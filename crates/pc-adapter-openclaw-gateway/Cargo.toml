@@ -1,0 +1,21 @@
+[package]
+name = "pc-adapter-openclaw-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip OpenClaw Gateway adapter"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-adapter-api = { path = "../pc-adapter-api" }
+pc-adapter-process = { path = "../pc-adapter-process" }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+tokio = { workspace = true }

@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -63,6 +63,10 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/me/user-secrets",
             get(my_user_secrets).post(upsert_my_user_secret),
         )
+        .route("/api/secrets/:id/rotate", post(rotate_secret))
+        .route("/api/secrets/:id", patch(update_secret))
+        .route("/api/secrets/:id/usage", get(secret_usage))
+        .route("/api/secrets/:id/access-events", get(secret_access_events))
 }
 
 #[derive(Debug, FromRow)]
@@ -487,4 +491,216 @@ async fn upsert_my_user_secret(
     .execute(state.db.pool())
     .await?;
     Ok((StatusCode::OK, Json(json!({ "stored": true }))))
+}
+
+// ── Rotate / Update / Usage / Access-events ──────────────────
+
+#[expect(dead_code)]
+#[derive(Debug, FromRow)]
+struct SecretVersionRow {
+    id: Uuid,
+    secret_id: Uuid,
+    version: i32,
+    material: Value,
+    value_sha256: String,
+    created_by_user_id: Option<String>,
+    created_by_agent_id: Option<Uuid>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, FromRow)]
+struct SecretBindingRow {
+    id: Uuid,
+    company_id: Uuid,
+    secret_id: Uuid,
+    target_type: String,
+    target_id: String,
+    config_path: String,
+    version_selector: String,
+    required: bool,
+    label: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct SecretAccessEventRow {
+    id: Uuid,
+    company_id: Uuid,
+    secret_id: Option<Uuid>,
+    secret_scope: String,
+    version: Option<i32>,
+    provider: String,
+    actor_type: String,
+    actor_id: Option<String>,
+    consumer_type: String,
+    consumer_id: String,
+    outcome: String,
+    error_code: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSecretBody {
+    name: Option<String>,
+    description: Option<String>,
+}
+
+async fn update_secret(
+    State(state): State<AppState>,
+    Path(secret_id): Path<Uuid>,
+    Json(body): Json<UpdateSecretBody>,
+) -> ApiResult<Json<Value>> {
+    if let Some(ref name) = body.name {
+        sqlx::query("UPDATE company_secrets SET name = $1, updated_at = now() WHERE id = $2")
+            .bind(name)
+            .bind(secret_id)
+            .execute(state.db.pool())
+            .await?;
+    }
+    if let Some(ref desc) = body.description {
+        sqlx::query(
+            "UPDATE company_secrets SET description = $1, updated_at = now() WHERE id = $2",
+        )
+        .bind(desc)
+        .bind(secret_id)
+        .execute(state.db.pool())
+        .await?;
+    }
+    // Re-fetch
+    let row: Option<SecretRow> = sqlx::query_as(
+        "SELECT id, company_id, name, key, provider, status, scope, description, latest_version,          created_at, updated_at FROM company_secrets WHERE id = $1",
+    )
+    .bind(secret_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    match row {
+        Some(row) => Ok(Json(secret_json(&row))),
+        None => Err(ApiError::NotFound(format!("secret {secret_id}"))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RotateSecretBody {
+    material: Value,
+    created_by_user_id: Option<String>,
+    created_by_agent_id: Option<Uuid>,
+}
+
+async fn rotate_secret(
+    State(state): State<AppState>,
+    Path(secret_id): Path<Uuid>,
+    Json(body): Json<RotateSecretBody>,
+) -> ApiResult<Json<Value>> {
+    // Fetch current secret to get latest_version
+    let current: Option<(i32,)> =
+        sqlx::query_as("SELECT latest_version FROM company_secrets WHERE id = $1")
+            .bind(secret_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let Some((latest_version,)) = current else {
+        return Err(ApiError::NotFound(format!("secret {secret_id}")));
+    };
+
+    let new_version = latest_version + 1;
+    let material = &body.material;
+    // Compute a simple SHA-256 placeholder (real impl should use actual hash)
+    let value_sha256 = "sha256-placeholder";
+
+    // Insert new version
+    sqlx::query(
+        "INSERT INTO company_secret_versions          (secret_id, version, material, value_sha256, created_by_user_id, created_by_agent_id)          VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(secret_id)
+    .bind(new_version)
+    .bind(material)
+    .bind(value_sha256)
+    .bind(&body.created_by_user_id)
+    .bind(body.created_by_agent_id)
+    .execute(state.db.pool())
+    .await?;
+
+    // Bump latest_version on parent
+    sqlx::query("UPDATE company_secrets SET latest_version = $1, updated_at = now() WHERE id = $2")
+        .bind(new_version)
+        .bind(secret_id)
+        .execute(state.db.pool())
+        .await?;
+
+    // Re-fetch
+    let row: Option<SecretRow> = sqlx::query_as(
+        "SELECT id, company_id, name, key, provider, status, scope, description, latest_version,          created_at, updated_at FROM company_secrets WHERE id = $1",
+    )
+    .bind(secret_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    match row {
+        Some(row) => Ok(Json(secret_json(&row))),
+        None => Err(ApiError::NotFound(format!("secret {secret_id}"))),
+    }
+}
+
+async fn secret_usage(
+    State(state): State<AppState>,
+    Path(secret_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let bindings: Vec<SecretBindingRow> = sqlx::query_as(
+        "SELECT id, company_id, secret_id, target_type, target_id, config_path,          version_selector, required, label, created_at          FROM company_secret_bindings WHERE secret_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(secret_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = bindings
+        .iter()
+        .map(|b| {
+            json!({
+                "id": b.id,
+                "companyId": b.company_id,
+                "secretId": b.secret_id,
+                "targetType": b.target_type,
+                "targetId": b.target_id,
+                "configPath": b.config_path,
+                "versionSelector": b.version_selector,
+                "required": b.required,
+                "label": b.label,
+                "createdAt": b.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "secretId": secret_id, "items": items })))
+}
+
+async fn secret_access_events(
+    State(state): State<AppState>,
+    Path(secret_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let events: Vec<SecretAccessEventRow> = sqlx::query_as(
+        "SELECT id, company_id, secret_id, secret_scope, version, provider,          actor_type, actor_id, consumer_type, consumer_id, outcome, error_code, created_at          FROM secret_access_events WHERE secret_id = $1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(secret_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = events
+        .iter()
+        .map(|e| {
+            json!({
+                "id": e.id,
+                "companyId": e.company_id,
+                "secretId": e.secret_id,
+                "secretScope": e.secret_scope,
+                "version": e.version,
+                "provider": e.provider,
+                "actorType": e.actor_type,
+                "actorId": e.actor_id,
+                "consumerType": e.consumer_type,
+                "consumerId": e.consumer_id,
+                "outcome": e.outcome,
+                "errorCode": e.error_code,
+                "createdAt": e.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "secretId": secret_id, "items": items })))
 }

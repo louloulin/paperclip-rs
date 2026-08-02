@@ -503,6 +503,11 @@ Paperclip 仓库为 pnpm monorepo，包含 server（Node + Express）、ui（Rea
 - .comet.yaml               phase=design
 ```
 
+| `docs/01-VITE-ERROR-ROOT-CAUSE.md` | Vite Lexical.mjs ENOENT 根因分析与修复 | 运维 |
+| `docs/02-PAPERCLIP-ARCHITECTURE.md` | Node/TS 端完整基线架构分析 | 全体 |
+| `docs/03-KAMEO-ACTOR-ANALYSIS.md` | kameo Actor 架构分析与路由优化计划 | 后端 |
+| `docs/04-EXECUTION-PLAN.md` | 最新执行计划（已完成 + 待实现 + 风险评估） | PM |
+
 ## 附录 B：术语表
 
 | 术语 | 含义 |

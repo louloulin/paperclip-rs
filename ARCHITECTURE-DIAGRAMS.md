@@ -127,55 +127,132 @@
 
 ---
 
-## 图 3：Crate 依赖图（自底向上）
+## 图 3（更新版）：Crate 依赖图 — 实际实现状态 (2026-08-03)
 
 ```
-                          ┌─────────────────┐
-                          │  pc-errors      │
-                          │  pc-telemetry   │
-                          │  pc-config      │
-                          └────────┬────────┘
-                                   │
-                                   ▼
-                          ┌─────────────────┐
-                          │  pc-core        │
-                          │  pc-db          │
-                          │  pc-storage     │
-                          │  pc-secrets     │
-                          │  pc-auth        │
-                          │  pc-authz       │
-                          └────────┬────────┘
-                                   │
-                                   ▼
-                          ┌─────────────────┐
-                          │  pc-repos       │
-                          │  pc-realtime    │
-                          │  pc-activity    │
-                          └────────┬────────┘
-                                   │
-                ┌──────────────────┼──────────────────┐
-                ▼                  ▼                  ▼
-       ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-       │  pc-http       │  │  pc-ws         │  │  pc-heartbeat  │
-       │  pc-openapi    │  │  pc-realtime*  │  │  pc-workflow   │
-       └────────┬───────┘  └────────┬───────┘  └────────┬───────┘
-                │                   │                   │
-                └───────────────────┼───────────────────┘
-                                    │
-                                    ▼
-                          ┌─────────────────┐
-                          │  pc-server      │
-                          │  (binary)       │
-                          └─────────────────┘
-
-       旁支（适配器与插件，由 pc-server 装配）：
-       ┌─────────────────────────────┐    ┌─────────────────────────────┐
-       │  pc-adapter-api             │    │  pc-plugin-protocol         │
-       │  pc-adapter-{11 个}         │    │  pc-plugin-host             │
-       └─────────────────────────────┘    └─────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                     paperclip-rs/  (Cargo workspace)                 │
+│                                                                      │
+│   apps/                                                              │
+│   ┌──────────────────────────────────────────────────────────────┐   │
+│   │                                                              │   │
+│   │   pc-server (✅ 已完成)         pc-cli (⏳ 待实现)             │   │
+│   │   ┌──────────────────┐         ┌──────────────────┐          │   │
+│   │   │ main.rs          │         │ paperclipai      │          │   │
+│   │   │ Axum Router      │         │ clap 20+ 子命令  │          │   │
+│   │   │ 56 路由          │         │                  │          │   │
+│   │   └─────────┬────────┘         └──────────────────┘          │   │
+│   │             │                                                │   │
+│   └─────────────┼────────────────────────────────────────────────┘   │
+│                 │                                                    │
+│   crates/                                                            │
+│   ┌─────────────┼────────────────────────────────────────────────┐   │
+│   │   ====== 服务层 ======                                        │   │
+│   │   ┌─────────┴──────────┐  ┌──────────────────┐               │   │
+│   │   │  pc-http (✅)      │  │  pc-ws (✅)      │               │   │
+│   │   │  axum 56 routes    │──│  WS live-events  │               │   │
+│   │   │  serde(camelCase)  │  │                  │               │   │
+│   │   └─────────┬──────────┘  └────────┬─────────┘               │   │
+│   │             │                      │                          │   │
+│   │   ┌─────────┴──────────┐  ┌───────┴──────────┐               │   │
+│   │   │  pc-heartbeat (✅) │  │  pc-realtime (✅) │               │   │
+│   │   │  HeartbeatActor    │  │  broadcast chan   │               │   │
+│   │   │  kameo actor       │  │  LiveEvent        │               │   │
+│   │   └─────────┬──────────┘  └────────┬─────────┘               │   │
+│   │             │                      │                          │   │
+│   │   ====== 领域层 ======                                        │   │
+│   │   ┌─────────┴──────────────────────┴──────────────────┐      │   │
+│   │   │                  pc-core (✅)                      │      │   │
+│   │   │  Actor + ActorRegistry + DomainMessage + kameo_api│      │   │
+│   │   │  Id + Timestamp + Money                           │      │   │
+│   │   │  底层: kameo 0.22 (ActorRef, Spawn, Message)     │      │   │
+│   │   └─────────┬─────────────────────────────────────────┘      │   │
+│   │             │                                                │   │
+│   │   ====== 数据层 ======                                        │   │
+│   │   ┌─────────┴──────────────────────────────────────────┐     │   │
+│   │   │              pc-repos (✅)                          │     │   │
+│   │   │  29 子模块: company/agent/issue/case/project/      │     │   │
+│   │   │  approval/decision/routine/pipeline/environment/   │     │   │
+│   │   │  execution/heartbeat/plugin/auth/activity/document/│     │   │
+│   │   │  goal/folder/sidebar/inbox/summary/tool/skill/     │     │   │
+│   │   │  settings/smoke/cost/membership/user_profile      │     │   │
+│   │   └─────────┬──────────────────────────────────────────┘     │   │
+│   │             │                                                │   │
+│   │   ┌─────────┼──────────────────────────────────────────┐     │   │
+│   │   │  pc-db (✅)    │  sqlx 0.8 + compile-time SQL check│     │   │
+│   │   │                 │  109 tables DDL + 嵌入式迁移      │     │   │
+│   │   └─────────────────┴──────────────────────────────────┘     │   │
+│   │                                                                │   │
+│   │   ====== 基础层 ======                                        │   │
+│   │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │   │
+│   │   │ pc-errors(✅)│  │pc-telemetry  │  │ pc-config(✅) │       │   │
+│   │   │ ApiError     │  │  (✅)        │  │ 环境变量     │       │   │
+│   │   │ → HTTP code  │  │ tracing/json  │  │ RunMode      │       │   │
+│   │   └──────────────┘  └──────────────┘  └──────────────┘       │   │
+│   │                                                                │   │
+│   │   ====== 认证/授权 ======                                     │   │
+│   │   ┌──────────────┐  ┌──────────────┐                         │   │
+│   │   │ pc-auth (✅) │  │ pc-authz (✅)│                         │   │
+│   │   │ session/cookie│  │ 权限矩阵    │                         │   │
+│   │   └──────────────┘  └──────────────┘                         │   │
+│   │                                                                │   │
+│   │   ====== 适配器 (1/11 完成) ======                            │   │
+│   │   ┌────────────────┐  ┌───────────────────────┐               │   │
+│   │   │pc-adapter-api  │  │ pc-adapter-process(✅)│               │   │
+│   │   │  (✅)          │  │  tokio::process       │               │   │
+│   │   │ Adapter trait  │  └───────────────────────┘               │   │
+│   │   └────────────────┘                                         │   │
+│   │   ┌──────────────────────────────────────────┐               │   │
+│   │   │ pc-adapter-codex-local (✅)              │               │   │
+│   │   │  其余 10 个适配器 ⏳                      │               │   │
+│   │   │  claude-local / cursor-{cloud,local} /   │               │   │
+│   │   │  gemini-local / grok-local / hermes /    │               │   │
+│   │   │  hermes-gateway / openclaw-gateway /     │               │   │
+│   │   │  opencode-local / pi-local               │               │   │
+│   │   └──────────────────────────────────────────┘               │   │
+│   │                                                                │   │
+│   │   ====== 插件 (待实现) ======                                 │   │
+│   │   ┌────────────────┐  ┌──────────────────┐                   │   │
+│   │   │pc-plugin-      │  │ pc-plugin-host   │                   │   │
+│   │   │protocol (⏳)   │  │   (⏳)           │                   │   │
+│   │   └────────────────┘  └──────────────────┘                   │   │
+│   │                                                                │   │
+│   │   ====== 辅助 ======                                          │   │
+│   │   ✅ pc-storage   ✅ pc-backup    ✅ pc-openapi              │   │
+│   │   ✅ pc-feature-flags   ✅ pc-doc-anchors                    │   │
+│   │   ⏳ pc-secrets (aes-gcm)                                     │   │
+│   └────────────────────────────────────────────────────────────┘   │
+│                                                                    │
+│   ✅ = 已完成并真实化     ⏳ = 待实现                               │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
----
+## 图 3b：Actor 注册表与 kameo actor 实例（运行时视图）
+
+```
+ActorRegistry (Mutex<HashMap<ActorKey, RegisteredActor>>)
+
+  ┌──────────────────────────────────────────────────────────┐
+  │ ActorKey { kind: "heartbeat_run", id: run-1 }           │
+  │   → HeartbeatActor { run_id, state, adapter, ... }     │
+  │ ActorKey { kind: "heartbeat_run", id: run-2 }           │
+  │   → HeartbeatActor { ... }                              │
+  │ ActorKey { kind: "plugin_worker", id: plugin-x }        │
+  │   → PluginWorkerActor { ... }                            │
+  │ ActorKey { kind: "adapter", id: config-y }              │
+  │   → AdapterBridgeActor { ... }                           │
+  │ ActorKey { kind: "ws_conn", id: conn-z }                │
+  │   → WsConnectionActor { ... }                            │
+  │ ActorKey { kind: "tool_invoke", id: invoke-1 }          │
+  │   → ToolInvocationActor { ... }                          │
+  │ ActorKey { kind: "key_rotation", id: secret-1 }         │
+  │   → KeyRotationActor { ... }                             │
+  │ ActorKey { kind: "system", id: "root" }                 │
+  │   → SystemActor (graceful shutdown root)                │
+  └──────────────────────────────────────────────────────────┘
+```
+
 
 ## 图 4：核心数据流 — 心跳 → 适配器 → live-events → UI
 

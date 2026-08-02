@@ -55,6 +55,39 @@ struct CardRow {
     updated_at: pc_core::Timestamp,
 }
 
+#[derive(Debug, FromRow, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRow {
+    id: Uuid,
+    card_id: Uuid,
+    kind: String,
+    trigger: String,
+    generation_issue_id: Option<Uuid>,
+    run_id: Option<Uuid>,
+    changes: Value,
+    input_tokens: i32,
+    output_tokens: i32,
+    cost_cents: i32,
+    model: Option<String>,
+    query_version: Option<i32>,
+    change_summary: Option<String>,
+    started_at: pc_core::Timestamp,
+    finished_at: Option<pc_core::Timestamp>,
+    status: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, FromRow, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SummaryRevisionRow {
+    id: Uuid,
+    revision_number: i32,
+    title: Option<String>,
+    body: String,
+    change_summary: Option<String>,
+    created_at: pc_core::Timestamp,
+}
+
 fn row_json(row: &CardRow) -> Value {
     json!({
         "id": row.id,
@@ -172,13 +205,13 @@ async fn patch_status_card(
     let title = body.title.clone();
     let prompt = body.interest_prompt.clone();
     let refresh_policy = body.refresh_policy.clone();
-    let archived = body.archived.unwrap_or(false);
+    let archived = body.archived;
     let row: CardRow = sqlx::query_as(
         "UPDATE status_cards SET \
             title = COALESCE($2, title), \
             interest_prompt = COALESCE($3, interest_prompt), \
             refresh_policy = COALESCE($4, refresh_policy), \
-            archived_at = CASE WHEN $5 THEN now() ELSE archived_at END, \
+            archived_at = CASE WHEN $5 IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END, \
             updated_at = now() \
          WHERE id = $1 \
          RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \
@@ -205,39 +238,86 @@ async fn delete_status_card(
     Ok((StatusCode::NO_CONTENT, Json(json!({}))))
 }
 
-async fn card_updates(State(_state): State<AppState>, Path(id): Path<Uuid>) -> Json<Value> {
-    let _ = id;
-    Json(json!({ "updates": [] }))
+async fn card_updates(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Vec<UpdateRow>>> {
+    let rows: Vec<UpdateRow> = sqlx::query_as(
+        "SELECT id, card_id, kind, trigger, generation_issue_id, run_id, changes, input_tokens, \
+                output_tokens, cost_cents, model, query_version, change_summary, started_at, \
+                finished_at, status, error \
+         FROM status_card_updates WHERE card_id = $1 ORDER BY started_at DESC",
+    )
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await?;
+    Ok(Json(rows))
 }
 
 async fn card_summary_revisions(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Json<Value> {
-    let _ = id;
-    Json(json!({ "revisions": [] }))
+) -> ApiResult<Json<Vec<SummaryRevisionRow>>> {
+    let row: Option<(Uuid, Option<Uuid>)> =
+        sqlx::query_as("SELECT company_id, document_id FROM status_cards WHERE id = $1")
+            .bind(id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let Some((company_id, Some(document_id))) = row else {
+        return Ok(Json(Vec::new()));
+    };
+    let rows: Vec<SummaryRevisionRow> = sqlx::query_as(
+        "SELECT id, revision_number, title, body, change_summary, created_at \
+         FROM document_revisions WHERE document_id = $1 AND company_id = $2 \
+         ORDER BY revision_number DESC",
+    )
+    .bind(document_id)
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    Ok(Json(rows))
 }
 
-async fn card_recompile(State(_state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+async fn card_recompile(
+    State(_state): State<AppState>,
+    Path(_id): Path<Uuid>,
+) -> impl IntoResponse {
     (
-        StatusCode::ACCEPTED,
-        Json(json!({ "id": id, "status": "recompile-queued" })),
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({ "error": "Status-card compilation actor is not enabled" })),
     )
 }
 
 async fn card_refresh(
     State(_state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(_id): Path<Uuid>,
     Json(_body): Json<Value>,
 ) -> impl IntoResponse {
     (
-        StatusCode::ACCEPTED,
-        Json(json!({ "id": id, "status": "refresh-queued" })),
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({ "error": "Status-card refresh actor is not enabled" })),
     )
 }
 
-async fn card_dry_run(State(_state): State<AppState>, Path(id): Path<Uuid>) -> Json<Value> {
-    Json(json!({ "id": id, "preview": null, "warnings": [] }))
+async fn card_dry_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(i32, Value, Value)> = sqlx::query_as(
+        "SELECT query_version, queries, mentioned_issue_ids FROM status_cards WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((query_version, queries, mentioned_issues)) = row else {
+        return Err(ApiError::NotFound(format!("status card {id}")));
+    };
+    Ok(Json(json!({
+        "cardId": id,
+        "queryVersion": query_version,
+        "queries": queries,
+        "mentionedIssues": mentioned_issues
+    })))
 }
 
 async fn card_query(
@@ -245,33 +325,32 @@ async fn card_query(
     Path(id): Path<Uuid>,
     Json(body): Json<QueryBody>,
 ) -> ApiResult<Json<Value>> {
-    let version = body.version.unwrap_or(0) + 1;
-    sqlx::query(
-        "UPDATE status_cards SET queries = $2, query_version = $3, query_compiled_at = now(), updated_at = now() \
-         WHERE id = $1",
+    let row: Option<CardRow> = sqlx::query_as(
+        "UPDATE status_cards SET queries = $2, query_version = query_version + 1, \
+                query_compiled_at = now(), updated_at = now() \
+         WHERE id = $1 \
+         RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \
+                   last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at",
     )
     .bind(id)
     .bind(&body.queries)
-    .bind(version)
-    .execute(state.db.pool())
+    .fetch_optional(state.db.pool())
     .await?;
-    Ok(Json(
-        json!({ "id": id, "version": version, "queries": body.queries }),
-    ))
+    let Some(row) = row else {
+        return Err(ApiError::NotFound(format!("status card {id}")));
+    };
+    Ok(Json(row_json(&row)))
 }
 
 async fn card_summary(
     State(_state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(_id): Path<Uuid>,
     Json(body): Json<SummaryBody>,
 ) -> impl IntoResponse {
     (
-        StatusCode::OK,
-        Json(json!({
-            "id": id,
-            "model": body.model,
-            "body": body.body,
-            "savedAt": chrono::Utc::now()
-        })),
+        StatusCode::NOT_IMPLEMENTED,
+        Json(
+            json!({ "error": "Status-card summary writer is not enabled", "model": body.model, "bodyLength": body.body.len() }),
+        ),
     )
 }

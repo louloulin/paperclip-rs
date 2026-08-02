@@ -1,7 +1,7 @@
 //! 公司级 skills (浏览、安装、状态、清单)。
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
@@ -10,6 +10,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::FromRow;
+use tokio::fs;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
@@ -115,22 +116,229 @@ struct InstallBody {
     categories: Option<Vec<String>>,
 }
 
-async fn skills_catalog(State(_s): State<AppState>) -> Json<Value> {
-    Json(json!({ "items": [] }))
+#[derive(Debug, Deserialize, Default)]
+struct CatalogQuery {
+    kind: Option<String>,
+    category: Option<String>,
+    q: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct CatalogFileQuery {
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+    path: Option<String>,
+}
+
+async fn skills_catalog(
+    State(_state): State<AppState>,
+    Query(query): Query<CatalogQuery>,
+) -> ApiResult<Json<Vec<Value>>> {
+    let manifest = load_catalog_manifest().await?;
+    let items = catalog_skills(&manifest)
+        .into_iter()
+        .filter(|skill| {
+            query
+                .kind
+                .as_deref()
+                .is_none_or(|kind| skill["kind"] == kind)
+        })
+        .filter(|skill| {
+            query
+                .category
+                .as_deref()
+                .is_none_or(|category| skill["category"] == category)
+        })
+        .filter(|skill| {
+            query.q.as_deref().is_none_or(|needle| {
+                let needle = needle.trim().to_lowercase();
+                ["id", "key", "slug", "name", "description", "category"]
+                    .iter()
+                    .filter_map(|field| skill.get(*field).and_then(Value::as_str))
+                    .any(|value| value.to_lowercase().contains(&needle))
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(items))
 }
 
 async fn skills_catalog_files(
-    State(_s): State<AppState>,
+    State(_state): State<AppState>,
     Path(catalog_id): Path<String>,
-) -> Json<Value> {
-    Json(json!({ "catalogId": catalog_id, "files": [] }))
+    Query(query): Query<CatalogFileQuery>,
+) -> ApiResult<Json<Value>> {
+    let reference = query.reference.as_deref().unwrap_or(&catalog_id);
+    let manifest = load_catalog_manifest().await?;
+    let skill = resolve_catalog_skill(&manifest, reference)?;
+    read_catalog_skill_file(&skill, query.path.as_deref().unwrap_or("SKILL.md")).await
 }
 
 async fn skills_catalog_detail(
-    State(_s): State<AppState>,
+    State(_state): State<AppState>,
     Path(catalog_id): Path<String>,
-) -> Json<Value> {
-    Json(json!({ "catalogId": catalog_id }))
+    Query(query): Query<CatalogFileQuery>,
+) -> ApiResult<Json<Value>> {
+    let reference = query.reference.as_deref().unwrap_or(&catalog_id);
+    let skill = resolve_catalog_skill(&load_catalog_manifest().await?, reference)?;
+    Ok(Json(skill))
+}
+
+async fn load_catalog_manifest() -> ApiResult<Value> {
+    let path = catalog_manifest_path().ok_or_else(|| {
+        ApiError::NotFound(
+            "Skills catalog manifest is unavailable; build @paperclipai/skills-catalog first"
+                .into(),
+        )
+    })?;
+    let content = fs::read_to_string(&path).await.map_err(|error| {
+        ApiError::Internal(format!("failed to read skills catalog manifest: {error}"))
+    })?;
+    serde_json::from_str(&content)
+        .map_err(|error| ApiError::Internal(format!("invalid skills catalog manifest: {error}")))
+}
+
+fn catalog_manifest_path() -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var("PAPERCLIP_SKILLS_CATALOG_MANIFEST") {
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let current = std::env::current_dir().ok()?;
+    let candidates = [
+        current.join("../paperclip/packages/skills-catalog/generated/catalog.json"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../paperclip/packages/skills-catalog/generated/catalog.json"),
+    ];
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn catalog_skills(manifest: &Value) -> Vec<Value> {
+    let package_name = manifest.get("packageName").cloned().unwrap_or(Value::Null);
+    let package_version = manifest
+        .get("packageVersion")
+        .cloned()
+        .unwrap_or(Value::Null);
+    manifest
+        .get("skills")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|skill| {
+            let mut skill = skill.clone();
+            if let Some(object) = skill.as_object_mut() {
+                object.insert("packageName".into(), package_name.clone());
+                object.insert("packageVersion".into(), package_version.clone());
+            }
+            skill
+        })
+        .collect()
+}
+
+fn resolve_catalog_skill(manifest: &Value, reference: &str) -> ApiResult<Value> {
+    let skills = catalog_skills(manifest);
+    if let Some(skill) = skills.iter().find(|skill| {
+        ["id", "key"]
+            .iter()
+            .filter_map(|field| skill.get(*field).and_then(Value::as_str))
+            .any(|value| value == reference)
+    }) {
+        return Ok(skill.clone());
+    }
+    let matches = skills
+        .iter()
+        .filter(|skill| skill.get("slug").and_then(Value::as_str) == Some(reference))
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [skill] => Ok((*skill).clone()),
+        [] => Err(ApiError::NotFound("Catalog skill not found".into())),
+        _ => Err(ApiError::BadRequest(format!(
+            "Catalog skill slug '{reference}' is ambiguous; use an id or key"
+        ))),
+    }
+}
+
+async fn read_catalog_skill_file(skill: &Value, relative_path: &str) -> ApiResult<Json<Value>> {
+    let normalized = relative_path.replace('\\', "/");
+    let normalized = normalized.trim_start_matches('/');
+    if normalized.is_empty()
+        || normalized
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "..")
+    {
+        return Err(ApiError::BadRequest("invalid catalog file path".into()));
+    }
+    let file_entry = skill
+        .get("files")
+        .and_then(Value::as_array)
+        .and_then(|files| {
+            files
+                .iter()
+                .find(|entry| entry.get("path").and_then(Value::as_str) == Some(normalized))
+        })
+        .ok_or_else(|| ApiError::NotFound("Catalog skill file not found".into()))?;
+    if file_entry.get("kind").and_then(Value::as_str) == Some("asset") {
+        return Err(ApiError::BadRequest(
+            "Catalog asset previews are not supported".into(),
+        ));
+    }
+    if skill.get("source").is_some_and(|source| !source.is_null()) {
+        return Err(ApiError::Other(anyhow::anyhow!(
+            "remote catalog skill sources are not enabled in the Rust server"
+        )));
+    }
+    let manifest_path = catalog_manifest_path()
+        .ok_or_else(|| ApiError::NotFound("Skills catalog manifest is unavailable".into()))?;
+    let package_root = manifest_path
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or_else(|| ApiError::Internal("invalid skills catalog manifest path".into()))?;
+    let skill_path = skill
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::Internal("catalog skill path is missing".into()))?;
+    let skill_root = tokio::fs::canonicalize(package_root.join(skill_path))
+        .await
+        .map_err(|_| ApiError::NotFound("Catalog skill source is unavailable".into()))?;
+    let file_path = tokio::fs::canonicalize(skill_root.join(normalized))
+        .await
+        .map_err(|_| ApiError::NotFound("Catalog skill file not found".into()))?;
+    if !file_path.starts_with(&skill_root) {
+        return Err(ApiError::BadRequest("invalid catalog file path".into()));
+    }
+    let content = fs::read_to_string(&file_path).await.map_err(|error| {
+        ApiError::Internal(format!("failed to read catalog skill file: {error}"))
+    })?;
+    let markdown = normalized.eq_ignore_ascii_case("SKILL.md")
+        || normalized.to_ascii_lowercase().ends_with(".md");
+    let language = catalog_language(normalized);
+    Ok(Json(json!({
+        "catalogSkillId": skill.get("id"),
+        "path": normalized,
+        "kind": file_entry.get("kind"),
+        "content": content,
+        "language": language,
+        "markdown": markdown
+    })))
+}
+
+fn catalog_language(path: &str) -> Option<&'static str> {
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())?;
+    match extension.to_ascii_lowercase().as_str() {
+        "md" => Some("markdown"),
+        "ts" => Some("typescript"),
+        "tsx" => Some("tsx"),
+        "js" => Some("javascript"),
+        "json" => Some("json"),
+        "yml" | "yaml" => Some("yaml"),
+        "sh" => Some("bash"),
+        "py" => Some("python"),
+        "html" => Some("html"),
+        "css" => Some("css"),
+        _ => None,
+    }
 }
 
 async fn list_company_skills(

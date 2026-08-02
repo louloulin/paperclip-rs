@@ -15,7 +15,18 @@ members = [
     "crates/pc-heartbeat",
     "crates/pc-adapter-api",
     "crates/pc-adapter-process",
+    "crates/pc-adapter-claude-local",
     "crates/pc-adapter-codex-local",
+    "crates/pc-adapter-cursor-cloud",
+    "crates/pc-adapter-cursor-local",
+    "crates/pc-adapter-gemini-local",
+    "crates/pc-adapter-grok-local",
+    "crates/pc-adapter-hermes",
+    "crates/pc-adapter-hermes-gateway",
+    "crates/pc-adapter-openclaw-gateway",
+    "crates/pc-adapter-opencode-local",
+    "crates/pc-adapter-pi-local",
+    "crates/pc-secrets",
     "crates/pc-server",
 ]
 
@@ -57,6 +68,7 @@ anyhow = "1"
 kameo = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dirs = "6"
 dotenvy = "0.15"
 
 # 测试

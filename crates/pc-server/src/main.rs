@@ -14,7 +14,17 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::Router;
 use pc_adapter_api::AdapterRegistry;
+use pc_adapter_claude_local::PcAdapterClaudeLocalAdapter;
 use pc_adapter_codex_local::CodexLocalAdapter;
+use pc_adapter_cursor_cloud::PcAdapterCursorCloudAdapter;
+use pc_adapter_cursor_local::PcAdapterCursorLocalAdapter;
+use pc_adapter_gemini_local::PcAdapterGeminiLocalAdapter;
+use pc_adapter_grok_local::PcAdapterGrokLocalAdapter;
+use pc_adapter_hermes::PcAdapterHermesAdapter;
+use pc_adapter_hermes_gateway::PcAdapterHermesGatewayAdapter;
+use pc_adapter_openclaw_gateway::PcAdapterOpenclawGatewayAdapter;
+use pc_adapter_opencode_local::PcAdapterOpencodeLocalAdapter;
+use pc_adapter_pi_local::PcAdapterPiLocalAdapter;
 use pc_config::Config;
 use pc_core::{spawn_system_actor, ActorKey, ActorRegistry};
 use pc_db::{Db, Migrator};
@@ -85,6 +95,36 @@ async fn main() -> anyhow::Result<()> {
     adapters
         .register(Arc::new(CodexLocalAdapter::new()))
         .context("register codex local adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterClaudeLocalAdapter::new()))
+        .context("register claude local adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterCursorCloudAdapter::new()))
+        .context("register cursor cloud adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterCursorLocalAdapter::new()))
+        .context("register cursor local adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterGeminiLocalAdapter::new()))
+        .context("register gemini local adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterGrokLocalAdapter::new()))
+        .context("register grok local adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterHermesAdapter::new()))
+        .context("register hermes adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterHermesGatewayAdapter::new()))
+        .context("register hermes gateway adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterOpenclawGatewayAdapter::new()))
+        .context("register openclaw gateway adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterOpencodeLocalAdapter::new()))
+        .context("register opencode local adapter")?;
+    adapters
+        .register(Arc::new(PcAdapterPiLocalAdapter::new()))
+        .context("register pi local adapter")?;
     actors
         .register(
             ActorKey::new("system", "heartbeat-supervisor"),

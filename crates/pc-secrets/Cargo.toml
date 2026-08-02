@@ -1,0 +1,28 @@
+[package]
+name = "pc-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Secret provider: local AES-256-GCM encryption, provider registry, health checks"
+
+[lints]
+workspace = true
+
+[dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
+dirs = { workspace = true }
+sha2 = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+pc-config = { path = "../pc-config" }
+
+[dev-dependencies]
+tokio = { workspace = true }
