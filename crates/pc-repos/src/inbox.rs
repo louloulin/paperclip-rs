@@ -1,4 +1,4 @@
-//! inbox_dismissals 域。
+//! `inbox_dismissals` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,11 +18,19 @@ pub struct InboxRow {
     pub updated_at: Timestamp,
 }
 
-pub struct InboxRepo<'a> { pub db: &'a Db }
+pub struct InboxRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> InboxRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
-    pub async fn list_for_user(&self, company_id: Uuid, _user_id: &str) -> sqlx::Result<Vec<InboxRow>> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+    pub async fn list_for_user(
+        &self,
+        company_id: Uuid,
+        _user_id: &str,
+    ) -> sqlx::Result<Vec<InboxRow>> {
         sqlx::query_as::<_, InboxRow>(
             "SELECT id, company_id, kind AS name, '' AS status, created_at, created_at AS updated_at FROM inbox_dismissals WHERE company_id = $1 ORDER BY created_at DESC",
         ).bind(company_id).fetch_all(self.db.pool()).await

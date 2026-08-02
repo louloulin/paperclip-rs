@@ -1,83 +1,24 @@
 //! paperclip-server：Paperclip 后端服务器二进制入口。
 //!
-//! Phase A 启动序列：
+//! 启动序列：
 //! 1. 加载配置（pc-config）
 //! 2. 初始化遥测（pc-telemetry）
 //! 3. 启动横幅
 //! 4. 连接数据库（pc-db）
 //! 5. 执行迁移（`pc-db::Migrator`）
-//! 6. 装配 axum 路由 + 监听
+//! 6. 装配 axum 路由（pc-http 56 路由） + 监听
 //! 7. 等待信号；graceful shutdown
 
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json, Router};
-use serde::Serialize;
+use axum::Router;
+use pc_config::Config;
+use pc_db::{Db, Migrator};
+use pc_http::AppState;
+use pc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 use tokio::signal;
 use tracing::info;
-
-use pc_config::Config;
-use pc_db::{Db, HealthCheck, Migrator};
-use pc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
-
-#[derive(Clone)]
-#[allow(dead_code)]
-struct AppState {
-    config: Arc<Config>,
-    db: Db,
-}
-
-#[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-    db: pc_db::health::DbHealth,
-}
-
-async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let db = HealthCheck::check(&state.db).await;
-    let overall_ok = db.ok;
-    let body = HealthResponse {
-        status: if overall_ok { "ok" } else { "degraded" },
-        version: env!("CARGO_PKG_VERSION"),
-        db,
-    };
-    let status = if overall_ok {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    (status, Json(body))
-}
-
-fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", axum::routing::get(health_handler))
-        .with_state(state)
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c().await.expect("install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => info!("ctrl-c received, shutting down"),
-        () = terminate => info!("SIGTERM received, shutting down"),
-    }
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -123,12 +64,19 @@ async fn main() -> anyhow::Result<()> {
         info!("migrations skipped (PAPERCLIP_DB_RUN_MIGRATIONS=false)");
     }
 
-    // 6. 启动 HTTP
-    let state = AppState {
-        config: cfg.clone(),
+    // 6. 装配 axum 路由（pc-http 56 路由）
+    let state = AppState::new(
         db,
-    };
-    let app = build_router(state);
+        pc_http::state::ConfigSnapshot {
+            host: cfg.server.host.clone(),
+            port: cfg.server.port,
+            session_cookie: cfg.auth.session_cookie_name.clone(),
+            api_key_header: cfg.auth.api_key_header.clone(),
+            csrf_header: cfg.auth.csrf_header.clone(),
+        },
+        telemetry_opts,
+    );
+    let app: Router = pc_http::routes::router().with_state(state);
 
     let addr = std::net::SocketAddr::from((
         cfg.server.host.parse::<std::net::IpAddr>()?,
@@ -146,4 +94,26 @@ async fn main() -> anyhow::Result<()> {
 
     info!("shutdown complete");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => info!("ctrl-c received, shutting down"),
+        () = terminate => info!("SIGTERM received, shutting down"),
+    }
 }

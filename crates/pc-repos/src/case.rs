@@ -1,4 +1,4 @@
-//! case 域。
+//! `case` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,12 +18,19 @@ pub struct CaseRow {
     pub updated_at: Timestamp,
 }
 
-pub struct CaseRepo<'a> { pub db: &'a Db }
+pub struct CaseRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> CaseRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<CaseRow>> {
-        let sql = format!("SELECT id, company_id, title AS name, status, created_at, updated_at FROM cases WHERE company_id = $1 ORDER BY created_at DESC");
-        sqlx::query_as::<_, CaseRow>(&sql).bind(company_id).fetch_all(self.db.pool()).await
+        let sql = "SELECT id, company_id, title AS name, status, created_at, updated_at FROM cases WHERE company_id = $1 ORDER BY created_at DESC";
+        sqlx::query_as::<_, CaseRow>(sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await
     }
 }

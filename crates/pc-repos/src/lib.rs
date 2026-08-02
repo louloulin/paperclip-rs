@@ -9,7 +9,7 @@
 //! 设计：
 //! - 全部仓储都依赖 `pc_db::Db`，禁止直接使用 sqlx 之外的数据库驱动
 //! - 仓储方法返回 `pc_core::Timestamp` 等领域类型，不直接暴露 sqlx 行
-//! - 测试通过集成测试使用真实 PostgreSQL 验证（`DATABASE_URL`）
+//! - 测试通过集成测试使用真实 `PostgreSQL` 验证（`DATABASE_URL`）
 
 pub mod activity;
 pub mod agent;

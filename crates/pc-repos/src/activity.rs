@@ -1,4 +1,4 @@
-//! activity_log 域。
+//! `activity_log` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,10 +18,14 @@ pub struct ActivityRow {
     pub updated_at: Timestamp,
 }
 
-pub struct ActivityRepo<'a> { pub db: &'a Db }
+pub struct ActivityRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> ActivityRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list_recent(&self, company_id: Uuid) -> sqlx::Result<Vec<ActivityRow>> {
         sqlx::query_as::<_, ActivityRow>(
             "SELECT id, company_id, actor_type AS name, '' AS status, created_at, created_at AS updated_at FROM activity_log WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200",

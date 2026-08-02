@@ -1,4 +1,4 @@
-//! routine 域。
+//! `routine` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,12 +18,19 @@ pub struct RoutineRow {
     pub updated_at: Timestamp,
 }
 
-pub struct RoutineRepo<'a> { pub db: &'a Db }
+pub struct RoutineRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> RoutineRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<RoutineRow>> {
-        let sql = format!("SELECT id, company_id, 'routine' AS name, '' AS status, created_at, updated_at FROM routines WHERE company_id = $1 ORDER BY created_at DESC");
-        sqlx::query_as::<_, RoutineRow>(&sql).bind(company_id).fetch_all(self.db.pool()).await
+        let sql = "SELECT id, company_id, 'routine' AS name, '' AS status, created_at, updated_at FROM routines WHERE company_id = $1 ORDER BY created_at DESC";
+        sqlx::query_as::<_, RoutineRow>(sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await
     }
 }

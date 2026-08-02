@@ -1,4 +1,4 @@
-//! plugins 域。
+//! `plugins` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,16 +18,20 @@ pub struct PluginRow {
     pub updated_at: Timestamp,
 }
 
-pub struct PluginRepo<'a> { pub db: &'a Db }
+pub struct PluginRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> PluginRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list(&self) -> sqlx::Result<Vec<PluginRow>> {
         sqlx::query_as::<_, PluginRow>(
             "SELECT id, '00000000-0000-0000-0000-000000000000'::uuid AS company_id, '' AS name, '' AS status, updated_at AS created_at, updated_at FROM plugins ORDER BY updated_at DESC",
         ).fetch_all(self.db.pool()).await
     }
-    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<PluginRow>> {
+    pub async fn list_by_company(&self, _company_id: Uuid) -> sqlx::Result<Vec<PluginRow>> {
         sqlx::query_as::<_, PluginRow>(
             "SELECT id, '00000000-0000-0000-0000-000000000000'::uuid AS company_id, '' AS name, '' AS status, updated_at AS created_at, updated_at FROM plugins ORDER BY updated_at DESC",
         ).fetch_all(self.db.pool()).await

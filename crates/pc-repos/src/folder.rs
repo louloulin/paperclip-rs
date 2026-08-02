@@ -1,4 +1,4 @@
-//! folder 域。
+//! `folder` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,12 +18,19 @@ pub struct FolderRow {
     pub updated_at: Timestamp,
 }
 
-pub struct FolderRepo<'a> { pub db: &'a Db }
+pub struct FolderRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> FolderRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<FolderRow>> {
-        let sql = format!("SELECT id, company_id, name, '' AS status, created_at, updated_at FROM folders WHERE company_id = $1 ORDER BY created_at DESC");
-        sqlx::query_as::<_, FolderRow>(&sql).bind(company_id).fetch_all(self.db.pool()).await
+        let sql = "SELECT id, company_id, name, '' AS status, created_at, updated_at FROM folders WHERE company_id = $1 ORDER BY created_at DESC";
+        sqlx::query_as::<_, FolderRow>(sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await
     }
 }

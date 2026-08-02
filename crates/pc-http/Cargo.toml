@@ -1,0 +1,28 @@
+[package]
+name = "pc-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip HTTP 层：axum Router、middleware、56 个路由"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core", features = ["sqlx"] }
+pc-db = { path = "../pc-db" }
+pc-errors = { path = "../pc-errors" }
+pc-telemetry = { path = "../pc-telemetry" }
+pc-repos = { path = "../pc-repos" }
+axum = { workspace = true }
+sqlx = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }

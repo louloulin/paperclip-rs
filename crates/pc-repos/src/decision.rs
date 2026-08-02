@@ -1,4 +1,4 @@
-//! decisions 域。
+//! `decisions` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,10 +18,14 @@ pub struct DecisionRow {
     pub updated_at: Timestamp,
 }
 
-pub struct DecisionRepo<'a> { pub db: &'a Db }
+pub struct DecisionRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> DecisionRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<DecisionRow>> {
         sqlx::query_as::<_, DecisionRow>(
             "SELECT id, company_id, title AS name, '' AS status, created_at, created_at AS updated_at FROM decisions WHERE company_id = $1 ORDER BY created_at DESC",

@@ -1,4 +1,4 @@
-//! smoke_runs 域。
+//! `smoke_runs` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,13 +18,17 @@ pub struct SmokeRow {
     pub updated_at: Timestamp,
 }
 
-pub struct SmokeRepo<'a> { pub db: &'a Db }
+pub struct SmokeRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> SmokeRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list(&self, company_id: Uuid) -> sqlx::Result<Vec<SmokeRow>> {
         sqlx::query_as::<_, SmokeRow>(
-            "SELECT id, company_id, name, status, started_at AS created_at, COALESCE(finished_at, started_at) AS updated_at FROM smoke_runs WHERE company_id = $1 ORDER BY started_at DESC",
+            "SELECT id, company_id, trigger AS name, status, created_at, updated_at FROM smoke_runs WHERE company_id = $1 ORDER BY started_at DESC",
         ).bind(company_id).fetch_all(self.db.pool()).await
     }
     pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<SmokeRow>> {

@@ -1,4 +1,4 @@
-//! heartbeat_runs 域。
+//! `heartbeat_runs` 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,10 +18,14 @@ pub struct HeartbeatRow {
     pub updated_at: Timestamp,
 }
 
-pub struct HeartbeatRepo<'a> { pub db: &'a Db }
+pub struct HeartbeatRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> HeartbeatRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
     pub async fn list_for_agent(&self, agent_id: Uuid) -> sqlx::Result<Vec<HeartbeatRow>> {
         sqlx::query_as::<_, HeartbeatRow>(
             "SELECT id, company_id, '' AS name, status, started_at AS created_at, COALESCE(finished_at, started_at) AS updated_at FROM heartbeat_runs WHERE agent_id = $1 ORDER BY started_at DESC",

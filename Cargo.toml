@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pc-errors",
     "crates/pc-repos",
+    "crates/pc-http",
     "crates/pc-migrate-smoke",
     "crates/pc-telemetry",
     "crates/pc-config",
