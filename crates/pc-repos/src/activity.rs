@@ -26,6 +26,9 @@ impl<'a> ActivityRepo<'a> {
     pub fn new(db: &'a Db) -> Self {
         Self { db }
     }
+    pub async fn list_recent(&self, c: Uuid, limit: i64) -> sqlx::Result<Vec<ActivityRow>> {
+        self.list_by_company(c, limit).await
+    }
     pub async fn list_by_company(&self, c: Uuid, limit: i64) -> sqlx::Result<Vec<ActivityRow>> {
         sqlx::query_as::<_, ActivityRow>(
             "SELECT id, company_id, actor_type, actor_id, action, entity_type, entity_id, \
