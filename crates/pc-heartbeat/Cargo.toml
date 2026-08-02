@@ -1,0 +1,22 @@
+[package]
+name = "pc-heartbeat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip heartbeat Actor 状态机与执行编排"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-adapter-api = { path = "../pc-adapter-api" }
+kameo = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]

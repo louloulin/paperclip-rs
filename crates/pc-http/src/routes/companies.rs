@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post},
     Json, Router,
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use pc_realtime::LiveEvent;
 use pc_repos::company::{CompanyListRow, CompanyRepo};
 
-use crate::{ApiError, ApiResult, AppState};
+use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -49,6 +49,7 @@ struct CreateBody {
 
 async fn create(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     if body.name.trim().is_empty() {
@@ -57,6 +58,23 @@ async fn create(
     let row = CompanyRepo::new(&state.db)
         .create(&body.name, body.description.as_deref())
         .await?;
+    let owner_id = match require_user_id(&state, &headers).await {
+        Ok(user_id) => user_id,
+        Err(ApiError::Unauthorized(_)) => "local-board".to_owned(),
+        Err(error) => return Err(error),
+    };
+    sqlx::query(
+        "INSERT INTO company_memberships \
+            (company_id, principal_type, principal_id, status, membership_role) \
+         VALUES ($1, 'user', $2, 'active', 'owner') \
+         ON CONFLICT (company_id, principal_type, principal_id) DO UPDATE SET \
+            status = 'active', membership_role = COALESCE(company_memberships.membership_role, 'owner'), \
+            updated_at = now()",
+    )
+    .bind(row.id)
+    .bind(&owner_id)
+    .execute(state.db.pool())
+    .await?;
     state.realtime.publish(
         LiveEvent::new("company.created", "company", row.id)
             .with_company(row.id)

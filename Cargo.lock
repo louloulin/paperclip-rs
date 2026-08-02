@@ -1132,6 +1132,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-adapter-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "pc-adapter-codex-local"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-adapter-api",
+ "pc-adapter-process",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "pc-adapter-process"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-adapter-api",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "pc-auth"
 version = "0.1.0"
 dependencies = [
@@ -1214,17 +1253,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-heartbeat"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "kameo",
+ "pc-adapter-api",
+ "pc-core",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "pc-http"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "chrono",
  "futures-util",
+ "pc-adapter-api",
  "pc-auth",
  "pc-core",
  "pc-db",
  "pc-errors",
+ "pc-heartbeat",
  "pc-realtime",
  "pc-repos",
  "pc-telemetry",
@@ -1271,6 +1328,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "pc-adapter-api",
  "pc-core",
  "pc-db",
  "pc-errors",
@@ -1289,12 +1347,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "pc-adapter-api",
+ "pc-adapter-codex-local",
  "pc-config",
  "pc-core",
  "pc-db",
  "pc-errors",
+ "pc-heartbeat",
  "pc-http",
  "pc-realtime",
+ "pc-repos",
  "pc-telemetry",
  "serde",
  "serde_json",
@@ -2131,6 +2193,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

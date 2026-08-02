@@ -12,7 +12,10 @@ pub mod money;
 pub mod timestamp;
 
 pub use actor::Actor;
-pub use actor_runtime::{spawn_system_actor, DomainMessage, MessageOrigin, SystemActor};
+pub use actor_runtime::{
+    spawn_system_actor, ActorKey, ActorRegistry, ActorRegistryError, DomainMessage, MessageOrigin,
+    SystemActor,
+};
 pub use error::{CoreError, CoreResult};
 pub use id::Id;
 pub use money::Money;

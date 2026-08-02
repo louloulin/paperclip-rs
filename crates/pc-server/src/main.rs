@@ -13,10 +13,16 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::Router;
+use pc_adapter_api::AdapterRegistry;
+use pc_adapter_codex_local::CodexLocalAdapter;
 use pc_config::Config;
+use pc_core::{spawn_system_actor, ActorKey, ActorRegistry};
 use pc_db::{Db, Migrator};
+use pc_heartbeat::spawn_heartbeat_supervisor;
+use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
 use pc_http::AppState;
 use pc_realtime::{RealtimeHandle, WsState};
+use pc_repos::heartbeat::HeartbeatRepo;
 
 use pc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 use tokio::signal;
@@ -66,7 +72,26 @@ async fn main() -> anyhow::Result<()> {
         info!("migrations skipped (PAPERCLIP_DB_RUN_MIGRATIONS=false)");
     }
 
-    // 6. 装配 axum 路由（pc-http 56 路由）
+    // 6. 启动 Actor 根运行时并装配 axum 路由（pc-http 56 路由）
+    let actors = ActorRegistry::new();
+    actors
+        .register(
+            ActorKey::new("system", "root"),
+            spawn_system_actor("paperclip-root"),
+        )
+        .context("register root actor")?;
+    let heartbeat = spawn_heartbeat_supervisor(50, actors.clone());
+    let adapters = AdapterRegistry::new();
+    adapters
+        .register(Arc::new(CodexLocalAdapter::new()))
+        .context("register codex local adapter")?;
+    actors
+        .register(
+            ActorKey::new("system", "heartbeat-supervisor"),
+            heartbeat.clone(),
+        )
+        .context("register heartbeat supervisor")?;
+    recover_heartbeat_runs(&db, &heartbeat).await?;
     let realtime = RealtimeHandle::start(1024);
     let ws = std::sync::Arc::new(WsState {
         realtime: realtime.clone(),
@@ -74,6 +99,11 @@ async fn main() -> anyhow::Result<()> {
     });
     let state = AppState::new(
         db,
+        pc_http::state::RuntimeHandles {
+            actors: actors.clone(),
+            heartbeat,
+            adapters,
+        },
         pc_http::state::ConfigSnapshot {
             host: cfg.server.host.clone(),
             port: cfg.server.port,
@@ -101,7 +131,38 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("axum serve")?;
 
+    actors.shutdown().await.context("shutdown actors")?;
+
     info!("shutdown complete");
+    Ok(())
+}
+
+async fn recover_heartbeat_runs(
+    db: &Db,
+    heartbeat: &pc_core::actor_runtime::kameo_api::ActorRef<pc_heartbeat::HeartbeatSupervisor>,
+) -> anyhow::Result<()> {
+    let runs = HeartbeatRepo::new(db)
+        .list_recoverable(10_000)
+        .await
+        .context("list recoverable heartbeat runs")?;
+    let mut recovered = 0usize;
+    let mut deferred = 0usize;
+    for run in runs {
+        match heartbeat.ask(StartHeartbeat { run_id: run.id }).await {
+            Ok(StartHeartbeatResult::Started | StartHeartbeatResult::AlreadyActive) => {
+                recovered += 1;
+            }
+            Err(pc_core::actor_runtime::kameo_api::SendError::HandlerError(
+                pc_heartbeat::HeartbeatSupervisorError::CapacityExceeded { .. },
+            )) => {
+                deferred += 1;
+            }
+            Err(error) => {
+                tracing::warn!(run_id = %run.id, error = %error, "heartbeat run recovery failed");
+            }
+        }
+    }
+    info!(recovered, deferred, "heartbeat run recovery complete");
     Ok(())
 }
 

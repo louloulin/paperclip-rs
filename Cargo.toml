@@ -12,6 +12,10 @@ members = [
     "crates/pc-auth",
     "crates/pc-authz",
     "crates/pc-realtime",
+    "crates/pc-heartbeat",
+    "crates/pc-adapter-api",
+    "crates/pc-adapter-process",
+    "crates/pc-adapter-codex-local",
     "crates/pc-server",
 ]
 

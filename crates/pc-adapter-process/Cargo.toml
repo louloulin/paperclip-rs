@@ -1,0 +1,18 @@
+[package]
+name = "pc-adapter-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 本地 adapter 共享子进程执行器"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-adapter-api = { path = "../pc-adapter-api" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }

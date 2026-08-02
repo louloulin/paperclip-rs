@@ -8,6 +8,24 @@ use pc_core::Timestamp;
 
 use crate::Db;
 
+fn issue_prefix_candidate(name: &str, attempt: usize) -> String {
+    let base: String = name
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .map(|character| character.to_ascii_uppercase())
+        .take(3)
+        .collect();
+    let base = if base.is_empty() { "PC" } else { &base };
+    format!("{base}{}", "A".repeat(attempt.saturating_sub(1)))
+}
+
+fn is_issue_prefix_conflict(error: &sqlx::Error) -> bool {
+    error.as_database_error().is_some_and(|database_error| {
+        database_error.code().as_deref() == Some("23505")
+            && database_error.constraint() == Some("companies_issue_prefix_idx")
+    })
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct CompanyRow {
     pub id: Uuid,
@@ -76,19 +94,30 @@ impl<'a> CompanyRepo<'a> {
     }
 
     pub async fn create(&self, name: &str, description: Option<&str>) -> sqlx::Result<CompanyRow> {
-        sqlx::query_as::<_, CompanyRow>(
-            "INSERT INTO companies (name, description) VALUES ($1, $2) \
-             RETURNING id, name, description, status, pause_reason, paused_at, \
-                       issue_prefix, issue_counter, budget_monthly_cents, spent_monthly_cents, \
-                       attachment_max_bytes, default_responsible_user_id, \
-                       require_board_approval_for_new_agents, feedback_data_sharing_enabled, \
-                       feedback_data_sharing_consent_at, feedback_data_sharing_consent_by_user_id, \
-                       feedback_data_sharing_terms_version, brand_color, created_at, updated_at",
-        )
-        .bind(name)
-        .bind(description)
-        .fetch_one(self.db.pool())
-        .await
+        for attempt in 1..10_000 {
+            let result = sqlx::query_as::<_, CompanyRow>(
+                "INSERT INTO companies (name, description, issue_prefix) VALUES ($1, $2, $3) \
+                 RETURNING id, name, description, status, pause_reason, paused_at, \
+                           issue_prefix, issue_counter, budget_monthly_cents, spent_monthly_cents, \
+                           attachment_max_bytes, default_responsible_user_id, \
+                           require_board_approval_for_new_agents, feedback_data_sharing_enabled, \
+                           feedback_data_sharing_consent_at, feedback_data_sharing_consent_by_user_id, \
+                           feedback_data_sharing_terms_version, brand_color, created_at, updated_at",
+            )
+            .bind(name)
+            .bind(description)
+            .bind(issue_prefix_candidate(name, attempt))
+            .fetch_one(self.db.pool())
+            .await;
+            match result {
+                Ok(company) => return Ok(company),
+                Err(error) if is_issue_prefix_conflict(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err(sqlx::Error::Protocol(
+            "unable to allocate unique company issue prefix".into(),
+        ))
     }
 
     pub async fn update(
@@ -141,5 +170,17 @@ impl<'a> CompanyRepo<'a> {
             .execute(self.db.pool())
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_compatible_issue_prefix_candidates() {
+        assert_eq!(issue_prefix_candidate("Paper Clip", 1), "PAP");
+        assert_eq!(issue_prefix_candidate("Paper Clip", 2), "PAPA");
+        assert_eq!(issue_prefix_candidate("123", 1), "PC");
     }
 }

@@ -17,6 +17,7 @@ pub mod approval;
 pub mod auth;
 pub mod case;
 pub mod company;
+pub mod cost;
 pub mod decision;
 pub mod document;
 pub mod environment;
@@ -26,6 +27,7 @@ pub mod goal;
 pub mod heartbeat;
 pub mod inbox;
 pub mod issue;
+pub mod membership;
 pub mod pipeline;
 pub mod plugin;
 pub mod project;
@@ -36,6 +38,7 @@ pub mod skill;
 pub mod smoke;
 pub mod summary;
 pub mod tool;
+pub mod user_profile;
 
 pub use pc_db::Db;
 

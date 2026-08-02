@@ -10,11 +10,140 @@
 //! - pc-realtime：live-event bus 由 actor 持有广播状态
 //! - pc-plugin-host：每个插件 worker 一个 actor
 
+use std::any::Any;
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+
 use kameo::actor::{Actor, ActorRef, Spawn};
 use kameo::error::Infallible;
 use kameo::message::Message;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+type StopFuture = Pin<Box<dyn Future<Output = Result<(), kameo::error::SendError>> + Send>>;
+type StopActor = Arc<dyn Fn() -> StopFuture + Send + Sync>;
+type IsAlive = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Actor 的稳定业务身份，不暴露 kameo 内部分配的 [`kameo::actor::ActorId`]。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ActorKey {
+    pub kind: String,
+    pub id: String,
+}
+
+impl ActorKey {
+    pub fn new(kind: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            id: id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ActorRegistryError {
+    #[error("actor already registered: {0:?}")]
+    AlreadyRegistered(ActorKey),
+    #[error("actor type does not match registry key: {0:?}")]
+    TypeMismatch(ActorKey),
+    #[error("actor shutdown failed: {0}")]
+    Shutdown(String),
+}
+
+struct RegisteredActor {
+    actor_ref: Arc<dyn Any + Send + Sync>,
+    is_alive: IsAlive,
+    stop: StopActor,
+}
+
+/// 进程内 Actor 注册表。
+///
+/// 业务层使用 [`ActorKey`] 定位 Actor；具体类型通过 `get::<A>` 在边界处校验。
+/// 注册表同时保留类型擦除后的停止句柄，使 composition root 可以统一优雅关闭。
+#[derive(Clone, Default)]
+pub struct ActorRegistry {
+    actors: Arc<Mutex<HashMap<ActorKey, RegisteredActor>>>,
+}
+
+impl ActorRegistry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register<A: Actor>(
+        &self,
+        key: ActorKey,
+        actor_ref: ActorRef<A>,
+    ) -> Result<(), ActorRegistryError> {
+        let mut actors = self.actors.lock().expect("actor registry mutex poisoned");
+        if actors.get(&key).is_some_and(|entry| (entry.is_alive)()) {
+            return Err(ActorRegistryError::AlreadyRegistered(key));
+        }
+
+        let alive_ref = actor_ref.clone();
+        let stop_ref = actor_ref.clone();
+        actors.insert(
+            key,
+            RegisteredActor {
+                actor_ref: Arc::new(actor_ref),
+                is_alive: Arc::new(move || alive_ref.is_alive()),
+                stop: Arc::new(move || {
+                    let actor_ref = stop_ref.clone();
+                    Box::pin(stop_actor(actor_ref))
+                }),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn get<A: Actor>(&self, key: &ActorKey) -> Result<ActorRef<A>, ActorRegistryError> {
+        let actors = self.actors.lock().expect("actor registry mutex poisoned");
+        let Some(entry) = actors.get(key) else {
+            return Err(ActorRegistryError::TypeMismatch(key.clone()));
+        };
+        entry
+            .actor_ref
+            .downcast_ref::<ActorRef<A>>()
+            .cloned()
+            .ok_or_else(|| ActorRegistryError::TypeMismatch(key.clone()))
+    }
+
+    pub fn unregister(&self, key: &ActorKey) -> bool {
+        self.actors
+            .lock()
+            .expect("actor registry mutex poisoned")
+            .remove(key)
+            .is_some()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.actors
+            .lock()
+            .expect("actor registry mutex poisoned")
+            .is_empty()
+    }
+
+    pub async fn shutdown(&self) -> Result<(), ActorRegistryError> {
+        let entries = {
+            let mut actors = self.actors.lock().expect("actor registry mutex poisoned");
+            actors.drain().map(|(_, entry)| entry).collect::<Vec<_>>()
+        };
+
+        for entry in entries {
+            (entry.stop)()
+                .await
+                .map_err(|error| ActorRegistryError::Shutdown(error.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+async fn stop_actor<A: Actor>(actor_ref: ActorRef<A>) -> Result<(), kameo::error::SendError> {
+    actor_ref.stop_gracefully().await
+}
 
 /// 重导出 kameo 的核心类型，便于上层一致引用。
 pub mod kameo_api {
@@ -170,5 +299,73 @@ mod tests {
     fn kameo_api_re_exports_compile() {
         fn assert_actor<T: Actor>() {}
         assert_actor::<SystemActor>();
+    }
+
+    #[tokio::test]
+    async fn registry_returns_the_same_typed_actor() {
+        let registry = ActorRegistry::new();
+        let actor_ref = spawn_system_actor("registered");
+
+        registry
+            .register(ActorKey::new("system", "primary"), actor_ref.clone())
+            .unwrap();
+
+        let resolved = registry
+            .get::<SystemActor>(&ActorKey::new("system", "primary"))
+            .unwrap();
+        assert_eq!(resolved.id(), actor_ref.id());
+        registry.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_duplicate_live_actor() {
+        let registry = ActorRegistry::new();
+        let key = ActorKey::new("heartbeat-run", "run-1");
+        let first = spawn_system_actor("first");
+        let second = spawn_system_actor("second");
+
+        registry.register(key.clone(), first).unwrap();
+        let error = registry.register(key.clone(), second.clone()).unwrap_err();
+
+        assert_eq!(error, ActorRegistryError::AlreadyRegistered(key));
+        second.stop_gracefully().await.unwrap();
+        registry.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn registry_replaces_stopped_actor() {
+        let registry = ActorRegistry::new();
+        let key = ActorKey::new("heartbeat-run", "run-2");
+        let stopped = spawn_system_actor("stopped");
+        registry.register(key.clone(), stopped.clone()).unwrap();
+        stopped.stop_gracefully().await.unwrap();
+
+        let replacement = spawn_system_actor("replacement");
+        registry.register(key.clone(), replacement.clone()).unwrap();
+
+        assert_eq!(
+            registry.get::<SystemActor>(&key).unwrap().id(),
+            replacement.id()
+        );
+        registry.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn registry_shutdown_stops_and_removes_all_actors() {
+        let registry = ActorRegistry::new();
+        let first = spawn_system_actor("first");
+        let second = spawn_system_actor("second");
+        registry
+            .register(ActorKey::new("system", "first"), first.clone())
+            .unwrap();
+        registry
+            .register(ActorKey::new("system", "second"), second.clone())
+            .unwrap();
+
+        registry.shutdown().await.unwrap();
+
+        assert!(!first.is_alive());
+        assert!(!second.is_alive());
+        assert!(registry.is_empty());
     }
 }

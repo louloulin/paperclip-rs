@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 pc-core = { path = "../pc-core", features = ["sqlx"] }
+pc-adapter-api = { path = "../pc-adapter-api" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 sqlx = { workspace = true }

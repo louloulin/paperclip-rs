@@ -1,20 +1,32 @@
-//! `POST /api/user-profiles` 路由模块（user profiles）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 用户资料及投入统计路由。
 
-use axum::{routing::get, Json, Router};
-use serde_json::{json, Value};
+use axum::{
+    extract::{Path, State},
+    http::HeaderMap,
+    routing::get,
+    Json, Router,
+};
+use pc_repos::user_profile::{UserProfileRepo, UserProfileResponse};
+use uuid::Uuid;
 
-use crate::AppState;
+use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/user-profiles", get(handler))
+    Router::new().route(
+        "/api/companies/:company_id/users/:user_slug/profile",
+        get(get_profile),
+    )
 }
 
-async fn handler() -> Json<Value> {
-    Json(json!({
-        "module": "user_profiles",
-        "description": "user profiles",
-        "status": "ok",
-    }))
+async fn get_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((company_id, user_slug)): Path<(Uuid, String)>,
+) -> ApiResult<Json<UserProfileResponse>> {
+    require_user_id(&state, &headers).await?;
+    let profile = UserProfileRepo::new(&state.db)
+        .load(company_id, &user_slug)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("User not found".to_owned()))?;
+    Ok(Json(profile))
 }
