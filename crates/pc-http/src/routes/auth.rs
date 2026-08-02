@@ -25,6 +25,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 struct SessionInfo {
     user_id: String,
     name: String,
@@ -69,6 +70,7 @@ async fn get_session(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SignInBody {
     email: String,
     #[serde(default)]
@@ -79,6 +81,7 @@ struct SignInBody {
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 struct SignInResponse {
     user_id: String,
     session_token: String,
@@ -204,6 +207,7 @@ async fn sign_out(State(state): State<AppState>, headers: HeaderMap) -> ApiResul
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct IssueKeyBody {
     name: String,
 }

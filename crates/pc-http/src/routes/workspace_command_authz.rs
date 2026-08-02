@@ -1,20 +1,30 @@
-//! `POST /api/workspace-command-authz` 路由模块（workspace command authz）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! workspace command 授权。
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    extract::{Path, State},
+    routing::get,
+    Json, Router,
+};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/workspace-command-authz", get(handler))
+    Router::new().route(
+        "/api/workspaces/:workspace_id/command-authz",
+        get(workspace_command_authz),
+    )
 }
 
-async fn handler() -> Json<Value> {
+async fn workspace_command_authz(
+    State(_state): State<AppState>,
+    Path(workspace_id): Path<Uuid>,
+) -> Json<Value> {
     Json(json!({
-        "module": "workspace_command_authz",
-        "description": "workspace command authz",
-        "status": "ok",
+        "workspaceId": workspace_id,
+        "allow": ["read", "write"],
+        "deny": [],
+        "updatedAt": null
     }))
 }

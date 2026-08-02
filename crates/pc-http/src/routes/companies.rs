@@ -41,6 +41,7 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct CreateBody {
     name: String,
     #[serde(default)]
@@ -87,6 +88,7 @@ async fn create(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct UpdateBody {
     #[serde(default)]
     name: Option<String>,

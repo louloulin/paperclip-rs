@@ -1,20 +1,29 @@
-//! `POST /api/environment-selection` 路由模块（environment selection）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 当前公司选择的环境。
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    extract::{Path, State},
+    routing::get,
+    Json, Router,
+};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/environment-selection", get(handler))
+    Router::new().route(
+        "/api/companies/:company_id/environment-selection",
+        get(get_selection),
+    )
 }
 
-async fn handler() -> Json<Value> {
+async fn get_selection(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> Json<Value> {
     Json(json!({
-        "module": "environment_selection",
-        "description": "environment selection",
-        "status": "ok",
+        "companyId": company_id,
+        "environmentId": null,
+        "updatedAt": null
     }))
 }

@@ -1,20 +1,23 @@
-//! `GET /api/companies/import-paths` 路由模块（company import paths）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 公司可导入路径配置。
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    extract::{Path, State},
+    routing::get,
+    Json, Router,
+};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/companies/import-paths", get(handler))
+    Router::new().route("/api/companies/:company_id/import-paths", get(import_paths))
 }
 
-async fn handler() -> Json<Value> {
+async fn import_paths(State(_state): State<AppState>, Path(company_id): Path<Uuid>) -> Json<Value> {
     Json(json!({
-        "module": "company_import_paths",
-        "description": "company import paths",
-        "status": "ok",
+        "companyId": company_id,
+        "paths": [],
+        "updatedAt": null
     }))
 }

@@ -1,20 +1,13 @@
-//! `POST /api/plugin-ui` 路由模块（plugin ui static）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 插件 UI 静态资源。
 
-use axum::{routing::get, Json, Router};
-use serde_json::{json, Value};
+use axum::{extract::Path, http::StatusCode, response::IntoResponse, routing::get, Router};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/plugin-ui", get(handler))
+    Router::new().route("/_plugins/:plugin_id/ui/*path", get(plugin_ui_static))
 }
 
-async fn handler() -> Json<Value> {
-    Json(json!({
-        "module": "plugin_ui_static",
-        "description": "plugin ui static",
-        "status": "ok",
-    }))
+async fn plugin_ui_static(Path((_plugin_id, _path)): Path<(String, String)>) -> impl IntoResponse {
+    (StatusCode::NOT_FOUND, "plugin UI not found in this build")
 }

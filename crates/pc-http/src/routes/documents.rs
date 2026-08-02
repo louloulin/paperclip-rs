@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ListQuery {
     company_id: Uuid,
 }
@@ -48,6 +49,7 @@ async fn get_one(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<J
     Ok(Json(serde_json::to_value(r).unwrap_or_default()))
 }
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct CreateBody {
     company_id: Uuid,
     #[serde(default)]
@@ -69,6 +71,7 @@ async fn create(
     ))
 }
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct UpdateBody {
     #[serde(default)]
     title: Option<String>,

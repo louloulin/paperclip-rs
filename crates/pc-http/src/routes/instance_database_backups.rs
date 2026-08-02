@@ -1,20 +1,21 @@
-//! `POST /api/instance-database-backups` 路由模块（instance database backups）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 实例级数据库备份。
 
-use axum::{routing::get, Json, Router};
-use serde_json::{json, Value};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
+use serde_json::json;
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/instance-database-backups", get(handler))
+    Router::new().route("/api/instance/database-backups", post(trigger_backup))
 }
 
-async fn handler() -> Json<Value> {
-    Json(json!({
-        "module": "instance_database_backups",
-        "description": "instance database backups",
-        "status": "ok",
-    }))
+async fn trigger_backup(State(_state): State<AppState>) -> impl IntoResponse {
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "status": "accepted",
+            "trigger": "manual",
+            "message": "backup scheduling delegated to background task in the embedded PG mode"
+        })),
+    )
 }

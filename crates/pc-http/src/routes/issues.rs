@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ListQuery {
     company_id: Uuid,
     #[serde(default)]
@@ -49,6 +50,7 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct CreateBody {
     company_id: Uuid,
     title: String,
@@ -94,6 +96,7 @@ async fn create(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct UpdateBody {
     #[serde(default)]
     title: Option<String>,

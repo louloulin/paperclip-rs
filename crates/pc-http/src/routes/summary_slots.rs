@@ -32,11 +32,13 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ScopeQuery {
     scope_id: Option<Uuid>,
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct SlotRow {
     id: Uuid,
     company_id: Uuid,
@@ -55,6 +57,7 @@ struct SlotRow {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct DocumentView {
     id: Uuid,
     company_id: Uuid,
@@ -72,6 +75,7 @@ struct DocumentView {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct RevisionView {
     id: Uuid,
     company_id: Uuid,
@@ -88,6 +92,7 @@ struct RevisionView {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct IssueView {
     id: Uuid,
     identifier: Option<String>,

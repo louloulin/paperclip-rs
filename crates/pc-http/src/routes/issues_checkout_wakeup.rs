@@ -1,29 +1,42 @@
-//! `POST /api/issues/checkout-wakeup` 路由模块（issues checkout wakeup）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! Issue checkout + wakeup 路径。
 
 use axum::{
-    routing::{get, post},
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::post,
     Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::json;
+use uuid::Uuid;
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/issues/checkout-wakeup", post(handler))
-        .route("/api/issues/checkout-wakeup", get(meta))
+        .route("/api/issues/:issue_id/checkout", post(checkout))
+        .route("/api/issues/:issue_id/wakeup", post(wakeup))
 }
 
-async fn meta() -> Json<Value> {
-    Json(json!({"method": "POST", "description": "should-wake-assignee"}))
+async fn checkout(State(_state): State<AppState>, Path(issue_id): Path<Uuid>) -> impl IntoResponse {
+    let _ = issue_id;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "issueId": issue_id,
+            "status": "checked-out",
+            "actorId": null
+        })),
+    )
 }
 
-async fn handler() -> Json<Value> {
-    Json(json!({
-        "module": "issues_checkout_wakeup",
-        "description": "issues checkout wakeup",
-        "status": "ok",
-    }))
+async fn wakeup(State(_state): State<AppState>, Path(issue_id): Path<Uuid>) -> impl IntoResponse {
+    let _ = issue_id;
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "issueId": issue_id,
+            "status": "wakeup-queued"
+        })),
+    )
 }

@@ -23,18 +23,21 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct CompanyBudget {
     id: Uuid,
     budget_monthly_cents: i32,
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct StatusCount {
     status: String,
     count: i64,
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct RunActivityRow {
     date: String,
     status: String,
@@ -287,6 +290,7 @@ async fn summary(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct RecoveryQuery {
     weeks: Option<f64>,
     threshold: Option<f64>,

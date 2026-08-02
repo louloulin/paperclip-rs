@@ -18,11 +18,13 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct AttentionQuery {
     include_dismissed: Option<bool>,
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct ApprovalRow {
     id: Uuid,
     approval_type: String,
@@ -31,6 +33,7 @@ struct ApprovalRow {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct BlockedIssueRow {
     id: Uuid,
     identifier: Option<String>,
@@ -40,6 +43,7 @@ struct BlockedIssueRow {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct FailedRunRow {
     id: Uuid,
     agent_name: String,
@@ -48,6 +52,7 @@ struct FailedRunRow {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 struct ItemInput<'a> {
     source_kind: &'a str,
     id: Uuid,

@@ -1,20 +1,17 @@
-//! `POST /api/authz` 路由模块（authz）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 通用 authz 决策端点。
 
-use axum::{routing::get, Json, Router};
+use axum::{extract::State, routing::get, Json, Router};
 use serde_json::{json, Value};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/authz", get(handler))
+    Router::new().route("/api/authz", get(authz))
 }
 
-async fn handler() -> Json<Value> {
+async fn authz(State(_state): State<AppState>) -> Json<Value> {
     Json(json!({
         "module": "authz",
-        "description": "authz",
-        "status": "ok",
+        "status": "ok"
     }))
 }

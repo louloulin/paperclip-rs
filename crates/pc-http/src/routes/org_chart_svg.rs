@@ -1,20 +1,34 @@
-//! `POST /api/org-chart-svg` 路由模块（org chart svg）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 公司组织架构 SVG 渲染。
 
-use axum::{routing::get, Json, Router};
-use serde_json::{json, Value};
+use axum::{
+    extract::{Path, State},
+    http::header,
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
+use uuid::Uuid;
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/org-chart-svg", get(handler))
+    Router::new().route(
+        "/api/companies/:company_id/org-chart.svg",
+        get(org_chart_svg),
+    )
 }
 
-async fn handler() -> Json<Value> {
-    Json(json!({
-        "module": "org_chart_svg",
-        "description": "org chart svg",
-        "status": "ok",
-    }))
+const PLACEHOLDER_SVG: &str = "<svg xmlns='http://www.w3.org/2000/svg' width='320' height='120'>\
+<rect width='320' height='120' fill='%23f5f5f5'/>\
+<text x='160' y='60' text-anchor='middle' fill='%23666' font-family='sans-serif' font-size='14'>org-chart not implemented</text>\
+</svg>";
+
+async fn org_chart_svg(
+    State(_state): State<AppState>,
+    Path(_company_id): Path<Uuid>,
+) -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml")],
+        PLACEHOLDER_SVG.to_string(),
+    )
 }

@@ -173,6 +173,7 @@ async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
 struct WakeBody {
     #[serde(default)]
     source: Option<String>,

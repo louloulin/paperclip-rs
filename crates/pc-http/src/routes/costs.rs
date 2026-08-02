@@ -76,6 +76,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct CostQuery {
     from: Option<String>,
     to: Option<String>,
@@ -251,6 +252,7 @@ async fn quota_windows() -> Json<Vec<Value>> {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct BudgetCounts {
     pending_approvals: i64,
     paused_agents: i64,
@@ -310,6 +312,7 @@ async fn update_company_budget(
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct ValueRow {
     id: Uuid,
     budget_monthly_cents: i32,
@@ -343,6 +346,7 @@ async fn update_agent_budget(
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct AgentBudgetRow {
     id: Uuid,
     company_id: Uuid,
@@ -365,6 +369,7 @@ struct IssueCostSummary {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct IssueCostRow {
     cost_cents: i64,
     input_tokens: i64,
@@ -407,6 +412,7 @@ async fn issue_cost_summary(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct IssueCostQuery {
     #[serde(default)]
     exclude_root: bool,

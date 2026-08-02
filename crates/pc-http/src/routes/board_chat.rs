@@ -1,20 +1,25 @@
-//! `POST /api/board-chat` 路由模块（board chat）。
-//!
-//! 完整实现位于 Phase C；当前为 Phase A/B 占位，返回与原 server 同构的空响应。
+//! 董事会聊天（SSE 流）。
 
-use axum::{routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use serde_json::{json, Value};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/board-chat", get(handler))
+    Router::new().route("/api/board/chat/stream", post(board_chat_stream))
 }
 
-async fn handler() -> Json<Value> {
-    Json(json!({
-        "module": "board_chat",
-        "description": "board chat",
-        "status": "ok",
-    }))
+async fn board_chat_stream(
+    State(_state): State<AppState>,
+    Json(_body): Json<Value>,
+) -> impl IntoResponse {
+    // SSE streaming is not implemented in this build; the UI may fall back
+    // to one-shot /api/board/chat for a final answer.
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "status": "accepted",
+            "message": "board chat streaming not implemented in Rust build yet"
+        })),
+    )
 }
