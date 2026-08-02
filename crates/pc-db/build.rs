@@ -12,7 +12,7 @@ fn main() {
         .collect::<Vec<_>>();
     files.sort();
 
-    let generated = files
+    let entries = files
         .iter()
         .map(|path| {
             let name = path.file_name().expect("migration filename").to_string_lossy();
@@ -22,6 +22,7 @@ fn main() {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let generated = format!("&[\n{entries}\n]");
 
     let output = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("drizzle_migrations.rs");
     fs::write(output, generated).expect("write generated migration list");

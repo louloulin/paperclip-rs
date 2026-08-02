@@ -1,0 +1,26 @@
+[package]
+name = "pc-repos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 数据访问层：按 25 个 schema 模块一一对应的仓储实现"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core", features = ["sqlx"] }
+pc-db = { path = "../pc-db" }
+pc-errors = { path = "../pc-errors" }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }

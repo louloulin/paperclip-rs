@@ -1,0 +1,621 @@
+    pub db: &'a Db,
+}
+
+impl<'a> ExecutionRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<ExecutionWorkspace>> {
+        sqlx::query_as::<_, ExecutionWorkspace>(
+            "SELECT id, company_id, agent_id, issue_id, status, worktree_path, created_at, \
+             updated_at FROM execution_workspaces WHERE company_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/heartbeat.rs <<'EOF
+//! heartbeat_runs / heartbeat_run_events 域。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeartbeatRun {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub agent_id: Uuid,
+    pub status: String,
+    pub invocation_source: String,
+    pub trigger_detail: Option<String>,
+    pub wakeup_request_id: Option<Uuid>,
+    pub started_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
+    pub exit_code: Option<i32>,
+    pub signal: Option<String>,
+    pub usage_json: Option<serde_json::Value>,
+    pub result_json: Option<serde_json::Value>,
+    pub session_id_before: Option<String>,
+    pub session_id_after: Option<String>,
+    pub log_store: Option<String>,
+    pub log_ref: Option<String>,
+    pub log_bytes: Option<i64>,
+    pub log_sha256: Option<String>,
+    pub log_compressed: bool,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct HeartbeatRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> HeartbeatRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_for_agent(&self, agent_id: Uuid) -> sqlx::Result<Vec<HeartbeatRun>> {
+        sqlx::query_as::<_, HeartbeatRun>(
+            "SELECT id, company_id, agent_id, status, invocation_source, trigger_detail, \
+             wakeup_request_id, started_at, finished_at, exit_code, signal, usage_json, \
+             result_json, session_id_before, session_id_after, log_store, log_ref, log_bytes, \
+             log_sha256, log_compressed, created_at, updated_at FROM heartbeat_runs \
+             WHERE agent_id = $1 ORDER BY started_at DESC",
+        )
+        .bind(agent_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/plugin.rs <<'EOF
+//! plugins / plugin_workers 域。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Plugin {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub manifest: serde_json::Value,
+    pub enabled: bool,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct PluginRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> PluginRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<Plugin>> {
+        sqlx::query_as::<_, Plugin>(
+            "SELECT id, company_id, name, manifest, enabled, created_at, updated_at FROM plugins \
+             WHERE company_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/auth.rs <<'EOF
+//! auth / users / sessions 域（骨架，对应原 packages/db/src/schema/auth.ts）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct User {
+    pub id: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub role: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct AuthRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> AuthRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn find_by_email(&self, email: &str) -> sqlx::Result<Option<User>> {
+        sqlx::query_as::<_, User>(
+            "SELECT id, email, name, role, created_at, updated_at FROM auth WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/activity.rs <<'EOF
+//! activity_log 域。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityEntry {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub actor_user_id: Option<String>,
+    pub actor_agent_id: Option<Uuid>,
+    pub kind: String,
+    pub summary: String,
+    pub payload: serde_json::Value,
+    pub created_at: Timestamp,
+}
+
+pub struct ActivityRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> ActivityRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_recent(&self, company_id: Uuid) -> sqlx::Result<Vec<ActivityEntry>> {
+        sqlx::query_as::<_, ActivityEntry>(
+            "SELECT id, company_id, actor_user_id, actor_agent_id, kind, summary, payload, \
+             created_at FROM activity_log WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/document.rs <<'EOF
+//! documents / document_revisions 域。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Document {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub title: String,
+    pub current_revision_id: Option<Uuid>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct DocumentRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> DocumentRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<Document>> {
+        sqlx::query_as::<_, Document>(
+            "SELECT id, company_id, title, current_revision_id, created_at, updated_at \
+             FROM documents WHERE company_id = $1 ORDER BY updated_at DESC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/goal.rs <<'EOF
+//! goals 域。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Goal {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub level: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct GoalRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> GoalRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<Goal>> {
+        sqlx::query_as::<_, Goal>(
+            "SELECT id, company_id, level, title, description, status, created_at, updated_at \
+             FROM goals WHERE company_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/folder.rs <<'EOF
+//! folders 域。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Folder {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub parent_id: Option<Uuid>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub struct FolderRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> FolderRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<Folder>> {
+        sqlx::query_as::<_, Folder>(
+            "SELECT id, company_id, name, parent_id, created_at, updated_at FROM folders \
+             WHERE company_id = $1 ORDER BY name ASC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/sidebar.rs <<'EOF
+//! sidebar / sidebar_preferences 域（占位骨架）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SidebarPreference {
+    pub user_id: String,
+    pub payload: serde_json::Value,
+    pub updated_at: Timestamp,
+}
+
+pub struct SidebarRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> SidebarRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn get(&self, user_id: &str) -> sqlx::Result<Option<SidebarPreference>> {
+        sqlx::query_as::<_, SidebarPreference>(
+            "SELECT user_id, payload, updated_at FROM company_user_sidebar_preferences \
+             WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/inbox.rs <<'EOF
+//! inbox / inbox_dismissals / inbox_agent_policy 域（骨架）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InboxItem {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub user_id: Option<String>,
+    pub kind: String,
+    pub summary: String,
+    pub dismissed: bool,
+    pub created_at: Timestamp,
+}
+
+pub struct InboxRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> InboxRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_for_user(
+        &self,
+        company_id: Uuid,
+        user_id: &str,
+    ) -> sqlx::Result<Vec<InboxItem>> {
+        sqlx::query_as::<_, InboxItem>(
+            "SELECT id, company_id, user_id, kind, summary, dismissed, created_at \
+             FROM inbox_dismissals WHERE company_id = $1 AND user_id = $2 \
+             ORDER BY created_at DESC",
+        )
+        .bind(company_id)
+        .bind(user_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/summary.rs <<'EOF
+//! summary / summary_slots 域（骨架）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SummarySlot {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub slot: String,
+    pub payload: serde_json::Value,
+    pub refreshed_at: Timestamp,
+}
+
+pub struct SummaryRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> SummaryRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list(&self, company_id: Uuid) -> sqlx::Result<Vec<SummarySlot>> {
+        sqlx::query_as::<_, SummarySlot>(
+            "SELECT id, company_id, slot, payload, refreshed_at FROM summary_slots \
+             WHERE company_id = $1 ORDER BY refreshed_at DESC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/tool.rs <<'EOF
+//! tool_access / tool_gateway 域（骨架）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolAccess {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub tool_name: String,
+    pub agent_id: Option<Uuid>,
+    pub policy: serde_json::Value,
+    pub updated_at: Timestamp,
+}
+
+pub struct ToolRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> ToolRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<ToolAccess>> {
+        sqlx::query_as::<_, ToolAccess>(
+            "SELECT id, company_id, tool_name, agent_id, policy, updated_at FROM tool_access \
+             WHERE company_id = $1 ORDER BY tool_name ASC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/smoke.rs <<'EOF
+//! smoke_lab 域（骨架）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmokeRun {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub status: String,
+    pub started_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
+}
+
+pub struct SmokeRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> SmokeRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list(&self, company_id: Uuid) -> sqlx::Result<Vec<SmokeRun>> {
+        sqlx::query_as::<_, SmokeRun>(
+            "SELECT id, company_id, name, status, started_at, finished_at FROM smoke_lab \
+             WHERE company_id = $1 ORDER BY started_at DESC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/settings.rs <<'EOF
+//! settings 域（instance_settings 为主）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstanceSetting {
+    pub key: String,
+    pub value: serde_json::Value,
+    pub updated_at: Timestamp,
+}
+
+pub struct SettingsRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> SettingsRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn get(&self, key: &str) -> sqlx::Result<Option<InstanceSetting>> {
+        sqlx::query_as::<_, InstanceSetting>(
+            "SELECT key, value, updated_at FROM instance_settings WHERE key = $1",
+        )
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+}
+EOF
+cat > crates/pc-repos/src/skill.rs <<'EOF
+//! company_skills / company_skill_policies 域（骨架）。
+
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use pc_core::Timestamp;
+
+use crate::Db;
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompanySkill {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub body: String,
+    pub enabled: bool,
+    pub updated_at: Timestamp,
+}
+
+pub struct SkillRepo<'a> {
+    pub db: &'a Db,
+}
+
+impl<'a> SkillRepo<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<CompanySkill>> {
+        sqlx::query_as::<_, CompanySkill>(
+            "SELECT id, company_id, name, body, enabled, updated_at FROM company_skills \
+             WHERE company_id = $1 ORDER BY name ASC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+}
+EOF
+apply_patch <<'PATCH'
+*** Update File: Cargo.toml
+@@
+     "crates/pc-errors",
++    "crates/pc-repos",
+     "crates/pc-migrate-smoke",
+*** End Patch
+PATCH
+rtk cargo check -p pc-repos 2>&1 | tail -60

@@ -21,7 +21,7 @@ struct MigrationSource {
 }
 
 static MIGRATIONS: &[MigrationSource] =
-    &[include!(concat!(env!("OUT_DIR"), "/drizzle_migrations.rs"))];
+    include!(concat!(env!("OUT_DIR"), "/drizzle_migrations.rs"));
 
 #[derive(Debug, Deserialize)]
 struct Journal {
@@ -194,10 +194,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_hash_is_stable() {
-        assert_eq!(
-            sha256_hex("paperclip"),
-            "e8acd82a229923a8a9999787c9a3770f8e2fe1bac653b7200c553191bde6af8f"
-        );
+    fn split_drizzle_statements_with_comments() {
+        let statements =
+            split_statements("-- header comment\nSELECT 1;--> statement-breakpoint\n\nSELECT 2;")
+                .collect::<Vec<_>>();
+        assert_eq!(statements, ["-- header comment\nSELECT 1;", "SELECT 2;"]);
     }
 }

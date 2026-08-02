@@ -31,6 +31,38 @@ impl std::fmt::Display for Timestamp {
     }
 }
 
+#[cfg(feature = "sqlx")]
+impl sqlx::Type<sqlx::Postgres> for Timestamp {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <chrono::DateTime<chrono::Utc> as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <chrono::DateTime<chrono::Utc> as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for Timestamp {
+    fn decode(
+        value: <sqlx::Postgres as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        <chrono::DateTime<chrono::Utc> as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)
+            .map(Timestamp)
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for Timestamp {
+    fn encode_by_ref(
+        &self,
+        buf: &mut <sqlx::Postgres as sqlx::Database>::ArgumentBuffer<'q>,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <chrono::DateTime<chrono::Utc> as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(
+            &self.0, buf,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
