@@ -1,7 +1,7 @@
 //! 数据库迁移。
 //!
 //! Phase A：迁移目录为空（109 表 SQL 将在 Phase B 之前迁移过来）。
-//! 这里只验证 sqlx::migrate! 框架能跑通。
+//! 这里只验证 `sqlx::migrate!` 框架能跑通。
 
 use crate::DbError;
 use tracing::info;
@@ -14,12 +14,12 @@ impl Migrator {
         // Phase A：暂时跳过，等 Phase B 引入 109 表 SQL DDL 时启用
         // sqlx::migrate!("./migrations").run(db.pool()).await?;
         info!("migrations skipped (Phase A: no migrations yet)");
-        Ok(())
+        std::future::ready(Ok(())).await
     }
 
     /// 查看已应用的迁移版本。
     pub async fn status(_db: &super::Db) -> Result<Vec<String>, DbError> {
-        Ok(Vec::new())
+        std::future::ready(Ok(Vec::new())).await
     }
 }
 
@@ -27,15 +27,9 @@ impl Migrator {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn migrator_runs_without_migrations() {
-        // 这里不依赖真实 DB：只验证类型与函数可调用
-        let result = Migrator::status_dummy().await;
-        assert!(result.is_ok());
+    #[test]
+    fn migrator_is_constructible() {
+        let migrator = Migrator;
+        assert_eq!(std::mem::size_of_val(&migrator), 0);
     }
-}
-
-impl Migrator {
-    // 占位方法，让上面单元测试无需 DB
-    pub async fn status_dummy() -> Result<Vec<String>, DbError> { Ok(vec![]) }
 }

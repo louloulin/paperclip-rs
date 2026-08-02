@@ -8,13 +8,21 @@ use serde::{Deserialize, Serialize};
 pub struct Timestamp(DateTime<Utc>);
 
 impl Timestamp {
-    pub fn now() -> Self { Self(Utc::now()) }
-    pub fn from_dt(dt: DateTime<Utc>) -> Self { Self(dt) }
-    pub fn as_datetime(&self) -> DateTime<Utc> { self.0 }
+    pub fn now() -> Self {
+        Self(Utc::now())
+    }
+    pub fn from_dt(dt: DateTime<Utc>) -> Self {
+        Self(dt)
+    }
+    pub fn as_datetime(&self) -> DateTime<Utc> {
+        self.0
+    }
 }
 
 impl Default for Timestamp {
-    fn default() -> Self { Self::now() }
+    fn default() -> Self {
+        Self::now()
+    }
 }
 
 impl std::fmt::Display for Timestamp {
@@ -36,7 +44,11 @@ mod tests {
 
     #[test]
     fn rfc3339_format() {
-        let t = Timestamp::from_dt(chrono::DateTime::parse_from_rfc3339("2026-08-02T10:00:00Z").unwrap().with_timezone(&Utc));
+        let t = Timestamp::from_dt(
+            chrono::DateTime::parse_from_rfc3339("2026-08-02T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
         assert_eq!(t.to_string(), "2026-08-02T10:00:00+00:00");
     }
 }

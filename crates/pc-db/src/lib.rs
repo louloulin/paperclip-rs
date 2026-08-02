@@ -1,15 +1,15 @@
 //! Paperclip 数据库层。
 //!
-//! 单一职责：管理 PostgreSQL 连接池、迁移、健康检查。
+//! 单一职责：管理 `PostgreSQL` 连接池、迁移、健康检查。
 //! 上层（pc-repos 等）通过 `Db` 句柄访问。
 
-pub mod pool;
-pub mod migrate;
 pub mod health;
+pub mod migrate;
+pub mod pool;
 
-pub use pool::Db;
-pub use migrate::Migrator;
 pub use health::HealthCheck;
+pub use migrate::Migrator;
+pub use pool::Db;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {

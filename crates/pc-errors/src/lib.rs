@@ -12,7 +12,10 @@ use std::fmt;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("validation error: {message}")]
-    Validation { message: String, details: Vec<ValidationDetail> },
+    Validation {
+        message: String,
+        details: Vec<ValidationDetail>,
+    },
 
     #[error("not found: {resource}")]
     NotFound { resource: String },
@@ -30,7 +33,11 @@ pub enum Error {
     RateLimited { retry_after_secs: u32 },
 
     #[error("upstream error: {service} returned {status}")]
-    Upstream { service: String, status: u16, message: String },
+    Upstream {
+        service: String,
+        status: u16,
+        message: String,
+    },
 
     #[error("internal error: {message}")]
     Internal { message: String },
@@ -127,34 +134,50 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// 便捷构造器。
 pub fn validation(message: impl Into<String>) -> Error {
-    Error::Validation { message: message.into(), details: Vec::new() }
+    Error::Validation {
+        message: message.into(),
+        details: Vec::new(),
+    }
 }
 
 pub fn validation_field(path: impl Into<String>, message: impl Into<String>) -> Error {
     Error::Validation {
         message: "validation failed".into(),
-        details: vec![ValidationDetail { path: path.into(), message: message.into() }],
+        details: vec![ValidationDetail {
+            path: path.into(),
+            message: message.into(),
+        }],
     }
 }
 
 pub fn not_found(resource: impl Into<String>) -> Error {
-    Error::NotFound { resource: resource.into() }
+    Error::NotFound {
+        resource: resource.into(),
+    }
 }
 
 pub fn conflict(message: impl Into<String>) -> Error {
-    Error::Conflict { message: message.into() }
+    Error::Conflict {
+        message: message.into(),
+    }
 }
 
 pub fn forbidden(message: impl Into<String>) -> Error {
-    Error::Forbidden { message: message.into() }
+    Error::Forbidden {
+        message: message.into(),
+    }
 }
 
 pub fn unauthorized(message: impl Into<String>) -> Error {
-    Error::Unauthorized { message: message.into() }
+    Error::Unauthorized {
+        message: message.into(),
+    }
 }
 
 pub fn internal(message: impl Into<String>) -> Error {
-    Error::Internal { message: message.into() }
+    Error::Internal {
+        message: message.into(),
+    }
 }
 
 /// 显示友好的 Display 别名（让 main 错误信息更紧凑）。
@@ -202,7 +225,9 @@ mod tests {
 
     #[test]
     fn rate_limited_includes_retry_after() {
-        let err = Error::RateLimited { retry_after_secs: 30 };
+        let err = Error::RateLimited {
+            retry_after_secs: 30,
+        };
         let body = err.to_body();
         assert_eq!(body.error.retry_after_secs, Some(30));
         assert_eq!(err.status_code(), http::StatusCode::TOO_MANY_REQUESTS);

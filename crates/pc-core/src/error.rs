@@ -5,7 +5,10 @@ pub enum CoreError {
     #[error("invalid identifier: {0}")]
     InvalidId(String),
     #[error("invariant violated on {entity}: {message}")]
-    InvariantViolation { entity: &'static str, message: String },
+    InvariantViolation {
+        entity: &'static str,
+        message: String,
+    },
     #[error("empty value not allowed for {field}")]
     EmptyField { field: &'static str },
 }

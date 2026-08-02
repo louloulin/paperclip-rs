@@ -1,4 +1,4 @@
-//! sqlx PgPool 封装。提供带重试的 connect 与共享的 `Db` 句柄。
+//! sqlx `PgPool` 封装。提供带重试的 connect 与共享的 `Db` 句柄。
 
 use crate::DbError;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::{info, warn};
 
-/// 共享的 PostgreSQL 连接池句柄。Clone 廉价（内部 Arc）。
+/// 共享的 `PostgreSQL` 连接池句柄。`Clone` 廉价（内部 `Arc`）。
 #[derive(Clone)]
 pub struct Db {
     pool: PgPool,
@@ -15,7 +15,11 @@ pub struct Db {
 
 impl Db {
     /// 建立连接池。带指数退避重试，适配嵌入式 PG 冷启动。
-    pub async fn connect(url: &str, max_connections: u32, min_connections: u32) -> Result<Self, DbError> {
+    pub async fn connect(
+        url: &str,
+        max_connections: u32,
+        min_connections: u32,
+    ) -> Result<Self, DbError> {
         let opts = PgConnectOptions::from_str(url)
             .map_err(|e| DbError::Pool(format!("invalid url: {e}")))?
             // 屏蔽每次 acquire 的 info 日志（避免刷屏）
@@ -31,7 +35,12 @@ impl Db {
                 .await
             {
                 Ok(pool) => {
-                    info!(attempt, max = max_connections, min = min_connections, "db connected");
+                    info!(
+                        attempt,
+                        max = max_connections,
+                        min = min_connections,
+                        "db connected"
+                    );
                     return Ok(Self { pool });
                 }
                 Err(e) => {
@@ -51,7 +60,9 @@ impl Db {
         Ok(())
     }
 
-    pub fn pool(&self) -> &PgPool { &self.pool }
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 }
 
 #[cfg(test)]

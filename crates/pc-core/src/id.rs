@@ -20,18 +20,28 @@ pub struct Id<T: ?Sized> {
 
 impl<T: ?Sized> Id<T> {
     pub fn new() -> Self {
-        Self { inner: Uuid::now_v7(), _marker: PhantomData }
+        Self {
+            inner: Uuid::now_v7(),
+            _marker: PhantomData,
+        }
     }
 
     pub fn from_uuid(uuid: Uuid) -> Self {
-        Self { inner: uuid, _marker: PhantomData }
+        Self {
+            inner: uuid,
+            _marker: PhantomData,
+        }
     }
 
-    pub fn as_uuid(&self) -> Uuid { self.inner }
+    pub fn as_uuid(&self) -> Uuid {
+        self.inner
+    }
 }
 
 impl<T: ?Sized> Default for Id<T> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: ?Sized> std::fmt::Display for Id<T> {
@@ -41,7 +51,9 @@ impl<T: ?Sized> std::fmt::Display for Id<T> {
 }
 
 impl<T: ?Sized> From<Uuid> for Id<T> {
-    fn from(u: Uuid) -> Self { Self::from_uuid(u) }
+    fn from(u: Uuid) -> Self {
+        Self::from_uuid(u)
+    }
 }
 
 #[cfg(test)]

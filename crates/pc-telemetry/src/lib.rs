@@ -49,7 +49,7 @@ impl Default for TelemetryOptions {
 /// 初始化全局 tracing subscriber。
 ///
 /// 默认输出 JSON 到 stdout；可通过 `RUST_LOG` 环境变量覆盖级别。
-pub fn init(opts: TelemetryOptions) -> anyhow::Result<()> {
+pub fn init(opts: &TelemetryOptions) -> anyhow::Result<()> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(opts.default_level.to_string()));
 

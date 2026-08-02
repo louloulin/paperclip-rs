@@ -5,7 +5,7 @@
 //! 2. 初始化遥测（pc-telemetry）
 //! 3. 启动横幅
 //! 4. 连接数据库（pc-db）
-//! 5. 执行迁移（pc-db::Migrator）
+//! 5. 执行迁移（`pc-db::Migrator`）
 //! 6. 装配 axum 路由 + 监听
 //! 7. 等待信号；graceful shutdown
 
@@ -74,8 +74,8 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => info!("ctrl-c received, shutting down"),
-        _ = terminate => info!("SIGTERM received, shutting down"),
+        () = ctrl_c => info!("ctrl-c received, shutting down"),
+        () = terminate => info!("SIGTERM received, shutting down"),
     }
 }
 
@@ -124,10 +124,16 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 6. 启动 HTTP
-    let state = AppState { config: cfg.clone(), db };
+    let state = AppState {
+        config: cfg.clone(),
+        db,
+    };
     let app = build_router(state);
 
-    let addr = std::net::SocketAddr::from((cfg.server.host.parse::<std::net::IpAddr>()?, cfg.server.port));
+    let addr = std::net::SocketAddr::from((
+        cfg.server.host.parse::<std::net::IpAddr>()?,
+        cfg.server.port,
+    ));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind {addr}"))?;

@@ -13,8 +13,12 @@ pub enum Actor {
 }
 
 impl Actor {
-    pub fn system() -> Self { Actor::System }
-    pub fn is_system(&self) -> bool { matches!(self, Actor::System) }
+    pub fn system() -> Self {
+        Actor::System
+    }
+    pub fn is_system(&self) -> bool {
+        matches!(self, Actor::System)
+    }
 }
 
 #[cfg(test)]

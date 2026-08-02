@@ -4,16 +4,16 @@
 //! 低耦合：不依赖任何 IO crate（sqlx、tokio 等）。
 //! 上层服务（pc-repos、pc-http、pc-heartbeat）依赖本 crate。
 
-pub mod id;
-pub mod timestamp;
-pub mod money;
 pub mod actor;
 pub mod actor_runtime;
 pub mod error;
+pub mod id;
+pub mod money;
+pub mod timestamp;
 
-pub use id::Id;
-pub use timestamp::Timestamp;
-pub use money::Money;
 pub use actor::Actor;
-pub use actor_runtime::{DomainMessage, MessageOrigin, SystemActor, spawn_system_actor};
+pub use actor_runtime::{spawn_system_actor, DomainMessage, MessageOrigin, SystemActor};
 pub use error::{CoreError, CoreResult};
+pub use id::Id;
+pub use money::Money;
+pub use timestamp::Timestamp;

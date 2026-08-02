@@ -8,19 +8,29 @@ pub struct Money(i64);
 
 impl Money {
     pub const ZERO: Money = Money(0);
-    pub fn from_cents(cents: i64) -> Self { Self(cents) }
-    pub fn from_dollars(dollars: i64) -> Self { Self(dollars * 100) }
-    pub fn cents(&self) -> i64 { self.0 }
+    pub fn from_cents(cents: i64) -> Self {
+        Self(cents)
+    }
+    pub fn from_dollars(dollars: i64) -> Self {
+        Self(dollars * 100)
+    }
+    pub fn cents(&self) -> i64 {
+        self.0
+    }
 }
 
 impl std::ops::Add for Money {
     type Output = Money;
-    fn add(self, rhs: Self) -> Self::Output { Money(self.0 + rhs.0) }
+    fn add(self, rhs: Self) -> Self::Output {
+        Money(self.0 + rhs.0)
+    }
 }
 
 impl std::ops::Sub for Money {
     type Output = Money;
-    fn sub(self, rhs: Self) -> Self::Output { Money(self.0 - rhs.0) }
+    fn sub(self, rhs: Self) -> Self::Output {
+        Money(self.0 - rhs.0)
+    }
 }
 
 #[cfg(test)]
