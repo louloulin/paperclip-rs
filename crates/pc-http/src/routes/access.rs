@@ -9,8 +9,10 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::FromRow;
+use uuid::Uuid;
 
-use crate::AppState;
+use crate::{require_user_id, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -41,7 +43,73 @@ pub fn router() -> Router<AppState> {
         .route("/api/skills/:skill_name", get(skill_get))
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, FromRow)]
+struct ChallengeRow {
+    id: Uuid,
+    secret_hash: String,
+    command: String,
+    client_name: Option<String>,
+    requested_access: String,
+    requested_company_id: Option<Uuid>,
+    pending_key_hash: String,
+    pending_key_name: String,
+    approved_by_user_id: Option<String>,
+    approved_at: Option<pc_core::Timestamp>,
+    cancelled_at: Option<pc_core::Timestamp>,
+    expires_at: pc_core::Timestamp,
+    created_at: pc_core::Timestamp,
+}
+
+fn challenge_json(row: &ChallengeRow, include_secret: bool) -> Value {
+    let mut obj = json!({
+        "id": row.id,
+        "command": row.command,
+        "clientName": row.client_name,
+        "requestedAccess": row.requested_access,
+        "requestedCompanyId": row.requested_company_id,
+        "pendingKeyHash": row.pending_key_hash,
+        "pendingKeyName": row.pending_key_name,
+        "approvedByUserId": row.approved_by_user_id,
+        "approvedAt": row.approved_at,
+        "cancelledAt": row.cancelled_at,
+        "expiresAt": row.expires_at,
+        "createdAt": row.created_at,
+    });
+    if include_secret {
+        obj["secretHash"] = json!(row.secret_hash);
+    }
+    obj
+}
+
+#[derive(Debug, FromRow)]
+struct BoardKeyRow {
+    id: Uuid,
+    user_id: String,
+    name: String,
+    key_hash: String,
+    last_used_at: Option<pc_core::Timestamp>,
+    revoked_at: Option<pc_core::Timestamp>,
+    expires_at: Option<pc_core::Timestamp>,
+    created_at: pc_core::Timestamp,
+}
+
+fn board_key_json(row: &BoardKeyRow, include_key: bool) -> Value {
+    let mut obj = json!({
+        "id": row.id,
+        "userId": row.user_id,
+        "name": row.name,
+        "lastUsedAt": row.last_used_at,
+        "revokedAt": row.revoked_at,
+        "expiresAt": row.expires_at,
+        "createdAt": row.created_at,
+    });
+    if include_key {
+        obj["keyHash"] = json!(row.key_hash);
+    }
+    obj
+}
+
+#[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
 struct ClaimBody {
     user_id: Option<String>,
@@ -86,86 +154,194 @@ async fn bootstrap_claim(
     )
 }
 
-async fn cli_challenge_create(
-    State(_state): State<AppState>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "id": "cli_challenge_new",
-            "code": "ABCD-1234",
-            "verificationUrl": "https://example.com/verify",
-            "expiresAt": chrono::Utc::now() + chrono::Duration::minutes(5)
-        })),
-    )
+#[derive(Debug, Deserialize, Default)]
+struct ChallengeCreateBody {
+    command: Option<String>,
+    client_name: Option<String>,
+    requested_access: Option<String>,
+    requested_company_id: Option<Uuid>,
+    pending_key_name: Option<String>,
 }
 
-async fn cli_challenge_get(State(_state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    Json(json!({
-        "id": id,
-        "status": "pending"
-    }))
+async fn cli_challenge_create(
+    State(state): State<AppState>,
+    Json(body): Json<ChallengeCreateBody>,
+) -> ApiResult<Json<Value>> {
+    let command = body
+        .command
+        .clone()
+        .unwrap_or_else(|| "paperclip login".to_owned());
+    let client_name = body.client_name.clone();
+    let requested_access = body
+        .requested_access
+        .clone()
+        .unwrap_or_else(|| "board".to_owned());
+    let requested_company_id = body.requested_company_id;
+    let pending_key_name = body
+        .pending_key_name
+        .clone()
+        .unwrap_or_else(|| "cli-session".to_owned());
+    let pending_key_hash = "pending-hash-stub".to_string();
+    let secret_hash = "secret-hash-stub".to_string();
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let row: ChallengeRow = sqlx::query_as(
+        "INSERT INTO cli_auth_challenges \
+            (secret_hash, command, client_name, requested_access, requested_company_id, \
+             pending_key_hash, pending_key_name, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id, \
+                   pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
+                   cancelled_at, expires_at, created_at",
+    )
+    .bind(&secret_hash)
+    .bind(&command)
+    .bind(client_name)
+    .bind(&requested_access)
+    .bind(requested_company_id)
+    .bind(&pending_key_hash)
+    .bind(&pending_key_name)
+    .bind(expires_at)
+    .fetch_one(state.db.pool())
+    .await?;
+    Ok(Json(challenge_json(&row, true)))
+}
+
+async fn cli_challenge_get(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<ChallengeRow> = sqlx::query_as(
+        "SELECT id, secret_hash, command, client_name, requested_access, requested_company_id, \
+                pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
+                cancelled_at, expires_at, created_at \
+         FROM cli_auth_challenges WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    match row {
+        Some(row) => Ok(Json(challenge_json(&row, true))),
+        None => Err(ApiError::NotFound(format!("challenge {id}"))),
+    }
 }
 
 async fn cli_challenge_approve(
-    State(_state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(json!({ "id": id, "status": "approved" })),
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = require_user_id(&state, &headers).await?;
+    let row: ChallengeRow = sqlx::query_as(
+        "UPDATE cli_auth_challenges SET \
+            approved_by_user_id = $2, approved_at = now(), updated_at = now() \
+         WHERE id = $1 \
+         RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id, \
+                   pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
+                   cancelled_at, expires_at, created_at",
     )
+    .bind(id)
+    .bind(&user_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    Ok(Json(challenge_json(&row, true)))
 }
 
 async fn cli_challenge_cancel(
-    State(_state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(json!({ "id": id, "status": "cancelled" })),
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: ChallengeRow = sqlx::query_as(
+        "UPDATE cli_auth_challenges SET cancelled_at = now(), updated_at = now() \
+         WHERE id = $1 \
+         RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id, \
+                   pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
+                   cancelled_at, expires_at, created_at",
     )
+    .bind(id)
+    .fetch_one(state.db.pool())
+    .await?;
+    Ok(Json(challenge_json(&row, false)))
 }
 
-async fn cli_auth_me(State(_state): State<AppState>) -> Json<Value> {
+async fn cli_auth_me(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Json<Value> {
+    let user_id = require_user_id(&state, &headers).await.ok();
     Json(json!({
-        "actor": "anonymous",
+        "actor": if user_id.is_some() { "board" } else { "anonymous" },
+        "userId": user_id,
         "roles": []
     }))
 }
 
-async fn board_keys_list(State(_state): State<AppState>) -> Json<Value> {
-    Json(json!({ "items": [] }))
+async fn board_keys_list(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = require_user_id(&state, &headers).await?;
+    let rows: Vec<BoardKeyRow> = sqlx::query_as(
+        "SELECT id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at \
+         FROM board_api_keys WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC",
+    )
+    .bind(&user_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows.iter().map(|r| board_key_json(r, false)).collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct BoardKeyCreateBody {
+    name: Option<String>,
+    expires_at: Option<pc_core::Timestamp>,
 }
 
 async fn board_keys_create(
-    State(_state): State<AppState>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "id": "key_new",
-            "prefix": "tok_",
-            "name": "new-key",
-            "createdAt": chrono::Utc::now()
-        })),
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<BoardKeyCreateBody>,
+) -> ApiResult<impl IntoResponse> {
+    let user_id = require_user_id(&state, &headers).await?;
+    let name = body.name.clone().unwrap_or_else(|| "new-key".to_owned());
+    let key_hash = "key-hash-stub".to_string();
+    let row: BoardKeyRow = sqlx::query_as(
+        "INSERT INTO board_api_keys (user_id, name, key_hash, expires_at) \
+         VALUES ($1, $2, $3, $4) \
+         RETURNING id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at",
     )
+    .bind(&user_id)
+    .bind(&name)
+    .bind(&key_hash)
+    .bind(body.expires_at)
+    .fetch_one(state.db.pool())
+    .await?;
+    Ok((StatusCode::CREATED, Json(board_key_json(&row, true))))
 }
 
 async fn delete_board_key(
-    State(_state): State<AppState>,
-    Path(key_id): Path<String>,
-) -> impl IntoResponse {
-    (
+    State(state): State<AppState>,
+    Path(key_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let user_id = require_user_id(&state, &headers).await?;
+    sqlx::query(
+        "UPDATE board_api_keys SET revoked_at = now() \
+         WHERE id = $1 AND user_id = $2",
+    )
+    .bind(key_id)
+    .bind(&user_id)
+    .execute(state.db.pool())
+    .await?;
+    Ok((
         StatusCode::NO_CONTENT,
         Json(json!({ "id": key_id, "deleted": true })),
-    )
+    ))
 }
 
-async fn cli_revoke_current(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({ "revoked": true })))
+async fn cli_revoke_current(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let _ = require_user_id(&state, &headers).await?;
+    Ok((StatusCode::OK, Json(json!({ "revoked": true }))))
 }
 
 async fn invites_get(State(_state): State<AppState>, Path(token): Path<String>) -> Json<Value> {
