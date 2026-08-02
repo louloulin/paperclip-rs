@@ -1,4 +1,4 @@
-//! execution_workspaces 域。
+//! execution 域。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -9,13 +9,11 @@ use pc_core::Timestamp;
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExecutionWorkspace {
+pub struct ExecutionRow {
     pub id: Uuid,
     pub company_id: Uuid,
-    pub agent_id: Option<Uuid>,
-    pub issue_id: Option<Uuid>,
+    pub name: String,
     pub status: String,
-    pub worktree_path: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -24,9 +22,8 @@ pub struct ExecutionRepo<'a> { pub db: &'a Db }
 
 impl<'a> ExecutionRepo<'a> {
     pub fn new(db: &'a Db) -> Self { Self { db } }
-    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<ExecutionWorkspace>> {
-        sqlx::query_as::<_, ExecutionWorkspace>(
-            "SELECT id, company_id, agent_id, issue_id, status, worktree_path, created_at, updated_at FROM execution_workspaces WHERE company_id = $1 ORDER BY created_at DESC",
-        ).bind(company_id).fetch_all(self.db.pool()).await
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<ExecutionRow>> {
+        let sql = format!("SELECT id, company_id, '' AS name, status, created_at, updated_at FROM execution_workspaces WHERE company_id = $1 ORDER BY created_at DESC");
+        sqlx::query_as::<_, ExecutionRow>(&sql).bind(company_id).fetch_all(self.db.pool()).await
     }
 }

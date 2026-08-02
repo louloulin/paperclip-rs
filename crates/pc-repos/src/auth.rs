@@ -23,7 +23,7 @@ impl<'a> AuthRepo<'a> {
     pub fn new(db: &'a Db) -> Self { Self { db } }
     pub async fn find_by_email(&self, email: &str) -> sqlx::Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, email, name, role, created_at, updated_at FROM auth WHERE email = $1",
+            "SELECT id, email, name, role, created_at, updated_at FROM \"user\" WHERE email = $1",
         ).bind(email).fetch_optional(self.db.pool()).await
     }
 }

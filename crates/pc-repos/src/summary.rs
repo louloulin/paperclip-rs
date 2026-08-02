@@ -9,21 +9,25 @@ use pc_core::Timestamp;
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SummarySlot {
+pub struct SummaryRow {
     pub id: Uuid,
     pub company_id: Uuid,
-    pub slot: String,
-    pub payload: serde_json::Value,
-    pub refreshed_at: Timestamp,
+    pub name: String,
+    pub status: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 pub struct SummaryRepo<'a> { pub db: &'a Db }
 
 impl<'a> SummaryRepo<'a> {
     pub fn new(db: &'a Db) -> Self { Self { db } }
-    pub async fn list(&self, company_id: Uuid) -> sqlx::Result<Vec<SummarySlot>> {
-        sqlx::query_as::<_, SummarySlot>(
-            "SELECT id, company_id, slot, payload, refreshed_at FROM summary_slots WHERE company_id = $1 ORDER BY refreshed_at DESC",
+    pub async fn list(&self, company_id: Uuid) -> sqlx::Result<Vec<SummaryRow>> {
+        sqlx::query_as::<_, SummaryRow>(
+            "SELECT id, company_id, slot AS name, '' AS status, refreshed_at AS created_at, refreshed_at AS updated_at FROM summary_slots WHERE company_id = $1 ORDER BY refreshed_at DESC",
         ).bind(company_id).fetch_all(self.db.pool()).await
+    }
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<SummaryRow>> {
+        self.list(company_id).await
     }
 }

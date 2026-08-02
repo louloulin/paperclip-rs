@@ -60,6 +60,13 @@ impl Db {
         Ok(())
     }
 
+
+    /// 从外部 `PgPool` 包装（用于测试共享池等场景）。
+    #[must_use]
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }

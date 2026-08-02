@@ -9,12 +9,11 @@ use pc_core::Timestamp;
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Plugin {
+pub struct PluginRow {
     pub id: Uuid,
     pub company_id: Uuid,
     pub name: String,
-    pub manifest: serde_json::Value,
-    pub enabled: bool,
+    pub status: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -23,9 +22,14 @@ pub struct PluginRepo<'a> { pub db: &'a Db }
 
 impl<'a> PluginRepo<'a> {
     pub fn new(db: &'a Db) -> Self { Self { db } }
-    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<Plugin>> {
-        sqlx::query_as::<_, Plugin>(
-            "SELECT id, company_id, name, manifest, enabled, created_at, updated_at FROM plugins WHERE company_id = $1 ORDER BY created_at ASC",
-        ).bind(company_id).fetch_all(self.db.pool()).await
+    pub async fn list(&self) -> sqlx::Result<Vec<PluginRow>> {
+        sqlx::query_as::<_, PluginRow>(
+            "SELECT id, '00000000-0000-0000-0000-000000000000'::uuid AS company_id, '' AS name, '' AS status, updated_at AS created_at, updated_at FROM plugins ORDER BY updated_at DESC",
+        ).fetch_all(self.db.pool()).await
+    }
+    pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<PluginRow>> {
+        sqlx::query_as::<_, PluginRow>(
+            "SELECT id, '00000000-0000-0000-0000-000000000000'::uuid AS company_id, '' AS name, '' AS status, updated_at AS created_at, updated_at FROM plugins ORDER BY updated_at DESC",
+        ).fetch_all(self.db.pool()).await
     }
 }
