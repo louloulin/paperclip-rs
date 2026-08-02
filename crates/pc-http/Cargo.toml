@@ -14,6 +14,7 @@ pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-telemetry = { path = "../pc-telemetry" }
 pc-realtime = { path = "../pc-realtime" }
+pc-auth = { path = "../pc-auth" }
 pc-repos = { path = "../pc-repos" }
 axum = { workspace = true }
 sqlx = { workspace = true }
@@ -25,6 +26,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+sha2 = "0.10"
 chrono = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }

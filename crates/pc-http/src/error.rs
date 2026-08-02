@@ -13,6 +13,8 @@ pub enum ApiError {
     BadRequest(String),
     #[error("forbidden: {0}")]
     Forbidden(String),
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
     #[error("internal: {0}")]
     Internal(String),
     #[error(transparent)]
@@ -30,6 +32,7 @@ impl IntoResponse for ApiError {
         let (status, code) = match &self {
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
+            ApiError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             ApiError::NotFound(_) | ApiError::Sqlx(sqlx::Error::RowNotFound) => {
                 (StatusCode::NOT_FOUND, "not_found")
             }

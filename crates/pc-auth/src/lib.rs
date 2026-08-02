@@ -1,0 +1,238 @@
+//! pc-auth：API key / session / actor 解析。
+//!
+//! 复用原 paperclip 的 `user` + `session` + `board_api_keys` 表。
+
+use axum::http::header;
+use axum::http::request::Parts;
+use chrono::{DateTime, Utc};
+use pc_db::Db;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use uuid::Uuid;
+
+#[derive(Debug, Error)]
+pub enum AuthError {
+    #[error("missing credentials")]
+    MissingCredentials,
+    #[error("invalid token")]
+    InvalidToken,
+    #[error("session expired")]
+    Expired,
+    #[error("db: {0}")]
+    Db(#[from] sqlx::Error),
+    #[error("hash: {0}")]
+    Hash(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Actor {
+    User { id: String },
+    Agent { id: Uuid },
+    System,
+    Anonymous,
+}
+
+impl Actor {
+    pub fn is_authenticated(&self) -> bool {
+        !matches!(self, Actor::Anonymous)
+    }
+    pub fn system() -> Self {
+        Actor::System
+    }
+    pub fn user_id(&self) -> Option<&str> {
+        if let Actor::User { id } = self {
+            Some(id)
+        } else {
+            None
+        }
+    }
+    pub fn agent_id(&self) -> Option<Uuid> {
+        if let Actor::Agent { id } = self {
+            Some(*id)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthContext {
+    pub actor: Actor,
+    pub method: &'static str,
+    pub api_key_id: Option<Uuid>,
+}
+
+impl AuthContext {
+    pub fn anonymous() -> Self {
+        Self {
+            actor: Actor::Anonymous,
+            method: "anonymous",
+            api_key_id: None,
+        }
+    }
+    pub fn system() -> Self {
+        Self {
+            actor: Actor::System,
+            method: "system",
+            api_key_id: None,
+        }
+    }
+    pub fn require_user(&self) -> Result<&str, AuthError> {
+        self.actor.user_id().ok_or(AuthError::InvalidToken)
+    }
+}
+
+pub fn hash_token(token: &str) -> String {
+    let digest = Sha256::digest(token.as_bytes());
+    hex::encode(digest)
+}
+
+pub async fn resolve_api_key(db: &Db, token: &str) -> Result<Option<(Uuid, String)>, AuthError> {
+    let h = hash_token(token);
+    let row: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, user_id FROM board_api_keys \
+         WHERE key_hash = $1 AND revoked_at IS NULL \
+         AND (expires_at IS NULL OR expires_at > now())",
+    )
+    .bind(&h)
+    .fetch_optional(db.pool())
+    .await?;
+    Ok(row)
+}
+
+pub async fn touch_api_key(db: &Db, key_id: Uuid) -> Result<(), AuthError> {
+    sqlx::query("UPDATE board_api_keys SET last_used_at = now() WHERE id = $1")
+        .bind(key_id)
+        .execute(db.pool())
+        .await?;
+    Ok(())
+}
+
+pub async fn resolve_session(
+    db: &Db,
+    token: &str,
+) -> Result<Option<(String, DateTime<Utc>)>, AuthError> {
+    let row: Option<(String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT user_id, expires_at FROM session WHERE token = $1 AND expires_at > now()",
+    )
+    .bind(token)
+    .fetch_optional(db.pool())
+    .await?;
+    Ok(row)
+}
+
+/// 解析请求的 auth 上下文（不依赖 axum extractor，方便从任意地方调用）。
+pub async fn resolve_auth(db: &Db, parts: &Parts) -> Result<AuthContext, AuthError> {
+    if let Some(auth) = parts
+        .headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            if let Some((key_id, user_id)) = resolve_api_key(db, token).await? {
+                touch_api_key(db, key_id).await.ok();
+                return Ok(AuthContext {
+                    actor: Actor::User { id: user_id },
+                    method: "api_key",
+                    api_key_id: Some(key_id),
+                });
+            }
+            if let Some((user_id, _)) = resolve_session(db, token).await? {
+                return Ok(AuthContext {
+                    actor: Actor::User { id: user_id },
+                    method: "session",
+                    api_key_id: None,
+                });
+            }
+            return Err(AuthError::InvalidToken);
+        }
+    }
+    if let Some(cookie) = parts
+        .headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+    {
+        for kv in cookie.split(';') {
+            if let Some(v) = kv.trim().strip_prefix("paperclip_session=") {
+                if let Some((user_id, _)) = resolve_session(db, v).await? {
+                    return Ok(AuthContext {
+                        actor: Actor::User { id: user_id },
+                        method: "session_cookie",
+                        api_key_id: None,
+                    });
+                }
+            }
+        }
+    }
+    if let Some(agent_id) = parts
+        .headers
+        .get("x-paperclip-agent-id")
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Ok(uuid) = Uuid::parse_str(agent_id) {
+            return Ok(AuthContext {
+                actor: Actor::Agent { id: uuid },
+                method: "agent_header",
+                api_key_id: None,
+            });
+        }
+    }
+    Ok(AuthContext::anonymous())
+}
+
+pub struct ApiKeyIssuer;
+impl ApiKeyIssuer {
+    pub fn new_token() -> (String, String) {
+        use base64::Engine;
+        let mut bytes = [0u8; 32];
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let uuid = Uuid::new_v4();
+        #[allow(clippy::cast_sign_loss)]
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (now as u64).to_le_bytes()[i % 8] ^ uuid.as_bytes()[i % 16];
+        }
+        let raw = format!(
+            "pcak_{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        );
+        let hash = hash_token(&raw);
+        (raw, hash)
+    }
+    pub async fn create(db: &Db, user_id: &str, name: &str) -> Result<(Uuid, String), AuthError> {
+        let (raw, hash) = Self::new_token();
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO board_api_keys (user_id, name, key_hash) VALUES ($1, $2, $3) RETURNING id",
+        )
+        .bind(user_id)
+        .bind(name)
+        .bind(&hash)
+        .fetch_one(db.pool())
+        .await?;
+        Ok((id, raw))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn hash_deterministic() {
+        let a = hash_token("hello");
+        let b = hash_token("hello");
+        assert_eq!(a, b);
+        let c = hash_token("world");
+        assert_ne!(a, c);
+    }
+    #[test]
+    fn new_token_format_and_uniqueness() {
+        let (raw1, h1) = ApiKeyIssuer::new_token();
+        let (raw2, h2) = ApiKeyIssuer::new_token();
+        assert!(raw1.starts_with("pcak_"));
+        assert!(raw2.starts_with("pcak_"));
+        assert_ne!(raw1, raw2);
+        assert_eq!(h1, hash_token(&raw1));
+        assert_eq!(h2, hash_token(&raw2));
+    }
+}

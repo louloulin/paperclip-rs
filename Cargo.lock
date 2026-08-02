@@ -1132,6 +1132,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-auth"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "chrono",
+ "hex",
+ "pc-core",
+ "pc-db",
+ "pc-errors",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-authz"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pc-core",
+ "serde",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "pc-config"
 version = "0.1.0"
 dependencies = [
@@ -1190,6 +1221,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures-util",
+ "pc-auth",
  "pc-core",
  "pc-db",
  "pc-errors",
@@ -1198,6 +1230,7 @@ dependencies = [
  "pc-telemetry",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",

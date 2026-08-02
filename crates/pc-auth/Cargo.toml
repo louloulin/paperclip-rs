@@ -1,0 +1,25 @@
+[package]
+name = "pc-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip auth：API key / session / actor 解析"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-db = { path = "../pc-db" }
+pc-errors = { path = "../pc-errors" }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+thiserror = { workspace = true }
