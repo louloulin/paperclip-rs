@@ -8,7 +8,7 @@ pub mod migrate;
 pub mod pool;
 
 pub use health::HealthCheck;
-pub use migrate::Migrator;
+pub use migrate::{MigrationStatus, Migrator};
 pub use pool::Db;
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +17,8 @@ pub enum DbError {
     Connect(#[from] sqlx::Error),
     #[error("migration error: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("invalid migration manifest: {0}")]
+    MigrationManifest(String),
     #[error("connection pool error: {0}")]
     Pool(String),
 }
