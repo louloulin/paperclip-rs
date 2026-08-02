@@ -1,0 +1,15 @@
+[package]
+name = "pc-errors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 统一错误类型与 HTTP 状态码映射"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+http = "1"

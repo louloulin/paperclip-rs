@@ -1,0 +1,5 @@
+# Tell Git on Windows to materialize AGENTS.override.md as a symlink
+# so it stays aliased to AGENTS.md across platforms. Users without
+# symlink support get a plain file copy (still resolves the
+# "git ls-files failed" stderr noise from Codex 0.144.4).
+AGENTS.override.md symlink

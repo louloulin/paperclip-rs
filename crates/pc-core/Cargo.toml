@@ -1,0 +1,19 @@
+[package]
+name = "pc-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 领域模型：实体、值对象、不变量校验"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+kameo = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pc-errors",
+    "crates/pc-telemetry",
+    "crates/pc-config",
+    "crates/pc-core",
+    "crates/pc-db",
+    "crates/pc-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Paperclip Contributors"]
+repository = "https://github.com/paperclipai/paperclip-rs"
+
+[workspace.dependencies]
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP / Web
+axum = { version = "0.7", features = ["macros", "ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit"] }
+hyper = "1"
+
+# 数据库
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
+
+# 序列化 / Schema
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 时间 / ID
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# 错误 / 日志 / 配置
+thiserror = "1"
+anyhow = "1"
+kameo = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dotenvy = "0.15"
+
+# 测试
+proptest = "1"
+mockall = "0.13"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+debug = 1
+incremental = true

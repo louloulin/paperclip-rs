@@ -1,0 +1,19 @@
+[package]
+name = "pc-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 遥测：tracing + 结构化日志 + 启动横幅"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

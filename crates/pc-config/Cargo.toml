@@ -1,0 +1,15 @@
+[package]
+name = "pc-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 配置加载：环境变量 + .env 文件"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+dotenvy = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

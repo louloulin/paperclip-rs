@@ -1,0 +1,20 @@
+[package]
+name = "pc-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 数据库层：sqlx 连接池 + 迁移 + 健康检查"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
+pc-telemetry = { path = "../pc-telemetry" }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
