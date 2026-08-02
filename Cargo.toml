@@ -9,6 +9,7 @@ members = [
     "crates/pc-config",
     "crates/pc-core",
     "crates/pc-db",
+    "crates/pc-realtime",
     "crates/pc-server",
 ]
 

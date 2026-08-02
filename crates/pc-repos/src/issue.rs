@@ -75,44 +75,70 @@ const ISSUE_COLS: &str = "id, company_id, project_id, project_workspace_id, goal
     source_trust, unblock_descriptor, blocked_transition_at, blocked_owner_notified_at, \
     started_at, completed_at, cancelled_at, hidden_at, created_at, updated_at";
 
-pub struct IssueRepo<'a> { pub db: &'a Db }
+pub struct IssueRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> IssueRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
 
-    pub async fn list_by_company(&self, company_id: Uuid, status: Option<&str>) -> sqlx::Result<Vec<IssueRow>> {
+    pub async fn list_by_company(
+        &self,
+        company_id: Uuid,
+        status: Option<&str>,
+    ) -> sqlx::Result<Vec<IssueRow>> {
         let sql = format!(
             "SELECT {ISSUE_COLS} FROM issues WHERE company_id = $1 \
              AND ($2::text IS NULL OR status = $2) AND hidden_at IS NULL \
              ORDER BY created_at DESC LIMIT 200"
         );
         sqlx::query_as::<_, IssueRow>(&sql)
-            .bind(company_id).bind(status)
-            .fetch_all(self.db.pool()).await
+            .bind(company_id)
+            .bind(status)
+            .fetch_all(self.db.pool())
+            .await
     }
 
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");
-        sqlx::query_as::<_, IssueRow>(&sql).bind(id)
-            .fetch_optional(self.db.pool()).await
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
     }
 
     pub async fn create(
-        &self, company_id: Uuid, title: &str, description: Option<&str>,
-        priority: &str, assignee_agent_id: Option<Uuid>,
+        &self,
+        company_id: Uuid,
+        title: &str,
+        description: Option<&str>,
+        priority: &str,
+        assignee_agent_id: Option<Uuid>,
     ) -> sqlx::Result<IssueRow> {
         let sql = format!(
             "INSERT INTO issues (company_id, title, description, priority, assignee_agent_id) \
              VALUES ($1,$2,$3,$4,$5) RETURNING {ISSUE_COLS}"
         );
         sqlx::query_as::<_, IssueRow>(&sql)
-            .bind(company_id).bind(title).bind(description).bind(priority).bind(assignee_agent_id)
-            .fetch_one(self.db.pool()).await
+            .bind(company_id)
+            .bind(title)
+            .bind(description)
+            .bind(priority)
+            .bind(assignee_agent_id)
+            .fetch_one(self.db.pool())
+            .await
     }
 
     pub async fn update(
-        &self, id: Uuid, title: Option<&str>, description: Option<&str>,
-        status: Option<&str>, priority: Option<&str>, assignee_agent_id: Option<Option<Uuid>>,
+        &self,
+        id: Uuid,
+        title: Option<&str>,
+        description: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+        assignee_agent_id: Option<Option<Uuid>>,
     ) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!(
             "UPDATE issues SET \
@@ -122,13 +148,21 @@ impl<'a> IssueRepo<'a> {
              WHERE id=$1 RETURNING {ISSUE_COLS}"
         );
         sqlx::query_as::<_, IssueRow>(&sql)
-            .bind(id).bind(title).bind(description).bind(status).bind(priority).bind(assignee_agent_id)
-            .fetch_optional(self.db.pool()).await
+            .bind(id)
+            .bind(title)
+            .bind(description)
+            .bind(status)
+            .bind(priority)
+            .bind(assignee_agent_id)
+            .fetch_optional(self.db.pool())
+            .await
     }
 
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM issues WHERE id=$1").bind(id)
-            .execute(self.db.pool()).await?;
+        let r = sqlx::query("DELETE FROM issues WHERE id=$1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 }

@@ -13,12 +13,14 @@ pc-core = { path = "../pc-core", features = ["sqlx"] }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-telemetry = { path = "../pc-telemetry" }
+pc-realtime = { path = "../pc-realtime" }
 pc-repos = { path = "../pc-repos" }
 axum = { workspace = true }
 sqlx = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
+futures-util = { version = "0.3", features = ["sink"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

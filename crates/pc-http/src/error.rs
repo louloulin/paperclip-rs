@@ -30,15 +30,27 @@ impl IntoResponse for ApiError {
         let (status, code) = match &self {
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
-            ApiError::NotFound(_) | ApiError::Sqlx(sqlx::Error::RowNotFound) => (StatusCode::NOT_FOUND, "not_found"),
+            ApiError::NotFound(_) | ApiError::Sqlx(sqlx::Error::RowNotFound) => {
+                (StatusCode::NOT_FOUND, "not_found")
+            }
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
-        let body = ApiErrorBody { error: ApiErrorDetail { code, message: self.to_string() } };
+        let body = ApiErrorBody {
+            error: ApiErrorDetail {
+                code,
+                message: self.to_string(),
+            },
+        };
         (status, Json(body)).into_response()
     }
 }
 
 #[derive(Serialize)]
-struct ApiErrorBody { error: ApiErrorDetail }
+struct ApiErrorBody {
+    error: ApiErrorDetail,
+}
 #[derive(Serialize)]
-struct ApiErrorDetail { code: &'static str, message: String }
+struct ApiErrorDetail {
+    code: &'static str,
+    message: String,
+}

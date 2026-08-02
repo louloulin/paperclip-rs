@@ -1189,9 +1189,11 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "futures-util",
  "pc-core",
  "pc-db",
  "pc-errors",
+ "pc-realtime",
  "pc-repos",
  "pc-telemetry",
  "serde",
@@ -1212,6 +1214,21 @@ dependencies = [
  "pc-db",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "pc-realtime"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "kameo",
+ "pc-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1244,6 +1261,7 @@ dependencies = [
  "pc-db",
  "pc-errors",
  "pc-http",
+ "pc-realtime",
  "pc-telemetry",
  "serde",
  "serde_json",

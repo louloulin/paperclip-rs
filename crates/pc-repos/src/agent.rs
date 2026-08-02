@@ -35,10 +35,14 @@ pub struct AgentRow {
     pub updated_at: Timestamp,
 }
 
-pub struct AgentRepo<'a> { pub db: &'a Db }
+pub struct AgentRepo<'a> {
+    pub db: &'a Db,
+}
 
 impl<'a> AgentRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
 
     pub async fn list_by_company(&self, company_id: Uuid) -> sqlx::Result<Vec<AgentRow>> {
         sqlx::query_as::<_, AgentRow>(
@@ -61,12 +65,19 @@ impl<'a> AgentRepo<'a> {
                     error_reason, permissions, last_heartbeat_at, metadata, created_at, updated_at \
              FROM agents WHERE id = $1",
         )
-        .bind(id).fetch_optional(self.db.pool()).await
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await
     }
 
     pub async fn create(
-        &self, company_id: Uuid, name: &str, role: &str, title: Option<&str>,
-        adapter_type: &str, adapter_config: serde_json::Value,
+        &self,
+        company_id: Uuid,
+        name: &str,
+        role: &str,
+        title: Option<&str>,
+        adapter_type: &str,
+        adapter_config: serde_json::Value,
     ) -> sqlx::Result<AgentRow> {
         sqlx::query_as::<_, AgentRow>(
             "INSERT INTO agents (company_id, name, role, title, adapter_type, adapter_config) \
@@ -82,7 +93,12 @@ impl<'a> AgentRepo<'a> {
     }
 
     pub async fn update(
-        &self, id: Uuid, name: Option<&str>, role: Option<&str>, title: Option<&str>, status: Option<&str>,
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+        role: Option<&str>,
+        title: Option<&str>,
+        status: Option<&str>,
     ) -> sqlx::Result<Option<AgentRow>> {
         sqlx::query_as::<_, AgentRow>(
             "UPDATE agents SET \
@@ -99,8 +115,10 @@ impl<'a> AgentRepo<'a> {
     }
 
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM agents WHERE id=$1").bind(id)
-            .execute(self.db.pool()).await?;
+        let r = sqlx::query("DELETE FROM agents WHERE id=$1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 }

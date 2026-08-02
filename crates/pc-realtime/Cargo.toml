@@ -1,0 +1,20 @@
+[package]
+name = "pc-realtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip realtime 事件总线（tokio broadcast + kameo supervisor）"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+kameo = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }

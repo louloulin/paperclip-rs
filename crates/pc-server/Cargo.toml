@@ -19,6 +19,7 @@ pc-config = { path = "../pc-config" }
 pc-core = { path = "../pc-core" }
 pc-db = { path = "../pc-db" }
 pc-http = { path = "../pc-http" }
+pc-realtime = { path = "../pc-realtime" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

@@ -57,6 +57,8 @@ pub mod user_profiles;
 pub mod workspace_command_authz;
 pub mod workspace_runtime_service_authz;
 
+pub mod live_events;
+
 use axum::Router;
 
 use crate::AppState;
@@ -119,4 +121,5 @@ pub fn router() -> Router<AppState> {
         .merge(plugin_ui_static::router())
         .merge(secrets::router())
         .merge(adapters::router())
+        .merge(live_events::router())
 }

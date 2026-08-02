@@ -47,7 +47,9 @@ pub struct CompanyRepo<'a> {
 }
 
 impl<'a> CompanyRepo<'a> {
-    pub fn new(db: &'a Db) -> Self { Self { db } }
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
 
     pub async fn list(&self) -> sqlx::Result<Vec<CompanyListRow>> {
         sqlx::query_as::<_, CompanyListRow>(
@@ -89,7 +91,13 @@ impl<'a> CompanyRepo<'a> {
         .await
     }
 
-    pub async fn update(&self, id: Uuid, name: Option<&str>, description: Option<&str>, status: Option<&str>) -> sqlx::Result<Option<CompanyRow>> {
+    pub async fn update(
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+        status: Option<&str>,
+    ) -> sqlx::Result<Option<CompanyRow>> {
         sqlx::query_as::<_, CompanyRow>(
             "UPDATE companies SET \
                 name = COALESCE($2, name), \
@@ -104,7 +112,10 @@ impl<'a> CompanyRepo<'a> {
                        feedback_data_sharing_consent_at, feedback_data_sharing_consent_by_user_id, \
                        feedback_data_sharing_terms_version, brand_color, created_at, updated_at",
         )
-        .bind(id).bind(name).bind(description).bind(status)
+        .bind(id)
+        .bind(name)
+        .bind(description)
+        .bind(status)
         .fetch_optional(self.db.pool())
         .await
     }
@@ -125,8 +136,10 @@ impl<'a> CompanyRepo<'a> {
     }
 
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM companies WHERE id = $1").bind(id)
-            .execute(self.db.pool()).await?;
+        let r = sqlx::query("DELETE FROM companies WHERE id = $1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 }

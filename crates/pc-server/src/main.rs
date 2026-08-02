@@ -16,6 +16,8 @@ use axum::Router;
 use pc_config::Config;
 use pc_db::{Db, Migrator};
 use pc_http::AppState;
+use pc_realtime::{RealtimeHandle, WsState};
+
 use pc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 use tokio::signal;
 use tracing::info;
@@ -65,6 +67,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 6. 装配 axum 路由（pc-http 56 路由）
+    let realtime = RealtimeHandle::start(1024);
+    let ws = std::sync::Arc::new(WsState {
+        realtime: realtime.clone(),
+        server_name: "paperclip-rs".into(),
+    });
     let state = AppState::new(
         db,
         pc_http::state::ConfigSnapshot {
@@ -75,6 +82,8 @@ async fn main() -> anyhow::Result<()> {
             csrf_header: cfg.auth.csrf_header.clone(),
         },
         telemetry_opts,
+        ws,
+        realtime.clone(),
     );
     let app: Router = pc_http::routes::router().with_state(state);
 

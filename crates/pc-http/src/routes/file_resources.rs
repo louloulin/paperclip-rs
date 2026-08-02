@@ -8,8 +8,7 @@ use serde_json::{json, Value};
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/api/file-resources", get(handler))
+    Router::new().route("/api/file-resources", get(handler))
 }
 
 async fn handler() -> Json<Value> {

@@ -1,0 +1,22 @@
+[package]
+name = "pc-ws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip WebSocket 层：/api/live-events 桥接 pc-realtime"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-realtime = { path = "../pc-realtime" }
+pc-core = { path = "../pc-core" }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = "0.24"
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
