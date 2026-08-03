@@ -25,6 +25,9 @@ pc-heartbeat = { path = "../pc-heartbeat" }
 pc-repos = { path = "../pc-repos" }
 pc-storage = { path = "../pc-storage" }
 pc-feature-flags = { path = "../pc-feature-flags" }
+pc-plugin-host = { path = "../pc-plugin-host" }
+pc-plugin-protocol = { path = "../pc-plugin-protocol" }
+uuid = { workspace = true }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-adapter-claude-local = { path = "../pc-adapter-claude-local" }
 pc-adapter-codex-local = { path = "../pc-adapter-codex-local" }

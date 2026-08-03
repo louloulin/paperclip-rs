@@ -124,7 +124,6 @@ pub fn router() -> Router<AppState> {
         .merge(plugin_ui_static::router())
         .merge(secrets::router())
         .merge(storage::router())
-        .merge(activity::router())
         .merge(feature_flags::router())
         .merge(workflows::router())
         .merge(adapters::router())

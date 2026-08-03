@@ -1920,6 +1920,8 @@ dependencies = [
  "pc-feature-flags",
  "pc-heartbeat",
  "pc-http",
+ "pc-plugin-host",
+ "pc-plugin-protocol",
  "pc-realtime",
  "pc-repos",
  "pc-storage",
@@ -1930,6 +1932,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

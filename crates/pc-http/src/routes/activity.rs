@@ -17,7 +17,7 @@ use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/activity", post(emit_event))
+        .route("/api/activity/emit", post(emit_event))
         .route("/api/activity/list", get(query_events))
 }
 

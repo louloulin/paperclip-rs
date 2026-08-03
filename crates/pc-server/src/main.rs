@@ -128,36 +128,6 @@ async fn main() -> anyhow::Result<()> {
             .register(Arc::new(PiLocalAdapter::new()))
             .context("register pi local adapter")?;
     }
-    adapters
-        .register(Arc::new(ClaudeLocalAdapter::new()))
-        .context("register claude local adapter")?;
-    adapters
-        .register(Arc::new(CursorCloudAdapter::new()))
-        .context("register cursor cloud adapter")?;
-    adapters
-        .register(Arc::new(CursorLocalAdapter::new()))
-        .context("register cursor local adapter")?;
-    adapters
-        .register(Arc::new(GeminiLocalAdapter::new()))
-        .context("register gemini local adapter")?;
-    adapters
-        .register(Arc::new(GrokLocalAdapter::new()))
-        .context("register grok local adapter")?;
-    adapters
-        .register(Arc::new(HermesAdapter::new()))
-        .context("register hermes adapter")?;
-    adapters
-        .register(Arc::new(HermesGatewayAdapter::new()))
-        .context("register hermes gateway adapter")?;
-    adapters
-        .register(Arc::new(OpenclawGatewayAdapter::new()))
-        .context("register openclaw gateway adapter")?;
-    adapters
-        .register(Arc::new(OpencodeLocalAdapter::new()))
-        .context("register opencode local adapter")?;
-    adapters
-        .register(Arc::new(PiLocalAdapter::new()))
-        .context("register pi local adapter")?;
     actors
         .register(
             ActorKey::new("system", "heartbeat-supervisor"),
@@ -223,6 +193,74 @@ async fn main() -> anyhow::Result<()> {
             }),
         );
         tracing::info!("feature flags: registered 2 default flags");
+    }
+
+    // ---- Bootstrap plugins into WorkerPool ----
+    {
+        use pc_plugin_host::registry::{PluginEntry, PluginStatus};
+        use pc_plugin_protocol::manifest::PaperclipPluginManifestV1;
+        use pc_repos::plugin::PluginRepo;
+        let plugin_repo = PluginRepo::new(&state.db);
+        match plugin_repo.list_filtered(Some("ready")).await {
+            Ok(rows) => {
+                let mut count = 0usize;
+                for row in rows {
+                    let manifest: PaperclipPluginManifestV1 = match serde_json::from_value(
+                        row.manifest_json.clone(),
+                    ) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            tracing::warn!(plugin = %row.plugin_key, error = %e, "plugin manifest parse failed");
+                            continue;
+                        }
+                    };
+                    let (cmd, args) = if manifest.entry.contains(' ') {
+                        let mut parts = manifest.entry.split_whitespace();
+                        let c = parts.next().unwrap_or("node").to_string();
+                        (c, parts.map(String::from).collect())
+                    } else {
+                        (manifest.entry.clone(), vec![])
+                    };
+                    let package_path = row
+                        .package_path
+                        .clone()
+                        .unwrap_or_else(|| format!("./plugins/{}", row.plugin_key));
+                    let opts = pc_plugin_host::WorkerOptions {
+                        plugin_id: row.id,
+                        command: cmd,
+                        args,
+                        cwd: Some(std::path::PathBuf::from(package_path)),
+                        env: vec![],
+                        plugin_version: row.version.clone(),
+                        manifest_version: manifest.manifest_version.clone(),
+                        instance_id: uuid::Uuid::nil(),
+                        init_timeout: std::time::Duration::from_secs(15),
+                    };
+                    let entry = PluginEntry {
+                        plugin_id: row.id,
+                        plugin_key: row.plugin_key.clone(),
+                        manifest,
+                        install_order: row.install_order.unwrap_or(0),
+                        status: PluginStatus::Ready,
+                    };
+                    if let Err(e) = state.plugin_registry.register(entry) {
+                        tracing::warn!(plugin = %row.plugin_key, error = %e, "plugin registry insert failed");
+                        continue;
+                    }
+                    match state.plugin_workers.spawn(opts).await {
+                        Ok(_handle) => {
+                            tracing::info!(plugin = %row.plugin_key, "plugin worker spawned");
+                            count += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!(plugin = %row.plugin_key, error = %e, "plugin worker spawn failed");
+                        }
+                    }
+                }
+                tracing::info!(count, "plugin workers bootstrapped");
+            }
+            Err(e) => tracing::warn!(error = %e, "plugin bootstrap query failed"),
+        }
     }
 
     let app: Router = pc_http::routes::router().with_state(state);
