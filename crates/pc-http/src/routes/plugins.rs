@@ -694,7 +694,7 @@ struct BridgeStreamQuery {
 
 fn worker_not_running(plugin_id_str: &str) -> (StatusCode, Json<Value>) {
     (
-        StatusCode::NOT_IMPLEMENTED,
+        StatusCode::BAD_GATEWAY,
         Json(json!({
             "error": "plugin worker not running",
             "pluginId": plugin_id_str,
@@ -707,7 +707,7 @@ fn worker_not_running(plugin_id_str: &str) -> (StatusCode, Json<Value>) {
 ///
 /// Returns `Ok(Arc<WorkerHandle>)` if the plugin is registered in the in-process
 /// metadata registry AND the worker pool has a live worker for it. Otherwise
-/// returns `Err((StatusCode::NOT_IMPLEMENTED, Json))` with a message that the
+/// returns `Err((StatusCode::BAD_GATEWAY, Json))` with a message that the
 /// HTTP layer can return verbatim.
 async fn resolve_worker_or_501(
     state: &AppState,
@@ -1341,5 +1341,21 @@ async fn collect_package_files(directory: &std::path::Path, output: &mut Vec<std
                 pending.push((path, depth + 1));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use super::worker_not_running;
+
+    #[test]
+    fn missing_worker_maps_to_bad_gateway() {
+        let (status, body) = worker_not_running("plugin-1");
+
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body.0["error"], "plugin worker not running");
+        assert_eq!(body.0["pluginId"], "plugin-1");
     }
 }

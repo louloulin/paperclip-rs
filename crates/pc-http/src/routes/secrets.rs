@@ -16,6 +16,112 @@ use crate::{ApiError, ApiResult, AppState};
 
 use sha2::{Digest, Sha256};
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretProviderDescriptor {
+    id: &'static str,
+    label: &'static str,
+    requires_external_ref: bool,
+    supports_managed_values: bool,
+    supports_external_references: bool,
+    supports_external_value_writes: bool,
+    configured: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretProviderHealth {
+    provider: &'static str,
+    status: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
+}
+
+fn provider_descriptors() -> Vec<SecretProviderDescriptor> {
+    vec![
+        SecretProviderDescriptor {
+            id: "local_encrypted",
+            label: "Local encrypted (default)",
+            requires_external_ref: false,
+            supports_managed_values: true,
+            supports_external_references: false,
+            supports_external_value_writes: false,
+            configured: true,
+        },
+        SecretProviderDescriptor {
+            id: "aws_secrets_manager",
+            label: "AWS Secrets Manager",
+            requires_external_ref: true,
+            supports_managed_values: true,
+            supports_external_references: true,
+            supports_external_value_writes: true,
+            configured: std::env::var("PAPERCLIP_SECRETS_AWS_REGION")
+                .or_else(|_| std::env::var("AWS_REGION"))
+                .is_ok(),
+        },
+        SecretProviderDescriptor {
+            id: "gcp_secret_manager",
+            label: "Google Secret Manager",
+            requires_external_ref: true,
+            supports_managed_values: false,
+            supports_external_references: true,
+            supports_external_value_writes: false,
+            configured: false,
+        },
+        SecretProviderDescriptor {
+            id: "vault",
+            label: "HashiCorp Vault",
+            requires_external_ref: true,
+            supports_managed_values: false,
+            supports_external_references: true,
+            supports_external_value_writes: false,
+            configured: false,
+        },
+    ]
+}
+
+fn provider_health() -> Vec<SecretProviderHealth> {
+    let mut checks = Vec::new();
+    checks.push(SecretProviderHealth {
+        provider: "local_encrypted",
+        status: "ok",
+        message: "Local encrypted secret provider is available.".into(),
+        warnings: Vec::new(),
+    });
+
+    let aws_configured = std::env::var("PAPERCLIP_SECRETS_AWS_REGION")
+        .or_else(|_| std::env::var("AWS_REGION"))
+        .is_ok();
+    checks.push(SecretProviderHealth {
+        provider: "aws_secrets_manager",
+        status: if aws_configured { "warn" } else { "warn" },
+        message: if aws_configured {
+            "AWS Secrets Manager configuration is present; credentials are resolved at runtime."
+                .into()
+        } else {
+            "AWS Secrets Manager provider is not ready: region is not configured.".into()
+        },
+        warnings: if aws_configured {
+            vec!["Credential readiness is checked when a provider operation runs.".into()]
+        } else {
+            vec!["Set PAPERCLIP_SECRETS_AWS_REGION or AWS_REGION to configure the provider.".into()]
+        },
+    });
+    for (provider, label) in [
+        ("gcp_secret_manager", "Google Secret Manager"),
+        ("vault", "HashiCorp Vault"),
+    ] {
+        checks.push(SecretProviderHealth {
+            provider,
+            status: "warn",
+            message: format!("{label} provider is not configured in this deployment."),
+            warnings: vec!["External provider integration is unavailable.".into()],
+        });
+    }
+    checks
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/agents/me/secrets", get(agent_secrets_list))
@@ -180,14 +286,14 @@ async fn agent_secret_set(
 }
 
 async fn list_providers(State(_s): State<AppState>, Path(_company_id): Path<Uuid>) -> Json<Value> {
-    Json(json!({ "items": [] }))
+    Json(json!(provider_descriptors()))
 }
 
 async fn providers_health(
     State(_s): State<AppState>,
     Path(_company_id): Path<Uuid>,
 ) -> Json<Value> {
-    Json(json!({ "items": [] }))
+    Json(json!({ "providers": provider_health() }))
 }
 
 async fn list_provider_configs(

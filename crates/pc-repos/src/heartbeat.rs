@@ -497,6 +497,115 @@ impl<'a> HeartbeatRepo<'a> {
         .await
     }
 
+    pub async fn count_running_for_agent(&self, agent_id: Uuid) -> sqlx::Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM heartbeat_runs \
+             WHERE agent_id=$1 AND status='running'",
+        )
+        .bind(agent_id)
+        .fetch_one(self.db.pool())
+        .await
+    }
+
+    pub async fn count_started_today_for_agent(&self, agent_id: Uuid) -> sqlx::Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM heartbeat_runs \
+             WHERE agent_id=$1 AND started_at >= (date_trunc('day', timezone('UTC', now())) AT TIME ZONE 'UTC') \
+               AND started_at < ((date_trunc('day', timezone('UTC', now())) + interval '1 day') AT TIME ZONE 'UTC') \
+               AND status NOT IN ('queued','scheduled_retry')",
+        )
+        .bind(agent_id)
+        .fetch_one(self.db.pool())
+        .await
+    }
+
+    pub async fn claim_for_agent_with_limit(
+        &self,
+        run: &HeartbeatRow,
+        max_concurrent: i64,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(run.agent_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let running: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM heartbeat_runs \
+             WHERE agent_id=$1 AND status='running'",
+        )
+        .bind(run.agent_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if running >= max_concurrent {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+        let query = format!(
+            "UPDATE heartbeat_runs SET status='running', \
+             responsible_user_id=COALESCE($3,responsible_user_id), process_pid=$4, process_group_id=$5, \
+             process_started_at=CASE WHEN $4 IS NOT NULL THEN COALESCE(process_started_at,now()) ELSE process_started_at END, \
+             started_at=COALESCE(started_at,now()), scheduled_retry_at=NULL, updated_at=now() \
+             WHERE company_id=$1 AND id=$2 AND status IN ('queued','scheduled_retry') \
+             RETURNING {RUN_COLUMNS}"
+        );
+        let claimed = sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(run.company_id)
+            .bind(run.id)
+            .bind(run.responsible_user_id.as_deref())
+            .bind(run.process_pid)
+            .bind(run.process_group_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(claimed)
+    }
+
+    pub async fn promote_due_scheduled_retry(
+        &self,
+        run_id: Uuid,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let query = format!(
+            "UPDATE heartbeat_runs SET status='queued', updated_at=now() \
+             WHERE id=$1 AND status='scheduled_retry' \
+               AND scheduled_retry_at IS NOT NULL AND scheduled_retry_at <= now() \
+             RETURNING {RUN_COLUMNS}"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    pub async fn create_scheduled_retry(
+        &self,
+        run: &HeartbeatRow,
+        due_at: Timestamp,
+        attempt: i32,
+        reason: &str,
+    ) -> sqlx::Result<HeartbeatRow> {
+        let query = format!(
+            "INSERT INTO heartbeat_runs (company_id, agent_id, invocation_source, trigger_detail, \
+             status, responsible_user_id, context_snapshot, retry_of_run_id, scheduled_retry_at, \
+             scheduled_retry_attempt, scheduled_retry_reason, issue_comment_status, continuation_attempt) \
+             VALUES ($1,$2,$3,$4,'scheduled_retry',$5,$6,$7,$8,$9,$10,'not_applicable',$11) \
+             RETURNING {RUN_COLUMNS}"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(run.company_id)
+            .bind(run.agent_id)
+            .bind(&run.invocation_source)
+            .bind(run.trigger_detail.as_deref())
+            .bind(run.responsible_user_id.as_deref())
+            .bind(run.context_snapshot.clone())
+            .bind(run.id)
+            .bind(due_at)
+            .bind(attempt)
+            .bind(reason)
+            .bind(run.continuation_attempt)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
     pub async fn mark_running(&self, run_id: Uuid) -> sqlx::Result<Option<HeartbeatRow>> {
         let query = format!(
             "UPDATE heartbeat_runs SET status='running', started_at=COALESCE(started_at,now()), \

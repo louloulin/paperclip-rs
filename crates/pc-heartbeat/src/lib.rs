@@ -10,6 +10,49 @@ use kameo::error::Infallible;
 use kameo::message::{Context, Message};
 use serde::{Deserialize, Serialize};
 
+pub const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS: [i64; 4] = [
+    2 * 60 * 1_000,
+    10 * 60 * 1_000,
+    30 * 60 * 1_000,
+    2 * 60 * 60 * 1_000,
+];
+pub const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS: i32 =
+    BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.len() as i32;
+const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO: f64 = 0.25;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetrySchedule {
+    pub attempt: i32,
+    pub base_delay_ms: i64,
+    pub delay_ms: i64,
+    pub due_at: pc_core::Timestamp,
+    pub max_attempts: i32,
+}
+
+pub fn compute_bounded_transient_retry_schedule(
+    attempt: i32,
+    now: pc_core::Timestamp,
+    sample: f64,
+) -> Option<RetrySchedule> {
+    if attempt <= 0 {
+        return None;
+    }
+    let base_delay_ms = *BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS
+        .get((attempt - 1) as usize)?;
+    let sample = sample.clamp(0.0, 1.0);
+    let jitter_multiplier = 1.0 + (((sample * 2.0) - 1.0) * BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO);
+    let delay_ms = ((base_delay_ms as f64 * jitter_multiplier).round() as i64).max(1_000);
+    Some(RetrySchedule {
+        attempt,
+        base_delay_ms,
+        delay_ms,
+        due_at: pc_core::Timestamp::from_dt(
+            now.as_datetime() + chrono::Duration::milliseconds(delay_ms),
+        ),
+        max_attempts: BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS,
+    })
+}
+
 /// 与 `heartbeat_runs.status` 兼容的持久化状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, kameo::Reply)]
 #[serde(rename_all = "snake_case")]
@@ -584,6 +627,29 @@ pub fn spawn_heartbeat_supervisor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn bounded_retry_schedule_matches_node_delay_table_and_jitter() {
+        let now = pc_core::Timestamp::now();
+        let low = compute_bounded_transient_retry_schedule(1, now, 0.0).unwrap();
+        let midpoint = compute_bounded_transient_retry_schedule(1, now, 0.5).unwrap();
+        let high = compute_bounded_transient_retry_schedule(1, now, 1.0).unwrap();
+
+        assert_eq!(low.base_delay_ms, 120_000);
+        assert_eq!(low.delay_ms, 90_000);
+        assert_eq!(midpoint.delay_ms, 120_000);
+        assert_eq!(high.delay_ms, 150_000);
+        assert_eq!(high.max_attempts, 4);
+        assert_eq!(high.due_at.as_datetime() - now.as_datetime(), chrono::Duration::milliseconds(150_000));
+    }
+
+    #[test]
+    fn bounded_retry_schedule_rejects_out_of_range_attempts() {
+        let now = pc_core::Timestamp::now();
+        assert!(compute_bounded_transient_retry_schedule(0, now, 0.5).is_none());
+        assert!(compute_bounded_transient_retry_schedule(5, now, 0.5).is_none());
+    }
 
     #[test]
     fn queued_run_can_start_and_succeed() {
@@ -629,6 +695,143 @@ mod tests {
             Err(HeartbeatTransitionError::Invalid { .. })
         ));
     }
+    #[test]
+    fn heartbeat_policy_parses_all_runtime_config_aliases() {
+        let config = serde_json::json!({
+            "heartbeat": {
+                "enabled": true,
+                "intervalSec": 300,
+                "wakeOnAssignment": true,
+                "maxConcurrentRuns": 8,
+                "issueOnlyTimer": true,
+                "dailyRunLimit": 25,
+                "dailyCostCentsLimit": 1500,
+            }
+        });
+        let policy = HeartbeatPolicy::from_runtime_config(&config);
+        assert!(policy.enabled);
+        assert_eq!(policy.interval_sec, 300);
+        assert!(policy.wake_on_demand);
+        assert_eq!(policy.max_concurrent_runs, 8);
+        assert!(policy.skip_timer_when_no_actionable_work);
+        assert_eq!(policy.max_daily_runs, Some(25));
+        assert_eq!(policy.max_daily_cost_cents, Some(1500));
+    }
+
+    #[test]
+    fn heartbeat_policy_handles_missing_heartbeat_block() {
+        let policy = HeartbeatPolicy::from_runtime_config(&serde_json::json!({}));
+        assert!(!policy.enabled);
+        assert_eq!(policy.interval_sec, 0);
+        assert!(policy.wake_on_demand);
+        assert_eq!(policy.max_concurrent_runs, 20);
+        assert_eq!(policy.max_daily_runs, None);
+        assert_eq!(policy.max_daily_cost_cents, None);
+    }
+
+    #[test]
+    fn heartbeat_policy_invalid_max_concurrent_runs_clamps_to_default() {
+        let config = serde_json::json!({
+            "heartbeat": { "maxConcurrentRuns": 9999 }
+        });
+        let policy = HeartbeatPolicy::from_runtime_config(&config);
+        assert_eq!(policy.max_concurrent_runs, 50);
+
+        let config = serde_json::json!({
+            "heartbeat": { "maxConcurrentRuns": 0 }
+        });
+        let policy = HeartbeatPolicy::from_runtime_config(&config);
+        assert_eq!(policy.max_concurrent_runs, 1);
+    }
+
+    #[test]
+    fn heartbeat_policy_negative_or_non_integer_caps_drop_to_none() {
+        let config = serde_json::json!({
+            "heartbeat": {
+                "maxDailyRuns": -5,
+                "maxDailyCostCents": "not-a-number",
+            }
+        });
+        let policy = HeartbeatPolicy::from_runtime_config(&config);
+        assert_eq!(policy.max_daily_runs, None);
+        assert_eq!(policy.max_daily_cost_cents, None);
+    }
+
+    #[test]
+    fn utc_day_window_covers_a_single_utc_day() {
+        let (start, end) = utc_day_window(chrono::Utc.with_ymd_and_hms(2026, 8, 4, 12, 0, 0).unwrap());
+        assert_eq!(start, chrono::Utc.with_ymd_and_hms(2026, 8, 4, 0, 0, 0).unwrap());
+        assert_eq!(end, chrono::Utc.with_ymd_and_hms(2026, 8, 5, 0, 0, 0).unwrap());
+        // Always UTC, regardless of local time
+        assert_eq!(start.timezone(), chrono::Utc);
+    }
+
+    #[test]
+    fn evaluate_daily_cap_blocks_daily_run_limit() {
+        let policy = HeartbeatPolicy {
+            enabled: true,
+            interval_sec: 60,
+            wake_on_demand: true,
+            max_concurrent_runs: 1,
+            skip_timer_when_no_actionable_work: false,
+            max_daily_runs: Some(10),
+            max_daily_cost_cents: None,
+        };
+        let block = evaluate_daily_cap(&policy, 10, 0).unwrap();
+        assert_eq!(
+            block.error_code(),
+            "heartbeat.daily_run_limit",
+        );
+        assert_eq!(block.observed(), 10);
+        assert_eq!(block.limit(), 10);
+    }
+
+    #[test]
+    fn evaluate_daily_cap_blocks_daily_cost_limit() {
+        let policy = HeartbeatPolicy {
+            enabled: true,
+            interval_sec: 60,
+            wake_on_demand: true,
+            max_concurrent_runs: 1,
+            skip_timer_when_no_actionable_work: false,
+            max_daily_runs: None,
+            max_daily_cost_cents: Some(500),
+        };
+        let block = evaluate_daily_cap(&policy, 0, 500).unwrap();
+        assert_eq!(block.error_code(), "heartbeat.daily_cost_limit");
+        assert_eq!(block.observed(), 500);
+        assert_eq!(block.limit(), 500);
+    }
+
+    #[test]
+    fn evaluate_daily_cap_disabled_when_no_caps_configured() {
+        let policy = HeartbeatPolicy {
+            enabled: true,
+            interval_sec: 60,
+            wake_on_demand: true,
+            max_concurrent_runs: 1,
+            skip_timer_when_no_actionable_work: false,
+            max_daily_runs: None,
+            max_daily_cost_cents: None,
+        };
+        assert!(evaluate_daily_cap(&policy, 1_000_000, 1_000_000).is_none());
+    }
+
+    #[test]
+    fn evaluate_daily_cap_run_limit_takes_precedence_over_cost_limit() {
+        let policy = HeartbeatPolicy {
+            enabled: true,
+            interval_sec: 60,
+            wake_on_demand: true,
+            max_concurrent_runs: 1,
+            skip_timer_when_no_actionable_work: false,
+            max_daily_runs: Some(5),
+            max_daily_cost_cents: Some(100),
+        };
+        let block = evaluate_daily_cap(&policy, 100, 100).unwrap();
+        assert_eq!(block.error_code(), "heartbeat.daily_run_limit");
+    }
+
 
     #[tokio::test]
     async fn heartbeat_actor_serializes_run_lifecycle() {
@@ -886,4 +1089,173 @@ mod tests {
             HeartbeatStatus::Succeeded
         );
     }
+}
+
+/// Parsed heartbeat policy from `agent.runtime_config.heartbeat`.
+/// Mirrors Node `parseHeartbeatPolicy` in `services/heartbeat.ts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeartbeatPolicy {
+    pub enabled: bool,
+    pub interval_sec: i64,
+    pub wake_on_demand: bool,
+    pub max_concurrent_runs: i32,
+    pub skip_timer_when_no_actionable_work: bool,
+    pub max_daily_runs: Option<i64>,
+    pub max_daily_cost_cents: Option<i64>,
+}
+
+impl HeartbeatPolicy {
+    pub fn from_runtime_config(runtime_config: &serde_json::Value) -> Self {
+        let runtime_config = runtime_config
+            .as_object()
+            .and_then(|v| v.get("heartbeat"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let obj = runtime_config.as_object();
+        let enabled = obj
+            .and_then(|o| o.get("enabled"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let interval_sec = obj
+            .and_then(|o| o.get("intervalSec"))
+            .and_then(serde_json::Value::as_i64)
+            .map(|v| v.max(0))
+            .unwrap_or(0);
+        let wake_on_demand = obj
+            .and_then(|o| {
+                o.get("wakeOnDemand")
+                    .or_else(|| o.get("wakeOnAssignment"))
+                    .or_else(|| o.get("wakeOnOnDemand"))
+                    .or_else(|| o.get("wakeOnAutomation"))
+            })
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        let max_concurrent_runs = obj
+            .and_then(|o| o.get("maxConcurrentRuns"))
+            .and_then(serde_json::Value::as_i64)
+            .map(|v| v.clamp(1, 50) as i32)
+            .unwrap_or(20);
+        let skip_timer_when_no_actionable_work = obj
+            .and_then(|o| {
+                o.get("skipTimerWhenNoActionableWork")
+                    .or_else(|| o.get("requireActionableTimerWork"))
+                    .or_else(|| o.get("issueOnlyTimer"))
+            })
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let max_daily_runs = obj
+            .and_then(|o| {
+                o.get("maxDailyRuns")
+                    .or_else(|| o.get("dailyRunLimit"))
+                    .or_else(|| o.get("dailyRunCap"))
+                    .or_else(|| o.get("maxRunsPerDay"))
+            })
+            .and_then(normalize_non_negative);
+        let max_daily_cost_cents = obj
+            .and_then(|o| {
+                o.get("maxDailyCostCents")
+                    .or_else(|| o.get("dailyCostCentsLimit"))
+                    .or_else(|| o.get("dailySpendCentsLimit"))
+                    .or_else(|| o.get("dailyBudgetCents"))
+            })
+            .and_then(normalize_non_negative);
+        Self {
+            enabled,
+            interval_sec,
+            wake_on_demand,
+            max_concurrent_runs,
+            skip_timer_when_no_actionable_work,
+            max_daily_runs,
+            max_daily_cost_cents,
+        }
+    }
+}
+
+fn normalize_non_negative(value: &serde_json::Value) -> Option<i64> {
+    if value.is_null() {
+        return None;
+    }
+    let n = value.as_i64().unwrap_or_else(|| value.as_f64().unwrap_or(-1.0) as i64);
+    if n >= 0 {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+/// UTC day window for the daily run/cost cap. Returns `[start, end)` where
+/// `end` is the next UTC midnight. Mirrors Node `currentUtcDayWindow`.
+pub fn utc_day_window(now: chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    let start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_utc();
+    let end = start + chrono::Duration::days(1);
+    (start, end)
+}
+
+/// Reason for a daily cap block. Returned by `check_daily_cap_block`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DailyCapReason {
+    DailyRunLimit { observed: i64, limit: i64 },
+    DailyCostLimit { observed: i64, limit: i64 },
+}
+
+/// Aggregate block returned when an agent exceeds its daily run or cost cap.
+/// Mirrors Node `getHeartbeatDailyCapBlock`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DailyCapBlock {
+    pub reason: DailyCapReason,
+}
+
+impl DailyCapBlock {
+    pub fn error_code(&self) -> &'static str {
+        match &self.reason {
+            DailyCapReason::DailyRunLimit { .. } => "heartbeat.daily_run_limit",
+            DailyCapReason::DailyCostLimit { .. } => "heartbeat.daily_cost_limit",
+        }
+    }
+    pub fn observed(&self) -> i64 {
+        match &self.reason {
+            DailyCapReason::DailyRunLimit { observed, .. }
+            | DailyCapReason::DailyCostLimit { observed, .. } => *observed,
+        }
+    }
+    pub fn limit(&self) -> i64 {
+        match &self.reason {
+            DailyCapReason::DailyRunLimit { limit, .. }
+            | DailyCapReason::DailyCostLimit { limit, .. } => *limit,
+        }
+    }
+}
+
+/// Pure helper used by the daily cap check. Tests pass the observed counts
+/// directly so they don't need a database.
+pub fn evaluate_daily_cap(
+    policy: &HeartbeatPolicy,
+    started_today: i64,
+    cost_today_cents: i64,
+) -> Option<DailyCapBlock> {
+    if let Some(limit) = policy.max_daily_runs {
+        if started_today >= limit {
+            return Some(DailyCapBlock {
+                reason: DailyCapReason::DailyRunLimit {
+                    observed: started_today,
+                    limit,
+                },
+            });
+        }
+    }
+    if let Some(limit) = policy.max_daily_cost_cents {
+        if cost_today_cents >= limit {
+            return Some(DailyCapBlock {
+                reason: DailyCapReason::DailyCostLimit {
+                    observed: cost_today_cents,
+                    limit,
+                },
+            });
+        }
+    }
+    None
 }

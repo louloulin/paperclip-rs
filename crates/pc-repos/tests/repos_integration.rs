@@ -5,6 +5,7 @@
 use pc_db::Db;
 use pc_repos::{
     activity::ActivityRepo,
+    cost::{AgentCostWindow, CostRepo},
     agent::{
         AgentRepo, HeartbeatInvocationSource, NewAgentWakeupRequest, WakeupActorType,
         WakeupRequestStatus, WakeupTriggerDetail,
@@ -13,7 +14,11 @@ use pc_repos::{
     auth::AuthRepo,
     case::{CaseActor, CaseFilter, CasePatch, CaseRepo, CaseStatus, NewCaseRecord},
     decision::DecisionRepo, document::DocumentRepo, environment::EnvironmentRepo,
-    execution::ExecutionRepo, folder::FolderRepo, goal::GoalRepo, heartbeat::HeartbeatRepo,
+    execution::ExecutionRepo, folder::FolderRepo, goal::GoalRepo,
+    heartbeat::{
+        CreateHeartbeat, HeartbeatEventStream, HeartbeatRepo, HeartbeatRunStatus,
+        NewHeartbeatEvent, NewWatchdogDecision, WatchdogDecision,
+    },
     inbox::InboxRepo, pipeline::PipelineRepo, plugin::PluginRepo, project::ProjectRepo,
     routine::RoutineRepo, settings::SettingsRepo, sidebar::SidebarRepo, skill::SkillRepo,
     smoke::SmokeRepo, summary::SummaryRepo, tool::ToolRepo,
@@ -299,4 +304,311 @@ async fn case_upsert_records_events_and_preserves_terminal_invariants() {
         .await
         .expect("other company lookup")
         .is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn heartbeat_events_are_serialized_and_watchdog_decisions_are_scoped() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let company_id = uuid::Uuid::new_v4();
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO companies (id, name, issue_prefix) VALUES ($1, 'Heartbeat Corp', 'HBT')",
+    )
+    .bind(company_id)
+    .execute(db.pool())
+    .await
+    .expect("insert company");
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type) \
+         VALUES ($1, $2, 'Runner', 'general', 'process')",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
+
+    let repo = HeartbeatRepo::new(&db);
+    let queued = repo
+        .create(CreateHeartbeat {
+            company_id,
+            agent_id,
+            invocation_source: "on_demand",
+            trigger_detail: Some("manual"),
+            responsible_user_id: Some("user-1"),
+            wakeup_request_id: None,
+            context_snapshot: Some(serde_json::json!({"issueId": null})),
+        })
+        .await
+        .expect("create run");
+    assert_eq!(queued.run_status(), Some(HeartbeatRunStatus::Queued));
+    assert_eq!(queued.issue_comment_status, "not_applicable");
+    assert!(!queued.log_compressed);
+
+    let first = repo.append_event_full(
+        &queued,
+        NewHeartbeatEvent {
+            event_type: "adapter.output".into(),
+            stream: Some(HeartbeatEventStream::Stdout),
+            level: None,
+            color: None,
+            message: Some("first".into()),
+            payload: None,
+        },
+        true,
+    );
+    let second = repo.append_event_full(
+        &queued,
+        NewHeartbeatEvent {
+            event_type: "adapter.output".into(),
+            stream: Some(HeartbeatEventStream::Stderr),
+            level: None,
+            color: None,
+            message: Some("second".into()),
+            payload: None,
+        },
+        true,
+    );
+    let (first, second) = tokio::join!(first, second);
+    let mut sequences = [
+        first.expect("first concurrent event").seq,
+        second.expect("second concurrent event").seq,
+    ];
+    sequences.sort_unstable();
+    assert_eq!(sequences, [1, 2]);
+
+    let running = repo
+        .claim_for_company(company_id, queued.id, Some("user-1"), Some(1234), Some(1234))
+        .await
+        .expect("claim run")
+        .expect("running row");
+    assert_eq!(running.run_status(), Some(HeartbeatRunStatus::Running));
+    assert!(running.started_at.is_some());
+    assert!(running.process_started_at.is_some());
+
+    let decision = repo
+        .record_watchdog_decision(NewWatchdogDecision {
+            company_id,
+            run_id: queued.id,
+            evaluation_issue_id: None,
+            decision: WatchdogDecision::Continue,
+            snoozed_until: None,
+            reason: Some("output is expected".into()),
+            created_by_agent_id: None,
+            created_by_user_id: Some("user-1".into()),
+            created_by_run_id: None,
+        })
+        .await
+        .expect("record watchdog decision");
+    assert_eq!(decision.decision, "continue");
+    assert!(decision.snoozed_until.is_some());
+    assert!(repo
+        .active_watchdog_snooze(company_id, queued.id)
+        .await
+        .expect("active watchdog snooze")
+        .is_some());
+    assert!(repo
+        .active_watchdog_snooze(uuid::Uuid::new_v4(), queued.id)
+        .await
+        .expect("other company watchdog lookup")
+        .is_none());
+
+    let succeeded = repo
+        .transition_status(
+            company_id,
+            queued.id,
+            HeartbeatRunStatus::Succeeded,
+            None,
+            None,
+        )
+        .await
+        .expect("finish run")
+        .expect("succeeded row");
+    assert_eq!(succeeded.run_status(), Some(HeartbeatRunStatus::Succeeded));
+    assert!(succeeded.finished_at.is_some());
+    assert!(repo
+        .transition_status(
+            company_id,
+            queued.id,
+            HeartbeatRunStatus::Running,
+            None,
+            None,
+        )
+        .await
+        .expect("terminal restart")
+        .is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cost_repo_sum_agent_window_cost_cents_matches_inserted_rows() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let company_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
+        .bind(company_id)
+        .bind("Cost Cap Corp")
+        .bind("CRC")
+        .execute(db.pool())
+        .await
+        .expect("insert company");
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, adapter_config)          VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind("Cost Cap Bot")
+    .bind("tester")
+    .bind("process")
+    .bind(serde_json::json!({}))
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
+
+    let now = chrono::Utc::now();
+    let start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight")
+        .and_utc();
+    let end = start + chrono::Duration::days(1);
+    let yesterday = start - chrono::Duration::hours(1);
+
+    // Insert two events in today's window and one in the previous day
+    let repo = CostRepo::new(&db);
+    repo.create_event(
+        company_id,
+        &pc_repos::cost::CreateCostEvent {
+            agent_id,
+            issue_id: None,
+            project_id: None,
+            goal_id: None,
+            heartbeat_run_id: None,
+            billing_code: None,
+            provider: "openai".to_owned(),
+            biller: "openai".to_owned(),
+            billing_type: "api".to_owned(),
+            model: "gpt-4".to_owned(),
+            input_tokens: 100,
+            cached_input_tokens: 0,
+            output_tokens: 50,
+            cost_cents: 250,
+            occurred_at: now,
+        },
+    )
+    .await
+    .expect("insert today event 1");
+    repo.create_event(
+        company_id,
+        &pc_repos::cost::CreateCostEvent {
+            agent_id,
+            issue_id: None,
+            project_id: None,
+            goal_id: None,
+            heartbeat_run_id: None,
+            billing_code: None,
+            provider: "openai".to_owned(),
+            biller: "openai".to_owned(),
+            billing_type: "api".to_owned(),
+            model: "gpt-4".to_owned(),
+            input_tokens: 200,
+            cached_input_tokens: 0,
+            output_tokens: 150,
+            cost_cents: 750,
+            occurred_at: now,
+        },
+    )
+    .await
+    .expect("insert today event 2");
+    repo.create_event(
+        company_id,
+        &pc_repos::cost::CreateCostEvent {
+            agent_id,
+            issue_id: None,
+            project_id: None,
+            goal_id: None,
+            heartbeat_run_id: None,
+            billing_code: None,
+            provider: "openai".to_owned(),
+            biller: "openai".to_owned(),
+            billing_type: "api".to_owned(),
+            model: "gpt-4".to_owned(),
+            input_tokens: 999,
+            cached_input_tokens: 0,
+            output_tokens: 999,
+            cost_cents: 9999,
+            occurred_at: yesterday,
+        },
+    )
+    .await
+    .expect("insert yesterday event");
+
+    let sum = repo
+        .sum_agent_window_cost_cents(AgentCostWindow {
+            company_id,
+            agent_id,
+            window_start: start,
+            window_end: end,
+        })
+        .await
+        .expect("sum");
+    assert_eq!(sum, 1000, "only today's events contribute to the daily window");
+
+    // Different agent should see zero
+    let other_id = uuid::Uuid::new_v4();
+    let sum_other = repo
+        .sum_agent_window_cost_cents(AgentCostWindow {
+            company_id,
+            agent_id: other_id,
+            window_start: start,
+            window_end: end,
+        })
+        .await
+        .expect("sum other");
+    assert_eq!(sum_other, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn heartbeat_daily_cap_blocks_when_run_count_equals_limit() {
+    use pc_heartbeat::evaluate_daily_cap;
+    use pc_heartbeat::HeartbeatPolicy;
+
+    let policy = HeartbeatPolicy {
+        enabled: true,
+        interval_sec: 60,
+        wake_on_demand: true,
+        max_concurrent_runs: 1,
+        skip_timer_when_no_actionable_work: false,
+        max_daily_runs: Some(3),
+        max_daily_cost_cents: None,
+    };
+    // At-limit: block
+    assert!(evaluate_daily_cap(&policy, 3, 0).is_some());
+    // Just-under: allow
+    assert!(evaluate_daily_cap(&policy, 2, 0).is_none());
+    // Above-limit: block
+    assert!(evaluate_daily_cap(&policy, 4, 0).is_some());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn heartbeat_daily_cap_blocks_when_cost_equals_limit() {
+    use pc_heartbeat::evaluate_daily_cap;
+    use pc_heartbeat::HeartbeatPolicy;
+
+    let policy = HeartbeatPolicy {
+        enabled: true,
+        interval_sec: 60,
+        wake_on_demand: true,
+        max_concurrent_runs: 1,
+        skip_timer_when_no_actionable_work: false,
+        max_daily_runs: None,
+        max_daily_cost_cents: Some(500),
+    };
+    // At-limit: block
+    assert!(evaluate_daily_cap(&policy, 0, 500).is_some());
+    // Just-under: allow
+    assert!(evaluate_daily_cap(&policy, 0, 499).is_none());
+    // Above-limit: block
+    assert!(evaluate_daily_cap(&policy, 0, 501).is_some());
 }

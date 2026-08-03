@@ -9,6 +9,11 @@ use pc_core::Timestamp;
 use crate::approval::ApprovalRow;
 use crate::Db;
 
+const AGENT_COLUMNS: &str = "id, company_id, name, role, title, icon, status, reports_to, capabilities, \
+adapter_type, adapter_config, runtime_config, default_environment_id, budget_monthly_cents, \
+spent_monthly_cents, pause_reason, paused_at, error_reason, permissions, last_heartbeat_at, \
+metadata, created_at, updated_at";
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRow {
@@ -477,7 +482,26 @@ impl<'a> AgentRepo<'a> {
         )
         .bind(id)
         .fetch_optional(self.db.pool())
-        .await
+            .await
+    }
+
+    pub async fn claim_due_timer_heartbeat(
+        &self,
+        agent_id: Uuid,
+        interval_seconds: i64,
+    ) -> sqlx::Result<Option<AgentRow>> {
+        let query = format!(
+            "UPDATE agents SET last_heartbeat_at=now(), updated_at=now() \
+             WHERE id=$1 AND status NOT IN ('paused','terminated') \
+               AND (last_heartbeat_at <= now() - ($2 * interval '1 second') \
+                    OR (last_heartbeat_at IS NULL AND created_at <= now() - ($2 * interval '1 second'))) \
+             RETURNING {AGENT_COLUMNS}"
+        );
+        sqlx::query_as::<_, AgentRow>(&query)
+            .bind(agent_id)
+            .bind(interval_seconds.clamp(1, 86_400))
+            .fetch_optional(self.db.pool())
+            .await
     }
 
     pub async fn create(

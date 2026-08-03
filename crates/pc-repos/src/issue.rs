@@ -316,6 +316,39 @@ impl<'a> IssueRepo<'a> {
         Self { db }
     }
 
+    pub async fn claim_due_monitors(&self, limit: i64) -> sqlx::Result<Vec<IssueRow>> {
+        let query = format!(
+            "WITH due AS (\
+                SELECT id FROM issues \
+                WHERE monitor_next_check_at IS NOT NULL \
+                  AND monitor_next_check_at <= now() \
+                  AND assignee_agent_id IS NOT NULL AND assignee_user_id IS NULL \
+                  AND status IN ('in_progress','in_review') \
+                  AND (monitor_wake_requested_at IS NULL \
+                       OR monitor_wake_requested_at < now() - interval '5 minutes') \
+                ORDER BY monitor_next_check_at ASC, updated_at ASC \
+                LIMIT $1 FOR UPDATE SKIP LOCKED\
+            ) \
+            UPDATE issues AS i SET monitor_wake_requested_at=now(), updated_at=now() \
+            FROM due WHERE i.id=due.id RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&query)
+            .bind(limit.clamp(1, 50))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn complete_monitor_dispatch(&self, id: Uuid) -> sqlx::Result<()> {
+        sqlx::query(
+            "UPDATE issues SET monitor_next_check_at=NULL, monitor_last_triggered_at=now(), \
+             monitor_attempt_count=monitor_attempt_count+1, updated_at=now() WHERE id=$1",
+        )
+        .bind(id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     // ---------- list / get ----------
 
     pub async fn list_by_company(
@@ -1467,6 +1500,22 @@ impl<'a> IssueRepo<'a> {
         .fetch_one(self.db.pool())
         .await?;
         Ok(count.0)
+    }
+
+    pub async fn has_actionable_timer_work(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+    ) -> sqlx::Result<bool> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM issues \
+             WHERE company_id=$1 AND assignee_agent_id=$2 AND assignee_user_id IS NULL \
+               AND hidden_at IS NULL AND status IN ('todo','in_progress'))",
+        )
+        .bind(company_id)
+        .bind(agent_id)
+        .fetch_one(self.db.pool())
+        .await
     }
 
     /// 简单全文搜索：在 title/description 中 ILIKE 匹配

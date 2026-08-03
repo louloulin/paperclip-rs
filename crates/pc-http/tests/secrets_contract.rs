@@ -116,7 +116,7 @@ async fn company_secrets_list_returns_empty_for_new_company() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn list_providers_returns_empty_list() {
+async fn list_providers_returns_registered_providers() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = Uuid::new_v4();
     let app = routes::secrets::router().with_state(test_state(db));
@@ -128,7 +128,25 @@ async fn list_providers_returns_empty_list() {
     )
     .await;
     assert_eq!(status, 200);
-    assert!(body["items"].is_array());
+    assert!(body.is_array());
+    assert_eq!(body.as_array().unwrap().len(), 4);
+    assert_eq!(body[0]["id"], "local_encrypted");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_health_returns_all_registered_providers() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let app = routes::secrets::router().with_state(test_state(db));
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/companies/{}/secret-providers/health", Uuid::new_v4()),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["providers"].as_array().unwrap().len(), 4);
+    assert_eq!(body["providers"][0]["status"], "ok");
 }
 
 #[tokio::test(flavor = "current_thread")]

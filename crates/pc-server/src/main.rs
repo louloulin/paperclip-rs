@@ -33,6 +33,7 @@ use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
 use pc_http::AppState;
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::settings::SettingsRepo;
 
 use pc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
 use tokio::signal;
@@ -183,6 +184,66 @@ async fn main() -> anyhow::Result<()> {
         ws,
         realtime.clone(),
     );
+    let scheduler_state = state.clone();
+    let heartbeat_scheduler = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            if heartbeat_scheduling_suppressed(&scheduler_state.db).await.is_some() {
+                continue;
+            }
+            let runs = match HeartbeatRepo::new(&scheduler_state.db)
+                .list_recoverable(200)
+                .await
+            {
+                Ok(runs) => runs,
+                Err(error) => {
+                    tracing::warn!(error = %error, "heartbeat scheduler query failed");
+                    continue;
+                }
+            };
+            for run in runs {
+                let run = if run.status == "scheduled_retry" {
+                    match HeartbeatRepo::new(&scheduler_state.db)
+                        .promote_due_scheduled_retry(run.id)
+                        .await
+                    {
+                        Ok(Some(promoted)) => promoted,
+                        Ok(None) => continue,
+                        Err(error) => {
+                            tracing::warn!(error = %error, run_id = %run.id, "heartbeat retry promotion failed");
+                            continue;
+                        }
+                    }
+                } else if run.status == "queued" {
+                    run
+                } else {
+                    continue;
+                };
+                match pc_http::routes::agents::dispatch_queued_heartbeat(&scheduler_state, run).await
+                {
+                    Ok(Some(run)) => tracing::debug!(run_id = %run.id, "heartbeat scheduler dispatched run"),
+                    Ok(None) => {}
+                    Err(error) => tracing::warn!(error = %error, "heartbeat scheduler dispatch failed"),
+                }
+            }
+            match pc_http::routes::agents::dispatch_due_issue_monitors(&scheduler_state, 50).await {
+                Ok(count) if count > 0 => {
+                    tracing::debug!(count, "heartbeat scheduler dispatched issue monitors")
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(error = %error, "issue monitor scheduler failed"),
+            }
+            match pc_http::routes::agents::dispatch_due_timer_heartbeats(&scheduler_state, 200).await {
+                Ok(count) if count > 0 => {
+                    tracing::debug!(count, "heartbeat scheduler dispatched timer heartbeats")
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(error = %error, "timer heartbeat scheduler failed"),
+            }
+        }
+    });
     // ---- Bootstrap runtime services into AppState ----
     {
         use pc_storage::LocalDiskStorage;
@@ -329,10 +390,52 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("axum serve")?;
 
+    heartbeat_scheduler.abort();
+
     actors.shutdown().await.context("shutdown actors")?;
 
     info!("shutdown complete");
     Ok(())
+}
+
+/// Check whether the heartbeat scheduler should be suppressed. Mirrors
+/// Node `resolveHeartbeatSchedulingSuppression` plus the worktree run
+/// execution override cache. Returns the suppression reason when the
+/// scheduler should skip the current tick.
+async fn heartbeat_scheduling_suppressed(
+    db: &pc_db::Db,
+) -> Option<&'static str> {
+    fn truthy(name: &str) -> bool {
+        matches!(
+            std::env::var(name).ok().as_deref(),
+            Some("true" | "1" | "yes" | "on")
+        )
+    }
+    if truthy("PAPERCLIP_DATABASE_RESTORE_IN_PROGRESS")
+        || truthy("PAPERCLIP_RESTORE_IN_PROGRESS")
+    {
+        return Some("database_restore_in_progress");
+    }
+    if !truthy("PAPERCLIP_IN_WORKTREE") {
+        return None;
+    }
+    if truthy("PAPERCLIP_ENABLE_WORKTREE_RUN_EXECUTION") {
+        return None;
+    }
+    // Worktree instance: honor the experimental override. A read failure
+    // fails closed to the safe suppressed state.
+    let instance_id = std::env::var("PAPERCLIP_INSTANCE_ID").ok();
+    match SettingsRepo::new(db)
+        .resolve_worktree_run_execution_activation(instance_id.as_deref())
+        .await
+    {
+        Ok(activation) if activation.armed => None,
+        Ok(_) => Some("worktree_instance"),
+        Err(error) => {
+            tracing::warn!(?error, "worktree run execution activation read failed; defaulting to suppressed");
+            Some("worktree_instance")
+        }
+    }
 }
 
 async fn recover_heartbeat_runs(

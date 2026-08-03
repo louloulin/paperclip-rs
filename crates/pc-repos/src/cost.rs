@@ -508,3 +508,36 @@ impl<'a> CostRepo<'a> {
         query.fetch_all(self.db.pool()).await
     }
 }
+
+/// Daily cost window for a single agent. Returns the sum of `cost_cents` for
+/// the agent in `[window_start, window_end)`. Mirrors the Node-side
+/// `currentUtcDayWindow` contract used by `getHeartbeatDailyCapBlock`.
+#[derive(Debug, Clone, Copy)]
+pub struct AgentCostWindow {
+    pub company_id: Uuid,
+    pub agent_id: Uuid,
+    pub window_start: DateTime<Utc>,
+    pub window_end: DateTime<Utc>,
+}
+
+impl<'a> CostRepo<'a> {
+    /// Sum of `cost_cents` for one agent in `[window_start, window_end)`.
+    /// Used by the heartbeat scheduler to enforce the per-agent daily cost cap.
+    pub async fn sum_agent_window_cost_cents(
+        &self,
+        window: AgentCostWindow,
+    ) -> sqlx::Result<i64> {
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(cost_cents), 0)::bigint FROM cost_events \
+             WHERE company_id = $1 AND agent_id = $2 \
+               AND occurred_at >= $3 AND occurred_at < $4",
+        )
+        .bind(window.company_id)
+        .bind(window.agent_id)
+        .bind(window.window_start)
+        .bind(window.window_end)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0.unwrap_or(0))
+    }
+}

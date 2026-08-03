@@ -25,12 +25,15 @@ use pc_agent::{
 };
 use pc_core::actor_runtime::kameo_api::SendError;
 use pc_heartbeat::{
-    FinishHeartbeat, HeartbeatExecutionOutcome, HeartbeatExecutionSink, HeartbeatOutcome,
-    LaunchHeartbeatExecution, StartHeartbeat, StartHeartbeatResult,
+    evaluate_daily_cap, utc_day_window, FinishHeartbeat, HeartbeatExecutionOutcome,
+    HeartbeatExecutionSink, HeartbeatOutcome, HeartbeatPolicy, LaunchHeartbeatExecution,
+    StartHeartbeat, StartHeartbeatResult,
 };
 use pc_realtime::LiveEvent;
 use pc_repos::agent::{AgentRepo, AgentRow};
+use pc_repos::cost::CostRepo;
 use pc_repos::heartbeat::{CreateHeartbeat, HeartbeatRepo, HeartbeatRow};
+use pc_repos::issue::IssueRepo;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -1069,6 +1072,239 @@ async fn create_heartbeat_run(
     Ok((StatusCode::ACCEPTED, Json(run)))
 }
 
+/// Dispatch one queued heartbeat through the same claim and adapter path used
+/// by the explicit wake endpoint. The database update is conditional on the
+/// queued state, so concurrent scheduler ticks can safely race.
+pub async fn dispatch_queued_heartbeat(
+    state: &AppState,
+    queued: HeartbeatRow,
+) -> ApiResult<Option<HeartbeatRow>> {
+    if queued.status != "queued" {
+        return Ok(None);
+    }
+    let agent = AgentRepo::new(&state.db)
+        .get(queued.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {}", queued.agent_id)))?;
+    if matches!(agent.status.as_str(), "paused" | "terminated") {
+        return Ok(None);
+    }
+    let repo = HeartbeatRepo::new(&state.db);
+    let max_concurrent = agent
+        .runtime_config
+        .get("heartbeat")
+        .and_then(Value::as_object)
+        .and_then(|heartbeat| heartbeat.get("maxConcurrentRuns"))
+        .and_then(Value::as_i64)
+        .unwrap_or(20)
+        .clamp(1, 50);
+    if let Some(cap_block) = evaluate_daily_cap_for_agent(&state.db, &agent).await? {
+        if let Some(cancelled) = repo
+            .transition_status(
+                agent.company_id,
+                queued.id,
+                pc_repos::heartbeat::HeartbeatRunStatus::Cancelled,
+                Some(&format!(
+                    "Cancelled because the agent reached a per-day heartbeat budget cap ({}) before adapter invocation",
+                    cap_block.error_code()
+                )),
+                Some(cap_block.error_code()),
+            )
+            .await?
+        {
+            let _ = repo
+                .append_event(
+                    &cancelled,
+                    "run.cancelled",
+                    Some("system"),
+                    Some(json!({
+                        "reason": "daily_cap",
+                        "errorCode": cap_block.error_code(),
+                        "observed": cap_block.observed(),
+                        "limit": cap_block.limit(),
+                    })),
+                )
+                .await;
+            state.realtime.publish(
+                LiveEvent::new("heartbeat.run.cancelled", "heartbeat_run", cancelled.id)
+                    .with_company(cancelled.company_id)
+                    .with_data(json!({
+                        "agentId": cancelled.agent_id,
+                        "status": cancelled.status,
+                        "reason": "daily_cap",
+                        "errorCode": cap_block.error_code(),
+                    })),
+            );
+        }
+        return Ok(None);
+    }
+    let Some(mut run) = repo
+        .claim_for_agent_with_limit(&queued, max_concurrent)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let prompt = queued
+        .context_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.get("reason"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Run your Paperclip heartbeat and report useful progress.")
+        .to_owned();
+    repo.append_event(&run, "run.started", None, None).await?;
+    state.realtime.publish(
+        LiveEvent::new("heartbeat.run.started", "heartbeat_run", run.id)
+            .with_company(run.company_id)
+            .with_data(json!({ "agentId": run.agent_id, "status": run.status })),
+    );
+    run = launch_registered_adapter(state, &agent, &repo, run, prompt).await?;
+    Ok(Some(run))
+}
+
+/// Evaluate the daily run/cost cap for an agent using the same UTC day window
+/// the Node-side `getHeartbeatDailyCapBlock` uses. Returns `Ok(Some(block))`
+/// when the cap is hit, `Ok(None)` when the agent may dispatch, and
+/// `Err(RepoError)` when the underlying query fails.
+pub async fn evaluate_daily_cap_for_agent(
+    db: &pc_db::Db,
+    agent: &AgentRow,
+) -> ApiResult<Option<pc_heartbeat::DailyCapBlock>> {
+    let policy = HeartbeatPolicy::from_runtime_config(&agent.runtime_config);
+    if policy.max_daily_runs.is_none() && policy.max_daily_cost_cents.is_none() {
+        return Ok(None);
+    }
+    let (start, end) = utc_day_window(chrono::Utc::now());
+    let started_today = HeartbeatRepo::new(db)
+        .count_started_today_for_agent(agent.id)
+        .await?;
+    let cost_today_cents = match policy.max_daily_cost_cents {
+        Some(_) => {
+            CostRepo::new(db)
+                .sum_agent_window_cost_cents(pc_repos::cost::AgentCostWindow {
+                    company_id: agent.company_id,
+                    agent_id: agent.id,
+                    window_start: start,
+                    window_end: end,
+                })
+                .await?
+        }
+        None => 0,
+    };
+    Ok(evaluate_daily_cap(&policy, started_today, cost_today_cents))
+}
+
+pub async fn dispatch_due_issue_monitors(state: &AppState, limit: i64) -> ApiResult<usize> {
+    let issue_repo = IssueRepo::new(&state.db);
+    let due = issue_repo.claim_due_monitors(limit).await?;
+    let mut dispatched = 0usize;
+    for issue in due {
+        let Some(agent_id) = issue.assignee_agent_id else {
+            continue;
+        };
+        let run = HeartbeatRepo::new(&state.db)
+            .create(CreateHeartbeat {
+                company_id: issue.company_id,
+                agent_id,
+                invocation_source: "automation",
+                trigger_detail: Some("system"),
+                responsible_user_id: issue.responsible_user_id.as_deref(),
+                wakeup_request_id: None,
+                context_snapshot: Some(json!({
+                    "issueId": issue.id,
+                    "wakeReason": "issue_monitor_due",
+                    "source": "scheduler",
+                })),
+            })
+            .await?;
+        if dispatch_queued_heartbeat(state, run).await?.is_some() {
+            issue_repo.complete_monitor_dispatch(issue.id).await?;
+            dispatched += 1;
+        }
+    }
+    Ok(dispatched)
+}
+
+pub async fn dispatch_due_timer_heartbeats(state: &AppState, limit: usize) -> ApiResult<usize> {
+    let agents = AgentRepo::new(&state.db).list_all().await?;
+    let mut dispatched = 0usize;
+    for agent in agents.into_iter().take(limit) {
+        if agent.status == "paused" || agent.status == "terminated" {
+            continue;
+        }
+        let Some(heartbeat) = agent.runtime_config.get("heartbeat").and_then(Value::as_object)
+        else {
+            continue;
+        };
+        if heartbeat.get("enabled").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let Some(interval_seconds) = heartbeat.get("intervalSec").and_then(Value::as_i64) else {
+            continue;
+        };
+        if interval_seconds <= 0 {
+            continue;
+        }
+        let skip_without_work = heartbeat
+            .get("skipTimerWhenNoActionableWork")
+            .or_else(|| heartbeat.get("requireActionableTimerWork"))
+            .or_else(|| heartbeat.get("issueOnlyTimer"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if skip_without_work
+            && !IssueRepo::new(&state.db)
+                .has_actionable_timer_work(agent.company_id, agent.id)
+                .await?
+        {
+            continue;
+        }
+        let max_daily_runs = [
+            "maxDailyRuns",
+            "dailyRunLimit",
+            "dailyRunCap",
+            "maxRunsPerDay",
+        ]
+        .iter()
+        .find_map(|key| heartbeat.get(*key).and_then(Value::as_i64))
+        .filter(|value| *value >= 0);
+        if let Some(cap) = max_daily_runs {
+            if HeartbeatRepo::new(&state.db)
+                .count_started_today_for_agent(agent.id)
+                .await?
+                >= cap
+            {
+                continue;
+            }
+        }
+        let first_heartbeat = agent.last_heartbeat_at.is_none();
+        let Some(claimed) = AgentRepo::new(&state.db)
+            .claim_due_timer_heartbeat(agent.id, interval_seconds)
+            .await?
+        else {
+            continue;
+        };
+        let run = HeartbeatRepo::new(&state.db)
+            .create(CreateHeartbeat {
+                company_id: claimed.company_id,
+                agent_id: claimed.id,
+                invocation_source: "timer",
+                trigger_detail: Some("system"),
+                responsible_user_id: None,
+                wakeup_request_id: None,
+                context_snapshot: Some(json!({
+                    "source": "scheduler",
+                    "reason": "interval_elapsed",
+                    "timerClaimWasFirstHeartbeat": first_heartbeat,
+                })),
+            })
+            .await?;
+        if dispatch_queued_heartbeat(state, run).await?.is_some() {
+            dispatched += 1;
+        }
+    }
+    Ok(dispatched)
+}
+
 async fn launch_registered_adapter(
     state: &AppState,
     agent: &AgentRow,
@@ -1217,6 +1453,42 @@ impl HeartbeatExecutionSink for SqlHeartbeatExecutionSink {
         )
         .await
         .map_err(|error| error.to_string())?;
+        if status == "failed"
+            && outcome
+                .result
+                .as_ref()
+                .and_then(|result| result.error_code.as_deref())
+                == Some("transient_failure")
+        {
+            let next_attempt = run.scheduled_retry_attempt.saturating_add(1);
+            if let Some(schedule) = pc_heartbeat::compute_bounded_transient_retry_schedule(
+                next_attempt,
+                pc_core::Timestamp::now(),
+                0.5,
+            ) {
+                let retry = repo
+                    .create_scheduled_retry(
+                        &run,
+                        schedule.due_at,
+                        schedule.attempt,
+                        "transient_failure",
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                repo.append_event(
+                    &run,
+                    "run.retry_scheduled",
+                    Some(&format!("scheduled retry {}", retry.id)),
+                    Some(json!({
+                        "retryRunId": retry.id,
+                        "attempt": schedule.attempt,
+                        "dueAt": schedule.due_at,
+                    })),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            }
+        }
         self.realtime.publish(
             LiveEvent::new("heartbeat.run.status", "heartbeat_run", run.id)
                 .with_company(run.company_id)

@@ -1,5 +1,9 @@
 # Paperclip-rs 复刻进度审计（2026-08-03，第五轮）
 
+> 2026-08-04 增量：新增 `docs/06-NODE-RUST-GAP-MATRIX.md`；`secrets` provider registry
+> 已从空返回值改为四项 provider descriptor/health 契约，新增 2 个契约断言。
+> heartbeat scheduler 已接入 server：每秒条件 claim queued/scheduled_retry 并复用 adapter dispatch。
+
 ## 当前门禁
 - ✅ `cargo fmt --all`
 - ✅ `cargo build --workspace` — 0 errors / 9 warnings（pre-existing dead_code）
