@@ -42,3 +42,5 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+
+async-stream = { workspace = true }

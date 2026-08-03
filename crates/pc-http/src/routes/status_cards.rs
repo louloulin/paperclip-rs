@@ -343,14 +343,50 @@ async fn card_query(
 }
 
 async fn card_summary(
-    State(_state): State<AppState>,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
     Json(body): Json<SummaryBody>,
-) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(
-            json!({ "error": "Status-card summary writer is not enabled", "model": body.model, "bodyLength": body.body.len() }),
-        ),
+) -> ApiResult<Json<Value>> {
+    // 校验 card 存在并取 company_id
+    let card: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM status_cards WHERE id = $1")
+        .bind(id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = card else {
+        return Err(ApiError::NotFound(format!("status card {id}")));
+    };
+    let body_len = body.body.chars().count();
+    let summary_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO status_card_updates             (card_id, kind, trigger, changes, model, status, finished_at, change_summary)          VALUES ($1, 'summary', 'manual', $2::jsonb, $3, 'completed', now(), $4)          RETURNING id",
     )
+    .bind(id)
+    .bind(json!([{ "field": "summary", "op": "set", "value": body.body }]))
+    .bind(body.model.as_deref())
+    .bind(format!("manual summary ({body_len} chars)"))
+    .fetch_one(state.db.pool())
+    .await?;
+    // 更新 status_cards.last_generated_at
+    sqlx::query(
+        "UPDATE status_cards SET last_generated_at = now(), updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(state.db.pool())
+    .await?;
+    // 发布 live event
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("status_card.summary.created", "status_card", id)
+            .with_company(company_id)
+            .with_actor("manual")
+            .with_data(
+                json!({ "summaryId": summary_id, "model": body.model, "bodyLength": body_len }),
+            ),
+    );
+    Ok(Json(json!({
+        "cardId": id,
+        "summaryId": summary_id,
+        "companyId": company_id,
+        "model": body.model,
+        "bodyLength": body_len,
+        "status": "completed",
+    })))
 }
