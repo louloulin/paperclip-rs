@@ -24,6 +24,7 @@ pub mod documents;
 pub mod environment_selection;
 pub mod environments;
 pub mod execution_workspaces;
+pub mod feature_flags;
 pub mod file_resources;
 pub mod folders;
 pub mod goals;
@@ -49,11 +50,13 @@ pub mod sidebar_badges;
 pub mod sidebar_preferences;
 pub mod smoke_lab;
 pub mod status_cards;
+pub mod storage;
 pub mod summary_slots;
 pub mod teams_catalog;
 pub mod tool_access;
 pub mod tool_gateway;
 pub mod user_profiles;
+pub mod workflows;
 pub mod workspace_command_authz;
 pub mod workspace_runtime_service_authz;
 
@@ -120,6 +123,10 @@ pub fn router() -> Router<AppState> {
         .merge(org_chart_svg::router())
         .merge(plugin_ui_static::router())
         .merge(secrets::router())
+        .merge(storage::router())
+        .merge(activity::router())
+        .merge(feature_flags::router())
+        .merge(workflows::router())
         .merge(adapters::router())
         .merge(live_events::router())
 }

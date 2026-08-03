@@ -3,15 +3,19 @@ use axum::{
     extract::FromRef,
     http::{header, HeaderMap},
 };
+use pc_activity::{ActivityLog, SharedActivitySink};
 use pc_adapter_api::AdapterRegistry;
 use pc_core::actor_runtime::kameo_api::ActorRef;
 use pc_core::ActorRegistry;
 use pc_db::Db;
+use pc_feature_flags::{FeatureEvaluator, SharedFeatureEvaluator};
 use pc_heartbeat::HeartbeatSupervisor;
 use pc_plugin_host::{PluginRegistry, WorkerPool};
 use pc_realtime::RealtimeHandle;
 use pc_realtime::WsState;
+use pc_storage::StorageRegistry;
 use pc_telemetry::TelemetryOptions;
+use pc_workflow::{RoutineRegistry, WorkflowEngine, WorkflowRegistry};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -37,6 +41,18 @@ pub struct AppState {
     pub plugin_workers: Arc<WorkerPool>,
     /// Plugin metadata registry (`by_id` + `by_key`). Always present; empty by default.
     pub plugin_registry: Arc<PluginRegistry>,
+    /// Workflow definitions registry (routines + pipelines). Always present; empty by default.
+    pub workflow_registry: Arc<WorkflowRegistry>,
+    /// Routine implementations registry. Always present; empty by default.
+    pub routine_registry: Arc<RoutineRegistry>,
+    /// Workflow run engine. Always present; default config.
+    pub workflow_engine: Arc<WorkflowEngine>,
+    /// Object storage registry (bucket -> provider). Always present; empty by default.
+    pub storage: Arc<StorageRegistry>,
+    /// Activity log facade. Always present; uses `InMemoryActivityLog` by default.
+    pub activity: ActivityLog,
+    /// Feature flag evaluator. Always present; empty catalog by default.
+    pub feature_flags: SharedFeatureEvaluator,
 }
 
 #[derive(Clone)]
@@ -72,6 +88,20 @@ impl AppState {
             realtime,
             plugin_workers: Arc::new(WorkerPool::new()),
             plugin_registry: Arc::new(PluginRegistry::new()),
+            workflow_registry: Arc::new(WorkflowRegistry::new()),
+            routine_registry: Arc::new(RoutineRegistry::new()),
+            workflow_engine: Arc::new(WorkflowEngine::new(
+                WorkflowRegistry::new(),
+                RoutineRegistry::new(),
+                pc_workflow::engine::EngineConfig::default(),
+            )),
+            storage: Arc::new(StorageRegistry::new()),
+            activity: ActivityLog::new(SharedActivitySink::new(std::sync::Arc::new(
+                pc_activity::InMemoryActivityLog::new(),
+            ))),
+            feature_flags: SharedFeatureEvaluator::new(std::sync::Arc::new(FeatureEvaluator::new(
+                pc_feature_flags::FeatureCatalog::new(),
+            ))),
         }
     }
 

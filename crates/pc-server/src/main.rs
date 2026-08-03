@@ -188,6 +188,43 @@ async fn main() -> anyhow::Result<()> {
         ws,
         realtime.clone(),
     );
+    // ---- Bootstrap runtime services into AppState ----
+    {
+        use pc_storage::LocalDiskStorage;
+
+        // Register local-disk provider with a default root (under $HOME/.paperclip/storage).
+        let storage_root = dirs::home_dir().map_or_else(
+            || std::path::PathBuf::from(".paperclip-storage"),
+            |h| h.join(".paperclip").join("storage"),
+        );
+        let local = std::sync::Arc::new(LocalDiskStorage::new(storage_root.clone()));
+        if let Err(e) = state.storage.register(local) {
+            tracing::warn!(error = %e, "storage.register(local_disk) failed");
+        }
+        if let Err(e) = state.storage.route_bucket("paperclip-assets", "local_disk") {
+            tracing::warn!(error = %e, "storage.route_bucket failed");
+        }
+        if let Err(e) = state.storage.route_bucket("paperclip-public", "local_disk") {
+            tracing::warn!(error = %e, "storage.route_bucket failed");
+        }
+        tracing::info!(root = %storage_root.display(), "storage: local_disk provider registered");
+
+        // Register a default feature flag so /api/feature-flags has non-empty data on startup.
+        state.feature_flags.catalog().register(
+            pc_feature_flags::FeatureKey::new("pc.ui.dense-mode"),
+            true,
+            None,
+        );
+        state.feature_flags.catalog().register(
+            pc_feature_flags::FeatureKey::new("pc.workflows.auto-archive"),
+            true,
+            Some(pc_feature_flags::rules::RolloutRule {
+                strategy: pc_feature_flags::rules::RolloutStrategy::Percentage { pct: 25 },
+            }),
+        );
+        tracing::info!("feature flags: registered 2 default flags");
+    }
+
     let app: Router = pc_http::routes::router().with_state(state);
 
     let addr = std::net::SocketAddr::from((

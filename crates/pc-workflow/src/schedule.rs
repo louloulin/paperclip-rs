@@ -219,7 +219,9 @@ impl ScheduleSpec {
             ScheduleKind::Cron(expr) => {
                 ParsedCron::parse(expr).ok().and_then(|p| p.next_after(now))
             }
-            ScheduleKind::IntervalSeconds(s) => Some(now + Duration::seconds(*s as i64)),
+            ScheduleKind::IntervalSeconds(s) => {
+                Some(now + Duration::seconds(i64::from(u32::try_from(*s).unwrap_or(u32::MAX))))
+            }
             ScheduleKind::Manual | ScheduleKind::Event { .. } => None,
         }
     }

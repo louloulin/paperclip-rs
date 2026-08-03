@@ -139,12 +139,12 @@ impl StorageProvider for LocalDiskStorage {
                 let p = entry.path();
                 if p.is_dir() {
                     stack.push(p);
-                } else if p.extension().and_then(|e| e.to_str()) == Some("meta") {
-                    continue; // skip sidecar
-                } else if let Ok(rel) = p.strip_prefix(&self.root.join(bucket)) {
-                    let rel_str = rel.to_string_lossy().to_string();
-                    if rel_str.starts_with(prefix) {
-                        out.push(ObjectKey::new(rel_str));
+                } else if p.extension().and_then(|e| e.to_str()) != Some("meta") {
+                    if let Ok(rel) = p.strip_prefix(self.root.join(bucket)) {
+                        let rel_str = rel.to_string_lossy();
+                        if rel_str.starts_with(prefix) {
+                            out.push(ObjectKey::new(&*rel_str));
+                        }
                     }
                 }
             }

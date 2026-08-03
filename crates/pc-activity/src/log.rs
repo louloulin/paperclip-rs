@@ -1,4 +1,4 @@
-//! ActivityLog: handle that wraps any ActivitySink.
+//! `ActivityLog`: handle that wraps any `ActivitySink`.
 //!
 //! Provides ergonomic `emit_*` helpers and async `query` API.
 //! `InMemoryActivityLog` is the default sink for tests + dry-runs.
@@ -118,12 +118,13 @@ impl ActivitySink for InMemoryActivityLog {
                     }
                 }
                 if let Some(actor_id) = filter.actor_id {
-                    let matches = match &e.actor {
-                        ActivityActor::User { id, .. } => *id == actor_id,
-                        ActivityActor::Agent { id, .. } => *id == actor_id,
-                        ActivityActor::Plugin { plugin_id, .. } => *plugin_id == actor_id,
-                        _ => false,
-                    };
+                    let matches = matches!(&e.actor,
+                        ActivityActor::User { id, .. } if *id == actor_id
+                    ) || matches!(&e.actor,
+                        ActivityActor::Agent { id, .. } if *id == actor_id
+                    ) || matches!(&e.actor,
+                        ActivityActor::Plugin { plugin_id, .. } if *plugin_id == actor_id
+                    );
                     if !matches {
                         return false;
                     }
@@ -177,7 +178,7 @@ impl ActivitySink for ChannelActivityLog {
     }
 }
 
-/// Factory: build a default ActivityLog backed by an in-memory sink.
+/// Factory: build a default `ActivityLog` backed by an in-memory sink.
 #[must_use]
 pub fn in_memory_log() -> (ActivityLog, Arc<InMemoryActivityLog>) {
     let sink = Arc::new(InMemoryActivityLog::new());

@@ -59,6 +59,16 @@ impl SharedFeatureEvaluator {
     pub fn new(inner: Arc<FeatureEvaluator>) -> Self {
         Self(inner)
     }
+
+    #[must_use]
+    pub fn catalog(&self) -> &crate::catalog::FeatureCatalog {
+        self.0.catalog()
+    }
+
+    #[must_use]
+    pub fn is_enabled(&self, key: &crate::catalog::FeatureKey, actor_id: uuid::Uuid) -> bool {
+        self.0.is_enabled(key, actor_id)
+    }
 }
 
 #[cfg(test)]

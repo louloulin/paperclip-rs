@@ -1,4 +1,4 @@
-//! Top-level OpenAPI 3.1 document types.
+//! Top-level `OpenAPI` 3.1 document types.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! OpenAPI 3.1 spec builder.
+//! `OpenAPI` 3.1 spec builder.
 //!
 //! 与原 paperclip `server/src/routes/openapi.ts` 等价：
 //! - 生成 `/openapi.json` 与 `/openapi.yaml` 的 JSON/YAML 序列化

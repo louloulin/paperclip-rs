@@ -1,4 +1,4 @@
-//! OpenApiRegistry: register paths + components in any order.
+//! `OpenApiRegistry`: register paths + components in any order.
 
 use crate::path::{HttpMethod, OpenApiPath};
 use crate::schema::SchemaRef;
@@ -49,8 +49,8 @@ impl OpenApiRegistry {
                     .schemas
                     .insert(n, SchemaRef::Named { reference });
             }
-            other => {
-                self.components.schemas.insert(n, other);
+            SchemaRef::Inline { schema: _ } => {
+                self.components.schemas.insert(n, schema);
             }
         }
         self
@@ -96,15 +96,14 @@ mod tests {
                 license: None,
             })
             .server("http://localhost:3100", Some("local".into()));
+        let props = serde_json::json!({
+            "agentId": {"type": "string", "format": "uuid"},
+            "prompt": {"type": "string"},
+        });
+        let required = vec!["agentId".to_string()];
         reg.register_schema(
             "HeartbeatRequest",
-            SchemaRef::object_with(
-                serde_json::json!({
-                    "agentId": {"type": "string", "format": "uuid"},
-                    "prompt": {"type": "string"},
-                }),
-                vec!["agentId".into()],
-            ),
+            SchemaRef::object_with(&props, &required),
         );
         let op = OpenApiPath {
             summary: Some("Trigger agent heartbeat".into()),
@@ -173,8 +172,10 @@ mod tests {
     fn schema_ref_refs_helper() {
         let r = SchemaRef::ref_to("Agent");
         match r {
-            SchemaRef::Named { reference } => assert_eq!(reference, "#/components/schemas/Agent"),
-            _ => panic!("expected Named"),
+            SchemaRef::Named { reference } => {
+                assert_eq!(reference, "#/components/schemas/Agent");
+            }
+            SchemaRef::Inline { .. } => panic!("expected Named"),
         }
     }
 

@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
-//! 对象存储抽象层：本地磁盘 + S3 兼容 provider。
+//! 对象存储抽象层：本地磁盘 + `S3` 兼容 provider。
 //!
 //! 与原 paperclip `server/src/storage/` 等价：
 //! - `StorageProvider` trait 统一接口
 //! - `LocalDiskStorage`：根目录 + 内容寻址（SHA-256）
-//! - `S3Storage`：S3 兼容（stub，返回 NotImplemented 由 host 决定）
+//! - `S3Storage`：`S3` 兼容（stub，返回 `NotImplemented` 由 host 决定）
 //! - `StorageRegistry`：多 provider 并存
 
 pub mod error;

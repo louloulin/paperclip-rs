@@ -108,3 +108,4 @@ audit/.coverage-trend.json
 .codex-cache-*.png
 .codex-cache-*.jpg
 .codex-table-thumb.jpg
+target/

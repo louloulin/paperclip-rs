@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
 
+use sha2::{Digest, Sha256};
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/agents/me/secrets", get(agent_secrets_list))
@@ -606,8 +608,11 @@ async fn rotate_secret(
 
     let new_version = latest_version + 1;
     let material = &body.material;
-    // Compute a simple SHA-256 placeholder (real impl should use actual hash)
-    let value_sha256 = "sha256-placeholder";
+    // Compute SHA-256 of the prepared material bytes for integrity tracking
+    let material_bytes = serde_json::to_vec(material).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(&material_bytes);
+    let value_sha256 = format!("{:x}", hasher.finalize());
 
     // Insert new version
     sqlx::query(

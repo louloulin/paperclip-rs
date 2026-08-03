@@ -101,7 +101,6 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use bytes::Bytes;
-    use futures::stream;
 
     use crate::provider::{ObjectMetadata, ObjectStream};
     use crate::types::{ObjectKey, StorageLocation};

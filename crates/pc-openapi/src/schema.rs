@@ -45,12 +45,12 @@ impl SchemaRef {
     }
 
     #[must_use]
-    pub fn object_with(properties: serde_json::Value, required: Vec<String>) -> Self {
+    pub fn object_with(properties: &serde_json::Value, required: &[String]) -> Self {
         Self::Inline {
             schema: serde_json::json!({
                 "type": "object",
-                "properties": properties,
-                "required": required,
+                "properties": properties.clone(),
+                "required": required.to_vec(),
             }),
         }
     }

@@ -1,18 +1,19 @@
 //! Workflow 状态机：选 runnable → 入队 → 执行 → 终态。
 //!
-//! 与 `pc-heartbeat` 的 PickRunnable/Finalize 模型对称。
+//! 与 `pc-heartbeat` 的 `PickRunnable`/`Finalize` 模型对称。
 //! 设计目标：
-//! - 并发上限（max_concurrent_runs）
+//! - `并发上限`（`max_concurrent_runs`）
 //! - 每个 run 是独立任务，由 tokio 调度
 //! - 状态变更通过 `WorkflowHandle` 调用
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::registry::RoutineRegistry;
@@ -64,23 +65,12 @@ pub struct WorkflowEngine {
     pub routines: RoutineRegistry,
 }
 
+#[derive(Debug)]
 struct EngineInner {
     workflows: crate::registry::WorkflowRegistry,
     config: EngineConfig,
     runs: tokio::sync::RwLock<Vec<WorkflowHandle>>,
     shutdown: CancellationToken,
-}
-
-impl std::fmt::Debug for EngineInner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EngineInner")
-            .field("config", &self.config)
-            .field(
-                "runs_count",
-                &self.runs.try_read().map(|r| r.len()).unwrap_or(0),
-            )
-            .finish()
-    }
 }
 
 impl std::fmt::Debug for WorkflowEngine {
@@ -129,7 +119,7 @@ impl WorkflowEngine {
             trigger,
             started_at: now,
             finished_at: None,
-            steps: Default::default(),
+            steps: HashMap::<Uuid, StepStatus>::default(),
             error: None,
         };
         let _ = run; // we record via handle state only; persistence is host's job
@@ -155,11 +145,10 @@ impl WorkflowEngine {
             *state_clone.lock().await = WorkflowRunState::Queued;
             *state_clone.lock().await = WorkflowRunState::Running;
             let result = execute_workflow(def, &routines, &cfg, cancel).await;
-            *state_clone.lock().await = match result {
-                Ok(()) => WorkflowRunState::Succeeded,
-                Err(RoutineError::Failed(_)) => WorkflowRunState::Failed,
-                Err(RoutineError::Timeout(_)) => WorkflowRunState::Failed,
-                Err(_) => WorkflowRunState::Failed,
+            *state_clone.lock().await = if result.is_ok() {
+                WorkflowRunState::Succeeded
+            } else {
+                WorkflowRunState::Failed
             };
             debug!(run_id = %run_id, "workflow run finished");
         });
@@ -211,7 +200,7 @@ async fn execute_workflow(
             let ctx = RoutineContext::new(Uuid::new_v4(), company_id);
             let result = tokio::select! {
                 r = routine.run(ctx) => r,
-                _ = cancel.cancelled() => {
+                () = cancel.cancelled() => {
                     info!("routine cancelled");
                     return Err(RoutineError::Failed("cancelled".into()));
                 }
@@ -227,7 +216,7 @@ async fn execute_workflow(
             // same Kahn topo-sort as `validate_pipeline_dag`.
             let order = match topo_order(&p.steps) {
                 Ok(o) => o,
-                Err(e) => return Err(RoutineError::Failed(e.to_string())),
+                Err(e) => return Err(RoutineError::Failed(e)),
             };
             for step in order {
                 if cancel.is_cancelled() {
@@ -255,7 +244,7 @@ fn topo_order(
     }
     // Edges dep -> s: indeg[s] += 1 for each dep; out[dep] += [s].
     let mut indeg: HashMap<Uuid, usize> = ids.keys().map(|k| (*k, 0)).collect();
-    let mut out: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    let mut out: HashMap<Uuid, Vec<Uuid>> = HashMap::default();
     for s in steps {
         for d in &s.depends_on {
             *indeg.get_mut(&s.id).expect("step in ids") += 1;
@@ -287,7 +276,6 @@ fn topo_order(
     Ok(order)
 }
 
-// Suppress unused warning for StepStatus
 #[allow(dead_code)]
 fn _ensure_step_status_used(_: StepStatus) {}
 
@@ -378,6 +366,7 @@ mod tests {
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 
+    #[allow(clippy::items_after_statements)]
     #[tokio::test]
     async fn pipeline_runs_steps_in_topological_order() {
         let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));

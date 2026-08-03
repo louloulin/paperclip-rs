@@ -18,8 +18,13 @@ pc-heartbeat = { path = "../pc-heartbeat" }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-auth = { path = "../pc-auth" }
 pc-repos = { path = "../pc-repos" }
+pc-secrets = { path = "../pc-secrets" }
 pc-plugin-host = { path = "../pc-plugin-host" }
 pc-plugin-protocol = { path = "../pc-plugin-protocol" }
+pc-workflow = { path = "../pc-workflow" }
+pc-storage = { path = "../pc-storage" }
+pc-activity = { path = "../pc-activity" }
+pc-feature-flags = { path = "../pc-feature-flags" }
 axum = { workspace = true }
 sqlx = { workspace = true }
 tower = { workspace = true }
@@ -30,6 +35,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+bytes = "1"
+base64 = "0.22"
 sha2 = "0.10"
 chrono = { workspace = true }
 tracing = { workspace = true }
