@@ -21,6 +21,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RegisterBody {
     key: String,
     enabled: bool,
@@ -73,6 +74,7 @@ async fn register_flag(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EvalBody {
     key: String,
     actor_id: Uuid,
@@ -92,6 +94,7 @@ async fn evaluate_flag(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EnableBody {
     enabled: bool,
 }

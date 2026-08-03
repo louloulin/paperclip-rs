@@ -17,10 +17,9 @@ use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/storage/:bucket/objects", post(put_object))
         .route(
             "/api/storage/:bucket/objects/*key",
-            get(get_object).delete(delete_object),
+            post(put_object).get(get_object).delete(delete_object),
         )
         .route("/api/storage/:bucket/list", post(list_objects))
 }

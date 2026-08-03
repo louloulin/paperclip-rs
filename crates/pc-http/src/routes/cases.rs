@@ -80,13 +80,11 @@ async fn create(
     state
         .realtime
         .publish(LiveEvent::new("case.created", "case", row.id).with_company(row.company_id));
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
+    let response = serde_json::json!({
             "id": row.id, "company_id": row.company_id, "title": row.title,
-            "case_type": row.case_type, "status": row.status
-        })),
-    ))
+            "case_type": row.case_type, "status": row.status, "identifier": row.identifier
+        });
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 #[derive(Debug, Deserialize)]

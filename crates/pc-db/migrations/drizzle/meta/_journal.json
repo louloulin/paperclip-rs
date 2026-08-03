@@ -1373,6 +1373,34 @@
       "when": 1785175200000,
       "tag": "0197_decisions_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1785175201000,
+      "tag": "0199_team_installs",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1785175202000,
+      "tag": "0200_project_artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1785175203000,
+      "tag": "0201_issue_tree_holds_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1785175204000,
+      "tag": "0202_company_assets",
+      "breakpoints": true
     }
   ]
 }

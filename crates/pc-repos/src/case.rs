@@ -75,10 +75,17 @@ impl<'a> CaseRepo<'a> {
         project_id: Option<Uuid>,
         summary: Option<&str>,
     ) -> sqlx::Result<CaseRow> {
-        // case_number + identifier 由 trigger / 后续步骤生成；此处先放占位
+        // 用 (company_id, max(case_number)+1) 与 CASE-<uuid> 保证唯一约束
+        let next_number: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(case_number), 0) + 1 FROM cases WHERE company_id = $1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        let identifier = format!("CASE-{}", Uuid::new_v4().simple());
         let sql = format!(
             "INSERT INTO cases (company_id, case_type, title, project_id, summary, case_number, identifier) \
-             VALUES ($1,$2,$3,$4,$5,0,'') RETURNING {COLS}"
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING {COLS}"
         );
         sqlx::query_as::<_, CaseRow>(&sql)
             .bind(company_id)
@@ -86,6 +93,8 @@ impl<'a> CaseRepo<'a> {
             .bind(title)
             .bind(project_id)
             .bind(summary)
+            .bind(next_number)
+            .bind(&identifier)
             .fetch_one(self.db.pool())
             .await
     }

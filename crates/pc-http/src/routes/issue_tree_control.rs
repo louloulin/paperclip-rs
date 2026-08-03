@@ -76,14 +76,14 @@ async fn tree_control_state(
 ) -> ApiResult<Json<Value>> {
     let pool = state.db.pool();
     let hold_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM issue_tree_holds WHERE issue_id = $1 AND released_at IS NULL",
+        "SELECT COUNT(*)::bigint FROM issue_tree_holds WHERE root_issue_id = $1 AND released_at IS NULL",
     )
     .bind(id)
     .fetch_one(pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     let last: Option<pc_core::Timestamp> =
-        sqlx::query_scalar("SELECT MAX(created_at) FROM issue_tree_holds WHERE issue_id = $1")
+        sqlx::query_scalar("SELECT MAX(created_at) FROM issue_tree_holds WHERE root_issue_id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await
@@ -102,7 +102,7 @@ async fn list_tree_holds(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let rows: Vec<(Uuid, String, Option<String>, Option<String>, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE issue_id = $1 ORDER BY created_at DESC",
+        "SELECT id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE root_issue_id = $1 ORDER BY created_at DESC",
     )
     .bind(id)
     .fetch_all(state.db.pool())
@@ -134,13 +134,13 @@ async fn get_tree_hold(
     let hold_uuid =
         Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
     let row: Option<(Uuid, Uuid, String, Option<String>, Option<String>, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, issue_id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE id = $1",
+        "SELECT id, root_issue_id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE id = $1",
     )
     .bind(hold_uuid)
     .fetch_optional(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let Some((id, issue_id, scope, reason, by, created, released)) = row else {
+    let Some((id, root_issue_id, scope, reason, by, created, released)) = row else {
         return Err(ApiError::NotFound(format!("tree hold {hold_id}")));
     };
     let status = if released.is_some() {
@@ -150,7 +150,7 @@ async fn get_tree_hold(
     };
     Ok(Json(json!({
         "id": id,
-        "issueId": issue_id,
+        "issueId": root_issue_id,
         "scope": scope,
         "reason": reason,
         "createdBy": by,
@@ -167,9 +167,18 @@ async fn create_tree_hold(
 ) -> ApiResult<impl IntoResponse> {
     let scope = body.scope.clone().unwrap_or_else(|| "subtree".to_owned());
     let reason = body.reason.clone();
-    let row: (Uuid, pc_core::Timestamp) = sqlx::query_as(
-        "INSERT INTO issue_tree_holds (issue_id, scope, reason, created_by_user_id)          VALUES ($1, $2, $3, 'local-board') RETURNING id, created_at",
+    let issue_company: Option<Uuid> = sqlx::query_scalar(
+        "SELECT company_id FROM issues WHERE id = $1",
     )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let issue_company = issue_company.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let row: (Uuid, pc_core::Timestamp) = sqlx::query_as(
+        "INSERT INTO issue_tree_holds (company_id, root_issue_id, scope, mode, status, reason, created_by_user_id)          VALUES ($1, $2, $3, 'merge', 'active', $4, 'local-board') RETURNING id, created_at",
+    )
+    .bind(issue_company)
     .bind(id)
     .bind(&scope)
     .bind(&reason)

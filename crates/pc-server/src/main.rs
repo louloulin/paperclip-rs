@@ -288,8 +288,32 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let app: Router =
-        pc_http::middleware::apply_default_middleware(pc_http::routes::router()).with_state(state);
+    let api_router = pc_http::middleware::apply_default_middleware(pc_http::routes::router())
+        .with_state(state.clone());
+    // Look for a UI dist bundle to serve alongside the API.
+    let ui_dist_path: Option<std::path::PathBuf> = std::env::var("UI_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.join("index.html").exists())
+        .or_else(|| {
+            let candidates = [
+                std::path::PathBuf::from("ui/dist"),
+                std::path::PathBuf::from("../ui/dist"),
+            ];
+            candidates.into_iter().find(|p| p.join("index.html").exists())
+        });
+
+    let app: Router = if let Some(ui_path) = ui_dist_path.clone() {
+        tracing::info!(path = %ui_path.display(), "serving UI bundle from dist");
+        let index_html = ui_path.join("index.html");
+        api_router
+            .fallback_service(
+                tower_http::services::ServeDir::new(ui_path.clone())
+                    .fallback(tower_http::services::ServeFile::new(index_html)),
+            )
+    } else {
+        api_router
+    };
 
     let addr = std::net::SocketAddr::from((
         cfg.server.host.parse::<std::net::IpAddr>()?,

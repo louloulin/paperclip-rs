@@ -60,7 +60,7 @@ async-trait = "0.1"
 # HTTP / Web
 axum = { version = "0.7", features = ["macros", "ws"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit", "fs"] }
 hyper = "1"
 
 # 数据库

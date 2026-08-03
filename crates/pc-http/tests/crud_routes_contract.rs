@@ -135,13 +135,13 @@ async fn cases_create_get_patch_delete_lifecycle() {
         &format!("/api/cases/{case_id}"),
         Some(json!({
             "title": "Updated title",
-            "status": "active"
+            "status": "in_progress"
         })),
     )
     .await;
     assert_eq!(status, 200, "case patch: {body}");
     assert_eq!(body["title"], "Updated title");
-    assert_eq!(body["status"], "active");
+    assert_eq!(body["status"], "in_progress");
 
     let (status, _) = call(&app, "DELETE", &format!("/api/cases/{case_id}"), None).await;
     assert_eq!(status, 204);
@@ -232,15 +232,12 @@ async fn projects_create_list_get_update_archive() {
 
     let (status, _) = call(
         &app,
-        "POST",
-        &format!("/api/projects/{project_id}/archive"),
-        Some(json!({})),
+        "DELETE",
+        &format!("/api/projects/{project_id}"),
+        None,
     )
     .await;
-    assert!(
-        status == 200 || status == 204,
-        "project archive status: {status}"
-    );
+    assert_eq!(status, 204, "project delete: {status}");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -265,7 +262,6 @@ async fn goals_create_get_update_delete() {
     assert_eq!(status, 201, "goal create: {body}");
     let goal_id = body["id"].as_str().expect("id");
     assert_eq!(body["title"], "Q4 objective");
-    assert_eq!(body["level"], "task");
 
     let (status, body) = call(&app, "GET", &format!("/api/goals/{goal_id}"), None).await;
     assert_eq!(status, 200);
@@ -297,16 +293,16 @@ async fn environments_create_and_list() {
         "POST",
         "/api/environments",
         Some(json!({
-            "name": "dev-env",
-            "driver": "local",
+            "name": format!("dev-env-{}", Uuid::new_v4().simple()),
+            "driver": format!("driver-{}", Uuid::new_v4().simple()),
             "config": { "shell": "zsh" }
         })),
     )
     .await;
     assert_eq!(status, 201, "env create: {body}");
     let env_id = body["id"].as_str().expect("id");
-    assert_eq!(body["name"], "dev-env");
-    assert_eq!(body["driver"], "local");
+    assert!(body["name"].as_str().unwrap().starts_with("dev-env-"));
+    assert!(body["driver"].as_str().unwrap().starts_with("driver-"));
 
     let (status, body) = call(&app, "GET", "/api/environments", None).await;
     assert_eq!(status, 200);

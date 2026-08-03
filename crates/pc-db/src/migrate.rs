@@ -178,12 +178,12 @@ mod tests {
     #[test]
     fn migration_manifest_matches_embedded_files() {
         let ordered = ordered_migrations().unwrap();
-        assert_eq!(ordered.len(), 196);
+        assert_eq!(ordered.len(), 200);
         assert_eq!(
             ordered.first().unwrap().name,
             "0000_mature_masked_marvel.sql"
         );
-        assert_eq!(ordered.last().unwrap().name, "0197_decisions_v1.sql");
+        assert_eq!(ordered.last().unwrap().name, "0201_issue_tree_holds_scope.sql");
     }
 
     #[test]
