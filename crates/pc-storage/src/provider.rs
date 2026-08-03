@@ -19,9 +19,8 @@ pub struct ObjectMetadata {
 }
 
 /// 内容流（本地磁盘 provider 直接是字节；S3 可走 multipart）。
-pub type ObjectStream = std::pin::Pin<
-    Box<dyn futures::Stream<Item = Result<Bytes, StorageError>> + Send + Sync>,
->;
+pub type ObjectStream =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, StorageError>> + Send + Sync>>;
 
 #[async_trait]
 pub trait StorageProvider: Send + Sync + std::fmt::Debug {
@@ -51,11 +50,7 @@ pub trait StorageProvider: Send + Sync + std::fmt::Debug {
     async fn delete_object(&self, location: &StorageLocation) -> StorageResult<()>;
 
     /// 列出 bucket 下前缀（用于回归测试 / 清理）。
-    async fn list_prefix(
-        &self,
-        bucket: &str,
-        prefix: &str,
-    ) -> StorageResult<Vec<ObjectKey>>;
+    async fn list_prefix(&self, bucket: &str, prefix: &str) -> StorageResult<Vec<ObjectKey>>;
 
     /// 生成临时下载 URL（如不支持 → `StorageError::NotImplemented`）。
     async fn presign_get(

@@ -1,6 +1,6 @@
 //! 调度类型：支持 cron 表达式解析（5 字段标准 cron）+ 间隔 + 手动/事件触发。
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -33,20 +33,29 @@ pub struct ScheduleSpec {
 impl ScheduleSpec {
     #[must_use]
     pub fn cron(expr: impl Into<String>) -> Self {
-        Self { kind: ScheduleKind::Cron(expr.into()) }
+        Self {
+            kind: ScheduleKind::Cron(expr.into()),
+        }
     }
     #[must_use]
     pub fn interval_secs(secs: u64) -> Self {
-        Self { kind: ScheduleKind::IntervalSeconds(secs) }
+        Self {
+            kind: ScheduleKind::IntervalSeconds(secs),
+        }
     }
     #[must_use]
     pub fn manual() -> Self {
-        Self { kind: ScheduleKind::Manual }
+        Self {
+            kind: ScheduleKind::Manual,
+        }
     }
     #[must_use]
     pub fn event(kind: impl Into<String>, selector: impl Into<String>) -> Self {
         Self {
-            kind: ScheduleKind::Event { kind: kind.into(), selector: selector.into() },
+            kind: ScheduleKind::Event {
+                kind: kind.into(),
+                selector: selector.into(),
+            },
         }
     }
 }
@@ -124,7 +133,7 @@ fn parse_range(s: &str, min: u32, max: u32) -> Result<(u32, u32), CronError> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedCron {
     minute: CronField,
     hour: CronField,
@@ -148,7 +157,13 @@ impl ParsedCron {
         let dom = CronField::parse(parts[2], 1, 31)?;
         let month = CronField::parse(parts[3], 1, 12)?;
         let dow = CronField::parse(parts[4], 0, 6)?;
-        Ok(Self { minute, hour, dom, month, dow })
+        Ok(Self {
+            minute,
+            hour,
+            dom,
+            month,
+            dow,
+        })
     }
 
     fn matches(&self, t: DateTime<Utc>) -> bool {
@@ -230,7 +245,10 @@ mod tests {
 
     #[test]
     fn parse_cron_rejects_wrong_field_count() {
-        assert!(matches!(ParsedCron::parse("* * * *"), Err(CronError::FieldCount(4))));
+        assert!(matches!(
+            ParsedCron::parse("* * * *"),
+            Err(CronError::FieldCount(4))
+        ));
     }
 
     #[test]
@@ -241,7 +259,10 @@ mod tests {
 
     #[test]
     fn schedule_spec_parsing() {
-        assert_eq!("manual".parse::<ScheduleSpec>().unwrap(), ScheduleSpec::manual());
+        assert_eq!(
+            "manual".parse::<ScheduleSpec>().unwrap(),
+            ScheduleSpec::manual()
+        );
         let s = "every:30".parse::<ScheduleSpec>().unwrap();
         assert_eq!(s, ScheduleSpec::interval_secs(30));
         let s = "0 9 * * 1-5".parse::<ScheduleSpec>().unwrap();

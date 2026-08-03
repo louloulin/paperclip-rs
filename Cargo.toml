@@ -32,6 +32,10 @@ members = [
     "crates/pc-server",
     "crates/pc-cli",
     "crates/pc-storage",
+    "crates/pc-workflow",
+    "crates/pc-activity",
+    "crates/pc-openapi",
+    "crates/pc-feature-flags",
 ]
 
 [workspace.package]

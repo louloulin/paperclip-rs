@@ -92,11 +92,7 @@ impl StorageProvider for S3Storage {
         ))
     }
 
-    async fn list_prefix(
-        &self,
-        _bucket: &str,
-        _prefix: &str,
-    ) -> StorageResult<Vec<ObjectKey>> {
+    async fn list_prefix(&self, _bucket: &str, _prefix: &str) -> StorageResult<Vec<ObjectKey>> {
         self.require_configured()?;
         Err(StorageError::NotImplemented(
             "S3 list_prefix: requires aws-sdk-s3".into(),
@@ -132,10 +128,7 @@ mod tests {
             bucket: "x".into(),
             key: ObjectKey::new("k"),
         };
-        let err = s3
-            .get_object(&target)
-            .await
-            .unwrap_err();
+        let err = s3.get_object(&target).await.unwrap_err();
         assert!(matches!(err, StorageError::NotImplemented(_)));
     }
 }

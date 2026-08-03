@@ -23,16 +23,18 @@ pub enum RegistryError {
     DagInvalid(String),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RoutineRegistry {
-    inner: RwLock<HashMap<String, Arc<dyn Routine>>>,
+    inner: Arc<RwLock<HashMap<String, Arc<dyn Routine>>>>,
 }
 
 impl std::fmt::Debug for RoutineRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let inner = self.inner.read().expect("routine registry poisoned");
         let keys: Vec<&String> = inner.keys().collect();
-        f.debug_struct("RoutineRegistry").field("routines", &keys).finish()
+        f.debug_struct("RoutineRegistry")
+            .field("routines", &keys)
+            .finish()
     }
 }
 
@@ -79,16 +81,18 @@ impl RoutineRegistry {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct WorkflowRegistry {
-    inner: RwLock<HashMap<String, WorkflowDefinition>>,
+    inner: Arc<RwLock<HashMap<String, WorkflowDefinition>>>,
 }
 
 impl std::fmt::Debug for WorkflowRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let inner = self.inner.read().expect("workflow registry poisoned");
         let keys: Vec<&String> = inner.keys().collect();
-        f.debug_struct("WorkflowRegistry").field("workflows", &keys).finish()
+        f.debug_struct("WorkflowRegistry")
+            .field("workflows", &keys)
+            .finish()
     }
 }
 
@@ -98,10 +102,7 @@ impl WorkflowRegistry {
         Self::default()
     }
 
-    pub fn register(
-        &self,
-        def: WorkflowDefinition,
-    ) -> Result<(), RegistryError> {
+    pub fn register(&self, def: WorkflowDefinition) -> Result<(), RegistryError> {
         let key = def.key().to_string();
         if let WorkflowDefinition::Pipeline(p) = &def {
             // Validate DAG: no cycles, no unknown deps
@@ -146,9 +147,7 @@ impl WorkflowRegistry {
 }
 
 /// Validates a pipeline DAG: no cycles, no self-deps.
-pub fn validate_pipeline_dag(
-    steps: &[crate::types::PipelineStep],
-) -> Result<(), RegistryError> {
+pub fn validate_pipeline_dag(steps: &[crate::types::PipelineStep]) -> Result<(), RegistryError> {
     let mut ids: HashMap<Uuid, &crate::types::PipelineStep> = HashMap::new();
     for s in steps {
         if ids.contains_key(&s.id) {
@@ -176,11 +175,13 @@ pub fn validate_pipeline_dag(
         }
     }
     // Cycle detection via Kahn's algorithm.
+    // Edges are dep -> s (dep must come before s), so each dep edge increments indeg[s].
     let mut indeg: HashMap<Uuid, usize> = ids.keys().map(|k| (*k, 0)).collect();
+    let mut out: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
     for s in steps {
         for d in &s.depends_on {
-            indeg.entry(*d).and_modify(|v| *v += 1);
-            // Note: edge goes from dep -> s, so we don't increment s.indeg
+            *indeg.get_mut(&s.id).expect("step in ids") += 1;
+            out.entry(*d).or_default().push(s.id);
         }
     }
     let mut queue: std::collections::VecDeque<Uuid> = indeg
@@ -191,15 +192,11 @@ pub fn validate_pipeline_dag(
     let mut popped = 0usize;
     while let Some(k) = queue.pop_front() {
         popped += 1;
-        if let Some(s) = ids.get(&k) {
-            for s2 in steps {
-                if s2.depends_on.contains(&k) {
-                    if let Some(v) = indeg.get_mut(&s2.id) {
-                        *v -= 1;
-                        if *v == 0 {
-                            queue.push_back(s2.id);
-                        }
-                    }
+        for next in out.get(&k).cloned().unwrap_or_default() {
+            if let Some(v) = indeg.get_mut(&next) {
+                *v -= 1;
+                if *v == 0 {
+                    queue.push_back(next);
                 }
             }
         }
@@ -210,6 +207,7 @@ pub fn validate_pipeline_dag(
     Ok(())
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

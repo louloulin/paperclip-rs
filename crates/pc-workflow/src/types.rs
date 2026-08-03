@@ -25,7 +25,22 @@ pub enum TriggerSpec {
 impl TriggerSpec {
     #[must_use]
     pub fn cron(expr: impl Into<String>) -> Self {
-        Self::Cron { expression: expr.into() }
+        Self::Cron {
+            expression: expr.into(),
+        }
+    }
+    #[must_use]
+    pub fn manual(actor: impl Into<String>) -> Self {
+        Self::Manual {
+            actor: actor.into(),
+        }
+    }
+    #[must_use]
+    pub fn event(kind: impl Into<String>, selector: impl Into<String>) -> Self {
+        Self::Event {
+            kind: kind.into(),
+            selector: selector.into(),
+        }
     }
     #[must_use]
     pub fn kind_label(&self) -> &'static str {
@@ -141,10 +156,7 @@ pub enum WorkflowRunState {
 impl WorkflowRunState {
     #[must_use]
     pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Succeeded | Self::Failed | Self::Cancelled
-        )
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
     }
 }
 

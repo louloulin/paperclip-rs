@@ -34,7 +34,9 @@ impl LocalDiskStorage {
             return Err(StorageError::Invalid(format!("invalid bucket: {bucket}")));
         }
         if key.contains("..") {
-            return Err(StorageError::Invalid(format!("invalid key (path traversal): {key}")));
+            return Err(StorageError::Invalid(format!(
+                "invalid key (path traversal): {key}"
+            )));
         }
         Ok(self.root.join(bucket).join(key))
     }
@@ -99,13 +101,9 @@ impl StorageProvider for LocalDiskStorage {
         let path = self.resolve(&location.bucket, location.key.as_str())?;
         match fs::read(&path).await {
             Ok(b) => Ok(Bytes::from(b)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err(StorageError::NotFound(format!(
-                    "{}/{}",
-                    location.bucket,
-                    location.key
-                )))
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StorageError::NotFound(
+                format!("{}/{}", location.bucket, location.key),
+            )),
             Err(e) => Err(e.into()),
         }
     }
@@ -128,11 +126,7 @@ impl StorageProvider for LocalDiskStorage {
         }
     }
 
-    async fn list_prefix(
-        &self,
-        bucket: &str,
-        prefix: &str,
-    ) -> StorageResult<Vec<ObjectKey>> {
+    async fn list_prefix(&self, bucket: &str, prefix: &str) -> StorageResult<Vec<ObjectKey>> {
         let base = self.resolve(bucket, "")?;
         let mut out = Vec::new();
         if !base.exists() {

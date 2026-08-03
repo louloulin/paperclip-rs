@@ -31,7 +31,9 @@ impl std::fmt::Debug for RegistryInner {
 impl std::fmt::Debug for StorageRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let inner = self.inner.read().expect("storage registry poisoned");
-        f.debug_struct("StorageRegistry").field("inner", &*inner).finish()
+        f.debug_struct("StorageRegistry")
+            .field("inner", &*inner)
+            .finish()
     }
 }
 
@@ -41,10 +43,7 @@ impl StorageRegistry {
         Self::default()
     }
 
-    pub fn register(
-        &self,
-        provider: Arc<dyn StorageProvider>,
-    ) -> Result<(), StorageError> {
+    pub fn register(&self, provider: Arc<dyn StorageProvider>) -> Result<(), StorageError> {
         let name = provider.name();
         let mut inner = self.inner.write().expect("storage registry poisoned");
         if inner.providers.contains_key(name) {
@@ -81,16 +80,10 @@ impl StorageRegistry {
             .get(bucket)
             .copied()
             .or_else(|| inner.providers.keys().next().copied())
-            .ok_or_else(|| StorageError::ProviderUnavailable(
-                "no providers registered".into(),
-            ))?;
-        let provider = inner
-            .providers
-            .get(provider_name)
-            .cloned()
-            .ok_or_else(|| StorageError::ProviderUnavailable(
-                format!("provider {provider_name} not found"),
-            ))?;
+            .ok_or_else(|| StorageError::ProviderUnavailable("no providers registered".into()))?;
+        let provider = inner.providers.get(provider_name).cloned().ok_or_else(|| {
+            StorageError::ProviderUnavailable(format!("provider {provider_name} not found"))
+        })?;
         Ok(provider)
     }
 

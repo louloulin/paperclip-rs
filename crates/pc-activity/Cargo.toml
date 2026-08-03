@@ -1,0 +1,22 @@
+[package]
+name = "pc-activity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Activity log: structured event recording for audit + analytics"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

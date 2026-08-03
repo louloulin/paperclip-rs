@@ -48,7 +48,10 @@ pub struct RoutineOutput {
 impl RoutineOutput {
     #[must_use]
     pub fn ok(result: Value) -> Self {
-        Self { result, metadata: Value::Null }
+        Self {
+            result,
+            metadata: Value::Null,
+        }
     }
 }
 
