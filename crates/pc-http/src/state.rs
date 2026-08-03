@@ -8,6 +8,7 @@ use pc_core::actor_runtime::kameo_api::ActorRef;
 use pc_core::ActorRegistry;
 use pc_db::Db;
 use pc_heartbeat::HeartbeatSupervisor;
+use pc_plugin_host::{PluginRegistry, WorkerPool};
 use pc_realtime::RealtimeHandle;
 use pc_realtime::WsState;
 use pc_telemetry::TelemetryOptions;
@@ -32,6 +33,10 @@ pub struct AppState {
     pub telemetry: Arc<TelemetryOptions>,
     pub ws: Arc<WsState>,
     pub realtime: RealtimeHandle,
+    /// Plugin worker process pool. Always present; empty by default.
+    pub plugin_workers: Arc<WorkerPool>,
+    /// Plugin metadata registry (`by_id` + `by_key`). Always present; empty by default.
+    pub plugin_registry: Arc<PluginRegistry>,
 }
 
 #[derive(Clone)]
@@ -65,7 +70,21 @@ impl AppState {
             telemetry: Arc::new(telemetry),
             ws,
             realtime,
+            plugin_workers: Arc::new(WorkerPool::new()),
+            plugin_registry: Arc::new(PluginRegistry::new()),
         }
+    }
+
+    /// Inject pre-populated plugin workers / registry (used by bootstrap flows).
+    #[must_use]
+    pub fn with_plugin_runtime(
+        mut self,
+        workers: Arc<WorkerPool>,
+        registry: Arc<PluginRegistry>,
+    ) -> Self {
+        self.plugin_workers = workers;
+        self.plugin_registry = registry;
+        self
     }
 }
 

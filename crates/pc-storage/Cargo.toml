@@ -1,0 +1,26 @@
+[package]
+name = "pc-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Object storage abstraction: local filesystem and S3-compatible providers"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = "1"
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = "0.1"
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"

@@ -65,6 +65,18 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+impl std::fmt::Display for JsonRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JSON-RPC error {}: {}", self.code, self.message)?;
+        if let Some(data) = &self.data {
+            write!(f, " (data: {data})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for JsonRpcError {}
+
 impl JsonRpcError {
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
@@ -189,5 +201,25 @@ mod tests {
         assert_eq!(JsonRpcErrorCode::InvalidParams.as_i32(), -32602);
         assert_eq!(JsonRpcErrorCode::InternalError.as_i32(), -32603);
         assert_eq!(JsonRpcErrorCode::ServerError.as_i32(), -32000);
+    }
+
+    #[test]
+    fn jsonrpc_error_display_basic() {
+        let err = JsonRpcError::new(-32601, "method not found");
+        let s = err.to_string();
+        assert!(s.contains("JSON-RPC error"));
+        assert!(s.contains("-32601"));
+        assert!(s.contains("method not found"));
+        assert!(!s.contains("data:"), "no data => no suffix");
+    }
+
+    #[test]
+    fn jsonrpc_error_display_with_data() {
+        let mut err = JsonRpcError::new(-32602, "invalid params");
+        err.data = Some(serde_json::json!({"field": "tool"}));
+        let s = err.to_string();
+        assert!(s.contains("invalid params"));
+        assert!(s.contains("data:"));
+        assert!(s.contains("tool"));
     }
 }

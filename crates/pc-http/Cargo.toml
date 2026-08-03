@@ -18,6 +18,8 @@ pc-heartbeat = { path = "../pc-heartbeat" }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-auth = { path = "../pc-auth" }
 pc-repos = { path = "../pc-repos" }
+pc-plugin-host = { path = "../pc-plugin-host" }
+pc-plugin-protocol = { path = "../pc-plugin-protocol" }
 axum = { workspace = true }
 sqlx = { workspace = true }
 tower = { workspace = true }

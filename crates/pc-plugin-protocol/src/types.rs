@@ -89,6 +89,21 @@ pub struct PluginJobContext {
     pub metadata: Value,
 }
 
+impl Default for PluginJobContext {
+    fn default() -> Self {
+        Self {
+            company_id: Uuid::nil(),
+            agent_id: None,
+            issue_id: None,
+            run_id: None,
+            heartbeat_run_id: None,
+            config: serde_json::Value::Null,
+            secrets: serde_json::Value::Null,
+            metadata: serde_json::Value::Null,
+        }
+    }
+}
+
 /// onEvent 参数。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,5 +227,18 @@ mod tests {
         assert!(json.contains("\"event\":\"issue.created\""));
         assert!(!json.contains("companyId"));
         assert!(!json.contains("data"));
+    }
+
+    #[test]
+    fn plugin_job_context_default_is_empty() {
+        let ctx = PluginJobContext::default();
+        assert_eq!(ctx.company_id, Uuid::nil());
+        assert!(ctx.agent_id.is_none());
+        assert!(ctx.issue_id.is_none());
+        assert!(ctx.run_id.is_none());
+        assert!(ctx.heartbeat_run_id.is_none());
+        assert_eq!(ctx.config, serde_json::Value::Null);
+        assert_eq!(ctx.secrets, serde_json::Value::Null);
+        assert_eq!(ctx.metadata, serde_json::Value::Null);
     }
 }

@@ -14,9 +14,8 @@ use uuid::Uuid;
 
 use pc_plugin_protocol::{JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse};
 
-/// 待处理 RPC 调用的 HashMap 别名。
-pub type PendingMap =
-    Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, JsonRpcError>>>>>;
+/// 待处理 RPC 调用的 `HashMap` 别名。
+pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, JsonRpcError>>>>>;
 
 /// 待处理的 RPC 调用：调用方通过 `oneshot` 等响应。
 pub struct PendingCall {

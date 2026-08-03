@@ -1,0 +1,25 @@
+[package]
+name = "pc-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip CLI (`paperclipai`)"
+
+[[bin]]
+name = "paperclipai"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tracing = "0.1"
+tracing-subscriber = { workspace = true }

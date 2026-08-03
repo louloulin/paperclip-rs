@@ -30,6 +30,8 @@ members = [
     "crates/pc-plugin-host",
     "crates/pc-secrets",
     "crates/pc-server",
+    "crates/pc-cli",
+    "crates/pc-storage",
 ]
 
 [workspace.package]

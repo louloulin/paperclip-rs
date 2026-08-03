@@ -13,9 +13,12 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tokio::fs;
 use uuid::Uuid;
 
+use pc_plugin_host::WorkerHandle;
+use pc_plugin_protocol::{ExecuteToolParams, RunJobParams};
 use pc_realtime::LiveEvent;
 use pc_repos::plugin::{
     PluginConfigRow, PluginJobRow, PluginJobRunRow, PluginLogRow, PluginRegistration, PluginRepo,
@@ -216,13 +219,17 @@ async fn ui_contributions(
 }
 
 async fn list_plugin_tools(
-    State(_state): State<AppState>,
-    headers: HeaderMap,
+    State(state): State<AppState>,
+    _headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
-    let _ = headers;
+    // Tool listing requires aggregating across every ready worker. Until
+    // WorkerHandle exposes a listTools JSON-RPC method, return 501.
+    let _ = state.plugin_workers.len().await;
     (
         StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Plugin tool dispatch is not enabled" })),
+        Json(json!({
+            "error": "plugin tool discovery requires WorkerHandle::list_tools (not yet implemented)",
+        })),
     )
 }
 
@@ -235,15 +242,36 @@ struct ToolExecBody {
 }
 
 async fn execute_plugin_tool(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
+    Path(plugin_id): Path<String>,
     Json(body): Json<ToolExecBody>,
 ) -> impl axum::response::IntoResponse {
-    let _ = (headers, body.tool, body.parameters, body.run_context);
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Plugin tool dispatch is not enabled" })),
-    )
+    let _ = headers;
+    let worker = match resolve_worker_or_501(&state, &plugin_id).await {
+        Ok(w) => w,
+        Err(resp) => return resp.into_response(),
+    };
+    let Some(tool) = body.tool else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "missing required field: tool"})),
+        )
+            .into_response();
+    };
+    let params = ExecuteToolParams {
+        tool,
+        args: body.parameters.unwrap_or(Value::Null),
+        context: body.run_context.unwrap_or(Value::Null),
+    };
+    match worker.execute_tool(params).await {
+        Ok(result) => (StatusCode::OK, Json(json!({"result": result}))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "worker rejected request", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn install_plugin(
@@ -319,7 +347,7 @@ async fn bridge_data(
     Json(_body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    bridge_not_enabled()
+    bridge_not_enabled("data bridge endpoint not wired into WorkerPool yet")
 }
 
 async fn bridge_action(
@@ -329,7 +357,7 @@ async fn bridge_action(
     Json(_body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    bridge_not_enabled()
+    bridge_not_enabled("perform_action bridge: requires worker.perform_action wiring")
 }
 
 async fn plugin_data(
@@ -339,7 +367,7 @@ async fn plugin_data(
     Json(_body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    bridge_not_enabled()
+    bridge_not_enabled("plugin_data bridge: requires worker.get_data wiring")
 }
 
 async fn plugin_action(
@@ -349,7 +377,7 @@ async fn plugin_action(
     Json(_body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    bridge_not_enabled()
+    bridge_not_enabled("plugin_action bridge: requires worker.perform_action wiring")
 }
 
 async fn bridge_stream(
@@ -358,14 +386,50 @@ async fn bridge_stream(
     Path((_plugin_id, _channel)): Path<(String, String)>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    bridge_not_enabled()
+    bridge_not_enabled("stream channel: requires websocket plumbing; not a one-shot JSON-RPC call")
 }
 
-fn bridge_not_enabled() -> (StatusCode, Json<Value>) {
+fn bridge_not_enabled(reason: &str) -> (StatusCode, Json<Value>) {
     (
         StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Plugin bridge is not enabled" })),
+        Json(json!({ "error": "Plugin bridge is not enabled", "reason": reason })),
     )
+}
+
+fn worker_not_running(plugin_id_str: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "plugin worker not running",
+            "pluginId": plugin_id_str,
+            "hint": "register a worker via app.bootstrap before calling this endpoint",
+        })),
+    )
+}
+
+/// Resolve `plugin_id` from path → running worker handle.
+///
+/// Returns `Ok(Arc<WorkerHandle>)` if the plugin is registered in the in-process
+/// metadata registry AND the worker pool has a live worker for it. Otherwise
+/// returns `Err((StatusCode::NOT_IMPLEMENTED, Json))` with a message that the
+/// HTTP layer can return verbatim.
+async fn resolve_worker_or_501(
+    state: &AppState,
+    plugin_id_str: &str,
+) -> Result<Arc<WorkerHandle>, (StatusCode, Json<Value>)> {
+    let Ok(plugin_id) = Uuid::parse_str(plugin_id_str) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid plugin id", "value": plugin_id_str})),
+        ));
+    };
+    if state.plugin_registry.get_by_id(&plugin_id).is_none() {
+        return Err(worker_not_running(plugin_id_str));
+    }
+    match state.plugin_workers.get(&plugin_id).await {
+        Some(handle) => Ok(handle),
+        None => Err(worker_not_running(plugin_id_str)),
+    }
 }
 
 async fn get_plugin(
@@ -565,16 +629,25 @@ async fn save_plugin_config(
 }
 
 async fn test_plugin_config(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
-    Path(_plugin_id): Path<String>,
-    Json(_body): Json<Value>,
+    Path(plugin_id): Path<String>,
+    Json(body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Plugin bridge is not enabled" })),
-    )
+    let worker = match resolve_worker_or_501(&state, &plugin_id).await {
+        Ok(w) => w,
+        Err(resp) => return resp.into_response(),
+    };
+    let config = body.get("config").cloned().unwrap_or(Value::Null);
+    match worker.validate_config(config).await {
+        Ok(outcome) => (StatusCode::OK, Json(outcome)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "worker validate_config failed", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn plugin_jobs(
@@ -616,16 +689,45 @@ async fn plugin_job_runs(
 }
 
 async fn trigger_plugin_job(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_plugin_id, _job_id)): Path<(String, Uuid)>,
-    Json(_body): Json<Value>,
+    Path((plugin_id, job_id)): Path<(String, Uuid)>,
+    Json(body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let _ = headers;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Plugin job scheduler is not enabled" })),
-    )
+    let worker = match resolve_worker_or_501(&state, &plugin_id).await {
+        Ok(w) => w,
+        Err(resp) => return resp.into_response(),
+    };
+    // body should be { "jobKey": "...", "context": { ... } } per protocol.
+    let job_key = match body.get("jobKey").and_then(Value::as_str) {
+        Some(k) => k.to_string(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "missing or non-string field: jobKey"})),
+            )
+                .into_response();
+        }
+    };
+    let context = body.get("context").cloned().unwrap_or(Value::Null);
+    let params = RunJobParams {
+        job_key,
+        run_id: job_id,
+        context: serde_json::from_value(context).unwrap_or_default(),
+    };
+    match worker.run_job(params).await {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"runId": job_id, "accepted": true})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "worker run_job failed", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn receive_plugin_webhook(

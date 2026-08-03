@@ -1,0 +1,25 @@
+[package]
+name = "pc-workflow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Workflow engine: routines, pipelines, cron scheduling"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+once_cell = "1"
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
