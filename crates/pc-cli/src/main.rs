@@ -242,7 +242,7 @@ async fn doctor_command(client: CliClient, _config: Option<String>) -> Result<()
     let mut all_ok = true;
 
     // Check server health
-    match client.get("/api/health").await {
+    match client.get("/health").await {
         Ok(json) => {
             println!("  ✓ Server reachable at {}", client.base_url);
             println!("    Response: {json}");
@@ -277,7 +277,7 @@ fn env_command(_config: Option<String>) -> Result<()> {
 async fn configure_command(client: CliClient, _config: Option<String>) -> Result<()> {
     println!("Updating configuration...");
     // Fetch current instance settings
-    let settings = client.get("/api/instance-settings").await;
+    let settings = client.get("/api/instance/settings").await;
     match settings {
         Ok(json) => println!("Current settings: {json}"),
         Err(_) => println!("Could not fetch current settings (server may not be running)."),
@@ -288,7 +288,7 @@ async fn configure_command(client: CliClient, _config: Option<String>) -> Result
 async fn db_backup_command(client: CliClient, _config: Option<String>) -> Result<()> {
     println!("Creating database backup...");
     let result = client
-        .post("/api/instance-database-backups", serde_json::json!({}))
+        .post("/api/instance/database-backups", serde_json::json!({}))
         .await;
     match result {
         Ok(json) => println!("Backup result: {json}"),
@@ -337,7 +337,7 @@ async fn heartbeat_command(client: CliClient, action: HeartbeatAction) -> Result
             if let Some(a) = adapter {
                 body["adapter"] = Value::String(a);
             }
-            let path = format!("/api/agents/{agent_id}/heartbeat");
+            let path = format!("/api/agents/{agent_id}/heartbeat/invoke");
             match client.post(&path, body).await {
                 Ok(json) => println!("Heartbeat result: {json}"),
                 Err(e) => println!("Heartbeat failed: {e}"),

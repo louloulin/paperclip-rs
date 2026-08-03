@@ -131,9 +131,11 @@ struct CatalogFileQuery {
 }
 
 async fn skills_catalog(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(query): Query<CatalogQuery>,
 ) -> ApiResult<Json<Vec<Value>>> {
+    let _ = state;  // catalog served from static manifest
+
     let manifest = load_catalog_manifest().await?;
     let items = catalog_skills(&manifest)
         .into_iter()
@@ -163,10 +165,12 @@ async fn skills_catalog(
 }
 
 async fn skills_catalog_files(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(catalog_id): Path<String>,
     Query(query): Query<CatalogFileQuery>,
 ) -> ApiResult<Json<Value>> {
+    let _ = state;  // catalog files served from static manifest
+
     let reference = query.reference.as_deref().unwrap_or(&catalog_id);
     let manifest = load_catalog_manifest().await?;
     let skill = resolve_catalog_skill(&manifest, reference)?;
@@ -174,10 +178,12 @@ async fn skills_catalog_files(
 }
 
 async fn skills_catalog_detail(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(catalog_id): Path<String>,
     Query(query): Query<CatalogFileQuery>,
 ) -> ApiResult<Json<Value>> {
+    let _ = state;  // catalog detail served from static manifest
+
     let reference = query.reference.as_deref().unwrap_or(&catalog_id);
     let skill = resolve_catalog_skill(&load_catalog_manifest().await?, reference)?;
     Ok(Json(skill))

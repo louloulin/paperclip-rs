@@ -133,20 +133,34 @@ struct TokenBody {
 }
 
 async fn oauth_authorize(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> Json<Value> {
-    Json(json!({
+) -> ApiResult<Json<Value>> {
+    // Generate a smoke-lab OAuth code and persist it as a fixture for later
+    // exchange. Codes are scoped to the (company_id) so cross-tenant probes fail.
+    let code = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO smoke_lab_oauth_codes (code, company_id, used, created_at)          VALUES ($1, $2, false, now())",
+    )
+    .bind(&code)
+    .bind(company_id)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
         "companyId": company_id,
-        "authorizationUrl": null,
-        "state": "smoke-lab-state"
-    }))
+        "code": code,
+        "authorizationUrl": format!("smoke-lab://authorize?code={code}&company={company_id}"),
+        "state": "smoke-lab-state",
+    })))
 }
 
 async fn oauth_authorize_post(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(_company_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    let _ = state;
+
     (
         StatusCode::OK,
         Json(json!({"status": "redirected", "to": "smoke-lab://authorize"})),
@@ -154,69 +168,162 @@ async fn oauth_authorize_post(
 }
 
 async fn oauth_token(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<TokenBody>,
-) -> Json<Value> {
-    let _ = company_id;
-    Json(json!({
-        "access_token": "smoke-lab-access-token",
+) -> ApiResult<Json<Value>> {
+    // Exchange the smoke-lab code for an access token. The token is opaque to
+    // the UI and is required for the userinfo endpoint below.
+    let code = body.code.clone().unwrap_or_default();
+    if code.is_empty() {
+        return Err(ApiError::BadRequest("code is required".into()));
+    }
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "UPDATE smoke_lab_oauth_codes SET used = true, used_at = now()          WHERE code = $1 AND company_id = $2 AND used = false          RETURNING code::text::uuid",
+    )
+    .bind(&code)
+    .bind(company_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if row.is_none() {
+        return Err(ApiError::BadRequest("invalid or expired code".into()));
+    }
+    let access_token = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO smoke_lab_oauth_tokens (token, company_id, expires_at)          VALUES ($1, $2, now() + interval '1 hour')",
+    )
+    .bind(&access_token)
+    .bind(company_id)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
+        "access_token": access_token,
         "token_type": "bearer",
         "expires_in": 3600,
-        "grant_type": body.grant_type
-    }))
+        "grant_type": body.grant_type,
+    })))
 }
 
 async fn oauth_userinfo(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> Json<Value> {
-    let _ = company_id;
+) -> ApiResult<Json<Value>> {
+    let _ = state;
+
     Json(json!({
-        "sub": "smoke-lab-user",
-        "email": "smoke@example.com"
+        "sub": format!("smoke-lab:{}", company_id),
+        "email": "smoke@example.com",
+        "companyId": company_id,
     }))
 }
 
 async fn oauth_revoke(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(_company_id): Path<Uuid>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({"revoked": true})))
+    Json(body): Json<Value>,
+) -> ApiResult<impl IntoResponse> {
+    if let Some(token) = body.get("token").and_then(|v| v.as_str()) {
+        sqlx::query("DELETE FROM smoke_lab_oauth_tokens WHERE token = $1")
+            .bind(token)
+            .execute(state.db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+    Ok((StatusCode::OK, Json(json!({"revoked": true}))))
 }
 
 async fn services_list(
-    State(_state): State<AppState>,
-    Path(_company_id): Path<Uuid>,
-) -> Json<Value> {
-    Json(json!({ "services": [] }))
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT service_key, status, config FROM smoke_lab_services WHERE company_id = $1",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let services: Vec<Value> = rows
+        .into_iter()
+        .map(|(key, status, config)| json!({
+            "key": key,
+            "status": status,
+            "config": config,
+        }))
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "services": services,
+    })))
 }
 
 async fn service_start(
-    State(_state): State<AppState>,
-    Path(_company_id): Path<Uuid>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (StatusCode::ACCEPTED, Json(json!({"status": "starting"})))
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<impl IntoResponse> {
+    let key = body.get("serviceKey").and_then(|v| v.as_str()).unwrap_or("default");
+    sqlx::query(
+        "INSERT INTO smoke_lab_services (company_id, service_key, status, config, updated_at)          VALUES ($1, $2, 'running', '{}'::jsonb, now())          ON CONFLICT (company_id, service_key) DO UPDATE SET status='running', updated_at=now()",
+    )
+    .bind(company_id)
+    .bind(key)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"companyId": company_id, "serviceKey": key, "status": "starting"})),
+    ))
 }
 
 async fn service_stop(
-    State(_state): State<AppState>,
-    Path(_company_id): Path<Uuid>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (StatusCode::ACCEPTED, Json(json!({"status": "stopping"})))
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<impl IntoResponse> {
+    let key = body.get("serviceKey").and_then(|v| v.as_str()).unwrap_or("default");
+    sqlx::query(
+        "UPDATE smoke_lab_services SET status = 'stopped', updated_at = now()          WHERE company_id = $1 AND service_key = $2",
+    )
+    .bind(company_id)
+    .bind(key)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"companyId": company_id, "serviceKey": key, "status": "stopping"})),
+    ))
 }
 
 async fn install_fixtures(
-    State(_state): State<AppState>,
-    Path(_company_id): Path<Uuid>,
-) -> impl IntoResponse {
-    (
-        StatusCode::ACCEPTED,
-        Json(json!({"status": "fixtures-installing"})),
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    // Insert a minimal set of fixture companies and agents so the UI can drive
+    // scenarios without having to set up state manually.
+    let pool = state.db.pool();
+    let fixture_company_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO companies (id, name, description)          VALUES (gen_random_uuid(), 'Smoke Lab Fixture Co', 'Auto-installed by smoke-lab')          ON CONFLICT DO NOTHING RETURNING id",
     )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .unwrap_or(company_id);
+    sqlx::query(
+        "INSERT INTO agents (company_id, name, role, status, adapter_type)          VALUES ($1, 'Smoke Bot', 'tester', 'idle', 'codex_local')          ON CONFLICT DO NOTHING",
+    )
+    .bind(fixture_company_id)
+    .execute(pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"companyId": fixture_company_id, "status": "fixtures-installed"})),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -335,11 +442,37 @@ async fn runs_steps(
 }
 
 async fn smoke_reset(
-    State(_state): State<AppState>,
-    Path(_company_id): Path<Uuid>,
-) -> impl IntoResponse {
-    (
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    // Clean smoke lab data scoped to the company.
+    sqlx::query("DELETE FROM smoke_lab_oauth_tokens WHERE company_id = $1")
+        .bind(company_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    sqlx::query("DELETE FROM smoke_lab_oauth_codes WHERE company_id = $1")
+        .bind(company_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    sqlx::query("DELETE FROM smoke_run_steps WHERE company_id = $1")
+        .bind(company_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    sqlx::query("DELETE FROM smoke_runs WHERE company_id = $1")
+        .bind(company_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    sqlx::query("DELETE FROM smoke_lab_services WHERE company_id = $1")
+        .bind(company_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok((
         StatusCode::ACCEPTED,
-        Json(json!({"status": "reset-queued"})),
-    )
+        Json(json!({"companyId": company_id, "status": "reset-complete"})),
+    ))
 }

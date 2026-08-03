@@ -44,3 +44,7 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 
 async-stream = { workspace = true }
+
+# Backup-specific dependencies
+flate2 = "1"
+dirs = "5"

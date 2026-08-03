@@ -279,24 +279,58 @@ async fn card_summary_revisions(
 }
 
 async fn card_recompile(
-    State(_state): State<AppState>,
-    Path(_id): Path<Uuid>,
-) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Status-card compilation actor is not enabled" })),
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    // Mark card as "compiling" and bump query_version; the watcher will pick
+    // it up and produce a fresh compiled query.
+    let row: Option<CardRow> = sqlx::query_as(
+        "UPDATE status_cards SET state = 'compiling', query_compiled_at = NULL,                 query_version = query_version + 1, updated_at = now()          WHERE id = $1          RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy,                    last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at",
     )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some(row) = row else {
+        return Err(ApiError::NotFound(format!("status card {id}")));
+    };
+    // Emit live event so the watcher can pick it up.
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("status_card.recompile.requested", "status_card", id)
+            .with_company(row.company_id)
+            .with_actor("manual")
+            .with_data(json!({ "cardId": id })),
+    );
+    Ok((StatusCode::ACCEPTED, Json(row_json(&row))))
 }
 
 async fn card_refresh(
-    State(_state): State<AppState>,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
     Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Status-card refresh actor is not enabled" })),
+) -> ApiResult<impl IntoResponse> {
+    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM status_cards WHERE id = $1")
+        .bind(id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = row else {
+        return Err(ApiError::NotFound(format!("status card {id}")));
+    };
+    // Schedule a refresh by bumping next_eval_at to now; the watcher polls this.
+    sqlx::query(
+        "UPDATE status_cards SET next_eval_at = now(), state = 'pending_refresh', updated_at = now()          WHERE id = $1",
     )
+    .bind(id)
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("status_card.refresh.requested", "status_card", id)
+            .with_company(company_id)
+            .with_actor("manual"),
+    );
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "cardId": id, "status": "refresh-queued" })),
+    ))
 }
 
 async fn card_dry_run(

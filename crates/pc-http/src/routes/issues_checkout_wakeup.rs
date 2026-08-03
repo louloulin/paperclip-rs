@@ -1,4 +1,7 @@
 //! Issue checkout + wakeup 路径。
+//!
+//! - checkout：建立 actor 对 issue 的执行锁（写入 checkout_run_id）
+//! - wakeup：在 agent_wakeup_requests 表中插入请求并触发心跳
 
 use axum::{
     extract::{Path, State},
@@ -10,7 +13,7 @@ use axum::{
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -18,25 +21,173 @@ pub fn router() -> Router<AppState> {
         .route("/api/issues/:issue_id/wakeup", post(wakeup))
 }
 
-async fn checkout(State(_state): State<AppState>, Path(issue_id): Path<Uuid>) -> impl IntoResponse {
-    let _ = issue_id;
-    (
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CheckoutBody {
+    #[serde(default)]
+    actor_type: Option<String>,
+    #[serde(default)]
+    actor_id: Option<String>,
+    #[serde(default)]
+    run_id: Option<Uuid>,
+    #[serde(default)]
+    strategy: Option<String>,
+}
+
+async fn checkout(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    body: Option<Json<CheckoutBody>>,
+) -> ApiResult<impl IntoResponse> {
+    let actor_id = require_user_id(&state, &headers).await?;
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let run_id = body.run_id.unwrap_or_else(Uuid::new_v4);
+    let strategy = body.strategy.as_deref().unwrap_or("merge");
+    let actor_type = body.actor_type.as_deref().unwrap_or("board");
+
+    let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+        "SELECT id, assignee_agent_id, checkout_run_id FROM issues WHERE id = $1",
+    )
+    .bind(issue_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some((_, assignee_agent_id, prev_checkout_run_id)) = row else {
+        return Err(ApiError::NotFound(format!("issue {issue_id}")));
+    };
+
+    sqlx::query(
+        "UPDATE issues SET checkout_run_id = $1, execution_locked_at = now(), updated_at = now() \
+         WHERE id = $2",
+    )
+    .bind(run_id)
+    .bind(issue_id)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "INSERT INTO issue_checkout_locks \
+         (issue_id, run_id, actor_type, actor_id, strategy, status, created_at) \
+         VALUES ($1, $2, $3, $4, $5, 'active', now()) \
+         ON CONFLICT (issue_id, run_id) DO NOTHING",
+    )
+    .bind(issue_id)
+    .bind(run_id)
+    .bind(actor_type)
+    .bind(&actor_id)
+    .bind(strategy)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let should_wake = should_wake_assignee(actor_type, &actor_id, assignee_agent_id, prev_checkout_run_id);
+    if should_wake {
+        if let Some(agent_id) = assignee_agent_id {
+            enqueue_wakeup(&state, issue_id, agent_id, "issue_checkout", &actor_id, actor_type).await;
+        }
+    }
+
+    Ok((
         StatusCode::OK,
         Json(json!({
             "issueId": issue_id,
             "status": "checked-out",
-            "actorId": null
+            "actorId": actor_id,
+            "runId": run_id,
+            "wakeupQueued": should_wake,
         })),
-    )
+    ))
 }
 
-async fn wakeup(State(_state): State<AppState>, Path(issue_id): Path<Uuid>) -> impl IntoResponse {
-    let _ = issue_id;
-    (
+async fn wakeup(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let actor_id = require_user_id(&state, &headers).await?;
+    let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT id, assignee_agent_id FROM issues WHERE id = $1",
+    )
+    .bind(issue_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some((_, assignee_agent_id)) = row else {
+        return Err(ApiError::NotFound(format!("issue {issue_id}")));
+    };
+
+    let queued = if let Some(agent_id) = assignee_agent_id {
+        enqueue_wakeup(&state, issue_id, agent_id, "issue_wakeup", &actor_id, "user").await;
+        true
+    } else {
+        false
+    };
+
+    Ok((
         StatusCode::ACCEPTED,
         Json(json!({
             "issueId": issue_id,
-            "status": "wakeup-queued"
+            "status": if queued { "wakeup-queued" } else { "no-assignee" },
+            "actorId": actor_id,
         })),
+    ))
+}
+
+async fn enqueue_wakeup(
+    state: &AppState,
+    issue_id: Uuid,
+    agent_id: Uuid,
+    source: &str,
+    actor_id: &str,
+    actor_type: &str,
+) {
+    // Resolve company_id for the agent
+    let company_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT company_id FROM agents WHERE id = $1",
     )
+    .bind(agent_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let Some(company_id) = company_id else {
+        return;
+    };
+    let payload = json!({ "issueId": issue_id, "actorId": actor_id });
+    let _ = sqlx::query(
+        "INSERT INTO agent_wakeup_requests \
+         (company_id, agent_id, source, reason, payload, status, requested_by_actor_type, requested_by_actor_id) \
+         VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7)",
+    )
+    .bind(company_id)
+    .bind(agent_id)
+    .bind(source)
+    .bind(format!("{source}:{issue_id}"))
+    .bind(payload)
+    .bind(actor_type)
+    .bind(actor_id)
+    .execute(state.db.pool())
+    .await;
+}
+
+fn should_wake_assignee(
+    actor_type: &str,
+    actor_id: &str,
+    assignee_agent_id: Option<Uuid>,
+    checkout_run_id: Option<Uuid>,
+) -> bool {
+    if actor_type != "agent" {
+        return true;
+    }
+    if assignee_agent_id.is_none() {
+        return false;
+    }
+    if checkout_run_id.is_none() {
+        return true;
+    }
+    Uuid::parse_str(actor_id)
+        .map(|uid| Some(uid) != assignee_agent_id)
+        .unwrap_or(true)
 }

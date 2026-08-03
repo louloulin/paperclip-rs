@@ -107,25 +107,54 @@ async fn list_training(
 }
 
 async fn preview_training(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> Json<Value> {
-    Json(json!({
+) -> ApiResult<Json<Value>> {
+    // Count decisions that haven't been exported yet.
+    let candidate_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM decisions WHERE company_id = $1          AND status = 'resolved' AND id NOT IN (SELECT source_id FROM decision_training_examples)",
+    )
+    .bind(company_id)
+    .fetch_one(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
         "companyId": company_id,
-        "candidateCount": 0,
-        "sources": []
-    }))
+        "candidateCount": candidate_count,
+        "sources": [
+            { "kind": "decision", "count": candidate_count }
+        ]
+    })))
 }
 
 async fn export_jsonl(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> impl IntoResponse {
-    (
+) -> ApiResult<impl IntoResponse> {
+    // Stream resolved decisions as JSONL training examples.
+    let rows: Vec<(Uuid, String, serde_json::Value, Option<String>)> = sqlx::query_as(
+        "SELECT id, title, payload, decision_outcome FROM decisions          WHERE company_id = $1 AND status = 'resolved'          ORDER BY created_at DESC LIMIT 1000",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut buf = String::new();
+    for (id, title, payload, outcome) in rows {
+        let example = json!({
+            "id": id,
+            "title": title,
+            "input": payload,
+            "output": outcome.unwrap_or_default(),
+        });
+        buf.push_str(&serde_json::to_string(&example).unwrap_or_default());
+        buf.push_str("\n");
+    }
+    Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/x-ndjson")],
-        format!("# paperclip decision-training export {company_id}\n"),
-    )
+        buf,
+    ))
 }
 
 async fn get_training(

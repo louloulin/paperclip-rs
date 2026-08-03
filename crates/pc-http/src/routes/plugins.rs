@@ -397,11 +397,11 @@ async fn bridge_action(
         .get("message")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("message required".into()))?;
-    let data = body.get("data").cloned().unwrap_or(json!({}));
+    let meta = body.get("data").cloned().unwrap_or(json!({}));
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO plugin_logs (plugin_id, level, message, data)          VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO plugin_logs (plugin_id, level, message, meta) VALUES ($1, $2, $3, $4) RETURNING id",
     )
-    .bind(pid).bind(level).bind(message).bind(data)
+    .bind(pid).bind(level).bind(message).bind(meta)
     .fetch_one(state.db.pool())
     .await?;
     state.realtime.publish(
@@ -451,15 +451,14 @@ async fn plugin_action(
     require_authenticated(&state, &headers).await?;
     let pid = Uuid::parse_str(&plugin_id)
         .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
-    let company_id = body
-        .get("companyId")
+    let schedule = body
+        .get("schedule")
         .and_then(Value::as_str)
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let payload = body.get("payload").cloned().unwrap_or(json!({}));
+        .unwrap_or("on_demand");
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO plugin_jobs (plugin_id, job_key, company_id, payload, status)          VALUES ($1, $2, $3, $4, 'queued') RETURNING id",
+        "INSERT INTO plugin_jobs (plugin_id, job_key, schedule, status) VALUES ($1, $2, $3, 'active') ON CONFLICT (plugin_id, job_key) DO UPDATE SET schedule = EXCLUDED.schedule, updated_at = now() RETURNING id",
     )
-    .bind(pid).bind(&key).bind(company_id).bind(payload)
+    .bind(pid).bind(&key).bind(schedule)
     .fetch_one(state.db.pool())
     .await?;
     state.realtime.publish(
@@ -675,16 +674,33 @@ async fn plugin_logs(
 }
 
 async fn upgrade_plugin(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
-    Path(_plugin_id): Path<String>,
-    Json(_body): Json<Value>,
-) -> impl axum::response::IntoResponse {
-    let _ = headers;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Plugin upgrade host is not enabled" })),
+    Path(plugin_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult<impl axum::response::IntoResponse> {
+    require_authenticated(&state, &headers).await?;
+    let repo = PluginRepo::new(&state.db);
+    let plugin = resolve_plugin(&repo, &plugin_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Plugin not found".into()))?;
+    let new_version = body.get("version").and_then(|v| v.as_str()).unwrap_or("latest");
+    sqlx::query(
+        "UPDATE plugins SET manifest = manifest || jsonb_build_object('pendingVersion', $2::text),                 status = 'upgrade_pending', updated_at = now()          WHERE id = $1",
     )
+    .bind(plugin.id)
+    .bind(new_version)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "id": plugin.id,
+            "version": new_version,
+            "status": "upgrade-queued"
+        })),
+    ))
 }
 
 async fn plugin_config(
@@ -833,16 +849,46 @@ async fn trigger_plugin_job(
 }
 
 async fn receive_plugin_webhook(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_plugin_id, _endpoint_key)): Path<(String, String)>,
-    Json(_body): Json<Value>,
-) -> impl axum::response::IntoResponse {
-    let _ = headers;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "Webhook ingestion is not enabled" })),
+    Path((plugin_id, endpoint_key)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> ApiResult<impl axum::response::IntoResponse> {
+    let plugin_uuid = Uuid::parse_str(&plugin_id)
+        .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
+    let expected = std::env::var("PAPERCLIP_PLUGIN_WEBHOOK_SECRET").ok();
+    if let Some(expected_secret) = expected {
+        let provided = headers
+            .get("x-paperclip-webhook-secret")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if provided != expected_secret {
+            return Err(ApiError::Unauthorized("invalid webhook secret".into()));
+        }
+    }
+    let delivery_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO plugin_webhook_deliveries (plugin_id, endpoint_key, payload, status, received_at)          VALUES ($1, $2, $3, 'queued', now()) RETURNING id",
     )
+    .bind(plugin_uuid)
+    .bind(&endpoint_key)
+    .bind(&body)
+    .fetch_one(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.realtime.publish(
+        LiveEvent::new("plugin.webhook.received", "plugin", plugin_uuid)
+            .with_data(json!({
+                "deliveryId": delivery_id,
+                "endpointKey": endpoint_key,
+            })),
+    );
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "deliveryId": delivery_id,
+            "status": "queued"
+        })),
+    ))
 }
 
 async fn plugin_dashboard(
