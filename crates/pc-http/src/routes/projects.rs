@@ -38,15 +38,14 @@ async fn list(
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = match q.company_id {
-        Some(cid) => ProjectRepo::new(&state.db).list_by_company(cid).await?,
+        Some(cid) => ProjectRepo::new(&state.db).list_by_company_no_filter(cid).await?,
         None => ProjectRepo::new(&state.db).list_all(200).await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = ProjectRepo::new(&state.db)
-        .get(id)
+    let row = ProjectRepo::new(&state.db).get_id_only(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("project {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -68,8 +67,7 @@ async fn create(
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".into()));
     }
-    let row = ProjectRepo::new(&state.db)
-        .create(body.company_id, &body.name, body.description.as_deref())
+    let row = ProjectRepo::new(&state.db).create_simple(body.company_id, &body.name, body.description.as_deref())
         .await?;
     state
         .realtime
@@ -114,7 +112,7 @@ async fn update(
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    let ok = ProjectRepo::new(&state.db).delete(id).await?;
+    let ok = ProjectRepo::new(&state.db).delete_one(id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
     } else {

@@ -1,4 +1,4 @@
-//! `heartbeat_runs` 与 `heartbeat_run_events` 数据访问。
+//! `heartbeat_runs`、`heartbeat_run_events` 与 watchdog 决策数据访问。
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -8,11 +8,229 @@ use pc_core::Timestamp;
 
 use crate::Db;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatRunStatus {
+    Queued,
+    ScheduledRetry,
+    Running,
+    Succeeded,
+    Interrupted,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+impl HeartbeatRunStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::ScheduledRetry => "scheduled_retry",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Interrupted | Self::Failed | Self::Cancelled | Self::TimedOut
+        )
+    }
+
+    pub fn can_transition_to(self, target: Self) -> bool {
+        if self == target {
+            return true;
+        }
+        match self {
+            Self::Queued => matches!(
+                target,
+                Self::ScheduledRetry
+                    | Self::Running
+                    | Self::Failed
+                    | Self::Cancelled
+                    | Self::TimedOut
+            ),
+            Self::ScheduledRetry => matches!(target, Self::Queued | Self::Running | Self::Cancelled),
+            Self::Running => matches!(
+                target,
+                Self::ScheduledRetry
+                    | Self::Succeeded
+                    | Self::Interrupted
+                    | Self::Failed
+                    | Self::Cancelled
+                    | Self::TimedOut
+            ),
+            Self::Succeeded
+            | Self::Interrupted
+            | Self::Failed
+            | Self::Cancelled
+            | Self::TimedOut => false,
+        }
+    }
+
+    fn allowed_predecessors(self) -> &'static [&'static str] {
+        match self {
+            Self::Queued => &["queued", "scheduled_retry"],
+            Self::ScheduledRetry => &["queued", "running", "scheduled_retry"],
+            Self::Running => &["queued", "scheduled_retry", "running"],
+            Self::Succeeded => &["running", "succeeded"],
+            Self::Interrupted => &["running", "interrupted"],
+            Self::Failed => &["queued", "running", "failed"],
+            Self::Cancelled => &["queued", "scheduled_retry", "running", "cancelled"],
+            Self::TimedOut => &["queued", "running", "timed_out"],
+        }
+    }
+}
+
+impl std::str::FromStr for HeartbeatRunStatus {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "scheduled_retry" => Ok(Self::ScheduledRetry),
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "interrupted" => Ok(Self::Interrupted),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            "timed_out" => Ok(Self::TimedOut),
+            _ => Err("invalid heartbeat run status"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunLivenessState {
+    Completed,
+    Advanced,
+    PlanOnly,
+    EmptyResponse,
+    Blocked,
+    Failed,
+    NeedsFollowup,
+}
+
+impl RunLivenessState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Advanced => "advanced",
+            Self::PlanOnly => "plan_only",
+            Self::EmptyResponse => "empty_response",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+            Self::NeedsFollowup => "needs_followup",
+        }
+    }
+}
+
+impl std::str::FromStr for RunLivenessState {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "advanced" => Ok(Self::Advanced),
+            "plan_only" => Ok(Self::PlanOnly),
+            "empty_response" => Ok(Self::EmptyResponse),
+            "blocked" => Ok(Self::Blocked),
+            "failed" => Ok(Self::Failed),
+            "needs_followup" => Ok(Self::NeedsFollowup),
+            _ => Err("invalid run liveness state"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchdogDecision {
+    Snooze,
+    Continue,
+    DismissedFalsePositive,
+}
+
+impl WatchdogDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Snooze => "snooze",
+            Self::Continue => "continue",
+            Self::DismissedFalsePositive => "dismissed_false_positive",
+        }
+    }
+}
+
+impl std::str::FromStr for WatchdogDecision {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "snooze" => Ok(Self::Snooze),
+            "continue" => Ok(Self::Continue),
+            "dismissed_false_positive" => Ok(Self::DismissedFalsePositive),
+            _ => Err("invalid watchdog decision"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatEventStream {
+    System,
+    Stdout,
+    Stderr,
+}
+
+impl HeartbeatEventStream {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatEventLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+impl HeartbeatEventLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+}
+
 const RUN_COLUMNS: &str = "id, company_id, agent_id, invocation_source, trigger_detail, status, \
 responsible_user_id, started_at, finished_at, error, wakeup_request_id, exit_code, signal, \
-usage_json, result_json, external_run_id, process_pid, process_group_id, process_started_at, \
-last_output_at, last_output_seq, retry_of_run_id, scheduled_retry_at, scheduled_retry_attempt, \
-context_snapshot, created_at, updated_at";
+usage_json, result_json, session_id_before, session_id_after, log_store, log_ref, log_bytes, \
+log_sha256, log_compressed, stdout_excerpt, stderr_excerpt, error_code, external_run_id, \
+process_pid, process_group_id, process_started_at, last_output_at, last_output_seq, \
+last_output_stream, last_output_bytes, retry_of_run_id, process_loss_retry_count, \
+scheduled_retry_at, scheduled_retry_attempt, scheduled_retry_reason, issue_comment_status, \
+issue_comment_satisfied_by_comment_id, issue_comment_retry_queued_at, liveness_state, \
+liveness_reason, continuation_attempt, last_useful_action_at, next_action, context_snapshot, \
+created_at, updated_at";
+
+const EVENT_COLUMNS: &str = "id, company_id, run_id, agent_id, seq, event_type, stream, level, \
+color, message, payload, created_at";
+
+const WATCHDOG_COLUMNS: &str = "id, company_id, run_id, evaluation_issue_id, decision, \
+snoozed_until, reason, created_by_agent_id, created_by_user_id, created_by_run_id, created_at";
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq)]
 pub struct HeartbeatRow {
@@ -31,18 +249,52 @@ pub struct HeartbeatRow {
     pub signal: Option<String>,
     pub usage_json: Option<serde_json::Value>,
     pub result_json: Option<serde_json::Value>,
+    pub session_id_before: Option<String>,
+    pub session_id_after: Option<String>,
+    pub log_store: Option<String>,
+    pub log_ref: Option<String>,
+    pub log_bytes: Option<i64>,
+    pub log_sha256: Option<String>,
+    pub log_compressed: bool,
+    pub stdout_excerpt: Option<String>,
+    pub stderr_excerpt: Option<String>,
+    pub error_code: Option<String>,
     pub external_run_id: Option<String>,
     pub process_pid: Option<i32>,
     pub process_group_id: Option<i32>,
     pub process_started_at: Option<Timestamp>,
     pub last_output_at: Option<Timestamp>,
     pub last_output_seq: i32,
+    pub last_output_stream: Option<String>,
+    pub last_output_bytes: Option<i64>,
     pub retry_of_run_id: Option<Uuid>,
+    pub process_loss_retry_count: i32,
     pub scheduled_retry_at: Option<Timestamp>,
     pub scheduled_retry_attempt: i32,
+    pub scheduled_retry_reason: Option<String>,
+    pub issue_comment_status: String,
+    pub issue_comment_satisfied_by_comment_id: Option<Uuid>,
+    pub issue_comment_retry_queued_at: Option<Timestamp>,
+    pub liveness_state: Option<String>,
+    pub liveness_reason: Option<String>,
+    pub continuation_attempt: i32,
+    pub last_useful_action_at: Option<Timestamp>,
+    pub next_action: Option<String>,
     pub context_snapshot: Option<serde_json::Value>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+impl HeartbeatRow {
+    pub fn run_status(&self) -> Option<HeartbeatRunStatus> {
+        self.status.parse().ok()
+    }
+
+    pub fn liveness(&self) -> Option<RunLivenessState> {
+        self.liveness_state
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+    }
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq)]
@@ -61,6 +313,22 @@ pub struct HeartbeatEventRow {
     pub created_at: Timestamp,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatWatchdogDecisionRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub run_id: Uuid,
+    pub evaluation_issue_id: Option<Uuid>,
+    pub decision: String,
+    pub snoozed_until: Option<Timestamp>,
+    pub reason: Option<String>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_by_run_id: Option<Uuid>,
+    pub created_at: Timestamp,
+}
+
 pub struct CreateHeartbeat<'a> {
     pub company_id: Uuid,
     pub agent_id: Uuid,
@@ -69,6 +337,37 @@ pub struct CreateHeartbeat<'a> {
     pub responsible_user_id: Option<&'a str>,
     pub wakeup_request_id: Option<Uuid>,
     pub context_snapshot: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewHeartbeatEvent {
+    pub event_type: String,
+    pub stream: Option<HeartbeatEventStream>,
+    pub level: Option<HeartbeatEventLevel>,
+    pub color: Option<String>,
+    pub message: Option<String>,
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewWatchdogDecision {
+    pub company_id: Uuid,
+    pub run_id: Uuid,
+    pub evaluation_issue_id: Option<Uuid>,
+    pub decision: WatchdogDecision,
+    pub snoozed_until: Option<Timestamp>,
+    pub reason: Option<String>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_by_run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HeartbeatRunFilter {
+    pub agent_id: Option<Uuid>,
+    pub statuses: Vec<HeartbeatRunStatus>,
+    pub responsible_user_id: Option<String>,
+    pub limit: Option<i64>,
 }
 
 pub struct HeartbeatRepo<'a> {
@@ -107,6 +406,21 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
+    pub async fn get_for_company(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let query = format!(
+            "SELECT {RUN_COLUMNS} FROM heartbeat_runs WHERE company_id=$1 AND id=$2"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     pub async fn list_for_agent(&self, agent_id: Uuid) -> sqlx::Result<Vec<HeartbeatRow>> {
         let query = format!(
             "SELECT {RUN_COLUMNS} FROM heartbeat_runs WHERE agent_id=$1 ORDER BY created_at DESC"
@@ -117,10 +431,48 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
+    pub async fn list_for_company(
+        &self,
+        company_id: Uuid,
+        filter: &HeartbeatRunFilter,
+    ) -> sqlx::Result<Vec<HeartbeatRow>> {
+        let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+            "SELECT {RUN_COLUMNS} FROM heartbeat_runs WHERE company_id="
+        ));
+        query.push_bind(company_id);
+        if let Some(agent_id) = filter.agent_id {
+            query.push(" AND agent_id=").push_bind(agent_id);
+        }
+        if !filter.statuses.is_empty() {
+            let statuses: Vec<String> = filter
+                .statuses
+                .iter()
+                .map(|status| status.as_str().to_owned())
+                .collect();
+            query
+                .push(" AND status=ANY(")
+                .push_bind(statuses)
+                .push("::text[])");
+        }
+        if let Some(responsible_user_id) = filter.responsible_user_id.as_deref() {
+            query
+                .push(" AND responsible_user_id=")
+                .push_bind(responsible_user_id);
+        }
+        query
+            .push(" ORDER BY created_at DESC, id DESC LIMIT ")
+            .push_bind(filter.limit.unwrap_or(200).clamp(1, 1_000));
+        query
+            .build_query_as::<HeartbeatRow>()
+            .fetch_all(self.db.pool())
+            .await
+    }
+
     pub async fn list_recoverable(&self, limit: i64) -> sqlx::Result<Vec<HeartbeatRow>> {
         let query = format!(
             "SELECT {RUN_COLUMNS} FROM heartbeat_runs \
-             WHERE status IN ('queued','running') ORDER BY created_at ASC LIMIT $1"
+             WHERE status IN ('queued','scheduled_retry','running') \
+             ORDER BY created_at ASC LIMIT $1"
         );
         sqlx::query_as::<_, HeartbeatRow>(&query)
             .bind(limit.clamp(1, 10_000))
@@ -134,26 +486,82 @@ impl<'a> HeartbeatRepo<'a> {
         agent_id: Option<Uuid>,
         limit: i64,
     ) -> sqlx::Result<Vec<HeartbeatRow>> {
-        let query = format!(
-            "SELECT {RUN_COLUMNS} FROM heartbeat_runs \
-             WHERE company_id=$1 AND ($2::uuid IS NULL OR agent_id=$2) \
-             ORDER BY created_at DESC LIMIT $3"
-        );
-        sqlx::query_as::<_, HeartbeatRow>(&query)
-            .bind(company_id)
-            .bind(agent_id)
-            .bind(limit.clamp(1, 1000))
-            .fetch_all(self.db.pool())
-            .await
+        self.list_for_company(
+            company_id,
+            &HeartbeatRunFilter {
+                agent_id,
+                limit: Some(limit),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     pub async fn mark_running(&self, run_id: Uuid) -> sqlx::Result<Option<HeartbeatRow>> {
         let query = format!(
-            "UPDATE heartbeat_runs SET status='running', started_at=COALESCE(started_at, now()), \
-             updated_at=now() WHERE id=$1 AND status='queued' RETURNING {RUN_COLUMNS}"
+            "UPDATE heartbeat_runs SET status='running', started_at=COALESCE(started_at,now()), \
+             scheduled_retry_at=NULL, updated_at=now() WHERE id=$1 \
+             AND status IN ('queued','scheduled_retry') RETURNING {RUN_COLUMNS}"
         );
         sqlx::query_as::<_, HeartbeatRow>(&query)
             .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    pub async fn claim_for_company(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+        responsible_user_id: Option<&str>,
+        process_pid: Option<i32>,
+        process_group_id: Option<i32>,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let query = format!(
+            "UPDATE heartbeat_runs SET status='running', responsible_user_id=COALESCE($3,responsible_user_id), \
+             process_pid=$4, process_group_id=$5, process_started_at=CASE WHEN $4 IS NOT NULL \
+             THEN COALESCE(process_started_at,now()) ELSE process_started_at END, \
+             started_at=COALESCE(started_at,now()), scheduled_retry_at=NULL, updated_at=now() \
+             WHERE company_id=$1 AND id=$2 AND status IN ('queued','scheduled_retry') \
+             RETURNING {RUN_COLUMNS}"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .bind(responsible_user_id)
+            .bind(process_pid)
+            .bind(process_group_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    pub async fn transition_status(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+        target: HeartbeatRunStatus,
+        error: Option<&str>,
+        error_code: Option<&str>,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let predecessors: Vec<String> = target
+            .allowed_predecessors()
+            .iter()
+            .map(|status| (*status).to_owned())
+            .collect();
+        let query = format!(
+            "UPDATE heartbeat_runs SET status=$3, error=$4, error_code=$5, \
+             started_at=CASE WHEN $3='running' THEN COALESCE(started_at,now()) ELSE started_at END, \
+             finished_at=CASE WHEN $3 IN ('succeeded','interrupted','failed','cancelled','timed_out') \
+                THEN COALESCE(finished_at,now()) ELSE NULL END, updated_at=now() \
+             WHERE company_id=$1 AND id=$2 AND status=ANY($6::text[]) RETURNING {RUN_COLUMNS}"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .bind(target.as_str())
+            .bind(error)
+            .bind(error_code)
+            .bind(predecessors)
             .fetch_optional(self.db.pool())
             .await
     }
@@ -164,14 +572,28 @@ impl<'a> HeartbeatRepo<'a> {
         status: &str,
         error: Option<&str>,
     ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let target: HeartbeatRunStatus = status
+            .parse()
+            .map_err(|message: &'static str| sqlx::Error::Protocol(message.into()))?;
+        if !target.is_terminal() {
+            return Err(sqlx::Error::Protocol(
+                "heartbeat finish status must be terminal".into(),
+            ));
+        }
+        let predecessors: Vec<String> = target
+            .allowed_predecessors()
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
         let query = format!(
-            "UPDATE heartbeat_runs SET status=$2, error=$3, finished_at=now(), updated_at=now() \
-             WHERE id=$1 AND status IN ('queued','running') RETURNING {RUN_COLUMNS}"
+            "UPDATE heartbeat_runs SET status=$2, error=$3, finished_at=COALESCE(finished_at,now()), \
+             updated_at=now() WHERE id=$1 AND status=ANY($4::text[]) RETURNING {RUN_COLUMNS}"
         );
         sqlx::query_as::<_, HeartbeatRow>(&query)
             .bind(run_id)
-            .bind(status)
+            .bind(target.as_str())
             .bind(error)
+            .bind(predecessors)
             .fetch_optional(self.db.pool())
             .await
     }
@@ -183,23 +605,82 @@ impl<'a> HeartbeatRepo<'a> {
         message: Option<&str>,
         payload: Option<serde_json::Value>,
     ) -> sqlx::Result<HeartbeatEventRow> {
-        sqlx::query_as::<_, HeartbeatEventRow>(
-            "INSERT INTO heartbeat_run_events \
-             (company_id, run_id, agent_id, seq, event_type, message, payload) \
-             VALUES ($1,$2,$3, \
-               COALESCE((SELECT MAX(seq)+1 FROM heartbeat_run_events WHERE run_id=$2), 1), \
-               $4,$5,$6) \
-             RETURNING id, company_id, run_id, agent_id, seq, event_type, stream, level, color, \
-                       message, payload, created_at",
+        self.append_event_full(
+            run,
+            NewHeartbeatEvent {
+                event_type: event_type.to_owned(),
+                stream: None,
+                level: None,
+                color: None,
+                message: message.map(ToOwned::to_owned),
+                payload,
+            },
+            false,
+        )
+        .await
+    }
+
+    pub async fn append_event_full(
+        &self,
+        run: &HeartbeatRow,
+        event: NewHeartbeatEvent,
+        update_last_output: bool,
+    ) -> sqlx::Result<HeartbeatEventRow> {
+        let mut transaction = self.db.pool().begin().await?;
+        let locked: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM heartbeat_runs WHERE company_id=$1 AND id=$2 FOR UPDATE",
         )
         .bind(run.company_id)
         .bind(run.id)
-        .bind(run.agent_id)
-        .bind(event_type)
-        .bind(message)
-        .bind(payload)
-        .fetch_one(self.db.pool())
-        .await
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if locked.is_none() {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        let next_seq: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq),0)+1 FROM heartbeat_run_events WHERE run_id=$1",
+        )
+        .bind(run.id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let query = format!(
+            "INSERT INTO heartbeat_run_events \
+             (company_id,run_id,agent_id,seq,event_type,stream,level,color,message,payload) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING {EVENT_COLUMNS}"
+        );
+        let row = sqlx::query_as::<_, HeartbeatEventRow>(&query)
+            .bind(run.company_id)
+            .bind(run.id)
+            .bind(run.agent_id)
+            .bind(next_seq)
+            .bind(event.event_type)
+            .bind(event.stream.map(HeartbeatEventStream::as_str))
+            .bind(event.level.map(HeartbeatEventLevel::as_str))
+            .bind(event.color)
+            .bind(&event.message)
+            .bind(event.payload)
+            .fetch_one(&mut *transaction)
+            .await?;
+        if update_last_output {
+            let message_bytes = event
+                .message
+                .as_deref()
+                .map_or(0_i64, |text| i64::try_from(text.len()).unwrap_or(i64::MAX));
+            sqlx::query(
+                "UPDATE heartbeat_runs SET last_output_at=now(), last_output_seq=$2, \
+                 last_output_stream=$3, last_output_bytes=$4, updated_at=now() \
+                 WHERE company_id=$1 AND id=$5",
+            )
+            .bind(run.company_id)
+            .bind(row.seq)
+            .bind(&row.stream)
+            .bind(message_bytes)
+            .bind(run.id)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(row)
     }
 
     pub async fn record_execution_event(
@@ -211,39 +692,30 @@ impl<'a> HeartbeatRepo<'a> {
         message: Option<&str>,
         payload: Option<serde_json::Value>,
     ) -> sqlx::Result<HeartbeatEventRow> {
-        let mut transaction = self.db.pool().begin().await?;
-        let message_bytes =
-            message.map_or(0_i64, |text| i64::try_from(text.len()).unwrap_or(i64::MAX));
-        let event = sqlx::query_as::<_, HeartbeatEventRow>(
-            "INSERT INTO heartbeat_run_events \
-             (company_id, run_id, agent_id, seq, event_type, stream, message, payload) \
-             VALUES ($1,$2,$3, \
-               COALESCE((SELECT MAX(seq)+1 FROM heartbeat_run_events WHERE run_id=$2), 1), \
-               $4,$5,$6,$7) \
-             RETURNING id, company_id, run_id, agent_id, seq, event_type, stream, level, color, \
-                       message, payload, created_at",
+        let parsed_stream = match stream {
+            Some("system") => Some(HeartbeatEventStream::System),
+            Some("stdout") => Some(HeartbeatEventStream::Stdout),
+            Some("stderr") => Some(HeartbeatEventStream::Stderr),
+            Some(_) => {
+                return Err(sqlx::Error::Protocol(
+                    "invalid heartbeat event stream".into(),
+                ))
+            }
+            None => None,
+        };
+        self.append_event_full(
+            run,
+            NewHeartbeatEvent {
+                event_type: event_type.to_owned(),
+                stream: parsed_stream,
+                level: None,
+                color: None,
+                message: message.map(ToOwned::to_owned),
+                payload,
+            },
+            true,
         )
-        .bind(run.company_id)
-        .bind(run.id)
-        .bind(run.agent_id)
-        .bind(event_type)
-        .bind(stream)
-        .bind(message)
-        .bind(payload)
-        .fetch_one(&mut *transaction)
-        .await?;
-        sqlx::query(
-            "UPDATE heartbeat_runs SET last_output_at=now(), last_output_seq=$2, \
-             last_output_stream=$3, last_output_bytes=$4, updated_at=now() WHERE id=$1",
-        )
-        .bind(run.id)
-        .bind(event.seq)
-        .bind(stream)
-        .bind(message_bytes)
-        .execute(&mut *transaction)
-        .await?;
-        transaction.commit().await?;
-        Ok(event)
+        .await
     }
 
     pub async fn finish_execution(
@@ -253,20 +725,34 @@ impl<'a> HeartbeatRepo<'a> {
         error: Option<&str>,
         result: Option<&pc_adapter_api::AdapterExecutionResult>,
     ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let target: HeartbeatRunStatus = status
+            .parse()
+            .map_err(|message: &'static str| sqlx::Error::Protocol(message.into()))?;
+        if !target.is_terminal() {
+            return Err(sqlx::Error::Protocol(
+                "execution result status must be terminal".into(),
+            ));
+        }
         let usage = result
             .and_then(|result| result.usage.as_ref())
             .map(serde_json::to_value)
             .transpose()
             .map_err(|error| sqlx::Error::Encode(Box::new(error)))?;
         let result_json = result.and_then(|result| result.result_json.clone());
+        let predecessors: Vec<String> = target
+            .allowed_predecessors()
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
         let query = format!(
             "UPDATE heartbeat_runs SET status=$2, error=$3, exit_code=$4, signal=$5, \
              usage_json=$6, result_json=$7, session_id_after=$8, error_code=$9, \
-             finished_at=now(), updated_at=now() WHERE id=$1 RETURNING {RUN_COLUMNS}"
+             finished_at=COALESCE(finished_at,now()), updated_at=now() \
+             WHERE id=$1 AND status=ANY($10::text[]) RETURNING {RUN_COLUMNS}"
         );
         sqlx::query_as::<_, HeartbeatRow>(&query)
             .bind(run_id)
-            .bind(status)
+            .bind(target.as_str())
             .bind(error)
             .bind(result.and_then(|result| result.exit_code))
             .bind(result.and_then(|result| result.signal.as_deref()))
@@ -274,6 +760,7 @@ impl<'a> HeartbeatRepo<'a> {
             .bind(result_json)
             .bind(result.and_then(|result| result.session_id.as_deref()))
             .bind(result.and_then(|result| result.error_code.as_deref()))
+            .bind(predecessors)
             .fetch_optional(self.db.pool())
             .await
     }
@@ -284,22 +771,160 @@ impl<'a> HeartbeatRepo<'a> {
         after_seq: i32,
         limit: i64,
     ) -> sqlx::Result<Vec<HeartbeatEventRow>> {
-        sqlx::query_as::<_, HeartbeatEventRow>(
-            "SELECT id, company_id, run_id, agent_id, seq, event_type, stream, level, color, \
-                    message, payload, created_at FROM heartbeat_run_events \
-             WHERE run_id=$1 AND seq>$2 ORDER BY seq ASC LIMIT $3",
-        )
-        .bind(run_id)
-        .bind(after_seq.max(0))
-        .bind(limit.clamp(1, 1000))
-        .fetch_all(self.db.pool())
-        .await
+        let query = format!(
+            "SELECT {EVENT_COLUMNS} FROM heartbeat_run_events WHERE run_id=$1 AND seq>$2 \
+             ORDER BY seq ASC LIMIT $3"
+        );
+        sqlx::query_as::<_, HeartbeatEventRow>(&query)
+            .bind(run_id)
+            .bind(after_seq.max(0))
+            .bind(limit.clamp(1, 1_000))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn list_events_for_company(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+        after_seq: i32,
+        limit: i64,
+    ) -> sqlx::Result<Vec<HeartbeatEventRow>> {
+        let query = format!(
+            "SELECT {EVENT_COLUMNS} FROM heartbeat_run_events \
+             WHERE company_id=$1 AND run_id=$2 AND seq>$3 ORDER BY seq ASC LIMIT $4"
+        );
+        sqlx::query_as::<_, HeartbeatEventRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .bind(after_seq.max(0))
+            .bind(limit.clamp(1, 1_000))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn record_watchdog_decision(
+        &self,
+        input: NewWatchdogDecision,
+    ) -> sqlx::Result<HeartbeatWatchdogDecisionRow> {
+        if input.decision == WatchdogDecision::Snooze && input.snoozed_until.is_none() {
+            return Err(sqlx::Error::Protocol(
+                "snooze watchdog decision requires snoozed_until".into(),
+            ));
+        }
+        let query = format!(
+            "INSERT INTO heartbeat_run_watchdog_decisions \
+             (company_id,run_id,evaluation_issue_id,decision,snoozed_until,reason, \
+              created_by_agent_id,created_by_user_id,created_by_run_id) \
+             SELECT hr.company_id,hr.id,$3,$4, \
+                CASE WHEN $4='continue' THEN COALESCE($5,now()+interval '30 minutes') \
+                     WHEN $4='snooze' THEN $5 ELSE NULL END, $6,$7,$8,$9 \
+             FROM heartbeat_runs hr WHERE hr.company_id=$1 AND hr.id=$2 \
+             RETURNING {WATCHDOG_COLUMNS}"
+        );
+        sqlx::query_as::<_, HeartbeatWatchdogDecisionRow>(&query)
+            .bind(input.company_id)
+            .bind(input.run_id)
+            .bind(input.evaluation_issue_id)
+            .bind(input.decision.as_str())
+            .bind(input.snoozed_until)
+            .bind(input.reason)
+            .bind(input.created_by_agent_id)
+            .bind(input.created_by_user_id)
+            .bind(input.created_by_run_id)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    pub async fn list_watchdog_decisions(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+    ) -> sqlx::Result<Vec<HeartbeatWatchdogDecisionRow>> {
+        let query = format!(
+            "SELECT {WATCHDOG_COLUMNS} FROM heartbeat_run_watchdog_decisions \
+             WHERE company_id=$1 AND run_id=$2 ORDER BY created_at DESC, id DESC"
+        );
+        sqlx::query_as::<_, HeartbeatWatchdogDecisionRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn active_watchdog_snooze(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+    ) -> sqlx::Result<Option<HeartbeatWatchdogDecisionRow>> {
+        let query = format!(
+            "SELECT {WATCHDOG_COLUMNS} FROM heartbeat_run_watchdog_decisions \
+             WHERE company_id=$1 AND run_id=$2 AND decision IN ('snooze','continue') \
+             AND snoozed_until>now() ORDER BY created_at DESC, id DESC LIMIT 1"
+        );
+        sqlx::query_as::<_, HeartbeatWatchdogDecisionRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heartbeat_contract_values_round_trip() {
+        for status in [
+            HeartbeatRunStatus::Queued,
+            HeartbeatRunStatus::ScheduledRetry,
+            HeartbeatRunStatus::Running,
+            HeartbeatRunStatus::Succeeded,
+            HeartbeatRunStatus::Interrupted,
+            HeartbeatRunStatus::Failed,
+            HeartbeatRunStatus::Cancelled,
+            HeartbeatRunStatus::TimedOut,
+        ] {
+            assert_eq!(status.as_str().parse(), Ok(status));
+        }
+        for state in [
+            RunLivenessState::Completed,
+            RunLivenessState::Advanced,
+            RunLivenessState::PlanOnly,
+            RunLivenessState::EmptyResponse,
+            RunLivenessState::Blocked,
+            RunLivenessState::Failed,
+            RunLivenessState::NeedsFollowup,
+        ] {
+            assert_eq!(state.as_str().parse(), Ok(state));
+        }
+        for decision in [
+            WatchdogDecision::Snooze,
+            WatchdogDecision::Continue,
+            WatchdogDecision::DismissedFalsePositive,
+        ] {
+            assert_eq!(decision.as_str().parse(), Ok(decision));
+        }
+    }
+
+    #[test]
+    fn heartbeat_terminal_states_cannot_restart() {
+        assert!(HeartbeatRunStatus::Queued.can_transition_to(HeartbeatRunStatus::Running));
+        assert!(HeartbeatRunStatus::ScheduledRetry.can_transition_to(HeartbeatRunStatus::Queued));
+        assert!(HeartbeatRunStatus::Running.can_transition_to(HeartbeatRunStatus::Succeeded));
+        for terminal in [
+            HeartbeatRunStatus::Succeeded,
+            HeartbeatRunStatus::Interrupted,
+            HeartbeatRunStatus::Failed,
+            HeartbeatRunStatus::Cancelled,
+            HeartbeatRunStatus::TimedOut,
+        ] {
+            assert!(terminal.is_terminal());
+            assert!(!terminal.can_transition_to(HeartbeatRunStatus::Running));
+            assert!(terminal.can_transition_to(terminal));
+        }
+    }
 
     #[test]
     fn queued_run_serializes_nullable_runtime_fields() {
@@ -320,15 +945,37 @@ mod tests {
             signal: None,
             usage_json: None,
             result_json: None,
+            session_id_before: None,
+            session_id_after: None,
+            log_store: None,
+            log_ref: None,
+            log_bytes: None,
+            log_sha256: None,
+            log_compressed: false,
+            stdout_excerpt: None,
+            stderr_excerpt: None,
+            error_code: None,
             external_run_id: None,
             process_pid: None,
             process_group_id: None,
             process_started_at: None,
             last_output_at: None,
             last_output_seq: 0,
+            last_output_stream: None,
+            last_output_bytes: None,
             retry_of_run_id: None,
+            process_loss_retry_count: 0,
             scheduled_retry_at: None,
             scheduled_retry_attempt: 0,
+            scheduled_retry_reason: None,
+            issue_comment_status: "not_applicable".into(),
+            issue_comment_satisfied_by_comment_id: None,
+            issue_comment_retry_queued_at: None,
+            liveness_state: None,
+            liveness_reason: None,
+            continuation_attempt: 0,
+            last_useful_action_at: None,
+            next_action: None,
             context_snapshot: None,
             created_at: now,
             updated_at: now,
@@ -338,5 +985,7 @@ mod tests {
         assert_eq!(value["status"], "queued");
         assert!(value["started_at"].is_null());
         assert!(value["finished_at"].is_null());
+        assert!(value["session_id_before"].is_null());
+        assert_eq!(value["issue_comment_status"], "not_applicable");
     }
 }

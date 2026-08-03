@@ -27,7 +27,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let rows = EnvironmentRepo::new(&state.db).list().await?;
+    let rows = EnvironmentRepo::new(&state.db).list_all().await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -65,7 +65,7 @@ async fn create(
         body.config
     };
     let row = EnvironmentRepo::new(&state.db)
-        .create(&body.name, &body.driver, cfg)
+        .create_simple(&body.name, &body.driver, cfg)
         .await?;
     state
         .realtime
@@ -95,12 +95,7 @@ async fn update(
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     let row = EnvironmentRepo::new(&state.db)
-        .update(
-            id,
-            body.name.as_deref(),
-            body.status.as_deref(),
-            body.config,
-        )
+        .update(id, body.name.as_deref(), body.status.as_deref(), body.config)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("environment {id}")))?;
     state

@@ -41,8 +41,7 @@ async fn list(
     }))
 }
 async fn get_one(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let r = GoalRepo::new(&s.db)
-        .get(id)
+    let r = GoalRepo::new(&s.db).get_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?;
     Ok(Json(serde_json::to_value(r).unwrap_or_default()))
@@ -64,8 +63,7 @@ async fn create(
     if b.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title required".into()));
     }
-    let r = GoalRepo::new(&s.db)
-        .create(
+    let r = GoalRepo::new(&s.db).create_simple(
             b.company_id,
             &b.title,
             b.description.as_deref(),
@@ -85,6 +83,8 @@ struct UpdateBody {
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
     status: Option<String>,
 }
 async fn update(
@@ -93,7 +93,7 @@ async fn update(
     Json(b): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     let r = GoalRepo::new(&s.db)
-        .update(id, b.title.as_deref(), b.status.as_deref())
+        .update(id, b.title.as_deref(), b.description.as_deref(), b.status.as_deref(), None, None)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?;
     s.realtime
@@ -101,7 +101,7 @@ async fn update(
     Ok(Json(serde_json::to_value(r).unwrap_or_default()))
 }
 async fn remove(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    if GoalRepo::new(&s.db).delete(id).await? {
+    if GoalRepo::new(&s.db).delete_one(id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound(format!("goal {id}")))

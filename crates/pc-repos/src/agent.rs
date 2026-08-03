@@ -159,6 +159,252 @@ pub struct CreateAgentApiKeyRecord {
     pub scope_config: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatInvocationSource {
+    Timer,
+    Assignment,
+    OnDemand,
+    Automation,
+}
+
+impl HeartbeatInvocationSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Timer => "timer",
+            Self::Assignment => "assignment",
+            Self::OnDemand => "on_demand",
+            Self::Automation => "automation",
+        }
+    }
+}
+
+impl std::str::FromStr for HeartbeatInvocationSource {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "timer" => Ok(Self::Timer),
+            "assignment" => Ok(Self::Assignment),
+            "on_demand" => Ok(Self::OnDemand),
+            "automation" => Ok(Self::Automation),
+            _ => Err("invalid heartbeat invocation source"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeupTriggerDetail {
+    Manual,
+    Ping,
+    Callback,
+    System,
+}
+
+impl WakeupTriggerDetail {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Ping => "ping",
+            Self::Callback => "callback",
+            Self::System => "system",
+        }
+    }
+}
+
+impl std::str::FromStr for WakeupTriggerDetail {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "manual" => Ok(Self::Manual),
+            "ping" => Ok(Self::Ping),
+            "callback" => Ok(Self::Callback),
+            "system" => Ok(Self::System),
+            _ => Err("invalid wakeup trigger detail"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeupRequestStatus {
+    Queued,
+    DeferredIssueExecution,
+    Claimed,
+    Coalesced,
+    Skipped,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl WakeupRequestStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::DeferredIssueExecution => "deferred_issue_execution",
+            Self::Claimed => "claimed",
+            Self::Coalesced => "coalesced",
+            Self::Skipped => "skipped",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Coalesced | Self::Skipped | Self::Completed | Self::Failed | Self::Cancelled
+        )
+    }
+
+    pub fn can_transition_to(self, target: Self) -> bool {
+        if self == target {
+            return true;
+        }
+        match self {
+            Self::Queued => matches!(
+                target,
+                Self::DeferredIssueExecution | Self::Claimed | Self::Skipped | Self::Cancelled
+            ),
+            Self::DeferredIssueExecution => matches!(
+                target,
+                Self::Queued | Self::Claimed | Self::Skipped | Self::Cancelled
+            ),
+            Self::Claimed => matches!(
+                target,
+                Self::Skipped | Self::Completed | Self::Failed | Self::Cancelled
+            ),
+            Self::Coalesced
+            | Self::Skipped
+            | Self::Completed
+            | Self::Failed
+            | Self::Cancelled => false,
+        }
+    }
+
+    fn allowed_predecessors(self) -> &'static [&'static str] {
+        match self {
+            Self::Queued => &["queued", "deferred_issue_execution"],
+            Self::DeferredIssueExecution => &["queued", "deferred_issue_execution"],
+            Self::Claimed => &["queued", "deferred_issue_execution", "claimed"],
+            Self::Coalesced => &["coalesced"],
+            Self::Skipped => &["queued", "deferred_issue_execution", "claimed", "skipped"],
+            Self::Completed => &["claimed", "completed"],
+            Self::Failed => &["claimed", "failed"],
+            Self::Cancelled => &[
+                "queued",
+                "deferred_issue_execution",
+                "claimed",
+                "cancelled",
+            ],
+        }
+    }
+}
+
+impl std::str::FromStr for WakeupRequestStatus {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "deferred_issue_execution" => Ok(Self::DeferredIssueExecution),
+            "claimed" => Ok(Self::Claimed),
+            "coalesced" => Ok(Self::Coalesced),
+            "skipped" => Ok(Self::Skipped),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid wakeup request status"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeupActorType {
+    User,
+    Agent,
+    System,
+}
+
+impl WakeupActorType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Agent => "agent",
+            Self::System => "system",
+        }
+    }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWakeupRequestRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub agent_id: Uuid,
+    pub source: String,
+    pub trigger_detail: Option<String>,
+    pub reason: Option<String>,
+    pub payload: Option<serde_json::Value>,
+    pub status: String,
+    pub coalesced_count: i32,
+    pub requested_by_actor_type: Option<String>,
+    pub requested_by_actor_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub run_id: Option<Uuid>,
+    pub requested_at: Timestamp,
+    pub claimed_at: Option<Timestamp>,
+    pub finished_at: Option<Timestamp>,
+    pub error: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+impl AgentWakeupRequestRow {
+    pub fn wakeup_status(&self) -> Option<WakeupRequestStatus> {
+        self.status.parse().ok()
+    }
+
+    pub fn invocation_source(&self) -> Option<HeartbeatInvocationSource> {
+        self.source.parse().ok()
+    }
+
+    pub fn trigger(&self) -> Option<WakeupTriggerDetail> {
+        self.trigger_detail
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAgentWakeupRequest {
+    pub company_id: Uuid,
+    pub agent_id: Uuid,
+    pub source: HeartbeatInvocationSource,
+    pub trigger_detail: Option<WakeupTriggerDetail>,
+    pub reason: Option<String>,
+    pub payload: Option<serde_json::Value>,
+    pub status: WakeupRequestStatus,
+    pub coalesced_count: i32,
+    pub requested_by_actor_type: Option<WakeupActorType>,
+    pub requested_by_actor_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub run_id: Option<Uuid>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentWakeupFilter {
+    pub status: Option<WakeupRequestStatus>,
+    pub run_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct NewHireApproval {
     pub requested_by_agent_id: Option<Uuid>,
@@ -180,7 +426,12 @@ const TASK_SESSION_COLS: &str = "id, company_id, agent_id, adapter_type, task_ke
     session_params_json, session_display_id, last_run_id, last_error, created_at, updated_at";
 
 const API_KEY_COLS: &str = "id, agent_id, company_id, name, key_hash, responsible_user_id, \
-    scope_config, last_used_at, revoked_at, created_at";
+                            scope_config, last_used_at, revoked_at, created_at";
+
+const WAKEUP_COLS: &str = "id, company_id, agent_id, source, trigger_detail, reason, payload, \
+                           status, coalesced_count, requested_by_actor_type, requested_by_actor_id, \
+                           idempotency_key, run_id, requested_at, claimed_at, finished_at, error, \
+                           created_at, updated_at";
 
 pub struct AgentRepo<'a> {
     pub db: &'a Db,
@@ -751,6 +1002,153 @@ impl<'a> AgentRepo<'a> {
             .await
     }
 
+    pub async fn create_wakeup_request(
+        &self,
+        input: NewAgentWakeupRequest,
+    ) -> sqlx::Result<AgentWakeupRequestRow> {
+        let sql = format!(
+            "INSERT INTO agent_wakeup_requests \
+                (company_id, agent_id, source, trigger_detail, reason, payload, status, \
+                 coalesced_count, requested_by_actor_type, requested_by_actor_id, idempotency_key, \
+                 run_id, claimed_at, finished_at, error) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, \
+                 CASE WHEN $7='claimed' THEN now() ELSE NULL END, \
+                 CASE WHEN $7 IN ('coalesced','skipped','completed','failed','cancelled') \
+                      THEN now() ELSE NULL END, $13) \
+             RETURNING {WAKEUP_COLS}"
+        );
+        sqlx::query_as(&sql)
+            .bind(input.company_id)
+            .bind(input.agent_id)
+            .bind(input.source.as_str())
+            .bind(input.trigger_detail.map(WakeupTriggerDetail::as_str))
+            .bind(input.reason)
+            .bind(input.payload)
+            .bind(input.status.as_str())
+            .bind(input.coalesced_count.max(0))
+            .bind(input.requested_by_actor_type.map(WakeupActorType::as_str))
+            .bind(input.requested_by_actor_id)
+            .bind(input.idempotency_key)
+            .bind(input.run_id)
+            .bind(input.error)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    pub async fn get_wakeup_request(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> sqlx::Result<Option<AgentWakeupRequestRow>> {
+        let sql = format!(
+            "SELECT {WAKEUP_COLS} FROM agent_wakeup_requests WHERE company_id=$1 AND id=$2"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    pub async fn list_wakeup_requests(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+        filter: &AgentWakeupFilter,
+    ) -> sqlx::Result<Vec<AgentWakeupRequestRow>> {
+        let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+            "SELECT {WAKEUP_COLS} FROM agent_wakeup_requests WHERE company_id="
+        ));
+        query.push_bind(company_id);
+        query.push(" AND agent_id=").push_bind(agent_id);
+        if let Some(status) = filter.status {
+            query.push(" AND status=").push_bind(status.as_str());
+        }
+        if let Some(run_id) = filter.run_id {
+            query.push(" AND run_id=").push_bind(run_id);
+        }
+        query
+            .push(" ORDER BY requested_at DESC, created_at DESC LIMIT ")
+            .push_bind(filter.limit.unwrap_or(200).clamp(1, 1_000));
+        query
+            .build_query_as::<AgentWakeupRequestRow>()
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn find_wakeup_by_idempotency_key(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+        idempotency_key: &str,
+    ) -> sqlx::Result<Option<AgentWakeupRequestRow>> {
+        let sql = format!(
+            "SELECT {WAKEUP_COLS} FROM agent_wakeup_requests \
+             WHERE company_id=$1 AND agent_id=$2 AND idempotency_key=$3 \
+             ORDER BY requested_at DESC, created_at DESC LIMIT 1"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(agent_id)
+            .bind(idempotency_key)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    pub async fn transition_wakeup_request(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+        target: WakeupRequestStatus,
+        run_id: Option<Uuid>,
+        error: Option<&str>,
+    ) -> sqlx::Result<Option<AgentWakeupRequestRow>> {
+        let allowed_predecessors: Vec<String> = target
+            .allowed_predecessors()
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
+        let sql = format!(
+            "UPDATE agent_wakeup_requests SET \
+                status=$3, run_id=COALESCE($4, run_id), \
+                claimed_at=CASE WHEN $3='claimed' THEN COALESCE(claimed_at, now()) ELSE claimed_at END, \
+                finished_at=CASE \
+                    WHEN $3 IN ('coalesced','skipped','completed','failed','cancelled') \
+                    THEN COALESCE(finished_at, now()) ELSE NULL END, \
+                error=CASE WHEN $3 IN ('completed','coalesced') THEN NULL ELSE $5 END, \
+                updated_at=now() \
+             WHERE company_id=$1 AND id=$2 AND status=ANY($6::text[]) \
+             RETURNING {WAKEUP_COLS}"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(id)
+            .bind(target.as_str())
+            .bind(run_id)
+            .bind(error)
+            .bind(allowed_predecessors)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    pub async fn increment_wakeup_coalesced_count(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> sqlx::Result<Option<AgentWakeupRequestRow>> {
+        let sql = format!(
+            "UPDATE agent_wakeup_requests SET coalesced_count=coalesced_count+1, updated_at=now() \
+             WHERE company_id=$1 AND id=$2 \
+             AND status IN ('queued','deferred_issue_execution','claimed') \
+             RETURNING {WAKEUP_COLS}"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     pub async fn update(
         &self,
         id: Uuid,
@@ -779,5 +1177,71 @@ impl<'a> AgentRepo<'a> {
             .execute(self.db.pool())
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HeartbeatInvocationSource, WakeupRequestStatus, WakeupTriggerDetail};
+
+    #[test]
+    fn wakeup_contract_values_round_trip() {
+        let statuses = [
+            WakeupRequestStatus::Queued,
+            WakeupRequestStatus::DeferredIssueExecution,
+            WakeupRequestStatus::Claimed,
+            WakeupRequestStatus::Coalesced,
+            WakeupRequestStatus::Skipped,
+            WakeupRequestStatus::Completed,
+            WakeupRequestStatus::Failed,
+            WakeupRequestStatus::Cancelled,
+        ];
+        for status in statuses {
+            assert_eq!(status.as_str().parse(), Ok(status));
+        }
+
+        let sources = [
+            HeartbeatInvocationSource::Timer,
+            HeartbeatInvocationSource::Assignment,
+            HeartbeatInvocationSource::OnDemand,
+            HeartbeatInvocationSource::Automation,
+        ];
+        for source in sources {
+            assert_eq!(source.as_str().parse(), Ok(source));
+        }
+
+        let trigger_details = [
+            WakeupTriggerDetail::Manual,
+            WakeupTriggerDetail::Ping,
+            WakeupTriggerDetail::Callback,
+            WakeupTriggerDetail::System,
+        ];
+        for trigger_detail in trigger_details {
+            assert_eq!(trigger_detail.as_str().parse(), Ok(trigger_detail));
+        }
+    }
+
+    #[test]
+    fn wakeup_lifecycle_rejects_terminal_reactivation() {
+        assert!(WakeupRequestStatus::Queued.can_transition_to(WakeupRequestStatus::Claimed));
+        assert!(WakeupRequestStatus::Queued
+            .can_transition_to(WakeupRequestStatus::DeferredIssueExecution));
+        assert!(WakeupRequestStatus::DeferredIssueExecution
+            .can_transition_to(WakeupRequestStatus::Queued));
+        assert!(WakeupRequestStatus::Claimed.can_transition_to(WakeupRequestStatus::Completed));
+        assert!(WakeupRequestStatus::Claimed.can_transition_to(WakeupRequestStatus::Failed));
+        assert!(WakeupRequestStatus::Claimed.can_transition_to(WakeupRequestStatus::Cancelled));
+
+        for terminal in [
+            WakeupRequestStatus::Coalesced,
+            WakeupRequestStatus::Skipped,
+            WakeupRequestStatus::Completed,
+            WakeupRequestStatus::Failed,
+            WakeupRequestStatus::Cancelled,
+        ] {
+            assert!(terminal.is_terminal());
+            assert!(!terminal.can_transition_to(WakeupRequestStatus::Queued));
+            assert!(terminal.can_transition_to(terminal));
+        }
     }
 }

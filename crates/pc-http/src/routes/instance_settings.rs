@@ -36,7 +36,7 @@ async fn get_all(
     headers: HeaderMap,
 ) -> ApiResult<Json<InstanceSetting>> {
     require_user_id(&state, &headers).await?;
-    Ok(Json(SettingsRepo::new(&state.db).get("default").await?))
+    Ok(Json(SettingsRepo::new(&state.db).get().await?))
 }
 async fn patch_all(
     State(state): State<AppState>,
@@ -46,7 +46,7 @@ async fn patch_all(
     require_user_id(&state, &headers).await?;
     Ok(Json(
         SettingsRepo::new(&state.db)
-            .patch(body.default_environment_id, body.general, body.experimental)
+            .patch_simple(body.default_environment_id, body.general, body.experimental)
             .await?,
     ))
 }
@@ -56,7 +56,7 @@ async fn get_general(
 ) -> ApiResult<Json<serde_json::Value>> {
     require_user_id(&state, &headers).await?;
     Ok(Json(
-        SettingsRepo::new(&state.db).get("default").await?.general,
+        SettingsRepo::new(&state.db).get().await?.general,
     ))
 }
 async fn patch_general(
@@ -67,7 +67,7 @@ async fn patch_general(
     require_user_id(&state, &headers).await?;
     Ok(Json(
         SettingsRepo::new(&state.db)
-            .patch(None, Some(value), None)
+            .patch_simple(None, Some(value), None)
             .await?
             .general,
     ))
@@ -79,7 +79,7 @@ async fn get_experimental(
     require_user_id(&state, &headers).await?;
     Ok(Json(
         SettingsRepo::new(&state.db)
-            .get("default")
+            .get()
             .await?
             .experimental,
     ))
@@ -92,7 +92,7 @@ async fn patch_experimental(
     require_user_id(&state, &headers).await?;
     Ok(Json(
         SettingsRepo::new(&state.db)
-            .patch(None, None, Some(value))
+            .patch_simple(None, None, Some(value))
             .await?
             .experimental,
     ))

@@ -67,7 +67,7 @@ async fn upsert(
         ));
     }
     let row = InboxRepo::new(&state.db)
-        .upsert(
+        .upsert_simple(
             company_id,
             &user_id,
             body.item_key.trim(),

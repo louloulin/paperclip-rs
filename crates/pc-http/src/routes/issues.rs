@@ -1395,7 +1395,7 @@ async fn list_issue_approvals(
     let approval_repo = pc_repos::approval::ApprovalRepo::new(&state.db);
     let mut out = Vec::with_capacity(links.len());
     for link in links {
-        if let Some(approval) = approval_repo.get(link.approval_id).await? {
+        if let Some(approval) = approval_repo.get_id_only(link.approval_id).await? {
             out.push(serde_json::json!({
                 "issue_id": link.issue_id,
                 "approval_id": link.approval_id,
@@ -1484,7 +1484,7 @@ async fn decide_issue_approval(
             .map(|s| s.to_string())
     });
     let row = pc_repos::approval::ApprovalRepo::new(&state.db)
-        .decide(
+        .decide_four_args(
             approval_id,
             &body.decision,
             body.decision_note.as_deref(),

@@ -36,15 +36,14 @@ async fn list(
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = match q.company_id {
-        Some(cid) => ApprovalRepo::new(&state.db).list_by_company(cid).await?,
+        Some(cid) => ApprovalRepo::new(&state.db).list_by_company_simple(cid).await?,
         None => ApprovalRepo::new(&state.db).list_all(200).await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = ApprovalRepo::new(&state.db)
-        .get(id)
+    let row = ApprovalRepo::new(&state.db).get_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -73,8 +72,7 @@ async fn create(
     } else {
         body.payload
     };
-    let row = ApprovalRepo::new(&state.db)
-        .create(body.company_id, &body.approval_type, payload)
+    let row = ApprovalRepo::new(&state.db).create_three_args(body.company_id, &body.approval_type, payload)
         .await?;
     state.realtime.publish(
         LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id),
@@ -106,8 +104,7 @@ async fn decide(
             "status must be approved|rejected|cancelled".into(),
         ));
     }
-    let row = ApprovalRepo::new(&state.db)
-        .decide(id, &body.status, body.note.as_deref(), &body.decided_by)
+    let row = ApprovalRepo::new(&state.db).decide_four_args(id, &body.status, body.note.as_deref(), &body.decided_by)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {id}")))?;
     state.realtime.publish(
@@ -118,7 +115,7 @@ async fn decide(
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    let ok = ApprovalRepo::new(&state.db).delete(id).await?;
+    let ok = ApprovalRepo::new(&state.db).delete_one(id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
     } else {

@@ -47,7 +47,7 @@ async fn create(
     Json(b): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     let r = FolderRepo::new(&s.db)
-        .create(b.company_id, &b.kind, &b.name, &b.slug)
+        .create_legacy(b.company_id, &b.kind, &b.name, &b.slug)
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -56,7 +56,7 @@ async fn create(
 }
 
 async fn remove(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    if FolderRepo::new(&s.db).delete(id).await? {
+    if FolderRepo::new(&s.db).delete_legacy(id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound(format!("folder {id}")))

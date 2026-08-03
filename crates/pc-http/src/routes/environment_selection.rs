@@ -37,7 +37,7 @@ fn default_setting() -> InstanceSetting {
 
 async fn get_setting(state: &AppState) -> InstanceSetting {
     SettingsRepo::new(&state.db)
-        .get("default")
+        .get()
         .await
         .unwrap_or_else(|_| default_setting())
 }
@@ -67,7 +67,7 @@ async fn update_selection(
         .and_then(|v| v.as_str())
         .and_then(|s| Uuid::parse_str(s).ok());
     let patch_result = SettingsRepo::new(&state.db)
-        .patch(
+        .patch_simple(
             None,
             Some(json!({ "currentEnvironmentId": env_id.map(|u| u.to_string()) })),
             None,

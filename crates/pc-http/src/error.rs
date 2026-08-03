@@ -86,3 +86,17 @@ struct ApiErrorDetail {
     code: &'static str,
     message: String,
 }
+
+impl From<pc_repos::RepoError> for ApiError {
+    fn from(err: pc_repos::RepoError) -> Self {
+        match err {
+            pc_repos::RepoError::Sql(e) => ApiError::Sqlx(e),
+            pc_repos::RepoError::NotFound { entity, id } => {
+                ApiError::NotFound(format!("{entity} {id}"))
+            }
+            pc_repos::RepoError::Invalid(msg) => ApiError::BadRequest(msg),
+            pc_repos::RepoError::Json(e) => ApiError::Json(e),
+            pc_repos::RepoError::Core(e) => ApiError::Internal(e.to_string()),
+        }
+    }
+}

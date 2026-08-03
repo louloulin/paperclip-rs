@@ -32,7 +32,7 @@ async fn get_import_paths(
     Path(_company_id): Path<Uuid>,
 ) -> Json<Value> {
     let setting = SettingsRepo::new(&state.db)
-        .get("default")
+        .get()
         .await
         .unwrap_or_else(|_| InstanceSetting {
             id: Uuid::nil(),
@@ -56,7 +56,7 @@ async fn update_import_paths(
 ) -> Json<Value> {
     let paths = body.get("paths").cloned().unwrap_or(json!([]));
     let updated = SettingsRepo::new(&state.db)
-        .patch(None, Some(json!({ "importPaths": paths })), None)
+        .patch_simple(None, Some(json!({ "importPaths": paths })), None)
         .await
         .unwrap();
     Json(json!({
