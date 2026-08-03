@@ -14,17 +14,17 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::Router;
 use pc_adapter_api::AdapterRegistry;
-use pc_adapter_claude_local::PcAdapterClaudeLocalAdapter;
+use pc_adapter_claude_local::ClaudeLocalAdapter;
 use pc_adapter_codex_local::CodexLocalAdapter;
-use pc_adapter_cursor_cloud::PcAdapterCursorCloudAdapter;
-use pc_adapter_cursor_local::PcAdapterCursorLocalAdapter;
-use pc_adapter_gemini_local::PcAdapterGeminiLocalAdapter;
-use pc_adapter_grok_local::PcAdapterGrokLocalAdapter;
-use pc_adapter_hermes::PcAdapterHermesAdapter;
-use pc_adapter_hermes_gateway::PcAdapterHermesGatewayAdapter;
-use pc_adapter_openclaw_gateway::PcAdapterOpenclawGatewayAdapter;
-use pc_adapter_opencode_local::PcAdapterOpencodeLocalAdapter;
-use pc_adapter_pi_local::PcAdapterPiLocalAdapter;
+use pc_adapter_cursor_cloud::CursorCloudAdapter;
+use pc_adapter_cursor_local::CursorLocalAdapter;
+use pc_adapter_gemini_local::GeminiLocalAdapter;
+use pc_adapter_grok_local::GrokLocalAdapter;
+use pc_adapter_hermes::HermesAdapter;
+use pc_adapter_hermes_gateway::HermesGatewayAdapter;
+use pc_adapter_openclaw_gateway::OpenclawGatewayAdapter;
+use pc_adapter_opencode_local::OpencodeLocalAdapter;
+use pc_adapter_pi_local::PiLocalAdapter;
 use pc_config::Config;
 use pc_core::{spawn_system_actor, ActorKey, ActorRegistry};
 use pc_db::{Db, Migrator};
@@ -39,6 +39,7 @@ use tokio::signal;
 use tracing::info;
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> anyhow::Result<()> {
     // 1. 加载配置
     let config = Config::from_env().context("load config")?;
@@ -92,38 +93,70 @@ async fn main() -> anyhow::Result<()> {
         .context("register root actor")?;
     let heartbeat = spawn_heartbeat_supervisor(50, actors.clone());
     let adapters = AdapterRegistry::new();
+    {
+        adapters
+            .register(Arc::new(CodexLocalAdapter::new()))
+            .context("register codex local adapter")?;
+        adapters
+            .register(Arc::new(ClaudeLocalAdapter::new()))
+            .context("register claude local adapter")?;
+        adapters
+            .register(Arc::new(CursorCloudAdapter::new()))
+            .context("register cursor cloud adapter")?;
+        adapters
+            .register(Arc::new(CursorLocalAdapter::new()))
+            .context("register cursor local adapter")?;
+        adapters
+            .register(Arc::new(GeminiLocalAdapter::new()))
+            .context("register gemini local adapter")?;
+        adapters
+            .register(Arc::new(GrokLocalAdapter::new()))
+            .context("register grok local adapter")?;
+        adapters
+            .register(Arc::new(HermesAdapter::new()))
+            .context("register hermes adapter")?;
+        adapters
+            .register(Arc::new(HermesGatewayAdapter::new()))
+            .context("register hermes gateway adapter")?;
+        adapters
+            .register(Arc::new(OpenclawGatewayAdapter::new()))
+            .context("register openclaw gateway adapter")?;
+        adapters
+            .register(Arc::new(OpencodeLocalAdapter::new()))
+            .context("register opencode local adapter")?;
+        adapters
+            .register(Arc::new(PiLocalAdapter::new()))
+            .context("register pi local adapter")?;
+    }
     adapters
-        .register(Arc::new(CodexLocalAdapter::new()))
-        .context("register codex local adapter")?;
-    adapters
-        .register(Arc::new(PcAdapterClaudeLocalAdapter::new()))
+        .register(Arc::new(ClaudeLocalAdapter::new()))
         .context("register claude local adapter")?;
     adapters
-        .register(Arc::new(PcAdapterCursorCloudAdapter::new()))
+        .register(Arc::new(CursorCloudAdapter::new()))
         .context("register cursor cloud adapter")?;
     adapters
-        .register(Arc::new(PcAdapterCursorLocalAdapter::new()))
+        .register(Arc::new(CursorLocalAdapter::new()))
         .context("register cursor local adapter")?;
     adapters
-        .register(Arc::new(PcAdapterGeminiLocalAdapter::new()))
+        .register(Arc::new(GeminiLocalAdapter::new()))
         .context("register gemini local adapter")?;
     adapters
-        .register(Arc::new(PcAdapterGrokLocalAdapter::new()))
+        .register(Arc::new(GrokLocalAdapter::new()))
         .context("register grok local adapter")?;
     adapters
-        .register(Arc::new(PcAdapterHermesAdapter::new()))
+        .register(Arc::new(HermesAdapter::new()))
         .context("register hermes adapter")?;
     adapters
-        .register(Arc::new(PcAdapterHermesGatewayAdapter::new()))
+        .register(Arc::new(HermesGatewayAdapter::new()))
         .context("register hermes gateway adapter")?;
     adapters
-        .register(Arc::new(PcAdapterOpenclawGatewayAdapter::new()))
+        .register(Arc::new(OpenclawGatewayAdapter::new()))
         .context("register openclaw gateway adapter")?;
     adapters
-        .register(Arc::new(PcAdapterOpencodeLocalAdapter::new()))
+        .register(Arc::new(OpencodeLocalAdapter::new()))
         .context("register opencode local adapter")?;
     adapters
-        .register(Arc::new(PcAdapterPiLocalAdapter::new()))
+        .register(Arc::new(PiLocalAdapter::new()))
         .context("register pi local adapter")?;
     actors
         .register(

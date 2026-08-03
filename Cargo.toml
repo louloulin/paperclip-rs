@@ -26,6 +26,8 @@ members = [
     "crates/pc-adapter-openclaw-gateway",
     "crates/pc-adapter-opencode-local",
     "crates/pc-adapter-pi-local",
+    "crates/pc-plugin-protocol",
+    "crates/pc-plugin-host",
     "crates/pc-secrets",
     "crates/pc-server",
 ]

@@ -23,7 +23,17 @@ pc-realtime = { path = "../pc-realtime" }
 pc-heartbeat = { path = "../pc-heartbeat" }
 pc-repos = { path = "../pc-repos" }
 pc-adapter-api = { path = "../pc-adapter-api" }
+pc-adapter-claude-local = { path = "../pc-adapter-claude-local" }
 pc-adapter-codex-local = { path = "../pc-adapter-codex-local" }
+pc-adapter-cursor-cloud = { path = "../pc-adapter-cursor-cloud" }
+pc-adapter-cursor-local = { path = "../pc-adapter-cursor-local" }
+pc-adapter-gemini-local = { path = "../pc-adapter-gemini-local" }
+pc-adapter-grok-local = { path = "../pc-adapter-grok-local" }
+pc-adapter-hermes = { path = "../pc-adapter-hermes" }
+pc-adapter-hermes-gateway = { path = "../pc-adapter-hermes-gateway" }
+pc-adapter-openclaw-gateway = { path = "../pc-adapter-openclaw-gateway" }
+pc-adapter-opencode-local = { path = "../pc-adapter-opencode-local" }
+pc-adapter-pi-local = { path = "../pc-adapter-pi-local" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

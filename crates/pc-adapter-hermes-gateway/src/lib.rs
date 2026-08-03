@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,
-    AdapterExecutionResult, UsageSummary,
+    AdapterExecutionResult,
 };
 use pc_adapter_process::{execute_process_capture, ProcessSpec};
 
@@ -21,7 +21,7 @@ fn default_model(config: &serde_json::Value) -> Option<String> {
     config
         .get("model")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
+        .map(String::from)
 }
 
 /// Parse adapter-specific JSONL or text output from stdout.
@@ -37,7 +37,11 @@ fn parse_stdout(stdout: &str) -> Option<String> {
             if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
                 return Some(text.to_owned());
             }
-            if let Some(item) = event.get("item").and_then(|v| v.get("text")).and_then(|v| v.as_str()) {
+            if let Some(item) = event
+                .get("item")
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str())
+            {
                 return Some(item.to_owned());
             }
         }
@@ -46,23 +50,23 @@ fn parse_stdout(stdout: &str) -> Option<String> {
     None
 }
 
-pub struct adapter_hermes_gatewayAdapter;
+pub struct HermesGatewayAdapter;
 
-impl adapter_hermes_gatewayAdapter {
+impl HermesGatewayAdapter {
     #[must_use]
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for adapter_hermes_gatewayAdapter {
+impl Default for HermesGatewayAdapter {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl Adapter for adapter_hermes_gatewayAdapter {
+impl Adapter for HermesGatewayAdapter {
     fn descriptor(&self) -> AdapterDescriptor {
         AdapterDescriptor::builtin(ADAPTER_TYPE, "Hermes Gateway")
     }
@@ -74,11 +78,15 @@ impl Adapter for adapter_hermes_gatewayAdapter {
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
         let model = default_model(&context.adapter_config);
-        let mut args: Vec<String> = context
+        let args: Vec<String> = context
             .adapter_config
             .get("args")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Standard CLI invocation: <command> [args] <prompt via stdin>
@@ -104,7 +112,7 @@ mod tests {
 
     #[test]
     fn descriptor_returns_correct_type() {
-        let adapter = adapter_hermes_gatewayAdapter::new();
+        let adapter = HermesGatewayAdapter::new();
         assert_eq!(adapter.descriptor().adapter_type, "hermes_gateway");
     }
 
