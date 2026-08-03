@@ -13,11 +13,13 @@ pc-core = { path = "../pc-core", features = ["sqlx"] }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
+pc-secrets = { path = "../pc-secrets" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+futures-util = "0.3"
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }

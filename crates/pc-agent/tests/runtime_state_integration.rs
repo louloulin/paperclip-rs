@@ -3,12 +3,13 @@ use pc_repos::Db;
 use serde_json::json;
 use uuid::Uuid;
 
-const TEST_DATABASE_URL: &str =
-    "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 #[tokio::test(flavor = "current_thread")]
 async fn runtime_state_is_ensured_and_task_reset_is_scoped() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name) VALUES ($1, $2)")
         .bind(company_id)

@@ -103,11 +103,7 @@ impl BackupManager {
             backup_dir: self.opts.backup_dir.clone(),
             format: BackupFormat::default(),
             compress: true,
-            extra_pg_dump_args: vec![
-                "--no-owner".into(),
-                "--clean".into(),
-                "--if-exists".into(),
-            ],
+            extra_pg_dump_args: vec!["--no-owner".into(), "--clean".into(), "--if-exists".into()],
             label: label.map(str::to_string),
         };
         let result = self.engine.run(&opts).await?;

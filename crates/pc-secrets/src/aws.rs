@@ -31,7 +31,11 @@ pub struct AwsSecretsManagerProvider {
 }
 
 impl AwsSecretsManagerProvider {
-    pub fn new(region: impl Into<String>, access_key: impl Into<String>, secret_key: impl Into<String>) -> Self {
+    pub fn new(
+        region: impl Into<String>,
+        access_key: impl Into<String>,
+        secret_key: impl Into<String>,
+    ) -> Self {
         Self {
             region: region.into(),
             access_key: access_key.into(),
@@ -75,7 +79,10 @@ fn hmac_bytes(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 fn amz_date(now: chrono::DateTime<Utc>) -> (String, String) {
-    (now.format("%Y%m%dT%H%M%SZ").to_string(), now.format("%Y%m%d").to_string())
+    (
+        now.format("%Y%m%dT%H%M%SZ").to_string(),
+        now.format("%Y%m%d").to_string(),
+    )
 }
 
 struct AwsRequest {
@@ -119,7 +126,10 @@ fn sign(
         credential_scope,
         sha256_hex(canonical_request.as_bytes())
     );
-    let k_date = hmac_bytes(format!("AWS4{secret_key}").as_bytes(), request.date_stamp.as_bytes());
+    let k_date = hmac_bytes(
+        format!("AWS4{secret_key}").as_bytes(),
+        request.date_stamp.as_bytes(),
+    );
     let k_region = hmac_bytes(&k_date, region.as_bytes());
     let k_service = hmac_bytes(&k_region, service.as_bytes());
     let k_signing = hmac_bytes(&k_service, b"aws4_request");
@@ -172,7 +182,13 @@ impl SecretProvider for AwsSecretsManagerProvider {
             access_key: self.access_key.clone(),
             payload: payload.clone(),
         };
-        let auth = sign(&self.secret_key, &self.region, "secretsmanager", &request, &payload_hash);
+        let auth = sign(
+            &self.secret_key,
+            &self.region,
+            "secretsmanager",
+            &request,
+            &payload_hash,
+        );
         let url = format!("https://{}/", host(&self.region));
         let resp = client()
             .post(&url)
@@ -196,7 +212,10 @@ impl SecretProvider for AwsSecretsManagerProvider {
             }),
             value_sha256: value_sha256.clone(),
             fingerprint_sha256: Some(value_sha256),
-            external_ref: Some(format!("arn:aws:secretsmanager:{}:secret:{}", self.region, secret_name)),
+            external_ref: Some(format!(
+                "arn:aws:secretsmanager:{}:secret:{}",
+                self.region, secret_name
+            )),
             provider_version_ref: None,
         })
     }
@@ -231,7 +250,13 @@ impl SecretProvider for AwsSecretsManagerProvider {
             access_key: self.access_key.clone(),
             payload: payload.clone(),
         };
-        let auth = sign(&self.secret_key, &self.region, "secretsmanager", &request, &payload_hash);
+        let auth = sign(
+            &self.secret_key,
+            &self.region,
+            "secretsmanager",
+            &request,
+            &payload_hash,
+        );
         let url = format!("https://{}/", host(&self.region));
         let resp = client()
             .post(&url)

@@ -38,11 +38,7 @@ pub enum AuthKind {
 }
 
 /// axum middleware：尝试解析认证上下文并注入到 extensions。
-pub async fn auth_layer(
-    state: AppState,
-    mut req: Request,
-    next: Next,
-) -> Response {
+pub async fn auth_layer(state: AppState, mut req: Request, next: Next) -> Response {
     let ctx = resolve_auth(&state, &req).await;
     // 始终注入一个 AuthContext（即使是 Anonymous），方便 handler 决策
     req.extensions_mut().insert(ctx);
@@ -57,9 +53,7 @@ async fn resolve_auth(state: &AppState, req: &Request) -> AuthContext {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
     {
-        if let Ok(Some((_, user_id))) =
-            pc_auth::resolve_api_key(&state.db, token).await
-        {
+        if let Ok(Some((_, user_id))) = pc_auth::resolve_api_key(&state.db, token).await {
             return AuthContext {
                 user_id,
                 auth_kind: AuthKind::ApiKey,
@@ -67,9 +61,7 @@ async fn resolve_auth(state: &AppState, req: &Request) -> AuthContext {
                 role: None,
             };
         }
-        if let Ok(Some((user_id, _))) =
-            pc_auth::resolve_session(&state.db, token).await
-        {
+        if let Ok(Some((user_id, _))) = pc_auth::resolve_session(&state.db, token).await {
             return AuthContext {
                 user_id,
                 auth_kind: AuthKind::Session,
@@ -87,9 +79,7 @@ async fn resolve_auth(state: &AppState, req: &Request) -> AuthContext {
         let prefix = format!("{}=", state.config.session_cookie);
         for part in cookie.split(';').map(str::trim) {
             if let Some(token) = part.strip_prefix(&prefix) {
-                if let Ok(Some((user_id, _))) =
-                    pc_auth::resolve_session(&state.db, token).await
-                {
+                if let Ok(Some((user_id, _))) = pc_auth::resolve_session(&state.db, token).await {
                     return AuthContext {
                         user_id,
                         auth_kind: AuthKind::Cookie,

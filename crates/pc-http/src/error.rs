@@ -65,14 +65,12 @@ impl From<pc_errors::Error> for ApiError {
             pc_errors::Error::Unprocessable { message } => Self::Unprocessable(message),
             pc_errors::Error::Forbidden { message } => Self::Forbidden(message),
             pc_errors::Error::Unauthorized { message } => Self::Unauthorized(message),
-            pc_errors::Error::RateLimited { retry_after_secs } => Self::Internal(format!(
-                "rate limited; retry after {retry_after_secs}s"
-            )),
+            pc_errors::Error::RateLimited { retry_after_secs } => {
+                Self::Internal(format!("rate limited; retry after {retry_after_secs}s"))
+            }
             pc_errors::Error::Upstream {
                 service, message, ..
-            } => {
-                Self::Internal(format!("upstream {service}: {message}"))
-            }
+            } => Self::Internal(format!("upstream {service}: {message}")),
             pc_errors::Error::Internal { message } => Self::Internal(message),
             pc_errors::Error::NotImplemented { message } => Self::Internal(message),
         }

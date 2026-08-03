@@ -38,11 +38,7 @@ impl BackupOptions {
             backup_dir: dir,
             format: BackupFormat::PlainGz,
             compress: true,
-            extra_pg_dump_args: vec![
-                "--no-owner".into(),
-                "--clean".into(),
-                "--if-exists".into(),
-            ],
+            extra_pg_dump_args: vec!["--no-owner".into(), "--clean".into(), "--if-exists".into()],
             label: None,
         })
     }

@@ -1,16 +1,15 @@
-use pc_agent::{
-    AgentPatch, AgentService, CreateAgent, RevisionContext,
-};
+use pc_agent::{AgentPatch, AgentService, CreateAgent, RevisionContext};
 use pc_repos::Db;
 use serde_json::json;
 use uuid::Uuid;
 
-const TEST_DATABASE_URL: &str =
-    "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 #[tokio::test(flavor = "current_thread")]
 async fn update_and_rollback_persist_ordered_config_revisions() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name) VALUES ($1, $2)")
         .bind(company_id)
@@ -73,7 +72,10 @@ async fn update_and_rollback_persist_ordered_config_revisions() {
         .expect("list revisions");
     assert_eq!(revisions.len(), 2);
     assert_eq!(revisions[1].changed_keys, ["name", "adapterConfig"]);
-    assert_eq!(revisions[1].created_by_user_id.as_deref(), Some("board-user"));
+    assert_eq!(
+        revisions[1].created_by_user_id.as_deref(),
+        Some("board-user")
+    );
 
     let rolled_back = service
         .rollback_config_revision(
@@ -94,7 +96,10 @@ async fn update_and_rollback_persist_ordered_config_revisions() {
         .expect("list revisions after rollback");
     assert_eq!(revisions.len(), 3);
     assert_eq!(revisions[0].source, "rollback");
-    assert_eq!(revisions[0].rolled_back_from_revision_id, Some(revisions[2].id));
+    assert_eq!(
+        revisions[0].rolled_back_from_revision_id,
+        Some(revisions[2].id)
+    );
     assert_eq!(revisions[0].changed_keys, ["title"]);
 
     sqlx::query("DELETE FROM agents WHERE id = $1")

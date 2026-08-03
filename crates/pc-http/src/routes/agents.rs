@@ -17,11 +17,11 @@ use uuid::Uuid;
 use pc_adapter_api::{AdapterEvent, AdapterExecutionContext, OutputStream};
 use pc_agent::{
     AgentConfigSnapshot, AgentPatch, AgentPermissionUpdate, AgentService, ApproveAgentCommand,
-    ClearAgentErrorCommand, CreateAgent, CreateAgentCommand, CreateAgentKey,
-    CreateAgentKeyCommand, HireAgentCommand, InstructionAgent, InstructionsBundleUpdate,
-    PauseAgentCommand, PauseReason, ResetRuntimeSession, ResetRuntimeSessionCommand,
-    ResumeAgentCommand, RevisionContext, RevokeAgentKeyCommand, RollbackConfigRevisionCommand,
-    TerminateAgentCommand, UpdateAgentCommand, UpdateAgentPermissionsCommand,
+    ClearAgentErrorCommand, CreateAgent, CreateAgentCommand, CreateAgentKey, CreateAgentKeyCommand,
+    HireAgentCommand, InstructionAgent, InstructionsBundleUpdate, PauseAgentCommand, PauseReason,
+    ResetRuntimeSession, ResetRuntimeSessionCommand, ResumeAgentCommand, RevisionContext,
+    RevokeAgentKeyCommand, RollbackConfigRevisionCommand, TerminateAgentCommand,
+    UpdateAgentCommand, UpdateAgentPermissionsCommand,
 };
 use pc_core::actor_runtime::kameo_api::SendError;
 use pc_heartbeat::{
@@ -41,15 +41,9 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/agents",
             get(list_company_agents).post(create_company_agent),
         )
-        .route(
-            "/api/companies/:company_id/agent-hires",
-            post(hire_agent),
-        )
+        .route("/api/companies/:company_id/agent-hires", post(hire_agent))
         .route("/api/agents/:id", get(get_one).patch(update).delete(remove))
-        .route(
-            "/api/agents/:id/configuration",
-            get(get_configuration),
-        )
+        .route("/api/agents/:id/configuration", get(get_configuration))
         .route(
             "/api/agents/:id/config-revisions",
             get(list_config_revisions),
@@ -86,14 +80,8 @@ pub fn router() -> Router<AppState> {
                 .put(put_instructions_file)
                 .delete(delete_instructions_file),
         )
-        .route(
-            "/api/agents/:id/runtime-state",
-            get(get_runtime_state),
-        )
-        .route(
-            "/api/agents/:id/task-sessions",
-            get(list_task_sessions),
-        )
+        .route("/api/agents/:id/runtime-state", get(get_runtime_state))
+        .route("/api/agents/:id/task-sessions", get(list_task_sessions))
         .route(
             "/api/agents/:id/runtime-state/reset-session",
             post(reset_runtime_session),
@@ -102,10 +90,7 @@ pub fn router() -> Router<AppState> {
             "/api/agents/:id/keys",
             get(list_agent_keys).post(create_agent_key),
         )
-        .route(
-            "/api/agents/:id/keys/:key_id",
-            delete(revoke_agent_key),
-        )
+        .route("/api/agents/:id/keys/:key_id", delete(revoke_agent_key))
         .route("/api/agents/:id/heartbeat/invoke", post(legacy_invoke))
         .route(
             "/api/companies/:company_id/heartbeat-runs",
@@ -126,7 +111,9 @@ async fn list_company_agents(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Vec<AgentRow>>> {
-    let rows = AgentRepo::new(&state.db).list_by_company(company_id).await?;
+    let rows = AgentRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await?;
     Ok(Json(rows))
 }
 
@@ -238,10 +225,7 @@ async fn create_agent(
             .with_company(row.company_id)
             .with_actor("system"),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(row),
-    ))
+    Ok((StatusCode::CREATED, Json(row)))
 }
 
 fn create_agent_input(company_id: Uuid, body: CreateBody) -> ApiResult<CreateAgent> {
@@ -510,9 +494,9 @@ async fn clear_agent_error(
         .await
         .map_err(map_agent_actor_error)?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
-    state.realtime.publish(
-        LiveEvent::new("agent.error_cleared", "agent", id).with_company(row.company_id),
-    );
+    state
+        .realtime
+        .publish(LiveEvent::new("agent.error_cleared", "agent", id).with_company(row.company_id));
     Ok(Json(serde_json::to_value(row)?))
 }
 
@@ -526,9 +510,9 @@ async fn terminate_agent(
         .await
         .map_err(map_agent_actor_error)?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
-    state.realtime.publish(
-        LiveEvent::new("agent.terminated", "agent", id).with_company(row.company_id),
-    );
+    state
+        .realtime
+        .publish(LiveEvent::new("agent.terminated", "agent", id).with_company(row.company_id));
     Ok(Json(serde_json::to_value(row)?))
 }
 
@@ -583,8 +567,7 @@ async fn update_agent_permissions(
         .map_err(map_agent_actor_error)?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
     state.realtime.publish(
-        LiveEvent::new("agent.permissions_updated", "agent", id)
-            .with_company(row.company_id),
+        LiveEvent::new("agent.permissions_updated", "agent", id).with_company(row.company_id),
     );
     Ok(Json(serde_json::to_value(row)?))
 }
@@ -885,8 +868,7 @@ async fn reset_runtime_session(
         .map_err(map_agent_actor_error)?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
     state.realtime.publish(
-        LiveEvent::new("agent.runtime_session_reset", "agent", id)
-            .with_company(row.company_id),
+        LiveEvent::new("agent.runtime_session_reset", "agent", id).with_company(row.company_id),
     );
     Ok(Json(serde_json::to_value(row)?))
 }

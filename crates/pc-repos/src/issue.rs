@@ -107,9 +107,6 @@ pub struct IssueInboxArchiveRow {
     pub updated_at: Timestamp,
 }
 
-
-
-
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct IssueApprovalRow {
     pub company_id: Uuid,
@@ -160,7 +157,6 @@ pub struct FeedbackVoteRow {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct AttachmentRow {
@@ -340,11 +336,7 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// 列出全部（跨公司）；按 status 过滤；limit 默认 200。
-    pub async fn list_all(
-        &self,
-        status: Option<&str>,
-        limit: i64,
-    ) -> sqlx::Result<Vec<IssueRow>> {
+    pub async fn list_all(&self, status: Option<&str>, limit: i64) -> sqlx::Result<Vec<IssueRow>> {
         let status_filter: Option<String> = status.map(str::to_owned);
         let sql = format!(
             "SELECT {ISSUE_COLS} FROM issues              WHERE (CAST($1 AS text) IS NULL OR status = $1)              AND hidden_at IS NULL              ORDER BY created_at DESC LIMIT $2"
@@ -546,11 +538,7 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-    pub async fn delete_comment(
-        &self,
-        issue_id: Uuid,
-        comment_id: Uuid,
-    ) -> sqlx::Result<bool> {
+    pub async fn delete_comment(&self, issue_id: Uuid, comment_id: Uuid) -> sqlx::Result<bool> {
         let r = sqlx::query("DELETE FROM issue_comments WHERE id = $1 AND issue_id = $2")
             .bind(comment_id)
             .bind(issue_id)
@@ -632,16 +620,12 @@ impl<'a> IssueRepo<'a> {
         Ok(r.rows_affected() > 0)
     }
 
-    pub async fn list_issue_label_ids(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Vec<Uuid>> {
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT label_id FROM issue_labels WHERE issue_id = $1",
-        )
-        .bind(issue_id)
-        .fetch_all(self.db.pool())
-        .await?;
+    pub async fn list_issue_label_ids(&self, issue_id: Uuid) -> sqlx::Result<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> =
+            sqlx::query_as("SELECT label_id FROM issue_labels WHERE issue_id = $1")
+                .bind(issue_id)
+                .fetch_all(self.db.pool())
+                .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -1036,7 +1020,6 @@ impl<'a> IssueRepo<'a> {
         Ok(r.rows_affected() > 0)
     }
 
-
     // =========================================================================
     // Issue approvals
     // =========================================================================
@@ -1078,18 +1061,12 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-    pub async fn unlink_approval(
-        &self,
-        issue_id: Uuid,
-        approval_id: Uuid,
-    ) -> sqlx::Result<bool> {
-        let r = sqlx::query(
-            "DELETE FROM issue_approvals WHERE issue_id = $1 AND approval_id = $2",
-        )
-        .bind(issue_id)
-        .bind(approval_id)
-        .execute(self.db.pool())
-        .await?;
+    pub async fn unlink_approval(&self, issue_id: Uuid, approval_id: Uuid) -> sqlx::Result<bool> {
+        let r = sqlx::query("DELETE FROM issue_approvals WHERE issue_id = $1 AND approval_id = $2")
+            .bind(issue_id)
+            .bind(approval_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -1199,10 +1176,7 @@ impl<'a> IssueRepo<'a> {
     // Feedback votes
     // =========================================================================
 
-    pub async fn list_feedback_votes(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Vec<FeedbackVoteRow>> {
+    pub async fn list_feedback_votes(&self, issue_id: Uuid) -> sqlx::Result<Vec<FeedbackVoteRow>> {
         sqlx::query_as::<_, FeedbackVoteRow>(
             "SELECT id, company_id, issue_id, target_type, target_id, author_user_id, \
                     vote, reason, shared_with_labs, shared_at, consent_version, \
@@ -1243,15 +1217,11 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-
     // =========================================================================
     // Attachments (via assets)
     // =========================================================================
 
-    pub async fn list_issue_attachments(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Vec<AttachmentRow>> {
+    pub async fn list_issue_attachments(&self, issue_id: Uuid) -> sqlx::Result<Vec<AttachmentRow>> {
         sqlx::query_as::<_, AttachmentRow>(
             "SELECT id, company_id, issue_id, asset_id, issue_comment_id, created_at, updated_at \
              FROM issue_attachments WHERE issue_id = $1 ORDER BY created_at DESC",
@@ -1357,10 +1327,7 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-    pub async fn get_external_object(
-        &self,
-        id: Uuid,
-    ) -> sqlx::Result<Option<ExternalObjectRow>> {
+    pub async fn get_external_object(&self, id: Uuid) -> sqlx::Result<Option<ExternalObjectRow>> {
         sqlx::query_as::<_, ExternalObjectRow>(
             "SELECT id, company_id, provider_key, plugin_id, object_type, external_id, \
                     display_title, status_key, status_label, status_category, status_tone, \
@@ -1413,10 +1380,7 @@ impl<'a> IssueRepo<'a> {
     // =========================================================================
 
     /// 返回阻塞此 issue 的问题列表（parent_id = this.id 且 status != done）
-    pub async fn list_blockers(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Vec<IssueRow>> {
+    pub async fn list_blockers(&self, issue_id: Uuid) -> sqlx::Result<Vec<IssueRow>> {
         let sql = format!(
             "SELECT {ISSUE_COLS} FROM issues WHERE parent_id = $1 \
              AND status NOT IN ('done', 'cancelled', 'completed') AND hidden_at IS NULL \
@@ -1460,10 +1424,7 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// 返回 issue 的子 issue 树（递归）
-    pub async fn subtree_diagnostics(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<IssueSubtree> {
+    pub async fn subtree_diagnostics(&self, issue_id: Uuid) -> sqlx::Result<IssueSubtree> {
         let root = self.get(issue_id).await?;
         let children = self.list_children(issue_id).await?;
         let mut subtree_children = Vec::with_capacity(children.len());
@@ -1535,10 +1496,7 @@ impl<'a> IssueRepo<'a> {
     // =========================================================================
 
     /// 标记 monitor check-now：把 monitor_next_check_at 设为 now()
-    pub async fn trigger_monitor_check_now(
-        &self,
-        id: Uuid,
-    ) -> sqlx::Result<Option<IssueRow>> {
+    pub async fn trigger_monitor_check_now(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!(
             "UPDATE issues SET monitor_next_check_at = now(), monitor_wake_requested_at = now(), \
                 updated_at = now() \
@@ -1551,10 +1509,7 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// 触发 scheduled-retry：把 monitor_next_check_at 设为 now() + 1s
-    pub async fn trigger_scheduled_retry_now(
-        &self,
-        id: Uuid,
-    ) -> sqlx::Result<Option<IssueRow>> {
+    pub async fn trigger_scheduled_retry_now(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!(
             "UPDATE issues SET monitor_next_check_at = now() + interval '1 second', \
                 monitor_wake_requested_at = now(), monitor_attempt_count = monitor_attempt_count + 1, \
@@ -1566,7 +1521,6 @@ impl<'a> IssueRepo<'a> {
             .fetch_optional(self.db.pool())
             .await
     }
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

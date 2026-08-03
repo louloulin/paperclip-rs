@@ -23,4 +23,6 @@ pub use engine::{BackupEngine, RestoreEngine};
 pub use error::BackupError;
 pub use manager::{BackupManager, BackupManagerOptions};
 pub use retention::{RetentionDecision, RetentionPolicy, RetentionStats};
-pub use types::{BackupFile, BackupFormat, BackupOptions, BackupResult, RestoreOptions, RestoreResult};
+pub use types::{
+    BackupFile, BackupFormat, BackupOptions, BackupResult, RestoreOptions, RestoreResult,
+};

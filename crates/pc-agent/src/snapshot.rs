@@ -7,16 +7,32 @@ pub const REDACTED_VALUE: &str = "***REDACTED***";
 const CONFIG_FIELDS: [(&str, fn(&AgentConfigSnapshot) -> Value); 12] = [
     ("name", |value| Value::String(value.name.clone())),
     ("role", |value| Value::String(value.role.clone())),
-    ("title", |value| serde_json::to_value(&value.title).expect("serialize title")),
-    ("icon", |value| serde_json::to_value(&value.icon).expect("serialize icon")),
-    ("reportsTo", |value| serde_json::to_value(value.reports_to).expect("serialize reports_to")),
-    ("capabilities", |value| serde_json::to_value(&value.capabilities).expect("serialize capabilities")),
-    ("adapterType", |value| Value::String(value.adapter_type.clone())),
+    ("title", |value| {
+        serde_json::to_value(&value.title).expect("serialize title")
+    }),
+    ("icon", |value| {
+        serde_json::to_value(&value.icon).expect("serialize icon")
+    }),
+    ("reportsTo", |value| {
+        serde_json::to_value(value.reports_to).expect("serialize reports_to")
+    }),
+    ("capabilities", |value| {
+        serde_json::to_value(&value.capabilities).expect("serialize capabilities")
+    }),
+    ("adapterType", |value| {
+        Value::String(value.adapter_type.clone())
+    }),
     ("adapterConfig", |value| value.adapter_config.clone()),
     ("runtimeConfig", |value| value.runtime_config.clone()),
-    ("defaultEnvironmentId", |value| serde_json::to_value(value.default_environment_id).expect("serialize environment")),
-    ("budgetMonthlyCents", |value| Value::from(value.budget_monthly_cents)),
-    ("metadata", |value| serde_json::to_value(&value.metadata).expect("serialize metadata")),
+    ("defaultEnvironmentId", |value| {
+        serde_json::to_value(value.default_environment_id).expect("serialize environment")
+    }),
+    ("budgetMonthlyCents", |value| {
+        Value::from(value.budget_monthly_cents)
+    }),
+    ("metadata", |value| {
+        serde_json::to_value(&value.metadata).expect("serialize metadata")
+    }),
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,10 +64,7 @@ impl AgentConfigSnapshot {
     pub fn sanitized(mut self) -> Self {
         self.adapter_config = sanitize_snapshot_value(&self.adapter_config);
         self.runtime_config = sanitize_snapshot_value(&self.runtime_config);
-        self.metadata = self
-            .metadata
-            .as_ref()
-            .map(sanitize_snapshot_value);
+        self.metadata = self.metadata.as_ref().map(sanitize_snapshot_value);
         self
     }
 }
@@ -163,8 +176,8 @@ fn looks_like_jwt(value: &str) -> bool {
     (segments.len() == 3 || segments.len() == 4)
         && segments.iter().all(|segment| {
             !segment.is_empty()
-                && segment
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+                && segment.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                })
         })
 }

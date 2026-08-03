@@ -4,17 +4,20 @@ use axum::{body::Body, http::Request};
 use pc_adapter_api::AdapterRegistry;
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
-use pc_http::{routes, state::{ConfigSnapshot, RuntimeHandles}, AppState};
+use pc_http::{
+    routes,
+    state::{ConfigSnapshot, RuntimeHandles},
+    AppState,
+};
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
-use tower::ServiceExt;
 use tokio::sync::Mutex as AsyncMutex;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 static TEST_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
-const TEST_DATABASE_URL: &str =
-    "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 fn test_state(db: Db) -> AppState {
     let actors = ActorRegistry::new();
@@ -140,7 +143,10 @@ async fn call(
     }
     let response = app
         .clone()
-        .oneshot(req.body(Body::from(serde_json::to_vec(&body).unwrap_or_default())).unwrap())
+        .oneshot(
+            req.body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
+                .unwrap(),
+        )
         .await
         .expect("request");
     let status = response.status().as_u16();
@@ -188,19 +194,20 @@ async fn issue_children_lifecycle() {
         None,
     )
     .await;
-    assert_eq!(body2["parent_id"].as_str(), Some(parent.to_string()).as_deref());
+    assert_eq!(
+        body2["parent_id"].as_str(),
+        Some(parent.to_string()).as_deref()
+    );
 
-    let (status, body) = call_no_body(
-        &app,
-        "GET",
-        &format!("/api/issues/{parent}/children"),
-        None,
-    )
-    .await;
+    let (status, body) =
+        call_no_body(&app, "GET", &format!("/api/issues/{parent}/children"), None).await;
     assert_eq!(status, 200, "list children: {body}");
     let arr = body.as_array().expect("array");
     assert_eq!(arr.len(), 2);
-    let titles: Vec<&str> = arr.iter().map(|v| v["title"].as_str().unwrap_or("")).collect();
+    let titles: Vec<&str> = arr
+        .iter()
+        .map(|v| v["title"].as_str().unwrap_or(""))
+        .collect();
     assert!(titles.contains(&"Child A"));
     assert!(titles.contains(&"Child B"));
 
@@ -334,14 +341,11 @@ async fn issue_labels_crud_and_assignment() {
     assert_eq!(status, 204, "unassign label");
 
     // delete label
-    let (status, _) = call_no_body(
-        &app,
-        "DELETE",
-        &format!("/api/labels/{label_id}"),
-        None,
-    )
-    .await;
-    assert_eq!(status, 404, "label deletion via /api/labels/:id without company_id should 404");
+    let (status, _) = call_no_body(&app, "DELETE", &format!("/api/labels/{label_id}"), None).await;
+    assert_eq!(
+        status, 404,
+        "label deletion via /api/labels/:id without company_id should 404"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -479,7 +483,10 @@ async fn issue_release_and_force_release() {
     )
     .await;
     assert_eq!(status, 200, "release: {body}");
-    assert!(body["checkout_run_id"].is_null(), "checkout_run_id should be cleared");
+    assert!(
+        body["checkout_run_id"].is_null(),
+        "checkout_run_id should be cleared"
+    );
 
     // 重新 checkout，再 force-release
     let run_uuid2 = Uuid::new_v4();
@@ -625,13 +632,8 @@ async fn issue_work_products_crud() {
     assert_eq!(arr.len(), 1);
 
     // GET via /api/work-products/:id
-    let (status, body) = call_no_body(
-        &app,
-        "GET",
-        &format!("/api/work-products/{wp_id}"),
-        None,
-    )
-    .await;
+    let (status, body) =
+        call_no_body(&app, "GET", &format!("/api/work-products/{wp_id}"), None).await;
     assert_eq!(status, 200, "get: {body}");
     assert_eq!(body["id"].as_str(), Some(wp_id.as_str()));
 
@@ -649,23 +651,12 @@ async fn issue_work_products_crud() {
     assert_eq!(body["review_state"], "approved");
 
     // DELETE
-    let (status, _) = call_no_body(
-        &app,
-        "DELETE",
-        &format!("/api/work-products/{wp_id}"),
-        None,
-    )
-    .await;
+    let (status, _) =
+        call_no_body(&app, "DELETE", &format!("/api/work-products/{wp_id}"), None).await;
     assert_eq!(status, 204);
 
     // GET 404
-    let (status, _) = call_no_body(
-        &app,
-        "GET",
-        &format!("/api/work-products/{wp_id}"),
-        None,
-    )
-    .await;
+    let (status, _) = call_no_body(&app, "GET", &format!("/api/work-products/{wp_id}"), None).await;
     assert_eq!(status, 404);
 }
 

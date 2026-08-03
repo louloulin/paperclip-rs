@@ -1,6 +1,4 @@
-use pc_agent::{
-    AgentInstructionsService, InstructionAgent, InstructionsBundleUpdate,
-};
+use pc_agent::{AgentInstructionsService, InstructionAgent, InstructionsBundleUpdate};
 use pc_errors::Error;
 use serde_json::json;
 
@@ -22,13 +20,12 @@ async fn managed_bundle_crud_and_path_guards_match_node_contract() {
     assert_eq!(written.file.path, "AGENTS.md");
     assert_eq!(written.file.content, "# Managed\n");
     assert_eq!(written.bundle.mode.as_deref(), Some("managed"));
-    assert!(written.bundle.root_path.as_deref().is_some_and(|path| path.ends_with(
-        "companies/company-1/agents/agent-1/instructions"
-    )));
-    assert_eq!(
-        written.adapter_config["instructionsEntryFile"],
-        "AGENTS.md"
-    );
+    assert!(written
+        .bundle
+        .root_path
+        .as_deref()
+        .is_some_and(|path| path.ends_with("companies/company-1/agents/agent-1/instructions")));
+    assert_eq!(written.adapter_config["instructionsEntryFile"], "AGENTS.md");
 
     let configured = InstructionAgent {
         adapter_config: written.adapter_config,

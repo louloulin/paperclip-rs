@@ -224,8 +224,7 @@ async fn start_connection_authz(
         .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
     let auth_url = upsert_oauth_state(&state, company_id, conn).await?;
     state.realtime.publish(
-        LiveEvent::new("tool.oauth.started", "tool_connection", conn)
-            .with_company(company_id),
+        LiveEvent::new("tool.oauth.started", "tool_connection", conn).with_company(company_id),
     );
     Ok(Json(json!({
         "connectionId": connection_id,
@@ -240,7 +239,10 @@ async fn connection_token(
 ) -> ApiResult<Json<Value>> {
     let cid = Uuid::parse_str(&connection_id)
         .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
-    let grant_kind = body.get("grantKind").and_then(Value::as_str).unwrap_or("oauth_access");
+    let grant_kind = body
+        .get("grantKind")
+        .and_then(Value::as_str)
+        .unwrap_or("oauth_access");
     let now = chrono::Utc::now();
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO connection_token_issuances (connection_id, path, status, requested_at)          VALUES ($1, $2, 'issued', $3) RETURNING id",

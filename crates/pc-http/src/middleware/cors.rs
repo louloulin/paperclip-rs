@@ -59,7 +59,9 @@ pub async fn cors_layer(req: Request, next: Next) -> Response {
     response
         .headers_mut()
         .entry(HeaderName::from_static("access-control-allow-methods"))
-        .or_insert(HeaderValue::from_static("GET,POST,PUT,PATCH,DELETE,OPTIONS"));
+        .or_insert(HeaderValue::from_static(
+            "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        ));
     response
         .headers_mut()
         .entry(HeaderName::from_static("access-control-allow-headers"))
@@ -118,7 +120,10 @@ mod tests {
     #[test]
     fn default_origins_include_local_dev() {
         let cfg = CorsConfig::default();
-        assert!(cfg.allowed_origins.iter().any(|o| o == "http://127.0.0.1:5173"));
+        assert!(cfg
+            .allowed_origins
+            .iter()
+            .any(|o| o == "http://127.0.0.1:5173"));
     }
 
     #[test]

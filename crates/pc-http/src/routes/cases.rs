@@ -20,7 +20,7 @@ use crate::{ApiError, ApiResult, AppState};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/cases", get(list).post(create))
-        .route("/api/cases/:id", get(get_one).patch(update).delete(remove))
+        .route("/api/cases/:case_id", get(get_one).patch(update).delete(remove))
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,11 +41,11 @@ async fn list(
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
-async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
+async fn get_one(State(state): State<AppState>, Path(case_id): Path<Uuid>) -> ApiResult<Json<Value>> {
     let row = CaseRepo::new(&state.db)
-        .get(id)
+        .get(case_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("case {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -102,29 +102,29 @@ struct UpdateBody {
 
 async fn update(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(case_id): Path<Uuid>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     let row = CaseRepo::new(&state.db)
         .update(
-            id,
+            case_id,
             body.title.as_deref(),
             body.summary.as_deref(),
             body.status.as_deref(),
         )
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("case {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     state
         .realtime
         .publish(LiveEvent::new("case.updated", "case", row.id).with_company(row.company_id));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
-async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    let ok = CaseRepo::new(&state.db).delete(id).await?;
+async fn remove(State(state): State<AppState>, Path(case_id): Path<Uuid>) -> ApiResult<StatusCode> {
+    let ok = CaseRepo::new(&state.db).delete(case_id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::NotFound(format!("case {id}")))
+        Err(ApiError::NotFound(format!("case {case_id}")))
     }
 }

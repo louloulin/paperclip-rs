@@ -5,8 +5,8 @@ pub mod middleware;
 pub mod routes;
 pub mod state;
 pub use error::{ApiError, ApiResult};
-pub use state::{require_user_id, AppState, ConfigSnapshot};
 pub use middleware::{
     redact_json, redact_text, AccessLogLayer, BodyLimitLayer, CorsConfig, CorsLayer,
     RedactionConfig, RequestId, RequestIdLayer, REQUEST_ID_HEADER,
 };
+pub use state::{require_user_id, AppState, ConfigSnapshot};

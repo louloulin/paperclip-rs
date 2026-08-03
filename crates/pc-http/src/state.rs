@@ -4,9 +4,9 @@ use axum::{
     http::{header, HeaderMap},
 };
 use pc_activity::{ActivityLog, SharedActivitySink};
+use pc_adapter_api::AdapterRegistry;
 use pc_agent::{AgentInstructionsService, AgentSupervisor};
 use pc_backup::BackupManager;
-use pc_adapter_api::AdapterRegistry;
 use pc_core::actor_runtime::kameo_api::ActorRef;
 use pc_core::ActorRegistry;
 use pc_db::Db;
@@ -133,10 +133,7 @@ impl AppState {
     }
 
     #[must_use]
-    pub fn with_agent_instructions(
-        mut self,
-        instructions: Arc<AgentInstructionsService>,
-    ) -> Self {
+    pub fn with_agent_instructions(mut self, instructions: Arc<AgentInstructionsService>) -> Self {
         self.agent_instructions = instructions;
         self
     }

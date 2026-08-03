@@ -20,10 +20,7 @@ pub fn router() -> Router<AppState> {
             "/api/issues/:id/heartbeat-context",
             get(issue_heartbeat_context),
         )
-        .route(
-            "/api/companies/:company_id/issues/count",
-            get(company_issues_count),
-        )
+        // 注: /api/companies/:company_id/issues/count 由 routes/issues.rs 注册
 }
 
 #[derive(Debug, FromRow)]

@@ -530,8 +530,7 @@ fn env_lab_command(action: EnvLabAction) -> Result<()> {
                 }
                 out.push_str(&format!("{k}={v}\n"));
             }
-            std::fs::write(&path, &out)
-                .with_context(|| format!("write {path}"))?;
+            std::fs::write(&path, &out).with_context(|| format!("write {path}"))?;
             println!("Wrote {} ({} lines)", path, vars.len());
             Ok(())
         }
@@ -682,12 +681,10 @@ async fn client_command(client: CliClient, action: ClientCommand) -> Result<()> 
                 Err(e) => println!("Failed: {e}"),
             }
         }
-        ClientCommand::Get { path, query } => {
-            match client.get_with_query(&path, &query).await {
-                Ok(json) => println!("{json}"),
-                Err(e) => println!("Failed: {e}"),
-            }
-        }
+        ClientCommand::Get { path, query } => match client.get_with_query(&path, &query).await {
+            Ok(json) => println!("{json}"),
+            Err(e) => println!("Failed: {e}"),
+        },
         ClientCommand::Post { path, body } => {
             let body = body
                 .as_deref()

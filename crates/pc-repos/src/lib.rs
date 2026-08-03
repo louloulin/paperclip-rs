@@ -32,6 +32,7 @@ pub mod pipeline;
 pub mod plugin;
 pub mod project;
 pub mod routine;
+pub mod secret;
 pub mod settings;
 pub mod sidebar;
 pub mod skill;

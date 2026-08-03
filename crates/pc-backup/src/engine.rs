@@ -8,9 +8,9 @@
 //! - 进程 IO 全部 `tokio::process`；压缩放 `spawn_blocking`
 //! - 错误保留 `pg_dump` / `psql` 的 stderr 末尾，便于排错
 
+use chrono::Utc;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use chrono::Utc;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
@@ -100,8 +100,7 @@ impl BackupEngine {
             let file = std::fs::File::create(&path_for_write)?;
             if true {
                 // 默认始终 gzip（即使 format=custom 也压缩存档）
-                let mut enc =
-                    flate2::write::GzEncoder::new(file, flate2::Compression::default());
+                let mut enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
                 enc.write_all(&bytes)?;
                 enc.finish()?;
             } else {
@@ -209,8 +208,7 @@ impl RestoreEngine {
             if path.extension().and_then(|s| s.to_str()) == Some("gz") {
                 let mut decoder = flate2::read::GzDecoder::new(bytes.as_slice());
                 let mut out = String::new();
-                std::io::Read::read_to_string(&mut decoder, &mut out)
-                    .map_err(BackupError::Io)?;
+                std::io::Read::read_to_string(&mut decoder, &mut out).map_err(BackupError::Io)?;
                 Ok(out)
             } else {
                 String::from_utf8(bytes)

@@ -8,7 +8,6 @@ use pc_core::Timestamp;
 
 use crate::Db;
 
-
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct PipelineStageRow {
     pub id: Uuid,
@@ -68,14 +67,17 @@ pub struct PipelineCaseEventRow {
     pub id: Uuid,
     pub company_id: Uuid,
     pub case_id: Uuid,
-    pub actor_agent_id: Option<Uuid>,
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub actor_type: String,
     pub actor_user_id: Option<String>,
-    pub event_type: String,
+    pub actor_agent_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
     pub from_stage_id: Option<Uuid>,
     pub to_stage_id: Option<Uuid>,
-    pub note: Option<String>,
-    pub payload: Option<serde_json::Value>,
+    pub payload: serde_json::Value,
     pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -88,6 +90,7 @@ pub struct PipelineCaseIssueLinkRow {
     pub created_at: Timestamp,
 }
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PipelineRow {
     pub id: Uuid,
     pub company_id: Uuid,
@@ -125,13 +128,8 @@ impl<'a> PipelineRepo<'a> {
     }
 
     /// 列出全部（跨公司）；limit 默认 200。
-    pub async fn list_all(
-        &self,
-        limit: i64,
-    ) -> sqlx::Result<Vec<PipelineRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM pipelines ORDER BY created_at DESC LIMIT $1"
-        );
+    pub async fn list_all(&self, limit: i64) -> sqlx::Result<Vec<PipelineRow>> {
+        let sql = format!("SELECT {COLS} FROM pipelines ORDER BY created_at DESC LIMIT $1");
         sqlx::query_as::<_, PipelineRow>(&sql)
             .bind(limit)
             .fetch_all(self.db.pool())
@@ -505,13 +503,10 @@ impl<'a> PipelineRepo<'a> {
     // Pipeline case events (history)
     // =========================================================================
 
-    pub async fn list_case_events(
-        &self,
-        case_id: Uuid,
-    ) -> sqlx::Result<Vec<PipelineCaseEventRow>> {
+    pub async fn list_case_events(&self, case_id: Uuid) -> sqlx::Result<Vec<PipelineCaseEventRow>> {
         sqlx::query_as::<_, PipelineCaseEventRow>(
-            "SELECT id, company_id, case_id, actor_agent_id, actor_user_id, event_type, \
-                    from_stage_id, to_stage_id, note, payload, created_at \
+            "SELECT id, company_id, case_id, type, actor_type, actor_user_id, actor_agent_id, \
+                    run_id, from_stage_id, to_stage_id, payload, created_at, updated_at \
              FROM pipeline_case_events WHERE case_id = $1 ORDER BY created_at ASC",
         )
         .bind(case_id)
@@ -593,18 +588,12 @@ impl<'a> PipelineRepo<'a> {
         .await
     }
 
-    pub async fn unlink_case_issue(
-        &self,
-        case_id: Uuid,
-        link_id: Uuid,
-    ) -> sqlx::Result<bool> {
-        let r = sqlx::query(
-            "DELETE FROM pipeline_case_issue_links WHERE id = $1 AND case_id = $2",
-        )
-        .bind(link_id)
-        .bind(case_id)
-        .execute(self.db.pool())
-        .await?;
+    pub async fn unlink_case_issue(&self, case_id: Uuid, link_id: Uuid) -> sqlx::Result<bool> {
+        let r = sqlx::query("DELETE FROM pipeline_case_issue_links WHERE id = $1 AND case_id = $2")
+            .bind(link_id)
+            .bind(case_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -623,5 +612,4 @@ impl<'a> PipelineRepo<'a> {
         .fetch_optional(self.db.pool())
         .await
     }
-
 }

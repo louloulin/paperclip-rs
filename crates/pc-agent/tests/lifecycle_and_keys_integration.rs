@@ -1,17 +1,16 @@
-use pc_agent::{
-    AgentService, CreateAgent, CreateAgentKey, PauseReason,
-};
+use pc_agent::{AgentService, CreateAgent, CreateAgentKey, PauseReason};
 use pc_errors::Error;
 use pc_repos::Db;
 use serde_json::json;
 use uuid::Uuid;
 
-const TEST_DATABASE_URL: &str =
-    "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 #[tokio::test(flavor = "current_thread")]
 async fn lifecycle_enforces_transitions_and_termination_revokes_keys() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name) VALUES ($1, $2)")
         .bind(company_id)
@@ -98,7 +97,10 @@ async fn lifecycle_enforces_transitions_and_termination_revokes_keys() {
     assert!(service.list_api_keys(agent.id).await.expect("list keys")[0]
         .revoked_at
         .is_some());
-    assert!(matches!(service.resume(agent.id).await, Err(Error::Conflict { .. })));
+    assert!(matches!(
+        service.resume(agent.id).await,
+        Err(Error::Conflict { .. })
+    ));
     assert!(matches!(
         service
             .create_api_key(

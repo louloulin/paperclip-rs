@@ -248,11 +248,12 @@ impl AgentInstructionsService {
             .or(current.mode.as_deref())
             .unwrap_or("managed");
         if !matches!(mode, "managed" | "external") {
-            return Err(unprocessable("Instructions bundle mode must be managed or external"));
+            return Err(unprocessable(
+                "Instructions bundle mode must be managed or external",
+            ));
         }
-        let entry = normalize_relative_path(
-            input.entry_file.as_deref().unwrap_or(&current.entry_file),
-        )?;
+        let entry =
+            normalize_relative_path(input.entry_file.as_deref().unwrap_or(&current.entry_file))?;
         let root = if mode == "managed" {
             self.managed_root(agent)
         } else {
@@ -325,7 +326,10 @@ impl AgentInstructionsService {
         let (state, config) = self
             .ensure_writable(agent, clear_legacy_prompt_template)
             .await?;
-        let root = state.root_path.as_deref().expect("writable bundle has root");
+        let root = state
+            .root_path
+            .as_deref()
+            .expect("writable bundle has root");
         let normalized = normalize_relative_path(relative_path)?;
         write_path(root, &normalized, content).await?;
         let configured = InstructionAgent {
@@ -436,7 +440,9 @@ impl AgentInstructionsService {
         entry = normalize_relative_path(&entry)?;
 
         if mode.as_deref() == Some("managed") {
-            if root.as_ref().is_some_and(|path| path != &managed_root) && is_directory(&managed_root).await {
+            if root.as_ref().is_some_and(|path| path != &managed_root)
+                && is_directory(&managed_root).await
+            {
                 warnings.push(format!(
                     "Recovered managed instructions from disk at {}; ignoring stale configured root {}.",
                     managed_root.display(),
@@ -463,12 +469,14 @@ impl AgentInstructionsService {
                     .unwrap_or(ENTRY_FILE_DEFAULT)
                     .to_owned();
                 root = resolved.parent().map(Path::to_path_buf);
-                mode = Some(if resolved.starts_with(&managed_root) {
-                    "managed"
-                } else {
-                    "external"
-                }
-                .into());
+                mode = Some(
+                    if resolved.starts_with(&managed_root) {
+                        "managed"
+                    } else {
+                        "external"
+                    }
+                    .into(),
+                );
             }
         }
         if let Some(root_path) = root.as_deref() {
@@ -478,7 +486,9 @@ impl AgentInstructionsService {
             let entry_path = resolve_within_root(root_path, &entry)?;
             if mode.as_deref() == Some("managed")
                 && tokio::fs::metadata(&entry_path).await.is_err()
-                && tokio::fs::metadata(root_path.join(ENTRY_FILE_DEFAULT)).await.is_ok()
+                && tokio::fs::metadata(root_path.join(ENTRY_FILE_DEFAULT))
+                    .await
+                    .is_ok()
             {
                 warnings.push(format!(
                     "Recovered managed instructions entry file from disk as AGENTS.md; previous entry {entry} was missing."
@@ -553,7 +563,10 @@ fn config_object(value: &Value) -> Map<String, Value> {
 }
 
 fn string_value(value: Option<&Value>) -> Option<&str> {
-    value.and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty())
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn normalize_relative_path(path: &str) -> Result<String> {
@@ -704,9 +717,15 @@ fn should_ignore(name: &str, directory: bool) -> bool {
     }
 }
 
-async fn file_summary(root: &Path, relative: &str, entry: &str) -> Result<AgentInstructionsFileSummary> {
+async fn file_summary(
+    root: &Path,
+    relative: &str,
+    entry: &str,
+) -> Result<AgentInstructionsFileSummary> {
     let absolute = resolve_within_root(root, relative)?;
-    let metadata = tokio::fs::metadata(absolute).await.map_err(map_write_error)?;
+    let metadata = tokio::fs::metadata(absolute)
+        .await
+        .map_err(map_write_error)?;
     Ok(AgentInstructionsFileSummary {
         path: relative.into(),
         size: metadata.len(),

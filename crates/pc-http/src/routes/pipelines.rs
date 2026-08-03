@@ -25,24 +25,32 @@ pub fn router() -> Router<AppState> {
             get(get_one).patch(update).delete(remove),
         )
         // stages
-        .route("/api/pipelines/:id/stages", get(list_stages).post(create_stage))
+        .route(
+            "/api/pipelines/:id/stages",
+            get(list_stages).post(create_stage),
+        )
         .route(
             "/api/pipelines/:id/stages/:stage_id",
             get(get_stage).patch(update_stage).delete(remove_stage),
         )
         // transitions
-        .route("/api/pipelines/:id/transitions", get(list_transitions).post(create_transition))
-        // cases
-        .route("/api/pipelines/:id/cases", get(list_cases).post(create_case))
         .route(
-            "/api/cases/:case_id",
-            get(get_case).delete(remove_case),
+            "/api/pipelines/:id/transitions",
+            get(list_transitions).post(create_transition),
+        )
+        // cases
+        .route(
+            "/api/pipelines/:id/cases",
+            get(list_cases).post(create_case),
         )
         .route("/api/cases/:case_id/transition", post(transition_case))
         .route("/api/cases/:case_id/claim", post(claim_case_route))
         .route("/api/cases/:case_id/release", post(release_case_route))
         .route("/api/cases/:case_id/events", get(list_case_events))
-        .route("/api/cases/:case_id/issue-links", get(list_case_links).post(link_case_issue_route))
+        .route(
+            "/api/cases/:case_id/issue-links",
+            get(list_case_links).post(link_case_issue_route),
+        )
         .route(
             "/api/cases/:case_id/issue-links/:link_id",
             delete(unlink_case_issue_route),
@@ -188,7 +196,9 @@ async fn create_stage(
     Json(body): Json<CreateStageBody>,
 ) -> ApiResult<impl IntoResponse> {
     if body.key.trim().is_empty() || body.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("key and name must not be empty".into()));
+        return Err(ApiError::BadRequest(
+            "key and name must not be empty".into(),
+        ));
     }
     let config = body.config.unwrap_or_else(|| serde_json::json!({}));
     let position = body.position.unwrap_or(0);
@@ -196,10 +206,12 @@ async fn create_stage(
         .create_stage(id, &body.key, &body.name, &body.kind, position, &config)
         .await?;
     state.realtime.publish(
-        LiveEvent::new("pipeline.stage.created", "pipeline_stage", row.id)
-            .with_company(id),
+        LiveEvent::new("pipeline.stage.created", "pipeline_stage", row.id).with_company(id),
     );
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(row).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(row).unwrap_or_default()),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -220,7 +232,13 @@ async fn update_stage(
     Json(body): Json<UpdateStageBody>,
 ) -> ApiResult<Json<Value>> {
     let row = PipelineRepo::new(&state.db)
-        .update_stage(stage_id, body.name.as_deref(), body.kind.as_deref(), body.position, body.config.as_ref())
+        .update_stage(
+            stage_id,
+            body.name.as_deref(),
+            body.kind.as_deref(),
+            body.position,
+            body.config.as_ref(),
+        )
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -231,7 +249,11 @@ async fn remove_stage(
     Path((_id, stage_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
     let ok = PipelineRepo::new(&state.db).delete_stage(stage_id).await?;
-    if ok { Ok(StatusCode::NO_CONTENT) } else { Err(ApiError::NotFound(format!("stage {stage_id}"))) }
+    if ok {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("stage {stage_id}")))
+    }
 }
 
 // ============================================================================
@@ -260,9 +282,17 @@ async fn create_transition(
     Json(body): Json<CreateTransitionBody>,
 ) -> ApiResult<impl IntoResponse> {
     let row = PipelineRepo::new(&state.db)
-        .create_transition(id, body.from_stage_id, body.to_stage_id, body.label.as_deref())
+        .create_transition(
+            id,
+            body.from_stage_id,
+            body.to_stage_id,
+            body.label.as_deref(),
+        )
         .await?;
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(row).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(row).unwrap_or_default()),
+    ))
 }
 
 // ============================================================================
@@ -280,7 +310,9 @@ async fn list_cases(
     Path(id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<ListCasesQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows = PipelineRepo::new(&state.db).list_cases(id, q.stage_id).await?;
+    let rows = PipelineRepo::new(&state.db)
+        .list_cases(id, q.stage_id)
+        .await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -320,7 +352,9 @@ async fn create_case(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("pipeline {id}")))?;
     if body.case_key.trim().is_empty() || body.title.trim().is_empty() {
-        return Err(ApiError::BadRequest("case_key and title must not be empty".into()));
+        return Err(ApiError::BadRequest(
+            "case_key and title must not be empty".into(),
+        ));
     }
     let fields = body.fields.unwrap_or_else(|| serde_json::json!({}));
     let row = PipelineRepo::new(&state.db)
@@ -342,7 +376,10 @@ async fn create_case(
         LiveEvent::new("pipeline.case.created", "pipeline_case", row.id)
             .with_company(row.company_id),
     );
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(row).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(row).unwrap_or_default()),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,11 +405,11 @@ async fn transition_case(
         .await?
         .ok_or_else(|| ApiError::Conflict("case stage changed concurrently".into()))?;
     // 记录 event
-    let _ = PipelineRepo::new(&state.db)
+    PipelineRepo::new(&state.db)
         .create_case_event(
             row.company_id,
             case_id,
-            "transition",
+            "transitioned",
             Some(from),
             Some(body.to_stage_id),
             None,
@@ -383,7 +420,7 @@ async fn transition_case(
                 .and_then(|v| v.to_str().ok()),
             None,
         )
-        .await;
+        .await?;
     state.realtime.publish(
         LiveEvent::new("pipeline.case.transitioned", "pipeline_case", row.id)
             .with_company(row.company_id),
@@ -432,7 +469,11 @@ async fn remove_case(
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
     let ok = PipelineRepo::new(&state.db).delete_case(case_id).await?;
-    if ok { Ok(StatusCode::NO_CONTENT) } else { Err(ApiError::NotFound(format!("case {case_id}"))) }
+    if ok {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("case {case_id}")))
+    }
 }
 
 // ============================================================================
@@ -443,7 +484,9 @@ async fn list_case_events(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = PipelineRepo::new(&state.db).list_case_events(case_id).await?;
+    let rows = PipelineRepo::new(&state.db)
+        .list_case_events(case_id)
+        .await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -455,17 +498,21 @@ async fn list_case_links(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = PipelineRepo::new(&state.db).list_case_issue_links(case_id).await?;
+    let rows = PipelineRepo::new(&state.db)
+        .list_case_issue_links(case_id)
+        .await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
 #[derive(Debug, Deserialize)]
 struct LinkCaseIssueBody {
     issue_id: Uuid,
-    #[serde(default = "default_link_kind")]
-    link_kind: String,
+    #[serde(default = "default_role")]
+    role: String,
 }
-fn default_link_kind() -> String { "primary".into() }
+fn default_role() -> String {
+    "work".into()
+}
 
 async fn link_case_issue_route(
     State(state): State<AppState>,
@@ -477,9 +524,12 @@ async fn link_case_issue_route(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let row = PipelineRepo::new(&state.db)
-        .link_case_issue(case.company_id, case_id, body.issue_id, &body.link_kind)
+        .link_case_issue(case.company_id, case_id, body.issue_id, &body.role)
         .await?;
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(row).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(row).unwrap_or_default()),
+    ))
 }
 
 async fn unlink_case_issue_route(
@@ -489,7 +539,11 @@ async fn unlink_case_issue_route(
     let ok = PipelineRepo::new(&state.db)
         .unlink_case_issue(case_id, link_id)
         .await?;
-    if ok { Ok(StatusCode::NO_CONTENT) } else { Err(ApiError::NotFound(format!("link {link_id}"))) }
+    if ok {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("link {link_id}")))
+    }
 }
 
 // ============================================================================
@@ -505,8 +559,7 @@ async fn archive_pipeline(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("pipeline {id}")))?;
     state.realtime.publish(
-        LiveEvent::new("pipeline.archived", "pipeline", row.id)
-            .with_company(row.company_id),
+        LiveEvent::new("pipeline.archived", "pipeline", row.id).with_company(row.company_id),
     );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }

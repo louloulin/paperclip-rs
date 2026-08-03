@@ -1,7 +1,7 @@
 //! 默认 middleware 装配。
-use axum::Router;
-use axum::middleware::from_fn;
 use crate::AppState;
+use axum::middleware::from_fn;
+use axum::Router;
 
 use super::{
     access_log::access_log_layer, body_limit::body_limit_layer, cors::cors_layer,

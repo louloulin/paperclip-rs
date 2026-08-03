@@ -12,10 +12,22 @@ impl Default for RedactionConfig {
     fn default() -> Self {
         Self {
             fields: vec![
-                "password".into(), "passwd".into(), "secret".into(), "token".into(),
-                "apiKey".into(), "apikey".into(), "api_key".into(), "authorization".into(),
-                "cookie".into(), "set-cookie".into(), "masterKey".into(), "master_key".into(),
-                "privateKey".into(), "private_key".into(), "accessKey".into(), "access_key".into(),
+                "password".into(),
+                "passwd".into(),
+                "secret".into(),
+                "token".into(),
+                "apiKey".into(),
+                "apikey".into(),
+                "api_key".into(),
+                "authorization".into(),
+                "cookie".into(),
+                "set-cookie".into(),
+                "masterKey".into(),
+                "master_key".into(),
+                "privateKey".into(),
+                "private_key".into(),
+                "accessKey".into(),
+                "access_key".into(),
                 "credential".into(),
             ],
             placeholder: "[REDACTED]".into(),
@@ -52,20 +64,37 @@ pub fn redact_text(input: &str, cfg: &RedactionConfig) -> String {
         if b == b'"' {
             let start = i;
             i += 1;
-            while i < bytes.len() && bytes[i] != b'"' { i += 1; }
-            let token = if i < bytes.len() { let s = &input[start + 1..i]; i += 1; s } else { &input[start + 1..] };
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            let token = if i < bytes.len() {
+                let s = &input[start + 1..i];
+                i += 1;
+                s
+            } else {
+                &input[start + 1..]
+            };
             if expecting_value {
                 if pending_key.is_some() {
-                    out.push('"'); out.push_str(&cfg.placeholder); out.push('"');
+                    out.push('"');
+                    out.push_str(&cfg.placeholder);
+                    out.push('"');
                 } else {
-                    out.push('"'); out.push_str(token); out.push('"');
+                    out.push('"');
+                    out.push_str(token);
+                    out.push('"');
                 }
                 pending_key = None;
                 expecting_value = false;
             } else {
                 let sensitive = cfg.fields.iter().any(|f| f.eq_ignore_ascii_case(token));
-                if sensitive { pending_key = Some(token.to_owned()); }
-                else { out.push('"'); out.push_str(token); out.push('"'); }
+                if sensitive {
+                    pending_key = Some(token.to_owned());
+                } else {
+                    out.push('"');
+                    out.push_str(token);
+                    out.push('"');
+                }
             }
         } else if b == b':' && pending_key.is_some() && !expecting_value {
             expecting_value = true;
@@ -75,7 +104,9 @@ pub fn redact_text(input: &str, cfg: &RedactionConfig) -> String {
             let ch = input[i..].chars().next().unwrap();
             out.push(ch);
             i += ch.len_utf8();
-            if !ch.is_whitespace() && !expecting_value { pending_key = None; }
+            if !ch.is_whitespace() && !expecting_value {
+                pending_key = None;
+            }
         }
     }
     out

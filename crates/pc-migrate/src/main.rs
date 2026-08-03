@@ -29,11 +29,7 @@ use tracing_subscriber::EnvFilter;
 struct Cli {
     /// PostgreSQL connection string.
     /// 默认从 `PAPERCLIP_DATABASE_URL` 或 `DATABASE_URL` 读取。
-    #[arg(
-        long,
-        env = "PAPERCLIP_DATABASE_URL",
-        global = true
-    )]
+    #[arg(long, env = "PAPERCLIP_DATABASE_URL", global = true)]
     database_url: Option<String>,
 
     /// 最大连接池大小。
@@ -61,7 +57,11 @@ enum Command {
     /// 校验 schema：列出关键表是否存在。
     Verify {
         /// 期望存在的关键表名（逗号分隔）。默认与原 server 一致。
-        #[arg(long, value_delimiter = ',', default_value = "companies,agents,issues,projects,heartbeat_runs,plugin_jobs,tool_invocations,tool_connections")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            default_value = "companies,agents,issues,projects,heartbeat_runs,plugin_jobs,tool_invocations,tool_connections"
+        )]
         required_tables: Vec<String>,
     },
     /// 把当前 schema 标记为基线（仅插入历史记录，不跑迁移）。
@@ -191,11 +191,14 @@ async fn cmd_up(db: &Db, dry_run: bool, json: bool) -> Result<()> {
 async fn cmd_status(db: &Db, json: bool) -> Result<()> {
     let status = Migrator::status(db).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&json!({
-            "available": status.available,
-            "applied": status.applied,
-            "pending": status.pending,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "available": status.available,
+                "applied": status.applied,
+                "pending": status.pending,
+            }))?
+        );
     } else {
         println!("available: {}", status.available);
         println!("applied:   {}", status.applied);

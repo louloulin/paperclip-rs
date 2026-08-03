@@ -5,12 +5,13 @@ use pc_agent::{
 use pc_repos::Db;
 use uuid::Uuid;
 
-const TEST_DATABASE_URL: &str =
-    "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supervisor_serializes_concurrent_agent_mutations() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name) VALUES ($1, $2)")
         .bind(company_id)

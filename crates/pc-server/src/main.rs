@@ -288,10 +288,8 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let app: Router = pc_http::middleware::apply_default_middleware(
-        pc_http::routes::router(),
-    )
-    .with_state(state);
+    let app: Router =
+        pc_http::middleware::apply_default_middleware(pc_http::routes::router()).with_state(state);
 
     let addr = std::net::SocketAddr::from((
         cfg.server.host.parse::<std::net::IpAddr>()?,

@@ -31,10 +31,7 @@ pub fn router() -> Router<AppState> {
             "/api/instance/database-backups/:filename/restore",
             post(restore_backup),
         )
-        .route(
-            "/api/instance/database-backups/prune",
-            post(prune_backups),
-        )
+        .route("/api/instance/database-backups/prune", post(prune_backups))
         .route("/api/instance/database-backups/status", get(backup_status))
 }
 
@@ -62,17 +59,20 @@ async fn trigger_backup(
         .run_backup(&url, label.as_deref())
         .await
         .map_err(|e| ApiError::Internal(format!("backup failed: {e}")))?;
-    Ok((StatusCode::CREATED, Json(json!({
-        "trigger": "manual",
-        "backupFile": result.file.path.to_string_lossy(),
-        "sizeBytes": result.file.size_bytes,
-        "prunedCount": result.pruned_count,
-        "startedAt": result.started_at.to_rfc3339(),
-        "finishedAt": result.finished_at.to_rfc3339(),
-        "durationMs": result.duration_ms,
-        "pgDumpExitCode": result.pg_dump_exit_code,
-        "label": result.file.label,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "trigger": "manual",
+            "backupFile": result.file.path.to_string_lossy(),
+            "sizeBytes": result.file.size_bytes,
+            "prunedCount": result.pruned_count,
+            "startedAt": result.started_at.to_rfc3339(),
+            "finishedAt": result.finished_at.to_rfc3339(),
+            "durationMs": result.duration_ms,
+            "pgDumpExitCode": result.pg_dump_exit_code,
+            "label": result.file.label,
+        })),
+    ))
 }
 
 async fn list_backups(
@@ -107,8 +107,8 @@ async fn download_backup(
     require_user_id(&state, &headers).await?;
     let safe_name = filename.replace('/', "_").replace('\\', "_");
     let path: PathBuf = state.backup.options().backup_dir.join(&safe_name);
-    let bytes = std::fs::read(&path)
-        .map_err(|_| ApiError::NotFound(format!("backup {safe_name}")))?;
+    let bytes =
+        std::fs::read(&path).map_err(|_| ApiError::NotFound(format!("backup {safe_name}")))?;
     let mut response = (StatusCode::OK, bytes).into_response();
     response
         .headers_mut()
@@ -133,8 +133,7 @@ async fn delete_backup(
     if !path.exists() {
         return Err(ApiError::NotFound(format!("backup {safe_name}")));
     }
-    std::fs::remove_file(&path)
-        .map_err(|e| ApiError::Internal(format!("delete backup: {e}")))?;
+    std::fs::remove_file(&path).map_err(|e| ApiError::Internal(format!("delete backup: {e}")))?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
 
@@ -169,13 +168,16 @@ async fn restore_backup(
         .run_restore(&url, path.clone())
         .await
         .map_err(|e| ApiError::Internal(format!("restore failed: {e}")))?;
-    Ok((StatusCode::OK, Json(json!({
-        "backupPath": result.backup_path.to_string_lossy(),
-        "startedAt": result.started_at.to_rfc3339(),
-        "finishedAt": result.finished_at.to_rfc3339(),
-        "durationMs": result.duration_ms,
-        "psqlExitCode": result.psql_exit_code,
-    }))))
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "backupPath": result.backup_path.to_string_lossy(),
+            "startedAt": result.started_at.to_rfc3339(),
+            "finishedAt": result.finished_at.to_rfc3339(),
+            "durationMs": result.duration_ms,
+            "psqlExitCode": result.psql_exit_code,
+        })),
+    ))
 }
 
 async fn prune_backups(

@@ -51,13 +51,8 @@ impl<'a> CaseRepo<'a> {
     }
 
     /// 列出全部（跨公司）；limit 默认 200。
-    pub async fn list_all(
-        &self,
-        limit: i64,
-    ) -> sqlx::Result<Vec<CaseRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM cases ORDER BY created_at DESC LIMIT $1"
-        );
+    pub async fn list_all(&self, limit: i64) -> sqlx::Result<Vec<CaseRow>> {
+        let sql = format!("SELECT {COLS} FROM cases ORDER BY created_at DESC LIMIT $1");
         sqlx::query_as::<_, CaseRow>(&sql)
             .bind(limit)
             .fetch_all(self.db.pool())

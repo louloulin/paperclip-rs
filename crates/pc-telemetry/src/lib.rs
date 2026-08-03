@@ -118,4 +118,4 @@ mod tests {
 pub mod otlp;
 
 #[cfg(feature = "otlp")]
-pub use otlp::{install_global, OtlpConfig, build_otlp_provider};
+pub use otlp::{build_otlp_provider, install_global, OtlpConfig};

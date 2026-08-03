@@ -50,7 +50,12 @@ impl Default for RetentionPolicy {
 
 impl RetentionPolicy {
     /// 评估单个文件的去留。
-    pub fn decide(&self, name: &str, modified: DateTime<Utc>, now: DateTime<Utc>) -> RetentionDecision {
+    pub fn decide(
+        &self,
+        name: &str,
+        modified: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> RetentionDecision {
         let age = now.signed_duration_since(modified);
         let age_days = u32::try_from(age.num_days().max(0)).unwrap_or(0);
 
@@ -87,9 +92,7 @@ impl RetentionPolicy {
                 None => continue,
             };
             let Ok(meta) = entry.metadata() else { continue };
-            let modified: DateTime<Utc> = meta
-                .modified()
-                .map_or_else(|_| now, DateTime::from);
+            let modified: DateTime<Utc> = meta.modified().map_or_else(|_| now, DateTime::from);
             if self.strict_name_match && !is_recognized_backup_name(&name) {
                 stats.kept += 1;
                 continue;
@@ -153,10 +156,7 @@ pub fn classify(
 ) -> HashMap<String, RetentionDecision> {
     let mut out = HashMap::new();
     for (name, mtime) in files {
-        out.insert(
-            name.clone(),
-            policy.decide(name, *mtime, now),
-        );
+        out.insert(name.clone(), policy.decide(name, *mtime, now));
     }
     out
 }
@@ -178,7 +178,10 @@ mod tests {
     fn daily_window_keeps_all() {
         let policy = RetentionPolicy::default();
         for d in 0..7 {
-            assert_eq!(policy.decide(&name(d), stamp(d), Utc::now()), RetentionDecision::Keep);
+            assert_eq!(
+                policy.decide(&name(d), stamp(d), Utc::now()),
+                RetentionDecision::Keep
+            );
         }
     }
 
@@ -197,7 +200,12 @@ mod tests {
         let old = Utc::now() - chrono::Duration::days(60);
         let path = dir.path().join("manual-export.zip");
         std::fs::write(&path, b"x").unwrap();
-        let mtime = std::fs::File::open(&path).unwrap().metadata().unwrap().modified().unwrap();
+        let mtime = std::fs::File::open(&path)
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .modified()
+            .unwrap();
         // 强制把 mtime 改到 60 天前
         let _ = (mtime, old);
         // 使用 decide 检查：未识别名称不参与剪枝逻辑（交由 prune 中的 strict_name_match 处理）
@@ -213,10 +221,7 @@ mod tests {
     #[test]
     fn classify_handles_mixed() {
         let now = Utc::now();
-        let files = vec![
-            (name(1), stamp(1)),
-            (name(40), stamp(40)),
-        ];
+        let files = vec![(name(1), stamp(1)), (name(40), stamp(40))];
         let policy = RetentionPolicy::default();
         let result = classify(&files, now, &policy);
         assert!(result.contains_key(&name(1)));

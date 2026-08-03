@@ -1,22 +1,28 @@
 use std::sync::Arc;
 
-use axum::{body::Body, http::{Request, StatusCode}};
-use pc_agent::{AgentInstructionsService, AgentService, CreateAgent};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use pc_adapter_api::AdapterRegistry;
+use pc_agent::{AgentInstructionsService, AgentService, CreateAgent};
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
-use pc_http::{routes, state::{ConfigSnapshot, RuntimeHandles}, AppState};
+use pc_http::{
+    routes,
+    state::{ConfigSnapshot, RuntimeHandles},
+    AppState,
+};
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
-use tower::ServiceExt;
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
+use tower::ServiceExt;
 
 static TEST_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 use uuid::Uuid;
 
-const TEST_DATABASE_URL: &str =
-    "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 fn test_state(db: Db) -> AppState {
     let actors = ActorRegistry::new();
@@ -79,7 +85,9 @@ async fn call_json(
 
 #[tokio::test(flavor = "current_thread")]
 async fn company_agent_list_uses_ui_path_and_camel_case_payload() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(company_id)
@@ -131,7 +139,9 @@ async fn company_agent_list_uses_ui_path_and_camel_case_payload() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn company_agent_create_accepts_ui_payload_and_returns_full_agent() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(company_id)
@@ -167,7 +177,10 @@ async fn company_agent_create_accepts_ui_payload_and_returns_full_agent() {
         .await
         .expect("body");
     let payload: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
-    if let Some(agent_id) = payload["id"].as_str().and_then(|value| Uuid::parse_str(value).ok()) {
+    if let Some(agent_id) = payload["id"]
+        .as_str()
+        .and_then(|value| Uuid::parse_str(value).ok())
+    {
         sqlx::query("DELETE FROM agents WHERE id=$1")
             .bind(agent_id)
             .execute(db.pool())
@@ -189,7 +202,9 @@ async fn company_agent_create_accepts_ui_payload_and_returns_full_agent() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn patch_records_and_exposes_config_revision_contract() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(company_id)
@@ -279,7 +294,9 @@ async fn patch_records_and_exposes_config_revision_contract() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn runtime_lifecycle_and_key_routes_match_ui_contract() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(company_id)
@@ -385,7 +402,9 @@ async fn runtime_lifecycle_and_key_routes_match_ui_contract() {
     assert_eq!(reset_status, StatusCode::OK);
     assert_eq!(reset["clearedTaskSessions"], 0);
     assert_eq!(create_key_status, StatusCode::CREATED);
-    assert!(created_key["token"].as_str().is_some_and(|value| value.starts_with("pcp_")));
+    assert!(created_key["token"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("pcp_")));
     assert_eq!(list_keys_status, StatusCode::OK);
     assert_eq!(keys.as_array().map(Vec::len), Some(1));
     assert_eq!(revoke_status, StatusCode::OK);
@@ -394,7 +413,9 @@ async fn runtime_lifecycle_and_key_routes_match_ui_contract() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn hire_approval_and_permissions_use_real_tables_and_state_transitions() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO companies (id, name, issue_prefix, require_board_approval_for_new_agents) \
@@ -495,11 +516,13 @@ async fn hire_approval_and_permissions_use_real_tables_and_state_transitions() {
             .execute(db.pool())
             .await
             .expect("delete grants");
-        sqlx::query("DELETE FROM company_memberships WHERE principal_type='agent' AND principal_id=$1")
-            .bind(agent_id.to_string())
-            .execute(db.pool())
-            .await
-            .expect("delete membership");
+        sqlx::query(
+            "DELETE FROM company_memberships WHERE principal_type='agent' AND principal_id=$1",
+        )
+        .bind(agent_id.to_string())
+        .execute(db.pool())
+        .await
+        .expect("delete membership");
         sqlx::query("DELETE FROM agents WHERE id=$1")
             .bind(agent_id)
             .execute(db.pool())
@@ -529,7 +552,9 @@ async fn hire_approval_and_permissions_use_real_tables_and_state_transitions() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn instructions_bundle_routes_persist_config_and_reject_path_traversal() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(company_id)
@@ -616,7 +641,9 @@ async fn instructions_bundle_routes_persist_config_and_reject_path_traversal() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn instructions_path_route_syncs_bundle_metadata_and_validates_relative_paths() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect test db");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect test db");
     let company_id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(company_id)
@@ -637,7 +664,9 @@ async fn instructions_path_route_syncs_bundle_metadata_and_validates_relative_pa
     let external_root = temp.path().join("external");
     tokio::fs::create_dir_all(&external_root).await.unwrap();
     let external_entry = external_root.join("AGENTS.md");
-    tokio::fs::write(&external_entry, "# External\n").await.unwrap();
+    tokio::fs::write(&external_entry, "# External\n")
+        .await
+        .unwrap();
     let state = test_state(db.clone()).with_agent_instructions(Arc::new(
         AgentInstructionsService::new(temp.path().join("instance")),
     ));

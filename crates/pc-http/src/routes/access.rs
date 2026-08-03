@@ -387,7 +387,8 @@ async fn board_keys_create(
 ) -> ApiResult<impl IntoResponse> {
     let user_id = require_user_id(&state, &headers).await?;
     let name = body.name.clone().unwrap_or_else(|| "new-key".to_owned());
-    let key_hash = "key-hash-stub".to_string();
+    let token = random_cli_token("pcp_board_");
+    let key_hash = sha2_sha256(&token);
     let row: BoardKeyRow = sqlx::query_as(
         "INSERT INTO board_api_keys (user_id, name, key_hash, expires_at) \
          VALUES ($1, $2, $3, $4) \
@@ -399,7 +400,11 @@ async fn board_keys_create(
     .bind(body.expires_at)
     .fetch_one(state.db.pool())
     .await?;
-    Ok((StatusCode::CREATED, Json(board_key_json(&row, true))))
+    let mut response = board_key_json(&row, true);
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert("token".into(), Value::String(token.clone()));
+    }
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 async fn delete_board_key(
@@ -551,4 +556,11 @@ fn sha2_sha256(input: &str) -> String {
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     hex
+}
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }

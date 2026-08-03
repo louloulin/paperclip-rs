@@ -43,9 +43,7 @@ impl Default for OtlpConfig {
             service_version: env!("CARGO_PKG_VERSION").into(),
             endpoint: std::env::var("PAPERCLIP_OTLP_ENDPOINT")
                 .unwrap_or_else(|_| "http://127.0.0.1:4318".into()),
-            headers: parse_headers(
-                &std::env::var("PAPERCLIP_OTLP_HEADERS").unwrap_or_default(),
-            ),
+            headers: parse_headers(&std::env::var("PAPERCLIP_OTLP_HEADERS").unwrap_or_default()),
             sample_ratio: std::env::var("PAPERCLIP_OTLP_SAMPLE_RATIO")
                 .ok()
                 .and_then(|s| s.parse::<f64>().ok())

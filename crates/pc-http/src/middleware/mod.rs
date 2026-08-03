@@ -16,9 +16,9 @@ pub mod request_id;
 pub mod stack;
 
 pub use access_log::AccessLogLayer;
+pub use auth::{auth_layer, require_auth, AuthContext, AuthKind};
 pub use body_limit::BodyLimitLayer;
 pub use cors::{CorsConfig, CorsLayer, DEFAULT_ALLOWED_ORIGINS};
 pub use redaction::{redact_json, redact_text, RedactionConfig};
 pub use request_id::{RequestId, RequestIdLayer, REQUEST_ID_HEADER};
 pub use stack::{apply_default_middleware, default_redaction};
-pub use auth::{auth_layer, require_auth, AuthContext, AuthKind};

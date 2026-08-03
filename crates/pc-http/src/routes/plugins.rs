@@ -17,7 +17,10 @@ use std::sync::Arc;
 use tokio::fs;
 use uuid::Uuid;
 
-use pc_plugin_host::{notifications::{StreamBridgeEvent, SubscriptionKey}, WorkerHandle};
+use pc_plugin_host::{
+    notifications::{StreamBridgeEvent, SubscriptionKey},
+    WorkerHandle,
+};
 use pc_plugin_protocol::{ExecuteToolParams, RunJobParams};
 use pc_plugin_protocol::{GetDataParams, PerformActionParams};
 use pc_realtime::LiveEvent;
@@ -366,14 +369,23 @@ async fn bridge_data(
         .and_then(Value::as_str)
         .and_then(|s| Uuid::parse_str(s).ok())
         .unwrap_or_else(Uuid::nil);
-    if let (Some(key), Ok(worker)) = (key.as_deref(), resolve_worker_or_501(&state, &plugin_id).await) {
+    if let (Some(key), Ok(worker)) = (
+        key.as_deref(),
+        resolve_worker_or_501(&state, &plugin_id).await,
+    ) {
         let params = GetDataParams {
             key: key.to_string(),
             params: body.get("params").cloned().unwrap_or(Value::Null),
             company_id,
         };
         match worker.get_data(params).await {
-            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
+            Ok(value) => {
+                return Ok((
+                    StatusCode::OK,
+                    Json(json!({ "data": value, "source": "worker" })),
+                )
+                    .into_response())
+            }
             Err(e) => return Err(ApiError::Internal(format!("worker rejected getData: {e}"))),
         }
     }
@@ -382,11 +394,23 @@ async fn bridge_data(
         .get("entityType")
         .and_then(Value::as_str)
         .unwrap_or("bridge_data");
-    let scope_kind = body.get("scopeKind").and_then(Value::as_str).unwrap_or("global");
-    let scope_id = body.get("scopeId").and_then(Value::as_str).map(String::from);
-    let external_id = body.get("externalId").and_then(Value::as_str).map(String::from);
+    let scope_kind = body
+        .get("scopeKind")
+        .and_then(Value::as_str)
+        .unwrap_or("global");
+    let scope_id = body
+        .get("scopeId")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let external_id = body
+        .get("externalId")
+        .and_then(Value::as_str)
+        .map(String::from);
     let title = body.get("title").and_then(Value::as_str).map(String::from);
-    let cid = body.get("companyId").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok());
+    let cid = body
+        .get("companyId")
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok());
     let data = body.get("data").cloned().unwrap_or(json!({}));
     let result: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO plugin_entities             (plugin_id, entity_type, scope_kind, scope_id, external_id, title, data, company_id)          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)          ON CONFLICT (company_id, plugin_id, entity_type, external_id)          DO UPDATE SET data = EXCLUDED.data, title = EXCLUDED.title, updated_at = now()          RETURNING id",
@@ -396,7 +420,11 @@ async fn bridge_data(
     .fetch_one(state.db.pool())
     .await;
     match result {
-        Ok(id) => Ok((StatusCode::OK, Json(json!({ "id": id, "ok": true, "source": "store" }))).into_response()),
+        Ok(id) => Ok((
+            StatusCode::OK,
+            Json(json!({ "id": id, "ok": true, "source": "store" })),
+        )
+            .into_response()),
         Err(e) => Err(ApiError::Internal(e.to_string())),
     }
 }
@@ -431,13 +459,27 @@ async fn bridge_action(
             company_id,
         };
         match worker.perform_action(params).await {
-            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
-            Err(e) => return Err(ApiError::Internal(format!("worker rejected performAction: {e}"))),
+            Ok(value) => {
+                return Ok((
+                    StatusCode::OK,
+                    Json(json!({ "data": value, "source": "worker" })),
+                )
+                    .into_response())
+            }
+            Err(e) => {
+                return Err(ApiError::Internal(format!(
+                    "worker rejected performAction: {e}"
+                )))
+            }
         }
     }
     // Fallback: 记录日志。
     let level = body.get("level").and_then(Value::as_str).unwrap_or("info");
-    let message = body.get("message").and_then(Value::as_str).unwrap_or("(no message)").to_string();
+    let message = body
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("(no message)")
+        .to_string();
     let meta = body.get("data").cloned().unwrap_or(json!({}));
     let result: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO plugin_logs (plugin_id, level, message, meta) VALUES ($1, $2, $3, $4) RETURNING id",
@@ -451,7 +493,11 @@ async fn bridge_action(
                 LiveEvent::new("plugin.action.logged", "plugin", pid)
                     .with_data(json!({ "logId": id, "level": level })),
             );
-            Ok((StatusCode::OK, Json(json!({ "id": id, "ok": true, "source": "log" }))).into_response())
+            Ok((
+                StatusCode::OK,
+                Json(json!({ "id": id, "ok": true, "source": "log" })),
+            )
+                .into_response())
         }
         Err(e) => Err(ApiError::Internal(e.to_string())),
     }
@@ -481,12 +527,24 @@ async fn plugin_data(
             company_id,
         };
         match worker.get_data(params).await {
-            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
+            Ok(value) => {
+                return Ok((
+                    StatusCode::OK,
+                    Json(json!({ "data": value, "source": "worker" })),
+                )
+                    .into_response())
+            }
             Err(e) => return Err(ApiError::Internal(format!("worker rejected getData: {e}"))),
         }
     }
-    let external_id = body.get("externalId").and_then(Value::as_str).unwrap_or(&key);
-    let cid = body.get("companyId").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok());
+    let external_id = body
+        .get("externalId")
+        .and_then(Value::as_str)
+        .unwrap_or(&key);
+    let cid = body
+        .get("companyId")
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok());
     let row: Result<Option<(Uuid, Value)>, _> = sqlx::query_as(
         "SELECT id, data FROM plugin_entities          WHERE plugin_id = $1 AND entity_type = $2 AND external_id = $3            AND ($4::uuid IS NULL OR company_id = $4)          LIMIT 1",
     )
@@ -494,7 +552,11 @@ async fn plugin_data(
     .fetch_optional(state.db.pool())
     .await;
     match row {
-        Ok(Some((id, data))) => Ok((StatusCode::OK, Json(json!({ "id": id, "found": true, "data": data, "source": "store" }))).into_response()),
+        Ok(Some((id, data))) => Ok((
+            StatusCode::OK,
+            Json(json!({ "id": id, "found": true, "data": data, "source": "store" })),
+        )
+            .into_response()),
         Ok(None) => Ok((StatusCode::OK, Json(json!({ "found": false }))).into_response()),
         Err(e) => Err(ApiError::Internal(e.to_string())),
     }
@@ -524,11 +586,24 @@ async fn plugin_action(
             company_id,
         };
         match worker.perform_action(params).await {
-            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
-            Err(e) => return Err(ApiError::Internal(format!("worker rejected performAction: {e}"))),
+            Ok(value) => {
+                return Ok((
+                    StatusCode::OK,
+                    Json(json!({ "data": value, "source": "worker" })),
+                )
+                    .into_response())
+            }
+            Err(e) => {
+                return Err(ApiError::Internal(format!(
+                    "worker rejected performAction: {e}"
+                )))
+            }
         }
     }
-    let schedule = body.get("schedule").and_then(Value::as_str).unwrap_or("on_demand");
+    let schedule = body
+        .get("schedule")
+        .and_then(Value::as_str)
+        .unwrap_or("on_demand");
     let result: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO plugin_jobs (plugin_id, job_key, schedule, status) VALUES ($1, $2, $3, 'active') ON CONFLICT (plugin_id, job_key) DO UPDATE SET schedule = EXCLUDED.schedule, updated_at = now() RETURNING id",
     )
@@ -541,7 +616,11 @@ async fn plugin_action(
                 LiveEvent::new("plugin.action.queued", "plugin", pid)
                     .with_data(json!({ "jobId": id, "jobKey": key })),
             );
-            Ok((StatusCode::OK, Json(json!({ "id": id, "ok": true, "status": "queued", "source": "store" }))).into_response())
+            Ok((
+                StatusCode::OK,
+                Json(json!({ "id": id, "ok": true, "status": "queued", "source": "store" })),
+            )
+                .into_response())
         }
         Err(e) => Err(ApiError::Internal(e.to_string())),
     }
@@ -557,13 +636,21 @@ async fn bridge_stream(
     let _ = headers;
     let pid = match Uuid::parse_str(&plugin_id) {
         Ok(id) => id,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid plugin id"}))).into_response(),
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "invalid plugin id"})),
+            )
+                .into_response()
+        }
     };
-    let company_id = query
-        .company_id
-        .unwrap_or_else(Uuid::nil);
+    let company_id = query.company_id.unwrap_or_else(Uuid::nil);
     let bus = state.plugin_bus.clone();
-    let key = SubscriptionKey { plugin_id: pid, channel: channel.clone(), company_id };
+    let key = SubscriptionKey {
+        plugin_id: pid,
+        channel: channel.clone(),
+        company_id,
+    };
     let (guard, mut rx) = bus.subscribe_stream(key.clone());
     // keep the guard alive for the duration of the stream
     let stream = async_stream::stream! {
@@ -871,7 +958,9 @@ async fn test_plugin_config(
     let config = body.get("config").cloned().unwrap_or(Value::Null);
     match worker.validate_config(config).await {
         Ok(outcome) => Ok((StatusCode::OK, Json(outcome)).into_response()),
-        Err(e) => Err(ApiError::Internal(format!("worker validate_config failed: {e}"))),
+        Err(e) => Err(ApiError::Internal(format!(
+            "worker validate_config failed: {e}"
+        ))),
     }
 }
 

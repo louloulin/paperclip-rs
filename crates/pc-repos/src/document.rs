@@ -25,7 +25,6 @@ pub struct DocumentRow {
     pub updated_at: Timestamp,
 }
 
-
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct DocumentRevisionRow {
     pub id: Uuid,
@@ -319,13 +318,11 @@ impl<'a> DocumentRepo<'a> {
 
     /// 删除 issue document（包括 link 与 revision），保留 document 实体供其他 issue 使用
     pub async fn delete_issue_document(&self, issue_id: Uuid, key: &str) -> sqlx::Result<bool> {
-        let r = sqlx::query(
-            "DELETE FROM issue_documents WHERE issue_id = $1 AND key = $2",
-        )
-        .bind(issue_id)
-        .bind(key)
-        .execute(self.db.pool())
-        .await?;
+        let r = sqlx::query("DELETE FROM issue_documents WHERE issue_id = $1 AND key = $2")
+            .bind(issue_id)
+            .bind(key)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -333,7 +330,10 @@ impl<'a> DocumentRepo<'a> {
     // Document revisions
     // =========================================================================
 
-    pub async fn list_revisions(&self, document_id: Uuid) -> sqlx::Result<Vec<DocumentRevisionRow>> {
+    pub async fn list_revisions(
+        &self,
+        document_id: Uuid,
+    ) -> sqlx::Result<Vec<DocumentRevisionRow>> {
         sqlx::query_as::<_, DocumentRevisionRow>(
             "SELECT id, company_id, document_id, revision_number, body, change_summary, \
                     created_by_agent_id, created_by_user_id, created_at \
@@ -365,12 +365,11 @@ impl<'a> DocumentRepo<'a> {
             None => return Ok(None),
         };
         // 取当前 document 的 latest_revision_number，新 revision = current + 1
-        let current: Option<i32> = sqlx::query_scalar(
-            "SELECT latest_revision_number FROM documents WHERE id = $1",
-        )
-        .bind(document_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let current: Option<i32> =
+            sqlx::query_scalar("SELECT latest_revision_number FROM documents WHERE id = $1")
+                .bind(document_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         let new_rev_number = current.unwrap_or(0) + 1;
         let new_rev_id = Uuid::new_v4();
         let company_id = target.company_id;
@@ -467,7 +466,10 @@ impl<'a> DocumentRepo<'a> {
         .await
     }
 
-    pub async fn get_annotation_thread(&self, thread_id: Uuid) -> sqlx::Result<Option<AnnotationThreadRow>> {
+    pub async fn get_annotation_thread(
+        &self,
+        thread_id: Uuid,
+    ) -> sqlx::Result<Option<AnnotationThreadRow>> {
         sqlx::query_as::<_, AnnotationThreadRow>(
             "SELECT id, company_id, issue_id, document_id, document_key, status, anchor_state, \
                     original_revision_id, original_revision_number, current_revision_id, \
@@ -607,5 +609,4 @@ impl<'a> DocumentRepo<'a> {
         .fetch_one(self.db.pool())
         .await
     }
-
 }

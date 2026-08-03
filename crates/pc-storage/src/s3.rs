@@ -115,7 +115,10 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn amz_date(now: chrono::DateTime<Utc>) -> (String, String) {
-    (now.format("%Y%m%dT%H%M%SZ").to_string(), now.format("%Y%m%d").to_string())
+    (
+        now.format("%Y%m%dT%H%M%SZ").to_string(),
+        now.format("%Y%m%d").to_string(),
+    )
 }
 
 struct SignedRequest {
@@ -168,7 +171,10 @@ fn build_signed_request(
         "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
         sha256_hex(canonical_request.as_bytes())
     );
-    let k_date = hmac(format!("AWS4{secret_key}").as_bytes(), date_stamp.as_bytes());
+    let k_date = hmac(
+        format!("AWS4{secret_key}").as_bytes(),
+        date_stamp.as_bytes(),
+    );
     let k_region = hmac(&k_date, region.as_bytes());
     let k_service = hmac(&k_region, service.as_bytes());
     let k_signing = hmac(&k_service, b"aws4_request");
@@ -210,9 +216,7 @@ impl StorageProvider for S3Storage {
 
     async fn health(&self) -> StorageResult<()> {
         if self.access_key.is_none() {
-            return Err(StorageError::NotConfigured(
-                "S3 credentials missing".into(),
-            ));
+            return Err(StorageError::NotConfigured("S3 credentials missing".into()));
         }
         Ok(())
     }
@@ -257,9 +261,11 @@ impl StorageProvider for S3Storage {
         for (k, v) in &headers {
             req = req.header(k.as_str(), v.as_str());
         }
-        let resp = req.body(bytes.clone()).send().await.map_err(|e| {
-            StorageError::Backend(format!("s3 put_object send failed: {e}"))
-        })?;
+        let resp = req
+            .body(bytes.clone())
+            .send()
+            .await
+            .map_err(|e| StorageError::Backend(format!("s3 put_object send failed: {e}")))?;
         if !resp.status().is_success() {
             return Err(StorageError::Backend(format!(
                 "s3 put_object HTTP {}",
@@ -311,14 +317,12 @@ impl StorageProvider for S3Storage {
         for (k, v) in &headers {
             req = req.header(k.as_str(), v.as_str());
         }
-        let resp = req.send().await.map_err(|e| {
-            StorageError::Backend(format!("s3 get_object send failed: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| StorageError::Backend(format!("s3 get_object send failed: {e}")))?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(StorageError::NotFound(format!(
-                "{}/{}",
-                self.bucket, key
-            )));
+            return Err(StorageError::NotFound(format!("{}/{}", self.bucket, key)));
         }
         if !resp.status().is_success() {
             return Err(StorageError::Backend(format!(
@@ -333,10 +337,7 @@ impl StorageProvider for S3Storage {
         Ok(bytes)
     }
 
-    async fn stream_object(
-        &self,
-        location: &StorageLocation,
-    ) -> StorageResult<ObjectStream> {
+    async fn stream_object(&self, location: &StorageLocation) -> StorageResult<ObjectStream> {
         let bytes = self.get_object(location).await?;
         Ok(Box::pin(futures::stream::once(async move { Ok(bytes) })))
     }
@@ -376,9 +377,10 @@ impl StorageProvider for S3Storage {
         for (k, v) in &headers {
             req = req.header(k.as_str(), v.as_str());
         }
-        let resp = req.send().await.map_err(|e| {
-            StorageError::Backend(format!("s3 delete_object send failed: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| StorageError::Backend(format!("s3 delete_object send failed: {e}")))?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(()); // idempotent
         }
@@ -391,11 +393,7 @@ impl StorageProvider for S3Storage {
         Ok(())
     }
 
-    async fn list_prefix(
-        &self,
-        bucket: &str,
-        prefix: &str,
-    ) -> StorageResult<Vec<ObjectKey>> {
+    async fn list_prefix(&self, bucket: &str, prefix: &str) -> StorageResult<Vec<ObjectKey>> {
         let (access, secret) = self.require_creds()?;
         let host = self.host();
         let canonical_uri = format!("/{bucket}");
@@ -427,18 +425,20 @@ impl StorageProvider for S3Storage {
         for (k, v) in &headers {
             req = req.header(k.as_str(), v.as_str());
         }
-        let resp = req.send().await.map_err(|e| {
-            StorageError::Backend(format!("s3 list_prefix send failed: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| StorageError::Backend(format!("s3 list_prefix send failed: {e}")))?;
         if !resp.status().is_success() {
             return Err(StorageError::Backend(format!(
                 "s3 list_prefix HTTP {}",
                 resp.status()
             )));
         }
-        let body: ListObjectsResponse = resp.json().await.map_err(|e| {
-            StorageError::Backend(format!("s3 list_prefix decode: {e}"))
-        })?;
+        let body: ListObjectsResponse = resp
+            .json()
+            .await
+            .map_err(|e| StorageError::Backend(format!("s3 list_prefix decode: {e}")))?;
         Ok(body
             .contents
             .into_iter()
@@ -484,7 +484,8 @@ impl StorageProvider for S3Storage {
         let k_service = hmac(&k_region, b"s3");
         let k_signing = hmac(&k_service, b"aws4_request");
         let signature = hex::encode(hmac(&k_signing, string_to_sign.as_bytes()));
-        let url = format!("https://{host}{canonical_uri}?{canonical_query}&X-Amz-Signature={signature}");
+        let url =
+            format!("https://{host}{canonical_uri}?{canonical_query}&X-Amz-Signature={signature}");
         let parsed = Url::parse(&url).map_err(|e| StorageError::Backend(e.to_string()))?;
         Ok(PresignedUrl {
             url: parsed.to_string(),

@@ -1,8 +1,8 @@
 use pc_errors::{conflict, internal, unprocessable, validation, Error, Result};
 use pc_repos::{
     agent::{
-        AgentConfigRecord, AgentConfigRevisionRow, AgentRepo, AgentRow, CreateAgentRecord,
-        AgentRuntimeStateRow, AgentTaskSessionRow, CreateAgentApiKeyRecord, NewAgentConfigRevision,
+        AgentConfigRecord, AgentConfigRevisionRow, AgentRepo, AgentRow, AgentRuntimeStateRow,
+        AgentTaskSessionRow, CreateAgentApiKeyRecord, CreateAgentRecord, NewAgentConfigRevision,
         NewHireApproval,
     },
     approval::ApprovalRow,
@@ -11,8 +11,8 @@ use pc_repos::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use uuid::Uuid;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::{contains_redacted_marker, AgentConfigSnapshot};
 
@@ -349,11 +349,7 @@ impl AgentService {
             .map_err(map_sql_error)
     }
 
-    pub async fn hire(
-        &self,
-        mut input: CreateAgent,
-        actor: RevisionContext,
-    ) -> Result<AgentHire> {
+    pub async fn hire(&self, mut input: CreateAgent, actor: RevisionContext) -> Result<AgentHire> {
         if input.company_id.is_nil() {
             return Err(validation("companyId is required"));
         }
@@ -386,11 +382,13 @@ impl AgentService {
             "metadata": input.metadata.as_ref().map(crate::sanitize_snapshot_value),
             "agentId": id,
         });
-        let approval = company.require_board_approval_for_new_agents.then(|| NewHireApproval {
-            requested_by_agent_id: actor.created_by_agent_id,
-            requested_by_user_id: actor.created_by_user_id,
-            payload,
-        });
+        let approval = company
+            .require_board_approval_for_new_agents
+            .then(|| NewHireApproval {
+                requested_by_agent_id: actor.created_by_agent_id,
+                requested_by_user_id: actor.created_by_user_id,
+                payload,
+            });
         let record = AgentRepo::new(&self.db)
             .create_hire(
                 CreateAgentRecord {
@@ -446,7 +444,11 @@ impl AgentService {
                 "Pending approval agent permissions cannot be changed before board approval",
             ));
         }
-        let mut permissions = existing.permissions.as_object().cloned().unwrap_or_default();
+        let mut permissions = existing
+            .permissions
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         permissions.insert(
             "canCreateAgents".into(),
             Value::Bool(input.can_create_agents),
@@ -533,11 +535,7 @@ impl AgentService {
             .map_err(map_sql_error)
     }
 
-    pub async fn create_api_key(
-        &self,
-        id: Uuid,
-        input: CreateAgentKey,
-    ) -> Result<AgentKeyCreated> {
+    pub async fn create_api_key(&self, id: Uuid, input: CreateAgentKey) -> Result<AgentKeyCreated> {
         let repo = AgentRepo::new(&self.db);
         let existing = repo
             .get(id)
@@ -592,7 +590,9 @@ impl AgentService {
                         id: row.id,
                         name: row.name,
                         responsible_user_id: row.responsible_user_id,
-                        scope: row.scope_config.unwrap_or_else(|| json!({"kind": "standard"})),
+                        scope: row
+                            .scope_config
+                            .unwrap_or_else(|| json!({"kind": "standard"})),
                         created_at: row.created_at,
                         revoked_at: row.revoked_at,
                     })
@@ -614,7 +614,9 @@ impl AgentService {
                     id: row.id,
                     name: row.name,
                     responsible_user_id: row.responsible_user_id,
-                    scope: row.scope_config.unwrap_or_else(|| json!({"kind": "standard"})),
+                    scope: row
+                        .scope_config
+                        .unwrap_or_else(|| json!({"kind": "standard"})),
                     created_at: row.created_at,
                     revoked_at: row.revoked_at,
                 })
@@ -701,10 +703,7 @@ impl AgentService {
         Ok(Some(runtime_state(state, latest.as_ref())))
     }
 
-    pub async fn list_task_sessions(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<Vec<AgentTaskSessionRow>>> {
+    pub async fn list_task_sessions(&self, id: Uuid) -> Result<Option<Vec<AgentTaskSessionRow>>> {
         let repo = AgentRepo::new(&self.db);
         let Some(agent) = repo.get(id).await.map_err(map_sql_error)? else {
             return Ok(None);
@@ -821,9 +820,7 @@ fn normalize_agent_permissions(value: Value, role: &str) -> Value {
     object
         .entry("canCreateAgents")
         .or_insert_with(|| Value::Bool(role.trim().eq_ignore_ascii_case("ceo")));
-    object
-        .entry("canCreateSkills")
-        .or_insert(Value::Bool(true));
+    object.entry("canCreateSkills").or_insert(Value::Bool(true));
     Value::Object(object)
 }
 

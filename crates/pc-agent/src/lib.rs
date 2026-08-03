@@ -4,8 +4,8 @@
 
 mod actor;
 mod instructions;
-mod snapshot;
 mod service;
+mod snapshot;
 
 pub use actor::{
     spawn_agent_supervisor, AgentSupervisor, ApproveAgentCommand, ClearAgentErrorCommand,
@@ -19,12 +19,12 @@ pub use instructions::{
     AgentInstructionsService, DeleteInstructionsFileResult, InstructionAgent,
     InstructionsBundleUpdate, InstructionsUpdateResult, WriteInstructionsFileResult,
 };
+pub use pc_repos::agent::AgentTaskSessionRow as AgentTaskSession;
+pub use service::{
+    AgentApiKey, AgentConfigRevision, AgentHire, AgentKeyCreated, AgentPatch,
+    AgentPermissionUpdate, AgentRuntimeState, AgentService, CreateAgent, CreateAgentKey,
+    PauseReason, ResetRuntimeSession, ResetRuntimeState, RevisionContext,
+};
 pub use snapshot::{
     contains_redacted_marker, sanitize_snapshot_value, AgentConfigSnapshot, REDACTED_VALUE,
 };
-pub use service::{
-    AgentApiKey, AgentConfigRevision, AgentKeyCreated, AgentPatch, AgentRuntimeState,
-    AgentHire, AgentPermissionUpdate, AgentService, CreateAgent, CreateAgentKey, PauseReason,
-    ResetRuntimeSession, ResetRuntimeState, RevisionContext,
-};
-pub use pc_repos::agent::AgentTaskSessionRow as AgentTaskSession;

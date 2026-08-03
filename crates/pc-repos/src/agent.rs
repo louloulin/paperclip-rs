@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 
-use crate::Db;
 use crate::approval::ApprovalRow;
+use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -451,9 +451,7 @@ impl<'a> AgentRepo<'a> {
         &self,
         agent_id: Uuid,
     ) -> sqlx::Result<Option<AgentRuntimeStateRow>> {
-        let sql = format!(
-            "SELECT {RUNTIME_STATE_COLS} FROM agent_runtime_state WHERE agent_id=$1"
-        );
+        let sql = format!("SELECT {RUNTIME_STATE_COLS} FROM agent_runtime_state WHERE agent_id=$1");
         sqlx::query_as(&sql)
             .bind(agent_id)
             .fetch_optional(self.db.pool())
@@ -520,13 +518,11 @@ impl<'a> AgentRepo<'a> {
             .execute(&mut *transaction)
             .await?
         } else {
-            sqlx::query(
-                "DELETE FROM agent_task_sessions WHERE company_id=$1 AND agent_id=$2",
-            )
-            .bind(agent.company_id)
-            .bind(agent.id)
-            .execute(&mut *transaction)
-            .await?
+            sqlx::query("DELETE FROM agent_task_sessions WHERE company_id=$1 AND agent_id=$2")
+                .bind(agent.company_id)
+                .bind(agent.id)
+                .execute(&mut *transaction)
+                .await?
         };
 
         let sql = if task_key.is_some() {
