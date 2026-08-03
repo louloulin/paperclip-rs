@@ -1,0 +1,25 @@
+[package]
+name = "pc-plugin-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 插件 Worker 池与 host 端调度（基于 JSON-RPC over stdio）"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-plugin-protocol = { path = "../pc-plugin-protocol" }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }

@@ -115,13 +115,26 @@ impl<R> JsonRpcResponse<R> {
 
 /// 标准 JSON-RPC 2.0 错误码。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
 pub enum JsonRpcErrorCode {
     ParseError = -32700,
     InvalidRequest = -32600,
     MethodNotFound = -32601,
     InvalidParams = -32602,
     InternalError = -32603,
-    ServerError(i32),
+    /// Marker for custom server error (range -32000 to -32099). Use [`Self::server`] to construct.
+    ServerError = -32000,
+}
+
+impl JsonRpcErrorCode {
+    pub fn server(code: i32) -> Self {
+        debug_assert!(
+            (-32099..=-32000).contains(&code),
+            "server error code must be in -32000..-32099"
+        );
+        let _ = code;
+        Self::ServerError
+    }
 }
 
 impl JsonRpcErrorCode {
@@ -132,7 +145,7 @@ impl JsonRpcErrorCode {
             Self::MethodNotFound => -32601,
             Self::InvalidParams => -32602,
             Self::InternalError => -32603,
-            Self::ServerError(c) => c,
+            Self::ServerError => -32000,
         }
     }
 }
@@ -161,10 +174,8 @@ mod tests {
 
     #[test]
     fn response_error_includes_code() {
-        let resp: JsonRpcResponse<Value> = JsonRpcResponse::error(
-            "req-1",
-            JsonRpcError::new(-32601, "method not found"),
-        );
+        let resp: JsonRpcResponse<Value> =
+            JsonRpcResponse::error("req-1", JsonRpcError::new(-32601, "method not found"));
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"error\""));
         assert!(json.contains("\"code\":-32601"));
@@ -177,6 +188,6 @@ mod tests {
         assert_eq!(JsonRpcErrorCode::MethodNotFound.as_i32(), -32601);
         assert_eq!(JsonRpcErrorCode::InvalidParams.as_i32(), -32602);
         assert_eq!(JsonRpcErrorCode::InternalError.as_i32(), -32603);
-        assert_eq!(JsonRpcErrorCode::ServerError(-32000).as_i32(), -32000);
+        assert_eq!(JsonRpcErrorCode::ServerError.as_i32(), -32000);
     }
 }

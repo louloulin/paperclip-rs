@@ -21,7 +21,7 @@ pub struct PluginManifestAuthor {
 }
 
 /// Capability 类型。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginManifestCapabilityKind {
     Jobs,
@@ -142,11 +142,11 @@ mod tests {
     #[test]
     fn manifest_rejects_empty_id() {
         let m = PaperclipPluginManifestV1 {
-            id: "".into(),
+            id: String::new(),
             version: "1.0.0".into(),
             manifest_version: "v1".into(),
             label: "Test".into(),
-            description: "".into(),
+            description: String::new(),
             author: None,
             entry: "x".into(),
             capabilities: vec![],
@@ -164,7 +164,7 @@ mod tests {
             version: "1.0.0".into(),
             manifest_version: "v99".into(),
             label: "Test".into(),
-            description: "".into(),
+            description: String::new(),
             author: None,
             entry: "x".into(),
             capabilities: vec![],
@@ -183,7 +183,7 @@ mod tests {
             version: "1.0.0".into(),
             manifest_version: "v1".into(),
             label: "Test".into(),
-            description: "".into(),
+            description: String::new(),
             author: None,
             entry: "x".into(),
             capabilities: vec![PluginManifestCapability {

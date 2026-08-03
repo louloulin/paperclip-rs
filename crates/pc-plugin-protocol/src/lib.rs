@@ -10,8 +10,8 @@
 
 pub mod envelope;
 pub mod error_codes;
-pub mod methods;
 pub mod manifest;
+pub mod methods;
 pub mod types;
 
 pub use envelope::{JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse};
@@ -21,12 +21,10 @@ pub use manifest::{
     PluginManifestCapabilityKind, PluginManifestUiContribution,
 };
 pub use methods::{
-    WorkerToHostMethodName, HostToWorkerMethodName,
-    HOST_TO_WORKER_METHODS, WORKER_TO_HOST_METHODS,
+    HostToWorkerMethodName, WorkerToHostMethodName, HOST_TO_WORKER_METHODS, WORKER_TO_HOST_METHODS,
 };
 pub use types::{
     ConfigChangedParams, ExecuteToolParams, GetDataParams, HandleApiRequestParams,
-    InitializeParams, InitializeResult, OnEventParams, PerformActionParams,
-    PluginEvent, PluginHealthDiagnostics, PluginJobContext, RunJobParams,
-    ToolResult,
+    InitializeParams, InitializeResult, OnEventParams, PerformActionParams, PluginEvent,
+    PluginHealthDiagnostics, PluginJobContext, RunJobParams, ToolResult,
 };
