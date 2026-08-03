@@ -87,7 +87,9 @@ async fn file_content(
     Path(issue_id): Path<Uuid>,
     Query(query): Query<ContentQuery>,
 ) -> ApiResult<Json<Value>> {
-    let path = query.path.ok_or_else(|| ApiError::BadRequest("path query is required".into()))?;
+    let path = query
+        .path
+        .ok_or_else(|| ApiError::BadRequest("path query is required".into()))?;
     // Try to read content from project_artifacts keyed by path + project of issue.
     let row: Option<(String, Option<String>, Option<i64>)> = sqlx::query_as(
         "SELECT a.content, a.mime_type, a.size_bytes FROM project_artifacts a          JOIN issues i ON i.project_id = a.project_id          WHERE i.id = $1 AND a.path = $2 LIMIT 1",

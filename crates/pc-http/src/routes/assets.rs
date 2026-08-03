@@ -108,10 +108,7 @@ async fn upload_logo(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&body.content_base64)
         .map_err(|e| ApiError::BadRequest(format!("invalid base64: {e}")))?;
-    let content_type = body
-        .content_type
-        .as_deref()
-        .unwrap_or("image/png");
+    let content_type = body.content_type.as_deref().unwrap_or("image/png");
     let provider = state
         .storage
         .resolve("company-assets")
@@ -125,14 +122,12 @@ async fn upload_logo(
         .put_object(&target, Bytes::from(bytes), Some(content_type))
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query(
-        "UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2",
-    )
-    .bind(format!("/api/companies/{company_id}/logo/content"))
-    .bind(company_id)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    sqlx::query("UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2")
+        .bind(format!("/api/companies/{company_id}/logo/content"))
+        .bind(company_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -170,11 +165,7 @@ async fn asset_content(
         pc_storage::StorageError::NotFound(_) => ApiError::NotFound(format!("asset content {key}")),
         other => ApiError::Internal(other.to_string()),
     })?;
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, ct)],
-        bytes,
-    ))
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, ct)], bytes))
 }
 
 fn mime_to_ext(content_type: &str) -> &'static str {

@@ -29,16 +29,18 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ListQuery {
-    company_id: Uuid,
+    #[serde(default)]
+    company_id: Option<Uuid>,
 }
 
 async fn list(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows = ProjectRepo::new(&state.db)
-        .list_by_company(q.company_id)
-        .await?;
+    let rows = match q.company_id {
+        Some(cid) => ProjectRepo::new(&state.db).list_by_company(cid).await?,
+        None => ProjectRepo::new(&state.db).list_all(200).await?,
+    };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 

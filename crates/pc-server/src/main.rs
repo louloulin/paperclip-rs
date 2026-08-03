@@ -53,6 +53,23 @@ async fn main() -> anyhow::Result<()> {
     };
     pc_telemetry::init(&telemetry_opts)?;
 
+    // 2a. 可选 OTLP exporter
+    #[cfg(feature = "otlp")]
+    {
+        match pc_telemetry::install_global(&pc_telemetry::OtlpConfig {
+            service_name: telemetry_opts.service_name.clone(),
+            service_version: env!("CARGO_PKG_VERSION").to_string(),
+            ..Default::default()
+        }) {
+            Ok(_provider) => {
+                info!("otlp: tracing layer installed");
+            }
+            Err(error) => {
+                info!(error = %error, "otlp: not installed (disabled or invalid config)");
+            }
+        }
+    }
+
     // 3. 启动横幅
     let banner = StartupBanner {
         service: "paperclip-server".into(),
@@ -92,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .context("register root actor")?;
     let heartbeat = spawn_heartbeat_supervisor(50, actors.clone());
+    let agent_supervisor = pc_agent::spawn_agent_supervisor(db.clone());
     let adapters = AdapterRegistry::new();
     {
         adapters
@@ -134,6 +152,12 @@ async fn main() -> anyhow::Result<()> {
             heartbeat.clone(),
         )
         .context("register heartbeat supervisor")?;
+    actors
+        .register(
+            ActorKey::new("system", "agent-supervisor"),
+            agent_supervisor.clone(),
+        )
+        .context("register agent supervisor")?;
     recover_heartbeat_runs(&db, &heartbeat).await?;
     let realtime = RealtimeHandle::start(1024);
     let ws = std::sync::Arc::new(WsState {
@@ -145,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
         pc_http::state::RuntimeHandles {
             actors: actors.clone(),
             heartbeat,
+            agents: agent_supervisor,
             adapters,
         },
         pc_http::state::ConfigSnapshot {
@@ -263,7 +288,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let app: Router = pc_http::routes::router().with_state(state);
+    let app: Router = pc_http::middleware::apply_default_middleware(
+        pc_http::routes::router(),
+    )
+    .with_state(state);
 
     let addr = std::net::SocketAddr::from((
         cfg.server.host.parse::<std::net::IpAddr>()?,

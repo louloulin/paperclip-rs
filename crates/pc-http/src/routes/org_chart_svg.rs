@@ -47,10 +47,7 @@ async fn org_chart_svg(
     } else {
         render_simple_svg(&rows, &style)
     };
-    (
-        [(header::CONTENT_TYPE, "image/svg+xml")],
-        svg,
-    )
+    ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
 }
 
 fn render_simple_svg(rows: &[(Uuid, String, String, String, Option<Uuid>)], style: &str) -> String {

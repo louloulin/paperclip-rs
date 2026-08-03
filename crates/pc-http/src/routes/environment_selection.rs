@@ -42,10 +42,7 @@ async fn get_setting(state: &AppState) -> InstanceSetting {
         .unwrap_or_else(|_| default_setting())
 }
 
-async fn get_selection(
-    State(state): State<AppState>,
-    Path(company_id): Path<Uuid>,
-) -> Json<Value> {
+async fn get_selection(State(state): State<AppState>, Path(company_id): Path<Uuid>) -> Json<Value> {
     let setting = get_setting(&state).await;
     let env_id = setting
         .general

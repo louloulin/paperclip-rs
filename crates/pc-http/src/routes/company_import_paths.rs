@@ -56,11 +56,7 @@ async fn update_import_paths(
 ) -> Json<Value> {
     let paths = body.get("paths").cloned().unwrap_or(json!([]));
     let updated = SettingsRepo::new(&state.db)
-        .patch(
-            None,
-            Some(json!({ "importPaths": paths })),
-            None,
-        )
+        .patch(None, Some(json!({ "importPaths": paths })), None)
         .await
         .unwrap();
     Json(json!({

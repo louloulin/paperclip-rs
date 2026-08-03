@@ -38,7 +38,8 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-const CATALOG_JSON: &str = include_str!("../../../../packages/teams-catalog/generated/catalog.json");
+const CATALOG_JSON: &str =
+    include_str!("../../../../packages/teams-catalog/generated/catalog.json");
 
 fn load_catalog() -> Result<Value, ApiError> {
     serde_json::from_str(CATALOG_JSON).map_err(|e| ApiError::Internal(format!("catalog: {e}")))
@@ -49,12 +50,10 @@ fn find_team<'a>(catalog: &'a Value, catalog_id: &str) -> Option<&'a Value> {
         .get("teams")
         .and_then(|t| t.as_array())
         .and_then(|teams| {
-            teams
-                .iter()
-                .find(|t| {
-                    t.get("key").and_then(|v| v.as_str()) == Some(catalog_id)
-                        || t.get("id").and_then(|v| v.as_str()) == Some(catalog_id)
-                })
+            teams.iter().find(|t| {
+                t.get("key").and_then(|v| v.as_str()) == Some(catalog_id)
+                    || t.get("id").and_then(|v| v.as_str()) == Some(catalog_id)
+            })
         })
 }
 
@@ -67,14 +66,15 @@ async fn list_teams_catalog() -> ApiResult<Json<Value>> {
     })))
 }
 
-async fn catalog_files(
-    Path(catalog_id): Path<String>,
-) -> ApiResult<Json<Value>> {
+async fn catalog_files(Path(catalog_id): Path<String>) -> ApiResult<Json<Value>> {
     let catalog = load_catalog()?;
     let team = find_team(&catalog, &catalog_id)
         .ok_or_else(|| ApiError::NotFound(format!("catalog {catalog_id}")))?;
     let path = team.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    let entry = team.get("entrypoint").and_then(|v| v.as_str()).unwrap_or("TEAM.md");
+    let entry = team
+        .get("entrypoint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("TEAM.md");
     Ok(Json(json!({
         "catalogId": catalog_id,
         "path": path,
@@ -83,9 +83,7 @@ async fn catalog_files(
     })))
 }
 
-async fn catalog_detail(
-    Path(catalog_id): Path<String>,
-) -> ApiResult<Json<Value>> {
+async fn catalog_detail(Path(catalog_id): Path<String>) -> ApiResult<Json<Value>> {
     let catalog = load_catalog()?;
     let team = find_team(&catalog, &catalog_id)
         .ok_or_else(|| ApiError::NotFound(format!("catalog {catalog_id}")))?;
@@ -96,15 +94,19 @@ async fn installed_teams(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, Option<String>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(
-            "SELECT catalog_id, status, snapshot, installed_at FROM team_installs \
+    let rows: Vec<(
+        String,
+        Option<String>,
+        serde_json::Value,
+        chrono::DateTime<chrono::Utc>,
+    )> = sqlx::query_as(
+        "SELECT catalog_id, status, snapshot, installed_at FROM team_installs \
              WHERE company_id = $1 ORDER BY installed_at DESC",
-        )
-        .bind(company_id)
-        .fetch_all(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, status, snap, ts)| {
@@ -172,14 +174,12 @@ async fn uninstall_team(
     State(state): State<AppState>,
     Path((company_id, catalog_id)): Path<(Uuid, String)>,
 ) -> ApiResult<impl IntoResponse> {
-    let _ = sqlx::query(
-        "DELETE FROM team_installs WHERE company_id = $1 AND catalog_id = $2",
-    )
-    .bind(company_id)
-    .bind(&catalog_id)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = sqlx::query("DELETE FROM team_installs WHERE company_id = $1 AND catalog_id = $2")
+        .bind(company_id)
+        .bind(&catalog_id)
+        .execute(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::NO_CONTENT,
         Json(json!({

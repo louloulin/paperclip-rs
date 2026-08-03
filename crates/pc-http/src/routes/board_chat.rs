@@ -155,10 +155,8 @@ async fn board_chat_stream(
         let exit = child.wait().await.ok().and_then(|s| s.code());
         if !full_response.is_empty() {
             // Persist assistant turn as a comment on the standing issue.
-            if let Ok(client) = sqlx::PgPool::connect(
-                &std::env::var("DATABASE_URL").unwrap_or_default(),
-            )
-            .await
+            if let Ok(client) =
+                sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap_or_default()).await
             {
                 let _ = sqlx::query(
                     "INSERT INTO issue_comments (id, issue_id, author_user_id, body, created_at, updated_at) \
@@ -254,16 +252,19 @@ async fn board_chat_one_shot(
     })))
 }
 
-async fn ensure_board_issue(state: &AppState, company_id: Uuid, title: &str) -> Result<Uuid, ApiError> {
+async fn ensure_board_issue(
+    state: &AppState,
+    company_id: Uuid,
+    title: &str,
+) -> Result<Uuid, ApiError> {
     let pool = state.db.pool();
-    let existing: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM issues WHERE company_id = $1 AND title = $2 LIMIT 1",
-    )
-    .bind(company_id)
-    .bind(title)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let existing: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM issues WHERE company_id = $1 AND title = $2 LIMIT 1")
+            .bind(company_id)
+            .bind(title)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     if let Some((id,)) = existing {
         return Ok(id);
     }
@@ -294,7 +295,10 @@ fn extract_text(event: &Value) -> Option<String> {
         .get("message")
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_array())
-        .and_then(|arr| arr.iter().find(|b| b.get("type").and_then(|v| v.as_str()) == Some("text")))
+        .and_then(|arr| {
+            arr.iter()
+                .find(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
+        })
         .and_then(|b| b.get("text"))
         .and_then(|v| v.as_str())
     {

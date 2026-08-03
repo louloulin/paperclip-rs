@@ -31,15 +31,17 @@ async fn workspace_command_authz(
 
     // Look up workspace metadata for context. Use execution_workspaces table
     // when present; fall back to a permissive default for unknown workspaces.
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT id::text, kind FROM execution_workspaces WHERE id = $1",
-    )
-    .bind(workspace_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .unwrap_or(None);
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT id::text, kind FROM execution_workspaces WHERE id = $1")
+            .bind(workspace_id)
+            .fetch_optional(state.db.pool())
+            .await
+            .unwrap_or(None);
 
-    let kind = row.as_ref().and_then(|(_, k)| k.clone()).unwrap_or_else(|| "execution".into());
+    let kind = row
+        .as_ref()
+        .and_then(|(_, k)| k.clone())
+        .unwrap_or_else(|| "execution".into());
 
     // Provide a baseline allow-list (read + write). Agent keys cannot mutate
     // host-executed commands (mirrors the assertNoAgentHostWorkspaceCommandMutation

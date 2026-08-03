@@ -23,6 +23,9 @@ pub enum Error {
     #[error("conflict: {message}")]
     Conflict { message: String },
 
+    #[error("unprocessable entity: {message}")]
+    Unprocessable { message: String },
+
     #[error("forbidden: {message}")]
     Forbidden { message: String },
 
@@ -76,6 +79,7 @@ impl Error {
             Self::Validation { .. } => "validation_error",
             Self::NotFound { .. } => "not_found",
             Self::Conflict { .. } => "conflict",
+            Self::Unprocessable { .. } => "unprocessable_entity",
             Self::Forbidden { .. } => "forbidden",
             Self::Unauthorized { .. } => "unauthorized",
             Self::RateLimited { .. } => "rate_limited",
@@ -92,6 +96,7 @@ impl Error {
             Self::Validation { .. } => StatusCode::BAD_REQUEST,
             Self::NotFound { .. } => StatusCode::NOT_FOUND,
             Self::Conflict { .. } => StatusCode::CONFLICT,
+            Self::Unprocessable { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
@@ -158,6 +163,12 @@ pub fn not_found(resource: impl Into<String>) -> Error {
 
 pub fn conflict(message: impl Into<String>) -> Error {
     Error::Conflict {
+        message: message.into(),
+    }
+}
+
+pub fn unprocessable(message: impl Into<String>) -> Error {
+    Error::Unprocessable {
         message: message.into(),
     }
 }
@@ -231,5 +242,12 @@ mod tests {
         let body = err.to_body();
         assert_eq!(body.error.retry_after_secs, Some(30));
         assert_eq!(err.status_code(), http::StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn unprocessable_returns_422() {
+        let err = unprocessable("revision contains redacted secrets");
+        assert_eq!(err.code(), "unprocessable_entity");
+        assert_eq!(err.status_code(), http::StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

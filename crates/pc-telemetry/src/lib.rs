@@ -113,3 +113,9 @@ mod tests {
         assert!(opts.json_output);
     }
 }
+
+#[cfg(feature = "otlp")]
+pub mod otlp;
+
+#[cfg(feature = "otlp")]
+pub use otlp::{install_global, OtlpConfig, build_otlp_provider};

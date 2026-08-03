@@ -13,6 +13,7 @@ use std::fmt::Write;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_realtime::LiveEvent;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -210,28 +211,51 @@ fn invocation_json(row: &InvocationRow) -> Value {
 // ── Handlers ───────────────────────────────────────────────
 
 async fn start_connection_authz(
-    State(_s): State<AppState>,
+    State(state): State<AppState>,
     Path(connection_id): Path<String>,
-    Json(_body): Json<Value>,
-) -> Json<Value> {
-    Json(json!({
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let company_id = body
+        .get("companyId")
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(|| ApiError::BadRequest("companyId is required".into()))?;
+    let conn = Uuid::parse_str(&connection_id)
+        .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
+    let auth_url = upsert_oauth_state(&state, company_id, conn).await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.oauth.started", "tool_connection", conn)
+            .with_company(company_id),
+    );
+    Ok(Json(json!({
         "connectionId": connection_id,
-        "authorizationUrl": null
-    }))
+        "authorizationUrl": auth_url,
+    })))
 }
 
 async fn connection_token(
-    State(_s): State<AppState>,
+    State(state): State<AppState>,
     Path(connection_id): Path<String>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    let _ = connection_id;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "token issuance not yet implemented"
-        })),
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let cid = Uuid::parse_str(&connection_id)
+        .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
+    let grant_kind = body.get("grantKind").and_then(Value::as_str).unwrap_or("oauth_access");
+    let now = chrono::Utc::now();
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO connection_token_issuances (connection_id, path, status, requested_at)          VALUES ($1, $2, 'issued', $3) RETURNING id",
     )
+    .bind(cid)
+    .bind(grant_kind)
+    .bind(now)
+    .fetch_one(state.db.pool())
+    .await?;
+    Ok(Json(json!({
+        "id": id,
+        "connectionId": cid,
+        "status": "issued",
+        "issuedAt": now,
+    })))
 }
 
 async fn tool_gallery(
@@ -304,49 +328,128 @@ async fn connect_tool_app(
 }
 
 async fn start_company_connection_authz(
-    State(_s): State<AppState>,
-    Path((_company_id, connection_id)): Path<(Uuid, String)>,
+    State(state): State<AppState>,
+    Path((company_id, connection_id)): Path<(Uuid, String)>,
     Json(_body): Json<Value>,
-) -> Json<Value> {
-    Json(json!({
+) -> ApiResult<Json<Value>> {
+    let conn = Uuid::parse_str(&connection_id)
+        .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
+    let auth_url = upsert_oauth_state(&state, company_id, conn).await?;
+    Ok(Json(json!({
         "connectionId": connection_id,
-        "authorizationUrl": null
-    }))
+        "authorizationUrl": auth_url,
+    })))
 }
 
 async fn oauth_start(
-    State(_s): State<AppState>,
+    State(state): State<AppState>,
     Path(connection_id): Path<String>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    let _ = connection_id;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "OAuth flow not yet implemented"
-        })),
-    )
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let cid = Uuid::parse_str(&connection_id)
+        .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
+    let company_id = body
+        .get("companyId")
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .unwrap_or_else(Uuid::nil);
+    let auth_url = upsert_oauth_state(&state, company_id, cid).await?;
+    Ok(Json(json!({
+        "connectionId": cid,
+        "authorizationUrl": auth_url,
+    })))
 }
 
-async fn oauth_callback() -> impl IntoResponse {
-    (
+async fn oauth_callback(
+    State(state): State<AppState>,
+    Query(q): Query<OAuthCallbackQuery>,
+) -> ApiResult<axum::response::Response> {
+    // `state` from the URL is the only handshake to the original `oauth_start`. If we know the state, mark the oauth state
+    // as used (delete row) and bump connection health to "connected".
+    if let Some(state_token) = q.state.as_deref() {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "DELETE FROM tool_oauth_states WHERE state = $1 RETURNING company_id, connection_id",
+        )
+        .bind(state_token)
+        .fetch_optional(state.db.pool())
+        .await?;
+        if let Some((company_id, connection_id)) = row {
+            sqlx::query(
+                "UPDATE tool_connections SET status = 'connected', enabled = true,                   health_status = 'healthy', last_health_at = now(), updated_at = now()                  WHERE id = $1",
+            )
+            .bind(connection_id)
+            .execute(state.db.pool())
+            .await?;
+            state.realtime.publish(
+                LiveEvent::new("tool.oauth.connected", "tool_connection", connection_id)
+                    .with_company(company_id),
+            );
+        }
+    }
+    Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "text/html")],
         "<html><body><h1>OAuth Complete</h1><p>You may close this window.</p></body></html>",
     )
+        .into_response())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OAuthCallbackQuery {
+    state: Option<String>,
+    code: Option<String>,
+    #[serde(rename = "error")]
+    error: Option<String>,
 }
 
 async fn finish_oauth(
-    State(_s): State<AppState>,
-    Path((_company_id, _connection_id)): Path<(Uuid, String)>,
-    Json(_body): Json<Value>,
-) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "OAuth finish not yet implemented"
-        })),
+    State(state): State<AppState>,
+    Path((company_id, connection_id)): Path<(Uuid, String)>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let conn = Uuid::parse_str(&connection_id)
+        .map_err(|_| ApiError::BadRequest("invalid connection id".into()))?;
+    let access_token = body.get("accessToken").and_then(Value::as_str);
+    let refresh_token = body.get("refreshToken").and_then(Value::as_str);
+    let scopes = body.get("scopes").cloned().unwrap_or(json!([]));
+    let mut tx = state.db.pool().begin().await?;
+    sqlx::query(
+        "UPDATE tool_connections SET status = 'connected', enabled = true,           health_status = 'healthy', last_health_at = now(), updated_at = now()          WHERE id = $1 AND company_id = $2",
     )
+    .bind(conn)
+    .bind(company_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO connection_grants (company_id, connection_id, kind, status, credential_secret_refs)          VALUES ($1, $2, 'oauth', 'active', $3::jsonb)",
+    )
+    .bind(company_id)
+    .bind(conn)
+    .bind(json!([
+        { "field": "access_token", "value": access_token.map(str::to_string) },
+        { "field": "refresh_token", "value": refresh_token.map(str::to_string) }
+    ]))
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO tool_oauth_states (state, company_id, connection_id, code_verifier, expires_at)          VALUES ($1, $2, $3, $4, now() + interval '10 minutes')          ON CONFLICT (state) DO NOTHING",
+    )
+    .bind(format!("finish-{}", Uuid::new_v4().simple()))
+    .bind(company_id)
+    .bind(conn)
+    .bind(format!("scopes:{}", scopes))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.oauth.finished", "tool_connection", conn)
+            .with_company(company_id)
+            .with_data(json!({ "scopes": scopes })),
+    );
+    Ok(Json(json!({
+        "connectionId": conn,
+        "status": "connected",
+    })))
 }
 
 async fn list_connections(
@@ -663,4 +766,25 @@ async fn list_invocations(
 
     let items: Vec<Value> = rows.iter().map(invocation_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
+}
+
+async fn upsert_oauth_state(state: &AppState, company_id: Uuid, conn: Uuid) -> ApiResult<String> {
+    // Best-effort delete of expired rows.
+    sqlx::query("DELETE FROM tool_oauth_states WHERE expires_at < now()")
+        .execute(state.db.pool())
+        .await?;
+    let state_token = Uuid::new_v4().simple().to_string();
+    let code_verifier = Uuid::new_v4().simple().to_string();
+    sqlx::query(
+        "INSERT INTO tool_oauth_states (state, company_id, connection_id, code_verifier, expires_at)          VALUES ($1, $2, $3, $4, now() + interval '10 minutes')          ON CONFLICT (state) DO NOTHING",
+    )
+    .bind(&state_token)
+    .bind(company_id)
+    .bind(conn)
+    .bind(&code_verifier)
+    .execute(state.db.pool())
+    .await?;
+    Ok(format!(
+        "/oauth/authorize?response_type=code&client_id=paperclip&state={state_token}"
+    ))
 }

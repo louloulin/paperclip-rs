@@ -11,6 +11,7 @@ pub mod local_encrypted;
 pub mod provider;
 pub mod registry;
 pub mod types;
+pub mod aws;
 
 pub use provider::SecretProvider;
 pub use registry::SecretProviderRegistry;

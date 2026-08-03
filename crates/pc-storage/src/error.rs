@@ -18,6 +18,10 @@ pub enum StorageError {
     ProviderUnavailable(String),
     #[error("not implemented: {0}")]
     NotImplemented(String),
+    #[error("not configured: {0}")]
+    NotConfigured(String),
+    #[error("backend error: {0}")]
+    Backend(String),
     #[error("timeout after {0:?}")]
     Timeout(std::time::Duration),
 }

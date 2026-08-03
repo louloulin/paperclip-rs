@@ -35,6 +35,20 @@ impl<'a> GoalRepo<'a> {
             .fetch_all(self.db.pool())
             .await
     }
+
+    /// 列出全部（跨公司）；limit 默认 200。
+    pub async fn list_all(
+        &self,
+        limit: i64,
+    ) -> sqlx::Result<Vec<GoalRow>> {
+        let sql = format!(
+            "SELECT {COLS} FROM goals ORDER BY created_at DESC LIMIT $1"
+        );
+        sqlx::query_as::<_, GoalRow>(&sql)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<GoalRow>> {
         let s = format!("SELECT {COLS} FROM goals WHERE id = $1");
         sqlx::query_as::<_, GoalRow>(&s)

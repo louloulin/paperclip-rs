@@ -18,10 +18,7 @@ use uuid::Uuid;
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/_plugins/:plugin_id/ui/*path",
-        get(plugin_ui_static),
-    )
+    Router::new().route("/_plugins/:plugin_id/ui/*path", get(plugin_ui_static))
 }
 
 async fn plugin_ui_static(
@@ -46,7 +43,10 @@ async fn plugin_ui_static(
     let Some(ui) = ui_block else {
         return (StatusCode::NOT_FOUND, "plugin UI not found").into_response();
     };
-    let entry = ui.get("entry").and_then(|v| v.as_str()).unwrap_or("index.html");
+    let entry = ui
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .unwrap_or("index.html");
     let prefix = ui
         .get("assetsPrefix")
         .and_then(|v| v.as_str())
@@ -66,7 +66,9 @@ async fn plugin_ui_static(
 
     let provider = match state.storage.resolve("plugin-ui") {
         Ok(p) => p,
-        Err(_) => return (StatusCode::NOT_FOUND, "plugin UI storage not configured").into_response(),
+        Err(_) => {
+            return (StatusCode::NOT_FOUND, "plugin UI storage not configured").into_response()
+        }
     };
     let key = format!("{plugin_id}/{prefix}{rel_path}");
     let target = pc_storage::StorageLocation {

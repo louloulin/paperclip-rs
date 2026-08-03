@@ -1,0 +1,26 @@
+[package]
+name = "pc-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent domain service and kameo actor runtime"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+dirs = { workspace = true }
+kameo = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+sqlx = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/pc-agent",
     "crates/pc-errors",
     "crates/pc-repos",
     "crates/pc-http",
@@ -36,6 +37,8 @@ members = [
     "crates/pc-activity",
     "crates/pc-openapi",
     "crates/pc-feature-flags",
+    "crates/pc-backup",
+    "crates/pc-migrate",
 ]
 
 [workspace.package]
@@ -74,8 +77,9 @@ uuid = { version = "1", features = ["v4", "v7", "serde"] }
 # 错误 / 日志 / 配置
 thiserror = "1"
 anyhow = "1"
-kameo = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
+kameo = "0.22"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 dirs = "6"
 dotenvy = "0.15"

@@ -51,6 +51,20 @@ impl<'a> ProjectRepo<'a> {
             .await
     }
 
+    /// 列出全部（跨公司）；limit 默认 200。
+    pub async fn list_all(
+        &self,
+        limit: i64,
+    ) -> sqlx::Result<Vec<ProjectRow>> {
+        let sql = format!(
+            "SELECT {COLS} FROM projects ORDER BY created_at DESC LIMIT $1"
+        );
+        sqlx::query_as::<_, ProjectRow>(&sql)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<ProjectRow>> {
         let sql = format!("SELECT {COLS} FROM projects WHERE id = $1");
         sqlx::query_as::<_, ProjectRow>(&sql)

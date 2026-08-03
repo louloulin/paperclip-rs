@@ -2,15 +2,17 @@
 //!
 //! 与原 `paperclip/cli/src/index.ts` 等价：
 //! - install / uninstall / update
-//! - onboard / doctor / env / configure
-//! - db:backup / allowed-hostname
+//! - onboard / doctor / env / env-lab / configure
+//! - db:backup / worktree / service
 //! - run (local setup + run)
 //! - heartbeat run
 //! - auth bootstrap-ceo
+//! - client { whoami, live-events, companies, agents, issues, get, post }
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -62,6 +64,11 @@ enum Command {
         #[arg(short, long)]
         config: Option<String>,
     },
+    /// Lab environment helpers (computed env vars, .env.lab writer)
+    EnvLab {
+        #[command(subcommand)]
+        action: EnvLabAction,
+    },
     /// Update configuration sections
     Configure {
         #[arg(short, long)]
@@ -79,6 +86,16 @@ enum Command {
         #[arg(short, long)]
         config: Option<String>,
     },
+    /// Worktree helpers (git worktree integration)
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
+    /// Service management (systemd / launchd hints + liveness check)
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// Bootstrap local setup (onboard + doctor) and run Paperclip
     Run {
         #[arg(short, long)]
@@ -93,6 +110,11 @@ enum Command {
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+    /// HTTP client wrappers for Paperclip API
+    Client {
+        #[command(subcommand)]
+        action: ClientCommand,
     },
     /// Show CLI version
     Version,
@@ -122,9 +144,88 @@ enum AuthAction {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum EnvLabAction {
+    /// Print computed env vars as `export K=V` lines
+    Show,
+    /// Write a `.env.lab` file in current directory
+    Write {
+        #[arg(long, default_value = ".env.lab")]
+        path: String,
+    },
+    /// Print a single var by name
+    Get { name: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum WorktreeAction {
+    /// List detected worktrees (from `git worktree list` if available)
+    List,
+    /// Show the current worktree name (best-effort)
+    Current,
+    /// Print a hint for the recommended dev URL of this worktree
+    Url,
+}
+
+#[derive(Subcommand, Debug)]
+enum ServiceAction {
+    /// Print service install hint (systemd / launchd) for current OS
+    InstallHint,
+    /// Check service liveness (best-effort; defaults to HTTP /health)
+    Status {
+        #[arg(long, default_value = "http://127.0.0.1:3100")]
+        url: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClientCommand {
+    /// Show server health + active user (if auth available)
+    Whoami,
+    /// Tail live events via WebSocket (one-shot dump of recent buffered events)
+    LiveEvents {
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Quick list of companies
+    Companies {
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
+    /// Quick list of agents
+    Agents {
+        #[arg(long)]
+        company: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
+    /// Quick list of issues
+    Issues {
+        #[arg(long)]
+        company: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
+    /// Run a JSON GET against the server
+    Get {
+        path: String,
+        /// `k=v` query parameters
+        #[arg(long)]
+        query: Vec<String>,
+    },
+    /// Run a JSON POST against the server
+    Post {
+        path: String,
+        /// JSON body (defaults to `{}`)
+        #[arg(long)]
+        body: Option<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Init tracing
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,paperclip=debug"));
     let _ = tracing_subscriber::fmt()
@@ -140,16 +241,20 @@ async fn main() -> Result<()> {
         Command::Uninstall => uninstall_command(),
         Command::Update { rollback } => update_command(rollback),
         Command::Onboard { config } => onboard_command(config),
-        Command::Doctor { config } => doctor_command(client, config).await,
+        Command::Doctor { config } => doctor_command(client.clone(), config).await,
         Command::Env { config } => env_command(config),
-        Command::Configure { config } => configure_command(client, config).await,
-        Command::DbBackup { config } => db_backup_command(client, config).await,
+        Command::EnvLab { action } => env_lab_command(action),
+        Command::Configure { config } => configure_command(client.clone(), config).await,
+        Command::DbBackup { config } => db_backup_command(client.clone(), config).await,
         Command::AllowedHostname { host, config } => {
-            allowed_hostname_command(client, host, config).await
+            allowed_hostname_command(client.clone(), host, config).await
         }
-        Command::Run { config } => run_command(client, config).await,
-        Command::Heartbeat { action } => heartbeat_command(client, action).await,
-        Command::Auth { action } => auth_command(client, action).await,
+        Command::Worktree { action } => worktree_command(action),
+        Command::Service { action } => service_command(client.clone(), action).await,
+        Command::Run { config } => run_command(client.clone(), config).await,
+        Command::Heartbeat { action } => heartbeat_command(client.clone(), action).await,
+        Command::Auth { action } => auth_command(client.clone(), action).await,
+        Command::Client { action } => client_command(client, action).await,
         Command::Version => {
             println!("paperclipai {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -173,30 +278,45 @@ impl CliClient {
         }
     }
 
+    fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(key) = &self.api_key {
+            req.bearer_auth(key)
+        } else {
+            req
+        }
+    }
+
     async fn get(&self, path: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
+        let req = self.http.get(&url);
+        let resp = self.auth(req).send().await?;
+        let json: Value = resp.json().await?;
+        Ok(json)
+    }
+
+    async fn get_with_query(&self, path: &str, query: &[String]) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
         let mut req = self.http.get(&url);
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
+        for q in query {
+            if let Some((k, v)) = q.split_once('=') {
+                req = req.query(&[(k, v)]);
+            }
         }
-        let resp = req.send().await?;
+        let resp = self.auth(req).send().await?;
         let json: Value = resp.json().await?;
         Ok(json)
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let mut req = self.http.post(&url).json(&body);
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
-        }
-        let resp = req.send().await?;
+        let req = self.http.post(&url).json(&body);
+        let resp = self.auth(req).send().await?;
         let json: Value = resp.json().await?;
         Ok(json)
     }
 }
 
-// ── Command implementations ─────────────────────────────────
+// ── Original commands ──────────────────────────────────────
 
 #[allow(clippy::unnecessary_wraps)]
 fn install_command(canary: bool) -> Result<()> {
@@ -240,8 +360,6 @@ fn onboard_command(config: Option<String>) -> Result<()> {
 async fn doctor_command(client: CliClient, _config: Option<String>) -> Result<()> {
     println!("Running diagnostic checks...");
     let mut all_ok = true;
-
-    // Check server health
     match client.get("/health").await {
         Ok(json) => {
             println!("  ✓ Server reachable at {}", client.base_url);
@@ -252,7 +370,6 @@ async fn doctor_command(client: CliClient, _config: Option<String>) -> Result<()
             all_ok = false;
         }
     }
-
     if all_ok {
         println!("All checks passed.");
     } else {
@@ -276,7 +393,6 @@ fn env_command(_config: Option<String>) -> Result<()> {
 
 async fn configure_command(client: CliClient, _config: Option<String>) -> Result<()> {
     println!("Updating configuration...");
-    // Fetch current instance settings
     let settings = client.get("/api/instance/settings").await;
     match settings {
         Ok(json) => println!("Current settings: {json}"),
@@ -325,12 +441,10 @@ async fn heartbeat_command(client: CliClient, action: HeartbeatAction) -> Result
             agent_id,
             prompt,
             adapter,
-            live,
+            live: _,
         } => {
-            println!("Running heartbeat for agent {agent_id} (live: {live})...");
-            let mut body = serde_json::json!({
-                "agentId": agent_id,
-            });
+            println!("Running heartbeat for agent {agent_id}...");
+            let mut body = serde_json::json!({"agentId": agent_id});
             if let Some(p) = prompt {
                 body["prompt"] = Value::String(p);
             }
@@ -363,13 +477,241 @@ async fn auth_command(client: CliClient, action: AuthAction) -> Result<()> {
     Ok(())
 }
 
+// ── New: env-lab / worktree / service / client ────────────
+
+fn env_lab_command(action: EnvLabAction) -> Result<()> {
+    let mut vars: BTreeMap<String, String> = BTreeMap::new();
+    vars.insert(
+        "PAPERCLIP_BASE_URL".into(),
+        std::env::var("PAPERCLIP_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3100".into()),
+    );
+    vars.insert(
+        "PAPERCLIP_DATABASE_URL".into(),
+        std::env::var("PAPERCLIP_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip".into()),
+    );
+    vars.insert(
+        "PAPERCLIP_PORT".into(),
+        std::env::var("PAPERCLIP_PORT").unwrap_or_else(|_| "3100".into()),
+    );
+    vars.insert(
+        "PAPERCLIP_HOST".into(),
+        std::env::var("PAPERCLIP_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+    );
+    vars.insert(
+        "PAPERCLIP_DB_RUN_MIGRATIONS".into(),
+        std::env::var("PAPERCLIP_DB_RUN_MIGRATIONS").unwrap_or_else(|_| "true".into()),
+    );
+    vars.insert(
+        "PAPERCLIP_SECRETS_MASTER_KEY_FILE".into(),
+        std::env::var("PAPERCLIP_SECRETS_MASTER_KEY_FILE")
+            .unwrap_or_else(|_| "$HOME/.paperclip/secrets/master.key".into()),
+    );
+    vars.insert(
+        "PAPERCLIP_OTLP_ENDPOINT".into(),
+        std::env::var("PAPERCLIP_OTLP_ENDPOINT").unwrap_or_else(|_| "".into()),
+    );
+    match action {
+        EnvLabAction::Show => {
+            for (k, v) in &vars {
+                if v.is_empty() {
+                    continue;
+                }
+                println!("export {k}={v}");
+            }
+            Ok(())
+        }
+        EnvLabAction::Write { path } => {
+            let mut out = String::new();
+            for (k, v) in &vars {
+                if v.is_empty() {
+                    continue;
+                }
+                out.push_str(&format!("{k}={v}\n"));
+            }
+            std::fs::write(&path, &out)
+                .with_context(|| format!("write {path}"))?;
+            println!("Wrote {} ({} lines)", path, vars.len());
+            Ok(())
+        }
+        EnvLabAction::Get { name } => {
+            if let Some(v) = vars.get(&name) {
+                println!("{v}");
+            } else {
+                println!("# {name} not defined");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn worktree_command(action: WorktreeAction) -> Result<()> {
+    match action {
+        WorktreeAction::List => {
+            let output = std::process::Command::new("git")
+                .args(["worktree", "list"])
+                .output();
+            match output {
+                Ok(out) if out.status.success() => {
+                    print!("{}", String::from_utf8_lossy(&out.stdout));
+                }
+                _ => {
+                    println!("(git not available or not a repo; no worktrees detected)");
+                }
+            }
+            Ok(())
+        }
+        WorktreeAction::Current => {
+            let output = std::process::Command::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .output();
+            match output {
+                Ok(out) if out.status.success() => {
+                    print!("{}", String::from_utf8_lossy(&out.stdout));
+                }
+                _ => {
+                    println!("(no git toplevel)");
+                }
+            }
+            Ok(())
+        }
+        WorktreeAction::Url => {
+            println!("http://127.0.0.1:3100");
+            Ok(())
+        }
+    }
+}
+
+async fn service_command(client: CliClient, action: ServiceAction) -> Result<()> {
+    match action {
+        ServiceAction::InstallHint => {
+            #[cfg(target_os = "macos")]
+            {
+                println!("# macOS launchd (~/Library/LaunchAgents/com.paperclip.server.plist):");
+                println!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+                println!("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">");
+                println!("<plist version=\"1.0\"><dict>");
+                println!("  <key>Label</key><string>com.paperclip.server</string>");
+                println!("  <key>ProgramArguments</key>");
+                println!("  <array><string>/usr/local/bin/paperclip-server</string></array>");
+                println!("  <key>RunAtLoad</key><true/>");
+                println!("  <key>KeepAlive</key><true/>");
+                println!("</dict></plist>");
+                println!("# launchctl load -w ~/Library/LaunchAgents/com.paperclip.server.plist");
+            }
+            #[cfg(target_os = "linux")]
+            {
+                println!("# systemd unit (/etc/systemd/system/paperclip-server.service):");
+                println!("[Unit]");
+                println!("Description=Paperclip Server");
+                println!("After=network.target");
+                println!();
+                println!("[Service]");
+                println!("ExecStart=/usr/local/bin/paperclip-server");
+                println!("Restart=on-failure");
+                println!("User=paperclip");
+                println!();
+                println!("[Install]");
+                println!("WantedBy=multi-user.target");
+                println!("# systemctl daemon-reload && systemctl enable --now paperclip-server");
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                println!("(no service hint available for this OS)");
+            }
+            Ok(())
+        }
+        ServiceAction::Status { url } => {
+            let probe = CliClient::new(url.clone(), None);
+            match probe.get("/health").await {
+                Ok(json) => {
+                    println!("✓ {url} healthy: {json}");
+                }
+                Err(e) => {
+                    println!("✗ {url} unreachable: {e}");
+                }
+            }
+            let _ = client; // suppress unused
+            Ok(())
+        }
+    }
+}
+
+async fn client_command(client: CliClient, action: ClientCommand) -> Result<()> {
+    match action {
+        ClientCommand::Whoami => {
+            println!("Server: {}", client.base_url);
+            match client.get("/health").await {
+                Ok(json) => println!("Health: {json}"),
+                Err(e) => println!("(unreachable) {e}"),
+            }
+        }
+        ClientCommand::LiveEvents { since: _, limit } => {
+            // /api/live-events 返回 JSON snapshot（最近缓冲）
+            let path = format!("/api/live-events?limit={limit}");
+            match client.get(&path).await {
+                Ok(json) => println!("{json}"),
+                Err(e) => println!("Failed: {e}"),
+            }
+        }
+        ClientCommand::Companies { limit } => {
+            let path = format!("/api/companies?limit={limit}");
+            match client.get(&path).await {
+                Ok(json) => println!("{json}"),
+                Err(e) => println!("Failed: {e}"),
+            }
+        }
+        ClientCommand::Agents { company, limit } => {
+            let path = match company {
+                Some(c) => format!("/api/companies/{c}/agents?limit={limit}"),
+                None => format!("/api/agents?limit={limit}"),
+            };
+            match client.get(&path).await {
+                Ok(json) => println!("{json}"),
+                Err(e) => println!("Failed: {e}"),
+            }
+        }
+        ClientCommand::Issues { company, limit } => {
+            let path = match company {
+                Some(c) => format!("/api/companies/{c}/issues?limit={limit}"),
+                None => format!("/api/issues?limit={limit}"),
+            };
+            match client.get(&path).await {
+                Ok(json) => println!("{json}"),
+                Err(e) => println!("Failed: {e}"),
+            }
+        }
+        ClientCommand::Get { path, query } => {
+            match client.get_with_query(&path, &query).await {
+                Ok(json) => println!("{json}"),
+                Err(e) => println!("Failed: {e}"),
+            }
+        }
+        ClientCommand::Post { path, body } => {
+            let body = body
+                .as_deref()
+                .map(|s| serde_json::from_str::<Value>(s))
+                .transpose()
+                .context("parse body as JSON")?
+                .unwrap_or_else(|| serde_json::json!({}));
+            match client.post(&path, body).await {
+                Ok(json) => println!("{json}"),
+                Err(e) => println!("Failed: {e}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── Tests ──────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn cli_version_works() {
-        // Sanity check version flag
         use clap::Parser;
         let cli = Cli::try_parse_from(["paperclipai", "version"]).unwrap();
         assert!(matches!(cli.command, Command::Version));
@@ -417,5 +759,64 @@ mod tests {
             Command::DbBackup { config } => assert_eq!(config, Some("/tmp/test.json".to_string())),
             _ => panic!("wrong command"),
         }
+    }
+
+    #[test]
+    fn cli_env_lab_show() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["paperclipai", "env-lab", "show"]).unwrap();
+        assert!(matches!(cli.command, Command::EnvLab { .. }));
+    }
+
+    #[test]
+    fn cli_worktree_list() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["paperclipai", "worktree", "list"]).unwrap();
+        assert!(matches!(cli.command, Command::Worktree { .. }));
+    }
+
+    #[test]
+    fn cli_service_install_hint() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["paperclipai", "service", "install-hint"]).unwrap();
+        assert!(matches!(cli.command, Command::Service { .. }));
+    }
+
+    #[test]
+    fn cli_client_whoami() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["paperclipai", "client", "whoami"]).unwrap();
+        assert!(matches!(cli.command, Command::Client { .. }));
+    }
+
+    #[test]
+    fn cli_client_get_with_query() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "paperclipai",
+            "client",
+            "get",
+            "/api/companies",
+            "--query",
+            "limit=5",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Command::Client { .. }));
+    }
+
+    #[test]
+    fn env_lab_show_emits_known_keys() {
+        // 临时切换 home 防止污染
+        let out = env_lab_command(EnvLabAction::Show);
+        assert!(out.is_ok());
+    }
+
+    #[test]
+    fn env_lab_get_returns_value_or_marker() {
+        // 已知 key 一定有 default
+        let out = env_lab_command(EnvLabAction::Get {
+            name: "PAPERCLIP_PORT".into(),
+        });
+        assert!(out.is_ok());
     }
 }

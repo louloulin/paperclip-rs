@@ -4,13 +4,15 @@ use axum::{
     http::{header, HeaderMap},
 };
 use pc_activity::{ActivityLog, SharedActivitySink};
+use pc_agent::{AgentInstructionsService, AgentSupervisor};
+use pc_backup::BackupManager;
 use pc_adapter_api::AdapterRegistry;
 use pc_core::actor_runtime::kameo_api::ActorRef;
 use pc_core::ActorRegistry;
 use pc_db::Db;
 use pc_feature_flags::{FeatureEvaluator, SharedFeatureEvaluator};
 use pc_heartbeat::HeartbeatSupervisor;
-use pc_plugin_host::{PluginRegistry, WorkerPool};
+use pc_plugin_host::{NotificationBus, PluginRegistry, WorkerPool};
 use pc_realtime::RealtimeHandle;
 use pc_realtime::WsState;
 use pc_storage::StorageRegistry;
@@ -32,6 +34,8 @@ pub struct AppState {
     pub db: Db,
     pub actors: ActorRegistry,
     pub heartbeat: ActorRef<HeartbeatSupervisor>,
+    pub agents: ActorRef<AgentSupervisor>,
+    pub agent_instructions: Arc<AgentInstructionsService>,
     pub adapters: AdapterRegistry,
     pub config: Arc<ConfigSnapshot>,
     pub telemetry: Arc<TelemetryOptions>,
@@ -41,6 +45,8 @@ pub struct AppState {
     pub plugin_workers: Arc<WorkerPool>,
     /// Plugin metadata registry (`by_id` + `by_key`). Always present; empty by default.
     pub plugin_registry: Arc<PluginRegistry>,
+    /// Worker -> host notifications bus (stream bridge + plugin event fanout).
+    pub plugin_bus: Arc<NotificationBus>,
     /// Workflow definitions registry (routines + pipelines). Always present; empty by default.
     pub workflow_registry: Arc<WorkflowRegistry>,
     /// Routine implementations registry. Always present; empty by default.
@@ -53,12 +59,15 @@ pub struct AppState {
     pub activity: ActivityLog,
     /// Feature flag evaluator. Always present; empty catalog by default.
     pub feature_flags: SharedFeatureEvaluator,
+    /// Database backup manager. Always present; uses defaults.
+    pub backup: Arc<BackupManager>,
 }
 
 #[derive(Clone)]
 pub struct RuntimeHandles {
     pub actors: ActorRegistry,
     pub heartbeat: ActorRef<HeartbeatSupervisor>,
+    pub agents: ActorRef<AgentSupervisor>,
     pub adapters: AdapterRegistry,
 }
 
@@ -81,6 +90,8 @@ impl AppState {
             db,
             actors: runtime.actors,
             heartbeat: runtime.heartbeat,
+            agents: runtime.agents,
+            agent_instructions: Arc::new(AgentInstructionsService::from_env()),
             adapters: runtime.adapters,
             config: Arc::new(config),
             telemetry: Arc::new(telemetry),
@@ -88,6 +99,7 @@ impl AppState {
             realtime,
             plugin_workers: Arc::new(WorkerPool::new()),
             plugin_registry: Arc::new(PluginRegistry::new()),
+            plugin_bus: Arc::new(NotificationBus::new()),
             workflow_registry: Arc::new(WorkflowRegistry::new()),
             routine_registry: Arc::new(RoutineRegistry::new()),
             workflow_engine: Arc::new(WorkflowEngine::new(
@@ -102,6 +114,7 @@ impl AppState {
             feature_flags: SharedFeatureEvaluator::new(std::sync::Arc::new(FeatureEvaluator::new(
                 pc_feature_flags::FeatureCatalog::new(),
             ))),
+            backup: Arc::new(BackupManager::with_defaults()),
         }
     }
 
@@ -111,9 +124,20 @@ impl AppState {
         mut self,
         workers: Arc<WorkerPool>,
         registry: Arc<PluginRegistry>,
+        bus: Arc<NotificationBus>,
     ) -> Self {
         self.plugin_workers = workers;
         self.plugin_registry = registry;
+        self.plugin_bus = bus;
+        self
+    }
+
+    #[must_use]
+    pub fn with_agent_instructions(
+        mut self,
+        instructions: Arc<AgentInstructionsService>,
+    ) -> Self {
+        self.agent_instructions = instructions;
         self
     }
 }

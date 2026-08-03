@@ -15,6 +15,15 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_adapter_api::{AdapterEvent, AdapterExecutionContext, OutputStream};
+use pc_agent::{
+    AgentConfigSnapshot, AgentPatch, AgentPermissionUpdate, AgentService, ApproveAgentCommand,
+    ClearAgentErrorCommand, CreateAgent, CreateAgentCommand, CreateAgentKey,
+    CreateAgentKeyCommand, HireAgentCommand, InstructionAgent, InstructionsBundleUpdate,
+    PauseAgentCommand, PauseReason, ResetRuntimeSession, ResetRuntimeSessionCommand,
+    ResumeAgentCommand, RevisionContext, RevokeAgentKeyCommand, RollbackConfigRevisionCommand,
+    TerminateAgentCommand, UpdateAgentCommand, UpdateAgentPermissionsCommand,
+};
+use pc_core::actor_runtime::kameo_api::SendError;
 use pc_heartbeat::{
     FinishHeartbeat, HeartbeatExecutionOutcome, HeartbeatExecutionSink, HeartbeatOutcome,
     LaunchHeartbeatExecution, StartHeartbeat, StartHeartbeatResult,
@@ -28,8 +37,75 @@ use crate::{ApiError, ApiResult, AppState};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/agents", get(list).post(create))
+        .route(
+            "/api/companies/:company_id/agents",
+            get(list_company_agents).post(create_company_agent),
+        )
+        .route(
+            "/api/companies/:company_id/agent-hires",
+            post(hire_agent),
+        )
         .route("/api/agents/:id", get(get_one).patch(update).delete(remove))
+        .route(
+            "/api/agents/:id/configuration",
+            get(get_configuration),
+        )
+        .route(
+            "/api/agents/:id/config-revisions",
+            get(list_config_revisions),
+        )
+        .route(
+            "/api/agents/:id/config-revisions/:revision_id",
+            get(get_config_revision),
+        )
+        .route(
+            "/api/agents/:id/config-revisions/:revision_id/rollback",
+            post(rollback_config_revision),
+        )
         .route("/api/agents/:id/wakeup", post(wakeup))
+        .route("/api/agents/:id/pause", post(pause_agent))
+        .route("/api/agents/:id/resume", post(resume_agent))
+        .route("/api/agents/:id/clear-error", post(clear_agent_error))
+        .route("/api/agents/:id/terminate", post(terminate_agent))
+        .route("/api/agents/:id/approve", post(approve_agent))
+        .route(
+            "/api/agents/:id/permissions",
+            patch(update_agent_permissions),
+        )
+        .route(
+            "/api/agents/:id/instructions-path",
+            patch(update_instructions_path),
+        )
+        .route(
+            "/api/agents/:id/instructions-bundle",
+            get(get_instructions_bundle).patch(update_instructions_bundle),
+        )
+        .route(
+            "/api/agents/:id/instructions-bundle/file",
+            get(get_instructions_file)
+                .put(put_instructions_file)
+                .delete(delete_instructions_file),
+        )
+        .route(
+            "/api/agents/:id/runtime-state",
+            get(get_runtime_state),
+        )
+        .route(
+            "/api/agents/:id/task-sessions",
+            get(list_task_sessions),
+        )
+        .route(
+            "/api/agents/:id/runtime-state/reset-session",
+            post(reset_runtime_session),
+        )
+        .route(
+            "/api/agents/:id/keys",
+            get(list_agent_keys).post(create_agent_key),
+        )
+        .route(
+            "/api/agents/:id/keys/:key_id",
+            delete(revoke_agent_key),
+        )
         .route("/api/agents/:id/heartbeat/invoke", post(legacy_invoke))
         .route(
             "/api/companies/:company_id/heartbeat-runs",
@@ -44,6 +120,14 @@ pub fn router() -> Router<AppState> {
             "/api/heartbeat-runs/:run_id/events",
             get(list_heartbeat_events),
         )
+}
+
+async fn list_company_agents(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Vec<AgentRow>>> {
+    let rows = AgentRepo::new(&state.db).list_by_company(company_id).await?;
+    Ok(Json(rows))
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,17 +164,33 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateBody {
-    company_id: Uuid,
     name: String,
     #[serde(default = "default_role")]
     role: String,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    reports_to: Option<Uuid>,
+    #[serde(default)]
+    capabilities: Option<String>,
     #[serde(default = "default_adapter")]
     adapter_type: String,
     #[serde(default)]
     adapter_config: serde_json::Value,
+    #[serde(default)]
+    runtime_config: serde_json::Value,
+    #[serde(default)]
+    default_environment_id: Option<Uuid>,
+    #[serde(default)]
+    budget_monthly_cents: i32,
+    #[serde(default)]
+    permissions: serde_json::Value,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 fn default_role() -> String {
     "general".into()
@@ -101,21 +201,38 @@ fn default_adapter() -> String {
 
 async fn create(
     State(state): State<AppState>,
+    Json(body): Json<LegacyCreateBody>,
+) -> ApiResult<impl IntoResponse> {
+    create_agent(&state, body.company_id, body.agent).await
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyCreateBody {
+    #[serde(alias = "companyId")]
+    company_id: Uuid,
+    #[serde(flatten)]
+    agent: CreateBody,
+}
+
+async fn create_company_agent(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if body.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("name must not be empty".into()));
-    }
-    let row = AgentRepo::new(&state.db)
-        .create(
-            body.company_id,
-            &body.name,
-            &body.role,
-            body.title.as_deref(),
-            &body.adapter_type,
-            body.adapter_config,
-        )
-        .await?;
+    create_agent(&state, company_id, body).await
+}
+
+async fn create_agent(
+    state: &AppState,
+    company_id: Uuid,
+    body: CreateBody,
+) -> ApiResult<impl IntoResponse> {
+    let input = create_agent_input(company_id, body)?;
+    let row = state
+        .agents
+        .ask(CreateAgentCommand(input))
+        .await
+        .map_err(map_agent_actor_error)?;
     state.realtime.publish(
         LiveEvent::new("agent.created", "agent", row.id)
             .with_company(row.company_id)
@@ -123,23 +240,123 @@ async fn create(
     );
     Ok((
         StatusCode::CREATED,
-        Json(json!({
-            "id": row.id, "company_id": row.company_id, "name": row.name,
-            "role": row.role, "status": row.status
-        })),
+        Json(row),
     ))
 }
 
+fn create_agent_input(company_id: Uuid, body: CreateBody) -> ApiResult<CreateAgent> {
+    if body.budget_monthly_cents < 0 {
+        return Err(ApiError::BadRequest(
+            "budgetMonthlyCents must be nonnegative".into(),
+        ));
+    }
+    Ok(CreateAgent {
+        company_id,
+        name: body.name,
+        role: body.role,
+        title: body.title,
+        icon: body.icon,
+        reports_to: body.reports_to,
+        capabilities: body.capabilities,
+        adapter_type: body.adapter_type,
+        adapter_config: body.adapter_config,
+        runtime_config: body.runtime_config,
+        default_environment_id: body.default_environment_id,
+        budget_monthly_cents: body.budget_monthly_cents,
+        permissions: body.permissions,
+        metadata: body.metadata,
+        ..CreateAgent::default()
+    })
+}
+
+async fn hire_agent(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateBody>,
+) -> ApiResult<impl IntoResponse> {
+    let result = state
+        .agents
+        .ask(HireAgentCommand {
+            input: create_agent_input(company_id, body)?,
+            actor: RevisionContext::user("local-board", "hire"),
+        })
+        .await
+        .map_err(map_agent_actor_error)?;
+    state.realtime.publish(
+        LiveEvent::new("agent.hired", "agent", result.agent.id)
+            .with_company(result.agent.company_id)
+            .with_data(json!({
+                "approvalId": result.approval.as_ref().map(|approval| approval.id),
+                "status": result.agent.status,
+            })),
+    );
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(result)?)))
+}
+
+fn map_agent_actor_error<M>(error: SendError<M, pc_errors::Error>) -> ApiError {
+    match error {
+        SendError::HandlerError(error) => error.into(),
+        _ => ApiError::Internal("agent supervisor unavailable".into()),
+    }
+}
+
+#[derive(Debug, Default)]
+enum PatchField<T> {
+    #[default]
+    Missing,
+    Value(Option<T>),
+}
+
+impl<'de, T> Deserialize<'de> for PatchField<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer).map(Self::Value)
+    }
+}
+
+impl<T> PatchField<T> {
+    fn into_patch(self) -> Option<Option<T>> {
+        match self {
+            Self::Missing => None,
+            Self::Value(value) => Some(value),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateBody {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
     role: Option<String>,
     #[serde(default)]
-    title: Option<String>,
+    title: PatchField<String>,
     #[serde(default)]
-    status: Option<String>,
+    icon: PatchField<String>,
+    #[serde(default)]
+    reports_to: PatchField<Uuid>,
+    #[serde(default)]
+    capabilities: PatchField<String>,
+    #[serde(default)]
+    adapter_type: Option<String>,
+    #[serde(default)]
+    adapter_config: Option<Value>,
+    #[serde(default)]
+    runtime_config: Option<Value>,
+    #[serde(default)]
+    default_environment_id: PatchField<Uuid>,
+    #[serde(default)]
+    budget_monthly_cents: Option<i32>,
+    #[serde(default)]
+    metadata: PatchField<Value>,
+    #[serde(default)]
+    permissions: Option<Value>,
 }
 
 async fn update(
@@ -147,20 +364,595 @@ async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
-    let row = AgentRepo::new(&state.db)
-        .update(
+    if body.permissions.is_some() {
+        return Err(ApiError::BadRequest(
+            "permissions must be updated through /permissions".into(),
+        ));
+    }
+    if body.budget_monthly_cents.is_some_and(|value| value < 0) {
+        return Err(ApiError::BadRequest(
+            "budgetMonthlyCents must be nonnegative".into(),
+        ));
+    }
+    let row = state
+        .agents
+        .ask(UpdateAgentCommand {
             id,
-            body.name.as_deref(),
-            body.role.as_deref(),
-            body.title.as_deref(),
-            body.status.as_deref(),
-        )
-        .await?
+            patch: AgentPatch {
+                name: body.name,
+                role: body.role,
+                title: body.title.into_patch(),
+                icon: body.icon.into_patch(),
+                reports_to: body.reports_to.into_patch(),
+                capabilities: body.capabilities.into_patch(),
+                adapter_type: body.adapter_type,
+                adapter_config: body.adapter_config,
+                runtime_config: body.runtime_config,
+                default_environment_id: body.default_environment_id.into_patch(),
+                budget_monthly_cents: body.budget_monthly_cents,
+                metadata: body.metadata.into_patch(),
+            },
+            revision: RevisionContext::user("local-board", "patch"),
+        })
+        .await
+        .map_err(map_agent_actor_error)?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
     state
         .realtime
         .publish(LiveEvent::new("agent.updated", "agent", row.id).with_company(row.company_id));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+async fn get_configuration(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = AgentService::new(state.db.clone())
+        .get(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    Ok(Json(serde_json::to_value(
+        AgentConfigSnapshot::from(&row).sanitized(),
+    )?))
+}
+
+async fn list_config_revisions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    if AgentRepo::new(&state.db).get(id).await?.is_none() {
+        return Err(ApiError::NotFound(format!("agent {id}")));
+    }
+    let rows = AgentService::new(state.db.clone())
+        .list_config_revisions(id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(serde_json::to_value(rows)?))
+}
+
+async fn get_config_revision(
+    State(state): State<AppState>,
+    Path((id, revision_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row = AgentService::new(state.db.clone())
+        .get_config_revision(id, revision_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("revision {revision_id}")))?;
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn rollback_config_revision(
+    State(state): State<AppState>,
+    Path((id, revision_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(RollbackConfigRevisionCommand {
+            id,
+            revision_id,
+            actor: RevisionContext::user("local-board", "rollback"),
+        })
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("revision {revision_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("agent.config_rolled_back", "agent", row.id)
+            .with_company(row.company_id)
+            .with_data(json!({"revisionId": revision_id})),
+    );
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn pause_agent(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(PauseAgentCommand {
+            id,
+            reason: PauseReason::Manual,
+        })
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state
+        .realtime
+        .publish(LiveEvent::new("agent.paused", "agent", id).with_company(row.company_id));
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn resume_agent(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(ResumeAgentCommand(id))
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state
+        .realtime
+        .publish(LiveEvent::new("agent.resumed", "agent", id).with_company(row.company_id));
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn clear_agent_error(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(ClearAgentErrorCommand(id))
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("agent.error_cleared", "agent", id).with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn terminate_agent(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(TerminateAgentCommand(id))
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("agent.terminated", "agent", id).with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn approve_agent(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(ApproveAgentCommand(id))
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state
+        .realtime
+        .publish(LiveEvent::new("agent.approved", "agent", id).with_company(row.company_id));
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateAgentPermissionsBody {
+    can_create_agents: bool,
+    #[serde(default)]
+    can_create_skills: Option<bool>,
+    can_assign_tasks: bool,
+    #[serde(default)]
+    trust_preset: Option<Value>,
+    #[serde(default)]
+    authorization_policy: Option<Value>,
+}
+
+async fn update_agent_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateAgentPermissionsBody>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(UpdateAgentPermissionsCommand {
+            id,
+            input: AgentPermissionUpdate {
+                can_create_agents: body.can_create_agents,
+                can_create_skills: body.can_create_skills,
+                can_assign_tasks: body.can_assign_tasks,
+                trust_preset: body.trust_preset,
+                authorization_policy: body.authorization_policy,
+                granted_by_user_id: Some("local-board".into()),
+            },
+        })
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("agent.permissions_updated", "agent", id)
+            .with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn get_instructions_bundle(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let bundle = state
+        .agent_instructions
+        .get_bundle(&InstructionAgent::from(&agent))
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(serde_json::to_value(bundle)?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInstructionsBundleBody {
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    root_path: PatchField<String>,
+    #[serde(default)]
+    entry_file: Option<String>,
+    #[serde(default)]
+    clear_legacy_prompt_template: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInstructionsPathBody {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    adapter_config_key: Option<String>,
+}
+
+async fn update_instructions_path(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateInstructionsPathBody>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let adapter_config_key = body
+        .adapter_config_key
+        .clone()
+        .unwrap_or_else(|| "instructionsFilePath".to_owned());
+    if adapter_config_key != "instructionsFilePath" {
+        return Err(ApiError::Unprocessable(format!(
+            "No default instructions path key '{adapter_config_key}' is supported; use instructionsFilePath"
+        )));
+    }
+    let path = body
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(relative) = path {
+        if std::path::Path::new(relative).is_relative() {
+            return Err(ApiError::Unprocessable(
+                "Relative instructions path requires adapterConfig.cwd to be set to an absolute path"
+                    .into(),
+            ));
+        }
+    }
+    let next_config = state
+        .agent_instructions
+        .sync_bundle_config_from_path(&InstructionAgent::from(&agent), path)
+        .map_err(ApiError::from)?;
+    let value = Value::Object(next_config.clone());
+    persist_instructions_config(&state, id, value, "instructions_path_patch").await?;
+    let stored_path = next_config
+        .get("instructionsFilePath")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    state.realtime.publish(
+        LiveEvent::new("agent.instructions_path_updated", "agent", id)
+            .with_company(agent.company_id)
+            .with_data(json!({
+                "adapterConfigKey": adapter_config_key,
+                "path": stored_path,
+                "cleared": path.is_none(),
+            })),
+    );
+    Ok(Json(json!({
+        "agentId": id,
+        "adapterType": agent.adapter_type,
+        "adapterConfigKey": adapter_config_key,
+        "path": stored_path,
+    })))
+}
+
+async fn update_instructions_bundle(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateInstructionsBundleBody>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let result = state
+        .agent_instructions
+        .update_bundle(
+            &InstructionAgent::from(&agent),
+            InstructionsBundleUpdate {
+                mode: body.mode,
+                root_path: body.root_path.into_patch(),
+                entry_file: body.entry_file,
+                clear_legacy_prompt_template: body.clear_legacy_prompt_template,
+            },
+        )
+        .await
+        .map_err(ApiError::from)?;
+    persist_instructions_config(
+        &state,
+        id,
+        result.adapter_config,
+        "instructions_bundle_patch",
+    )
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("agent.instructions_bundle_updated", "agent", id)
+            .with_company(agent.company_id),
+    );
+    Ok(Json(serde_json::to_value(result.bundle)?))
+}
+
+#[derive(Debug, Deserialize)]
+struct InstructionsFileQuery {
+    #[serde(default)]
+    path: Option<String>,
+}
+
+fn required_instruction_path(path: Option<String>) -> ApiResult<String> {
+    path.map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::Unprocessable("Query parameter 'path' is required".into()))
+}
+
+async fn get_instructions_file(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<InstructionsFileQuery>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let file = state
+        .agent_instructions
+        .read_file(
+            &InstructionAgent::from(&agent),
+            &required_instruction_path(query.path)?,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(serde_json::to_value(file)?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PutInstructionsFileBody {
+    path: String,
+    content: String,
+    #[serde(default)]
+    clear_legacy_prompt_template: bool,
+}
+
+async fn put_instructions_file(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PutInstructionsFileBody>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let result = state
+        .agent_instructions
+        .write_file(
+            &InstructionAgent::from(&agent),
+            &body.path,
+            &body.content,
+            body.clear_legacy_prompt_template,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    persist_instructions_config(
+        &state,
+        id,
+        result.adapter_config,
+        "instructions_bundle_file_put",
+    )
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("agent.instructions_file_updated", "agent", id)
+            .with_company(agent.company_id)
+            .with_data(json!({"path": result.file.path, "size": result.file.size})),
+    );
+    Ok(Json(serde_json::to_value(result.file)?))
+}
+
+async fn delete_instructions_file(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<InstructionsFileQuery>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let path = required_instruction_path(query.path)?;
+    let result = state
+        .agent_instructions
+        .delete_file(&InstructionAgent::from(&agent), &path)
+        .await
+        .map_err(ApiError::from)?;
+    persist_instructions_config(
+        &state,
+        id,
+        result.adapter_config,
+        "instructions_bundle_file_delete",
+    )
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("agent.instructions_file_deleted", "agent", id)
+            .with_company(agent.company_id)
+            .with_data(json!({"path": path})),
+    );
+    Ok(Json(serde_json::to_value(result.bundle)?))
+}
+
+async fn load_agent(state: &AppState, id: Uuid) -> ApiResult<AgentRow> {
+    AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))
+}
+
+async fn persist_instructions_config(
+    state: &AppState,
+    id: Uuid,
+    adapter_config: Value,
+    source: &str,
+) -> ApiResult<()> {
+    state
+        .agents
+        .ask(UpdateAgentCommand {
+            id,
+            patch: AgentPatch {
+                adapter_config: Some(adapter_config),
+                ..AgentPatch::default()
+            },
+            revision: RevisionContext::user("local-board", source),
+        })
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    Ok(())
+}
+
+async fn get_runtime_state(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = AgentService::new(state.db.clone())
+        .runtime_state(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn list_task_sessions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = AgentService::new(state.db.clone())
+        .list_task_sessions(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    Ok(Json(serde_json::to_value(rows)?))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResetRuntimeSessionBody {
+    #[serde(default)]
+    task_key: Option<String>,
+}
+
+async fn reset_runtime_session(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ResetRuntimeSessionBody>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(ResetRuntimeSessionCommand {
+            id,
+            input: ResetRuntimeSession {
+                task_key: body.task_key,
+            },
+        })
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("agent.runtime_session_reset", "agent", id)
+            .with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row)?))
+}
+
+async fn list_agent_keys(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    if AgentRepo::new(&state.db).get(id).await?.is_none() {
+        return Err(ApiError::NotFound(format!("agent {id}")));
+    }
+    let rows = AgentService::new(state.db.clone())
+        .list_api_keys(id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(serde_json::to_value(rows)?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateAgentKeyBody {
+    name: String,
+    #[serde(default = "standard_key_scope")]
+    scope: Value,
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+}
+
+fn standard_key_scope() -> Value {
+    json!({"kind": "standard"})
+}
+
+async fn create_agent_key(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreateAgentKeyBody>,
+) -> ApiResult<impl IntoResponse> {
+    let row = state
+        .agents
+        .ask(CreateAgentKeyCommand {
+            id,
+            input: CreateAgentKey {
+                name: body.name,
+                responsible_user_id: body.responsible_user_id,
+                scope: body.scope,
+            },
+        })
+        .await
+        .map_err(map_agent_actor_error)?;
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(row)?)))
+}
+
+async fn revoke_agent_key(
+    State(state): State<AppState>,
+    Path((id, key_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row = state
+        .agents
+        .ask(RevokeAgentKeyCommand {
+            agent_id: id,
+            key_id,
+        })
+        .await
+        .map_err(map_agent_actor_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("agent key {key_id}")))?;
+    Ok(Json(serde_json::to_value(row)?))
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {

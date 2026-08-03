@@ -3,10 +3,14 @@ name = "pc-telemetry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Paperclip 遥测：tracing + 结构化日志 + 启动横幅"
+description = "Paperclip 遥测：tracing + 结构化日志 + 启动横幅 + 可选 OTLP/HTTP exporter"
 
 [lints]
 workspace = true
+
+[features]
+default = []
+otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 
 [dependencies]
 tracing = { workspace = true }
@@ -14,6 +18,12 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
+
+# OTLP 依赖（feature-gated，避免对默认构建造成编译开销）
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["http-proto", "reqwest-client"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

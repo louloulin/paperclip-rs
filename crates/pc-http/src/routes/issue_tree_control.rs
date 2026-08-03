@@ -55,13 +55,12 @@ async fn preview_tree_control(
 ) -> ApiResult<Json<Value>> {
     let mode = body.mode.unwrap_or_else(|| "merge".to_owned());
     // Fetch affected child issue IDs (one level deep).
-    let affected: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM issues WHERE parent_id = $1 AND hidden_at IS NULL",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let affected: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM issues WHERE parent_id = $1 AND hidden_at IS NULL")
+            .bind(id)
+            .fetch_all(state.db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "issueId": id,
         "mode": mode,
@@ -83,14 +82,13 @@ async fn tree_control_state(
     .fetch_one(pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let last: Option<pc_core::Timestamp> = sqlx::query_scalar(
-        "SELECT MAX(created_at) FROM issue_tree_holds WHERE issue_id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .flatten();
+    let last: Option<pc_core::Timestamp> =
+        sqlx::query_scalar("SELECT MAX(created_at) FROM issue_tree_holds WHERE issue_id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .flatten();
     Ok(Json(json!({
         "issueId": id,
         "mode": "merge",
@@ -112,14 +110,16 @@ async fn list_tree_holds(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     let holds: Vec<Value> = rows
         .into_iter()
-        .map(|(id, scope, reason, by, created, released)| json!({
-            "id": id,
-            "scope": scope,
-            "reason": reason,
-            "createdBy": by,
-            "createdAt": created,
-            "releasedAt": released,
-        }))
+        .map(|(id, scope, reason, by, created, released)| {
+            json!({
+                "id": id,
+                "scope": scope,
+                "reason": reason,
+                "createdBy": by,
+                "createdAt": created,
+                "releasedAt": released,
+            })
+        })
         .collect();
     Ok(Json(json!({"issueId": id, "holds": holds})))
 }
@@ -131,7 +131,8 @@ async fn get_tree_hold(
     if hold_id.is_empty() {
         return Err(ApiError::BadRequest("hold_id required".into()));
     }
-    let hold_uuid = Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
+    let hold_uuid =
+        Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
     let row: Option<(Uuid, Uuid, String, Option<String>, Option<String>, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
         "SELECT id, issue_id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE id = $1",
     )
@@ -142,7 +143,11 @@ async fn get_tree_hold(
     let Some((id, issue_id, scope, reason, by, created, released)) = row else {
         return Err(ApiError::NotFound(format!("tree hold {hold_id}")));
     };
-    let status = if released.is_some() { "released" } else { "active" };
+    let status = if released.is_some() {
+        "released"
+    } else {
+        "active"
+    };
     Ok(Json(json!({
         "id": id,
         "issueId": issue_id,
@@ -187,12 +192,15 @@ async fn release_tree_hold(
     State(state): State<AppState>,
     Path((_id, hold_id)): Path<(Uuid, String)>,
 ) -> ApiResult<impl IntoResponse> {
-    let hold_uuid = Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
-    sqlx::query("UPDATE issue_tree_holds SET released_at = now() WHERE id = $1 AND released_at IS NULL")
-        .bind(hold_uuid)
-        .execute(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let hold_uuid =
+        Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
+    sqlx::query(
+        "UPDATE issue_tree_holds SET released_at = now() WHERE id = $1 AND released_at IS NULL",
+    )
+    .bind(hold_uuid)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::OK,
         Json(json!({ "id": hold_id, "status": "released" })),

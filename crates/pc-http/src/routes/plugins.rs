@@ -17,8 +17,9 @@ use std::sync::Arc;
 use tokio::fs;
 use uuid::Uuid;
 
-use pc_plugin_host::WorkerHandle;
+use pc_plugin_host::{notifications::{StreamBridgeEvent, SubscriptionKey}, WorkerHandle};
 use pc_plugin_protocol::{ExecuteToolParams, RunJobParams};
+use pc_plugin_protocol::{GetDataParams, PerformActionParams};
 use pc_realtime::LiveEvent;
 use pc_repos::plugin::{
     PluginConfigRow, PluginJobRow, PluginJobRunRow, PluginLogRow, PluginRegistration, PluginRepo,
@@ -221,16 +222,27 @@ async fn ui_contributions(
 async fn list_plugin_tools(
     State(state): State<AppState>,
     _headers: HeaderMap,
-) -> impl axum::response::IntoResponse {
-    // Tool listing requires aggregating across every ready worker. Until
-    // WorkerHandle exposes a listTools JSON-RPC method, return 501.
-    let _ = state.plugin_workers.len().await;
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "plugin tool discovery requires WorkerHandle::list_tools (not yet implemented)",
-        })),
-    )
+) -> ApiResult<Json<Value>> {
+    // Aggregate tools from the static manifest catalog for every ready plugin.
+    // Dynamic tool listings from the worker would require a `listTools` RPC,
+    // which is not yet part of the protocol. The manifest-level catalog is
+    // good enough for the UI to render pre-built tool palettes.
+    let repo = PluginRepo::new(&state.db);
+    let plugins = repo.list_filtered(Some("ready")).await?;
+    let mut items: Vec<Value> = Vec::new();
+    for plugin in plugins {
+        let manifest_json = &plugin.manifest_json;
+        if let Some(arr) = manifest_json.get("tools").and_then(|t| t.as_array()) {
+            for tool in arr {
+                items.push(json!({
+                    "pluginId": plugin.id,
+                    "pluginKey": plugin.plugin_key,
+                    "tool": tool,
+                }));
+            }
+        }
+    }
+    Ok(Json(json!({ "items": items })))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -250,14 +262,14 @@ async fn execute_plugin_tool(
     let _ = headers;
     let worker = match resolve_worker_or_501(&state, &plugin_id).await {
         Ok(w) => w,
-        Err(resp) => return resp.into_response(),
+        Err(resp) => return Ok(resp.into_response()),
     };
     let Some(tool) = body.tool else {
-        return (
+        return Ok((
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "missing required field: tool"})),
         )
-            .into_response();
+            .into_response());
     };
     let params = ExecuteToolParams {
         tool,
@@ -265,12 +277,8 @@ async fn execute_plugin_tool(
         context: body.run_context.unwrap_or(Value::Null),
     };
     match worker.execute_tool(params).await {
-        Ok(result) => (StatusCode::OK, Json(json!({"result": result}))).into_response(),
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "worker rejected request", "detail": e.to_string()})),
-        )
-            .into_response(),
+        Ok(result) => Ok((StatusCode::OK, Json(json!({"result": result}))).into_response()),
+        Err(e) => Err(ApiError::Internal(format!("worker rejected request: {e}"))),
     }
 }
 
@@ -340,161 +348,261 @@ async fn install_plugin(
     Ok((StatusCode::OK, Json(row)).into_response())
 }
 
-// bridge_data: 在 plugin_entities 表按 (plugin_id, entity_type) upsert 一条记录
+// bridge_data: 优先转发到 plugin worker 的 getData RPC；若 worker 未运行，回落到 plugin_entities。
 async fn bridge_data(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((plugin_id,)): Path<(String,)>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<axum::response::Response> {
     require_authenticated(&state, &headers).await?;
-    let pid = Uuid::parse_str(&plugin_id)
-        .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
-    let entity_type = body
-        .get("entityType")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::BadRequest("entityType required".into()))?;
-    let scope_kind = body
-        .get("scopeKind")
-        .and_then(Value::as_str)
-        .unwrap_or("global");
-    let scope_id = body
-        .get("scopeId")
-        .and_then(Value::as_str)
-        .map(String::from);
-    let external_id = body
-        .get("externalId")
-        .and_then(Value::as_str)
-        .map(String::from);
-    let title = body.get("title").and_then(Value::as_str).map(String::from);
+    let pid = match Uuid::parse_str(&plugin_id) {
+        Ok(id) => id,
+        Err(_) => return Err(ApiError::BadRequest("invalid plugin id".into())),
+    };
+    let key = body.get("key").and_then(Value::as_str).map(String::from);
     let company_id = body
         .get("companyId")
         .and_then(Value::as_str)
-        .and_then(|s| Uuid::parse_str(s).ok());
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .unwrap_or_else(Uuid::nil);
+    if let (Some(key), Ok(worker)) = (key.as_deref(), resolve_worker_or_501(&state, &plugin_id).await) {
+        let params = GetDataParams {
+            key: key.to_string(),
+            params: body.get("params").cloned().unwrap_or(Value::Null),
+            company_id,
+        };
+        match worker.get_data(params).await {
+            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
+            Err(e) => return Err(ApiError::Internal(format!("worker rejected getData: {e}"))),
+        }
+    }
+    // Fallback: 持久化到 plugin_entities 供离线检索。
+    let entity_type = body
+        .get("entityType")
+        .and_then(Value::as_str)
+        .unwrap_or("bridge_data");
+    let scope_kind = body.get("scopeKind").and_then(Value::as_str).unwrap_or("global");
+    let scope_id = body.get("scopeId").and_then(Value::as_str).map(String::from);
+    let external_id = body.get("externalId").and_then(Value::as_str).map(String::from);
+    let title = body.get("title").and_then(Value::as_str).map(String::from);
+    let cid = body.get("companyId").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok());
     let data = body.get("data").cloned().unwrap_or(json!({}));
-    let id: Uuid = sqlx::query_scalar(
+    let result: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO plugin_entities             (plugin_id, entity_type, scope_kind, scope_id, external_id, title, data, company_id)          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)          ON CONFLICT (company_id, plugin_id, entity_type, external_id)          DO UPDATE SET data = EXCLUDED.data, title = EXCLUDED.title, updated_at = now()          RETURNING id",
     )
     .bind(pid).bind(entity_type).bind(scope_kind).bind(scope_id)
-    .bind(external_id).bind(title).bind(data).bind(company_id)
+    .bind(external_id).bind(title).bind(data).bind(cid)
     .fetch_one(state.db.pool())
-    .await?;
-    Ok(Json(json!({ "id": id, "ok": true })))
+    .await;
+    match result {
+        Ok(id) => Ok((StatusCode::OK, Json(json!({ "id": id, "ok": true, "source": "store" }))).into_response()),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
 }
 
-// bridge_action: 在 plugin_logs 写一条 log
+// bridge_action: 优先转发到 plugin worker 的 performAction RPC；否则写日志。
+// bridge_action: 优先转发到 plugin worker 的 performAction RPC；否则写日志。
 async fn bridge_action(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((plugin_id,)): Path<(String,)>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<axum::response::Response> {
     require_authenticated(&state, &headers).await?;
-    let pid = Uuid::parse_str(&plugin_id)
-        .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
-    let level = body.get("level").and_then(Value::as_str).unwrap_or("info");
-    let message = body
-        .get("message")
+    let pid = match Uuid::parse_str(&plugin_id) {
+        Ok(id) => id,
+        Err(_) => return Err(ApiError::BadRequest("invalid plugin id".into())),
+    };
+    let company_id = body
+        .get("companyId")
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::BadRequest("message required".into()))?;
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .unwrap_or_else(Uuid::nil);
+    if let Ok(worker) = resolve_worker_or_501(&state, &plugin_id).await {
+        let action = body
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("default")
+            .to_string();
+        let params = PerformActionParams {
+            action,
+            params: body.get("params").cloned().unwrap_or(Value::Null),
+            company_id,
+        };
+        match worker.perform_action(params).await {
+            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
+            Err(e) => return Err(ApiError::Internal(format!("worker rejected performAction: {e}"))),
+        }
+    }
+    // Fallback: 记录日志。
+    let level = body.get("level").and_then(Value::as_str).unwrap_or("info");
+    let message = body.get("message").and_then(Value::as_str).unwrap_or("(no message)").to_string();
     let meta = body.get("data").cloned().unwrap_or(json!({}));
-    let id: Uuid = sqlx::query_scalar(
+    let result: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO plugin_logs (plugin_id, level, message, meta) VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(pid).bind(level).bind(message).bind(meta)
     .fetch_one(state.db.pool())
-    .await?;
-    state.realtime.publish(
-        LiveEvent::new("plugin.action.logged", "plugin", pid)
-            .with_data(json!({ "logId": id, "level": level })),
-    );
-    Ok(Json(json!({ "id": id, "ok": true })))
+    .await;
+    match result {
+        Ok(id) => {
+            state.realtime.publish(
+                LiveEvent::new("plugin.action.logged", "plugin", pid)
+                    .with_data(json!({ "logId": id, "level": level })),
+            );
+            Ok((StatusCode::OK, Json(json!({ "id": id, "ok": true, "source": "log" }))).into_response())
+        }
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
 }
 
-// plugin_data: 按 (plugin_id, entity_type, external_id) 读取单条
+// plugin_data: 优先 worker getData(URL-keyed)；否则按 (plugin_id, entity_type) 查 plugin_entities。
 async fn plugin_data(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((plugin_id, key)): Path<(String, String)>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<axum::response::Response> {
     require_authenticated(&state, &headers).await?;
-    let pid = Uuid::parse_str(&plugin_id)
-        .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
-    let external_id = body
-        .get("externalId")
-        .and_then(Value::as_str)
-        .unwrap_or(&key);
+    let pid = match Uuid::parse_str(&plugin_id) {
+        Ok(id) => id,
+        Err(_) => return Err(ApiError::BadRequest("invalid plugin id".into())),
+    };
     let company_id = body
         .get("companyId")
         .and_then(Value::as_str)
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let row: Option<(Uuid, Value)> = sqlx::query_as(
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .unwrap_or_else(Uuid::nil);
+    if let Ok(worker) = resolve_worker_or_501(&state, &plugin_id).await {
+        let params = GetDataParams {
+            key: key.clone(),
+            params: body.get("params").cloned().unwrap_or(Value::Null),
+            company_id,
+        };
+        match worker.get_data(params).await {
+            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
+            Err(e) => return Err(ApiError::Internal(format!("worker rejected getData: {e}"))),
+        }
+    }
+    let external_id = body.get("externalId").and_then(Value::as_str).unwrap_or(&key);
+    let cid = body.get("companyId").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok());
+    let row: Result<Option<(Uuid, Value)>, _> = sqlx::query_as(
         "SELECT id, data FROM plugin_entities          WHERE plugin_id = $1 AND entity_type = $2 AND external_id = $3            AND ($4::uuid IS NULL OR company_id = $4)          LIMIT 1",
     )
-    .bind(pid).bind(&key).bind(external_id).bind(company_id)
+    .bind(pid).bind(&key).bind(external_id).bind(cid)
     .fetch_optional(state.db.pool())
-    .await?;
-    Ok(Json(match row {
-        Some((id, data)) => json!({ "id": id, "found": true, "data": data }),
-        None => json!({ "found": false }),
-    }))
+    .await;
+    match row {
+        Ok(Some((id, data))) => Ok((StatusCode::OK, Json(json!({ "id": id, "found": true, "data": data, "source": "store" }))).into_response()),
+        Ok(None) => Ok((StatusCode::OK, Json(json!({ "found": false }))).into_response()),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
 }
 
-// plugin_action: 在 plugin_jobs 创建/触发一个 job
+// plugin_action: 优先 worker performAction(URL-keyed)；否则在 plugin_jobs 排程。
 async fn plugin_action(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((plugin_id, key)): Path<(String, String)>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<axum::response::Response> {
     require_authenticated(&state, &headers).await?;
-    let pid = Uuid::parse_str(&plugin_id)
-        .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
-    let schedule = body
-        .get("schedule")
+    let pid = match Uuid::parse_str(&plugin_id) {
+        Ok(id) => id,
+        Err(_) => return Err(ApiError::BadRequest("invalid plugin id".into())),
+    };
+    let company_id = body
+        .get("companyId")
         .and_then(Value::as_str)
-        .unwrap_or("on_demand");
-    let id: Uuid = sqlx::query_scalar(
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .unwrap_or_else(Uuid::nil);
+    if let Ok(worker) = resolve_worker_or_501(&state, &plugin_id).await {
+        let params = PerformActionParams {
+            action: key.clone(),
+            params: body.get("params").cloned().unwrap_or(Value::Null),
+            company_id,
+        };
+        match worker.perform_action(params).await {
+            Ok(value) => return Ok((StatusCode::OK, Json(json!({ "data": value, "source": "worker" }))).into_response()),
+            Err(e) => return Err(ApiError::Internal(format!("worker rejected performAction: {e}"))),
+        }
+    }
+    let schedule = body.get("schedule").and_then(Value::as_str).unwrap_or("on_demand");
+    let result: Result<Uuid, _> = sqlx::query_scalar(
         "INSERT INTO plugin_jobs (plugin_id, job_key, schedule, status) VALUES ($1, $2, $3, 'active') ON CONFLICT (plugin_id, job_key) DO UPDATE SET schedule = EXCLUDED.schedule, updated_at = now() RETURNING id",
     )
     .bind(pid).bind(&key).bind(schedule)
     .fetch_one(state.db.pool())
-    .await?;
-    state.realtime.publish(
-        LiveEvent::new("plugin.action.queued", "plugin", pid)
-            .with_data(json!({ "jobId": id, "jobKey": key })),
-    );
-    Ok(Json(json!({ "id": id, "ok": true, "status": "queued" })))
+    .await;
+    match result {
+        Ok(id) => {
+            state.realtime.publish(
+                LiveEvent::new("plugin.action.queued", "plugin", pid)
+                    .with_data(json!({ "jobId": id, "jobKey": key })),
+            );
+            Ok((StatusCode::OK, Json(json!({ "id": id, "ok": true, "status": "queued", "source": "store" }))).into_response())
+        }
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
 }
 
-// bridge_stream: SSE 推送 plugin 事件（替代 WebSocket）
+// bridge_stream: 订阅 NotificationBus 并将 stream 事件以 SSE 推送给 UI。
 async fn bridge_stream(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((plugin_id, channel)): Path<(String, String)>,
-) -> ApiResult<axum::response::Response> {
-    require_authenticated(&state, &headers).await?;
-    let pid = Uuid::parse_str(&plugin_id)
-        .map_err(|_| ApiError::BadRequest("invalid plugin id".into()))?;
-    let receiver = state.realtime.subscribe();
+    Query(query): Query<BridgeStreamQuery>,
+) -> axum::response::Response {
+    let _ = headers;
+    let pid = match Uuid::parse_str(&plugin_id) {
+        Ok(id) => id,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid plugin id"}))).into_response(),
+    };
+    let company_id = query
+        .company_id
+        .unwrap_or_else(Uuid::nil);
+    let bus = state.plugin_bus.clone();
+    let key = SubscriptionKey { plugin_id: pid, channel: channel.clone(), company_id };
+    let (guard, mut rx) = bus.subscribe_stream(key.clone());
+    // keep the guard alive for the duration of the stream
     let stream = async_stream::stream! {
+        let _guard = guard;
         yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default().data(
             serde_json::to_string(&json!({
                 "channel": channel,
                 "pluginId": pid.to_string(),
+                "companyId": company_id.to_string(),
                 "type": "subscribed",
             })).unwrap_or_default()
         ));
-        let mut rx = receiver;
-        while let Ok(ev) = rx.recv().await {
-            let payload = json!({ "channel": channel, "event": ev });
-            yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default().data(
-                serde_json::to_string(&payload).unwrap_or_default()
-            ));
+        loop {
+            match rx.recv().await {
+                Ok(StreamBridgeEvent { event, event_type }) => {
+                    if event_type != "message" {
+                        yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default().event(event_type).data(
+                            serde_json::to_string(&event).unwrap_or_default()
+                        ));
+                    } else {
+                        yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default().data(
+                            serde_json::to_string(&event).unwrap_or_default()
+                        ));
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default().event("lagged").data(n.to_string()));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
         }
     };
-    Ok(axum::response::Sse::new(stream).into_response())
+    axum::response::Sse::new(stream).into_response()
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct BridgeStreamQuery {
+    #[serde(rename = "companyId")]
+    company_id: Option<Uuid>,
 }
 
 fn worker_not_running(plugin_id_str: &str) -> (StatusCode, Json<Value>) {
@@ -684,7 +792,10 @@ async fn upgrade_plugin(
     let plugin = resolve_plugin(&repo, &plugin_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Plugin not found".into()))?;
-    let new_version = body.get("version").and_then(|v| v.as_str()).unwrap_or("latest");
+    let new_version = body
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("latest");
     sqlx::query(
         "UPDATE plugins SET manifest = manifest || jsonb_build_object('pendingVersion', $2::text),                 status = 'upgrade_pending', updated_at = now()          WHERE id = $1",
     )
@@ -755,16 +866,12 @@ async fn test_plugin_config(
     let _ = headers;
     let worker = match resolve_worker_or_501(&state, &plugin_id).await {
         Ok(w) => w,
-        Err(resp) => return resp.into_response(),
+        Err(resp) => return Ok(resp.into_response()),
     };
     let config = body.get("config").cloned().unwrap_or(Value::Null);
     match worker.validate_config(config).await {
-        Ok(outcome) => (StatusCode::OK, Json(outcome)).into_response(),
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "worker validate_config failed", "detail": e.to_string()})),
-        )
-            .into_response(),
+        Ok(outcome) => Ok((StatusCode::OK, Json(outcome)).into_response()),
+        Err(e) => Err(ApiError::Internal(format!("worker validate_config failed: {e}"))),
     }
 }
 
@@ -811,21 +918,21 @@ async fn trigger_plugin_job(
     headers: HeaderMap,
     Path((plugin_id, job_id)): Path<(String, Uuid)>,
     Json(body): Json<Value>,
-) -> impl axum::response::IntoResponse {
+) -> ApiResult<axum::response::Response> {
     let _ = headers;
     let worker = match resolve_worker_or_501(&state, &plugin_id).await {
         Ok(w) => w,
-        Err(resp) => return resp.into_response(),
+        Err(resp) => return Ok(resp.into_response()),
     };
     // body should be { "jobKey": "...", "context": { ... } } per protocol.
     let job_key = match body.get("jobKey").and_then(Value::as_str) {
         Some(k) => k.to_string(),
         None => {
-            return (
+            return Ok((
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "missing or non-string field: jobKey"})),
             )
-                .into_response();
+                .into_response());
         }
     };
     let context = body.get("context").cloned().unwrap_or(Value::Null);
@@ -835,16 +942,12 @@ async fn trigger_plugin_job(
         context: serde_json::from_value(context).unwrap_or_default(),
     };
     match worker.run_job(params).await {
-        Ok(()) => (
+        Ok(()) => Ok((
             StatusCode::ACCEPTED,
             Json(json!({"runId": job_id, "accepted": true})),
         )
-            .into_response(),
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "worker run_job failed", "detail": e.to_string()})),
-        )
-            .into_response(),
+            .into_response()),
+        Err(e) => Err(ApiError::Internal(format!("worker run_job failed: {e}"))),
     }
 }
 
@@ -876,11 +979,10 @@ async fn receive_plugin_webhook(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
-        LiveEvent::new("plugin.webhook.received", "plugin", plugin_uuid)
-            .with_data(json!({
-                "deliveryId": delivery_id,
-                "endpointKey": endpoint_key,
-            })),
+        LiveEvent::new("plugin.webhook.received", "plugin", plugin_uuid).with_data(json!({
+            "deliveryId": delivery_id,
+            "endpointKey": endpoint_key,
+        })),
     );
     Ok((
         StatusCode::ACCEPTED,

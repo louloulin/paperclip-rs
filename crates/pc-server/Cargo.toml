@@ -12,9 +12,14 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+default = []
+otlp = ["pc-telemetry/otlp"]
+
 [dependencies]
 dirs = { workspace = true }
 pc-errors = { path = "../pc-errors" }
+pc-agent = { path = "../pc-agent" }
 pc-telemetry = { path = "../pc-telemetry" }
 pc-config = { path = "../pc-config" }
 pc-core = { path = "../pc-core" }

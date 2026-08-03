@@ -116,7 +116,10 @@ struct ClaimBody {
     company_id: Option<String>,
 }
 
-async fn board_claim(State(state): State<AppState>, Path(token): Path<String>) -> ApiResult<Json<Value>> {
+async fn board_claim(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<Json<Value>> {
     let row: Option<(Uuid, String, Option<Uuid>, String)> = sqlx::query_as(
         "SELECT id, kind, company_id, status FROM board_claim_tokens WHERE token = $1 LIMIT 1",
     )
@@ -125,7 +128,9 @@ async fn board_claim(State(state): State<AppState>, Path(token): Path<String>) -
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((id, kind, company_id, status)) = row else {
-        return Ok(Json(json!({"token": token, "kind": "board-claim", "valid": false, "reason": "not found"})));
+        return Ok(Json(
+            json!({"token": token, "kind": "board-claim", "valid": false, "reason": "not found"}),
+        ));
     };
     Ok(Json(json!({
         "id": id,
@@ -142,13 +147,21 @@ async fn board_claim_token(
     Path(token): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let user_id = body.get("userId").and_then(|v| v.as_str()).map(String::from)
+    let user_id = body
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .map(String::from)
         .or_else(|| Some("local-board".to_string()));
     // Mark the token as claimed, create a fresh session token.
     let session_token = Uuid::new_v4().to_string();
     let session_token_hash = sha2_sha256(&session_token);
     let expires = chrono::Utc::now() + chrono::Duration::days(7);
-    let mut tx = state.db.pool().begin().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut tx = state
+        .db
+        .pool()
+        .begin()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     sqlx::query(
         "UPDATE board_claim_tokens SET status = 'claimed', claimed_by = $1, claimed_at = now()          WHERE token = $2 AND status = 'pending'",
     )
@@ -167,7 +180,9 @@ async fn board_claim_token(
     .execute(&mut *tx)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    tx.commit().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -182,7 +197,10 @@ async fn bootstrap_claim(
     State(state): State<AppState>,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let user_id = body.get("userId").and_then(|v| v.as_str()).unwrap_or("u_bootstrap");
+    let user_id = body
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("u_bootstrap");
     let session_token = Uuid::new_v4().to_string();
     let token_hash = sha2_sha256(&session_token);
     sqlx::query(
@@ -231,8 +249,10 @@ async fn cli_challenge_create(
         .pending_key_name
         .clone()
         .unwrap_or_else(|| "cli-session".to_owned());
-    let pending_key_hash = "pending-hash-stub".to_string();
-    let secret_hash = "secret-hash-stub".to_string();
+    let challenge_secret = random_cli_token("pcp_cli_auth_");
+    let pending_board_token = random_cli_token("pcp_board_");
+    let pending_key_hash = pc_auth::hash_token(&pending_board_token);
+    let secret_hash = pc_auth::hash_token(&challenge_secret);
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
     let row: ChallengeRow = sqlx::query_as(
         "INSERT INTO cli_auth_challenges \
@@ -253,7 +273,23 @@ async fn cli_challenge_create(
     .bind(expires_at)
     .fetch_one(state.db.pool())
     .await?;
-    Ok(Json(challenge_json(&row, true)))
+    Ok(Json(json!({
+        "id": row.id,
+        "token": challenge_secret,
+        "boardApiToken": pending_board_token,
+        "approvalPath": format!("/cli-auth/challenges/{}", row.id),
+        "pollPath": format!("/cli-auth/challenges/{}", row.id),
+        "expiresAt": row.expires_at,
+        "suggestedPollIntervalMs": 1000,
+    })))
+}
+
+fn random_cli_token(prefix: &str) -> String {
+    format!(
+        "{prefix}{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
 }
 
 async fn cli_challenge_get(
@@ -406,7 +442,9 @@ async fn invites_get(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((id, company_id, role, status, expires_at)) = row else {
-        return Ok(Json(json!({"token": token, "valid": false, "reason": "not found"})));
+        return Ok(Json(
+            json!({"token": token, "valid": false, "reason": "not found"}),
+        ));
     };
     Ok(Json(json!({
         "id": id,
@@ -424,7 +462,10 @@ async fn invites_accept(
     Path(token): Path<String>,
     Json(body): Json<ClaimBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let user_id = body.user_id.clone().unwrap_or_else(|| "u_invited".to_owned());
+    let user_id = body
+        .user_id
+        .clone()
+        .unwrap_or_else(|| "u_invited".to_owned());
     let updated = sqlx::query(
         "UPDATE invites SET status = 'accepted', accepted_by = $1, accepted_at = now()          WHERE token = $2 AND status = 'pending'",
     )
@@ -434,7 +475,9 @@ async fn invites_accept(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     if updated.rows_affected() == 0 {
-        return Err(ApiError::BadRequest("invite already used or expired".into()));
+        return Err(ApiError::BadRequest(
+            "invite already used or expired".into(),
+        ));
     }
     Ok((
         StatusCode::OK,
@@ -451,22 +494,23 @@ async fn skills_available(State(state): State<AppState>) -> ApiResult<Json<Value
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(k, name, desc)| json!({
-            "key": k,
-            "name": name,
-            "description": desc,
-        }))
+        .map(|(k, name, desc)| {
+            json!({
+                "key": k,
+                "name": name,
+                "description": desc,
+            })
+        })
         .collect();
     Ok(Json(json!({"items": items})))
 }
 
 async fn skills_index(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT skill_key, display_name, category FROM skills ORDER BY skill_key",
-    )
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT skill_key, display_name, category FROM skills ORDER BY skill_key")
+            .fetch_all(state.db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     let mut index = serde_json::Map::new();
     for (k, name, cat) in rows {
         index.insert(k, json!({ "name": name, "category": cat }));
@@ -502,6 +546,9 @@ fn sha2_sha256(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     let result = hasher.finalize();
-    let hex = result.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = result
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     hex
 }

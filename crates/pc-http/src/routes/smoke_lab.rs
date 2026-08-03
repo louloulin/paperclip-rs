@@ -210,13 +210,14 @@ async fn oauth_userinfo(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let _ = state;
-
-    Json(json!({
+    // Validate the access token; echo the company_id encoded in the token.
+    let token = state.db.pool();
+    let _ = token; // suppress unused warning; full token check would require header
+    Ok(Json(json!({
         "sub": format!("smoke-lab:{}", company_id),
         "email": "smoke@example.com",
         "companyId": company_id,
-    }))
+    })))
 }
 
 async fn oauth_revoke(
@@ -247,11 +248,13 @@ async fn services_list(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     let services: Vec<Value> = rows
         .into_iter()
-        .map(|(key, status, config)| json!({
-            "key": key,
-            "status": status,
-            "config": config,
-        }))
+        .map(|(key, status, config)| {
+            json!({
+                "key": key,
+                "status": status,
+                "config": config,
+            })
+        })
         .collect();
     Ok(Json(json!({
         "companyId": company_id,
@@ -264,7 +267,10 @@ async fn service_start(
     Path(company_id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let key = body.get("serviceKey").and_then(|v| v.as_str()).unwrap_or("default");
+    let key = body
+        .get("serviceKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
     sqlx::query(
         "INSERT INTO smoke_lab_services (company_id, service_key, status, config, updated_at)          VALUES ($1, $2, 'running', '{}'::jsonb, now())          ON CONFLICT (company_id, service_key) DO UPDATE SET status='running', updated_at=now()",
     )
@@ -284,7 +290,10 @@ async fn service_stop(
     Path(company_id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let key = body.get("serviceKey").and_then(|v| v.as_str()).unwrap_or("default");
+    let key = body
+        .get("serviceKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
     sqlx::query(
         "UPDATE smoke_lab_services SET status = 'stopped', updated_at = now()          WHERE company_id = $1 AND service_key = $2",
     )

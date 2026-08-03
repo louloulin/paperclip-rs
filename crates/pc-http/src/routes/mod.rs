@@ -66,6 +66,8 @@ use axum::Router;
 
 use crate::AppState;
 
+pub mod extensions;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(health::router())
@@ -126,6 +128,7 @@ pub fn router() -> Router<AppState> {
         .merge(storage::router())
         .merge(feature_flags::router())
         .merge(workflows::router())
+        .merge(extensions::router())
         .merge(adapters::router())
         .merge(live_events::router())
 }

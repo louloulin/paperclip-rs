@@ -10,10 +10,12 @@
 
 pub mod handle;
 pub mod jsonrpc;
+pub mod notifications;
 pub mod pool;
 pub mod registry;
 
 pub use handle::{WorkerHandle, WorkerOptions, WorkerState};
 pub use jsonrpc::{JsonRpcStream, PendingCall};
+pub use notifications::{Notification, NotificationBus, StreamBridgeEvent};
 pub use pool::WorkerPool;
 pub use registry::PluginRegistry;

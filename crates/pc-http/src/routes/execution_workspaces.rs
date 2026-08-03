@@ -108,17 +108,23 @@ async fn list_workspaces(
 }
 
 async fn workspace_overview(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> Json<Value> {
-    let _ = company_id;
-
-    Json(json!({
+) -> ApiResult<Json<Value>> {
+    let pool = state.db.pool();
+    let (active, recent, needs_attention): (i64, i64, i64) = sqlx::query_as(
+        "SELECT             (SELECT COUNT(*)::bigint FROM execution_workspaces WHERE company_id = $1 AND status = 'active'),             (SELECT COUNT(*)::bigint FROM heartbeat_runs WHERE company_id = $1 AND created_at > now() - interval '24 hours'),             (SELECT COUNT(*)::bigint FROM heartbeat_runs WHERE company_id = $1 AND status = 'failed' AND created_at > now() - interval '24 hours')",
+    )
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
         "companyId": company_id,
-        "activeWorkspaces": 0,
-        "recentRuns": 0,
-        "needsAttention": 0
-    }))
+        "activeWorkspaces": active,
+        "recentRuns": recent,
+        "needsAttention": needs_attention,
+    })))
 }
 
 async fn get_workspace(
@@ -147,11 +153,23 @@ struct PatchBody {
 }
 
 async fn patch_workspace(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(_body): Json<PatchBody>,
+    Json(body): Json<PatchBody>,
 ) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({ "id": id, "status": "updated" })))
+    let updated = sqlx::query(
+        "UPDATE execution_workspaces SET name = COALESCE($2, name), status = COALESCE($3, status), updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(body.name.clone())
+    .bind(body.status.clone())
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
+        "id": id,
+        "status": if updated.rows_affected() > 0 { "updated" } else { "noop" },
+    })))
 }
 
 async fn close_readiness(
@@ -189,13 +207,12 @@ async fn workspace_operations(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // Look up available operations based on workspace status + kind
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT kind FROM execution_workspaces WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT kind FROM execution_workspaces WHERE id = $1")
+            .bind(id)
+            .fetch_optional(state.db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     let _kind = row.map(|(k,)| k).unwrap_or_else(|| "execution".into());
     Ok(Json(json!({
         "id": id,
@@ -261,11 +278,13 @@ async fn reconcile_branch(
     .execute(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query("UPDATE execution_workspaces SET status = 'reconciling', updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    sqlx::query(
+        "UPDATE execution_workspaces SET status = 'reconciling', updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({ "id": id, "status": "reconcile-queued" })),

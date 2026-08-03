@@ -20,6 +20,10 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = "0.1"
 chrono = { workspace = true }
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+url = "2"
+hmac = "0.12"
 
 [dev-dependencies]
 tokio = { workspace = true }

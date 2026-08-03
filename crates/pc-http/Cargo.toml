@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 pc-core = { path = "../pc-core", features = ["sqlx"] }
+pc-agent = { path = "../pc-agent" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-telemetry = { path = "../pc-telemetry" }
@@ -17,6 +18,7 @@ pc-realtime = { path = "../pc-realtime" }
 pc-heartbeat = { path = "../pc-heartbeat" }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-auth = { path = "../pc-auth" }
+pc-backup = { path = "../pc-backup" }
 pc-repos = { path = "../pc-repos" }
 pc-secrets = { path = "../pc-secrets" }
 pc-plugin-host = { path = "../pc-plugin-host" }
@@ -44,6 +46,9 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 
 async-stream = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 # Backup-specific dependencies
 flate2 = "1"

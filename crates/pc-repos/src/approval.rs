@@ -9,6 +9,7 @@ use pc_core::Timestamp;
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApprovalRow {
     pub id: Uuid,
     pub company_id: Uuid,
@@ -42,6 +43,20 @@ impl<'a> ApprovalRepo<'a> {
             format!("SELECT {COLS} FROM approvals WHERE company_id = $1 ORDER BY created_at DESC");
         sqlx::query_as::<_, ApprovalRow>(&sql)
             .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// 列出全部（跨公司）；limit 默认 200。
+    pub async fn list_all(
+        &self,
+        limit: i64,
+    ) -> sqlx::Result<Vec<ApprovalRow>> {
+        let sql = format!(
+            "SELECT {COLS} FROM approvals ORDER BY created_at DESC LIMIT $1"
+        );
+        sqlx::query_as::<_, ApprovalRow>(&sql)
+            .bind(limit)
             .fetch_all(self.db.pool())
             .await
     }

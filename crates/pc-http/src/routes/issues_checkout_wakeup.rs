@@ -46,13 +46,12 @@ async fn checkout(
     let strategy = body.strategy.as_deref().unwrap_or("merge");
     let actor_type = body.actor_type.as_deref().unwrap_or("board");
 
-    let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
-        "SELECT id, assignee_agent_id, checkout_run_id FROM issues WHERE id = $1",
-    )
-    .bind(issue_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> =
+        sqlx::query_as("SELECT id, assignee_agent_id, checkout_run_id FROM issues WHERE id = $1")
+            .bind(issue_id)
+            .fetch_optional(state.db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((_, assignee_agent_id, prev_checkout_run_id)) = row else {
         return Err(ApiError::NotFound(format!("issue {issue_id}")));
     };
@@ -82,10 +81,23 @@ async fn checkout(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let should_wake = should_wake_assignee(actor_type, &actor_id, assignee_agent_id, prev_checkout_run_id);
+    let should_wake = should_wake_assignee(
+        actor_type,
+        &actor_id,
+        assignee_agent_id,
+        prev_checkout_run_id,
+    );
     if should_wake {
         if let Some(agent_id) = assignee_agent_id {
-            enqueue_wakeup(&state, issue_id, agent_id, "issue_checkout", &actor_id, actor_type).await;
+            enqueue_wakeup(
+                &state,
+                issue_id,
+                agent_id,
+                "issue_checkout",
+                &actor_id,
+                actor_type,
+            )
+            .await;
         }
     }
 
@@ -107,19 +119,26 @@ async fn wakeup(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
     let actor_id = require_user_id(&state, &headers).await?;
-    let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
-        "SELECT id, assignee_agent_id FROM issues WHERE id = $1",
-    )
-    .bind(issue_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row: Option<(Uuid, Option<Uuid>)> =
+        sqlx::query_as("SELECT id, assignee_agent_id FROM issues WHERE id = $1")
+            .bind(issue_id)
+            .fetch_optional(state.db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((_, assignee_agent_id)) = row else {
         return Err(ApiError::NotFound(format!("issue {issue_id}")));
     };
 
     let queued = if let Some(agent_id) = assignee_agent_id {
-        enqueue_wakeup(&state, issue_id, agent_id, "issue_wakeup", &actor_id, "user").await;
+        enqueue_wakeup(
+            &state,
+            issue_id,
+            agent_id,
+            "issue_wakeup",
+            &actor_id,
+            "user",
+        )
+        .await;
         true
     } else {
         false
@@ -144,14 +163,13 @@ async fn enqueue_wakeup(
     actor_type: &str,
 ) {
     // Resolve company_id for the agent
-    let company_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT company_id FROM agents WHERE id = $1",
-    )
-    .bind(agent_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
+    let company_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT company_id FROM agents WHERE id = $1")
+            .bind(agent_id)
+            .fetch_optional(state.db.pool())
+            .await
+            .ok()
+            .flatten();
     let Some(company_id) = company_id else {
         return;
     };

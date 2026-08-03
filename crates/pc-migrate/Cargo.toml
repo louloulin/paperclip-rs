@@ -1,0 +1,25 @@
+[package]
+name = "pc-migrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone Paperclip database migration CLI"
+publish = false
+
+[[bin]]
+name = "paperclip-migrate"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-db = { path = "../pc-db" }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

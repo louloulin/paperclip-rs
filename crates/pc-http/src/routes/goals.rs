@@ -26,16 +26,19 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ListQuery {
-    company_id: Uuid,
+    #[serde(default)]
+    company_id: Option<Uuid>,
 }
 async fn list(
     State(s): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    Ok(Json(
-        serde_json::to_value(GoalRepo::new(&s.db).list_by_company(q.company_id).await?)
+    Ok(Json(match q.company_id {
+        Some(c) => serde_json::to_value(GoalRepo::new(&s.db).list_by_company(c).await?)
             .unwrap_or_default(),
-    ))
+        None => serde_json::to_value(GoalRepo::new(&s.db).list_all(200).await?)
+            .unwrap_or_default(),
+    }))
 }
 async fn get_one(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
     let r = GoalRepo::new(&s.db)
