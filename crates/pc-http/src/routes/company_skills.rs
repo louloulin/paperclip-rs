@@ -66,7 +66,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:company_id/skills/:skill_id/test-runs", get(list_test_runs).post(create_test_run))
         .route("/api/companies/:company_id/skills/:skill_id/test-runs/:run_id", get(get_test_run))
         .route("/api/companies/:company_id/skills/:skill_id/test-runs/:run_id/cancel", post(cancel_test_run))
+        .route("/api/companies/:company_id/skills/:skill_id/test-runs/:run_id", delete(delete_test_run))
         .route("/api/companies/:company_id/skills/:skill_id/files", get(list_skill_files).post(upload_skill_file))
+        // ===== Round 31: skill comment detail =====
+        .route("/api/companies/:company_id/skills/:skill_id/comments/:comment_id", get(get_skill_comment))
         .route("/api/companies/:company_id/skills/:skill_id/files/:file_id", delete(delete_skill_file))
         .route("/api/companies/:company_id/skill-test-run-templates", get(list_test_run_templates).post(create_test_run_template))
         .route("/api/companies/:company_id/skill-test-run-templates/:template_id", patch(patch_test_run_template).delete(delete_test_run_template))
@@ -822,27 +825,58 @@ async fn star_skill(
     if body.agent_id.is_none() && body.user_id.is_none() {
         return Err(ApiError::BadRequest("agent_id or user_id required".into()));
     }
-    sqlx::query(
+    // Round 31: 用 ON CONFLICT DO NOTHING + RETURNING 检测真正新增的行；同步 star_count
+    let inserted: Option<(Uuid,)> = sqlx::query_as(
         "INSERT INTO company_skill_stars (company_id, company_skill_id, agent_id, user_id)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(company_id).bind(skill_id).bind(body.agent_id).bind(&body.user_id)
-    .execute(state.db.pool()).await
-    .ok(); // ignore unique conflicts (already starred)
-    Ok(Json(json!({"starred": true, "companyId": company_id, "skillId": skill_id})))
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING RETURNING id",
+    ).bind(company_id).bind(skill_id).bind(body.agent_id).bind(&body.user_id)
+    .fetch_optional(state.db.pool()).await?;
+    let new_star = inserted.is_some();
+    if new_star {
+        sqlx::query(
+            "UPDATE company_skills SET star_count = star_count + 1, updated_at=now()
+             WHERE company_id=$1 AND id=$2",
+        ).bind(company_id).bind(skill_id)
+        .execute(state.db.pool()).await?;
+    }
+    Ok(Json(json!({
+        "starred": true, "companyId": company_id, "skillId": skill_id, "newStar": new_star,
+    })))
 }
 
 async fn unstar_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<StarBody>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "DELETE FROM company_skill_stars
-         WHERE company_id=$1 AND company_skill_id=$2",
-    )
-    .bind(company_id).bind(skill_id)
-    .execute(state.db.pool()).await?;
-    Ok(Json(json!({"unstarred": true, "skillId": skill_id})))
+    // Round 31: 按 actor 删（agent_id 或 user_id），不再误删全部 star
+    let mut deleted = 0;
+    if let Some(aid) = body.agent_id {
+        let r = sqlx::query(
+            "DELETE FROM company_skill_stars
+             WHERE company_id=$1 AND company_skill_id=$2 AND agent_id=$3",
+        ).bind(company_id).bind(skill_id).bind(aid)
+        .execute(state.db.pool()).await?;
+        deleted += r.rows_affected();
+    }
+    if let Some(uid) = body.user_id.as_ref() {
+        let r = sqlx::query(
+            "DELETE FROM company_skill_stars
+             WHERE company_id=$1 AND company_skill_id=$2 AND user_id=$3",
+        ).bind(company_id).bind(skill_id).bind(uid)
+        .execute(state.db.pool()).await?;
+        deleted += r.rows_affected();
+    }
+    // sync star_count
+    if deleted > 0 {
+        sqlx::query(
+            "UPDATE company_skills SET star_count = GREATEST(star_count - $1, 0), updated_at=now()
+             WHERE company_id=$2 AND id=$3",
+        ).bind(deleted as i32).bind(company_id).bind(skill_id)
+        .execute(state.db.pool()).await?;
+    }
+    Ok(Json(json!({"unstarred": true, "skillId": skill_id, "deletedStars": deleted})))
 }
 
 async fn skill_update_status(
@@ -1171,17 +1205,17 @@ async fn list_test_runs(
         _ => String::new(),
     };
     let sql_str = format!(
-        "SELECT id, status, input_id, agent_id, issue_id, template_id, created_at, updated_at
+        "SELECT id, status, input_id, agent_id, issue_id, created_at, updated_at
          FROM company_skill_test_runs WHERE company_id=$1 AND skill_id=$2 {status_filter}
          ORDER BY created_at DESC LIMIT $3"
     );
-    let rows: Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Option<String>, pc_core::Timestamp, pc_core::Timestamp)> =
+    let rows: Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, pc_core::Timestamp, pc_core::Timestamp)> =
         sqlx::query_as(&sql_str)
         .bind(company_id).bind(skill_id).bind(limit)
         .fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, st, inp, agent, iss, tmpl, ts, uts)| json!({
+    let items: Vec<Value> = rows.into_iter().map(|(id, st, inp, agent, iss, ts, uts)| json!({
         "id": id, "status": st, "inputId": inp, "agentId": agent,
-        "issueId": iss, "templateId": tmpl, "createdAt": ts, "updatedAt": uts,
+        "issueId": iss, "createdAt": ts, "updatedAt": uts,
     })).collect();
     Ok(Json(json!({"items": items, "companyId": company_id, "skillId": skill_id, "limit": limit})))
 }
@@ -1488,4 +1522,46 @@ async fn scan_project_skills(
         "candidates": [], "conflicts": [], "skipped": [],
         "companyId": company_id,
     })))
+}
+
+
+// ============ Round 31: skill comment detail + test-run delete ============
+
+async fn get_skill_comment(
+    State(state): State<AppState>,
+    Path((company_id, skill_id, comment_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, Uuid, Option<Uuid>, Option<String>, Option<String>, String, Option<pc_core::Timestamp>, pc_core::Timestamp, pc_core::Timestamp)> = sqlx::query_as(
+        "SELECT id, company_id, company_skill_id, parent_comment_id, author_agent_id, author_user_id,
+                body, deleted_at, created_at, updated_at
+         FROM company_skill_comments
+         WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
+    ).bind(company_id).bind(skill_id).bind(comment_id)
+    .fetch_optional(state.db.pool()).await?;
+    let (id, cid, sid, parent, author_agent, author_user, body, deleted_at, created_at, updated_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("skill comment {comment_id}")))?;
+    if deleted_at.is_some() {
+        return Err(ApiError::NotFound(format!("skill comment {comment_id} deleted")));
+    }
+    Ok(Json(json!({
+        "id": id, "companyId": cid, "skillId": sid,
+        "parentCommentId": parent,
+        "authorAgentId": author_agent, "authorUserId": author_user,
+        "body": body, "createdAt": created_at, "updatedAt": updated_at,
+    })))
+}
+
+async fn delete_test_run(
+    State(state): State<AppState>,
+    Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let r = sqlx::query(
+        "DELETE FROM company_skill_test_runs
+         WHERE company_id=$1 AND skill_id=$2 AND id=$3",
+    ).bind(company_id).bind(skill_id).bind(run_id)
+    .execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("test run {run_id}")));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

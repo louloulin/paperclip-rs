@@ -2,7 +2,7 @@
 
 #[allow(unused_imports)]
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
@@ -26,7 +26,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/decisions/:id/dismiss", post(dismiss_decision))
         .route("/api/decisions/:id/cancel", post(cancel_decision))
         .route("/api/companies/:company_id/decisions/stats", get(decision_stats_route))
-        .route("/api/companies/:company_id/decision-bundles", post(create_decision_bundle))
+        .route("/api/companies/:company_id/decision-bundles", post(create_decision_bundle).get(list_decision_bundles))
+        .route("/api/decision-bundles/:id", get(get_decision_bundle))
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,4 +298,74 @@ async fn create_decision_bundle(
             "originRunId": body.origin_run_id,
         })),
     ))
+}
+
+
+// ============ Round 34: decision bundles list + detail ============
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ListDecisionBundlesQuery {
+    #[serde(default)]
+    agent_id: Option<Uuid>,
+    #[serde(default)]
+    issue_id: Option<Uuid>,
+    #[serde(default)]
+    run_id: Option<Uuid>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+async fn list_decision_bundles(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Query(q): Query<ListDecisionBundlesQuery>,
+) -> ApiResult<Json<Value>> {
+    let mut sql = String::from(
+        "SELECT id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at          FROM decision_bundles WHERE company_id = $1",
+    );
+    let mut idx = 2;
+    if q.agent_id.is_some() { sql.push_str(&format!(" AND origin_agent_id = ${idx}")); idx += 1; }
+    if q.issue_id.is_some() { sql.push_str(&format!(" AND origin_issue_id = ${idx}")); idx += 1; }
+    if q.run_id.is_some() { sql.push_str(&format!(" AND origin_run_id = ${idx}")); idx += 1; }
+    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT {}", q.limit.unwrap_or(100).clamp(1, 500)));
+    let mut query = sqlx::query_as::<_, (Uuid, Uuid, String, String, Uuid, Uuid, Uuid, pc_core::Timestamp)>(&sql)
+        .bind(company_id);
+    if let Some(a) = q.agent_id { query = query.bind(a); }
+    if let Some(i) = q.issue_id { query = query.bind(i); }
+    if let Some(r) = q.run_id { query = query.bind(r); }
+    let rows = query.fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, cid, title, summary, agent, issue, run, ts)| json!({
+        "id": id, "companyId": cid,
+        "title": title, "summary": summary,
+        "originAgentId": agent, "originIssueId": issue, "originRunId": run,
+        "createdAt": ts,
+    })).collect();
+    Ok(Json(json!({"items": items, "companyId": company_id, "count": items.len()})))
+}
+
+async fn get_decision_bundle(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, String, String, Uuid, Uuid, Uuid, pc_core::Timestamp)> = sqlx::query_as(
+        "SELECT id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at          FROM decision_bundles WHERE id = $1",
+    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let (id, cid, title, summary, agent, issue, run, ts) = row
+        .ok_or_else(|| ApiError::NotFound(format!("decision bundle {id}")))?;
+    // 同时返回挂载的 decisions
+    let decisions: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, title, status FROM decisions WHERE bundle_id = $1 ORDER BY created_at ASC",
+    ).bind(id).fetch_all(state.db.pool()).await?;
+    let decisions_json: Vec<Value> = decisions.into_iter().map(|(did, t, s)| json!({
+        "id": did, "title": t, "status": s,
+    })).collect();
+    Ok(Json(json!({
+        "id": id, "companyId": cid,
+        "title": title, "summary": summary,
+        "originAgentId": agent, "originIssueId": issue, "originRunId": run,
+        "createdAt": ts,
+        "decisions": decisions_json,
+        "decisionCount": decisions_json.len(),
+    })))
 }

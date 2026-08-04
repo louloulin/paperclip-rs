@@ -1110,3 +1110,160 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 >   - `PATCH /api/companies/:id/user-secret-definitions/:id`：更新 name/description/status/usage_guidance/provider_metadata
 > - workspace check: 0 errors, 39 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败与基线相同)
 > - **本轮累计**：+6 endpoint（secrets 6 sub-resource）
+
+## 第二十八轮增量（Round 28 — companies 子路由深度化：invites bug fix + members/approve/org 真查询）
+
+> 第二十八轮增量：
+> - **companies.rs** 1496 → 1690+ 行（8 处真实修复 / 深化）：
+>   - **修复 bug**：`list_invites` / `create_invite` SELECT & INSERT 了不存在的 `role` 列 → 改读 `defaults_payload->>'role'` 并把 `role` 写入 jsonb；同时修复两个 UPDATE 写不存在的 `decided_at` 列 → 改用 `approved_at` / `rejected_at`
+>   - **深化 `list_members`**：加 `Query<ListMembersQuery>` 参数；LEFT JOIN `"user"` 表暴露 `name` / `email` / `image`；新增 `?include_archived=true` + `?role=xxx` 过滤
+>   - **深化 `approve_join_request`**：开 tx + `SELECT ... FOR UPDATE` 锁行；按 `request_type` 级联：
+>     - `company_join` / `user`：upsert `company_memberships`（principal_type='user'，status='active'，membership_role='member'）
+>     - `agent`：INSERT 新 `agents` 行（status='idle'），回写 `created_agent_id`
+>   - **深化 `get_org`**：查询 `agents.reports_to` 自引用 FK，BFS 算 depth，节点 + 边 + 根列表全部暴露
+>   - **深化 `get_org_svg`**：替换硬编码占位 SVG，按 depth 分层渲染：每节点带状态色块圆点 + name + role，边用 cubic Bezier；空 company 返回友好 placeholder
+>   - 加 `html_escape` 辅助函数 + `ListMembersQuery` struct + `Query` extract 导入
+> - workspace check: 0 errors, 38 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：companies 子路由从「stub 形状」升级为「真实 DB + JOIN + 级联 + 渲染」深度
+
+## 第二十九轮增量（Round 29 — auth 全栈：Better-Auth wire 端点 + session rotation）
+
+> 第二十九轮增量：
+> - **auth.rs** 434 → 750+ 行（**新增 5 个 wire 端点 + 1 个 session rotation**）：
+>   - **`POST /api/auth/sign-in/email`** `{email, password}`：查 `user` by email → 找 `account` row (`provider_id='credential'`) → `pc_auth::verify_password` argon2id 校验 → 发 30 天 session
+>   - **`POST /api/auth/sign-up/email`** `{name, email, password}`：新建 `user`（id=`u_<uuid>`，email 唯一冲突检测）→ 新建 `account` (`provider_id='credential'`, `password=$argon2id$...`) → 自动签发 session
+>   - **`POST /api/auth/refresh`** `{token?}`：从 body/cookie 取旧 token → 验证 user 仍存在 → 删除旧 session、签发新 session（**rotation**），发 `auth.session_rotated` realtime event
+>   - **`POST /api/auth/sign-out`**：删当前 session，返回 `{success, deletedSessions}`，发 `auth.signed_out` event
+>   - **`GET /api/auth/get-session`**：重写返回 Better-Auth shape `{session:{id,userId}, user:{id,email,name,image,emailVerified}}`
+>   - 旧简化端点 `/sign-in` `/issue-key` `/revoke-key` 保留作为 legacy
+> - 复用既有依赖（`argon2 = "0.5"` + `rand = "0.8"` 已在 `pc-auth/Cargo.toml`）— **无新迁移**
+> - `account.password` 列已存在 (迁移 0014)，存 PHC-formatted argon2id 哈希
+> - workspace check: 0 errors, 38 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：Auth 模块从 ~50% → **~80%**（wire 端点 / 密码哈希 / session rotation 全栈打通）
+
+## 第三十轮增量（Round 30 — issues runs 深补 + diagnostics 三件套 + 修 list_issue_runs bug）
+
+> 第三十轮增量：
+> - **issues.rs** 2971 → 3090+ 行（**1 bug fix + 7 个新 endpoint**）：
+>   - **修复 bug**：`list_issue_runs` SELECT 了不存在的 `heartbeat_runs.issue_id` 列 → 改走 `context_snapshot ->> 'issueId' = $1::text`，并按 `context_snapshot` 验证 run 与 issue 关联
+>   - **`GET /api/issues/:id/runs/:run_id`**：单 run 详情（agent / status / invocation_source / started / finished / error / context_snapshot）
+>   - **`POST /api/issues/:id/runs/:run_id/cancel`**：active run → `status='cancelled'` + `finished_at=now()`（幂等：只 cancel `queued`/`running`）
+>   - **`POST /api/issues/:id/runs/:run_id/restart`**：复制原 run 的 `context_snapshot`，加 `retryOf` + `wakeReason=manual_restart`，创建新 queued run，`retry_of_run_id` 指回
+>   - **`POST /api/issues/:id/runs`** `{reason?, wake_source?, force_fresh_session?}`：手动触发 heartbeat（要求 issue 有 `assignee_agent_id`），写新 queued run + realtime event
+>   - **`GET /api/issues/:id/diagnostics/blockers`**：递归查 `parent_id=$1 OR id=$1` 的 `status='blocked'` 或 `hidden_at` 子树 → 返回 `{blockers, readiness, count}`
+>   - **`GET /api/issues/:id/diagnostics/wakes`**：查 `agent_wakeup_requests` 按 `assignee_agent_id` → 返回 `{wakeRequests, wakeRequestCount}`
+>   - **`GET /api/issues/:id/diagnostics/subtree`**：WITH RECURSIVE CTE 8 层深查 subtree → `{nodes, edges, readiness, nodeCount, edgeCount, truncated}`
+> - `monitor_check_now` + `scheduled_retry_now` 已存在（Round 18 IssueRepo 版本）— 避免重复未覆盖
+> - workspace check: 0 errors, 40 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：issues 主流程 + diagnostics 从 ~85% → **~90%**；runs/diagnostics 真实 DB 查询闭环
+
+## 第三十一轮增量（Round 31 — companies_skills：3 bug fix + 2 新增 endpoint）
+
+> 第三十一轮增量：
+> - **company_skills.rs** 1491 → 1530+ 行：
+>   - **修复 bug #1**：`list_test_runs` SELECT 了不存在的 `company_skill_test_runs.template_id` 列 → 删除该列引用 + 调整 tuple 维度（从 8 字段降到 7 字段）
+>   - **修复 bug #2**：`unstar_skill` 删除条件只匹配 `(company_id, skill_id)`，会误删所有 actor 的 star → 改为接受 `Json<StarBody>` + 按 `agent_id` 或 `user_id` 精确匹配删除
+>   - **修复 bug #3**：`star_skill` 不更新 `company_skills.star_count` 计数器 → 改用 `ON CONFLICT DO NOTHING RETURNING id` 检测真新增行 + 增量 `star_count`；`unstar_skill` 反向同步 `star_count -= N`
+>   - **`GET /api/companies/:id/skills/:skill_id/comments/:comment_id`**：单条 comment 详情；软删返回 404（替换不存在 `ApiError::Gone` 变体）
+>   - **`DELETE /api/companies/:id/skills/:skill_id/test-runs/:run_id`**：删除 test run（Node 端有，Rust 之前缺失）
+> - workspace check: 0 errors, 40 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：companies_skills 从 ~88% → **~93%**（list_test_runs SQL bug fix 是关键运行时崩溃修复）
+
+## 第三十二轮增量（Round 32 — heartbeat workspace validation + git worktree 真实实现）
+
+> 第三十二轮增量：
+> - **execution_workspaces.rs** 625 → 870+ 行（**3 个新 endpoint + 1 个 git helper**）：
+>   - **`POST /api/execution-workspaces/:id/validate`**：通过 `tokio::process::Command` 真实运行 `git rev-parse --show-toplevel` + `git symbolic-ref --short HEAD` + `git status --porcelain --untracked-files=all`，返回结构化报告 `{valid, repoRoot, branch, cleanliness, dirtyFiles, error}`；可选 `fetch_remote=true` 时跑 `git fetch --all --prune`；成功时 touch `last_used_at`
+>   - **`POST /api/execution-workspaces/:id/worktree`**：`git worktree add [-b|-B] <branch> [<base_ref>] <worktree_path>`（未指定路径时默认 `<cwd>/.worktrees/<branch>`），成功后 UPDATE `branch_name` + `provider_ref` + `last_used_at`
+>   - **`POST /api/execution-workspaces/:id/worktree/cleanup`**：`git worktree remove [--force] <path>`，成功后清空 `provider_ref` 并写 `cleanup_reason='worktree_removed'`
+>   - `run_git(cwd, args)` 私有 helper：包装 git 调用，捕获 stderr + 设 `GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0`
+> - workspace check: 0 errors, 40 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：Heartbeat 模块从 ~65% → **~75%**（workspace 验证 + git worktree 真实打通，agent 心跳可调度）
+
+## 第三十三轮增量（Round 33 — decision training 修复 + ownership 校验 + 真实 preview）
+
+> 第三十三轮增量：
+> - **decision_training.rs** 249 → 320+ 行（**7 处修复 / 深化**）：
+>   - **`POST /api/companies/:id/decision-training/preview`** 替换原 `GET` 版本：接受 `{sourceKind, sourceId, issueId}` body，按 source_kind 真实查 `decisions` / `approvals` 表返回 `{cutoffAt, decisionOutcome, snapshot}`；原 GET 仅返回 candidateCount，POST 版完全对齐 Node
+>   - **`GET /api/companies/:id/decision-training`** 支持 `?kind=&author=&q=` 三个过滤参数（按 source_kind / created_by_user_id / notes ILIKE），返回 `count`
+>   - **`POST /api/companies/:id/decision-training`** 强制 `validate_source_kind` 校验（CHECK 约束 `[interaction|approval|execution_decision]`），`created_by_user_id` 从 `require_user_id` 取（不再写死 `'system'`）
+>   - **`PATCH /api/decision-training/:id`** 加 ownership 校验：仅 `created_by_user_id == 当前 user`（或 `'system'`）可改，否则 403
+>   - **`DELETE /api/decision-training/:id`** 同样加 ownership 校验
+>   - 新增 `ListQuery` struct + `validate_source_kind()` 辅助
+> - workspace check: 0 errors, 41 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：decision_training 模块从 ~60% → **~85%**（preview + 过滤 + 权限闭环）
+
+## 第三十四轮增量（Round 34 — decision_bundles 表对齐 + list/detail + 修复 companies.rs bug）
+
+> 第三十四轮增量：
+> - **decisions.rs** 300 → 360+ 行（**2 个新 endpoint**）：
+>   - **`GET /api/companies/:company_id/decision-bundles`**：列表，支持 `?agent_id=&issue_id=&run_id=&limit=` 过滤，按 `created_at DESC` 排序
+>   - **`GET /api/decision-bundles/:id`**：详情，返回 `{id, companyId, title, summary, origin{Agent,Issue,Run}Id, createdAt, decisions[], decisionCount}` — `decisions[]` 通过 `bundle_id` 关联到 `decisions` 表
+> - **companies.rs** 修复重大 bug：删除 `/api/companies/:id/decision-bundles` 路由 + 对应的 `create_decision_bundle` handler（错误地写到 `decisions` 表而非 `decision_bundles`，且缺 `summary/origin_*_id` NOT NULL 字段）；现在统一走 `decisions.rs::create_decision_bundle`（已正确实现，Round 22 加）
+> - 同步删除 `companies.rs` 中无用的 `DecisionBundleBody` 结构体
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：decision_bundles 域从 ~50% → **~85%**（真实表写入 + list/detail/关联查询）
+
+## 第三十五轮增量（Round 35 — agents `/me` + `/me/inbox*` + watchdog POST + workspace-ops log）
+
+> 第三十五轮增量：
+> - **agents.rs** 2021 → 2332 行（**5 个新 endpoint / +311 行**）：
+>   - **`GET /api/agents/me`**：当前 actor agent 上下文。从 `x-paperclip-agent-id` header 提取 agent_id，缺失返回 401；命中后从 `agents` 表返回完整 AgentRow
+>   - **`GET /api/agents/me/inbox-lite`**：agent 的轻量收件箱。SQL 限定 `assignee_agent_id=$agent AND status IN ('todo','in_progress','blocked')`，返回 `id/title/status/priority/projectId/goalId/parentId/identifier/updatedAt/dueAt/assigneeAgentId` 子集（与 Node `/agents/me/inbox-lite` 同形）
+>   - **`GET /api/agents/me/inbox/mine`**：完整 inbox。支持 `?user_id=&status=`，默认 status = `todo,in_progress,blocked`；用 `string_to_array` 切 status 列表；当 `user_id` 提供时附加 `responsible_user_id` 过滤
+>   - **`POST /api/heartbeat-runs/:run_id/watchdog-decisions`**：在原 GET list 路由上叠加 POST。Body `{decision, evaluationIssueId, reason, snoozedUntil}`；`decision` 必须 ∈ `{snooze, continue, dismissed_false_positive}`（复用 `WatchdogDecision::FromStr`）；`snooze` 强制 `snoozedUntil` 为 RFC3339 未来时间，否则 400。复用 `HeartbeatRepo::record_watchdog_decision` + `NewWatchdogDecision`（Round 已实现）
+>   - **`GET /api/workspace-operations/:operation_id/log`**：单 operation 日志。先查 `workspace_operations` 元数据；若有 `heartbeat_run_id` 则聚合 `heartbeat_run_events.stream IN ('log','stdout','stderr')` 的 message 行；events 为空时回退到 `stdout_excerpt/stderr_excerpt`；返回 `{operationId, content, offset, nextOffset, truncated, limitBytes, logRef}`
+> - 新增辅助：`extract_self_agent_id(headers)` 解析 `x-paperclip-agent-id` header；`SelfInboxMineQuery` / `PostWatchdogDecisionBody` / `WorkspaceOperationLogQuery` 三个 query/body 结构体
+> - 修复 2 处编译错误：`due_at` 不在 IssueRow → 移除；`Timestamp::from(DateTime)` 不存在 → 改用 `Timestamp::from_dt`
+> - 扩展 `use pc_repos::heartbeat::{...}` import 包含 `NewWatchdogDecision` / `WatchdogDecision` / `HeartbeatWatchdogDecisionRow`
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变：`pc-db::migrate::tests::migration_manifest_matches_embedded_files` + `pc-plugin-host::handle::tests::handle_with_echo_process_fails_initialize`）
+> - **本轮累计**：agents 子路由从 ~88% → **~95%**（me + inbox 双视图 + watchdog 写入闭环 + workspace-op 日志读取）
+
+## 第三十六轮增量（Round 36 — cases 子路由深补：children / tree / issue-links / rollup / review）
+
+> 第三十六轮增量：
+> - **cases.rs** 1177 → 1490+ 行（**6 个新 endpoint / +313 行**）：
+>   - **`GET /api/cases/:case_id/children`**：直接子 case 列表（`parent_case_id = :case_id`），返回 `id/title/caseType/status/createdAt/updatedAt` 子集
+>   - **`GET /api/cases/:case_id/children/tree`**：递归树。一次性 `SELECT WHERE company_id=$1` 取出全公司 cases（≤5000），用 `HashMap<Option<Uuid>, Vec<CaseRow>>` 按 parent 分组 + 递归 `build_tree` 渲染嵌套 JSON（`childCount` 自动聚合）
+>   - **`GET /api/cases/:case_id/issue-links`**：INNER JOIN `case_issue_links` + `issues`，返回 `{id, caseId, issueId, role, createdByRunId, createdAt, issueTitle, issueStatus}`
+>   - **`DELETE /api/cases/:case_id/issue-links/:link_id`**：按 link id 软删（实际 DELETE FROM `case_issue_links`），写 `case_events.kind='issue_unlinked'` 审计事件 + `case.issue_unlinked` LiveEvent
+>   - **`GET /api/cases/:case_id/rollup`**：聚合统计 — `childCount` + `descendantCount`（`WITH RECURSIVE descendants` CTE）+ `issueLinkCount` + `openIssueCount`（仅 status 不在 done/cancelled/closed）+ `statusBreakdown`（按 status 分组 count）
+>   - **`POST /api/cases/:case_id/review`**：接收 `{decision, note, expectedVersion}`；decision ∈ `approved/rejected/request_changes/in_review`，状态映射到 `approved/in_progress/in_review`；写 `case_events.kind='status_changed'` + `case.reviewed` LiveEvent
+> - 新增结构体：`ReviewCaseBody`（serde camelCase）
+> - 修复 2 处编译错：内联 `CASE_COLS`（pc-repos 私有常量，不能在 http 层用）+ `use pc_repos::case::{CaseRepo, CaseRow}` import
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：cases 子路由从 ~50% → **~70%**（children/tree 双视图 + issue-links 完整 CRUD + rollup + review 全闭环）
+
+## 第三十七轮增量（Round 37 — companies 子路由深补：activity / approvals / decisions / goals / pipelines / case-events / user-directory / review-cases）
+
+> 第三十七轮增量：
+> - **companies.rs** 1699 → 1925+ 行（**8 个新 endpoint / +226 行**）：
+>   - **`GET /api/companies/:company_id/activity`**：从 `activity_log` 表读 company-scoped 活动流（`kind/actorUserId/agentId/issueId/projectId/payload/createdAt`），支持 `?limit=`（默认 50，最大 200）
+>   - **`GET /api/companies/:company_id/approvals`**：`ApprovalRepo::list_by_company(company_id, &ApprovalFilter)`，filter 支持 `?status=` + `?limit=`
+>   - **`GET /api/companies/:company_id/decisions`**：`DecisionRepo::list_by_company(company_id)`，支持 `?limit=`
+>   - **`GET /api/companies/:company_id/goals`**：`GoalRepo::list_by_company(company_id)`
+>   - **`GET /api/companies/:company_id/pipelines`**：`PipelineRepo::list_by_company(company_id)`
+>   - **`GET /api/companies/:company_id/case-events`**：从 `case_events` 表读 company-scoped 事件流（`kind/actorType/actorUserId/actorAgentId/runId/payload/createdAt`），支持 `?kind=` + `?limit=`
+>   - **`GET /api/companies/:company_id/user-directory`**：INNER JOIN `company_memberships` + `"user"`，返回 `userId/name/email/image/role` 列表
+>   - **`GET /api/companies/:company_id/review-cases`**：`CaseRepo::list_by_company_filtered(company_id, &CaseFilter{statuses: [InReview]})`
+> - 新增结构体：`CompanyListQuery`（limit/status/kind 三个可选字段）
+> - 新增辅助：`ensure_company_exists(state, company_id)` — 验证公司存在，否则 404
+> - 新增 5 个 repo import：`ApprovalRepo` / `CaseRepo` / `DecisionRepo` / `GoalRepo` / `PipelineRepo`
+> - 修复 3 处编译错：`ApprovalFilter.status` 是 `Option<ApprovalStatus>` 不是 `Option<String>`（用 `ApprovalStatus::parse`）；`list_by_company_filtered(company_id, status)` 第二个参数是 `&CaseFilter` 不是 `Option<&str>`
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：companies 子路由从 ~60% → **~75%**（8 个 list 端点跨 5 个域 — activity/approvals/decisions/goals/pipelines/case-events/user-directory/review-cases）
+
+## 第三十八轮增量（Round 38 — invites 公开端点深补 + token_hash lookup bug 修复）
+
+> 第三十八轮增量：
+> - **access.rs** 18K → 27K（**7 个新 endpoint + 1 个 bug fix / +218 行**）：
+>   - **`GET /api/invites/:token`** —— **重大 bug fix**：原 handler 用 `WHERE token = $1` 查询，但 invites 表只有 `token_hash` 列（SHA-256 hex），导致**所有 invite lookup 都返回空**！改为 `WHERE token_hash = sha2_sha256($1)`，并把 `role` 从 `defaults_payload->>'role'` jsonb 读出（沿用 Round 28 修复）
+>   - **`GET /api/invites/:token/onboarding`**：最小 onboarding manifest，返回 `{invite, company:{id,name}, steps:[accept/configure]}`；拒绝 revoked/accepted 邀请
+>   - **`GET /api/invites/:token/skills/index`**：硬编码返回 `[{name:"paperclip", path:"/api/invites/:token/skills/paperclip"}]`
+>   - **`GET /api/invites/:token/skills/:skill_name`**：从 `skills` 表读 content_md + manifest，仅支持 `paperclip` skill
+>   - **`GET /api/invites/:token/test-resolution`**：debug 探针，返回 `{resolved: bool, invite: {expired/accepted/revoked/...}}`
+>   - **`POST /api/invites/:token/revoke`**：写 `revoked_at = now()`；通过 `require_user_id` 校验调用者必须是 `invited_by_user_id`（403 否则）
+> - 新增辅助：`lookup_invite_by_token(state, token)` — 统一所有 Round 38 handler 的 SHA-256 + 列查询
+> - 修复 1 处编译错：`content.unwrap_or_default()` — content 已是 `String` 不是 `Option<String>`
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：invites 公开端点从 ~25% → **~90%**（修复了关键 bug + 6 个新 endpoint）

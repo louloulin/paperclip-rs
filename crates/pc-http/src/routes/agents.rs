@@ -35,7 +35,10 @@ use pc_repos::agent::{AgentRepo, AgentRow};
 use pc_repos::cost::CostRepo;
 use pc_repos::execution::ExecutionRepo;
 use pc_repos::skill::SkillRepo;
-use pc_repos::heartbeat::{CreateHeartbeat, HeartbeatRepo, HeartbeatRow};
+use pc_repos::heartbeat::{
+    CreateHeartbeat, HeartbeatRepo, HeartbeatRow, HeartbeatWatchdogDecisionRow, NewWatchdogDecision,
+    WatchdogDecision,
+};
 use pc_repos::issue::IssueRepo;
 
 use crate::{ApiError, ApiResult, AppState};
@@ -158,6 +161,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/instance/scheduler-heartbeats",
             get(list_instance_scheduler_heartbeats),
+        )
+        // ---- Round 35: agents/me + inbox + watchdog POST + workspace-ops log ----
+        .route("/api/agents/me", get(get_self_agent))
+        .route("/api/agents/me/inbox-lite", get(get_self_inbox_lite))
+        .route("/api/agents/me/inbox/mine", get(get_self_inbox_mine))
+        .route(
+            "/api/heartbeat-runs/:run_id/watchdog-decisions",
+            get(list_watchdog_decisions).post(post_watchdog_decision),
+        )
+        .route(
+            "/api/workspace-operations/:operation_id/log",
+            get(read_workspace_operation_log),
         )
 }
 
@@ -2000,6 +2015,302 @@ async fn list_heartbeat_events(
         )
         .await?;
     Ok(Json(serde_json::to_value(events)?))
+}
+
+// ============================================================================
+// Round 35: self-agent routes (mirrors Node `/agents/me`, `/agents/me/inbox-lite`,
+// `/agents/me/inbox/mine`).  Agent identity comes from the `x-paperclip-agent-id`
+// header — same convention as `pc_auth::resolve_auth`'s agent fallback.  When
+// the header is absent we return 401 so existing user-authenticated callers
+// keep working.
+fn extract_self_agent_id(headers: &axum::http::HeaderMap) -> Result<Uuid, ApiError> {
+    headers
+        .get("x-paperclip-agent-id")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| ApiError::Unauthorized("agent authentication required".into()))
+        .and_then(|raw| {
+            Uuid::parse_str(raw.trim())
+                .map_err(|_| ApiError::Unauthorized("invalid agent id header".into()))
+        })
+}
+
+async fn get_self_agent(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let agent_id = extract_self_agent_id(&headers)?;
+    let agent = AgentRepo::new(&state.db)
+        .get(agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    Ok(Json(serde_json::to_value(&agent).unwrap_or_default()))
+}
+
+async fn get_self_inbox_lite(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Vec<Value>>> {
+    let agent_id = extract_self_agent_id(&headers)?;
+    let agent = AgentRepo::new(&state.db)
+        .get(agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    let rows = sqlx::query_as::<_, pc_repos::issue::IssueRow>(
+        "SELECT id, company_id, project_id, project_workspace_id, goal_id, parent_id, \
+                title, description, status, work_mode, harness_kind, priority, \
+                assignee_agent_id, assignee_user_id, checkout_run_id, execution_run_id, \
+                execution_agent_name_key, execution_locked_at, created_by_agent_id, \
+                created_by_user_id, responsible_user_id, issue_number, identifier, \
+                origin_kind, origin_id, origin_run_id, origin_fingerprint, request_depth, \
+                billing_code, assignee_adapter_overrides, execution_policy, execution_state, \
+                monitor_next_check_at, monitor_wake_requested_at, monitor_last_triggered_at, \
+                monitor_attempt_count, monitor_notes, monitor_scheduled_by, \
+                monitor_check_now_requested_at, monitor_scheduled_retry_requested_at, \
+                hidden_at, archived_at, completed_at, started_at, heartbeat_at, due_at, \
+                estimate_minutes, sla_minutes, source_kind, source_ref, created_at, updated_at, \
+                payload, tags \
+         FROM issues WHERE company_id=$1 AND assignee_agent_id=$2 \
+         AND status IN ('todo','in_progress','blocked') AND hidden_at IS NULL \
+         ORDER BY updated_at DESC LIMIT 200",
+    )
+    .bind(agent.company_id)
+    .bind(agent_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "companyId": row.company_id,
+                "title": row.title,
+                "status": row.status,
+                "priority": row.priority,
+                "projectId": row.project_id,
+                "goalId": row.goal_id,
+                "parentId": row.parent_id,
+                "identifier": row.identifier,
+                "updatedAt": row.updated_at,
+                "assigneeAgentId": row.assignee_agent_id,
+            })
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+#[derive(Debug, Deserialize)]
+struct SelfInboxMineQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+async fn get_self_inbox_mine(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<SelfInboxMineQuery>,
+) -> ApiResult<Json<Vec<Value>>> {
+    let agent_id = extract_self_agent_id(&headers)?;
+    let agent = AgentRepo::new(&state.db)
+        .get(agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    // Mirrors Node: `touchedByUserId=userId` + `inboxArchivedByUserId=userId`.
+    // For agents the typical filter is assignee_agent_id + status.  When user_id
+    // is provided we additionally filter by responsible_user_id to support the
+    // user-curated inbox view.
+    let status = q.status.unwrap_or_else(|| "todo,in_progress,blocked".to_string());
+    let user_filter = q.user_id.clone().unwrap_or_default();
+    let rows = sqlx::query_as::<_, pc_repos::issue::IssueRow>(
+        "SELECT id, company_id, project_id, project_workspace_id, goal_id, parent_id, \
+                title, description, status, work_mode, harness_kind, priority, \
+                assignee_agent_id, assignee_user_id, checkout_run_id, execution_run_id, \
+                execution_agent_name_key, execution_locked_at, created_by_agent_id, \
+                created_by_user_id, responsible_user_id, issue_number, identifier, \
+                origin_kind, origin_id, origin_run_id, origin_fingerprint, request_depth, \
+                billing_code, assignee_adapter_overrides, execution_policy, execution_state, \
+                monitor_next_check_at, monitor_wake_requested_at, monitor_last_triggered_at, \
+                monitor_attempt_count, monitor_notes, monitor_scheduled_by, \
+                monitor_check_now_requested_at, monitor_scheduled_retry_requested_at, \
+                hidden_at, archived_at, completed_at, started_at, heartbeat_at, due_at, \
+                estimate_minutes, sla_minutes, source_kind, source_ref, created_at, updated_at, \
+                payload, tags \
+         FROM issues WHERE company_id=$1 AND assignee_agent_id=$2 \
+         AND status = ANY(string_to_array($3, ',')) AND hidden_at IS NULL \
+         AND ($4 = '' OR responsible_user_id = $4) \
+         ORDER BY updated_at DESC LIMIT 200",
+    )
+    .bind(agent.company_id)
+    .bind(agent_id)
+    .bind(status)
+    .bind(user_filter)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "companyId": row.company_id,
+                "title": row.title,
+                "status": row.status,
+                "priority": row.priority,
+                "assigneeAgentId": row.assignee_agent_id,
+                "updatedAt": row.updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+// ============================================================================
+// Round 35: POST watchdog decision (mirrors Node
+// `/heartbeat-runs/:runId/watchdog-decisions`).  Accepts the same body shape
+// and validates snoozedUntil when decision='snooze'.
+#[derive(Debug, Deserialize)]
+struct PostWatchdogDecisionBody {
+    decision: String,
+    #[serde(default)]
+    evaluation_issue_id: Option<Uuid>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    snoozed_until: Option<String>,
+}
+
+async fn post_watchdog_decision(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PostWatchdogDecisionBody>,
+) -> ApiResult<Json<Value>> {
+    let decision: WatchdogDecision = body
+        .decision
+        .parse()
+        .map_err(|_| ApiError::BadRequest("unsupported watchdog decision".into()))?;
+    let snoozed_until = match (&decision, body.snoozed_until.as_deref()) {
+        (WatchdogDecision::Snooze, Some(raw)) => {
+            let parsed = chrono::DateTime::parse_from_rfc3339(raw)
+                .map_err(|_| ApiError::BadRequest("snoozedUntil must be an ISO datetime".into()))?
+                .with_timezone(&chrono::Utc);
+            if parsed <= chrono::Utc::now() {
+                return Err(ApiError::BadRequest(
+                    "snoozedUntil must be a future ISO datetime".into(),
+                ));
+            }
+            Some(Timestamp::from_dt(parsed))
+        }
+        (WatchdogDecision::Snooze, None) => {
+            return Err(ApiError::BadRequest(
+                "snooze decision requires snoozedUntil".into(),
+            ));
+        }
+        _ => None,
+    };
+    let run = HeartbeatRepo::new(&state.db)
+        .get(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("heartbeat run {run_id}")))?;
+    let reason = body
+        .reason
+        .as_deref()
+        .map(|s| s.chars().take(4000).collect::<String>());
+    let created_by_agent_id = extract_self_agent_id(&headers).ok();
+    let row: HeartbeatWatchdogDecisionRow = HeartbeatRepo::new(&state.db)
+        .record_watchdog_decision(NewWatchdogDecision {
+            company_id: run.company_id,
+            run_id,
+            evaluation_issue_id: body.evaluation_issue_id,
+            decision,
+            snoozed_until,
+            reason,
+            created_by_agent_id,
+            created_by_user_id: None,
+            created_by_run_id: None,
+        })
+        .await?;
+    Ok(Json(serde_json::to_value(&row).unwrap_or_default()))
+}
+
+// ============================================================================
+// Round 35: GET workspace-operation log.  Mirrors Node
+// `/workspace-operations/:operationId/log`.  We don't have a file-backed
+// log_store in this build, so we synthesize the same response shape by
+// joining heartbeat_run_events for the operation's heartbeat_run_id (when
+// present) and falling back to stdout_excerpt/stderr_excerpt otherwise.
+#[derive(Debug, Deserialize)]
+struct WorkspaceOperationLogQuery {
+    #[serde(default)]
+    offset: Option<i32>,
+    #[serde(default)]
+    limit_bytes: Option<usize>,
+}
+
+async fn read_workspace_operation_log(
+    State(state): State<AppState>,
+    Path(operation_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<WorkspaceOperationLogQuery>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Option<Uuid>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT company_id, heartbeat_run_id, stdout_excerpt, stderr_excerpt, log_ref \
+             FROM workspace_operations WHERE id=$1",
+        )
+        .bind(operation_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let (_company_id, run_id, stdout, stderr, log_ref) = row
+        .ok_or_else(|| ApiError::NotFound(format!("workspace operation {operation_id}")))?;
+    let limit_bytes = q.limit_bytes.unwrap_or(64 * 1024).clamp(1024, 1024 * 1024);
+    let after_seq = q.offset.unwrap_or(0).max(0);
+    let mut buffer = String::new();
+    let mut bytes = 0usize;
+    let mut next_seq = after_seq;
+    let mut truncated = false;
+    if let Some(run_id) = run_id {
+        let events = HeartbeatRepo::new(&state.db)
+            .list_events_for_company(_company_id, run_id, after_seq, 1_000)
+            .await?;
+        for event in events
+            .iter()
+            .filter(|event| matches!(event.stream.as_deref(), Some("log") | Some("stdout") | Some("stderr")))
+        {
+            let line = event.message.clone().unwrap_or_default();
+            let projected = bytes + line.len() + 1;
+            if projected > limit_bytes {
+                truncated = true;
+                break;
+            }
+            buffer.push_str(&line);
+            buffer.push('\n');
+            bytes = projected;
+            next_seq = event.seq;
+        }
+    }
+    if buffer.is_empty() {
+        for chunk in [stdout.as_deref(), stderr.as_deref()] {
+            if let Some(chunk) = chunk {
+                let projected = bytes + chunk.len() + 1;
+                if projected > limit_bytes {
+                    truncated = true;
+                    break;
+                }
+                buffer.push_str(chunk);
+                buffer.push('\n');
+                bytes = projected;
+            }
+        }
+    }
+    Ok(Json(json!({
+        "operationId": operation_id,
+        "content": buffer,
+        "offset": after_seq,
+        "nextOffset": next_seq,
+        "truncated": truncated,
+        "limitBytes": limit_bytes,
+        "logRef": log_ref,
+    })))
 }
 
 #[cfg(test)]

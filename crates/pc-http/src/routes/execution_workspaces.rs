@@ -17,8 +17,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use pc_repos::execution::{NewLease,
     ActionKind, ActionStatus, ExecutionRepo, RuntimeLifecycle, RuntimeServiceRow, WorkspaceRow,
@@ -64,6 +65,19 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/execution-workspaces/:id/action-log",
             get(list_action_log),
+        )
+        // ===== Round 32: workspace validation + git worktree =====
+        .route(
+            "/api/execution-workspaces/:id/validate",
+            post(validate_workspace_route),
+        )
+        .route(
+            "/api/execution-workspaces/:id/worktree",
+            post(create_worktree_route),
+        )
+        .route(
+            "/api/execution-workspaces/:id/worktree/cleanup",
+            post(cleanup_worktree_route),
         )
         .route(
             "/api/execution-workspaces/:id/lease",
@@ -622,4 +636,222 @@ fn status_from_str(s: &str) -> Option<WorkspaceStatus> {
 #[allow(dead_code)]
 fn action_status_from_str(s: &str) -> Option<ActionStatus> {
     ActionStatus::parse(s)
+}
+
+
+// ============ Round 32: workspace validation + git worktree ============
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ValidateWorkspaceBody {
+    #[serde(default)]
+    fetch_remote: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceValidationReport {
+    workspace_id: Uuid,
+    company_id: Uuid,
+    worktree_path: Option<String>,
+    valid: bool,
+    repo_root: Option<String>,
+    branch: Option<String>,
+    cleanliness: &'static str,
+    dirty_files: Vec<String>,
+    error: Option<String>,
+    checked_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Run `git <args>` in `cwd` and return Ok(stdout) / Err(stderr).
+async fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(args).current_dir(cwd);
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.env("GIT_OPTIONAL_LOCKS", "0");
+    let out = cmd.output().await.map_err(|e| format!("spawn git failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        return Err(stderr.trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// POST /api/execution-workspaces/:id/validate — git validate
+async fn validate_workspace_route(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ValidateWorkspaceBody>,
+) -> ApiResult<Json<WorkspaceValidationReport>> {
+    let ws: Option<(Uuid, Uuid, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT company_id, project_id, provider_ref, cwd FROM execution_workspaces WHERE id = $1",
+    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let (company_id, _project_id, provider_ref, cwd) = ws
+        .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    let worktree_path = provider_ref.or(cwd);
+    let mut report = WorkspaceValidationReport {
+        workspace_id: id,
+        company_id,
+        worktree_path: worktree_path.clone(),
+        valid: false,
+        repo_root: None,
+        branch: None,
+        cleanliness: "unknown",
+        dirty_files: Vec::new(),
+        error: None,
+        checked_at: chrono::Utc::now(),
+    };
+    let path = match worktree_path.as_deref() {
+        Some(p) if !p.is_empty() => p,
+        _ => {
+            report.error = Some("workspace has no provider_ref or cwd".into());
+            return Ok(Json(report));
+        }
+    };
+    if !tokio::fs::metadata(path).await.is_ok() {
+        report.error = Some(format!("path does not exist: {path}"));
+        return Ok(Json(report));
+    }
+    // git rev-parse --show-toplevel
+    match run_git(path, &["rev-parse", "--show-toplevel"]).await {
+        Ok(root) => report.repo_root = Some(root),
+        Err(e) => { report.error = Some(format!("rev-parse: {e}")); return Ok(Json(report)); }
+    }
+    // git symbolic-ref --quiet --short HEAD (branch)
+    match run_git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).await {
+        Ok(b) if !b.is_empty() => report.branch = Some(b),
+        _ => {}
+    }
+    // git status --porcelain --untracked-files=all
+    match run_git(path, &["status", "--porcelain", "--untracked-files=all"]).await {
+        Ok(out) => {
+            let files: Vec<String> = out.lines().filter(|l| !l.trim().is_empty()).map(|s| s.to_string()).collect();
+            report.cleanliness = if files.is_empty() { "clean" } else { "dirty" };
+            report.dirty_files = files;
+        }
+        Err(e) => { report.error = Some(format!("status: {e}")); return Ok(Json(report)); }
+    }
+    report.valid = report.error.is_none();
+    // optional fetch
+    if body.fetch_remote.unwrap_or(false) {
+        let _ = run_git(path, &["fetch", "--all", "--prune"]).await;
+    }
+    // touch last_used_at
+    sqlx::query("UPDATE execution_workspaces SET last_used_at = now(), updated_at = now() WHERE id = $1")
+        .bind(id).execute(state.db.pool()).await?;
+    Ok(Json(report))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CreateWorktreeBody {
+    branch: String,
+    #[serde(default)]
+    base_ref: Option<String>,
+    #[serde(default)]
+    worktree_path: Option<String>,
+    #[serde(default)]
+    fetch_remote: Option<bool>,
+}
+
+/// POST /api/execution-workspaces/:id/worktree — git worktree add
+async fn create_worktree_route(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreateWorktreeBody>,
+) -> ApiResult<Json<Value>> {
+    if body.branch.trim().is_empty() {
+        return Err(ApiError::BadRequest("branch required".into()));
+    }
+    let ws: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT company_id, cwd, provider_ref FROM execution_workspaces WHERE id = $1",
+    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let (company_id, cwd, provider_ref) = ws
+        .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    let main_repo = cwd.ok_or_else(||
+        ApiError::BadRequest("workspace has no cwd (main repo path); cannot create worktree".into())
+    )?;
+    let worktree_path = body.worktree_path.clone().unwrap_or_else(|| {
+        format!("{}/.worktrees/{}", main_repo.trim_end_matches('/'), body.branch)
+    });
+    // optional fetch
+    if body.fetch_remote.unwrap_or(false) {
+        let _ = run_git(&main_repo, &["fetch", "--all", "--prune"]).await;
+    }
+    // git worktree add [-B <branch> [<base>]] <path>
+    let mut args: Vec<String> = vec!["worktree".into(), "add".into()];
+    if let Some(base) = body.base_ref.as_deref() {
+        args.push("-B".into());
+        args.push(body.branch.clone());
+        args.push(base.into());
+    } else {
+        args.push("-b".into());
+        args.push(body.branch.clone());
+    }
+    args.push(worktree_path.clone());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git(&main_repo, &arg_refs).await.map_err(|e|
+        ApiError::Conflict(format!("git worktree add failed: {e}"))
+    )?;
+    // Persist new branch + provider_ref on the workspace
+    sqlx::query(
+        "UPDATE execution_workspaces
+         SET branch_name = $1, provider_ref = $2, last_used_at = now(), updated_at = now()
+         WHERE id = $3",
+    ).bind(&body.branch).bind(&worktree_path).bind(id)
+    .execute(state.db.pool()).await?;
+    Ok(Json(json!({
+        "created": true,
+        "workspaceId": id,
+        "companyId": company_id,
+        "branch": body.branch,
+        "worktreePath": worktree_path,
+        "mainRepo": main_repo,
+        "previousProviderRef": provider_ref,
+    })))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CleanupWorktreeBody {
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+/// POST /api/execution-workspaces/:id/worktree/cleanup — git worktree remove
+async fn cleanup_worktree_route(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CleanupWorktreeBody>,
+) -> ApiResult<Json<Value>> {
+    let ws: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT company_id, cwd, provider_ref FROM execution_workspaces WHERE id = $1",
+    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let (company_id, cwd, provider_ref) = ws
+        .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    let worktree_path = provider_ref.clone().ok_or_else(||
+        ApiError::BadRequest("workspace has no provider_ref; nothing to clean up".into())
+    )?;
+    let main_repo = cwd.clone().unwrap_or_else(|| worktree_path.clone());
+    let force_flag = body.force.unwrap_or(false);
+    let mut args: Vec<String> = vec!["worktree".into(), "remove".into()];
+    if force_flag { args.push("--force".into()); }
+    args.push(worktree_path.clone());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let removed = run_git(&main_repo, &arg_refs).await.is_ok();
+    if removed {
+        sqlx::query(
+            "UPDATE execution_workspaces
+             SET provider_ref = NULL, cleanup_reason = COALESCE(cleanup_reason, 'worktree_removed'),
+                 last_used_at = now(), updated_at = now()
+             WHERE id = $1",
+        ).bind(id).execute(state.db.pool()).await?;
+    }
+    Ok(Json(json!({
+        "removed": removed,
+        "workspaceId": id,
+        "companyId": company_id,
+        "worktreePath": worktree_path,
+        "forced": force_flag,
+    })))
 }

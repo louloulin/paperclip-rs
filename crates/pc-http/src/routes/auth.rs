@@ -17,28 +17,47 @@ use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        // ===== Better-Auth 风格 wire 端点 (Round 29) =====
         .route("/api/auth/get-session", get(get_session))
-        .route("/api/auth/sign-in", post(sign_in))
+        .route("/api/auth/sign-in/email", post(sign_in_email))
+        .route("/api/auth/sign-up/email", post(sign_up_email))
         .route("/api/auth/sign-out", post(sign_out))
+        .route("/api/auth/refresh", post(refresh_session))
+        .route("/api/auth/profile", get(get_profile).patch(patch_profile))
+        // ===== Legacy 简化端点（保留向后兼容） =====
+        .route("/api/auth/sign-in", post(sign_in))
         .route("/api/auth/issue-key", post(issue_key))
         .route("/api/auth/revoke-key", post(revoke_key))
-        .route("/api/auth/profile", get(get_profile).patch(patch_profile))
 }
 
 #[derive(Debug, Serialize)]
 #[allow(dead_code)]
-struct SessionInfo {
+struct SessionEnvelope {
+    session: SessionInner,
+    user: SessionUser,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct SessionInner {
+    id: String,
     user_id: String,
-    name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct SessionUser {
+    id: String,
     email: String,
+    name: String,
+    image: Option<String>,
     email_verified: bool,
-    method: &'static str,
 }
 
 async fn get_session(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> ApiResult<Json<SessionInfo>> {
+) -> ApiResult<Json<SessionEnvelope>> {
     let token = extract_token(&headers)
         .ok_or_else(|| ApiError::Unauthorized("missing credentials".into()))?;
     // Try API key first, then session
@@ -55,18 +74,25 @@ async fn get_session(
     } else {
         return Err(ApiError::Unauthorized("invalid credentials".into()));
     };
-    let row: Option<(String, Option<String>, bool)> =
-        sqlx::query_as("SELECT id, name, email_verified FROM \"user\" WHERE id = $1")
+    let row: Option<(String, String, Option<String>, Option<String>, bool)> =
+        sqlx::query_as("SELECT id, email, name, image, email_verified FROM \"user\" WHERE id = $1")
             .bind(&user_id)
             .fetch_optional(state.db.pool())
             .await?;
-    let (uid, name, ev) = row.ok_or_else(|| ApiError::Unauthorized("user not found".into()))?;
-    Ok(Json(SessionInfo {
-        user_id: uid,
-        name: name.unwrap_or_default(),
-        email: String::new(),
-        email_verified: ev,
-        method,
+    let (uid, email, name, image, ev) =
+        row.ok_or_else(|| ApiError::Unauthorized("user not found".into()))?;
+    Ok(Json(SessionEnvelope {
+        session: SessionInner {
+            id: format!("paperclip:{}:{}", method, uid),
+            user_id: uid.clone(),
+        },
+        user: SessionUser {
+            id: uid,
+            email,
+            name: name.unwrap_or_default(),
+            image,
+            email_verified: ev,
+        },
     }))
 }
 
@@ -238,14 +264,22 @@ async fn ensure_user(
     Ok(())
 }
 
-async fn sign_out(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<StatusCode> {
+async fn sign_out(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<serde_json::Value>> {
+    let mut deleted = 0;
     if let Some(token) = extract_token(&headers) {
-        sqlx::query("DELETE FROM session WHERE token = $1")
+        let r = sqlx::query("DELETE FROM session WHERE token = $1")
             .bind(&token)
             .execute(state.db.pool())
             .await?;
+        deleted = r.rows_affected();
     }
-    Ok(StatusCode::NO_CONTENT)
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("auth.signed_out", "user", Uuid::nil()).with_actor("anonymous"),
+    );
+    Ok(Json(json!({"success": true, "deletedSessions": deleted})))
 }
 
 #[derive(Debug, Deserialize)]
@@ -430,5 +464,299 @@ async fn patch_profile(
         email,
         name,
         image,
+    }))
+}
+
+
+// ============ Round 29: Better-Auth wire endpoints ============
+
+#[derive(Debug, Deserialize)]
+struct SignInEmailBody {
+    email: String,
+    password: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    remember_me: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthSuccessResponse {
+    #[serde(rename = "success")]
+    success: bool,
+    #[serde(rename = "user")]
+    user: SessionUserOut,
+    #[serde(rename = "redirect")]
+    redirect: bool,
+    #[serde(rename = "token")]
+    token: String,
+    #[serde(rename = "expiresAt")]
+    expires_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionUserOut {
+    id: String,
+    email: String,
+    name: String,
+    #[serde(rename = "emailVerified")]
+    email_verified: bool,
+    #[serde(rename = "image")]
+    image: Option<String>,
+}
+
+async fn sign_in_email(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SignInEmailBody>,
+) -> ApiResult<Json<AuthSuccessResponse>> {
+    let email = body.email.trim().to_lowercase();
+    let password = body.password;
+    if email.is_empty() || password.is_empty() {
+        return Err(ApiError::BadRequest("email and password required".into()));
+    }
+    // 1) find user by email
+    let user_row: Option<(String, String, Option<String>, Option<String>, bool)> = sqlx::query_as(
+        "SELECT id, email, name, image, email_verified FROM \"user\" WHERE email = $1 LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (user_id, user_email, user_name, user_image, ev) = user_row
+        .ok_or_else(|| ApiError::Unauthorized("invalid email or password".into()))?;
+    // 2) find credential account with password
+    let acct: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT password FROM account WHERE user_id = $1 AND provider_id = 'credential' LIMIT 1",
+    )
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let stored_hash = acct
+        .ok_or_else(|| ApiError::Unauthorized("no password set for this account".into()))?
+        .0
+        .ok_or_else(|| ApiError::Unauthorized("no password set for this account".into()))?;
+    if !pc_auth::verify_password(&password, &stored_hash) {
+        return Err(ApiError::Unauthorized("invalid email or password".into()));
+    }
+    // 3) rotate: delete old session(s) for this user (if any from cookie), then issue new
+    if let Some(t) = extract_token(&headers) {
+        sqlx::query("DELETE FROM session WHERE token = $1")
+            .bind(&t)
+            .execute(state.db.pool())
+            .await
+            .ok();
+    }
+    let session_token = pc_auth::generate_session_token();
+    let session_id: String = format!("s_{}", uuid::Uuid::new_v4().simple());
+    let expires_at = Utc::now() + Duration::days(30);
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string());
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    sqlx::query(
+        "INSERT INTO session (id, expires_at, token, created_at, updated_at, ip_address, user_agent, user_id)
+         VALUES ($1, $2, $3, now(), now(), $4, $5, $6)",
+    )
+    .bind(&session_id)
+    .bind(expires_at)
+    .bind(&session_token)
+    .bind(ip)
+    .bind(ua)
+    .bind(&user_id)
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("auth.signed_in", "user", Uuid::nil()).with_actor(&user_id),
+    );
+    Ok(Json(AuthSuccessResponse {
+        success: true,
+        user: SessionUserOut {
+            id: user_id.clone(),
+            email: user_email,
+            name: user_name.unwrap_or_default(),
+            email_verified: ev,
+            image: user_image,
+        },
+        redirect: false,
+        token: session_token,
+        expires_at,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct SignUpEmailBody {
+    name: String,
+    email: String,
+    password: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SignUpResponse {
+    success: bool,
+    user: SessionUserOut,
+    token: String,
+    expires_at: chrono::DateTime<Utc>,
+}
+
+async fn sign_up_email(
+    State(state): State<AppState>,
+    Json(body): Json<SignUpEmailBody>,
+) -> ApiResult<Json<SignUpResponse>> {
+    let email = body.email.trim().to_lowercase();
+    let name = body.name.trim();
+    if email.is_empty() || name.is_empty() || body.password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "name, email, password (>=8 chars) required".into(),
+        ));
+    }
+    // 1) check existing email
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM \"user\" WHERE email = $1 LIMIT 1")
+        .bind(&email)
+        .fetch_optional(state.db.pool())
+        .await?;
+    if exists.is_some() {
+        return Err(ApiError::Conflict("email already registered".into()));
+    }
+    // 2) create user
+    let user_id = format!("u_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO \"user\" (id, name, email, email_verified, created_at, updated_at)
+         VALUES ($1, $2, $3, false, now(), now())",
+    )
+    .bind(&user_id)
+    .bind(name)
+    .bind(&email)
+    .execute(state.db.pool())
+    .await?;
+    // 3) create credential account with argon2 hash
+    let phc = pc_auth::hash_password(&body.password)
+        .map_err(|e| ApiError::Internal(format!("hash failed: {e}")))?;
+    let account_id = format!("acc_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO account (id, account_id, provider_id, user_id, password, created_at, updated_at)
+         VALUES ($1, $2, 'credential', $3, $4, now(), now())",
+    )
+    .bind(&account_id)
+    .bind(&user_id)
+    .bind(&user_id)
+    .bind(&phc)
+    .execute(state.db.pool())
+    .await?;
+    // 4) issue session
+    let session_token = pc_auth::generate_session_token();
+    let session_id = format!("s_{}", uuid::Uuid::new_v4().simple());
+    let expires_at = Utc::now() + Duration::days(30);
+    sqlx::query(
+        "INSERT INTO session (id, expires_at, token, created_at, updated_at, user_id)
+         VALUES ($1, $2, $3, now(), now(), $4)",
+    )
+    .bind(&session_id)
+    .bind(expires_at)
+    .bind(&session_token)
+    .bind(&user_id)
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("auth.signed_up", "user", Uuid::nil()).with_actor(&user_id),
+    );
+    Ok(Json(SignUpResponse {
+        success: true,
+        user: SessionUserOut {
+            id: user_id.clone(),
+            email: email.clone(),
+            name: name.to_string(),
+            email_verified: false,
+            image: None,
+        },
+        token: session_token,
+        expires_at,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct RefreshBody {
+    #[serde(default)]
+    token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RefreshResponse {
+    success: bool,
+    token: String,
+    expires_at: chrono::DateTime<Utc>,
+}
+
+async fn refresh_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RefreshBody>,
+) -> ApiResult<Json<RefreshResponse>> {
+    // Prefer explicit token from body, fall back to Authorization/Cookie
+    let old_token = body
+        .token
+        .clone()
+        .or_else(|| extract_token(&headers))
+        .ok_or_else(|| ApiError::Unauthorized("no token to refresh".into()))?;
+    // 1) find old session
+    let row: Option<(String, chrono::DateTime<Utc>)> = sqlx::query_as(
+        "SELECT user_id, expires_at FROM session WHERE token = $1",
+    )
+    .bind(&old_token)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (user_id, _old_exp) = row.ok_or_else(|| ApiError::Unauthorized("invalid token".into()))?;
+    // 2) check user still active (email_verified not required for refresh)
+    let user_exists: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM \"user\" WHERE id = $1 LIMIT 1",
+    )
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    if user_exists.is_none() {
+        sqlx::query("DELETE FROM session WHERE token = $1")
+            .bind(&old_token)
+            .execute(state.db.pool())
+            .await
+            .ok();
+        return Err(ApiError::Unauthorized("user no longer exists".into()));
+    }
+    // 3) rotate: delete old, issue new
+    sqlx::query("DELETE FROM session WHERE token = $1")
+        .bind(&old_token)
+        .execute(state.db.pool())
+        .await?;
+    let new_token = pc_auth::generate_session_token();
+    let session_id = format!("s_{}", uuid::Uuid::new_v4().simple());
+    let expires_at = Utc::now() + Duration::days(30);
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string());
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    sqlx::query(
+        "INSERT INTO session (id, expires_at, token, created_at, updated_at, ip_address, user_agent, user_id)
+         VALUES ($1, $2, $3, now(), now(), $4, $5, $6)",
+    )
+    .bind(&session_id)
+    .bind(expires_at)
+    .bind(&new_token)
+    .bind(ip)
+    .bind(ua)
+    .bind(&user_id)
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("auth.session_rotated", "user", Uuid::nil()).with_actor(&user_id),
+    );
+    Ok(Json(RefreshResponse {
+        success: true,
+        token: new_token,
+        expires_at,
     }))
 }

@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::case::CaseRepo;
+use pc_repos::case::{CaseRepo, CaseRow};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -86,6 +86,16 @@ pub fn router() -> Router<AppState> {
             "/api/issues/:issue_id/cases",
             get(list_issue_cases),
         )
+        // ---- Round 36: case sub-resources (children / tree / issue-links / rollup / review) ----
+        .route("/api/cases/:case_id/children", get(list_case_children))
+        .route("/api/cases/:case_id/children/tree", get(list_case_children_tree))
+        .route("/api/cases/:case_id/issue-links", get(list_case_issue_links_route))
+        .route(
+            "/api/cases/:case_id/issue-links/:link_id",
+            delete(delete_case_issue_link),
+        )
+        .route("/api/cases/:case_id/rollup", get(get_case_rollup))
+        .route("/api/cases/:case_id/review", post(review_case_route))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1174,4 +1184,340 @@ async fn list_issue_cases(
         "cases": items,
         "items": items,
     })))
+}
+
+
+// ============================================================================
+// Round 36: case children / tree / issue-links list+delete / rollup / review
+// ============================================================================
+
+/// Direct children cases (one-level deep).  Mirrors Node
+/// `/cases/:caseId/children` — returns `parentCaseId = :case_id` rows.
+async fn list_case_children(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    #[allow(unused)] let rows: Vec<CaseRow> = sqlx::query_as("SELECT id, company_id, project_id, case_number, identifier, case_type, key, \
+                title, summary, status, fields, parent_case_id, created_by_agent_id, \
+                created_by_user_id, completed_at, created_at, updated_at \
+         FROM cases WHERE company_id=$1 AND parent_case_id=$2 \
+         ORDER BY created_at ASC LIMIT 200")
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "caseId": row.id,
+                "companyId": row.company_id,
+                "parentCaseId": row.parent_case_id,
+                "caseNumber": row.case_number,
+                "identifier": row.identifier,
+                "caseType": row.case_type,
+                "title": row.title,
+                "summary": row.summary,
+                "status": row.status,
+                "createdAt": row.created_at,
+                "updatedAt": row.updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "caseId": case_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// Recursive children tree.  Materializes full subtree by walking
+/// `parent_case_id`; safe up to ~5k cases per company in practice.
+async fn list_case_children_tree(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let root = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let all: Vec<CaseRow> = sqlx::query_as("SELECT id, company_id, project_id, case_number, identifier, case_type, key, \
+                title, summary, status, fields, parent_case_id, created_by_agent_id, \
+                created_by_user_id, completed_at, created_at, updated_at \
+         FROM cases WHERE company_id=$1 ORDER BY parent_case_id NULLS FIRST, created_at ASC LIMIT 5000")
+    .bind(root.company_id)
+    .fetch_all(state.db.pool())
+    .await?;
+
+    use std::collections::HashMap;
+    let mut children_by_parent: HashMap<Option<Uuid>, Vec<CaseRow>> = HashMap::new();
+    for row in all {
+        children_by_parent
+            .entry(row.parent_case_id)
+            .or_default()
+            .push(row);
+    }
+
+    fn build_tree(
+        node: &CaseRow,
+        children_by_parent: &HashMap<Option<Uuid>, Vec<CaseRow>>,
+    ) -> Value {
+        let kids = children_by_parent
+            .get(&Some(node.id))
+            .map(|rows| {
+                rows.iter()
+                    .map(|kid| build_tree(kid, children_by_parent))
+                    .collect::<Vec<Value>>()
+            })
+            .unwrap_or_default();
+        json!({
+            "id": node.id,
+            "caseNumber": node.case_number,
+            "identifier": node.identifier,
+            "title": node.title,
+            "status": node.status,
+            "caseType": node.case_type,
+            "children": kids,
+            "childCount": kids.len(),
+        })
+    }
+
+    let tree = build_tree(&root, &children_by_parent);
+    Ok(Json(json!({
+        "caseId": case_id,
+        "tree": tree,
+    })))
+}
+
+/// List issue links with joined issue details.  Mirrors Node
+/// `/cases/:caseId/issue-links` — INNER JOIN to `issues`.
+async fn list_case_issue_links_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let rows: Vec<(Uuid, Uuid, Uuid, String, Option<Uuid>, Timestamp, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT cil.id, cil.case_id, cil.issue_id, cil.role, cil.created_by_run_id, \
+                cil.created_at, i.title, i.status \
+         FROM case_issue_links cil \
+         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
+         WHERE cil.company_id=$1 AND cil.case_id=$2 \
+         ORDER BY cil.created_at ASC",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(link_id, case_id, issue_id, role, created_by_run_id, created_at, title, status)| {
+            json!({
+                "id": link_id,
+                "caseId": case_id,
+                "issueId": issue_id,
+                "role": role,
+                "createdByRunId": created_by_run_id,
+                "createdAt": created_at,
+                "issueTitle": title,
+                "issueStatus": status,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "caseId": case_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// Remove a single issue link by its link id.  Mirrors Node
+/// `/cases/:caseId/issue-links/:linkId` DELETE.
+async fn delete_case_issue_link(
+    State(state): State<AppState>,
+    Path((case_id, link_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    // Fetch link to know which issue_id to unlink (and emit event).
+    let link: Option<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT case_id, issue_id FROM case_issue_links WHERE id=$1 AND company_id=$2 AND case_id=$3",
+    )
+    .bind(link_id)
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((_, issue_id)) = link else {
+        return Err(ApiError::NotFound(format!("issue link {link_id}")));
+    };
+    let affected = sqlx::query(
+        "DELETE FROM case_issue_links WHERE id=$1 AND company_id=$2",
+    )
+    .bind(link_id)
+    .bind(case.company_id)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("issue link {link_id}")));
+    }
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'issue_unlinked', 'user', jsonb_build_object('issueId',$3::text))",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(issue_id.to_string())
+    .execute(state.db.pool())
+    .await;
+    state.realtime.publish(
+        LiveEvent::new("case.issue_unlinked", "case_issue_link", link_id)
+            .with_company(case.company_id)
+            .with_data(json!({"caseId": case_id, "issueId": issue_id})),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Rollup aggregate — counts children + status breakdown.  Mirrors Node
+/// `/cases/:caseId/rollup`.
+async fn get_case_rollup(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let child_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let descendant_count: i64 = sqlx::query_scalar(
+        "WITH RECURSIVE descendants AS ( \
+            SELECT id, parent_case_id FROM cases WHERE company_id=$1 AND parent_case_id=$2 \
+            UNION ALL \
+            SELECT c.id, c.parent_case_id FROM cases c \
+              INNER JOIN descendants d ON c.parent_case_id = d.id \
+              WHERE c.company_id=$1 \
+          ) SELECT count(*)::bigint FROM descendants",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let status_breakdown: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT status, count(*)::bigint FROM cases \
+         WHERE company_id=$1 AND (id=$2 OR parent_case_id=$2) \
+         GROUP BY status",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let issue_link_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM case_issue_links WHERE company_id=$1 AND case_id=$2",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let open_issue_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM case_issue_links cil \
+         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
+         WHERE cil.company_id=$1 AND cil.case_id=$2 \
+         AND i.status NOT IN ('done','cancelled','closed')",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let by_status: serde_json::Map<String, serde_json::Value> = status_breakdown
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::json!(v)))
+        .collect();
+    Ok(Json(json!({
+        "caseId": case_id,
+        "companyId": case.company_id,
+        "childCount": child_count,
+        "descendantCount": descendant_count,
+        "issueLinkCount": issue_link_count,
+        "openIssueCount": open_issue_count,
+        "statusBreakdown": by_status,
+        "status": case.status,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewCaseBody {
+    /// Verdict: "approved" | "rejected" | "request_changes"
+    decision: String,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    expected_version: Option<i32>,
+}
+
+/// Case review action — transitions case status and records an event.  Mirrors
+/// Node `/cases/:caseId/review`.
+async fn review_case_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(body): Json<ReviewCaseBody>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let new_status = match body.decision.as_str() {
+        "approved" => "approved",
+        "rejected" | "request_changes" => "in_progress",
+        "in_review" => "in_review",
+        other => {
+            return Err(ApiError::BadRequest(format!(
+                "unsupported review decision: {other}"
+            )));
+        }
+    };
+    let updated = CaseRepo::new(&state.db)
+        .update(case_id, None, None, Some(new_status))
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let payload = json!({
+        "decision": body.decision,
+        "note": body.note,
+        "expectedVersion": body.expected_version,
+    });
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'status_changed', 'user', $3::jsonb)",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(payload)
+    .execute(state.db.pool())
+    .await;
+    state.realtime.publish(
+        LiveEvent::new("case.reviewed", "case", case_id)
+            .with_company(case.company_id)
+            .with_data(json!({
+                "decision": body.decision,
+                "newStatus": new_status,
+                "previousStatus": case.status,
+            })),
+    );
+    Ok(Json(serde_json::to_value(updated).unwrap_or_default()))
 }

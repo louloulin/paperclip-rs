@@ -124,7 +124,27 @@ pub fn router() -> Router<AppState> {
         .route("/api/issues/:id/cases", get(list_issue_cases))
         .route("/api/issues/:id/runs", get(list_issue_runs))
         .route("/api/issues/:id/comments/:comment_id", get(get_one_comment))
+        .route(
+            "/api/issues/:id/tree-holds",
+            get(list_tree_holds).post(create_tree_hold),
+        )
+        .route("/api/issues/:id/tree-holds/:hold_id", get(get_tree_hold))
         .route("/api/issues/:id/tree-holds/:hold_id/release", post(release_tree_hold))
+        .route(
+            "/api/issues/:id/tree-control/preview",
+            post(preview_tree_control),
+        )
+        // ===== Round 30: runs deep + diagnostics + monitor =====
+        .route("/api/issues/:id/runs/:run_id", get(get_issue_run))
+        .route("/api/issues/:id/runs/:run_id/cancel", post(cancel_issue_run))
+        .route("/api/issues/:id/runs/:run_id/restart", post(restart_issue_run))
+        .route("/api/issues/:id/diagnostics/blockers", get(diagnostics_blockers))
+        .route("/api/issues/:id/diagnostics/wakes", get(diagnostics_wakes))
+        .route("/api/issues/:id/diagnostics/subtree", get(diagnostics_subtree))
+        // monitor_check_now + scheduled_retry_now already exist from Round 18
+        .route("/api/issues/:id/diagnostics/blockers", get(diagnostics_blockers))
+        .route("/api/issues/:id/diagnostics/wakes", get(diagnostics_wakes))
+        .route("/api/issues/:id/diagnostics/subtree", get(diagnostics_subtree))
         .route("/api/issues/:id/documents/:key", put(upsert_issue_document).delete(remove_issue_document))
         .route("/api/issues/:id/documents/:key/annotations/:thread_id/comments", post(annotation_comment_route))
         .route("/api/issues/:id/documents/:key/revisions/:revision_id/restore", post(restore_doc_revision))
@@ -2546,14 +2566,142 @@ async fn list_issue_runs(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, issue_id, status, finished_at
-         FROM heartbeat_runs WHERE issue_id=$1 ORDER BY created_at DESC LIMIT 50",
+    // Round 30: heartbeat_runs 没有 issue_id 列 — 关系走 context_snapshot->>'issueId'
+    let rows: Vec<(Uuid, Uuid, String, String, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<String>)> = sqlx::query_as(
+        "SELECT id, agent_id, status, invocation_source, started_at, finished_at, created_at, error
+         FROM heartbeat_runs
+         WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)
+           AND context_snapshot ->> 'issueId' = $1::text
+         ORDER BY created_at DESC LIMIT 100",
     ).bind(id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(rid, iid, st, fin)| json!({
-        "id": rid, "issueId": iid, "status": st, "finishedAt": fin,
+    let items: Vec<Value> = rows.into_iter().map(|(rid, aid, st, src, started, finished, created, err)| json!({
+        "id": rid, "issueId": id, "agentId": aid, "status": st, "invocationSource": src,
+        "startedAt": started, "finishedAt": finished, "createdAt": created, "error": err,
     })).collect();
-    Ok(Json(json!({"items": items, "issueId": id})))
+    Ok(Json(json!({"items": items, "issueId": id, "count": items.len()})))
+}
+
+async fn get_issue_run(
+    State(state): State<AppState>,
+    Path((id, run_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, Uuid, String, String, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<String>, Value)> = sqlx::query_as(
+        "SELECT id, company_id, agent_id, status, invocation_source, started_at, finished_at, created_at, error, context_snapshot
+         FROM heartbeat_runs WHERE id = $1",
+    ).bind(run_id).fetch_optional(state.db.pool()).await?;
+    let (rid, cid, aid, st, src, started, finished, created, err, ctx) = row
+        .ok_or_else(|| ApiError::NotFound(format!("run {run_id}")))?;
+    // 验证 run 属于该 issue（通过 context_snapshot->>'issueId'）
+    let issue_in_ctx = ctx.get("issueId").and_then(|v| v.as_str());
+    if issue_in_ctx != Some(&id.to_string()) {
+        return Err(ApiError::NotFound(format!("run {run_id} not associated with issue {id}")));
+    }
+    Ok(Json(json!({
+        "id": rid, "companyId": cid, "agentId": aid, "issueId": id,
+        "status": st, "invocationSource": src,
+        "startedAt": started, "finishedAt": finished, "createdAt": created,
+        "error": err, "contextSnapshot": ctx,
+    })))
+}
+
+async fn cancel_issue_run(
+    State(state): State<AppState>,
+    Path((id, run_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    // Round 30: cancel = status='cancelled', finished_at=now()（幂等）
+    let r = sqlx::query(
+        "UPDATE heartbeat_runs
+         SET status = 'cancelled', finished_at = now(), updated_at = now()
+         WHERE id = $1
+           AND context_snapshot ->> 'issueId' = $2::text
+           AND status IN ('queued','running')",
+    ).bind(run_id).bind(id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!("run {run_id} not active")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("issue.run_cancelled", "heartbeat_run", run_id)
+            .with_company(state.db.pool().acquire().await.ok().map(|_| Uuid::nil()).unwrap_or(Uuid::nil()))
+            .with_data(json!({"issueId": id, "runId": run_id})),
+    );
+    Ok(Json(json!({"cancelled": true, "issueId": id, "runId": run_id})))
+}
+
+async fn restart_issue_run(
+    State(state): State<AppState>,
+    Path((id, run_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    // Round 30: restart = 复制原 run 的 context_snapshot 创建新 queued run，retry_of_run_id 指回原 run
+    let orig: Option<(Uuid, Value)> = sqlx::query_as(
+        "SELECT agent_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
+    ).bind(run_id).fetch_optional(state.db.pool()).await?;
+    let (agent_id, mut ctx) = orig.ok_or_else(|| ApiError::NotFound(format!("run {run_id}")))?;
+    let issue_in_ctx = ctx.get("issueId").and_then(|v| v.as_str());
+    if issue_in_ctx != Some(&id.to_string()) {
+        return Err(ApiError::NotFound(format!("run {run_id} not associated with issue {id}")));
+    }
+    if let Some(obj) = ctx.as_object_mut() {
+        obj.insert("retryOf".into(), json!(run_id.to_string()));
+        obj.insert("wakeReason".into(), json!("manual_restart"));
+    }
+    let company_id: Uuid = sqlx::query_scalar("SELECT company_id FROM issues WHERE id = $1")
+        .bind(id).fetch_one(state.db.pool()).await?;
+    let new_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot)
+         VALUES ($1, $2, $3, 'on_demand', 'queued', $4)",
+    ).bind(new_id).bind(company_id).bind(agent_id).bind(&ctx).execute(state.db.pool()).await?;
+    state.realtime.publish(
+        LiveEvent::new("issue.run_restarted", "heartbeat_run", new_id)
+            .with_company(company_id)
+            .with_data(json!({"issueId": id, "retryOfRunId": run_id, "newRunId": new_id})),
+    );
+    Ok(Json(json!({"restarted": true, "issueId": id, "originalRunId": run_id, "newRunId": new_id})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StartIssueRunBody {
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    wake_source: Option<String>,
+    #[serde(default)]
+    force_fresh_session: Option<bool>,
+}
+
+async fn start_issue_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<StartIssueRunBody>,
+) -> ApiResult<Json<Value>> {
+    // Round 30: 手动触发 heartbeat run — 需要 issue 有 assignee_agent_id
+    let issue_row: Option<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT company_id, project_id, assignee_agent_id FROM issues WHERE id = $1",
+    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let (company_id, _project_id, assignee_agent_id) = issue_row
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let agent_id = assignee_agent_id
+        .ok_or_else(|| ApiError::BadRequest("issue has no assignee_agent_id; cannot start run".into()))?;
+    let ctx = json!({
+        "issueId": id.to_string(),
+        "source": "manual_start",
+        "wakeReason": body.reason.unwrap_or_else(|| "manual_trigger".into()),
+        "wakeSource": body.wake_source.unwrap_or_else(|| "issue.api".into()),
+        "forceFreshSession": body.force_fresh_session.unwrap_or(false),
+    });
+    let run_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot)
+         VALUES ($1, $2, $3, 'on_demand', 'queued', $4)",
+    ).bind(run_id).bind(company_id).bind(agent_id).bind(&ctx).execute(state.db.pool()).await?;
+    state.realtime.publish(
+        LiveEvent::new("issue.run_started", "heartbeat_run", run_id)
+            .with_company(company_id)
+            .with_data(json!({"issueId": id, "runId": run_id, "agentId": agent_id})),
+    );
+    Ok(Json(json!({
+        "started": true, "issueId": id, "runId": run_id, "agentId": agent_id, "status": "queued",
+    })))
 }
 
 async fn get_one_comment(
@@ -2754,3 +2902,307 @@ async fn withdraw_interaction(
     ).bind(iid).execute(_state.db.pool()).await.ok();
     Ok(Json(json!({"withdrawn": true, "interactionId": iid})))
 }
+
+// ============== Round 27: issue tree-holds list/create/get + tree-control preview ==============
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListTreeHoldsQuery {
+    status: Option<String>,
+}
+
+async fn list_tree_holds(
+    State(state): State<AppState>,
+    Path((issue_id, q)): Path<(Uuid, ListTreeHoldsQuery)>,
+) -> ApiResult<Json<Value>> {
+    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
+        .bind(issue_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+    let status = q.status.as_deref().unwrap_or("active");
+    let rows: Vec<(Uuid, Uuid, String, String, Option<String>, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, root_issue_id, mode, status, reason, release_policy, created_at \
+         FROM issue_tree_holds WHERE root_issue_id = $1 AND status = $2 \
+         ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(issue_id)
+    .bind(status)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, root_issue_id, mode, status, reason, release_policy, created_at)| {
+            json!({
+                "id": id,
+                "companyId": company_id,
+                "rootIssueId": root_issue_id,
+                "mode": mode,
+                "status": status,
+                "reason": reason,
+                "releasePolicy": release_policy,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "issueId": issue_id,
+        "companyId": company_id,
+        "holds": items,
+        "items": items,
+    })))
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTreeHoldBody {
+    mode: String,
+    reason: Option<String>,
+    release_policy: Option<Value>,
+}
+
+async fn create_tree_hold(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<CreateTreeHoldBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.mode.trim().is_empty() {
+        return Err(ApiError::BadRequest("mode is required".into()));
+    }
+    if !matches!(body.mode.as_str(), "pause" | "stop" | "throttle" | "isolate") {
+        return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
+    }
+    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
+        .bind(issue_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO issue_tree_holds (company_id, root_issue_id, mode, status, reason, release_policy, created_by_actor_type, created_by_user_id) \
+         VALUES ($1, $2, $3, 'active', $4, COALESCE($5, '{}'::jsonb), 'user', $6) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(issue_id)
+    .bind(&body.mode)
+    .bind(body.reason.as_deref())
+    .bind(body.release_policy.clone().unwrap_or_else(|| json!({})))
+    .bind(&user_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("issue_tree_hold.created", "issue_tree_hold", id)
+            .with_company(company_id)
+            .with_data(json!({"rootIssueId": issue_id, "mode": body.mode})),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": id,
+            "companyId": company_id,
+            "rootIssueId": issue_id,
+            "mode": body.mode,
+            "status": "active",
+            "reason": body.reason,
+            "releasePolicy": body.release_policy.unwrap_or_else(|| json!({})),
+        })),
+    ))
+}
+
+async fn get_tree_hold(
+    State(state): State<AppState>,
+    Path((issue_id, hold_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(
+        Uuid, Uuid, String, String, Option<String>, Value, Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> = sqlx::query_as(
+        "SELECT id, root_issue_id, mode, status, reason, release_policy, released_at, created_at \
+         FROM issue_tree_holds WHERE id = $1 AND root_issue_id = $2",
+    )
+    .bind(hold_id)
+    .bind(issue_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (id, root_issue_id, mode, status, reason, release_policy, released_at, created_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("tree hold {hold_id}")))?;
+    Ok(Json(json!({
+        "id": id,
+        "rootIssueId": root_issue_id,
+        "mode": mode,
+        "status": status,
+        "reason": reason,
+        "releasePolicy": release_policy,
+        "releasedAt": released_at,
+        "createdAt": created_at,
+    })))
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TreeControlPreviewBody {
+    mode: String,
+    reason: Option<String>,
+    /// Optional: include sub-tree issue count estimate
+    include_estimate: Option<bool>,
+}
+
+async fn preview_tree_control(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+    Json(body): Json<TreeControlPreviewBody>,
+) -> ApiResult<Json<Value>> {
+    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
+        .bind(issue_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+    if !matches!(body.mode.as_str(), "pause" | "stop" | "throttle" | "isolate") {
+        return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
+    }
+    // Estimate: count active descendants (best-effort: just count active heartbeat_runs referencing this issue)
+    let mut affected_runs = 0i64;
+    if body.include_estimate.unwrap_or(true) {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*) FROM heartbeat_runs WHERE issue_id = $1 AND status IN ('pending','in_progress')",
+        )
+        .bind(issue_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten();
+        affected_runs = row.map(|(c,)| c).unwrap_or(0);
+    }
+    // Active hold check
+    let active_hold: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, mode FROM issue_tree_holds \
+         WHERE root_issue_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(issue_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let would_conflict = active_hold.is_some();
+    Ok(Json(json!({
+        "issueId": issue_id,
+        "companyId": company_id,
+        "mode": body.mode,
+        "reason": body.reason,
+        "affectedRuns": affected_runs,
+        "wouldConflict": would_conflict,
+        "activeHold": active_hold.map(|(id, mode)| json!({"id": id, "mode": mode})),
+        "preview": {
+            "canApply": !would_conflict,
+            "action": if would_conflict { "release_existing_then_apply" } else { "apply" },
+        },
+    })))
+}
+
+
+// ============ Round 30: runs deep / diagnostics / monitor ============
+
+async fn diagnostics_blockers(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Round 30: blocker = subtree child issues with status='blocked' or parent hidden
+    let rows: Vec<(Uuid, String, Option<String>, pc_core::Timestamp)> = sqlx::query_as(
+        "SELECT id, title, status, created_at FROM issues
+         WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)
+           AND (parent_id = $1 OR id = $1)
+           AND (status = 'blocked' OR hidden_at IS NOT NULL)
+           AND hidden_at IS NULL
+         ORDER BY created_at DESC LIMIT 100",
+    ).bind(id).fetch_all(state.db.pool()).await?;
+    let blockers: Vec<Value> = rows.into_iter().map(|(bid, title, st, ts)| json!({
+        "id": bid, "title": title, "status": st, "createdAt": ts,
+    })).collect();
+    let readiness = if blockers.is_empty() { "ready" } else { "blocked" };
+    Ok(Json(json!({
+        "issueId": id,
+        "blockers": blockers,
+        "readiness": readiness,
+        "count": blockers.len(),
+    })))
+}
+
+async fn diagnostics_wakes(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Round 30: wakes = 该 issue 的 assignee_agent 收到的 wakeup_requests
+    let agent_row: Option<(Option<Uuid>,)> = sqlx::query_as(
+        "SELECT assignee_agent_id FROM issues WHERE id = $1",
+    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let agent_id = match agent_row.and_then(|(a,)| a) {
+        Some(a) => a,
+        None => return Ok(Json(json!({"issueId": id, "wakeRequests": [], "activityRecords": [], "wakeRequestCount": 0, "activityRecordCount": 0}))),
+    };
+    let wakes: Vec<(Uuid, String, Option<String>, String, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
+        "SELECT id, source, reason, status, requested_at, claimed_at
+         FROM agent_wakeup_requests
+         WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)
+           AND agent_id = $2
+         ORDER BY requested_at DESC LIMIT 100",
+    ).bind(id).bind(agent_id).fetch_all(state.db.pool()).await?;
+    let wake_requests: Vec<Value> = wakes.into_iter().map(|(wid, src, reason, st, req_at, claimed)| json!({
+        "id": wid, "source": src, "reason": reason, "status": st,
+        "requestedAt": req_at, "claimedAt": claimed,
+    })).collect();
+    Ok(Json(json!({
+        "issueId": id,
+        "agentId": agent_id,
+        "wakeRequests": wake_requests,
+        "wakeRequestCount": wake_requests.len(),
+    })))
+}
+
+async fn diagnostics_subtree(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Round 30: subtree = 递归查所有 parent_id 链上的 issues
+    let rows: Vec<(Uuid, Option<Uuid>, String, String, pc_core::Timestamp)> = sqlx::query_as(
+        "WITH RECURSIVE subtree AS (
+            SELECT id, parent_id, title, status, created_at, 0 AS depth
+            FROM issues WHERE id = $1
+            UNION ALL
+            SELECT i.id, i.parent_id, i.title, i.status, i.created_at, s.depth + 1
+            FROM issues i
+            INNER JOIN subtree s ON i.parent_id = s.id
+            WHERE s.depth < 8 AND i.hidden_at IS NULL
+         )
+         SELECT id, parent_id, title, status, created_at FROM subtree ORDER BY depth, created_at",
+    ).bind(id).fetch_all(state.db.pool()).await?;
+    let mut nodes: Vec<Value> = Vec::with_capacity(rows.len());
+    let mut edges: Vec<Value> = Vec::new();
+    let mut readiness: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for (nid, parent, title, status, ts) in rows {
+        nodes.push(json!({"id": nid, "title": title, "status": status, "createdAt": ts}));
+        readiness.insert(nid.to_string(), status.clone());
+        if let Some(p) = parent {
+            edges.push(json!({"from": p, "to": nid}));
+        }
+    }
+    Ok(Json(json!({
+        "issueId": id,
+        "nodes": nodes,
+        "edges": edges,
+        "readiness": readiness,
+        "nodeCount": nodes.len(),
+        "edgeCount": edges.len(),
+        "truncated": false,
+    })))
+}
+

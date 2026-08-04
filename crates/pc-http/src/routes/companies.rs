@@ -2,7 +2,7 @@
 
 #[allow(unused_imports)]
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post},
@@ -13,7 +13,12 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
+use pc_repos::approval::ApprovalRepo;
+use pc_repos::case::CaseRepo;
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
+use pc_repos::decision::DecisionRepo;
+use pc_repos::goal::GoalRepo;
+use pc_repos::pipeline::PipelineRepo;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
@@ -63,10 +68,18 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:id/org.svg", get(get_org_svg))
         .route("/api/companies/:id/org.png", get(get_org_png))
         .route("/api/companies/:id/search/extract", post(search_extract))
-        .route("/api/companies/:id/decision-bundles", post(create_decision_bundle))
         .route("/api/companies/:id/finance-events", post(create_finance_event))
         .route("/api/companies/:id/agents", post(create_agent))
         .route("/api/companies/:id/built-in-agents/:id/provision", post(provision_built_in_agent))
+        // ---- Round 37: company sub-resources (activity / approvals / decisions / goals / pipelines / case-events / user-directory / review-cases) ----
+        .route("/api/companies/:company_id/activity", get(list_company_activity_route))
+        .route("/api/companies/:company_id/approvals", get(list_company_approvals_route))
+        .route("/api/companies/:company_id/decisions", get(list_company_decisions_route))
+        .route("/api/companies/:company_id/goals", get(list_company_goals_route))
+        .route("/api/companies/:company_id/pipelines", get(list_company_pipelines_route))
+        .route("/api/companies/:company_id/case-events", get(list_company_case_events_route))
+        .route("/api/companies/:company_id/user-directory", get(list_company_user_directory_route))
+        .route("/api/companies/:company_id/review-cases", get(list_company_review_cases_route))
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
@@ -907,15 +920,26 @@ async fn list_invites(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT id, company_id, invite_type, role, expires_at, revoked_at
+    // Round 28: invites.role 不是真实列 — role 存在 defaults_payload jsonb
+    let rows: Vec<(Uuid, Uuid, String, Value, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> = sqlx::query_as(
+        "SELECT id, company_id, invite_type, defaults_payload, expires_at, revoked_at, accepted_at, invited_by_user_id
          FROM invites WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
     )
     .bind(company_id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, ty, role, exp, rev)| json!({
-        "id": id, "companyId": cid, "inviteType": ty, "role": role,
-        "expiresAt": exp, "revokedAt": rev,
-    })).collect();
+    let now = chrono::Utc::now();
+    let items: Vec<Value> = rows.into_iter().map(|(id, cid, ty, defaults, exp, rev, acc, inv_by)| {
+        let role = defaults.get("role").and_then(|v| v.as_str()).unwrap_or("member").to_string();
+        let status = if rev.is_some() { "revoked" }
+            else if acc.is_some() { "accepted" }
+            else if exp.map(|e| e < now).unwrap_or(false) { "expired" }
+            else { "pending" };
+        json!({
+            "id": id, "companyId": cid, "inviteType": ty, "role": role,
+            "defaults": defaults, "status": status,
+            "invitedByUserId": inv_by,
+            "expiresAt": exp, "revokedAt": rev, "acceptedAt": acc,
+        })
+    }).collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
 
@@ -965,11 +989,13 @@ async fn create_invite(
     };
     let id: Uuid = Uuid::new_v4();
     let exp = chrono::Utc::now() + chrono::Duration::days(days);
+    // Round 28: invites.role 不是真实列 — role 写到 defaults_payload jsonb
+    let defaults = serde_json::json!({"role": role});
     sqlx::query(
-        "INSERT INTO invites (id, company_id, invite_type, role, token_hash, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6)",
+        "INSERT INTO invites (id, company_id, invite_type, allowed_join_types, defaults_payload, token_hash, expires_at)
+         VALUES ($1,$2,$3,'both',$4,$5,$6)",
     )
-    .bind(id).bind(company_id).bind(&ty).bind(&role).bind(&token_hash).bind(exp)
+    .bind(id).bind(company_id).bind(&ty).bind(&defaults).bind(&token_hash).bind(exp)
     .execute(state.db.pool()).await?;
     Ok(Json(json!({
         "id": id, "companyId": company_id, "inviteType": ty, "role": role,
@@ -1018,29 +1044,77 @@ struct JoinRequestDecisionBody {
 async fn approve_join_request(
     State(state): State<AppState>,
     Path((company_id, req_id)): Path<(Uuid, Uuid)>,
-    Json(_body): Json<JoinRequestDecisionBody>,
+    Json(body): Json<JoinRequestDecisionBody>,
 ) -> ApiResult<Json<Value>> {
-    let r = sqlx::query(
-        "UPDATE join_requests SET status='approved', decided_at=now() WHERE company_id=$1 AND id=$2",
-    ).bind(company_id).bind(req_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("join request {req_id}")));
+    // Round 28: decided_at 不是列 — 改用 approved_at；级联写 membership / agent
+    let mut tx = state.db.pool().begin().await?;
+    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT request_type, requesting_user_id, request_email_snapshot, agent_name, adapter_type, status
+         FROM join_requests WHERE company_id=$1 AND id=$2 FOR UPDATE",
+    ).bind(company_id).bind(req_id).fetch_optional(&mut *tx).await?;
+    let (request_type, requesting_user_id, _email, agent_name, adapter_type, status) = row
+        .ok_or_else(|| ApiError::NotFound(format!("join request {req_id}")))?;
+    if status != "pending_approval" {
+        return Err(ApiError::Conflict(format!("join request already {status}")));
     }
-    Ok(Json(json!({"id": req_id, "status": "approved"})))
+    let mut created_membership_id: Option<Uuid> = None;
+    let mut created_agent_id: Option<Uuid> = None;
+    match request_type.as_str() {
+        "company_join" | "user" => {
+            if let Some(uid) = requesting_user_id.as_ref() {
+                let exists: Option<(Uuid,)> = sqlx::query_as(
+                    "SELECT id FROM company_memberships WHERE company_id=$1 AND principal_type='user' AND principal_id=$2",
+                ).bind(company_id).bind(uid).fetch_optional(&mut *tx).await?;
+                if let Some((mid,)) = exists {
+                    sqlx::query("UPDATE company_memberships SET status='active', updated_at=now() WHERE id=$1")
+                        .bind(mid).execute(&mut *tx).await?;
+                    created_membership_id = Some(mid);
+                } else {
+                    let mid: Uuid = Uuid::new_v4();
+                    sqlx::query("INSERT INTO company_memberships (id, company_id, principal_type, principal_id, status, membership_role) VALUES ($1,$2,'user',$3,'active','member')")
+                        .bind(mid).bind(company_id).bind(uid).execute(&mut *tx).await?;
+                    created_membership_id = Some(mid);
+                }
+            }
+        }
+        "agent" => {
+            if let Some(name) = agent_name.as_ref() {
+                let aid: Uuid = Uuid::new_v4();
+                let at = adapter_type.clone().unwrap_or_else(|| "process".into());
+                sqlx::query(
+                    "INSERT INTO agents (id, company_id, name, role, adapter_type, status)
+                     VALUES ($1,$2,$3,'general',$4,'idle')",
+                ).bind(aid).bind(company_id).bind(name).bind(&at).execute(&mut *tx).await?;
+                created_agent_id = Some(aid);
+            }
+        }
+        _ => {}
+    }
+    let now = chrono::Utc::now();
+    sqlx::query(
+        "UPDATE join_requests SET status='approved', approved_at=$1 WHERE id=$2",
+    ).bind(now).bind(req_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({
+        "id": req_id, "status": "approved", "note": body.note,
+        "createdMembershipId": created_membership_id,
+        "createdAgentId": created_agent_id,
+    })))
 }
 
 async fn reject_join_request(
     State(state): State<AppState>,
     Path((company_id, req_id)): Path<(Uuid, Uuid)>,
-    Json(_body): Json<JoinRequestDecisionBody>,
+    Json(body): Json<JoinRequestDecisionBody>,
 ) -> ApiResult<Json<Value>> {
+    // Round 28: decided_at 不是列 — 改用 rejected_at
     let r = sqlx::query(
-        "UPDATE join_requests SET status='rejected', decided_at=now() WHERE company_id=$1 AND id=$2",
+        "UPDATE join_requests SET status='rejected', rejected_at=now() WHERE company_id=$1 AND id=$2 AND status='pending_approval'",
     ).bind(company_id).bind(req_id).execute(state.db.pool()).await?;
     if r.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("join request {req_id}")));
+        return Err(ApiError::NotFound(format!("join request {req_id} not pending")));
     }
-    Ok(Json(json!({"id": req_id, "status": "rejected"})))
+    Ok(Json(json!({"id": req_id, "status": "rejected", "note": body.note})))
 }
 
 // ---------- members ----------
@@ -1048,14 +1122,33 @@ async fn reject_join_request(
 async fn list_members(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    Query(q): Query<ListMembersQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT m.id, m.user_id, m.role
-         FROM company_members m WHERE m.company_id=$1 ORDER BY m.role, m.user_id",
-    )
-    .bind(company_id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, uid, role)| json!({
+    let include_archived = q.include_archived.unwrap_or(false);
+    let role_filter = q.role.clone();
+    // Round 28: LEFT JOIN "user" 暴露 email/name/avatar；支持 ?include_archived + ?role 过滤
+    let mut sql = String::from(
+        "SELECT m.id, m.user_id, m.role, m.archived_at, m.created_at, m.updated_at, u.name, u.email, u.image \
+         FROM company_members m LEFT JOIN \"user\" u ON u.id = m.user_id WHERE m.company_id = $1",
+    );
+    if !include_archived {
+        sql.push_str(" AND m.archived_at IS NULL");
+    }
+    if role_filter.is_some() {
+        sql.push_str(" AND m.role = $3");
+    }
+    sql.push_str(" ORDER BY m.role, COALESCE(u.name, m.user_id)");
+    let mut query = sqlx::query_as::<_, (Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>, Option<String>)>(&sql)
+        .bind(company_id);
+    if let Some(r) = role_filter.as_ref() {
+        query = query.bind(r);
+    }
+    let rows = query.fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, uid, role, archived, created_at, updated_at, name, email, image)| json!({
         "id": id, "userId": uid, "role": role,
+        "name": name, "email": email, "image": image,
+        "archivedAt": archived,
+        "createdAt": created_at, "updatedAt": updated_at,
         "companyId": company_id,
     })).collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
@@ -1063,6 +1156,15 @@ async fn list_members(
 
 #[derive(Debug, Deserialize, Default)]
 struct PatchMemberBody {
+    #[serde(default)]
+    role: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ListMembersQuery {
+    #[serde(default)]
+    include_archived: Option<bool>,
     #[serde(default)]
     role: Option<String>,
 }
@@ -1355,22 +1457,147 @@ async fn export_agent_actions_csv(
 }
 
 async fn get_org(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT id, name FROM agents WHERE company_id=$1 ORDER BY name",
-    ).bind(company_id).fetch_all(_state.db.pool()).await?;
-    let nodes: Vec<Value> = rows.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
-    Ok(Json(json!({"companyId": company_id, "nodes": nodes, "edges": []})))
+    // Round 28: 真实 agents 层级 — reports_to 自引用，节点 + 边
+    let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<Uuid>, String)> = sqlx::query_as(
+        "SELECT id, name, role, title, reports_to, status
+         FROM agents WHERE company_id=$1 ORDER BY name",
+    ).bind(company_id).fetch_all(state.db.pool()).await?;
+    let mut nodes = Vec::with_capacity(rows.len());
+    let mut edges: Vec<Value> = Vec::new();
+    let mut children: std::collections::BTreeMap<Uuid, Vec<Uuid>> = std::collections::BTreeMap::new();
+    let mut roots: Vec<Uuid> = Vec::new();
+    for (id, name, role, title, reports_to, status) in rows {
+        nodes.push(json!({
+            "id": id, "name": name, "role": role, "title": title, "status": status,
+        }));
+        match reports_to {
+            Some(p) => {
+                edges.push(json!({"from": p, "to": id}));
+                children.entry(p).or_default().push(id);
+            }
+            None => roots.push(id),
+        }
+    }
+    // BFS 算 depth（用于 SVG 布局 + JSON 暴露）
+    let mut depth_map: std::collections::HashMap<Uuid, usize> = std::collections::HashMap::new();
+    let mut queue: std::collections::VecDeque<(Uuid, usize)> =
+        roots.iter().map(|r| (*r, 0usize)).collect();
+    while let Some((id, d)) = queue.pop_front() {
+        depth_map.insert(id, d);
+        if let Some(kids) = children.get(&id) {
+            for k in kids { queue.push_back((*k, d + 1)); }
+        }
+    }
+    for n in nodes.iter_mut() {
+        if let Some(id) = n.get("id").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok()) {
+            if let Some(d) = depth_map.get(&id) {
+                if let Some(obj) = n.as_object_mut() {
+                    obj.insert("depth".into(), json!(*d));
+                }
+            }
+        }
+    }
+    Ok(Json(json!({
+        "companyId": company_id,
+        "nodes": nodes,
+        "edges": edges,
+        "roots": roots,
+        "depths": depth_map.iter().map(|(k,v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<String, usize>>(),
+    })))
 }
 
 async fn get_org_svg(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    let svg = String::from("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"100\" height=\"100\" fill=\"#f3f4f6\"/><text x=\"50\" y=\"50\" text-anchor=\"middle\" font-size=\"8\" fill=\"#374151\">org </text></svg>");
-    let svg = svg.replace("</text>", &format!("{}</text>", company_id));
+    // Round 28: 真实层级 SVG 渲染 — BFS 算 depth，layered 布局，节点 box + 边 line
+    let rows: Vec<(Uuid, String, Option<String>, Option<Uuid>, String)> = sqlx::query_as(
+        "SELECT id, name, role, reports_to, status
+         FROM agents WHERE company_id=$1",
+    ).bind(company_id).fetch_all(state.db.pool()).await?;
+    if rows.is_empty() {
+        return Ok(([("content-type", "image/svg+xml")],
+            format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 80\"><text x=\"100\" y=\"40\" text-anchor=\"middle\" font-size=\"12\" fill=\"#94a3b8\">company {company_id}: no agents</text></svg>")));
+    }
+    let mut children: std::collections::BTreeMap<Option<Uuid>, Vec<Uuid>> = std::collections::BTreeMap::new();
+    for (id, _, _, parent, _) in &rows {
+        children.entry(*parent).or_default().push(*id);
+    }
+    for v in children.values_mut() { v.sort(); }
+    let roots = children.get(&None).cloned().unwrap_or_default();
+    let mut depth_map: std::collections::HashMap<Uuid, usize> = std::collections::HashMap::new();
+    let mut order: Vec<Uuid> = Vec::new();
+    let mut queue: std::collections::VecDeque<(Uuid, usize)> =
+        roots.into_iter().map(|r| (r, 0usize)).collect();
+    while let Some((id, d)) = queue.pop_front() {
+        depth_map.insert(id, d);
+        order.push(id);
+        if let Some(kids) = children.get(&Some(id)) {
+            for k in kids { queue.push_back((*k, d + 1)); }
+        }
+    }
+    let mut layer_pos: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut id_pos: std::collections::HashMap<Uuid, (usize, usize)> = std::collections::HashMap::new();
+    for id in &order {
+        let d = depth_map[id];
+        let p = layer_pos.entry(d).or_insert(0);
+        id_pos.insert(*id, (d, *p));
+        *p += 1;
+    }
+    let max_depth = depth_map.values().copied().max().unwrap_or(0);
+    let max_layer_size = layer_pos.values().copied().max().unwrap_or(1).max(1);
+    let box_w = 150;
+    let box_h = 56;
+    let gap_x = 36;
+    let gap_y = 56;
+    let total_w = (max_layer_size * (box_w + gap_x) + gap_x).max(200);
+    let total_h = ((max_depth + 1) * (box_h + gap_y) + gap_y).max(120);
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {w} {h}\"><style>.b{{fill:#eef2ff;stroke:#6366f1}} .t1{{font:11px sans-serif;fill:#1e293b}} .t2{{font:9px sans-serif;fill:#64748b}} .l{{stroke:#94a3b8;stroke-width:1}}</style>",
+        w = total_w, h = total_h,
+    );
+    // edges first
+    for (id, _, _, parent, _) in &rows {
+        let parent = match parent { Some(p) => p, None => continue };
+        let (cd, cp) = match id_pos.get(id) { Some(p) => *p, None => continue };
+        let (pd, pp) = match id_pos.get(&parent) { Some(p) => *p, None => continue };
+        let x1 = pp * (box_w + gap_x) + gap_x + box_w / 2;
+        let y1 = pd * (box_h + gap_y) + gap_y + box_h;
+        let x2 = cp * (box_w + gap_x) + gap_x + box_w / 2;
+        let y2 = cd * (box_h + gap_y) + gap_y;
+        svg.push_str(&format!(
+            "<path class=\"l\" d=\"M{x1} {y1} C{x1} {my} {x2} {my2} {x2} {y2}\" fill=\"none\"/>",
+            x1 = x1, y1 = y1, x2 = x2, y2 = y2,
+            my = y1 + 20, my2 = y2 - 20,
+        ));
+    }
+    // nodes
+    for (id, name, role, _, status) in &rows {
+        let (d, p) = match id_pos.get(id) { Some(p) => *p, None => continue };
+        let x = p * (box_w + gap_x) + gap_x;
+        let y = d * (box_h + gap_y) + gap_y;
+        let role_s = role.clone().unwrap_or_else(|| "agent".into());
+        let status_color = match status.as_str() {
+            "active" | "running" => "#10b981",
+            "paused" => "#f59e0b",
+            "archived" | "crashed" => "#ef4444",
+            _ => "#94a3b8",
+        };
+        svg.push_str(&format!(
+            "<rect class=\"b\" x=\"{x}\" y=\"{y}\" width=\"{bw}\" height=\"{bh}\" rx=\"6\"/><circle cx=\"{cx}\" cy=\"{cy}\" r=\"3\" fill=\"{sc}\"/><text class=\"t1\" x=\"{tx}\" y=\"{ty}\">{name}</text><text class=\"t2\" x=\"{tx}\" y=\"{ty2}\">{role}</text>",
+            x = x, y = y, bw = box_w, bh = box_h,
+            cx = x + box_w - 10, cy = y + 10,
+            tx = x + 8, ty = y + 22,
+            ty2 = y + 40,
+            sc = status_color,
+            name = html_escape(name),
+            role = html_escape(&role_s),
+        ));
+    }
+    svg.push_str("</svg>");
     Ok(([("content-type", "image/svg+xml")], svg))
 }
 
@@ -1416,21 +1643,6 @@ async fn search_extract(
 struct DecisionBundleBody {
     #[serde(default)]
     title: Option<String>,
-}
-
-async fn create_decision_bundle(
-    State(state): State<AppState>,
-    Path(company_id): Path<Uuid>,
-    Json(body): Json<DecisionBundleBody>,
-) -> ApiResult<Json<Value>> {
-    let title = body.title.unwrap_or_else(|| "Decision Bundle".to_string());
-    let id: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO decisions (id, company_id, title, status)
-         VALUES ($1, $2, $3, 'pending')",
-    ).bind(id).bind(company_id).bind(&title).execute(state.db.pool()).await
-    .ok();
-    Ok(Json(json!({"id": id, "companyId": company_id, "title": title, "status": "pending"})))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1493,4 +1705,289 @@ async fn provision_built_in_agent(
          VALUES ($1, $2) ON CONFLICT DO NOTHING",
     ).bind(company_id).bind(built_in_id).execute(state.db.pool()).await?;
     Ok(Json(json!({"provisioned": true, "companyId": company_id, "builtInAgentId": built_in_id})))
+}
+
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+
+// ============================================================================
+// Round 37: company sub-resources (activity / approvals / decisions / goals /
+// pipelines / case-events / user-directory / review-cases)
+// ============================================================================
+
+/// `GET /api/companies/:company_id/activity` — company-scoped activity feed.
+/// Mirrors Node `/companies/:companyId/activity`.  Reads from `activity_log`
+/// table; falls back to empty list when the table is empty / new.
+async fn list_company_activity_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let rows: Vec<(Uuid, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, kind, actor_user_id, agent_id, issue_id, project_id, payload, created_at \
+         FROM activity_log WHERE company_id=$1 \
+         ORDER BY created_at DESC LIMIT $2",
+    )
+    .bind(company_id)
+    .bind(limit)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, kind, actor_user_id, agent_id, issue_id, project_id, payload, created_at)| {
+            json!({
+                "id": id,
+                "companyId": company_id,
+                "kind": kind,
+                "actorUserId": actor_user_id,
+                "agentId": agent_id,
+                "issueId": issue_id,
+                "projectId": project_id,
+                "payload": payload,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/approvals` — company-scoped approvals list.
+async fn list_company_approvals_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let mut filter = pc_repos::approval::ApprovalFilter::default();
+    filter.status = q.status.as_deref().and_then(pc_repos::approval::ApprovalStatus::parse);
+    filter.limit = Some(q.limit.unwrap_or(50).clamp(1, 200));
+    let rows = ApprovalRepo::new(&state.db)
+        .list_by_company(company_id, &filter)
+        .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| serde_json::to_value(&row).unwrap_or_default())
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/decisions` — company-scoped decisions.
+async fn list_company_decisions_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let mut rows = DecisionRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await?;
+    if let Some(limit) = q.limit {
+        rows.truncate(limit.clamp(1, 500) as usize);
+    }
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| serde_json::to_value(&row).unwrap_or_default())
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/goals` — company-scoped goals.
+async fn list_company_goals_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let rows = GoalRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| serde_json::to_value(&row).unwrap_or_default())
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/pipelines` — company-scoped pipelines.
+async fn list_company_pipelines_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let rows = PipelineRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| serde_json::to_value(&row).unwrap_or_default())
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/case-events` — case events across company.
+/// Mirrors Node `/companies/:companyId/case-events`.  Aggregates from
+/// `case_events` with optional ?kind= filter.
+async fn list_company_case_events_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let kind_filter = q.kind.clone().unwrap_or_default();
+    let rows: Vec<(Uuid, Uuid, String, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>)> = if kind_filter.is_empty() {
+        sqlx::query_as(
+            "SELECT id, case_id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
+             FROM case_events WHERE company_id=$1 ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(company_id)
+        .bind(limit)
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT id, case_id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
+             FROM case_events WHERE company_id=$1 AND kind=$2 ORDER BY created_at DESC LIMIT $3",
+        )
+        .bind(company_id)
+        .bind(kind_filter)
+        .bind(limit)
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap_or_default()
+    };
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, case_id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at)| {
+            json!({
+                "id": id,
+                "companyId": company_id,
+                "caseId": case_id,
+                "kind": kind,
+                "actorType": actor_type,
+                "actorUserId": actor_user_id,
+                "actorAgentId": actor_agent_id,
+                "runId": run_id,
+                "payload": payload,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/user-directory` — list of users who have
+/// any membership in this company.  Mirrors Node `/companies/:companyId/user-directory`.
+async fn list_company_user_directory_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.email, u.image, COALESCE(cm.role, 'guest') \
+         FROM company_memberships cm \
+         INNER JOIN \"user\" u ON u.id = cm.user_id \
+         WHERE cm.company_id=$1 \
+         ORDER BY u.name NULLS LAST, u.email",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(user_id, name, email, image, role)| {
+            json!({
+                "userId": user_id,
+                "name": name,
+                "email": email,
+                "image": image,
+                "role": role,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// `GET /api/companies/:company_id/review-cases` — cases awaiting review.
+/// Mirrors Node `/companies/:companyId/review-cases`.  Filters cases with
+/// status = 'in_review' (terminal review state).
+async fn list_company_review_cases_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let mut filter = pc_repos::case::CaseFilter::default();
+    filter.statuses = vec![pc_repos::case::CaseStatus::InReview];
+    let rows = CaseRepo::new(&state.db)
+        .list_by_company_filtered(company_id, &filter)
+        .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| serde_json::to_value(&row).unwrap_or_default())
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct CompanyListQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// Helper — verify company exists, returning 404 if missing.  Used by all
+/// Round 37 sub-resource handlers.
+async fn ensure_company_exists(state: &AppState, company_id: Uuid) -> ApiResult<()> {
+    let exists: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM companies WHERE id=$1")
+        .bind(company_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    if exists.is_none() {
+        return Err(ApiError::NotFound(format!("company {company_id}")));
+    }
+    Ok(())
 }

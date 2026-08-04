@@ -38,6 +38,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/cli-auth/revoke-current", post(cli_revoke_current))
         .route("/api/invites/:token", get(invites_get))
         .route("/api/invites/:token/accept", post(invites_accept))
+        .route("/api/invites/:token/onboarding", get(invite_onboarding))
+        .route("/api/invites/:token/skills/index", get(invite_skills_index))
+        .route("/api/invites/:token/skills/:skill_name", get(invite_skill_get))
+        .route("/api/invites/:token/test-resolution", get(invite_test_resolution))
+        .route("/api/invites/:token/revoke", post(revoke_invite_by_token))
         .route("/api/skills/available", get(skills_available))
         .route("/api/skills/index", get(skills_index))
         .route("/api/skills/:skill_name", get(skill_get))
@@ -439,26 +444,43 @@ async fn invites_get(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, String, String, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, role, status, expires_at FROM invites WHERE token = $1 LIMIT 1",
+    // Round 38 fix: invites table stores token_hash (SHA-256 hex of the
+    // opaque token).  Previously the handler queried `token = $1` which
+    // matched no rows because the column is named `token_hash`.
+    let token_hash = sha2_sha256(&token);
+    let row: Option<(Uuid, Uuid, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<String>)> = sqlx::query_as(
+        "SELECT id, company_id, expires_at, accepted_at, revoked_at, invited_by_user_id          FROM invites WHERE token_hash = $1 LIMIT 1",
     )
-    .bind(&token)
+    .bind(&token_hash)
     .fetch_optional(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let Some((id, company_id, role, status, expires_at)) = row else {
+    let Some((id, company_id, expires_at, accepted_at, revoked_at, invited_by_user_id)) = row else {
         return Ok(Json(
             json!({"token": token, "valid": false, "reason": "not found"}),
         ));
     };
+    let now = chrono::Utc::now();
+    let valid = revoked_at.is_none() && accepted_at.is_none() && expires_at.map_or(false, |exp| exp.as_datetime() > now);
+    // Role lives in defaults_payload jsonb (per Round 28 audit fix)
+    let role: Option<String> = sqlx::query_scalar(
+        "SELECT defaults_payload->>'role' FROM invites WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .flatten();
     Ok(Json(json!({
         "id": id,
         "token": token,
         "companyId": company_id,
         "role": role,
-        "status": status,
         "expiresAt": expires_at,
-        "valid": status == "pending",
+        "acceptedAt": accepted_at,
+        "revokedAt": revoked_at,
+        "invitedByUserId": invited_by_user_id,
+        "valid": valid,
     })))
 }
 
@@ -539,7 +561,7 @@ async fn skill_get(
             "name": k,
             "displayName": name,
             "description": desc,
-            "content": content.unwrap_or_default(),
+            "content": content,
             "manifest": manifest,
         }))),
         None => Err(ApiError::NotFound(format!("skill {skill_name}"))),
@@ -563,4 +585,200 @@ fn hex_encode(bytes: &[u8]) -> String {
         s.push_str(&format!("{:02x}", b));
     }
     s
+}
+
+
+// ============================================================================
+// Round 38: invite public endpoints (onboarding / skills / test-resolution / revoke)
+// ============================================================================
+
+/// Hash token + lookup helper used by all Round 38 invite handlers.
+async fn lookup_invite_by_token(
+    state: &AppState,
+    token: &str,
+) -> ApiResult<Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)>> {
+    let token_hash = sha2_sha256(token);
+    let row: Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)> = sqlx::query_as(
+        "SELECT id, company_id, defaults_payload->>'role', expires_at, accepted_at, revoked_at \
+         FROM invites WHERE token_hash = $1 LIMIT 1",
+    )
+    .bind(&token_hash)
+    .fetch_optional(state.db.pool())
+    .await?;
+    Ok(row)
+}
+
+/// `GET /api/invites/:token/onboarding` — minimal onboarding manifest.
+/// Mirrors Node `/invites/:token/onboarding` but returns a simple JSON
+/// shape (no plugin manifest assembly) so the UI can render the basics.
+async fn invite_onboarding(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let invite = lookup_invite_by_token(&state, &token).await?;
+    let Some((id, company_id, role, expires_at, accepted_at, revoked_at)) = invite else {
+        return Err(ApiError::NotFound("invite not found".into()));
+    };
+    if revoked_at.is_some() || accepted_at.is_some() {
+        return Err(ApiError::NotFound("invite not found".into()));
+    }
+    let company_name: Option<String> = sqlx::query_scalar("SELECT name FROM companies WHERE id=$1")
+        .bind(company_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    Ok(Json(json!({
+        "invite": {
+            "id": id,
+            "token": token,
+            "companyId": company_id,
+            "role": role,
+            "expiresAt": expires_at,
+        },
+        "company": {
+            "id": company_id,
+            "name": company_name,
+        },
+        "steps": [
+            { "key": "accept", "label": "Accept invite" },
+            { "key": "configure", "label": "Configure environment" },
+        ],
+    })))
+}
+
+/// `GET /api/invites/:token/skills/index` — public skill catalog reachable
+/// via invite token.  Mirrors Node `/invites/:token/skills/index`.
+async fn invite_skills_index(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let invite = lookup_invite_by_token(&state, &token).await?;
+    let Some((_, _, _, _, accepted_at, revoked_at)) = invite else {
+        return Err(ApiError::NotFound("invite not found".into()));
+    };
+    if revoked_at.is_some() || accepted_at.is_some() {
+        return Err(ApiError::NotFound("invite not found".into()));
+    }
+    Ok(Json(json!({
+        "token": token,
+        "skills": [
+            { "name": "paperclip", "path": format!("/api/invites/{}/skills/paperclip", token) },
+        ],
+    })))
+}
+
+/// `GET /api/invites/:token/skills/:skill_name` — single skill markdown by
+/// invite token.  Mirrors Node `/invites/:token/skills/:skillName`.
+async fn invite_skill_get(
+    State(state): State<AppState>,
+    Path((token, skill_name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let invite = lookup_invite_by_token(&state, &token).await?;
+    let Some((_, _, _, _, accepted_at, revoked_at)) = invite else {
+        return Err(ApiError::NotFound("invite not found".into()));
+    };
+    if revoked_at.is_some() || accepted_at.is_some() {
+        return Err(ApiError::NotFound("invite not found".into()));
+    }
+    let skill_name = skill_name.to_lowercase();
+    if skill_name != "paperclip" {
+        return Err(ApiError::NotFound(format!("skill {skill_name}")));
+    }
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT content_md, manifest FROM skills WHERE skill_key=$1 LIMIT 1",
+    )
+    .bind(&skill_name)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((content, manifest)) = row else {
+        return Err(ApiError::NotFound(format!("skill {skill_name}")));
+    };
+    Ok(Json(json!({
+        "token": token,
+        "name": skill_name,
+        "content": content,
+        "manifest": manifest,
+    })))
+}
+
+/// `GET /api/invites/:token/test-resolution` — debug probe that returns
+/// which invite record the token resolves to (without exposing secrets).
+/// Mirrors Node `/invites/:token/test-resolution`.
+async fn invite_test_resolution(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let token_hash = sha2_sha256(&token);
+    let row: Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)> = sqlx::query_as(
+        "SELECT id, company_id, defaults_payload->>'role', expires_at, accepted_at, revoked_at \
+         FROM invites WHERE token_hash = $1 LIMIT 1",
+    )
+    .bind(&token_hash)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((id, company_id, role, expires_at, accepted_at, revoked_at)) = row else {
+        return Ok(Json(json!({
+            "token": token,
+            "resolved": false,
+            "reason": "no row matched token_hash",
+        })));
+    };
+    let now = chrono::Utc::now();
+    let expired = expires_at.map_or(false, |exp| exp.as_datetime() <= now);
+    Ok(Json(json!({
+        "token": token,
+        "resolved": true,
+        "invite": {
+            "id": id,
+            "companyId": company_id,
+            "role": role,
+            "expiresAt": expires_at,
+            "acceptedAt": accepted_at,
+            "revokedAt": revoked_at,
+            "expired": expired,
+            "accepted": accepted_at.is_some(),
+            "revoked": revoked_at.is_some(),
+        },
+    })))
+}
+
+/// `POST /api/invites/:token/revoke` — mark an invite as revoked.  Mirrors
+/// Node `POST /invites/:inviteId/revoke`.  Requires admin / company access
+/// to prevent abuse; we check that the caller matches the inviter user id.
+async fn revoke_invite_by_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let token_hash = sha2_sha256(&token);
+    let row: Option<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id, company_id, invited_by_user_id FROM invites WHERE token_hash=$1 LIMIT 1",
+    )
+    .bind(&token_hash)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((id, _company_id, invited_by_user_id)) = row else {
+        return Err(ApiError::NotFound("invite not found".into()));
+    };
+    if invited_by_user_id.as_deref() != Some(user_id.as_str()) {
+        return Err(ApiError::Forbidden(
+            "only the inviter can revoke this invite".into(),
+        ));
+    }
+    let updated = sqlx::query(
+        "UPDATE invites SET revoked_at = now(), updated_at = now() \
+         WHERE id=$1 AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected();
+    if updated == 0 {
+        return Err(ApiError::Conflict("invite already revoked".into()));
+    }
+    Ok(Json(json!({
+        "id": id,
+        "revoked": true,
+        "revokedAt": chrono::Utc::now(),
+    })))
 }
