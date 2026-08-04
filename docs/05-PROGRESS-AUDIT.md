@@ -1043,3 +1043,70 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 - **总体规模对比（Round 21 末）**：
   - tool_access.rs 47 个 route（+21）
   - 所有 64 个 route 文件累计路径从 476 → 509 (+33)
+
+## 第二十二轮增量（Round 22 — cases/approvals/decisions/projects 深度补完）
+
+> 第二十二轮增量（紧接第二十一轮 tool_access.rs 工作）：
+> - **cases.rs** 412 → 1177 行（+765），**10 个新 endpoint**：
+>   - `/cases/:id/documents/:key/annotations/threads`（GET/POST）：列出和创建 annotation thread（完整字段：status/anchor_state/selected_text/normalized_start/end/markdown_start/end/anchor_confidence/anchor_selector）
+>   - `/cases/:id/documents/:key/annotations/threads/:thread_id`（GET/PATCH）：获取 thread + 内联 comments；PATCH 支持 status 转换（open/resolved/outdated，自动维护 resolved_at）
+>   - `/cases/:id/documents/:key/annotations/threads/:thread_id/comments`（POST）：添加 comment
+>   - `/cases/:id/documents/:key`（DELETE）：删除 case 文档映射（保留 documents 表本体，写 case_event）
+>   - `/cases/:id/documents/:key/revisions`（GET）：列出版本历史
+>   - `/cases/:id/documents/:key/revisions/:revision_id/restore`（POST）：恢复版本（创建新 revision + 更新 latest_body + 写 case_event）
+>   - `/cases/:id/attachments`（POST）：添加 asset 附件
+>   - `/issues/:issue_id/cases`（GET）：从 issue_case_links 反查 cases
+> - **approvals.rs** 124 → 350 行（+226），**6 个新 endpoint**：
+>   - `/approvals/:id/issues`（GET）：通过 issue_approvals 表反查 issue
+>   - `/approvals/:id/approve`（POST）：调用 ApprovalRepo::decide_four_args 写 status='approved'
+>   - `/approvals/:id/reject`（POST）：同上 status='rejected'
+>   - `/approvals/:id/resubmit`（POST）：重置为 pending
+>   - `/approvals/:id/comments`（GET/POST）：list + add approval comment（FK -> approvals）
+> - **decisions.rs** 88 → 300 行（+212），**5 个新 endpoint**：
+>   - `/decisions/:id/decide`（POST）：写 chosen_option_id + status='decided' + decided_at
+>   - `/decisions/:id/dismiss`（POST）：写 status='dismissed' + metadata 记录原因
+>   - `/decisions/:id/cancel`（POST）：写 status='cancelled'
+>   - `/companies/:id/decisions/stats`（GET）：按 status 聚合统计（total/open/decided/dismissed/cancelled）
+>   - `/companies/:id/decision-bundles`（POST）：创建 decision bundle（用真实 schema: title/summary/origin_*_id）
+> - **projects.rs** 207 → 442 行（+235），**5 个新 endpoint**：
+>   - `/projects/:id/workspaces`（POST）：创建 workspace（name/cwd/repo_url/repo_ref/metadata/is_primary）
+>   - `/projects/:id/workspaces/:workspace_id`（PATCH/DELETE）：修改 + 删除
+>   - `/projects/:id/workspaces/:workspace_id/runtime-services/:action`（POST）：runtime 动作（start/stop/restart/pause/resume/status）
+>   - `/projects/:id/workspaces/:workspace_id/runtime-commands/:action`（POST）：runtime 命令（同一 handler）
+> - workspace check: 0 errors, 38 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败与第二轮基线相同)
+> - **本轮累计**：**+26 endpoint**（cases 10 + approvals 6 + decisions 5 + projects 5）
+
+## 第二十三轮增量（Round 23 — routines description annotations + trigger secret rotation）
+
+> 第二十三轮增量：
+> - **routines.rs** 982 → 1495 行（+513），**6 个新 endpoint**：
+>   - `/routines/:id/description/annotations`（GET/POST）：list + create routine description annotation threads（document_key='description' literal）
+>   - `/routines/:id/description/annotations/:thread_id`（GET/PATCH）：获取 thread + 内联 comments；PATCH 支持 status 转换
+>   - `/routines/:id/description/annotations/:thread_id/comments`（POST）：添加 comment
+>   - `/routine-triggers/:trigger_id/rotate-secret`（POST）：使用 LocalEncryptedProvider::load() + SecretProvider::create_secret 生成新 secret，写 routine_triggers.secret_ref，stamp rotatedAt/rotateReason 到 metadata
+> - workspace check: 0 errors, 38 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败与基线相同)
+> - **本轮累计**：+6 endpoint（routines annotation shape 5 + trigger rotate 1）
+
+## 第二十五轮增量（Round 25 — member permissions / inbox-agent-policy 补完）
+
+> 第二十五轮增量：
+> - **companies.rs** 新增 **4 个端点**（UI 实际使用）：
+>   - `PATCH /companies/:id/members/:member_id/permissions`：更新 role + permissions jsonb + 软删除
+>   - `PATCH /companies/:id/members/:member_id/role-and-grants`：合并 role + grants (string[]) + metadata 到 permissions jsonb
+>   - `GET /companies/:id/users/me/inbox-agent-policy`：从 user_inbox_agent_policies 表读 mode + allowed_agent_ids（无记录时返回默认 'open' + 空数组）
+>   - `PUT /companies/:id/users/me/inbox-agent-policy`：upsert mode ('open'|'allowlist'|'disabled') + allowed_agent_ids
+> - workspace check: 0 errors, 38 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败与基线相同)
+> - **本轮累计**：+4 endpoint（companies member permissions/role-grants/inbox-policy）
+
+## 第二十六轮增量（Round 26 — secrets 子资源补完）
+
+> 第二十六轮增量（基于 gap analysis 优先级）：
+> - **secrets.rs** 新增 **6 个端点**（UI 实际使用）：
+>   - `PATCH /api/secret-provider-configs/:id`：更新 label + status + config + is_default
+>   - `POST /api/companies/:id/secrets`：创建 company secret（含 v1 version insert + sha256 计算）
+>   - `PATCH /api/companies/:id/me/user-secrets/:id`：更新 value（自动 new version + sha256） 或 status
+>   - `DELETE /api/companies/:id/me/user-secrets/:id`：软删除（status='archived'）通过 owner_user_id 验证
+>   - `POST /api/companies/:id/me/user-secrets/:id/rotate`：自动 new version（无 body 时用 UUID 替代值）
+>   - `PATCH /api/companies/:id/user-secret-definitions/:id`：更新 name/description/status/usage_guidance/provider_metadata
+> - workspace check: 0 errors, 39 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败与基线相同)
+> - **本轮累计**：+6 endpoint（secrets 6 sub-resource）

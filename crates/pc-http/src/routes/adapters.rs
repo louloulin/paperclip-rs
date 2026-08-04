@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
 };
 use pc_adapter_api::{AdapterDescriptor, AdapterSource};
+use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -21,6 +22,23 @@ pub fn router() -> Router<AppState> {
         .route("/api/adapters/:adapter_type/config-schema", get(get_config_schema))
         .route("/api/adapters/:adapter_type/override", patch(override_adapter))
         .route("/api/adapters/:adapter_type/ui-parser.js", get(ui_parser_js))
+        // ── Round 24: per-company adapter sub-resources (models / detect / profiles / test-env) ──
+        .route(
+            "/api/companies/:company_id/adapters/:adapter_type/models",
+            get(adapter_models),
+        )
+        .route(
+            "/api/companies/:company_id/adapters/:adapter_type/model-profiles",
+            get(adapter_model_profiles),
+        )
+        .route(
+            "/api/companies/:company_id/adapters/:adapter_type/detect-model",
+            get(detect_adapter_model).post(detect_adapter_model),
+        )
+        .route(
+            "/api/companies/:company_id/adapters/:adapter_type/test-environment",
+            post(adapter_test_environment),
+        )
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -279,4 +297,280 @@ async fn ui_parser_js(
 /// ESM-cache invalidation is left to the registry bootstrap on restart.
 async fn state_adapters_reload(adapter_type: &str) {
     tracing::info!(target: "pc.adapters", adapter = adapter_type, "adapter reload requested");
+}
+
+// ============== Round 24: per-company adapter sub-resources ==============
+
+// Common per-adapter model catalogs. The Node service hard-codes these same
+// defaults; per-adapter dynamic detection is a follow-up.
+
+fn adapter_model_catalog(adapter_type: &str) -> Vec<Value> {
+    match adapter_type {
+        "claude_local" | "claude_local_subscription" => vec![
+            json!({ "id": "claude-sonnet-4-5", "label": "Claude Sonnet 4.5" }),
+            json!({ "id": "claude-opus-4-1", "label": "Claude Opus 4.1" }),
+            json!({ "id": "claude-haiku-4", "label": "Claude Haiku 4" }),
+        ],
+        "codex_local" | "codex_app_server" => vec![
+            json!({ "id": "gpt-5", "label": "GPT-5" }),
+            json!({ "id": "gpt-5-codex", "label": "GPT-5 Codex" }),
+            json!({ "id": "gpt-4.1", "label": "GPT-4.1" }),
+            json!({ "id": "o3", "label": "o3" }),
+        ],
+        "cursor_local" => vec![
+            json!({ "id": "gpt-5", "label": "GPT-5" }),
+            json!({ "id": "claude-sonnet-4-5", "label": "Claude Sonnet 4.5" }),
+            json!({ "id": "cursor-auto", "label": "Cursor Auto" }),
+        ],
+        "gemini_local" | "gemini_cli" => vec![
+            json!({ "id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro" }),
+            json!({ "id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash" }),
+        ],
+        "grok_local" => vec![
+            json!({ "id": "grok-4", "label": "Grok 4" }),
+            json!({ "id": "grok-3", "label": "Grok 3" }),
+        ],
+        "opencode_local" => vec![
+            json!({ "id": "opencode-default", "label": "OpenCode Default" }),
+        ],
+        "pi_local" => vec![
+            json!({ "id": "pi-default", "label": "Pi Default" }),
+        ],
+        _ => vec![
+            json!({ "id": "default", "label": "Default" }),
+        ],
+    }
+}
+
+fn adapter_model_profiles_catalog(adapter_type: &str) -> Vec<Value> {
+    // Profiles describe pre-baked configuration bundles. The Node service
+    // surfaces the same set of keys.
+    let mut profiles: Vec<Value> = Vec::new();
+    profiles.push(json!({
+        "key": "default",
+        "label": "Default",
+        "adapterType": adapter_type,
+    }));
+    profiles.push(json!({
+        "key": "fast",
+        "label": "Fast (low-latency)",
+        "adapterType": adapter_type,
+    }));
+    profiles.push(json!({
+        "key": "thorough",
+        "label": "Thorough (extended reasoning)",
+        "adapterType": adapter_type,
+    }));
+    profiles
+}
+
+async fn adapter_models(
+    State(state): State<AppState>,
+    Path((_company_id, adapter_type)): Path<(Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    let descriptor = state.adapters.descriptor(&adapter_type);
+    let models = adapter_model_catalog(&adapter_type);
+    let source = descriptor
+        .as_ref()
+        .map(|d| format!("{:?}", d.source).to_lowercase())
+        .unwrap_or_else(|| "unknown".to_owned());
+    Ok(Json(json!({
+        "companyId": _company_id,
+        "adapterType": adapter_type,
+        "adapterSource": source,
+        "loaded": descriptor.is_some(),
+        "items": models,
+        "models": models,
+    })))
+}
+
+async fn adapter_model_profiles(
+    State(state): State<AppState>,
+    Path((_company_id, adapter_type)): Path<(Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    let descriptor = state.adapters.descriptor(&adapter_type);
+    let profiles = adapter_model_profiles_catalog(&adapter_type);
+    let source = descriptor
+        .as_ref()
+        .map(|d| format!("{:?}", d.source).to_lowercase())
+        .unwrap_or_else(|| "unknown".to_owned());
+    Ok(Json(json!({
+        "companyId": _company_id,
+        "adapterType": adapter_type,
+        "adapterSource": source,
+        "items": profiles,
+        "modelProfiles": profiles,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DetectAdapterModelBody {
+    /// Optional explicit override: return this as the detected model
+    model: Option<String>,
+    /// Adapter config snapshot to read current model from
+    adapter_config: Option<Value>,
+    /// Agent ID to look up the agent's current adapter_config
+    agent_id: Option<Uuid>,
+}
+
+async fn detect_adapter_model(
+    State(state): State<AppState>,
+    Path((company_id, adapter_type)): Path<(Uuid, String)>,
+    Json(body): Json<DetectAdapterModelBody>,
+) -> ApiResult<Json<Value>> {
+    // Resolution order:
+    // 1. Explicit body.model
+    // 2. body.adapter_config.model
+    // 3. agents.adapter_config.model for body.agent_id
+    // 4. First item of the model catalog
+    let descriptor = state.adapters.descriptor(&adapter_type);
+    let source = descriptor
+        .as_ref()
+        .map(|d| format!("{:?}", d.source).to_lowercase())
+        .unwrap_or_else(|| "unknown".to_owned());
+
+    if let Some(m) = body.model.as_deref() {
+        if !m.is_empty() {
+            return Ok(Json(json!({
+                "companyId": company_id,
+                "adapterType": adapter_type,
+                "model": m,
+                "provider": adapter_type,
+                "source": "explicit",
+                "candidates": adapter_model_catalog(&adapter_type).iter().map(|x| x.get("id").cloned().unwrap_or(json!(null))).collect::<Vec<_>>(),
+            })));
+        }
+    }
+    if let Some(cfg) = body.adapter_config.as_ref() {
+        if let Some(m) = cfg.get("model").and_then(Value::as_str) {
+            return Ok(Json(json!({
+                "companyId": company_id,
+                "adapterType": adapter_type,
+                "model": m,
+                "provider": adapter_type,
+                "source": "config",
+                "candidates": adapter_model_catalog(&adapter_type).iter().map(|x| x.get("id").cloned().unwrap_or(json!(null))).collect::<Vec<_>>(),
+            })));
+        }
+    }
+    if let Some(agent_id) = body.agent_id {
+        let row: Option<(Value,)> = sqlx::query_as(
+            "SELECT adapter_config FROM agents WHERE id = $1 AND company_id = $2",
+        )
+        .bind(agent_id)
+        .bind(company_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten();
+        if let Some((cfg,)) = row {
+            if let Some(m) = cfg.get("model").and_then(Value::as_str) {
+                return Ok(Json(json!({
+                    "companyId": company_id,
+                    "adapterType": adapter_type,
+                    "model": m,
+                    "provider": adapter_type,
+                    "source": "agent_config",
+                    "agentId": agent_id,
+                })));
+            }
+        }
+    }
+    // Fallback: first catalog item
+    let catalog = adapter_model_catalog(&adapter_type);
+    let fallback = catalog
+        .first()
+        .and_then(|c| c.get("id").and_then(Value::as_str))
+        .unwrap_or("default");
+    Ok(Json(json!({
+        "companyId": company_id,
+        "adapterType": adapter_type,
+        "model": fallback,
+        "provider": adapter_type,
+        "source": "default",
+        "adapterSource": source,
+        "candidates": catalog.iter().map(|x| x.get("id").cloned().unwrap_or(json!(null))).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TestAdapterEnvBody {
+    model: Option<String>,
+    /// Optional: 'api' or 'subscription' — affects how the test is interpreted
+    delivery_mode: Option<String>,
+    /// Optional: skip network probing
+    skip_network: Option<bool>,
+}
+
+async fn adapter_test_environment(
+    State(state): State<AppState>,
+    Path((company_id, adapter_type)): Path<(Uuid, String)>,
+    Json(body): Json<TestAdapterEnvBody>,
+) -> ApiResult<Json<Value>> {
+    let descriptor = state.adapters.descriptor(&adapter_type);
+    let source = descriptor
+        .as_ref()
+        .map(|d| format!("{:?}", d.source).to_lowercase())
+        .unwrap_or_else(|| "unknown".to_owned());
+    let loaded = descriptor.is_some();
+    let skip_network = body.skip_network.unwrap_or(false);
+
+    // Probe local CLI presence by trying to find common binaries on PATH.
+    let mut checks: Vec<Value> = Vec::new();
+    let probe_binary = match adapter_type.as_str() {
+        "claude_local" | "claude_local_subscription" => Some("claude"),
+        "codex_local" | "codex_app_server" => Some("codex"),
+        "cursor_local" => Some("cursor"),
+        "gemini_local" | "gemini_cli" => Some("gemini"),
+        "grok_local" => Some("grok"),
+        "opencode_local" => Some("opencode"),
+        "pi_local" => Some("pi"),
+        _ => None,
+    };
+    if let Some(bin) = probe_binary {
+        let which = std::process::Command::new("which")
+            .arg(bin)
+            .output();
+        let ok = which.as_ref().map(|o| o.status.success()).unwrap_or(false);
+        let path = which
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+        checks.push(json!({
+            "name": format!("{}_binary", bin),
+            "ok": ok,
+            "path": path,
+        }));
+    } else {
+        checks.push(json!({
+            "name": "binary_probe",
+            "ok": true,
+            "note": format!("no probe configured for adapter_type={adapter_type}"),
+        }));
+    }
+    if !skip_network {
+        // Lightweight network reachability check via DNS resolution
+        let resolved = tokio::net::lookup_host("dns.google:80").await;
+        let ok = resolved.is_ok();
+        checks.push(json!({
+            "name": "network_reachability",
+            "ok": ok,
+            "note": if ok { "dns_resolved" } else { "dns_failed" },
+        }));
+    }
+    let all_ok = checks.iter().all(|c| c.get("ok").and_then(Value::as_bool).unwrap_or(false));
+    Ok(Json(json!({
+        "companyId": company_id,
+        "adapterType": adapter_type,
+        "adapterSource": source,
+        "loaded": loaded,
+        "model": body.model,
+        "deliveryMode": body.delivery_mode,
+        "ok": all_ok,
+        "checks": checks,
+        "testedAt": chrono::Utc::now(),
+    })))
 }

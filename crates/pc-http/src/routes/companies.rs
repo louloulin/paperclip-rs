@@ -54,6 +54,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:id/members", get(list_members))
         .route("/api/companies/:id/members/:member_id", patch(patch_member))
         .route("/api/companies/:id/members/:member_id/archive", post(archive_member))
+        .route("/api/companies/:id/members/:member_id/permissions", patch(patch_member_permissions))
+        .route("/api/companies/:id/members/:member_id/role-and-grants", patch(patch_member_role_and_grants))
+        .route("/api/companies/:id/users/me/inbox-agent-policy", get(get_my_inbox_agent_policy).put(put_my_inbox_agent_policy))
         .route("/api/companies/:id/audit/agent-actions", get(list_agent_actions))
         .route("/api/companies/:id/audit/agent-actions.csv", get(export_agent_actions_csv))
         .route("/api/companies/:id/org", get(get_org))
@@ -1091,6 +1094,233 @@ async fn archive_member(
         return Err(ApiError::NotFound(format!("member {member_id}")));
     }
     Ok(Json(json!({"archived": true, "id": member_id})))
+}
+
+// ---------- Round 25: member permissions / role-and-grants / inbox-agent-policy ----------
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PatchMemberPermissionsBody {
+    role: Option<String>,
+    permissions: Option<Value>,
+    archived: Option<bool>,
+}
+
+async fn patch_member_permissions(
+    State(state): State<AppState>,
+    Path((company_id, member_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchMemberPermissionsBody>,
+) -> ApiResult<Json<Value>> {
+    let mut tx = state.db.pool().begin().await?;
+    let mut changed = false;
+    if let Some(r) = body.role.as_deref() {
+        sqlx::query(
+            "UPDATE company_members SET role = $1, updated_at = now() WHERE company_id = $2 AND id = $3",
+        )
+        .bind(r)
+        .bind(company_id)
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+        changed = true;
+    }
+    if let Some(perms) = body.permissions.as_ref() {
+        sqlx::query(
+            "UPDATE company_members SET permissions = $1::jsonb, updated_at = now() WHERE company_id = $2 AND id = $3",
+        )
+        .bind(perms)
+        .bind(company_id)
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+        changed = true;
+    }
+    if let Some(true) = body.archived {
+        sqlx::query(
+            "UPDATE company_members SET archived_at = now() WHERE company_id = $1 AND id = $2 AND archived_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+        changed = true;
+    }
+    if !changed {
+        return Err(ApiError::BadRequest("no fields to update".into()));
+    }
+    let row: Option<(String, Uuid, String)> = sqlx::query_as(
+        "SELECT user_id, company_id, role FROM company_members WHERE company_id = $1 AND id = $2",
+    )
+    .bind(company_id)
+    .bind(member_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .ok()
+    .flatten();
+    tx.commit().await?;
+    let (user_id, _, role) = row.ok_or_else(|| ApiError::NotFound(format!("member {member_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("company_member.permissions_updated", "company_member", member_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "userId": user_id,
+                "role": body.role,
+                "permissions": body.permissions,
+            })),
+    );
+    Ok(Json(json!({
+        "id": member_id,
+        "companyId": company_id,
+        "userId": user_id,
+        "role": role,
+        "updated": true,
+    })))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PatchMemberRoleAndGrantsBody {
+    role: String,
+    #[serde(default)]
+    grants: Vec<String>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+async fn patch_member_role_and_grants(
+    State(state): State<AppState>,
+    Path((company_id, member_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchMemberRoleAndGrantsBody>,
+) -> ApiResult<Json<Value>> {
+    if body.role.trim().is_empty() {
+        return Err(ApiError::BadRequest("role is required".into()));
+    }
+    // Persist role + grants (jsonb array) + optional metadata into a jsonb column if present,
+    // else store grants in permissions column.
+    let metadata = body.metadata.clone().unwrap_or_else(|| json!({}));
+    let mut tx = state.db.pool().begin().await?;
+    // Try storing grants in `permissions` jsonb (typical) along with role.
+    let new_perms = json!({
+        "role": body.role,
+        "grants": body.grants,
+        "metadata": metadata,
+    });
+    let affected = sqlx::query(
+        "UPDATE company_members SET role = $1, permissions = $2::jsonb, updated_at = now()          WHERE company_id = $3 AND id = $4",
+    )
+    .bind(&body.role)
+    .bind(&new_perms)
+    .bind(company_id)
+    .bind(member_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("member {member_id}")));
+    }
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT user_id FROM company_members WHERE company_id = $1 AND id = $2",
+    )
+    .bind(company_id)
+    .bind(member_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .ok()
+    .flatten();
+    tx.commit().await?;
+    let (user_id,) = row.unwrap_or_default();
+    state.realtime.publish(
+        LiveEvent::new("company_member.role_and_grants_updated", "company_member", member_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "userId": user_id,
+                "role": body.role,
+                "grants": body.grants,
+            })),
+    );
+    Ok(Json(json!({
+        "id": member_id,
+        "companyId": company_id,
+        "userId": user_id,
+        "role": body.role,
+        "grants": body.grants,
+        "metadata": metadata,
+        "updated": true,
+    })))
+}
+
+// ── Inbox agent policy (per-user, per-company) ─────────────
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PutInboxAgentPolicyBody {
+    mode: String,
+    #[serde(default)]
+    allowed_agent_ids: Vec<Uuid>,
+}
+
+async fn get_my_inbox_agent_policy(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let row: Option<(String, Value, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT mode, allowed_agent_ids, created_at, updated_at          FROM user_inbox_agent_policies WHERE company_id = $1 AND user_id = $2",
+    )
+    .bind(company_id)
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (mode, allowed_agent_ids, _created_at, updated_at) = row.unwrap_or_else(|| (
+        "open".to_string(),
+        json!([]),
+        chrono::Utc::now(),
+        chrono::Utc::now(),
+    ));
+    Ok(Json(json!({
+        "companyId": company_id,
+        "userId": user_id,
+        "mode": mode,
+        "allowedAgentIds": allowed_agent_ids,
+        "updatedAt": updated_at,
+    })))
+}
+
+async fn put_my_inbox_agent_policy(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PutInboxAgentPolicyBody>,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    if !matches!(body.mode.as_str(), "open" | "allowlist" | "disabled") {
+        return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
+    }
+    let allowed = json!(body.allowed_agent_ids);
+    let updated_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "INSERT INTO user_inbox_agent_policies (company_id, user_id, mode, allowed_agent_ids)          VALUES ($1, $2, $3, $4::jsonb)          ON CONFLICT (company_id, user_id) DO UPDATE            SET mode = EXCLUDED.mode, allowed_agent_ids = EXCLUDED.allowed_agent_ids, updated_at = now()          RETURNING updated_at",
+    )
+    .bind(company_id)
+    .bind(&user_id)
+    .bind(&body.mode)
+    .bind(&allowed)
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("user_inbox_agent_policy.updated", "user_inbox_agent_policy", company_id)
+            .with_company(company_id)
+            .with_data(json!({"userId": user_id, "mode": body.mode})),
+    );
+    Ok(Json(json!({
+        "companyId": company_id,
+        "userId": user_id,
+        "mode": body.mode,
+        "allowedAgentIds": allowed,
+        "updatedAt": updated_at,
+    })))
 }
 
 // ---------- audit / org / search / agents ----------

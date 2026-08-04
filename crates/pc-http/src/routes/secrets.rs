@@ -13,6 +13,8 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_core::Timestamp;
+use pc_realtime::LiveEvent;
 
 use sha2::{Digest, Sha256};
 
@@ -139,6 +141,10 @@ pub fn router() -> Router<AppState> {
             get(list_provider_configs).post(create_provider_config),
         )
         .route(
+            "/api/secret-provider-configs/:id",
+            get(get_provider_config).patch(patch_provider_config).delete(delete_provider_config),
+        )
+        .route(
             "/api/companies/:company_id/secret-provider-configs/discovery/preview",
             post(discovery_preview),
         )
@@ -154,7 +160,19 @@ pub fn router() -> Router<AppState> {
             "/api/secret-provider-configs/:id/health",
             post(provider_health_check),
         )
-        .route("/api/companies/:company_id/secrets", get(list_secrets))
+        .route("/api/companies/:company_id/secrets", get(list_secrets).post(create_company_secret))
+        .route(
+            "/api/companies/:company_id/me/user-secrets/:secret_id",
+            patch(patch_my_user_secret).delete(delete_my_user_secret),
+        )
+        .route(
+            "/api/companies/:company_id/me/user-secrets/:secret_id/rotate",
+            post(rotate_my_user_secret),
+        )
+        .route(
+            "/api/companies/:company_id/user-secret-definitions/:definition_id",
+            patch(patch_user_def),
+        )
         .route(
             "/api/companies/:company_id/user-secret-definitions",
             get(list_user_defs).post(create_user_def),
@@ -814,4 +832,395 @@ async fn secret_access_events(
         })
         .collect();
     Ok(Json(json!({ "secretId": secret_id, "items": items })))
+}
+
+// ============== Round 26: user-secret CRUD + secret-provider-configs PATCH ==============
+
+// ── secret-provider-configs PATCH ───────────────────────────
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatchProviderConfigBody {
+    label: Option<String>,
+    status: Option<String>,
+    provider_config: Option<serde_json::Value>,
+    default_for_kind: Option<bool>,
+}
+
+async fn patch_provider_config(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchProviderConfigBody>,
+) -> ApiResult<Json<Value>> {
+    let mut tx = state.db.pool().begin().await?;
+    if body.status.is_none() && body.label.is_none() && body.provider_config.is_none() && body.default_for_kind.is_none() {
+        return Err(ApiError::BadRequest("no fields to update".into()));
+    }
+    sqlx::query(
+        "UPDATE secret_provider_configs SET \
+            label = COALESCE($1, label), \
+            status = COALESCE($2, status), \
+            config = COALESCE($3, config), \
+            is_default = COALESCE($4, is_default), \
+            updated_at = now() \
+         WHERE id = $5",
+    )
+    .bind(body.label.as_deref())
+    .bind(body.status.as_deref())
+    .bind(body.provider_config.clone())
+    .bind(body.default_for_kind)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    let row: Option<(Uuid, Uuid, String, String, Value, bool, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, company_id, label, status, config, is_default, updated_at FROM secret_provider_configs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .ok()
+    .flatten();
+    tx.commit().await?;
+    let (id, company_id, label, status, config, is_default, updated_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("secret_provider_config {id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("secret_provider_config.updated", "secret_provider_config", id)
+            .with_company(company_id)
+            .with_data(json!({"label": label, "status": status})),
+    );
+    Ok(Json(json!({
+        "id": id,
+        "companyId": company_id,
+        "label": label,
+        "status": status,
+        "config": config,
+        "isDefault": is_default,
+        "updatedAt": updated_at,
+    })))
+}
+
+// ── Company secrets POST ───────────────────────────────────
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCompanySecretBody {
+    name: String,
+    description: Option<String>,
+    provider: Option<String>,
+    value: Option<String>,
+}
+
+async fn create_company_secret(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateCompanySecretBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+    let provider = body.provider.clone().unwrap_or_else(|| "local_encrypted".to_owned());
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM company_secrets WHERE company_id = $1 AND name = $2",
+    )
+    .bind(company_id)
+    .bind(&body.name)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_some() {
+        return Err(ApiError::Conflict(format!("secret {} already exists", body.name)));
+    }
+    let external_ref = if let Some(v) = body.value.as_deref() {
+        // Persist a placeholder external_ref + first version
+        format!("local:{}", Uuid::new_v4().simple())
+    } else {
+        format!("local:{}", Uuid::new_v4().simple())
+    };
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO company_secrets (company_id, name, provider, external_ref, description) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&body.name)
+    .bind(&provider)
+    .bind(&external_ref)
+    .bind(body.description.as_deref())
+    .fetch_one(state.db.pool())
+    .await?;
+    // If value provided, create v1
+    if let Some(v) = body.value.as_deref() {
+        let sha = {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(v.as_bytes()))
+        };
+        sqlx::query(
+            "INSERT INTO company_secret_versions (company_id, secret_id, version, value_sha256, encrypted_payload) \
+             VALUES ($1, $2, 1, $3, $4::jsonb)",
+        )
+        .bind(company_id)
+        .bind(id)
+        .bind(&sha)
+        .bind(json!({ "value": v }))
+        .execute(state.db.pool())
+        .await?;
+    }
+    state.realtime.publish(
+        LiveEvent::new("company_secret.created", "company_secret", id).with_company(company_id),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": id,
+            "companyId": company_id,
+            "name": body.name,
+            "provider": provider,
+            "description": body.description,
+            "latestVersion": if body.value.is_some() { 1 } else { 0 },
+        })),
+    ))
+}
+
+// ── My user-secrets PATCH / DELETE / rotate ─────────────────
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatchMyUserSecretBody {
+    value: Option<String>,
+    status: Option<String>,
+}
+
+async fn patch_my_user_secret(
+    State(state): State<AppState>,
+    Path((company_id, secret_id)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PatchMyUserSecretBody>,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    // Update only if the secret is owned by this user (owner_user_id)
+    let mut tx = state.db.pool().begin().await?;
+    if body.status.is_some() {
+        sqlx::query(
+            "UPDATE company_secrets SET status = COALESCE($1, status), updated_at = now() \
+             WHERE id = $2 AND company_id = $3 AND owner_user_id = $4",
+        )
+        .bind(body.status.as_deref())
+        .bind(secret_id)
+        .bind(company_id)
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if let Some(v) = body.value.as_deref() {
+        let next_version: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM company_secret_versions WHERE secret_id = $1",
+        )
+        .bind(secret_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let sha = {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(v.as_bytes()))
+        };
+        sqlx::query(
+            "INSERT INTO company_secret_versions (company_id, secret_id, version, value_sha256, encrypted_payload) \
+             VALUES ($1, $2, $3, $4, $5::jsonb)",
+        )
+        .bind(company_id)
+        .bind(secret_id)
+        .bind(next_version)
+        .bind(&sha)
+        .bind(json!({ "value": v }))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE company_secrets SET latest_version = $1, updated_at = now() \
+             WHERE id = $2",
+        )
+        .bind(next_version)
+        .bind(secret_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let row: Option<(Uuid, Uuid, String, String, i32, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, company_id, name, status, latest_version, updated_at FROM company_secrets WHERE id = $1 AND company_id = $2 AND owner_user_id = $3",
+    )
+    .bind(secret_id)
+    .bind(company_id)
+    .bind(&user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .ok()
+    .flatten();
+    tx.commit().await?;
+    let (id, _, name, status, latest_version, updated_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("user secret {secret_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("user_secret.updated", "company_secret", id)
+            .with_company(company_id)
+            .with_data(json!({"userId": user_id, "name": name})),
+    );
+    Ok(Json(json!({
+        "id": id,
+        "companyId": company_id,
+        "name": name,
+        "status": status,
+        "latestVersion": latest_version,
+        "updatedAt": updated_at,
+    })))
+}
+
+async fn delete_my_user_secret(
+    State(state): State<AppState>,
+    Path((company_id, secret_id)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let affected = sqlx::query(
+        "UPDATE company_secrets SET status = 'archived', updated_at = now() \
+         WHERE id = $1 AND company_id = $2 AND owner_user_id = $3 AND status <> 'archived'",
+    )
+    .bind(secret_id)
+    .bind(company_id)
+    .bind(&user_id)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("user secret {secret_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("user_secret.archived", "company_secret", secret_id)
+            .with_company(company_id)
+            .with_data(json!({"userId": user_id})),
+    );
+    Ok(Json(json!({
+        "id": secret_id,
+        "companyId": company_id,
+        "archived": true,
+    })))
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RotateMyUserSecretBody {
+    value: Option<String>,
+}
+
+async fn rotate_my_user_secret(
+    State(state): State<AppState>,
+    Path((company_id, secret_id)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<RotateMyUserSecretBody>,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let new_value = body
+        .value
+        .clone()
+        .unwrap_or_else(|| format!("sk_{}", Uuid::new_v4().simple()));
+    let next_version: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM company_secret_versions WHERE secret_id = $1",
+    )
+    .bind(secret_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let sha = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(new_value.as_bytes()))
+    };
+    sqlx::query(
+        "INSERT INTO company_secret_versions (company_id, secret_id, version, value_sha256, encrypted_payload) \
+         VALUES ($1, $2, $3, $4, $5::jsonb)",
+    )
+    .bind(company_id)
+    .bind(secret_id)
+    .bind(next_version)
+    .bind(&sha)
+    .bind(json!({ "value": new_value }))
+    .execute(state.db.pool())
+    .await?;
+    sqlx::query(
+        "UPDATE company_secrets SET latest_version = $1, updated_at = now() \
+         WHERE id = $2 AND company_id = $3 AND owner_user_id = $4",
+    )
+    .bind(next_version)
+    .bind(secret_id)
+    .bind(company_id)
+    .bind(&user_id)
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("user_secret.rotated", "company_secret", secret_id)
+            .with_company(company_id)
+            .with_data(json!({"userId": user_id, "newVersion": next_version})),
+    );
+    Ok(Json(json!({
+        "id": secret_id,
+        "companyId": company_id,
+        "latestVersion": next_version,
+        "rotatedAt": chrono::Utc::now(),
+    })))
+}
+
+// ── User-secret-definitions PATCH ───────────────────────────
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatchUserDefBody {
+    name: Option<String>,
+    description: Option<String>,
+    status: Option<String>,
+    usage_guidance: Option<String>,
+    provider_metadata: Option<serde_json::Value>,
+}
+
+async fn patch_user_def(
+    State(state): State<AppState>,
+    Path((company_id, definition_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchUserDefBody>,
+) -> ApiResult<Json<Value>> {
+    let mut tx = state.db.pool().begin().await?;
+    sqlx::query(
+        "UPDATE user_secret_definitions SET \
+            name = COALESCE($1, name), \
+            description = COALESCE($2, description), \
+            status = COALESCE($3, status), \
+            usage_guidance = COALESCE($4, usage_guidance), \
+            provider_metadata = COALESCE($5, provider_metadata), \
+            updated_at = now() \
+         WHERE id = $6 AND company_id = $7",
+    )
+    .bind(body.name.as_deref())
+    .bind(body.description.as_deref())
+    .bind(body.status.as_deref())
+    .bind(body.usage_guidance.as_deref())
+    .bind(body.provider_metadata.clone())
+    .bind(definition_id)
+    .bind(company_id)
+    .execute(&mut *tx)
+    .await?;
+    let row: Option<(Uuid, Uuid, String, String, String, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, company_id, name, status, key, updated_at FROM user_secret_definitions WHERE id = $1",
+    )
+    .bind(definition_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .ok()
+    .flatten();
+    tx.commit().await?;
+    let (id, _, name, status, key, updated_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("user_secret_definition {definition_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("user_secret_definition.updated", "user_secret_definition", id)
+            .with_company(company_id)
+            .with_data(json!({"name": name, "key": key, "status": status})),
+    );
+    Ok(Json(json!({
+        "id": id,
+        "companyId": company_id,
+        "name": name,
+        "key": key,
+        "status": status,
+        "updatedAt": updated_at,
+    })))
 }

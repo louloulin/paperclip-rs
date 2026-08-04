@@ -485,6 +485,34 @@ async fn ensure_case_exists(state: &AppState, case_id: Uuid) -> ApiResult<Uuid> 
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))
 }
 
+#[derive(sqlx::FromRow)]
+struct AnnotationThreadRow {
+    id: Uuid,
+    document_key: String,
+    status: String,
+    anchor_state: String,
+    original_revision_id: Option<Uuid>,
+    original_revision_number: i32,
+    current_revision_id: Option<Uuid>,
+    current_revision_number: i32,
+    selected_text: String,
+    prefix_text: String,
+    suffix_text: String,
+    normalized_start: i32,
+    normalized_end: i32,
+    markdown_start: i32,
+    markdown_end: i32,
+    anchor_confidence: String,
+    anchor_selector: Value,
+    resolved_at: Option<chrono::DateTime<chrono::Utc>>,
+    resolved_by_user_id: Option<String>,
+    resolved_by_agent_id: Option<Uuid>,
+    created_by_user_id: Option<String>,
+    created_by_agent_id: Option<Uuid>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 // ── Case annotation threads ──────────────────────────────────
 
 #[derive(Debug, Default, Deserialize)]
@@ -518,15 +546,7 @@ async fn list_case_annotation_threads(
         }
     }
     sql.push_str(" ORDER BY created_at DESC LIMIT 200");
-    let rows: Vec<(
-        Uuid, Uuid, Uuid, Uuid, String, String, String,
-        Option<Uuid>, i32, Option<Uuid>, i32,
-        String, String, String, i32, i32, i32, i32,
-        String, Value,
-        Option<chrono::DateTime<chrono::Utc>>>, Option<String>, Option<Uuid>,
-        Option<String>, Option<Uuid>,
-        chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(&sql)
+    let rows: Vec<AnnotationThreadRow> = sqlx::query_as(&sql)
         .bind(case_id)
         .bind(&key)
         .fetch_all(state.db.pool())
@@ -534,38 +554,32 @@ async fn list_case_annotation_threads(
         .unwrap_or_default();
     let mut items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, _cid, _case_id, _doc_id, document_key, status, anchor_state,
-                orig_rev_id, orig_rev_no, curr_rev_id, curr_rev_no,
-                selected_text, prefix_text, suffix_text, norm_start, norm_end, md_start, md_end,
-                anchor_confidence, anchor_selector,
-                resolved_at, resolved_by_user_id, resolved_by_agent_id,
-                created_by_user_id, created_by_agent_id,
-                created_at, updated_at)| {
+        .map(|r| {
             json!({
-                "id": id,
-                "documentKey": document_key,
-                "status": status,
-                "anchorState": anchor_state,
-                "originalRevisionId": orig_rev_id,
-                "originalRevisionNumber": orig_rev_no,
-                "currentRevisionId": curr_rev_id,
-                "currentRevisionNumber": curr_rev_no,
-                "selectedText": selected_text,
-                "prefixText": prefix_text,
-                "suffixText": suffix_text,
-                "normalizedStart": norm_start,
-                "normalizedEnd": norm_end,
-                "markdownStart": md_start,
-                "markdownEnd": md_end,
-                "anchorConfidence": anchor_confidence,
-                "anchorSelector": anchor_selector,
-                "resolvedAt": resolved_at,
-                "resolvedByUserId": resolved_by_user_id,
-                "resolvedByAgentId": resolved_by_agent_id,
-                "createdByUserId": created_by_user_id,
-                "createdByAgentId": created_by_agent_id,
-                "createdAt": created_at,
-                "updatedAt": updated_at,
+                "id": r.id,
+                "documentKey": r.document_key,
+                "status": r.status,
+                "anchorState": r.anchor_state,
+                "originalRevisionId": r.original_revision_id,
+                "originalRevisionNumber": r.original_revision_number,
+                "currentRevisionId": r.current_revision_id,
+                "currentRevisionNumber": r.current_revision_number,
+                "selectedText": r.selected_text,
+                "prefixText": r.prefix_text,
+                "suffixText": r.suffix_text,
+                "normalizedStart": r.normalized_start,
+                "normalizedEnd": r.normalized_end,
+                "markdownStart": r.markdown_start,
+                "markdownEnd": r.markdown_end,
+                "anchorConfidence": r.anchor_confidence,
+                "anchorSelector": r.anchor_selector,
+                "resolvedAt": r.resolved_at,
+                "resolvedByUserId": r.resolved_by_user_id,
+                "resolvedByAgentId": r.resolved_by_agent_id,
+                "createdByUserId": r.created_by_user_id,
+                "createdByAgentId": r.created_by_agent_id,
+                "createdAt": r.created_at,
+                "updatedAt": r.updated_at,
             })
         })
         .collect();

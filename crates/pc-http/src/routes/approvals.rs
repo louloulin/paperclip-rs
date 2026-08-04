@@ -22,6 +22,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/approvals", get(list).post(create))
         .route("/api/approvals/:id", get(get_one).delete(remove))
         .route("/api/approvals/:id/decide", post(decide))
+        // ── Round 22: approval issues, comments, approve/reject/resubmit ──
+        .route("/api/approvals/:id/issues", get(list_approval_issues))
+        .route("/api/approvals/:id/approve", post(approve_approval))
+        .route("/api/approvals/:id/reject", post(reject_approval))
+        .route("/api/approvals/:id/resubmit", post(resubmit_approval))
+        .route("/api/approvals/:id/comments", get(list_approval_comments).post(add_approval_comment))
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,4 +127,224 @@ async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
     } else {
         Err(ApiError::NotFound(format!("approval {id}")))
     }
+}
+
+// ============== Round 22: approval issues / approve/reject/resubmit / comments ==============
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResubmitApprovalBody {
+    note: Option<String>,
+    payload: Option<Value>,
+}
+
+async fn list_approval_issues(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Issues linked to this approval via issue_approvals table
+    let rows: Vec<(Uuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT ia.issue_id, ia.company_id::text, ia.linked_by_user_id, ia.created_at \
+         FROM issue_approvals ia WHERE ia.approval_id = $1 ORDER BY ia.created_at DESC LIMIT 200",
+    )
+    .bind(approval_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(issue_id, company_id, linked_by_user_id, created_at)| {
+            json!({
+                "issueId": issue_id,
+                "companyId": company_id,
+                "linkedByUserId": linked_by_user_id,
+                "linkedAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "approvalId": approval_id,
+        "issues": items,
+        "items": items,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApproveRejectBody {
+    note: Option<String>,
+    decided_by: Option<String>,
+}
+
+async fn approve_approval(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+    Json(body): Json<ApproveRejectBody>,
+) -> ApiResult<Json<Value>> {
+    let row = ApprovalRepo::new(&state.db)
+        .decide_four_args(
+            approval_id,
+            "approved",
+            body.note.as_deref(),
+            body.decided_by.as_deref().unwrap_or("user"),
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("approval.approved", "approval", row.id).with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+async fn reject_approval(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+    Json(body): Json<ApproveRejectBody>,
+) -> ApiResult<Json<Value>> {
+    let row = ApprovalRepo::new(&state.db)
+        .decide_four_args(
+            approval_id,
+            "rejected",
+            body.note.as_deref(),
+            body.decided_by.as_deref().unwrap_or("user"),
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("approval.rejected", "approval", row.id).with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+async fn resubmit_approval(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+    Json(body): Json<ResubmitApprovalBody>,
+) -> ApiResult<Json<Value>> {
+    // Set status back to 'pending' and update payload if provided
+    let mut tx = state.db.pool().begin().await?;
+    if let Some(payload) = body.payload.as_ref() {
+        sqlx::query(
+            "UPDATE approvals SET status = 'pending', payload = $1, decision_note = $2, decided_at = NULL, updated_at = now() \
+             WHERE id = $3",
+        )
+        .bind(payload)
+        .bind(body.note.as_deref())
+        .bind(approval_id)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query(
+            "UPDATE approvals SET status = 'pending', decision_note = $1, decided_at = NULL, updated_at = now() \
+             WHERE id = $2",
+        )
+        .bind(body.note.as_deref())
+        .bind(approval_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT id, company_id FROM approvals WHERE id = $1",
+    )
+    .bind(approval_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .ok()
+    .flatten();
+    tx.commit().await?;
+    let (id, company_id) = row.ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    state.realtime.publish(
+        LiveEvent::new("approval.resubmitted", "approval", id).with_company(company_id),
+    );
+    Ok(Json(json!({
+        "id": id,
+        "companyId": company_id,
+        "status": "pending",
+        "resubmitted": true,
+    })))
+}
+
+async fn list_approval_comments(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, company_id, author_agent_id, author_user_id, body, created_at \
+         FROM approval_comments WHERE approval_id = $1 ORDER BY created_at ASC LIMIT 200",
+    )
+    .bind(approval_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, company_id, author_agent_id, author_user_id, body, created_at)| {
+            json!({
+                "id": id,
+                "companyId": company_id,
+                "authorAgentId": author_agent_id,
+                "authorUserId": author_user_id,
+                "body": body,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "approvalId": approval_id,
+        "comments": items,
+        "items": items,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddApprovalCommentBody {
+    body: String,
+    author_user_id: Option<String>,
+    author_agent_id: Option<Uuid>,
+}
+
+async fn add_approval_comment(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+    Json(body): Json<AddApprovalCommentBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.body.trim().is_empty() {
+        return Err(ApiError::BadRequest("body is required".into()));
+    }
+    let company_id: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM approvals WHERE id = $1")
+        .bind(approval_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten();
+    let (company_id,) = company_id.ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO approval_comments (company_id, approval_id, author_agent_id, author_user_id, body) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(approval_id)
+    .bind(body.author_agent_id)
+    .bind(body.author_user_id.as_deref())
+    .bind(&body.body)
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("approval.comment_added", "approval_comment", id)
+            .with_company(company_id)
+            .with_data(json!({"approvalId": approval_id})),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": id,
+            "companyId": company_id,
+            "approvalId": approval_id,
+            "body": body.body,
+            "authorUserId": body.author_user_id,
+            "authorAgentId": body.author_agent_id,
+            "createdAt": chrono::Utc::now(),
+        })),
+    ))
 }
