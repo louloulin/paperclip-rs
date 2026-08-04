@@ -16,6 +16,7 @@ hmac = "0.12"
 base64 = "0.22"
 hex = "0.4"
 rand = "0.8"
+ryu-js = "1.0.3"
 dirs = { workspace = true }
 sha2 = "0.10"
 serde = { workspace = true }
@@ -27,5 +28,9 @@ thiserror = { workspace = true }
 tracing = "0.1"
 pc-config = { path = "../pc-config" }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = "3"

@@ -13,3 +13,4 @@ serde = { workspace = true }
 dotenvy = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+dirs = { workspace = true }

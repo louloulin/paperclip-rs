@@ -15,6 +15,7 @@
 
 pub mod engine;
 pub mod error;
+pub mod health;
 pub mod manager;
 pub mod retention;
 pub mod types;

@@ -43,6 +43,8 @@ use tracing::info;
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> anyhow::Result<()> {
+    pc_secrets::ensure_decision_signing_secret().context("initialize decision signing secret")?;
+
     // 1. 加载配置
     let config = Config::from_env().context("load config")?;
     let cfg = Arc::new(config.clone());
@@ -191,7 +193,10 @@ async fn main() -> anyhow::Result<()> {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            if heartbeat_scheduling_suppressed(&scheduler_state.db).await.is_some() {
+            if heartbeat_scheduling_suppressed(&scheduler_state.db)
+                .await
+                .is_some()
+            {
                 continue;
             }
             let runs = match HeartbeatRepo::new(&scheduler_state.db)
@@ -222,11 +227,16 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     continue;
                 };
-                match pc_http::routes::agents::dispatch_queued_heartbeat(&scheduler_state, run).await
+                match pc_http::routes::agents::dispatch_queued_heartbeat(&scheduler_state, run)
+                    .await
                 {
-                    Ok(Some(run)) => tracing::debug!(run_id = %run.id, "heartbeat scheduler dispatched run"),
+                    Ok(Some(run)) => {
+                        tracing::debug!(run_id = %run.id, "heartbeat scheduler dispatched run")
+                    }
                     Ok(None) => {}
-                    Err(error) => tracing::warn!(error = %error, "heartbeat scheduler dispatch failed"),
+                    Err(error) => {
+                        tracing::warn!(error = %error, "heartbeat scheduler dispatch failed")
+                    }
                 }
             }
             match pc_http::routes::agents::dispatch_due_issue_monitors(&scheduler_state, 50).await {
@@ -236,7 +246,9 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) => {}
                 Err(error) => tracing::warn!(error = %error, "issue monitor scheduler failed"),
             }
-            match pc_http::routes::agents::dispatch_due_timer_heartbeats(&scheduler_state, 200).await {
+            match pc_http::routes::agents::dispatch_due_timer_heartbeats(&scheduler_state, 200)
+                .await
+            {
                 Ok(count) if count > 0 => {
                     tracing::debug!(count, "heartbeat scheduler dispatched timer heartbeats")
                 }
@@ -251,16 +263,15 @@ async fn main() -> anyhow::Result<()> {
                 .await
             {
                 Ok(0) => {}
-                Ok(count) => tracing::debug!(count, "heartbeat scheduler recovered stale wakeup claims"),
+                Ok(count) => {
+                    tracing::debug!(count, "heartbeat scheduler recovered stale wakeup claims")
+                }
                 Err(error) => tracing::warn!(error = %error, "stale wakeup recovery failed"),
             }
             // Status card tick: claim pending status cards whose next_eval_at
             // has passed and dispatch them to the refresh pipeline.
-            match pc_http::routes::status_cards::claim_due_status_card_updates(
-                &scheduler_state,
-                50,
-            )
-            .await
+            match pc_http::routes::status_cards::claim_due_status_card_updates(&scheduler_state, 50)
+                .await
             {
                 Ok(0) => {}
                 Ok(count) => tracing::debug!(count, "status card scheduler claimed updates"),
@@ -385,17 +396,18 @@ async fn main() -> anyhow::Result<()> {
                 std::path::PathBuf::from("ui/dist"),
                 std::path::PathBuf::from("../ui/dist"),
             ];
-            candidates.into_iter().find(|p| p.join("index.html").exists())
+            candidates
+                .into_iter()
+                .find(|p| p.join("index.html").exists())
         });
 
     let app: Router = if let Some(ui_path) = ui_dist_path.clone() {
         tracing::info!(path = %ui_path.display(), "serving UI bundle from dist");
         let index_html = ui_path.join("index.html");
-        api_router
-            .fallback_service(
-                tower_http::services::ServeDir::new(ui_path.clone())
-                    .fallback(tower_http::services::ServeFile::new(index_html)),
-            )
+        api_router.fallback_service(
+            tower_http::services::ServeDir::new(ui_path.clone())
+                .fallback(tower_http::services::ServeFile::new(index_html)),
+        )
     } else {
         api_router
     };
@@ -426,18 +438,14 @@ async fn main() -> anyhow::Result<()> {
 /// Node `resolveHeartbeatSchedulingSuppression` plus the worktree run
 /// execution override cache. Returns the suppression reason when the
 /// scheduler should skip the current tick.
-async fn heartbeat_scheduling_suppressed(
-    db: &pc_db::Db,
-) -> Option<&'static str> {
+async fn heartbeat_scheduling_suppressed(db: &pc_db::Db) -> Option<&'static str> {
     fn truthy(name: &str) -> bool {
         matches!(
             std::env::var(name).ok().as_deref(),
             Some("true" | "1" | "yes" | "on")
         )
     }
-    if truthy("PAPERCLIP_DATABASE_RESTORE_IN_PROGRESS")
-        || truthy("PAPERCLIP_RESTORE_IN_PROGRESS")
-    {
+    if truthy("PAPERCLIP_DATABASE_RESTORE_IN_PROGRESS") || truthy("PAPERCLIP_RESTORE_IN_PROGRESS") {
         return Some("database_restore_in_progress");
     }
     if !truthy("PAPERCLIP_IN_WORKTREE") {
@@ -456,7 +464,10 @@ async fn heartbeat_scheduling_suppressed(
         Ok(activation) if activation.armed => None,
         Ok(_) => Some("worktree_instance"),
         Err(error) => {
-            tracing::warn!(?error, "worktree run execution activation read failed; defaulting to suppressed");
+            tracing::warn!(
+                ?error,
+                "worktree run execution activation read failed; defaulting to suppressed"
+            );
             Some("worktree_instance")
         }
     }

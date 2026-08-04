@@ -77,7 +77,11 @@ impl ProviderHealthCheck {
 
     /// 附加 warning。
     pub fn with_warnings(mut self, warnings: Vec<String>) -> Self {
-        self.warnings = if warnings.is_empty() { None } else { Some(warnings) };
+        self.warnings = if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        };
         self
     }
 }

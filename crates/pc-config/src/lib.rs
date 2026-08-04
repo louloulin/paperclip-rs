@@ -9,6 +9,14 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
 
+pub mod home_paths;
+
+pub use home_paths::{
+    expand_home_prefix, resolve_env_path_for_config, resolve_home_aware_path, HomePathError,
+    PaperclipHomePaths, DEFAULT_PAPERCLIP_INSTANCE_ID, PAPERCLIP_CONFIG_BASENAME,
+    PAPERCLIP_ENV_FILENAME,
+};
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("missing required env var: {0}")]

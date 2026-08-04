@@ -13,6 +13,7 @@ use pc_http::{
 };
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
+use pc_secrets::DecisionSigningService;
 use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 use tower::ServiceExt;
@@ -47,6 +48,10 @@ fn test_state(db: Db) -> AppState {
         }),
         realtime,
     )
+    .with_decision_signing(Arc::new(
+        DecisionSigningService::from_secret("0123456789abcdef0123456789abcdef")
+            .expect("test signing secret"),
+    ))
 }
 
 async fn insert_company(db: &Db) -> Uuid {
@@ -109,12 +114,7 @@ async fn insert_heartbeat_run(db: &Db, company_id: Uuid, agent_id: Uuid) -> Uuid
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -146,9 +146,7 @@ async fn call(
 
 #[tokio::test(flavor = "current_thread")]
 async fn approval_create_get_list_decide_delete_lifecycle() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
@@ -168,13 +166,7 @@ async fn approval_create_get_list_decide_delete_lifecycle() {
     assert_eq!(body["status"], "pending");
     assert_eq!(body["approval_type"], "hire_agent");
 
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/api/approvals/{approval_id}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/api/approvals/{approval_id}"), None).await;
     assert_eq!(status, 200);
     assert_eq!(body["id"], approval_id);
 
@@ -216,9 +208,7 @@ async fn approval_create_get_list_decide_delete_lifecycle() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn approval_create_rejects_empty_approval_type() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
@@ -238,9 +228,7 @@ async fn approval_create_rejects_empty_approval_type() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn decision_create_and_list_filter_by_company() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let agent_id = insert_agent(&db, company_id).await;
     let _issue_id = insert_issue(&db, company_id).await;
@@ -272,4 +260,70 @@ async fn decision_create_and_list_filter_by_company() {
     assert_eq!(status, 200);
     let arr = body.as_array().expect("array");
     assert!(arr.iter().any(|d| d["id"] == decision_id));
+
+    let stored: (Value, Value, String) = sqlx::query_as(
+        "SELECT options, target_snapshots, signed_spec FROM decisions WHERE id = $1",
+    )
+    .bind(Uuid::parse_str(decision_id).unwrap())
+    .fetch_one(db.pool())
+    .await
+    .expect("load signed decision");
+    let signer = DecisionSigningService::from_secret("0123456789abcdef0123456789abcdef").unwrap();
+    assert!(pc_repos::decision::verify_decision_signature(
+        Uuid::parse_str(decision_id).unwrap(),
+        &stored.0,
+        &stored.1,
+        &stored.2,
+        &signer,
+    )
+    .unwrap());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn decision_decide_rejects_tampered_signed_spec() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    let agent_id = insert_agent(&db, company_id).await;
+    let _issue_id = insert_issue(&db, company_id).await;
+    let _run_id = insert_heartbeat_run(&db, company_id, agent_id).await;
+    let app = routes::decisions::router().with_state(test_state(db.clone()));
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/decisions",
+        Some(json!({
+            "company_id": company_id,
+            "title": "Signed decision",
+            "body": "Must reject tampering"
+        })),
+    )
+    .await;
+    assert_eq!(status, 201, "decision create: {body}");
+    let decision_id = Uuid::parse_str(body["id"].as_str().unwrap()).unwrap();
+    sqlx::query("UPDATE decisions SET options = $1 WHERE id = $2")
+        .bind(json!([{ "id": "tampered", "effects": [] }]))
+        .bind(decision_id)
+        .execute(db.pool())
+        .await
+        .expect("tamper decision");
+
+    let (status, response) = call(
+        &app,
+        "POST",
+        &format!("/api/decisions/{decision_id}/decide"),
+        Some(json!({ "chosenOptionId": "tampered" })),
+    )
+    .await;
+
+    assert_eq!(status, 403, "tampered decision: {response}");
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Decision signature verification failed"));
+    let status: String = sqlx::query_scalar("SELECT status FROM decisions WHERE id = $1")
+        .bind(decision_id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "open");
 }

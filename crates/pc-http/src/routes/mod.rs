@@ -12,6 +12,7 @@ pub mod authz;
 pub mod board_chat;
 pub mod built_in_agents;
 pub mod cases;
+pub(crate) mod change_consent;
 pub mod companies;
 pub mod company_import_paths;
 pub mod company_skill_policy;
@@ -61,6 +62,7 @@ pub mod workflows;
 pub mod workspace_command_authz;
 pub mod workspace_runtime_service_authz;
 
+pub mod labels;
 pub mod live_events;
 
 use axum::Router;
@@ -113,6 +115,7 @@ pub fn router() -> Router<AppState> {
         .merge(board_chat::router())
         .merge(built_in_agents::router())
         .merge(company_skills::router())
+        .merge(labels::router())
         .merge(company_skill_policy::router())
         .merge(company_import_paths::router())
         .merge(costs::router())

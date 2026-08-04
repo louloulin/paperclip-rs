@@ -6,6 +6,10 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 
+use crate::issue_change_receipt::{build_issue_changes, IssueChanges, IssueRelationChanges};
+use crate::issue_terminal_effects::{
+    apply_issue_terminal_effects, TerminalEffectActor, TerminalEffectIssue,
+};
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -273,6 +277,34 @@ pub struct IssueRecoveryActionRow {
     pub updated_at: Timestamp,
 }
 
+/// `upsert_recovery_action` 的输入。
+///
+/// 字段语义与 Node `UpsertIssueRecoveryActionInput` 对齐：
+/// - `owner_type` 不填则由 `owner_agent_id` / `owner_user_id` 推导
+/// - `attempt_count` 在 update 路径上由数据库自增（`existing.attempt_count + 1`）
+/// - fingerprint 用于 active 唯一索引（同一 source 同一 fingerprint 只保留一条 active）
+#[derive(Debug, Clone)]
+pub struct UpsertRecoveryAction {
+    pub company_id: Uuid,
+    pub source_issue_id: Uuid,
+    pub recovery_issue_id: Option<Uuid>,
+    pub kind: String,
+    pub owner_type: Option<String>,
+    pub owner_agent_id: Option<Uuid>,
+    pub owner_user_id: Option<String>,
+    pub previous_owner_agent_id: Option<Uuid>,
+    pub return_owner_agent_id: Option<Uuid>,
+    pub cause: String,
+    pub fingerprint: String,
+    pub evidence: Option<serde_json::Value>,
+    pub next_action: String,
+    pub wake_policy: Option<serde_json::Value>,
+    pub monitor_policy: Option<serde_json::Value>,
+    pub max_attempts: Option<i32>,
+    pub timeout_at: Option<Timestamp>,
+    pub last_attempt_at: Option<Timestamp>,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct IssueWorkProductRow {
     pub id: Uuid,
@@ -307,8 +339,35 @@ const ISSUE_COLS: &str = "id, company_id, project_id, project_workspace_id, goal
     source_trust, unblock_descriptor, blocked_transition_at, blocked_owner_notified_at, \
     started_at, completed_at, cancelled_at, hidden_at, created_at, updated_at";
 
+const ISSUE_STATUSES: [&str; 7] = [
+    "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
+];
+
+fn valid_issue_status(status: &str) -> bool {
+    ISSUE_STATUSES.contains(&status)
+}
+
 pub struct IssueRepo<'a> {
     pub db: &'a Db,
+}
+
+#[derive(Debug, Clone)]
+pub struct IssueUpdateReceipt {
+    pub issue: IssueRow,
+    pub changes: IssueChanges,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IssueRelationUpdate {
+    pub label_ids: Option<Vec<Uuid>>,
+    pub blocked_by_issue_ids: Option<Vec<Uuid>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IssueUpdateActor {
+    pub agent_id: Option<Uuid>,
+    pub user_id: Option<String>,
+    pub run_id: Option<Uuid>,
 }
 
 impl<'a> IssueRepo<'a> {
@@ -438,6 +497,331 @@ impl<'a> IssueRepo<'a> {
             .bind(assignee_agent_id)
             .fetch_optional(self.db.pool())
             .await
+    }
+
+    pub async fn update_with_receipt(
+        &self,
+        id: Uuid,
+        title: Option<&str>,
+        description: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+        assignee_agent_id: Option<Option<Uuid>>,
+        relation_changes: &IssueRelationChanges,
+    ) -> sqlx::Result<Option<IssueUpdateReceipt>> {
+        self.update_with_relations(
+            id,
+            title,
+            description,
+            status,
+            priority,
+            assignee_agent_id,
+            IssueRelationUpdate::default(),
+            relation_changes,
+            None,
+        )
+        .await
+    }
+
+    pub async fn update_with_relations(
+        &self,
+        id: Uuid,
+        title: Option<&str>,
+        description: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+        assignee_agent_id: Option<Option<Uuid>>,
+        relations: IssueRelationUpdate,
+        relation_changes: &IssueRelationChanges,
+        actor: Option<IssueUpdateActor>,
+    ) -> sqlx::Result<Option<IssueUpdateReceipt>> {
+        let mut tx = self.db.pool().begin().await?;
+        let Some(existing) = sqlx::query_as::<_, IssueRow>(&format!(
+            "SELECT {ISSUE_COLS} FROM issues WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            return Ok(None);
+        };
+
+        if let Some(status) = status {
+            if !valid_issue_status(status) {
+                return Err(sqlx::Error::Protocol(format!("unknown issue status: {status}")));
+            }
+            let next_assignee = assignee_agent_id.unwrap_or(existing.assignee_agent_id);
+            if status == "in_progress" && next_assignee.is_none() && existing.assignee_user_id.is_none() {
+                return Err(sqlx::Error::Protocol(
+                    "in_progress issues require an assignee".into(),
+                ));
+            }
+            if status == "in_progress" {
+                let unresolved_count: i64 = if let Some(blocker_ids) = relations.blocked_by_issue_ids.as_deref() {
+                    sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM issues WHERE company_id=$1 AND id=ANY($2) AND status NOT IN ('done','cancelled') AND hidden_at IS NULL",
+                    )
+                    .bind(existing.company_id)
+                    .bind(blocker_ids)
+                    .fetch_one(&mut *tx)
+                    .await?
+                } else {
+                    sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM issue_relations ir INNER JOIN issues blocker ON blocker.id=ir.issue_id AND blocker.company_id=ir.company_id WHERE ir.company_id=$1 AND ir.related_issue_id=$2 AND ir.type='blocks' AND blocker.status NOT IN ('done','cancelled') AND blocker.hidden_at IS NULL",
+                    )
+                    .bind(existing.company_id)
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await?
+                };
+                if unresolved_count > 0 {
+                    return Err(sqlx::Error::Protocol(
+                        "issue is blocked by unresolved blockers".into(),
+                    ));
+                }
+            }
+        }
+        if let Some(actor) = &actor {
+            if let Some(agent_id) = actor.agent_id {
+                let agent_exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM agents WHERE id=$1 AND company_id=$2)",
+                )
+                .bind(agent_id)
+                .bind(existing.company_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !agent_exists {
+                    return Err(sqlx::Error::Protocol(
+                        "actor agent does not belong to the issue company".into(),
+                    ));
+                }
+                if let Some(run_id) = actor.run_id {
+                    let run_exists: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE id=$1 AND company_id=$2 AND agent_id=$3)",
+                    )
+                    .bind(run_id)
+                    .bind(existing.company_id)
+                    .bind(agent_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    if !run_exists {
+                        return Err(sqlx::Error::Protocol(
+                            "actor run does not belong to the actor agent".into(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let previous_label_ids: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT label_id FROM issue_labels WHERE issue_id = $1 ORDER BY label_id",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let previous_blocker_ids: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT issue_id FROM issue_relations WHERE related_issue_id = $1 AND type = 'blocks' ORDER BY issue_id",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        if let Some(label_ids) = relations.label_ids.as_deref() {
+            let unique: std::collections::BTreeSet<Uuid> = label_ids.iter().copied().collect();
+            let unique_vec: Vec<Uuid> = unique.iter().copied().collect();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM labels WHERE company_id = $1 AND id = ANY($2)",
+            )
+            .bind(existing.company_id)
+            .bind(&unique_vec)
+            .fetch_one(&mut *tx)
+            .await?;
+            if count != unique_vec.len() as i64 {
+                return Err(sqlx::Error::Protocol(
+                    "one or more labels do not belong to the issue company".into(),
+                ));
+            }
+            sqlx::query("DELETE FROM issue_labels WHERE issue_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            for label_id in unique_vec {
+                sqlx::query(
+                    "INSERT INTO issue_labels (issue_id, label_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+                )
+                .bind(id)
+                .bind(label_id)
+                .bind(existing.company_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        if let Some(blocker_ids) = relations.blocked_by_issue_ids.as_deref() {
+            let unique: std::collections::BTreeSet<Uuid> = blocker_ids.iter().copied().collect();
+            if unique.contains(&id) {
+                return Err(sqlx::Error::Protocol(
+                    "an issue cannot be blocked by itself".into(),
+                ));
+            }
+            let unique_vec: Vec<Uuid> = unique.iter().copied().collect();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND id = ANY($2)",
+            )
+            .bind(existing.company_id)
+            .bind(&unique_vec)
+            .fetch_one(&mut *tx)
+            .await?;
+            if count != unique_vec.len() as i64 {
+                return Err(sqlx::Error::Protocol(
+                    "blocked-by issues must belong to the same company".into(),
+                ));
+            }
+            let edges: Vec<(Uuid, Uuid)> = sqlx::query_as(
+                "SELECT issue_id, related_issue_id FROM issue_relations WHERE company_id = $1 AND type = 'blocks'",
+            )
+            .bind(existing.company_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            let mut graph: std::collections::HashMap<Uuid, Vec<Uuid>> = Default::default();
+            for (from, to) in edges {
+                graph.entry(from).or_default().push(to);
+            }
+            for candidate in &unique_vec {
+                let mut queue = vec![id];
+                let mut visited = std::collections::HashSet::from([id]);
+                while let Some(current) = queue.pop() {
+                    if current == *candidate {
+                        return Err(sqlx::Error::Protocol(
+                            "blocking relations cannot contain cycles".into(),
+                        ));
+                    }
+                    for next in graph.get(&current).into_iter().flatten() {
+                        if visited.insert(*next) {
+                            queue.push(*next);
+                        }
+                    }
+                }
+            }
+            sqlx::query(
+                "DELETE FROM issue_relations WHERE company_id = $1 AND related_issue_id = $2 AND type = 'blocks'",
+            )
+            .bind(existing.company_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            for blocker_id in unique_vec {
+                sqlx::query(
+                    "INSERT INTO issue_relations (company_id, issue_id, related_issue_id, type, created_by_agent_id, created_by_user_id) VALUES ($1,$2,$3,'blocks',$4,$5) ON CONFLICT DO NOTHING",
+                )
+                .bind(existing.company_id)
+                .bind(blocker_id)
+                .bind(id)
+                .bind(actor.as_ref().and_then(|value| value.agent_id))
+                .bind(actor.as_ref().and_then(|value| value.user_id.as_deref()))
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        let issue = sqlx::query_as::<_, IssueRow>(&format!(
+            "UPDATE issues SET title=COALESCE($2,title), description=COALESCE($3,description), \
+             status=COALESCE($4,status), priority=COALESCE($5,priority), \
+             assignee_agent_id=COALESCE($6,assignee_agent_id), \
+             started_at=CASE WHEN $4='in_progress' AND started_at IS NULL THEN now() ELSE started_at END, \
+             completed_at=CASE WHEN $4='done' THEN now() WHEN $4 IS NOT NULL THEN NULL ELSE completed_at END, \
+             cancelled_at=CASE WHEN $4='cancelled' THEN now() WHEN $4 IS NOT NULL THEN NULL ELSE cancelled_at END, \
+             blocked_transition_at=CASE WHEN $4='blocked' AND status<>'blocked' THEN now() WHEN $4 IS NOT NULL AND $4<>'blocked' THEN NULL ELSE blocked_transition_at END, \
+             blocked_owner_notified_at=CASE WHEN $4='blocked' AND status<>'blocked' THEN NULL WHEN $4 IS NOT NULL AND $4<>'blocked' THEN NULL ELSE blocked_owner_notified_at END, \
+             unblock_descriptor=CASE WHEN $4 IS NOT NULL AND $4<>'blocked' THEN NULL ELSE unblock_descriptor END, \
+             checkout_run_id=CASE WHEN $4 IS NOT NULL AND $4<>'in_progress' THEN NULL ELSE checkout_run_id END, \
+             execution_run_id=CASE WHEN $4 IS NOT NULL AND $4<>'in_progress' THEN NULL ELSE execution_run_id END, \
+             execution_agent_name_key=CASE WHEN $4 IS NOT NULL AND $4<>'in_progress' THEN NULL ELSE execution_agent_name_key END, \
+             execution_locked_at=CASE WHEN $4 IS NOT NULL AND $4<>'in_progress' THEN NULL ELSE execution_locked_at END, \
+             updated_at=now() \
+             WHERE id=$1 RETURNING {ISSUE_COLS}"
+        ))
+        .bind(id)
+        .bind(title)
+        .bind(description)
+        .bind(status)
+        .bind(priority)
+        .bind(assignee_agent_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(issue) = issue else {
+            return Ok(None);
+        };
+        let existing_value = serde_json::to_value(&existing).unwrap_or_default();
+        let updated_value = serde_json::to_value(&issue).unwrap_or_default();
+        let mut effective_relations = relation_changes.clone();
+        if relations.label_ids.is_some() {
+            effective_relations.label_ids = Some((
+                previous_label_ids.iter().map(|(value,)| value.to_string()).collect(),
+                relations.label_ids.unwrap_or_default().iter().map(Uuid::to_string).collect(),
+            ));
+        }
+        if relations.blocked_by_issue_ids.is_some() {
+            effective_relations.blocked_by_issue_ids = Some((
+                previous_blocker_ids.iter().map(|(value,)| value.to_string()).collect(),
+                relations
+                    .blocked_by_issue_ids
+                    .unwrap_or_default()
+                    .iter()
+                    .map(Uuid::to_string)
+                    .collect(),
+            ));
+        }
+        let empty = serde_json::Map::new();
+        let changes = build_issue_changes(
+            existing_value.as_object().unwrap_or(&empty),
+            updated_value.as_object().unwrap_or(&empty),
+            &effective_relations,
+        );
+        if existing.status != issue.status
+            && matches!(issue.status.as_str(), "done" | "cancelled" | "blocked")
+        {
+            let effect_actor = TerminalEffectActor {
+                agent_id: actor.as_ref().and_then(|value| value.agent_id),
+                user_id: actor.as_ref().and_then(|value| value.user_id.as_deref()),
+                run_id: actor.as_ref().and_then(|value| value.run_id),
+            };
+            apply_issue_terminal_effects(
+                &mut tx,
+                &TerminalEffectIssue {
+                    id: issue.id,
+                    company_id: issue.company_id,
+                    identifier: issue.identifier.as_deref(),
+                    title: &issue.title,
+                    status: &issue.status,
+                },
+                &effect_actor,
+            )
+            .await?;
+        }
+        if let Some(actor) = &actor {
+            let (actor_type, actor_id) = if let Some(agent_id) = actor.agent_id {
+                ("agent", agent_id.to_string())
+            } else if let Some(user_id) = actor.user_id.as_deref() {
+                ("user", user_id.to_owned())
+            } else {
+                ("system", "issue_service".to_owned())
+            };
+            sqlx::query(
+                "INSERT INTO activity_log (company_id, actor_type, actor_id, action, entity_type, entity_id, agent_id, run_id, details) VALUES ($1,$2,$3,'issue.updated','issue',$4,$5,$6,$7)",
+            )
+            .bind(existing.company_id)
+            .bind(actor_type)
+            .bind(actor_id)
+            .bind(id.to_string())
+            .bind(actor.agent_id)
+            .bind(actor.run_id)
+            .bind(serde_json::json!({ "changes": changes }))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(Some(IssueUpdateReceipt { issue, changes }))
     }
 
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
@@ -929,6 +1313,277 @@ impl<'a> IssueRepo<'a> {
     // =========================================================================
     // Work products
     // =========================================================================
+    /// Upsert active recovery action for a source issue.
+    ///
+    /// 对齐 Node `upsertSourceScopedUnlocked`：
+    /// - 已有 active 行：增量更新 `attempt_count` 并保留历史 owner / evidence
+    /// - 无 active 行：插入新行，`attempt_count = 1`
+    /// - 在 `issue_recovery_actions_active_source_uq` /
+    ///   `issue_recovery_actions_active_fingerprint_uq` 上 retry 最多 3 次
+    ///   （处理并发首次插入竞争）
+    ///
+    /// 调用方需要在更外层使用 advisory lock 来按 (company_id, source_issue_id)
+    /// 串行化，本函数只负责单次原子 upsert。
+    pub async fn upsert_recovery_action(
+        &self,
+        input: &UpsertRecoveryAction,
+    ) -> sqlx::Result<IssueRecoveryActionRow> {
+        const MAX_RETRIES: u32 = 3;
+        let owner_type = input
+            .owner_type
+            .clone()
+            .or_else(|| {
+                if input.owner_agent_id.is_some() {
+                    Some("agent".to_string())
+                } else {
+                    Some("board".to_string())
+                }
+            })
+            .unwrap_or_else(|| "board".to_string());
+        let mut last_err: Option<sqlx::Error> = None;
+        for _attempt in 0..MAX_RETRIES {
+            // 1) 尝试更新现有 active 行
+            let existing: Option<IssueRecoveryActionRow> = sqlx::query_as(
+                "UPDATE issue_recovery_actions SET \
+                    recovery_issue_id = $2, kind = $3, status = 'active', \
+                    owner_type = $4, owner_agent_id = $5, owner_user_id = $6, \
+                    previous_owner_agent_id = $7, return_owner_agent_id = $8, \
+                    cause = $9, fingerprint = $10, evidence = $11, next_action = $12, \
+                    wake_policy = $13, monitor_policy = $14, \
+                    attempt_count = attempt_count + 1, max_attempts = $15, \
+                    timeout_at = $16, last_attempt_at = COALESCE($17, now()), \
+                    outcome = NULL, resolution_note = NULL, resolved_at = NULL, \
+                    updated_at = now() \
+                 WHERE source_issue_id = $1 AND status = 'active' \
+                 RETURNING id, company_id, source_issue_id, recovery_issue_id, kind, status, \
+                    owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
+                    return_owner_agent_id, cause, fingerprint, evidence, next_action, \
+                    wake_policy, monitor_policy, attempt_count, max_attempts, \
+                    timeout_at, last_attempt_at, outcome, resolution_note, resolved_at, \
+                    created_at, updated_at",
+            )
+            .bind(input.source_issue_id)
+            .bind(input.recovery_issue_id)
+            .bind(&input.kind)
+            .bind(&owner_type)
+            .bind(input.owner_agent_id)
+            .bind(input.owner_user_id.as_deref())
+            .bind(input.previous_owner_agent_id)
+            .bind(input.return_owner_agent_id)
+            .bind(&input.cause)
+            .bind(&input.fingerprint)
+            .bind(input.evidence.clone().unwrap_or(serde_json::Value::Null))
+            .bind(&input.next_action)
+            .bind(input.wake_policy.clone())
+            .bind(input.monitor_policy.clone())
+            .bind(input.max_attempts)
+            .bind(input.timeout_at)
+            .bind(input.last_attempt_at)
+            .fetch_optional(self.db.pool())
+            .await?;
+            if let Some(row) = existing {
+                return Ok(row);
+            }
+            // 2) 没有 active 行 → 插入新行
+            let inserted: Result<IssueRecoveryActionRow, sqlx::Error> = sqlx::query_as(
+                "INSERT INTO issue_recovery_actions ( \
+                    company_id, source_issue_id, recovery_issue_id, kind, status, \
+                    owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
+                    return_owner_agent_id, cause, fingerprint, evidence, next_action, \
+                    wake_policy, monitor_policy, attempt_count, max_attempts, \
+                    timeout_at, last_attempt_at \
+                 ) VALUES ( \
+                    $1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, \
+                    $14, $15, 1, $16, $17, $18 \
+                 ) RETURNING id, company_id, source_issue_id, recovery_issue_id, kind, status, \
+                    owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
+                    return_owner_agent_id, cause, fingerprint, evidence, next_action, \
+                    wake_policy, monitor_policy, attempt_count, max_attempts, \
+                    timeout_at, last_attempt_at, outcome, resolution_note, resolved_at, \
+                    created_at, updated_at",
+            )
+            .bind(input.company_id)
+            .bind(input.source_issue_id)
+            .bind(input.recovery_issue_id)
+            .bind(&input.kind)
+            .bind(&owner_type)
+            .bind(input.owner_agent_id)
+            .bind(input.owner_user_id.as_deref())
+            .bind(input.previous_owner_agent_id)
+            .bind(input.return_owner_agent_id)
+            .bind(&input.cause)
+            .bind(&input.fingerprint)
+            .bind(input.evidence.clone().unwrap_or(serde_json::Value::Null))
+            .bind(&input.next_action)
+            .bind(input.wake_policy.clone())
+            .bind(input.monitor_policy.clone())
+            .bind(input.max_attempts)
+            .bind(input.timeout_at)
+            .bind(input.last_attempt_at)
+            .fetch_one(self.db.pool())
+            .await;
+            match inserted {
+                Ok(row) => return Ok(row),
+                Err(sqlx::Error::Database(db_err)) if is_unique_recovery_conflict(db_err.as_ref()) => {
+                    // 并发竞争：另一个事务抢先插入 → 下次循环走 update 路径
+                    last_err = Some(sqlx::Error::Database(db_err));
+                    continue;
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| sqlx::Error::RowNotFound))
+    }
+
+    /// Bulk 拉取一组 source issues 的「最近一条 active」recovery action。
+    ///
+    /// 对齐 Node `listActiveForIssues`：按 `source_issue_id` 分组，每个 issue 只
+    /// 保留 `updated_at` 最新的一条 active 行（status IN ('active','escalated')）。
+    /// 空输入 → 空 Map。
+    pub async fn list_active_recovery_actions_for_issues(
+        &self,
+        company_id: Uuid,
+        source_issue_ids: &[Uuid],
+    ) -> sqlx::Result<std::collections::HashMap<Uuid, IssueRecoveryActionRow>> {
+        use std::collections::HashMap;
+        let mut out: HashMap<Uuid, IssueRecoveryActionRow> = HashMap::new();
+        if source_issue_ids.is_empty() {
+            return Ok(out);
+        }
+        let rows: Vec<IssueRecoveryActionRow> = sqlx::query_as(
+            "SELECT id, company_id, source_issue_id, recovery_issue_id, kind, status, \
+                    owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
+                    return_owner_agent_id, cause, fingerprint, evidence, next_action, \
+                    wake_policy, monitor_policy, attempt_count, max_attempts, \
+                    timeout_at, last_attempt_at, outcome, resolution_note, resolved_at, \
+                    created_at, updated_at \
+             FROM issue_recovery_actions \
+             WHERE company_id = $1 \
+               AND source_issue_id = ANY($2::uuid[]) \
+               AND status IN ('active', 'escalated') \
+             ORDER BY source_issue_id, updated_at DESC",
+        )
+        .bind(company_id)
+        .bind(source_issue_ids)
+        .fetch_all(self.db.pool())
+        .await?;
+        for row in rows {
+            // 只保留每个 source 的第一条（已按 updated_at DESC 排序）
+            out.entry(row.source_issue_id).or_insert(row);
+        }
+        Ok(out)
+    }
+
+    /// 按 source_issue_id + 可选过滤条件 resolve active recovery action。
+    ///
+    /// 对齐 Node `resolveActiveForIssue`：
+    /// - 必须匹配 company_id + source_issue_id + status IN ('active','escalated')
+    /// - 可选 action_id / kind / cause / fingerprint 进一步过滤
+    /// - 写 status / outcome / resolution_note / resolved_at / updated_at
+    ///
+    /// 返回被更新的最新行（可能 None：未匹配到任何 active 行）。
+    pub async fn resolve_active_recovery_for_issue(
+        &self,
+        company_id: Uuid,
+        source_issue_id: Uuid,
+        action_id: Option<Uuid>,
+        kind: Option<&str>,
+        cause: Option<&str>,
+        fingerprint: Option<&str>,
+        status: &str,
+        outcome: &str,
+        resolution_note: Option<&str>,
+    ) -> sqlx::Result<Option<IssueRecoveryActionRow>> {
+        let mut sql = String::from(
+            "UPDATE issue_recovery_actions SET \
+                status = $3, outcome = $4, resolution_note = $5, \
+                resolved_at = now(), updated_at = now() \
+             WHERE company_id = $1 AND source_issue_id = $2 \
+               AND status IN ('active', 'escalated')",
+        );
+        let mut bind_idx = 6;
+        if action_id.is_some() {
+            sql.push_str(&format!(" AND id = ${}", bind_idx));
+            bind_idx += 1;
+        }
+        if kind.is_some() {
+            sql.push_str(&format!(" AND kind = ${}", bind_idx));
+            bind_idx += 1;
+        }
+        if cause.is_some() {
+            sql.push_str(&format!(" AND cause = ${}", bind_idx));
+            bind_idx += 1;
+        }
+        if fingerprint.is_some() {
+            sql.push_str(&format!(" AND fingerprint = ${}", bind_idx));
+        }
+        sql.push_str(
+            " RETURNING id, company_id, source_issue_id, recovery_issue_id, kind, status, \
+                    owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
+                    return_owner_agent_id, cause, fingerprint, evidence, next_action, \
+                    wake_policy, monitor_policy, attempt_count, max_attempts, \
+                    timeout_at, last_attempt_at, outcome, resolution_note, resolved_at, \
+                    created_at, updated_at",
+        );
+        let mut q = sqlx::query_as::<_, IssueRecoveryActionRow>(&sql)
+            .bind(company_id)
+            .bind(source_issue_id)
+            .bind(status)
+            .bind(outcome)
+            .bind(resolution_note);
+        if let Some(id) = action_id {
+            q = q.bind(id);
+        }
+        if let Some(k) = kind {
+            q = q.bind(k);
+        }
+        if let Some(c) = cause {
+            q = q.bind(c);
+        }
+        if let Some(f) = fingerprint {
+            q = q.bind(f);
+        }
+        q.fetch_optional(self.db.pool())
+            .await
+    }
+
+    /// 把超时未结的 active / escalated recovery action 标记为 cancelled。
+    ///
+    /// 对齐 Node `expireRecoveryActions`（background cleanup）：
+    /// - 限定 `timeout_at IS NOT NULL AND timeout_at < now()`
+    /// - 写 `status='cancelled'`、`outcome='timed_out'`、`resolved_at=now()`、`updated_at=now()`
+    /// - 返回被取消的行数
+    pub async fn expire_timed_out_recovery_actions(
+        &self,
+        company_id: Option<Uuid>,
+    ) -> sqlx::Result<u64> {
+        let result = if let Some(cid) = company_id {
+            sqlx::query(
+                "UPDATE issue_recovery_actions SET \
+                    status = 'cancelled', outcome = 'timed_out', \
+                    resolved_at = now(), updated_at = now() \
+                 WHERE company_id = $1 \
+                   AND status IN ('active', 'escalated') \
+                   AND timeout_at IS NOT NULL AND timeout_at < now()",
+            )
+            .bind(cid)
+            .execute(self.db.pool())
+            .await?
+        } else {
+            sqlx::query(
+                "UPDATE issue_recovery_actions SET \
+                    status = 'cancelled', outcome = 'timed_out', \
+                    resolved_at = now(), updated_at = now() \
+                 WHERE status IN ('active', 'escalated') \
+                   AND timeout_at IS NOT NULL AND timeout_at < now()",
+            )
+            .execute(self.db.pool())
+            .await?
+        };
+        Ok(result.rows_affected())
+    }
+
+
 
     pub async fn list_work_products(
         &self,
@@ -1051,6 +1706,54 @@ impl<'a> IssueRepo<'a> {
             .execute(self.db.pool())
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// 事务化「设为 primary」：在同一 issue + type 下先把所有 work_product 的
+    /// `is_primary` 清空，再把目标行设为 primary。返回目标行最新状态。
+    ///
+    /// 对齐 Node `workProductService.setPrimary` 的事务语义：
+    /// - 同一 issue + type 至多一条 `is_primary = true`
+    /// - 跨 type 不互相影响
+    pub async fn set_as_primary_work_product(
+        &self,
+        id: Uuid,
+    ) -> sqlx::Result<Option<IssueWorkProductRow>> {
+        let mut tx = self.db.pool().begin().await?;
+        // 取出目标的 (issue_id, type) 用于限定同 type 清空
+        let row: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT issue_id, type FROM issue_work_products WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((issue_id, kind)) = row else {
+            tx.rollback().await.ok();
+            return Ok(None);
+        };
+        // 清空同 issue + type 的其他 primary
+        sqlx::query(
+            "UPDATE issue_work_products SET is_primary = false, updated_at = now() \
+             WHERE issue_id = $1 AND type = $2 AND id != $3 AND is_primary = true",
+        )
+        .bind(issue_id)
+        .bind(&kind)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        // 设置目标为 primary
+        let updated: Option<IssueWorkProductRow> = sqlx::query_as(
+            "UPDATE issue_work_products SET is_primary = true, updated_at = now() \
+             WHERE id = $1 \
+             RETURNING id, company_id, project_id, issue_id, type as type_, provider, \
+                external_id, title, status, review_state, is_primary, health_status, \
+                summary, metadata, created_by_run_id, source_trust, \
+                created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(updated)
     }
 
     // =========================================================================
@@ -1624,4 +2327,49 @@ pub struct IssueSubtree {
 pub struct IssueSubtreeNode {
     pub issue: IssueRow,
     pub children: Vec<IssueSubtreeNode>,
+}
+
+#[cfg(test)]
+mod issue_update_tests {
+    use super::valid_issue_status;
+
+    #[test]
+    fn accepts_all_node_issue_statuses() {
+        for status in [
+            "backlog",
+            "todo",
+            "in_progress",
+            "in_review",
+            "done",
+            "blocked",
+            "cancelled",
+        ] {
+            assert!(valid_issue_status(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_issue_statuses() {
+        assert!(!valid_issue_status("completed"));
+        assert!(!valid_issue_status("open"));
+        assert!(!valid_issue_status(""));
+    }
+}
+
+
+/// Detect Postgres unique constraint conflict on the active-recovery indexes.
+/// 对齐 Node `isUniqueRecoveryActionConflict`。
+fn is_unique_recovery_conflict(err: &dyn sqlx::error::DatabaseError) -> bool {
+    if err.code().as_deref() != Some("23505") {
+        return false;
+    }
+    let constraint = err.constraint().unwrap_or("");
+    if constraint.contains("issue_recovery_actions_active_source_uq")
+        || constraint.contains("issue_recovery_actions_active_fingerprint_uq")
+    {
+        return true;
+    }
+    let msg = err.message();
+    msg.contains("issue_recovery_actions_active_source_uq")
+        || msg.contains("issue_recovery_actions_active_fingerprint_uq")
 }

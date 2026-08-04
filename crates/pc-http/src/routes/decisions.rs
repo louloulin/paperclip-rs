@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
-use pc_repos::decision::DecisionRepo;
+use pc_repos::decision::{verify_decision_signature, DecisionRepo};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -25,8 +25,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/decisions/:id/decide", post(decide_decision))
         .route("/api/decisions/:id/dismiss", post(dismiss_decision))
         .route("/api/decisions/:id/cancel", post(cancel_decision))
-        .route("/api/companies/:company_id/decisions/stats", get(decision_stats_route))
-        .route("/api/companies/:company_id/decision-bundles", post(create_decision_bundle).get(list_decision_bundles))
+        .route(
+            "/api/companies/:company_id/decisions/stats",
+            get(decision_stats_route),
+        )
+        .route(
+            "/api/companies/:company_id/decision-bundles",
+            post(create_decision_bundle).get(list_decision_bundles),
+        )
         .route("/api/decision-bundles/:id", get(get_decision_bundle))
 }
 
@@ -72,7 +78,12 @@ async fn create(
         ));
     }
     let row = DecisionRepo::new(&state.db)
-        .create(body.company_id, &body.title, &body.body)
+        .create(
+            body.company_id,
+            &body.title,
+            &body.body,
+            &state.decision_signing,
+        )
         .await?;
     state.realtime.publish(
         LiveEvent::new("decision.created", "decision", row.id).with_company(row.company_id),
@@ -105,6 +116,41 @@ struct DecideDecisionBody {
     input_values: Option<Value>,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct SignedDecisionRow {
+    company_id: Uuid,
+    options: Value,
+    target_snapshots: Value,
+    signed_spec: String,
+}
+
+async fn load_verified_decision(
+    state: &AppState,
+    decision_id: Uuid,
+) -> ApiResult<SignedDecisionRow> {
+    let row = sqlx::query_as::<_, SignedDecisionRow>(
+        "SELECT company_id, options, target_snapshots, signed_spec FROM decisions WHERE id = $1",
+    )
+    .bind(decision_id)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    let verified = verify_decision_signature(
+        decision_id,
+        &row.options,
+        &row.target_snapshots,
+        &row.signed_spec,
+        &state.decision_signing,
+    )
+    .map_err(|error| ApiError::Internal(format!("resolve decision signing secret: {error}")))?;
+    if !verified {
+        return Err(ApiError::Forbidden(
+            "Decision signature verification failed".into(),
+        ));
+    }
+    Ok(row)
+}
+
 async fn decide_decision(
     State(state): State<AppState>,
     Path(decision_id): Path<Uuid>,
@@ -113,13 +159,9 @@ async fn decide_decision(
     if body.chosen_option_id.trim().is_empty() {
         return Err(ApiError::BadRequest("chosenOptionId required".into()));
     }
-    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM decisions WHERE id = $1")
-        .bind(decision_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    let company_id = load_verified_decision(&state, decision_id)
+        .await?
+        .company_id;
     sqlx::query(
         "UPDATE decisions SET status = 'decided', chosen_option_id = $1, decided_by_user_id = $2, \
             decided_at = now(), input_values = COALESCE($3, input_values), updated_at = now() \
@@ -161,13 +203,9 @@ async fn dismiss_decision(
     Path(decision_id): Path<Uuid>,
     Json(body): Json<DismissDecisionBody>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM decisions WHERE id = $1")
-        .bind(decision_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    let company_id = load_verified_decision(&state, decision_id)
+        .await?
+        .company_id;
     sqlx::query(
         "UPDATE decisions SET status = 'dismissed', \
             metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dismissReason', to_jsonb($1::text), 'dismissedByUserId', to_jsonb($2::text)), \
@@ -203,12 +241,10 @@ async fn cancel_decision(
         .ok()
         .flatten();
     let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
-    sqlx::query(
-        "UPDATE decisions SET status = 'cancelled', updated_at = now() WHERE id = $1",
-    )
-    .bind(decision_id)
-    .execute(state.db.pool())
-    .await?;
+    sqlx::query("UPDATE decisions SET status = 'cancelled', updated_at = now() WHERE id = $1")
+        .bind(decision_id)
+        .execute(state.db.pool())
+        .await?;
     state.realtime.publish(
         LiveEvent::new("decision.cancelled", "decision", decision_id).with_company(company_id),
     );
@@ -250,7 +286,6 @@ async fn decision_stats_route(
         "byStatus": by_status,
     })))
 }
-
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -300,7 +335,6 @@ async fn create_decision_bundle(
     ))
 }
 
-
 // ============ Round 34: decision bundles list + detail ============
 
 #[derive(Debug, Deserialize, Default)]
@@ -325,23 +359,60 @@ async fn list_decision_bundles(
         "SELECT id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at          FROM decision_bundles WHERE company_id = $1",
     );
     let mut idx = 2;
-    if q.agent_id.is_some() { sql.push_str(&format!(" AND origin_agent_id = ${idx}")); idx += 1; }
-    if q.issue_id.is_some() { sql.push_str(&format!(" AND origin_issue_id = ${idx}")); idx += 1; }
-    if q.run_id.is_some() { sql.push_str(&format!(" AND origin_run_id = ${idx}")); idx += 1; }
-    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT {}", q.limit.unwrap_or(100).clamp(1, 500)));
-    let mut query = sqlx::query_as::<_, (Uuid, Uuid, String, String, Uuid, Uuid, Uuid, pc_core::Timestamp)>(&sql)
-        .bind(company_id);
-    if let Some(a) = q.agent_id { query = query.bind(a); }
-    if let Some(i) = q.issue_id { query = query.bind(i); }
-    if let Some(r) = q.run_id { query = query.bind(r); }
+    if q.agent_id.is_some() {
+        sql.push_str(&format!(" AND origin_agent_id = ${idx}"));
+        idx += 1;
+    }
+    if q.issue_id.is_some() {
+        sql.push_str(&format!(" AND origin_issue_id = ${idx}"));
+        idx += 1;
+    }
+    if q.run_id.is_some() {
+        sql.push_str(&format!(" AND origin_run_id = ${idx}"));
+        idx += 1;
+    }
+    sql.push_str(&format!(
+        " ORDER BY created_at DESC LIMIT {}",
+        q.limit.unwrap_or(100).clamp(1, 500)
+    ));
+    let mut query = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Uuid,
+            Uuid,
+            Uuid,
+            pc_core::Timestamp,
+        ),
+    >(&sql)
+    .bind(company_id);
+    if let Some(a) = q.agent_id {
+        query = query.bind(a);
+    }
+    if let Some(i) = q.issue_id {
+        query = query.bind(i);
+    }
+    if let Some(r) = q.run_id {
+        query = query.bind(r);
+    }
     let rows = query.fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, title, summary, agent, issue, run, ts)| json!({
-        "id": id, "companyId": cid,
-        "title": title, "summary": summary,
-        "originAgentId": agent, "originIssueId": issue, "originRunId": run,
-        "createdAt": ts,
-    })).collect();
-    Ok(Json(json!({"items": items, "companyId": company_id, "count": items.len()})))
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, cid, title, summary, agent, issue, run, ts)| {
+            json!({
+                "id": id, "companyId": cid,
+                "title": title, "summary": summary,
+                "originAgentId": agent, "originIssueId": issue, "originRunId": run,
+                "createdAt": ts,
+            })
+        })
+        .collect();
+    Ok(Json(
+        json!({"items": items, "companyId": company_id, "count": items.len()}),
+    ))
 }
 
 async fn get_decision_bundle(
@@ -351,15 +422,23 @@ async fn get_decision_bundle(
     let row: Option<(Uuid, Uuid, String, String, Uuid, Uuid, Uuid, pc_core::Timestamp)> = sqlx::query_as(
         "SELECT id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at          FROM decision_bundles WHERE id = $1",
     ).bind(id).fetch_optional(state.db.pool()).await?;
-    let (id, cid, title, summary, agent, issue, run, ts) = row
-        .ok_or_else(|| ApiError::NotFound(format!("decision bundle {id}")))?;
+    let (id, cid, title, summary, agent, issue, run, ts) =
+        row.ok_or_else(|| ApiError::NotFound(format!("decision bundle {id}")))?;
     // 同时返回挂载的 decisions
     let decisions: Vec<(Uuid, String, String)> = sqlx::query_as(
         "SELECT id, title, status FROM decisions WHERE bundle_id = $1 ORDER BY created_at ASC",
-    ).bind(id).fetch_all(state.db.pool()).await?;
-    let decisions_json: Vec<Value> = decisions.into_iter().map(|(did, t, s)| json!({
-        "id": did, "title": t, "status": s,
-    })).collect();
+    )
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let decisions_json: Vec<Value> = decisions
+        .into_iter()
+        .map(|(did, t, s)| {
+            json!({
+                "id": did, "title": t, "status": s,
+            })
+        })
+        .collect();
     Ok(Json(json!({
         "id": id, "companyId": cid,
         "title": title, "summary": summary,

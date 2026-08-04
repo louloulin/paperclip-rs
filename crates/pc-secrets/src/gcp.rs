@@ -44,9 +44,8 @@ impl GcpSecretManagerProvider {
     }
 
     pub fn from_config(provider_config: Option<Value>) -> Result<Self, String> {
-        let cfg = provider_config.ok_or_else(|| {
-            "gcp_secret_manager provider_config is required".to_string()
-        })?;
+        let cfg = provider_config
+            .ok_or_else(|| "gcp_secret_manager provider_config is required".to_string())?;
         let project_id = cfg
             .get("projectId")
             .and_then(|v| v.as_str())
@@ -153,9 +152,7 @@ impl SecretProvider for GcpSecretManagerProvider {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!(
-                "gcp addVersion returned {status}: {body}"
-            ));
+            return Err(format!("gcp addVersion returned {status}: {body}"));
         }
         let v: Value = resp
             .json()
@@ -236,12 +233,7 @@ impl SecretProvider for GcpSecretManagerProvider {
             self.base_url(),
             self.project()
         );
-        match client()
-            .get(&url)
-            .bearer_auth(self.token())
-            .send()
-            .await
-        {
+        match client().get(&url).bearer_auth(self.token()).send().await {
             Ok(r) if r.status().is_success() => ProviderHealthCheck::ok(
                 "gcp_secret_manager",
                 "Connected to Google Secret Manager successfully.".to_string(),
@@ -259,7 +251,7 @@ impl SecretProvider for GcpSecretManagerProvider {
                         backup_guidance: None,
                         details: None,
                     }
-                .with_warnings(vec!["Check accessToken and project IAM bindings.".into()])
+                    .with_warnings(vec!["Check accessToken and project IAM bindings.".into()])
                 } else {
                     ProviderHealthCheck {
                         provider: "gcp_secret_manager".to_string(),
@@ -269,7 +261,9 @@ impl SecretProvider for GcpSecretManagerProvider {
                         backup_guidance: None,
                         details: None,
                     }
-                .with_warnings(vec!["Provider reachable but returned a non-success status.".into()])
+                    .with_warnings(vec![
+                        "Provider reachable but returned a non-success status.".into(),
+                    ])
                 }
             }
             Err(e) => ProviderHealthCheck {
@@ -280,7 +274,9 @@ impl SecretProvider for GcpSecretManagerProvider {
                 backup_guidance: None,
                 details: None,
             }
-                .with_warnings(vec!["Network or DNS error; provider operations will fail.".into()]),
+            .with_warnings(vec![
+                "Network or DNS error; provider operations will fail.".into(),
+            ]),
         }
     }
 }

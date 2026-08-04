@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod models_env;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};

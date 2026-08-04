@@ -8,12 +8,16 @@
 //! 主要方法：initialize / health / shutdown / runJob / handleWebhook /
 //! getData / performAction / executeTool 等。
 
+pub mod config_validator;
 pub mod envelope;
 pub mod error_codes;
 pub mod manifest;
 pub mod methods;
 pub mod types;
 
+pub use config_validator::{
+    validate_instance_config, ConfigValidationError, ConfigValidationResult,
+};
 pub use envelope::{JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse};
 pub use error_codes::{PluginErrorCode, PluginStandardErrorCode};
 pub use manifest::{

@@ -15,6 +15,10 @@ use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
 use pc_realtime::LiveEvent;
+use pc_repos::change_consent_gate::{
+    skill_change_target_key, skill_import_change_target_key,
+    skill_slug_change_target_key, skills_scan_projects_change_target_key,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -397,6 +401,7 @@ async fn list_company_skills(
 async fn install_company_skill(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> ApiResult<impl IntoResponse> {
     let key = body
@@ -407,6 +412,13 @@ async fn install_company_skill(
         .slug
         .clone()
         .unwrap_or_else(|| key.to_lowercase().replace(' ', "-"));
+    super::change_consent::assert_agent_change_consented(
+        &state,
+        &headers,
+        company_id,
+        vec![skill_slug_change_target_key(&slug)],
+    )
+    .await?;
     let name = body.name.clone().unwrap_or_else(|| key.clone());
     let markdown = body.markdown.clone().unwrap_or_default();
     let source_type = body
@@ -1021,8 +1033,16 @@ struct PatchSkillBody {
 async fn patch_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Json(body): Json<PatchSkillBody>,
 ) -> ApiResult<Json<Value>> {
+    super::change_consent::assert_agent_change_consented(
+        &state,
+        &headers,
+        company_id,
+        vec![skill_change_target_key(skill_id)],
+    )
+    .await?;
     let mut updated: Vec<&str> = vec![];
     if let Some(ref n) = body.name {
         if n.len() > 200 { return Err(ApiError::BadRequest("name too long".into())); }
@@ -1486,8 +1506,16 @@ struct ImportSkillsBody {
 async fn import_skills(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<ImportSkillsBody>,
 ) -> ApiResult<Json<Value>> {
+    super::change_consent::assert_agent_change_consented(
+        &state,
+        &headers,
+        company_id,
+        vec![skill_import_change_target_key("manual")],
+    )
+    .await?;
     let items = body.items.unwrap_or_default();
     let mut count = 0;
     for item in items {
@@ -1514,10 +1542,18 @@ async fn install_catalog_skills(
 }
 
 async fn scan_project_skills(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(_body): Json<serde_json::Value>,
 ) -> ApiResult<Json<Value>> {
+    super::change_consent::assert_agent_change_consented(
+        &state,
+        &headers,
+        company_id,
+        vec![skills_scan_projects_change_target_key().to_owned()],
+    )
+    .await?;
     Ok(Json(json!({
         "candidates": [], "conflicts": [], "skipped": [],
         "companyId": company_id,

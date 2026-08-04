@@ -29,6 +29,7 @@ pc-realtime = { path = "../pc-realtime" }
 pc-heartbeat = { path = "../pc-heartbeat" }
 pc-repos = { path = "../pc-repos" }
 pc-storage = { path = "../pc-storage" }
+pc-secrets = { path = "../pc-secrets" }
 pc-feature-flags = { path = "../pc-feature-flags" }
 pc-plugin-host = { path = "../pc-plugin-host" }
 pc-plugin-protocol = { path = "../pc-plugin-protocol" }

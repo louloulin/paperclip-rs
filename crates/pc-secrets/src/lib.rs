@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 pub mod aws;
+pub mod decision_signing;
 pub mod gcp;
-pub mod vault;
 /// 秘密提供方抽象与本地 AES-256-GCM 加密实现。
 ///
 /// 设计目标：
@@ -14,8 +14,15 @@ pub mod local_encrypted;
 pub mod provider;
 pub mod registry;
 pub mod types;
+pub mod vault;
 
 pub use aws::AwsSecretsManagerProvider;
+pub use decision_signing::{
+    ensure_decision_signing_secret, resolve_decision_signing_secret, sign_decision_spec,
+    sign_decision_spec_with_secret, verify_decision_spec, verify_decision_spec_with_secret,
+    DecisionSigningError, DecisionSigningKeyStore, DecisionSigningService,
+    DECISION_SIGNING_VERSION, MIN_DECISION_SIGNING_SECRET_LENGTH,
+};
 pub use gcp::GcpSecretManagerProvider;
 pub use local_encrypted::LocalEncryptedProvider;
 pub use provider::SecretProvider;
@@ -142,7 +149,10 @@ mod tests {
         };
         // create_secret 会真正调用网络，所以只断言 sanitize 路径合法
         // 改用 sanitize_name 单元测试：
-        assert_eq!(super::gcp::sanitize_name_for_test("ok-name_1.0").unwrap(), "ok-name_1.0");
+        assert_eq!(
+            super::gcp::sanitize_name_for_test("ok-name_1.0").unwrap(),
+            "ok-name_1.0"
+        );
         assert!(super::gcp::sanitize_name_for_test("").is_err());
         assert!(super::gcp::sanitize_name_for_test("with space").is_err());
         let _ = (p, ctx); // suppress unused

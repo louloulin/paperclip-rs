@@ -5,7 +5,7 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post},
     Json, Router,
@@ -32,6 +32,9 @@ use pc_heartbeat::{
 };
 use pc_realtime::LiveEvent;
 use pc_repos::agent::{AgentRepo, AgentRow};
+use pc_repos::change_consent_gate::{
+    agent_instructions_change_target_key, agent_profile_change_target_key,
+};
 use pc_repos::cost::CostRepo;
 use pc_repos::execution::ExecutionRepo;
 use pc_repos::skill::SkillRepo;
@@ -373,6 +376,10 @@ where
 }
 
 impl<T> PatchField<T> {
+    fn is_present(&self) -> bool {
+        !matches!(self, Self::Missing)
+    }
+
     fn into_patch(self) -> Option<Option<T>> {
         match self {
             Self::Missing => None,
@@ -415,6 +422,7 @@ struct UpdateBody {
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     if body.permissions.is_some() {
@@ -426,6 +434,20 @@ async fn update(
         return Err(ApiError::BadRequest(
             "budgetMonthlyCents must be nonnegative".into(),
         ));
+    }
+    let touches_protected_profile = body.name.is_some()
+        || body.role.is_some()
+        || body.title.is_present()
+        || body.capabilities.is_present();
+    if touches_protected_profile {
+        let target = load_agent(&state, id).await?;
+        super::change_consent::assert_agent_change_consented(
+            &state,
+            &headers,
+            target.company_id,
+            vec![agent_profile_change_target_key(target.id)],
+        )
+        .await?;
     }
     let row = state
         .agents
@@ -679,9 +701,17 @@ struct UpdateInstructionsPathBody {
 async fn update_instructions_path(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<UpdateInstructionsPathBody>,
 ) -> ApiResult<Json<Value>> {
     let agent = load_agent(&state, id).await?;
+    super::change_consent::assert_agent_change_consented(
+        &state,
+        &headers,
+        agent.company_id,
+        vec![agent_instructions_change_target_key(agent.id)],
+    )
+    .await?;
     let adapter_config_key = body
         .adapter_config_key
         .clone()
@@ -734,9 +764,17 @@ async fn update_instructions_path(
 async fn update_instructions_bundle(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<UpdateInstructionsBundleBody>,
 ) -> ApiResult<Json<Value>> {
     let agent = load_agent(&state, id).await?;
+    super::change_consent::assert_agent_change_consented(
+        &state,
+        &headers,
+        agent.company_id,
+        vec![agent_instructions_change_target_key(agent.id)],
+    )
+    .await?;
     let result = state
         .agent_instructions
         .update_bundle(
@@ -763,6 +801,7 @@ async fn update_instructions_bundle(
     );
     Ok(Json(serde_json::to_value(result.bundle)?))
 }
+
 
 #[derive(Debug, Deserialize)]
 struct InstructionsFileQuery {

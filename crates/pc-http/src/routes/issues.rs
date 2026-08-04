@@ -4,7 +4,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Json, Router,
@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
-use pc_repos::issue::IssueRepo;
+use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
+use pc_repos::issue_change_receipt::IssueRelationChanges;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
@@ -390,27 +391,65 @@ struct UpdateBody {
     priority: Option<String>,
     #[serde(default)]
     assignee_agent_id: Option<Uuid>,
+    #[serde(default, alias = "labelIds")]
+    label_ids: Option<Vec<Uuid>>,
+    #[serde(default, alias = "blockedByIssueIds")]
+    blocked_by_issue_ids: Option<Vec<Uuid>>,
 }
 
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
-    let row = IssueRepo::new(&state.db)
-        .update(
+    let actor_agent_id = headers
+        .get("x-paperclip-agent-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let actor_run_id = headers
+        .get("x-paperclip-run-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let actor_user_id = if actor_agent_id.is_none() {
+        crate::state::require_user_id(&state, &headers).await.ok()
+    } else {
+        None
+    };
+    let actor = if actor_agent_id.is_some() || actor_user_id.is_some() {
+        Some(IssueUpdateActor {
+            agent_id: actor_agent_id,
+            user_id: actor_user_id,
+            run_id: actor_run_id,
+        })
+    } else {
+        None
+    };
+    let receipt = IssueRepo::new(&state.db)
+        .update_with_relations(
             id,
             body.title.as_deref(),
             body.description.as_deref(),
             body.status.as_deref(),
             body.priority.as_deref(),
-            Some(body.assignee_agent_id),
+            body.assignee_agent_id.map(Some),
+            IssueRelationUpdate {
+                label_ids: body.label_ids,
+                blocked_by_issue_ids: body.blocked_by_issue_ids,
+            },
+            &IssueRelationChanges::default(),
+            actor,
         )
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let row = receipt.issue;
     state
         .realtime
-        .publish(LiveEvent::new("issue.updated", "issue", row.id).with_company(row.company_id));
+        .publish(
+            LiveEvent::new("issue.updated", "issue", row.id)
+                .with_company(row.company_id)
+                .with_data(json!({ "changes": receipt.changes })),
+        );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 

@@ -170,3 +170,17 @@ rtk cargo test --workspace --no-fail-fast --lib
 | P3 | Phase G 切流量（UI 默认 Rust server） | — | 1 round |
 
 > 7-10 轮可推到 **≥ 90% 行为等价**，再 2-3 轮推到 e2e 冒烟通过。
+
+## 9. 第八十四轮增量（Round 84 — pc-config::home_paths + pc-secrets::decision_signing）
+
+> 第八十四轮增量：
+> - **新增 `pc-config::home_paths` 模块**：完整对齐 Node `packages/shared/src/home-paths.ts` 的 11 项路径规则、3 个常量、env 解析、tild 展开、相对路径清理、instance 校验、config/.env/runtime 目录布局。新增 11 个单测 + 1 个配置常量测试
+> - **新增 `pc-secrets::decision_signing/` 目录模块**：将 Node `services/decision-signing.ts` 拆为 `mod.rs + canonical.rs + key_store.rs + tests.rs` 四文件；提供 `DecisionSigningService`（可注入 env/固定密钥）、canonical JSON 字节级 Node 兼容（用 `ryu-js` 输出 ECMAScript 数字）、HMAC-SHA256 signing/verify、UTF-16 code unit 长度校验、并发 hard-link 原子发布、0o600/0o700 自愈、symlink 拒绝、3 个 Node 黄金签名向量验证
+> - **接线到启动与仓储**：`pc-server::main` 新增 `ensure_decision_signing_secret()` fail-fast；`pc_repos::DecisionRepo::create` 注入签名服务；`pc_http::routes::decisions` decide/dismiss 在写入前调用 `verify_decision_signature` 拒绝篡改；`AppState.decision_signing` 注入测试固定密钥
+> - **新增集成测试** `decision_decide_rejects_tampered_signed_spec`：篡改 `options` 后断言 403 + `status` 仍为 `open`
+> - **进度影响**：
+>   - 路由端点覆盖 +0.2%（决策 decide/dismiss 行为从允许篡改升级为 403）
+>   - Auth/Secrets +1.5%（决策签名链路完整：启动 fail-fast + canonical + 验证 + tamper 拒绝）
+>   - 数据持久化 +0.3%（decision 写入原子化签名）
+>   - 综合进度从 **≈ 75.4% → ≈ 75.7%**（加权后小幅提升，安全关键路径补齐）
+>   - workspace 总单测：**+32 passing**（pc-config 5→16 / pc-secrets 21→39 / pc-repos decision +2 / 集成 +1）

@@ -325,7 +325,8 @@ impl AgentService {
         if input.name.trim().is_empty() {
             return Err(validation("name must not be empty"));
         }
-        let permissions = normalize_agent_permissions(input.permissions, &input.role);
+        let normalized = crate::permissions::normalize_agent_permissions(input.permissions.clone(), &input.role);
+        let permissions = normalized.to_value();
         AgentRepo::new(&self.db)
             .create_full(CreateAgentRecord {
                 id: input.id.unwrap_or_else(Uuid::new_v4),
@@ -367,7 +368,8 @@ impl AgentService {
             "idle".into()
         };
         let id = input.id.unwrap_or_else(Uuid::new_v4);
-        let permissions = normalize_agent_permissions(input.permissions, &input.role);
+        let normalized = crate::permissions::normalize_agent_permissions(input.permissions.clone(), &input.role);
+        let permissions = normalized.to_value();
         let payload = json!({
             "name": input.name,
             "role": input.role,
@@ -462,7 +464,8 @@ impl AgentService {
         if let Some(value) = input.authorization_policy {
             permissions.insert("authorizationPolicy".into(), value);
         }
-        let permissions = normalize_agent_permissions(Value::Object(permissions), &existing.role);
+        let normalized = crate::permissions::normalize_agent_permissions(Value::Object(permissions), &existing.role);
+        let permissions = normalized.to_value();
         let effective_can_assign = existing.role.eq_ignore_ascii_case("ceo")
             || input.can_create_agents
             || input.can_assign_tasks;
@@ -815,14 +818,7 @@ fn map_sql_error(error: sqlx::Error) -> Error {
     internal(format!("agent database operation failed: {error}"))
 }
 
-fn normalize_agent_permissions(value: Value, role: &str) -> Value {
-    let mut object = value.as_object().cloned().unwrap_or_default();
-    object
-        .entry("canCreateAgents")
-        .or_insert_with(|| Value::Bool(role.trim().eq_ignore_ascii_case("ceo")));
-    object.entry("canCreateSkills").or_insert(Value::Bool(true));
-    Value::Object(object)
-}
+// 复用 permissions 模块的标准化逻辑（对齐 Node agent-permissions.ts）
 
 fn normalize_api_key_scope(scope: Value) -> Result<Value> {
     let Some(object) = scope.as_object() else {

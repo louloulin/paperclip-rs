@@ -110,7 +110,11 @@ impl SecretProvider for VaultProvider {
         context: &SecretProviderWriteContext,
     ) -> Result<PreparedSecretVersion, String> {
         let path = sanitize_path(&context.secret_key)?;
-        let url = format!("{}/v1/secret/data/{}", self.addr().trim_end_matches('/'), path);
+        let url = format!(
+            "{}/v1/secret/data/{}",
+            self.addr().trim_end_matches('/'),
+            path
+        );
         let payload = json!({
             "data": {
                 "value": &value,
@@ -174,7 +178,11 @@ impl SecretProvider for VaultProvider {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "vault material missing path".to_string())?;
-        let url = format!("{}/v1/secret/data/{}", self.addr().trim_end_matches('/'), path);
+        let url = format!(
+            "{}/v1/secret/data/{}",
+            self.addr().trim_end_matches('/'),
+            path
+        );
         let resp = client()
             .get(&url)
             .header("X-Vault-Token", self.token())
@@ -206,7 +214,12 @@ impl SecretProvider for VaultProvider {
     ) -> ProviderHealthCheck {
         // Vault health endpoint: GET /v1/sys/health
         let url = format!("{}/v1/sys/health", self.addr().trim_end_matches('/'));
-        match client().get(&url).header("X-Vault-Token", self.token()).send().await {
+        match client()
+            .get(&url)
+            .header("X-Vault-Token", self.token())
+            .send()
+            .await
+        {
             Ok(r) => {
                 let s = r.status();
                 if s.is_success() {
@@ -223,7 +236,9 @@ impl SecretProvider for VaultProvider {
                         backup_guidance: None,
                         details: None,
                     }
-                    .with_warnings(vec!["Check X-Vault-Token validity and policy permissions.".into()])
+                    .with_warnings(vec![
+                        "Check X-Vault-Token validity and policy permissions.".into(),
+                    ])
                 } else if s.as_u16() == 429 {
                     ProviderHealthCheck {
                         provider: "vault".to_string(),
@@ -254,7 +269,9 @@ impl SecretProvider for VaultProvider {
                 backup_guidance: None,
                 details: None,
             }
-            .with_warnings(vec!["Network or DNS error; provider operations will fail.".into()]),
+            .with_warnings(vec![
+                "Network or DNS error; provider operations will fail.".into(),
+            ]),
         }
     }
 }

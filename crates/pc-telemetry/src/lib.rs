@@ -119,3 +119,13 @@ pub mod otlp;
 
 #[cfg(feature = "otlp")]
 pub use otlp::{build_otlp_provider, install_global, OtlpConfig};
+
+pub mod feedback_share;
+
+pub use feedback_share::{
+    build_feedback_share_object_key, create_feedback_trace_share_client_from_config,
+    decode_feedback_share_payload, encode_feedback_share_payload, FeedbackShareConfig,
+    FeedbackTraceBundle, FeedbackTraceShareClient, FeedbackTraceShareError,
+    HttpFeedbackTraceShareClient, UploadTraceBundleResponse, DEFAULT_FEEDBACK_EXPORT_BACKEND_URL,
+    FEEDBACK_SHARE_ENCODING,
+};

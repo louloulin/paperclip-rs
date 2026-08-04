@@ -15,6 +15,7 @@ use pc_heartbeat::HeartbeatSupervisor;
 use pc_plugin_host::{NotificationBus, PluginRegistry, WorkerPool};
 use pc_realtime::RealtimeHandle;
 use pc_realtime::WsState;
+use pc_secrets::DecisionSigningService;
 use pc_storage::StorageRegistry;
 use pc_telemetry::TelemetryOptions;
 use pc_workflow::{RoutineRegistry, WorkflowEngine, WorkflowRegistry};
@@ -61,6 +62,8 @@ pub struct AppState {
     pub feature_flags: SharedFeatureEvaluator,
     /// Database backup manager. Always present; uses defaults.
     pub backup: Arc<BackupManager>,
+    /// Decision spec signer. Production resolves env/file on every operation; tests may inject a fixed key.
+    pub decision_signing: Arc<DecisionSigningService>,
 }
 
 #[derive(Clone)]
@@ -115,6 +118,7 @@ impl AppState {
                 pc_feature_flags::FeatureCatalog::new(),
             ))),
             backup: Arc::new(BackupManager::with_defaults()),
+            decision_signing: Arc::new(DecisionSigningService::from_environment()),
         }
     }
 
@@ -135,6 +139,12 @@ impl AppState {
     #[must_use]
     pub fn with_agent_instructions(mut self, instructions: Arc<AgentInstructionsService>) -> Self {
         self.agent_instructions = instructions;
+        self
+    }
+
+    #[must_use]
+    pub fn with_decision_signing(mut self, service: Arc<DecisionSigningService>) -> Self {
+        self.decision_signing = service;
         self
     }
 }

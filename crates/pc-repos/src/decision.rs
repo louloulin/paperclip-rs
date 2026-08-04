@@ -5,6 +5,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use pc_core::Timestamp;
+use pc_secrets::{DecisionSigningError, DecisionSigningService};
 
 use crate::Db;
 
@@ -83,6 +84,7 @@ impl<'a> DecisionRepo<'a> {
         company_id: Uuid,
         title: &str,
         body: &str,
+        decision_signing: &DecisionSigningService,
     ) -> sqlx::Result<DecisionRow> {
         // decisions 表要求 origin_agent_id/issue_id/run_id NOT NULL
         // 若公司下已有 agent + issue，则用最新的；否则用零 UUID 占位（FK 会校验，必须有真实记录）
@@ -109,24 +111,28 @@ impl<'a> DecisionRepo<'a> {
         .await?
         .ok_or(sqlx::Error::RowNotFound)?;
 
+        let id = Uuid::new_v4();
+        let options = serde_json::json!([]);
+        let target_snapshots = serde_json::json!({});
+        let signed_spec = decision_signing
+            .sign(&decision_signature_spec(id, &options, &target_snapshots))
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
         let sql = format!(
-            "INSERT INTO decisions (company_id, origin_agent_id, origin_issue_id, origin_run_id, \
+            "INSERT INTO decisions (id, company_id, origin_agent_id, origin_issue_id, origin_run_id, \
              title, body, options, signed_spec, target_snapshots, expires_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now() + interval '7 days') RETURNING {COLS}"
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now() + interval '7 days') RETURNING {COLS}"
         );
         sqlx::query_as::<_, DecisionRow>(&sql)
+            .bind(id)
             .bind(company_id)
             .bind(agent_id)
             .bind(issue_id)
             .bind(run_id)
             .bind(title)
             .bind(body)
-            .bind(serde_json::json!([]))
-            .bind(
-                serde_json::to_string(&serde_json::json!({"version": 1, "kind": "user_decision"}))
-                    .unwrap_or_default(),
-            )
-            .bind(serde_json::json!([]))
+            .bind(options)
+            .bind(signed_spec)
+            .bind(target_snapshots)
             .fetch_one(self.db.pool())
             .await
     }
@@ -137,5 +143,71 @@ impl<'a> DecisionRepo<'a> {
             .execute(self.db.pool())
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+}
+
+pub fn decision_signature_spec(
+    id: Uuid,
+    options: &serde_json::Value,
+    target_snapshots: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "decisionId": id.to_string(),
+        "options": options,
+        "targetSnapshots": target_snapshots,
+    })
+}
+
+pub fn verify_decision_signature(
+    id: Uuid,
+    options: &serde_json::Value,
+    target_snapshots: &serde_json::Value,
+    signed_spec: &str,
+    decision_signing: &DecisionSigningService,
+) -> Result<bool, DecisionSigningError> {
+    decision_signing.verify(
+        &decision_signature_spec(id, options, target_snapshots),
+        signed_spec,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_SECRET: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn signature_spec_matches_node_shape() {
+        let id = Uuid::parse_str("6b43a722-4bf8-4ead-9d7f-74e99d37ff75").unwrap();
+        assert_eq!(
+            decision_signature_spec(id, &serde_json::json!([]), &serde_json::json!({})),
+            serde_json::json!({
+                "decisionId": "6b43a722-4bf8-4ead-9d7f-74e99d37ff75",
+                "options": [],
+                "targetSnapshots": {},
+            })
+        );
+    }
+
+    #[test]
+    fn signature_verification_detects_tampering() {
+        let id = Uuid::new_v4();
+        let signer = DecisionSigningService::from_secret(TEST_SECRET).unwrap();
+        let options = serde_json::json!([{ "id": "yes", "effects": [] }]);
+        let snapshots = serde_json::json!({});
+        let signature = signer
+            .sign(&decision_signature_spec(id, &options, &snapshots))
+            .unwrap();
+
+        assert!(verify_decision_signature(id, &options, &snapshots, &signature, &signer).unwrap());
+        assert!(!verify_decision_signature(
+            id,
+            &serde_json::json!([{ "id": "tampered", "effects": [] }]),
+            &snapshots,
+            &signature,
+            &signer
+        )
+        .unwrap());
     }
 }
