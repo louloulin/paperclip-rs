@@ -1641,3 +1641,36 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 >   - `/api/companies/:id/finance-events` 列表 / summary / by-biller / by-kind 路由未注册，read 路径仅在 cost.rs 中有 repo 方法；需要把它们接到 routes 层
 >   - 集成测试需要 Postgres（与前几轮一致，PoolTimedOut）
 > - **本轮累计**：`pc-repos` 单测 101 → **105** ✅；finance create 路径从「错列名 stub」升级为「完整 25 列 + FK 校验 + 真实 insert」
+
+## 第五十七轮增量（Round 57 — `agent_secret_bindings` 移植：secret_ref / user_secret_ref 解析与同步 trait）
+
+> 第五十七轮增量：
+> - **新增** `crates/pc-repos/src/agent_secret_bindings.rs`（≈ 360 行 + 11 单测）：
+>   - DTO：`SecretVersionSelector`（`Latest` / `Number(i64)` untagged enum） / `SecretVersionSelectorValue`（DB 序列化形式） / `SecretRef` / `UserSecretRef` / `SecretBindingTargetType`（`Agent` 占位） / `SyncOptions`
+>   - 纯函数 `collect_secret_refs(adapter_config) -> Vec<SecretRef>`：遍历 `env.<KEY>` 与顶层（除 `env` 外）字段，识别 `{ type: "secret_ref", secretId, version?, projectionClass?, projectionAllowlistKey? }` 结构；非法 binding 静默跳过（对齐 Node `envBindingSchema.safeParse(...).success` 语义）
+>   - 纯函数 `collect_user_secret_refs(adapter_config) -> Vec<UserSecretRef>`：同上，识别 `user_secret_ref`，默认 `required=true` / `allowMissingOverride=false`
+>   - 公共 `is_env_binding(value) -> bool` helper：识别 secret_ref / user_secret_ref / plain 三类结构
+>   - 抽象 `AgentSecretBindingSync` trait（`async_trait`）：3 个方法（精细 / 精细 / 粗粒度），对齐 Node `secretsSvc` 的可选方法集合
+>   - 入口 `sync_agent_adapter_env_bindings(...)`：精细版同步，调 `sync_secret_refs_for_target` + `sync_user_secret_declarations_for_target`
+>   - 备选 `sync_agent_env_value_only(...)`：粗粒度，把整个 `env` 对象传给 `sync_env_bindings_for_target`
+> - **测试**（11）：
+>   - env 路径下 `secret_ref` 解析 + 路径为 `env.<KEY>`
+>   - 顶层 `secret_ref` 解析 + 自定义 `version: 3`
+>   - plain 绑定静默跳过（不混入结果）
+>   - 非法 `secret_ref`（缺 `secretId` / 空字符串）跳过
+>   - `user_secret_ref` 默认 `required=true` / `allow_missing_override=false`
+>   - 显式 `required: false` / `allowMissingOverride: true` 生效
+>   - env + 顶层混合 4 个 ref 全被提取
+>   - 非对象 config（null / 数字 / 字符串 / 布尔）返回空
+>   - `is_env_binding` 识别 3 类合法 / 拒绝 3 类非法
+>   - `version_selector` 默认 `Latest`
+>   - `version_selector` 序列化：数字 3 / 字符串 "latest" / 非法 "v1" 拒绝
+> - **验证**：
+>   - `cargo test -p pc-repos agent_secret_bindings`：**11/11 通过**
+>   - `cargo test -p pc-repos --lib`：**116/116 通过**（agent_secret_bindings 11 + 既有 105）
+>   - `cargo check --workspace`：**0 errors，47 warnings**
+> - **关键差距**（下一轮目标）：
+>   - `crates/pc-http/src/routes/agents.ts` 中 agent 创建 / 更新路径需要在新 / 改 `adapterConfig` 时调用 `sync_agent_adapter_env_bindings`（需要先确认 Rust 端 `agents` 路由是否已经持久化 `adapterConfig`）
+>   - `pc-secrets` crate 还没有实现 `AgentSecretBindingSync` trait 的具体 struct（只有 `secretsService` 的部分方法），下一轮可提供一个最小实现
+>   - `SecretProjectionClass` 当前用 `Option<String>` 透传；后续可强化为枚举（值如 `"env_var" | "command_arg" | "file_content"`）
+> - **本轮累计**：`pc-repos` 单测 105 → **116** ✅；`agent-secret-bindings.ts`（Node 175 行）核心解析与同步 trait 完整移植

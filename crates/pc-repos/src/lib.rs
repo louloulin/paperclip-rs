@@ -33,6 +33,7 @@ pub mod goal;
 pub mod heartbeat;
 pub mod inbox;
 pub mod issue;
+pub mod issue_approvals;
 pub mod membership;
 pub mod pipeline;
 pub mod plugin;

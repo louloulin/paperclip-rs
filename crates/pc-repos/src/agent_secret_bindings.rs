@@ -182,7 +182,7 @@ fn try_parse_user_secret_ref(
     Some((key, Some(version_selector), required, allow_missing_override))
 }
 
-fn is_env_binding(value: &Value) -> bool {
+pub fn is_env_binding(value: &Value) -> bool {
     let Some(obj) = value.as_object() else {
         return false;
     };
@@ -344,9 +344,6 @@ pub async fn sync_agent_env_value_only<S: AgentSecretBindingSync>(
         .await
 }
 
-// 暴露 env_binding 类型识别 helper（用于上层 UI 过滤）
-pub use self::is_env_binding as matches_env_binding;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,12 +472,12 @@ mod tests {
 
     #[test]
     fn matches_env_binding_recognizes_known_types() {
-        assert!(matches_env_binding(&json!({"type": "secret_ref", "secretId": "x"})));
-        assert!(matches_env_binding(&json!({"type": "user_secret_ref", "key": "x"})));
-        assert!(matches_env_binding(&json!({"type": "plain", "value": "x"})));
-        assert!(!matches_env_binding(&json!({"type": "unknown", "value": "x"})));
-        assert!(!matches_env_binding(&json!("legacy-string")));
-        assert!(!matches_env_binding(&json!(null)));
+        assert!(is_env_binding(&json!({"type": "secret_ref", "secretId": "x"})));
+        assert!(is_env_binding(&json!({"type": "user_secret_ref", "key": "x"})));
+        assert!(is_env_binding(&json!({"type": "plain", "value": "x"})));
+        assert!(!is_env_binding(&json!({"type": "unknown", "value": "x"})));
+        assert!(!is_env_binding(&json!("legacy-string")));
+        assert!(!is_env_binding(&json!(null)));
     }
 
     #[test]
