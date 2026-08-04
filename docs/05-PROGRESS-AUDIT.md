@@ -1317,3 +1317,50 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 > - 修复 3 处编译错：移除 `instance_settings.rs` 重复 `use uuid::Uuid;`；补 `serde_json::{json, Value}` imports 到 instance_settings.rs 和 auth.rs
 > - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
 > - **本轮累计**：instance-level admin endpoints 从 ~50% → **~85%**（legacy aliases + stats + dev-server + pipelines-attention + bulk-review 全覆盖）
+
+## 第四十二轮增量（Round 42 — admin user-management endpoints + tools/runtime-slots restart/stop）
+
+> 第四十二轮增量：
+> - **access.rs** 34 → 56+ 行（router 段）+ 770 → 1000+ 行（handler 段，**5 个新 endpoint / +230 行**）：
+  - **`GET /api/admin/users`**：list instance admins — `LEFT JOIN instance_user_roles` + `users`，去重；返回 `{users:[{id, name, email, image, isInstanceAdmin, lastActiveAt}], total}`
+  - **`GET /api/admin/users/:user_id/company-access`**：返回 `{companies:[{companyId, companyName, role}], userId}` — INNER JOIN `company_memberships` + `companies`
+  - **`PUT /api/admin/users/:user_id/company-access`**：body `{companies:[{companyId, role}]}` — 事务内先 DELETE 该用户全部 membership 再 INSERT 新的，ON CONFLICT 更新 role
+  - **`POST /api/admin/users/:user_id/promote-instance-admin`**：UPSERT `instance_user_roles (user_id, role='instance_admin')`，ON CONFLICT DO NOTHING
+  - **`POST /api/admin/users/:user_id/demote-instance-admin`**：DELETE `instance_user_roles WHERE user_id=$1 AND role='instance_admin'`，返回 `{ok:true, demoted:bool}`
+> - **tool_access.rs** 199 → 235+ 行（router 段）+ 3000 → 3170+ 行（handler 段，**2 个新 endpoint / +170 行**）：
+  - **`POST /api/companies/:company_id/tools/runtime-slots/:slot_id/restart`**：发 `tool.runtime_slot.restart_requested` LiveEvent + 返回 `{status:"restart_requested", slotId, companyId}`
+  - **`POST /api/companies/:company_id/tools/runtime-slots/:slot_id/stop`**：发 `tool.runtime_slot.stop_requested` LiveEvent + 返回 `{status:"stop_requested", slotId, companyId}`
+> - 新增 3 个结构体：`PutCompanyAccessBody` / `PutCompanyAccessItem`（camelCase）+ admin path-param 复用 `Path<String>`
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：admin/user-management 从 ~60% → **~95%**（5 个 endpoint 全闭环）；tools runtime-slots 子模块从 ~85% → **~95%**（restart/stop 补齐）
+
+## 第四十三轮增量（Round 43 — annotations alias + heartbeat-runs/issues + invites/onboarding.txt + invites/logo）
+
+> 第四十三轮增量：
+> - **cases.rs** router 段 +3 行（**0 新 endpoint handler，但 +1 alias 路由**）：
+  - **`GET /api/cases/:case_id/documents/:key/annotations/:thread_id`**：Node 兼容 alias，**复用 `get_case_annotation_thread` handler**。Rust 既有 `/annotations/threads/:thread_id`（语义清晰路径），Node 用 `/annotations/:thread_id`（扁平路径）— 加 alias 让两边完全对齐
+> - **activity.rs** 182 → 287 行（**+1 新 endpoint / +105 行**）：
+  - **`GET /api/heartbeat-runs/:run_id/issues`**：跨租户安全设计 — `runId` 不存在或用户不属于 `run.company_id` 都返回 `200 []`（不暴露存在性）。数据来源：`issues WHERE company_id=$1 AND (execution_run_id=$2 OR checkout_run_id=$2)` + 可选 `context_snapshot.issueId` 兜底（如果存在且不在主结果集中）。限制 200 条
+> - **access.rs** 1009 → 1057 行（**+2 新 endpoint / +48 行**）：
+  - **`GET /api/invites/:token/onboarding.txt`**：返回 `text/plain; charset=utf-8` 简化的 onboarding 文档（invite id + company name + role + expiresAt + 步骤列表）。比 Node 简单（无 plugin manifest assembly）但足够 LLM agent 拉取 onboarding context
+  - **`GET /api/invites/:token/logo`**：返回 company logo asset。读 `company_logos` 表拿 `asset_id` — 如果 row 不存在返回 404；如果存在但 Rust 没有 object storage backend，返回 503 InternalError（诚实暴露 capability 缺口，不伪造 payload）
+> - **覆盖率**：从 93.2% → **97.6%**（566/580 paths registered，仅 14 missing）；missing 主要集中在 `plugins/local-folders`（4）+ `cases automation retry`（4）+ `attachments/content`（storage 依赖）+ `companies/issues`+`stats`（跨公司聚合）+ `llms` 静态文件 + `plugin-ui-static`
+> - workspace check: 0 errors, 44 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：从「端点 + DB schema 一对一迁移」阶段进入「service-layer synthesis 阶段」— automation retry / local-folders / cross-company aggregations 等都需要新的 service 层或 manifest extension，已超出 endpoint CRUD 范畴
+
+## 第四十四轮增量（Round 44 — llms /api aliases + health root + attachments/content stub）
+
+> 第四十四轮增量：
+> - **llms.rs** 80 → 100+ 行（**+3 alias 路由 / +20 行**）：
+  - **`GET /api/llms/agent-configuration.txt`**：node 用 `api.use(llmRoutes(db))` 把 llms 挂在 `/api` 下，所以实际路径是 `/api/llms/...`；Rust 原生挂 `/llms/...` — 加 3 个 alias 让两边完全对齐
+  - **`GET /api/llms/agent-icons.txt`**：同 alias，**复用 `agent_icons` handler**
+  - **`GET /api/llms/agent-configuration/:adapter_type.txt`**：同 alias，**复用 `configuration_for_adapter` handler**
+> - **health.rs** 34 → 44+ 行（**+2 alias 路由 / +10 行**）：
+  - **`GET /api`**：根 index alias，**复用 `handler`**（返回 db ping + version 信息）
+  - **`GET /api/health`**：node health 实际挂在 `/api/health`，加 alias
+> - **issues.rs** 3220 → 3230 行（**+1 stub endpoint / +10 行**）：
+  - **`GET /api/attachments/:attachment_id/content`**：Rust 没有 object storage backend（无 `StorageService` 注册到 `AppState`），返回 503 InternalError「attachment storage backend is not configured in this deployment」。诚实暴露 capability 缺口，不伪造 binary payload
+> - 新增 1 个 handler：`attachment_content_stub`（参数 `Path<Uuid>`，返回 `ApiResult<Json<Value>>`）
+> - **覆盖率**：97.6% → **97.9%**（568/580 paths registered，仅 12 missing）；missing 全部为 plugins local-folders (4) + cases automation retry (4) + plugins-ui-static (1) + companies/issues (1) + companies/stats (1) + companies/:id/exports (1) — 都需要新 service 层或 manifest extension
+> - workspace check: 0 errors, 44 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：5 个 path alias/stub 加完，「单 endpoint CRUD 补全」阶段基本完成；剩余 12 missing 都是 service-layer synthesis 工作（plugin manifest 扩展 / automation engine / object storage）

@@ -5,7 +5,11 @@ use serde_json::json;
 use std::time::Instant;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/health", get(handler))
+    Router::new()
+        .route("/health", get(handler))
+        // ── Round 44: /api root index alias (node health mounted at /api) ──
+        .route("/api", get(handler))
+        .route("/api/health", get(handler))
 }
 
 async fn handler(State(state): State<AppState>) -> impl IntoResponse {

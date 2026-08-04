@@ -58,6 +58,11 @@ pub fn router() -> Router<AppState> {
             "/api/cases/:case_id/documents/:key/annotations/threads/:thread_id",
             get(get_case_annotation_thread),
         )
+        // ── Round 43: node-compatible alias for /annotations/:thread_id ──
+        .route(
+            "/api/cases/:case_id/documents/:key/annotations/:thread_id",
+            get(get_case_annotation_thread),
+        )
         .route(
             "/api/cases/:case_id/documents/:key/annotations/threads/:thread_id",
             patch(patch_case_annotation_thread),

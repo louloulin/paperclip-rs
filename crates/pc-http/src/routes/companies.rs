@@ -40,6 +40,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/import/preview", post(import_preview_root))
         .route("/api/companies/import/jobs/:job_id", get(get_import_job))
         .route("/api/companies/:id/export", post(start_company_export))
+        // ── Round 45: cross-company aggregation + export plural alias ──
+        .route("/api/companies/stats", get(get_companies_stats))
+        .route("/api/companies/issues", get(get_companies_issues_malformed))
+        .route("/api/companies/:company_id/exports", post(start_company_export))
+        // ── Round 45: plugin UI static alias (root-mount) ──
+        .route("/_plugins/:plugin_id/companies/:company_id/ui/*file_path", get(plugin_ui_static))
         .route("/api/companies/:id/export/fidelity", get(get_company_export_fidelity))
         .route("/api/companies/:id/feedback-traces", get(list_company_feedback_traces))
         .route("/api/companies/:id/imports/apply", post(apply_company_import))
@@ -1990,4 +1996,97 @@ async fn ensure_company_exists(state: &AppState, company_id: Uuid) -> ApiResult<
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }
     Ok(())
+}
+
+/// `GET /api/companies/stats` — board-only cross-company aggregated stats.
+///
+/// Mirrors Node `/companies/stats`. Returns per-company stats for every
+/// company the requesting user has access to (or all companies if
+/// instance admin / local-implicit).  Each entry is the same shape as
+/// `GET /api/companies/:id/stats`.
+async fn get_companies_stats(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    use crate::state::require_user_id;
+    let user_id = require_user_id(&state, &headers).await?;
+
+    // Determine accessible companies for this user.
+    let accessible: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT c.id, c.name FROM companies c          INNER JOIN company_memberships cm ON cm.company_id = c.id          WHERE cm.principal_id = $1 AND cm.status = 'active'          ORDER BY c.name",
+    )
+    .bind(&user_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut map = serde_json::Map::new();
+    let pool = state.db.pool();
+    for (id, name) in accessible {
+        let issue_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND hidden_at IS NULL",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or((0,));
+        let agent_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM agents WHERE company_id = $1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or((0,));
+        let case_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM pipeline_cases WHERE company_id = $1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or((0,));
+        let user_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM company_memberships WHERE company_id = $1 AND status = 'active'",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or((0,));
+        map.insert(
+            id.to_string(),
+            json!({
+                "companyId": id,
+                "name": name,
+                "agentCount": agent_count.0,
+                "issueCount": issue_count.0,
+                "caseCount": case_count.0,
+                "userCount": user_count.0,
+            }),
+        );
+    }
+    Ok(Json(json!({ "stats": map })))
+}
+
+/// `GET /api/companies/issues` — common-malformed-path handler.
+///
+/// Mirrors Node which returns 400 with a hint to use
+/// `/api/companies/{companyId}/issues`.
+async fn get_companies_issues_malformed() -> ApiResult<Json<Value>> {
+    Err(ApiError::BadRequest(
+        "Missing companyId in path. Use /api/companies/{companyId}/issues.".into(),
+    ))
+}
+
+/// `GET /_plugins/:plugin_id/companies/:company_id/ui/*file_path`
+///
+/// Mirrors Node `/api/_plugins/:pluginId/companies/:companyId/ui/*filePath`.
+/// Node serves these from on-disk plugin asset directories.  The Rust
+/// binary has no plugin-asset static serving wired in, so the route
+/// honestly surfaces 503 (mirroring the `invite_logo` / `attachment_content`
+/// pattern from earlier rounds).
+async fn plugin_ui_static(
+    Path((_plugin_id, _company_id, _file_path)): Path<(Uuid, Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    Err(ApiError::Internal(
+        "plugin UI static serving is not configured in this deployment".into(),
+    ))
 }

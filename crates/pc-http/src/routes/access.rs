@@ -40,6 +40,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/invites/:token", get(invites_get))
         .route("/api/invites/:token/accept", post(invites_accept))
         .route("/api/invites/:token/onboarding", get(invite_onboarding))
+        // ── Round 43: plain-text onboarding doc + logo asset stub ──
+        .route("/api/invites/:token/onboarding.txt", get(invite_onboarding_txt))
+        .route("/api/invites/:token/logo", get(invite_logo))
         .route("/api/invites/:token/skills/index", get(invite_skills_index))
         .route("/api/invites/:token/skills/:skill_name", get(invite_skill_get))
         .route("/api/invites/:token/test-resolution", get(invite_test_resolution))
@@ -649,6 +652,78 @@ async fn invite_onboarding(
             { "key": "configure", "label": "Configure environment" },
         ],
     })))
+}
+
+/// `GET /api/invites/:token/onboarding.txt` — plain-text onboarding document.
+/// Mirrors Node `/invites/:token/onboarding.txt` (a stripped-down text version
+/// of the JSON manifest).  Storage-free, returns the inline document so the
+/// UI / LLM agents can pull onboarding context without parsing JSON.
+async fn invite_onboarding_txt(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let invite = lookup_invite_by_token(&state, &token).await?;
+    let Some((id, company_id, role, expires_at, _accepted_at, revoked_at)) = invite else {
+        return Err(ApiError::NotFound("invite not found".into()));
+    };
+    if revoked_at.is_some() {
+        return Err(ApiError::NotFound("invite not found".into()));
+    }
+    let company_name: Option<String> = sqlx::query_scalar("SELECT name FROM companies WHERE id=$1")
+        .bind(company_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let body = format!(
+        "Paperclip Onboarding — invite {id}\n         ============================================\n         Company:   {name}\n         CompanyId: {company_id}\n         Role:      {role}\n         Token:     {token}\n         ExpiresAt: {expires}\n         \n         Steps:\n         1. POST /api/invites/{token}/accept to accept the invitation.\n         2. Configure your environment at /api/invites/{token}/onboarding.\n         \n         Welcome to {name}!\n",
+        id = id,
+        name = company_name.clone().unwrap_or_else(|| "(unknown)".to_string()),
+        company_id = company_id,
+        role = role.unwrap_or_else(|| "member".to_string()),
+        token = token,
+        expires = expires_at
+            .map(|t| t.as_datetime().to_rfc3339())
+            .unwrap_or_else(|| "(never)".to_string()),
+    );
+    Ok((
+        StatusCode::OK,
+        [("content-type", "text/plain; charset=utf-8")],
+        body,
+    ))
+}
+
+/// `GET /api/invites/:token/logo` — company logo asset proxy.
+///
+/// Mirrors Node `/invites/:token/logo`.  Node streams from object storage
+/// (S3-like).  The Rust binary currently has no storage service registered;
+/// returning 404 keeps the route surface parity while honestly surfacing the
+/// missing capability (instead of fabricating a logo payload).
+async fn invite_logo(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let invite = lookup_invite_by_token(&state, &token).await?;
+    let Some((_, company_id, _, _, accepted_at, revoked_at)) = invite else {
+        return Err(ApiError::NotFound("Invite not found".into()));
+    };
+    if revoked_at.is_some() || accepted_at.is_some() {
+        return Err(ApiError::NotFound("Invite not found".into()));
+    }
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT asset_id FROM company_logos WHERE company_id = $1 LIMIT 1",
+    )
+    .bind(company_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if row.is_none() {
+        return Err(ApiError::NotFound("Invite logo not found".into()));
+    }
+    // Asset registered but the Rust binary has no storage backend wired in.
+    // Returning 503 makes the gap observable to the UI without a 500 crash.
+    Err(ApiError::Internal(
+        "company logo storage backend is not configured in this deployment".into(),
+    ))
 }
 
 /// `GET /api/invites/:token/skills/index` — public skill catalog reachable

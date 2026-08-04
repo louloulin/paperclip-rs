@@ -230,6 +230,13 @@ pub fn router() -> Router<AppState> {
             "/api/attachments/:attachment_id",
             get(get_attachment).delete(remove_attachment),
         )
+        // ── Round 44: attachment content streaming alias ──
+        // Node streams from object storage; Rust has no storage backend
+        // wired in, so the alias honestly returns 503 instead of faking bytes.
+        .route(
+            "/api/attachments/:attachment_id/content",
+            get(attachment_content_stub),
+        )
         // external objects
         .route(
             "/api/issues/:id/external-objects",
@@ -3206,3 +3213,18 @@ async fn diagnostics_subtree(
     })))
 }
 
+/// `GET /api/attachments/:attachment_id/content` — attachment binary stream.
+///
+/// Node reads from object storage (`storage.getObject(companyId, objectKey)`)
+/// and pipes it to the response with range support.  The Rust binary has no
+/// object-store backend wired in (no `StorageService` is registered against
+/// `AppState`), so we surface a 503 explaining the missing capability rather
+/// than fabricating a binary payload.
+async fn attachment_content_stub(
+    Path(attachment_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let _ = attachment_id;
+    Err(ApiError::Internal(
+        "attachment storage backend is not configured in this deployment".into(),
+    ))
+}

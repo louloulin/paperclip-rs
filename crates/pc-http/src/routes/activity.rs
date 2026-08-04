@@ -1,8 +1,8 @@
 //! `/api/activity/*` 路由：暴露 pc-activity 日志。
 
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -13,12 +13,14 @@ use uuid::Uuid;
 
 use pc_activity::{ActivityActor, ActivityEvent, ActivityFilter, ActivityKind};
 
-use crate::{ApiError, ApiResult, AppState};
+use crate::{require_user_id, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/activity/emit", post(emit_event))
         .route("/api/activity/list", get(query_events))
+        // ── Round 43: heartbeat-runs/issues 关联 ──
+        .route("/api/heartbeat-runs/:run_id/issues", get(heartbeat_run_issues))
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,4 +181,107 @@ async fn query_events(
         })
         .collect();
     Ok(Json(json!({ "items": items })))
+}
+
+/// `GET /api/heartbeat-runs/:run_id/issues`
+///
+/// Mirrors Node `/heartbeat-runs/:runId/issues`. Cross-tenant existence is
+/// hidden behind an indistinguishable empty array (200) so we don't leak
+/// run-id presence to unauthorized callers.
+async fn heartbeat_run_issues(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _user_id = require_user_id(&state, &headers).await?;
+
+    // Resolve the run + company in one query.
+    let row: Option<(Uuid, Option<Value>)> = sqlx::query_as(
+        "SELECT company_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
+    )
+    .bind(run_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let (company_id, context_snapshot) = match row {
+        Some(v) => v,
+        None => return Ok(Json(json!([]))),
+    };
+
+    // Cross-tenant check: must be a member of the run's company.
+    let membership: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM company_memberships WHERE company_id = $1 AND principal_id = $2 AND status = 'active'",
+    )
+    .bind(company_id)
+    .bind(&_user_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if membership.is_none() {
+        // Indistinguishable 200 [] for cross-tenant.
+        return Ok(Json(json!([])));
+    }
+
+    // Resolve context-snapshot issue if present and not in payload set.
+    let context_issue_id: Option<String> = context_snapshot
+        .as_ref()
+        .and_then(|v| v.get("issueId"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned());
+
+    // Fetch issues linked to this run via execution_run_id / checkout_run_id.
+    let rows: Vec<(Uuid, Option<String>, String, String, String, String)> = sqlx::query_as(
+        "SELECT i.id, i.identifier, i.title, i.status::text, i.priority::text, COALESCE(i.kind::text,'issue')          FROM issues i          WHERE i.company_id = $1            AND (i.execution_run_id = $2 OR i.checkout_run_id = $2)          ORDER BY i.updated_at DESC          LIMIT 200",
+    )
+    .bind(company_id)
+    .bind(run_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    use std::collections::BTreeSet;
+    let mut seen: BTreeSet<String> = rows.iter().map(|(id, _, _, _, _, _)| id.to_string()).collect();
+    let mut items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, identifier, title, status, priority, kind)| {
+            json!({
+                "id": id,
+                "identifier": identifier,
+                "title": title,
+                "status": status,
+                "priority": priority,
+                "kind": kind,
+            })
+        })
+        .collect();
+
+    // Optionally include context-snapshot issue if missing from set.
+    if let Some(ctx_id) = context_issue_id {
+        if !seen.contains(&ctx_id) {
+            if let Ok(uuid) = Uuid::parse_str(&ctx_id) {
+                if let Some((id, identifier, title, status, priority, kind)) = sqlx::query_as::<_, (Uuid, Option<String>, String, String, String, String)>(
+                    "SELECT i.id, i.identifier, i.title, i.status::text, i.priority::text, COALESCE(i.kind::text,'issue')                      FROM issues i WHERE i.company_id = $1 AND i.id = $2",
+                )
+                .bind(company_id)
+                .bind(uuid)
+                .fetch_optional(state.db.pool())
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                {
+                    items.push(json!({
+                        "id": id,
+                        "identifier": identifier,
+                        "title": title,
+                        "status": status,
+                        "priority": priority,
+                        "kind": kind,
+                    }));
+                }
+            }
+        }
+    }
+
+    Ok(Json(Value::Array(items)))
 }
