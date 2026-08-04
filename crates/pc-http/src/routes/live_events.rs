@@ -35,6 +35,10 @@ struct AuthQuery {
     token: Option<String>,
     #[serde(default)]
     company_id: Option<Uuid>,
+    /// 重连 resume 起点：客户端上一次收到的 event_id。
+    /// 服务器会先重放 resume_buffer 中 event_id > resume 的事件，再切换到实时广播。
+    #[serde(default)]
+    resume: Option<u64>,
 }
 
 async fn handler(
@@ -70,7 +74,8 @@ async fn handler(
             .into_response();
     }
     let ws_state = state.ws.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, ws_state, company_id))
+    let resume_from = query.resume;
+    ws.on_upgrade(move |socket| handle_socket(socket, ws_state, company_id, resume_from))
 }
 
 /// Authorize a WebSocket upgrade. Mirrors Node `authorizeUpgrade` in
@@ -91,10 +96,14 @@ async fn authorize_ws(
     let token = token.map(str::trim).filter(|value| !value.is_empty());
     match (token, local_trusted) {
         (Some(token), _) => {
-            // Hash the token and look up the agent API key
+            // Hash the token and look up the agent API key.
+            // Mirrors Node `live-events-ws.ts`: it queries `agentApiKeys` joined
+            // with `companyMemberships` / `instanceUserRoles` to resolve board vs.
+            // agent context. `agent_api_keys` is the agent-scoped table (with
+            // `company_id`) and is the correct analog here.
             let token_hash = pc_auth::hash_token(token);
             let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-                "SELECT id, company_id FROM board_api_keys                  WHERE key_hash = $1 AND revoked_at IS NULL",
+                "SELECT id, company_id FROM agent_api_keys                  WHERE key_hash = $1 AND revoked_at IS NULL",
             )
             .bind(&token_hash)
             .fetch_optional(state.db.pool())
@@ -155,15 +164,51 @@ async fn handle_socket(
     socket: WebSocket,
     state: Arc<WsState>,
     initial_company_id: Option<Uuid>,
+    resume_from: Option<u64>,
 ) {
     let client_id = Uuid::new_v4();
-    info!(%client_id, ?initial_company_id, "ws connected");
+    info!(%client_id, ?initial_company_id, ?resume_from, "ws connected");
 
     let (mut sender, mut receiver) = socket.split();
-    let mut rx = state.realtime.subscribe();
 
-    let welcome =
-        json!({"type":"welcome","client_id":client_id,"server":&state.server_name}).to_string();
+    // 重连 resume：先把 resume_buffer 中 event_id > resume 的事件重放给客户端。
+    // 再切换到 broadcast 订阅。
+    let (mut rx, replayed) = match resume_from {
+        Some(last_id) => {
+            let (replay, rx) = state.realtime.subscribe_with_resume(last_id);
+            let count = replay.len();
+            for arc_evt in replay {
+                if let Some(cid) = initial_company_id {
+                    if arc_evt.company_id != Some(cid) {
+                        continue;
+                    }
+                }
+                let frame = json!({"type":"event","event":&*arc_evt}).to_string();
+                if sender.send(Message::Text(frame)).await.is_err() {
+                    return;
+                }
+            }
+            // 通知客户端 resume 边界
+            let ack = json!({"type":"resumed","last_event_id": last_id,"replayed":count}).to_string();
+            if sender.send(Message::Text(ack)).await.is_err() {
+                return;
+            }
+            (rx, count)
+        }
+        None => {
+            let rx = state.realtime.subscribe();
+            (rx, 0)
+        }
+    };
+    info!(%client_id, replayed, "ws resume complete");
+
+    let welcome = json!({
+        "type":"welcome",
+        "client_id":client_id,
+        "server":&state.server_name,
+        "next_event_id": state.realtime.next_event_id(),
+    })
+    .to_string();
     if sender.send(Message::Text(welcome)).await.is_err() {
         return;
     }

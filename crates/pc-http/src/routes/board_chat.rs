@@ -5,13 +5,13 @@
 //! 通过 LiveEvent 总线广播。
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
     },
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::stream::Stream;
@@ -26,11 +26,20 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
+use pc_repos::board_chat::{BoardChatRepo, ChatMessageStatus, ChatRole, NewMessage, NewThread};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/board/chat/stream", post(board_chat_stream))
         .route("/api/board/chat", post(board_chat_one_shot))
+        .route(
+            "/api/companies/:company_id/board-chat/threads",
+            get(list_threads),
+        )
+        .route(
+            "/api/board/chat/threads/:thread_id/messages",
+            get(list_messages),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +76,9 @@ async fn board_chat_stream(
         None => ensure_board_issue(&state, body.company_id, "Board Operations").await?,
     };
 
+    // Persist the user message into a board chat thread (idempotent).
+    let _thread_id = persist_user_message(&state, body.company_id, Some(resolved_issue_id), &body.message).await?;
+
     let claude = body
         .claude_command
         .clone()
@@ -78,6 +90,7 @@ async fn board_chat_stream(
     // Spawn the claude CLI subprocess.
     let message = body.message.clone();
     let company_id = body.company_id;
+    let db = state.db.clone();
     tokio::spawn(async move {
         let mut cmd = Command::new(&claude);
         cmd.arg("--print")
@@ -154,21 +167,43 @@ async fn board_chat_stream(
 
         let exit = child.wait().await.ok().and_then(|s| s.code());
         if !full_response.is_empty() {
-            // Persist assistant turn as a comment on the standing issue.
-            if let Ok(client) =
-                sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap_or_default()).await
+            // Persist assistant turn as a comment on the standing issue AND as a
+            // board_chat_messages entry. We rely on the parent DB pool rather than
+            // a fresh PgPool (avoids extra connection slot).
+            let _ = sqlx::query(
+                "INSERT INTO issue_comments (id, issue_id, author_user_id, body, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, now(), now()) \
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(Uuid::new_v4())
+            .bind(resolved_issue_id)
+            .bind("board-concierge")
+            .bind(&full_response)
+            .execute(db.pool())
+            .await;
+            // Also persist into the board_chat thread tied to the issue (if any).
+            let repo = BoardChatRepo::new(&db);
+            if let Ok(thread) = repo
+                .get_or_create_thread(&NewThread {
+                    company_id,
+                    issue_id: Some(resolved_issue_id),
+                    title: "Board Operations".into(),
+                    created_by_user_id: None,
+                })
+                .await
             {
-                let _ = sqlx::query(
-                    "INSERT INTO issue_comments (id, issue_id, author_user_id, body, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, now(), now()) \
-                     ON CONFLICT (id) DO NOTHING",
-                )
-                .bind(Uuid::new_v4())
-                .bind(resolved_issue_id)
-                .bind("board-concierge")
-                .bind(&full_response)
-                .execute(&client)
-                .await;
+                let _ = repo
+                    .append_message(&NewMessage {
+                        thread_id: thread.id,
+                        company_id,
+                        role: ChatRole::Assistant,
+                        author_user_id: None,
+                        author_agent_id: None,
+                        body: full_response.clone(),
+                        tool_uses: None,
+                        status: Some(ChatMessageStatus::Complete),
+                    })
+                    .await;
             }
         }
 
@@ -215,6 +250,7 @@ async fn board_chat_one_shot(
         Some(id) => id,
         None => ensure_board_issue(&state, body.company_id, "Board Operations").await?,
     };
+    let _thread_id = persist_user_message(&state, body.company_id, Some(resolved_issue_id), &body.message).await?;
     let claude = body
         .claude_command
         .clone()
@@ -257,29 +293,111 @@ async fn ensure_board_issue(
     company_id: Uuid,
     title: &str,
 ) -> Result<Uuid, ApiError> {
-    let pool = state.db.pool();
-    let existing: Option<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM issues WHERE company_id = $1 AND title = $2 LIMIT 1")
-            .bind(company_id)
-            .bind(title)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if let Some((id,)) = existing {
-        return Ok(id);
-    }
-    let new_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO issues (company_id, title, priority, status, origin_kind, origin_fingerprint) \
-         VALUES ($1, $2, 'normal', 'open', 'board', 'board-chat') RETURNING id",
-    )
-    .bind(company_id)
-    .bind(title)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(new_id)
+    BoardChatRepo::new(&state.db)
+        .ensure_board_issue(company_id, title)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
+
+async fn list_threads(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let repo = BoardChatRepo::new(&state.db);
+    let rows = repo
+        .list_threads(company_id, 100)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "companyId": r.company_id,
+                "issueId": r.issue_id,
+                "title": r.title,
+                "status": r.status,
+                "createdByUserId": r.created_by_user_id,
+                "lastMessageAt": r.last_message_at,
+                "createdAt": r.created_at,
+                "updatedAt": r.updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+    })))
+}
+
+async fn list_messages(
+    State(state): State<AppState>,
+    Path(thread_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let repo = BoardChatRepo::new(&state.db);
+    let rows = repo
+        .list_messages(thread_id, 500)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "threadId": r.thread_id,
+                "companyId": r.company_id,
+                "role": r.role,
+                "authorUserId": r.author_user_id,
+                "authorAgentId": r.author_agent_id,
+                "body": r.body,
+                "toolUses": r.tool_uses,
+                "status": r.status,
+                "createdAt": r.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "threadId": thread_id,
+        "items": items,
+    })))
+}
+
+
+
+/// Persist the user message into a board_chat_thread BEFORE starting the LLM turn.
+/// Returns the thread id for downstream callers (so they can tie the assistant reply
+/// to the same thread).
+async fn persist_user_message(
+    state: &AppState,
+    company_id: Uuid,
+    issue_id: Option<Uuid>,
+    message: &str,
+) -> Result<Uuid, ApiError> {
+    let repo = BoardChatRepo::new(&state.db);
+    let thread = repo
+        .get_or_create_thread(&NewThread {
+            company_id,
+            issue_id,
+            title: "Board Operations".into(),
+            created_by_user_id: None,
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    repo.append_message(&NewMessage {
+        thread_id: thread.id,
+        company_id,
+        role: ChatRole::User,
+        author_user_id: None,
+        author_agent_id: None,
+        body: message.to_string(),
+        tool_uses: None,
+        status: Some(ChatMessageStatus::Complete),
+    })
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(thread.id)
+}
 fn extract_text(event: &Value) -> Option<String> {
     if let Some(text) = event.get("text").and_then(|v| v.as_str()) {
         return Some(text.to_owned());

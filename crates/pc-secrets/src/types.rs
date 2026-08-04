@@ -61,6 +61,27 @@ pub struct ProviderHealthCheck {
     pub details: Option<serde_json::Value>,
 }
 
+impl ProviderHealthCheck {
+    /// 构造一个 OK 状态。
+    #[must_use]
+    pub fn ok(provider: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+            status: ProviderHealthStatus::Ok,
+            message: message.into(),
+            warnings: None,
+            backup_guidance: None,
+            details: None,
+        }
+    }
+
+    /// 附加 warning。
+    pub fn with_warnings(mut self, warnings: Vec<String>) -> Self {
+        self.warnings = if warnings.is_empty() { None } else { Some(warnings) };
+        self
+    }
+}
+
 /// 配置校验结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretProviderValidationResult {
@@ -74,6 +95,15 @@ impl SecretProviderValidationResult {
         Self {
             ok: true,
             warnings: Vec::new(),
+        }
+    }
+
+    /// 构造一个 invalid 结果，可附带原因。
+    #[must_use]
+    pub fn invalid(reason: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            warnings: vec![reason.into()],
         }
     }
 

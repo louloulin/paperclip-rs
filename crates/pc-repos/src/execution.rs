@@ -463,6 +463,276 @@ impl<'a> ExecutionRepo<'a> {
     }
 }
 
+
+// ---- workspace action log ----
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionKind {
+    Service,
+    Command,
+    Reconcile,
+}
+impl ActionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Service => "service",
+            Self::Command => "command",
+            Self::Reconcile => "reconcile",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "service" => Some(Self::Service),
+            "command" => Some(Self::Command),
+            "reconcile" => Some(Self::Reconcile),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+impl ActionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "queued" => Some(Self::Queued),
+            "running" => Some(Self::Running),
+            "succeeded" => Some(Self::Succeeded),
+            "failed" => Some(Self::Failed),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
+}
+
+const ACTION_COLS: &str = "id, workspace_id, kind, action, payload, status, error,     requested_by_user_id, requested_by_agent_id, started_at, completed_at, created_at, updated_at";
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionLogRow {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub kind: String,
+    pub action: String,
+    pub payload: Value,
+    pub status: String,
+    pub error: Option<String>,
+    pub requested_by_user_id: Option<Uuid>,
+    pub requested_by_agent_id: Option<Uuid>,
+    pub started_at: Option<Timestamp>,
+    pub completed_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewActionLog {
+    pub workspace_id: Uuid,
+    pub kind: ActionKind,
+    pub action: String,
+    pub payload: Option<Value>,
+    pub requested_by_user_id: Option<Uuid>,
+    pub requested_by_agent_id: Option<Uuid>,
+}
+
+impl<'a> ExecutionRepo<'a> {
+    /// Enqueue a workspace action. Returns the queued row.
+    pub async fn enqueue_action(&self, n: &NewActionLog) -> RepoResult<ActionLogRow> {
+        let sql = format!(
+            "INSERT INTO workspace_action_log (workspace_id, kind, action, payload, status,                 requested_by_user_id, requested_by_agent_id)              VALUES ($1,$2,$3,$4,'queued',$5,$6) RETURNING {ACTION_COLS}",
+        );
+        Ok(sqlx::query_as::<_, ActionLogRow>(&sql)
+            .bind(n.workspace_id)
+            .bind(n.kind.as_str())
+            .bind(&n.action)
+            .bind(n.payload.clone().unwrap_or_else(|| serde_json::json!({})))
+            .bind(n.requested_by_user_id)
+            .bind(n.requested_by_agent_id)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    pub async fn list_actions_for_workspace(
+        &self,
+        workspace_id: Uuid,
+        limit: i64,
+    ) -> RepoResult<Vec<ActionLogRow>> {
+        let sql = format!(
+            "SELECT {ACTION_COLS} FROM workspace_action_log              WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT $2"
+        );
+        Ok(sqlx::query_as::<_, ActionLogRow>(&sql)
+            .bind(workspace_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn claim_next_queued_action(&self) -> RepoResult<Option<ActionLogRow>> {
+        let mut tx = self.db.pool().begin().await?;
+        let claimed: Option<ActionLogRow> = sqlx::query_as::<_, ActionLogRow>(&format!(
+            "SELECT {ACTION_COLS} FROM workspace_action_log              WHERE status='queued' ORDER BY created_at ASC              FOR UPDATE SKIP LOCKED LIMIT 1"
+        ))
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = claimed else {
+            return Ok(None);
+        };
+        let updated: ActionLogRow = sqlx::query_as::<_, ActionLogRow>(&format!(
+            "UPDATE workspace_action_log SET status='running', started_at=now(), updated_at=now()              WHERE id=$1 RETURNING {ACTION_COLS}"
+        ))
+        .bind(row.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(updated))
+    }
+
+    pub async fn complete_action(
+        &self,
+        action_id: Uuid,
+        to: ActionStatus,
+        error: Option<&str>,
+    ) -> RepoResult<Option<ActionLogRow>> {
+        let sql = format!(
+            "UPDATE workspace_action_log SET status=$2, error=$3, completed_at=now(),                 updated_at=now()              WHERE id=$1 AND (status='queued' OR status='running') RETURNING {ACTION_COLS}"
+        );
+        Ok(sqlx::query_as::<_, ActionLogRow>(&sql)
+            .bind(action_id)
+            .bind(to.as_str())
+            .bind(error)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+}
+
+// ---- runtime services ----
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeServiceRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub project_id: Option<Uuid>,
+    pub project_workspace_id: Option<Uuid>,
+    pub issue_id: Option<Uuid>,
+    pub scope_type: String,
+    pub scope_id: Option<String>,
+    pub service_name: String,
+    pub status: String,
+    pub lifecycle: String,
+    pub reuse_key: Option<String>,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub port: Option<i32>,
+    pub url: Option<String>,
+    pub provider: String,
+    pub provider_ref: Option<String>,
+    pub owner_agent_id: Option<Uuid>,
+    pub started_by_run_id: Option<Uuid>,
+    pub last_used_at: Timestamp,
+    pub started_at: Timestamp,
+    pub stopped_at: Option<Timestamp>,
+    pub stop_policy: Option<Value>,
+    pub health_status: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeLifecycle {
+    Fresh,
+    Started,
+    Restarting,
+    Stopped,
+}
+impl RuntimeLifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Started => "started",
+            Self::Restarting => "restarting",
+            Self::Stopped => "stopped",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "fresh" => Some(Self::Fresh),
+            "started" => Some(Self::Started),
+            "restarting" => Some(Self::Restarting),
+            "stopped" => Some(Self::Stopped),
+            _ => None,
+        }
+    }
+}
+
+const RS_COLS: &str = "id, company_id, project_id, project_workspace_id, issue_id, scope_type,     scope_id, service_name, status, lifecycle, reuse_key, command, cwd, port, url, provider,     provider_ref, owner_agent_id, started_by_run_id, last_used_at, started_at, stopped_at,     stop_policy, health_status, created_at, updated_at";
+
+impl<'a> ExecutionRepo<'a> {
+    pub async fn list_runtime_services_for_workspace(
+        &self,
+        workspace_id: Uuid,
+    ) -> RepoResult<Vec<RuntimeServiceRow>> {
+        let sql = format!(
+            "SELECT {RS_COLS} FROM workspace_runtime_services              WHERE scope_type='execution_workspace' AND scope_id=$1              ORDER BY last_used_at DESC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, RuntimeServiceRow>(&sql)
+            .bind(workspace_id.to_string())
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn get_runtime_service(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> RepoResult<Option<RuntimeServiceRow>> {
+        let sql = format!(
+            "SELECT {RS_COLS} FROM workspace_runtime_services              WHERE company_id=$1 AND id=$2"
+        );
+        Ok(sqlx::query_as::<_, RuntimeServiceRow>(&sql)
+            .bind(company_id)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    pub async fn set_runtime_service_lifecycle(
+        &self,
+        id: Uuid,
+        lifecycle: RuntimeLifecycle,
+    ) -> RepoResult<Option<RuntimeServiceRow>> {
+        let sql = format!(
+            "UPDATE workspace_runtime_services SET lifecycle=$2, updated_at=now()              WHERE id=$1 RETURNING {RS_COLS}"
+        );
+        Ok(sqlx::query_as::<_, RuntimeServiceRow>(&sql)
+            .bind(id)
+            .bind(lifecycle.as_str())
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+}
+
 impl WorkspaceStatus {
     pub fn parse(s: &str) -> Option<Self> {
         match s {

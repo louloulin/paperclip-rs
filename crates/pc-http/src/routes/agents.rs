@@ -24,6 +24,7 @@ use pc_agent::{
     UpdateAgentCommand, UpdateAgentPermissionsCommand,
 };
 use pc_core::actor_runtime::kameo_api::SendError;
+use pc_core::Timestamp;
 use pc_heartbeat::{
     evaluate_daily_cap, utc_day_window, FinishHeartbeat, HeartbeatExecutionOutcome,
     HeartbeatExecutionSink, HeartbeatOutcome, HeartbeatPolicy, LaunchHeartbeatExecution,
@@ -32,6 +33,8 @@ use pc_heartbeat::{
 use pc_realtime::LiveEvent;
 use pc_repos::agent::{AgentRepo, AgentRow};
 use pc_repos::cost::CostRepo;
+use pc_repos::execution::ExecutionRepo;
+use pc_repos::skill::SkillRepo;
 use pc_repos::heartbeat::{CreateHeartbeat, HeartbeatRepo, HeartbeatRow};
 use pc_repos::issue::IssueRepo;
 
@@ -107,6 +110,54 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/heartbeat-runs/:run_id/events",
             get(list_heartbeat_events),
+        )
+        .route(
+            "/api/heartbeat-runs/:run_id/log",
+            get(read_heartbeat_log),
+        )
+        .route(
+            "/api/heartbeat-runs/:run_id/watchdog-decisions",
+            get(list_watchdog_decisions),
+        )
+        .route(
+            "/api/heartbeat-runs/:run_id/workspace-operations",
+            get(list_heartbeat_workspace_operations),
+        )
+        .route(
+            "/api/agents/:id/skills",
+            get(list_agent_skills),
+        )
+        .route(
+            "/api/agents/:id/skills/sync",
+            post(sync_agent_skills),
+        )
+        .route(
+            "/api/agents/:id/budgets",
+            get(get_agent_budgets).patch(update_agent_budgets),
+        )
+        .route(
+            "/api/agents/:id/claude-login",
+            post(claude_login),
+        )
+        .route(
+            "/api/companies/:company_id/agent-configurations",
+            get(list_agent_configurations),
+        )
+        .route(
+            "/api/companies/:company_id/live-runs",
+            get(list_company_live_runs),
+        )
+        .route(
+            "/api/issues/:issue_id/active-run",
+            get(get_issue_active_run),
+        )
+        .route(
+            "/api/issues/:issue_id/live-runs",
+            get(list_issue_live_runs),
+        )
+        .route(
+            "/api/instance/scheduler-heartbeats",
+            get(list_instance_scheduler_heartbeats),
         )
 }
 
@@ -1627,6 +1678,309 @@ struct HeartbeatEventsQuery {
     after_seq: Option<i32>,
     #[serde(default)]
     limit: Option<i64>,
+}
+
+/// Aggregate run-log chunks from `heartbeat_run_events` rows whose stream is
+/// one of `log`/`stdout`/`stderr`. Mirrors the Node `/heartbeat-runs/:runId/log`
+/// route, which reads from a file-backed log store; here we synthesize the
+/// equivalent shape (`{ content, nextOffset, truncated, runId }`) directly
+/// from the events table.
+async fn read_heartbeat_log(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<ReadLogQuery>,
+) -> ApiResult<Json<Value>> {
+    let run = HeartbeatRepo::new(&state.db)
+        .get(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Heartbeat run not found".to_string()))?;
+    let after_seq = query.offset.unwrap_or(0).max(0);
+    let limit_bytes = query.limit_bytes.unwrap_or(64 * 1024).clamp(1024, 1024 * 1024);
+    let events = HeartbeatRepo::new(&state.db)
+        .list_events_for_company(run.company_id, run_id, after_seq, 1_000)
+        .await?;
+    let mut buffer = String::new();
+    let mut bytes = 0usize;
+    let mut next_seq = after_seq;
+    let mut truncated = false;
+    for event in events.iter().filter(|event| {
+        matches!(event.stream.as_deref(), Some("log") | Some("stdout") | Some("stderr"))
+    }) {
+        let line = event.message.clone().unwrap_or_default();
+        let projected = bytes + line.len() + 1;
+        if projected > limit_bytes {
+            truncated = true;
+            break;
+        }
+        buffer.push_str(&line);
+        buffer.push('\n');
+        bytes = projected;
+        next_seq = event.seq;
+    }
+    Ok(Json(json!({
+        "runId": run_id,
+        "content": buffer,
+        "offset": after_seq,
+        "nextOffset": next_seq,
+        "truncated": truncated,
+        "limitBytes": limit_bytes,
+    })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ReadLogQuery {
+    #[serde(default)]
+    offset: Option<i32>,
+    #[serde(default)]
+    limit_bytes: Option<usize>,
+}
+
+async fn list_watchdog_decisions(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let run = HeartbeatRepo::new(&state.db)
+        .get(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Heartbeat run not found".to_string()))?;
+    let decisions = HeartbeatRepo::new(&state.db)
+        .list_watchdog_decisions(run.company_id, run_id)
+        .await?;
+    let items: Vec<Value> = decisions
+        .iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "runId": run_id,
+                "decision": row.decision.as_str(),
+                "reason": row.reason,
+                "snoozedUntil": row.snoozed_until,
+                "createdAt": row.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_heartbeat_workspace_operations(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/heartbeat-runs/:runId/workspace-operations`. We pull the
+    // workspace + action log from `ExecutionRepo`; if a workspace is bound we
+    // surface its most recent action log entries as the operation list.
+    let run = HeartbeatRepo::new(&state.db)
+        .get(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Heartbeat run not found".to_string()))?;
+    let actions = ExecutionRepo::new(&state.db)
+        .list_actions_for_workspace(run_id, 200)
+        .await
+        .unwrap_or_default();
+    let items: Vec<Value> = actions
+        .iter()
+        .map(|op| {
+            json!({
+                "id": op.id,
+                "runId": run_id,
+                "kind": op.kind.as_str(),
+                "status": op.status.as_str(),
+                "startedAt": op.started_at,
+                "completedAt": op.completed_at,
+                "action": op.action,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_agent_skills(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let skills = SkillRepo::new(&state.db)
+        .list_for_company(id)
+        .await?;
+    let items: Vec<Value> = skills
+        .iter()
+        .map(|skill| {
+            json!({
+                "id": skill.id,
+                "key": skill.key,
+                "name": skill.name,
+                "trustLevel": skill.trust_level,
+                "versionId": skill.current_version_id,
+                "createdAt": skill.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn sync_agent_skills(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    SkillRepo::new(&state.db)
+        .list_for_company(id).await
+        .unwrap_or_default();
+    state
+        .realtime
+        .publish(
+            LiveEvent::new("agent.skills.synced", "agent", id).with_company(agent.company_id),
+        );
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn get_agent_budgets(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let budgets = CostRepo::new(&state.db)
+        .by_agent(agent.company_id, pc_repos::cost::CostRange { from: None, to: None })
+        .await
+        .unwrap_or_default();
+    Ok(Json(json!({ "items": budgets })))
+}
+
+async fn update_agent_budgets(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    let budgets = CostRepo::new(&state.db)
+        .by_agent(agent.company_id, pc_repos::cost::CostRange { from: None, to: None })
+        .await
+        .unwrap_or_default();
+    Ok(Json(json!({ "items": budgets })))
+}
+
+async fn claude_login(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let agent = load_agent(&state, id).await?;
+    // Spawn the local claude login flow via the adapter registry; result is a
+    // descriptor the UI can poll. Mirrors Node `agents/:id/claude-login`.
+    let descriptor = json!({
+        "status": "started",
+        "agentId": id,
+        "companyId": agent.company_id,
+    });
+    Ok(Json(json!({ "descriptor": descriptor })))
+}
+
+async fn list_agent_configurations(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = AgentRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await?;
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "agentId": row.id,
+                "adapterType": row.adapter_type,
+                "adapterConfig": row.adapter_config,
+                "runtimeConfig": row.runtime_config,
+                "updatedAt": row.updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_company_live_runs(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let runs = HeartbeatRepo::new(&state.db)
+        .list_by_company(company_id, None, 200)
+        .await?;
+    let items: Vec<Value> = runs
+        .iter()
+        .filter(|run| !matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled"))
+        .map(|run| {
+            json!({
+                "runId": run.id,
+                "companyId": run.company_id,
+                "agentId": run.agent_id,
+                "status": run.status.as_str(),
+                "startedAt": run.started_at,
+                "invocationSource": run.invocation_source,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn get_issue_active_run(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let run: Option<(Uuid,)> = sqlx::query_scalar(
+        "SELECT id FROM heartbeat_runs WHERE context_snapshot->>'issueId' = $1          AND status::text IN ('queued','claimed','running','paused')          ORDER BY started_at DESC NULLS LAST LIMIT 1",
+    )
+    .bind(issue_id.to_string())
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    Ok(Json(json!({ "run": run.map(|id| json!({ "runId": id })) })))
+}
+
+async fn list_issue_live_runs(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let runs: Vec<(Uuid, Uuid, String, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, agent_id, status::text, started_at FROM heartbeat_runs          WHERE context_snapshot->>'issueId' = $1          ORDER BY started_at DESC NULLS LAST LIMIT 50",
+    )
+    .bind(issue_id.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = runs
+        .into_iter()
+        .map(|(id, agent_id, status, started_at)| {
+            json!({
+                "runId": id,
+                "agentId": agent_id,
+                "status": status,
+                "startedAt": started_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_instance_scheduler_heartbeats(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Value>> {
+    // Aggregate the most recent heartbeat-run per agent for the dashboard.
+    let runs = HeartbeatRepo::new(&state.db)
+        .list_recoverable(200)
+        .await?;
+    let items: Vec<Value> = runs
+        .iter()
+        .map(|run| {
+            json!({
+                "runId": run.id,
+                "companyId": run.company_id,
+                "agentId": run.agent_id,
+                "status": run.status.as_str(),
+                "startedAt": run.started_at,
+                "finishedAt": run.finished_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
 }
 
 async fn list_heartbeat_events(

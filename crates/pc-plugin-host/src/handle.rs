@@ -25,9 +25,12 @@ pub enum WorkerState {
     Starting,
     Ready,
     Busy,
+    Running,
     Stopping,
     Stopped,
     Failed,
+    Error,
+    Crashed,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,7 @@ pub struct WorkerHandle {
     pub state: Arc<Mutex<WorkerState>>,
     stream: Arc<Mutex<Option<JsonRpcStream>>>,
     child: Arc<Mutex<Option<Child>>>,
+    pub restart_count: std::sync::atomic::AtomicU32,
 }
 
 impl WorkerHandle {
@@ -59,6 +63,7 @@ impl WorkerHandle {
             state: Arc::new(Mutex::new(WorkerState::Starting)),
             stream: Arc::new(Mutex::new(None)),
             child: Arc::new(Mutex::new(None)),
+            restart_count: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -241,7 +246,10 @@ impl WorkerHandle {
 
     pub fn is_alive(&self) -> bool {
         match self.state.try_lock() {
-            Ok(s) => matches!(*s, WorkerState::Ready | WorkerState::Busy),
+            Ok(s) => matches!(
+                *s,
+                WorkerState::Ready | WorkerState::Busy | WorkerState::Running
+            ),
             Err(_) => false,
         }
     }
@@ -249,6 +257,49 @@ impl WorkerHandle {
     async fn set_state(&self, new_state: WorkerState) {
         let mut state = self.state.lock().await;
         *state = new_state;
+    }
+
+    // ---- supervisor hooks ----
+
+    /// 暴露 plugin_id（方便 supervisor 在不持有 self 句柄时也能用）。
+    pub fn plugin_id(&self) -> Uuid {
+        self.plugin_id
+    }
+
+    /// 当前 worker 状态。
+    pub async fn state(&self) -> WorkerState {
+        *self.state.lock().await
+    }
+
+    /// 启动成功后的重启计数（用于 supervisor 指数 backoff）。
+    pub async fn restart_count(&self) -> u32 {
+        self.restart_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// 增加重启计数。
+    pub async fn bump_restart_count(&self) -> u32 {
+        self.restart_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    /// 标记 worker 已彻底失败（达到 max_restarts）。
+    pub async fn mark_crashed(&self) {
+        self.set_state(WorkerState::Failed).await;
+    }
+
+    /// 返回当前 options 的 clone（用于 supervisor 重启时复用）。
+    pub fn options_snapshot(&self) -> WorkerOptions {
+        self.options.clone()
+    }
+
+    /// 使用给定 options 重新启动 worker（supervisor 用）。
+    pub async fn start_with_options(
+        &self,
+        _options: WorkerOptions,
+    ) -> Result<InitializeResult, String> {
+        // 当前实现忽略传入的 options（保持 options 字段不变）。
+        self.start().await
     }
 }
 

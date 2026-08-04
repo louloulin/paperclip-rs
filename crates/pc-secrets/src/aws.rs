@@ -85,6 +85,7 @@ fn amz_date(now: chrono::DateTime<Utc>) -> (String, String) {
     )
 }
 
+#[allow(dead_code)]
 struct AwsRequest {
     method: String,
     canonical_uri: String,

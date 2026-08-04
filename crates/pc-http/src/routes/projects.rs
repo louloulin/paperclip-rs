@@ -24,6 +24,16 @@ pub fn router() -> Router<AppState> {
             "/api/projects/:id",
             get(get_one).patch(update).delete(remove),
         )
+        .route(
+            "/api/companies/:company_id/projects",
+            get(list_company_projects).post(create_company_project),
+        )
+        .route("/api/projects/:id/workspaces", get(list_project_workspaces))
+        .route("/api/projects/:id/goals", get(list_project_goals))
+        .route(
+            "/api/projects/:id/external-object-summary",
+            get(project_external_object_summary),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,4 +128,80 @@ async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
     } else {
         Err(ApiError::NotFound(format!("project {id}")))
     }
+}
+
+
+// ============== Sub-resource handlers ==============
+
+async fn list_company_projects(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = ProjectRepo::new(&state.db)
+        .list_by_company(company_id, false)
+        .await?;
+    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+}
+
+async fn create_company_project(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateBody>,
+) -> ApiResult<Json<Value>> {
+    let row = ProjectRepo::new(&state.db)
+        .create_simple(company_id, &body.name, body.description.as_deref())
+        .await?;
+    state.realtime.publish(
+        LiveEvent::new("project.created", "project", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+async fn list_project_workspaces(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = ProjectRepo::new(&state.db)
+        .list_workspaces(id)
+        .await?;
+    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+}
+
+async fn list_project_goals(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = ProjectRepo::new(&state.db)
+        .goals_for_project(id)
+        .await?;
+    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+}
+
+async fn project_external_object_summary(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let project = ProjectRepo::new(&state.db)
+        .get_id_only(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("project {id}")))?;
+    let workspaces = ProjectRepo::new(&state.db)
+        .list_workspaces(id)
+        .await
+        .unwrap_or_default();
+    let goals = ProjectRepo::new(&state.db)
+        .goals_for_project(id)
+        .await
+        .unwrap_or_default();
+    let summary = json!({
+        "projectId": project.id,
+        "companyId": project.company_id,
+        "workspaceCount": workspaces.len(),
+        "workspaceSources": workspaces.iter().map(|w| w.source_type.as_str()).collect::<Vec<_>>(),
+        "goalCount": goals.len(),
+        "links": Vec::<Value>::new(),
+        "files": Vec::<Value>::new(),
+    });
+    Ok(Json(summary))
 }

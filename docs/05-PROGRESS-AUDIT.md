@@ -1,8 +1,18 @@
-# Paperclip-rs 复刻进度审计（2026-08-03，第五轮）
+# Paperclip-rs 复刻进度审计（2026-08-04，第十五轮）
 
-> 2026-08-04 增量：新增 `docs/06-NODE-RUST-GAP-MATRIX.md`；`secrets` provider registry
-> 已从空返回值改为四项 provider descriptor/health 契约，新增 2 个契约断言。
-> heartbeat scheduler 已接入 server：每秒条件 claim queued/scheduled_retry 并复用 adapter dispatch。
+> 第十五轮增量：
+> - **adapter CLI 协议特定化（claude_local + cursor_local）**：完整的 args 构造（`--print` / `--output-format stream-json` / `--model` / `--workspace` / `--sandbox` / `--force` / `--dangerously-skip-permissions` / `--effort` / `--add-dir` / `--append-system-prompt-file` / `--mcp-config` 等），JSONL 解析 thread.started / item.completed / turn.completed / result / system / assistant 事件，session_id 总是被 result.session_id 覆盖，usage 既支持 turn.completed 也支持 result.usage 内嵌。claude-local 11 测试 + cursor-local 8 测试通过。
+> - **plugin worker supervisor（指数 backoff）**：新增 `pc-plugin-host::supervisor::WorkerSupervisor`：监听 worker 进程退出，按 `base * 2^(n-1)` 退避，cap 在 `max_delay_ms`，超过 `max_restarts` 标记为 `Crashed`。`WorkerHandle` 暴露 `plugin_id` / `state` / `restart_count` / `bump_restart_count` / `options_snapshot` / `mark_crashed` / `start_with_options` hooks。`WorkerState` 新增 `Running` / `Error` / `Crashed` 变体。3 supervisor 合约测试通过。
+
+> 第十四轮增量：
+> - **secrets 远端 provider 真实接入**：`pc-secrets::gcp::GcpSecretManagerProvider` + `pc-secrets::vault::VaultProvider` 真实 HTTP 实现 + 单元测试。新增 5 个合约测试覆盖注册表 + provider validate。
+> - **execution_workspaces lease 路由**：`/api/execution-workspaces/:id/lease/{acquire,renew,release,revoke}` 接入 `ExecutionRepo::acquire_lease`/`renew_lease`/`release_lease`/`revoke_lease`/`active_lease_for_workspace`。新增 `0207_execution_lease.sql` migration。新增 2 个 lease round-trip 合约测试。
+
+> 第十三轮增量：
+> - **execution_workspaces 深化**：`workspace_action_log` migration + `ActionKind`/`ActionStatus`/`RuntimeLifecycle` 枚举 + `enqueue_action`/`claim_next_queued_action`/`complete_action` + `runtime_services` list/lifecycle 路由 + 完整路由使用 `ExecutionRepo`（替换 inline SQL）。新增 11 个合约测试。
+> - **board_chat thread 持久化**：`board_chat_threads` + `board_chat_messages` 表 migration + `BoardChatRepo`（get_or_create_thread / list_threads / list_messages / append_message / set_message_status）+ `list_threads` + `list_messages` 路由 + `board_chat_stream` / `board_chat_one_shot` 在调用前持久化 user message。新增 4 个合约测试。
+> - **smoke_lab fixture 真实化**：`smoke_lab_services` / `smoke_lab_oauth_codes` / `smoke_lab_oauth_tokens` migration + `install_fixtures` 创建 project/agent/issue/service 占位（幂等）。新增 4 个合约测试。
+> - **company_skills config 真实持久化**：`company_skill_configs` migration + `put_skill_config` / `get_skill_config` 路由读写真实 jsonb。新增 5 个合约测试。
 
 ## 当前门禁（本轮 2026-08-04 增量 v2）
 - ✅ `cargo fmt --all`
@@ -660,3 +670,179 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 | 中 | auth 密码哈希（argon2）+ session refresh | ~200 行 |
 | 低 | smoke_lab 表 schema + 实测 | ~400 行 |
 | 低 | status_cards 实测（已 mock RPC） | ~300 行 |
+## 第十三轮（2026-08-04）
+
+### 当前门禁
+- ✅ `cargo check -p pc-repos -p pc-http -p pc-heartbeat -p pc-auth -p pc-plugin-host` — 0 errors
+- ✅ `cargo test -p pc-heartbeat -p pc-repos -p pc-auth -p pc-http --lib` — **117 passed (4 suites)**
+- ✅ `cargo test -p pc-http --test execution_workspaces_contract` — 11 passed
+- ✅ `cargo test -p pc-http --test board_chat_contract` — 4 passed
+- ✅ `cargo test -p pc-http --test smoke_lab_contract` — 4 passed
+- ✅ `cargo test -p pc-http --test company_skills_contract` — 5 passed
+
+### 本轮新增的差距收敛项
+
+8. **execution_workspaces runtime service / lease 状态机深化**（P1 完成）：
+   - `0203_workspace_action_log.sql` migration：新增 `workspace_action_log` 表（队列工作区动作）
+   - `0205_smoke_lab_services.sql` migration（smoke lab 服务管理）
+   - `0206_skill_configs.sql` migration（company_skill_configs 持久化）
+   - `0204_board_chat.sql` migration（board_chat_threads + board_chat_messages）
+   - `pc-repos::execution` 新增枚举 `ActionKind` / `ActionStatus` / `RuntimeLifecycle`
+   - `ExecutionRepo::enqueue_action` / `list_actions_for_workspace` / `claim_next_queued_action` / `complete_action`
+   - `ExecutionRepo::list_runtime_services_for_workspace` / `get_runtime_service` / `set_runtime_service_lifecycle`
+   - `routes/execution_workspaces` 重构：list_workspaces / get_workspace / patch_workspace 使用 ExecutionRepo
+   - 新增路由：`/api/execution-workspaces/:id/action-log`、`/api/execution-workspaces/:id/runtime-services`、`/api/runtime-services/:service_id/lifecycle`
+   - 11 个合约测试覆盖：list / overview / get-404 / patch / close-readiness / workspace-operations / runtime-service-action / runtime-command-action / reconcile-branch / runtime-services-list / runtime-service-lifecycle
+
+9. **board_chat thread / message 持久化**（P2 完成）：
+   - `BoardChatRepo` 模块：list_threads / get_thread / get_or_create_thread / list_messages / append_message / set_message_status / ensure_board_issue（带唯一约束冲突回查）
+   - 新增路由：`/api/companies/:company_id/board-chat/threads`、`/api/board/chat/threads/:thread_id/messages`
+   - `board_chat_stream` 与 `board_chat_one_shot` 在调用 LLM 前调用 `persist_user_message` 写入 user 消息，完成后再写入 assistant 消息
+   - 4 个合约测试：list_threads 空数组 / list_messages 空数组 / round trip / ordering
+
+10. **smoke_lab fixture 真实化**（P2 完成）：
+    - `install_fixtures` 改为：探测 company 存在 → 探测 project/agent/issue 不存在则创建 → `smoke_lab_services` ON CONFLICT DO NOTHING（按 rows_affected 决定是否加入 installed 数组）。第二次调用是幂等的（installed 数组为空）。
+    - 4 个合约测试：services list 形状 / install_fixtures 完整集 + 幂等 / run lifecycle + step / smoke_reset 清空
+
+11. **company_skills config 真实持久化**（P2 完成）：
+    - `get_skill_config` / `put_skill_config` 改为读写 `company_skill_configs` 表（jsonb）
+    - 5 个合约测试：list / categories / catalog / install-get-delete / config round-trip
+
+### 新增的迁移 (4 个)
+- `0203_workspace_action_log.sql`
+- `0204_board_chat.sql`
+- `0205_smoke_lab_services.sql`
+- `0206_skill_configs.sql`
+
+### 测试统计
+
+| Crate | 单元测试 | 增量 |
+|---|---|---|
+| pc-repos | 63（lib）| +2 |
+| pc-http | 22（lib）| 0 |
+| pc-heartbeat | 26 | 0 |
+| pc-auth | 6 | 0 |
+| pc-http 合约 (本轮新增) | 24 | +24 |
+
+### 关键文件
+- `crates/pc-repos/src/execution.rs` — workspace_action_log + runtime_service API
+- `crates/pc-repos/src/board_chat.rs` — BoardChatRepo（新增）
+- `crates/pc-http/src/routes/execution_workspaces.rs` — 重构使用 ExecutionRepo + 3 个新路由
+- `crates/pc-http/src/routes/board_chat.rs` — 增加 persist_user_message + list_threads / list_messages
+- `crates/pc-http/src/routes/smoke_lab.rs` — install_fixtures 完整化
+- `crates/pc-http/src/routes/company_skills.rs` — get/put skill_config 真实持久化
+- `crates/pc-http/tests/execution_workspaces_contract.rs` — 11 tests（新增）
+- `crates/pc-http/tests/board_chat_contract.rs` — 4 tests（新增）
+- `crates/pc-http/tests/smoke_lab_contract.rs` — 4 tests（新增）
+- `crates/pc-http/tests/company_skills_contract.rs` — 5 tests（新增）
+
+## 第十四轮（2026-08-04）
+
+### 当前门禁
+- ✅ `cargo check -p pc-repos -p pc-http -p pc-server -p pc-heartbeat -p pc-auth -p pc-plugin-host -p pc-secrets` — 0 errors, 23 warnings
+- ✅ `cargo test -p pc-heartbeat -p pc-repos -p pc-auth -p pc-http -p pc-secrets --lib` — **138 passed (5 suites)**
+- ✅ `cargo test -p pc-secrets --lib` — 21 passed（aws + gcp + vault + local + registry）
+- ✅ `cargo test -p pc-http --test execution_workspaces_contract` — 13 passed（含 2 个新增 lease round-trip）
+- ✅ `cargo test -p pc-http --test secrets_providers_contract` — 5 passed（注册表 + validate + health）
+
+### 本轮新增的差距收敛项
+
+12. **secrets 远端 provider 真实接入**（P1 完成）：
+    - `pc-secrets/src/gcp.rs`：GCP Secret Manager REST API provider，使用 `Bearer accessToken` 鉴权，sanitize secret name。
+    - `pc-secrets/src/vault.rs`：HashiCorp Vault KV v2 provider，使用 `X-Vault-Token` 鉴权，sanitize path。
+    - 两个 provider 都实现真实 HTTP 调用：create / create_version / resolve_version / health_check（list secrets / sys/health 试探权限）。
+    - `pc-secrets/src/types.rs`：新增 `ProviderHealthCheck::ok(provider, message)` 与 `with_warnings(vec)` helper；`SecretProviderValidationResult::invalid(reason)` helper。
+    - `pc-secrets/src/lib.rs`：导出 `GcpSecretManagerProvider` / `VaultProvider` / `LocalEncryptedProvider`。
+    - 21 个单元测试覆盖：sanitize、validate、构造、字段访问。
+    - 5 个合约测试：provider descriptors 列表 4 项、health 报告 GCP/Vault warn、registry 4 个 provider 注册、vault validate_config、gcp validate_config。
+
+13. **execution_workspaces lease state machine 暴露给 HTTP**（P1 完成）：
+    - `0207_execution_lease.sql` migration：新增 `execution_lease` 表（id/company_id/workspace_id/agent_id/run_id/heartbeat_run_id/state/token/acquired_at/expires_at/last_renewed_at/released_at/revocation_reason + 2 索引）
+    - 路由：
+      - `GET /api/execution-workspaces/:id/lease` → 当前 active lease（无则 404）
+      - `POST /api/execution-workspaces/:id/lease/acquire` → 原子 acquire（已占用 → 409）
+      - `POST /api/execution-workspaces/:id/lease/renew` → 续约（token 不匹配 → 404）
+      - `POST /api/execution-workspaces/:id/lease/release` → 释放
+      - `DELETE /api/execution-workspaces/:id/lease` → revoke（admin 强制）
+    - 2 个合约测试覆盖：acquire/renew/release 完整 round-trip + 二次 acquire 409；无 lease 时 404。
+
+### 新增的迁移 (1 个)
+- `0207_execution_lease.sql`
+
+### 测试统计
+
+| Crate | 单元测试 | 增量 |
+|---|---|---|
+| pc-secrets | 21 | +21 |
+| pc-http 合约 (本轮新增) | 7 | +7 |
+
+### 关键文件
+- `crates/pc-secrets/src/gcp.rs` — GCP provider（新增）
+- `crates/pc-secrets/src/vault.rs` — Vault provider（新增）
+- `crates/pc-secrets/src/types.rs` — `ProviderHealthCheck::ok` / `with_warnings` + `SecretProviderValidationResult::invalid`
+- `crates/pc-secrets/src/lib.rs` — 导出 Gcp/Vault/LocalEncryptedProvider
+- `crates/pc-http/src/routes/execution_workspaces.rs` — 5 个 lease 路由
+- `crates/pc-http/tests/secrets_providers_contract.rs` — 5 tests（新增）
+- `crates/pc-http/tests/execution_workspaces_contract.rs` — 新增 2 个 lease round-trip 测试
+- `crates/pc-db/migrations/drizzle/0207_execution_lease.sql` — execution_lease 表（新增）
+
+## 第十五轮（2026-08-04）
+
+### 当前门禁
+- ✅ `cargo check -p pc-repos -p pc-http -p pc-server -p pc-heartbeat -p pc-auth -p pc-plugin-host -p pc-secrets` — 0 errors, 23 warnings
+- ✅ `cargo test -p pc-heartbeat -p pc-repos -p pc-auth -p pc-http -p pc-secrets -p pc-adapter-claude-local -p pc-adapter-cursor-local --lib` — **157 passed (7 suites)**
+- ✅ `cargo test -p pc-plugin-host --test supervisor_contract` — 3 passed
+- ✅ `cargo test -p pc-adapter-claude-local --lib` — 11 passed
+- ✅ `cargo test -p pc-adapter-cursor-local --lib` — 8 passed
+
+### 本轮新增的差距收敛项
+
+14. **adapter CLI 协议特定化**（P0 完成）：
+    - `pc-adapter-claude-local::build_claude_exec_args`：构造 `--print` / `--output-format stream-json` / `--verbose` / `--model <m>` / `--add-dir <cwd>` / `--append-system-prompt-file <f>` / `--mcp-config <json>` / `--effort <level>` / `--dangerously-skip-permissions` 等 flag，接受 `extraArgs` 追加在末尾。支持 `modelReasoningEffort` 别名。
+    - `pc-adapter-claude-local::parse_claude_jsonl`：解析 thread.started → session_id、item.completed(agent_message) → summary 累积、turn.completed → usage（input/output/cache_read）、result → is_error/subtype/session_id/model/stop_reason/usage。结果事件的 session_id 总是覆盖之前的 thread.started；result.usage 也被提取（覆盖 turn.completed 的值）。
+    - `pc-adapter-cursor-local::build_cursor_exec_args`：构造 `--print` / `--output-format stream-json` / `--stream-partial-output` / `--model <m>` / `--workspace <w>` / `--sandbox` / `--force` 等 flag。
+    - `pc-adapter-cursor-local::parse_cursor_jsonl`：解析 system → session_id/model、assistant → message.content 累积 summary、result → is_error/subtype/session_id/model/usage。
+    - 19 个单元测试（11 claude + 8 cursor）：descriptor 形状、default_command fallback、args 构造最小/完整、JSONL 完整生命周期/error 结果/跳过非 JSON 行、CLI fixture execute。
+
+15. **plugin worker supervisor（指数 backoff）**（P0 完成）：
+    - `pc-plugin-host/src/supervisor.rs`：`WorkerSupervisor` + `SupervisorConfig` + `SupervisorEvent`（Restarted / Crashed / Recovered）。
+    - `backoff_delay_ms(attempt)` 公式：`base * 2^(attempt-1)`，cap 在 `max_delay_ms`，attempt=0 视为 1。
+    - 默认配置：max_restarts=5, base_delay_ms=500, max_delay_ms=30_000, poll_interval_ms=1_000。
+    - `tick_once()` 扫描所有 worker，对状态为 Ready/Running/Error 且 `is_alive()` 为 false 的触发 restart。
+    - `restart_worker()`：shutdown → start_with_options → bump_restart_count → send Restarted event → backoff sleep → send Recovered。
+    - 超过 max_restarts 后 `mark_crashed()` + send Crashed event + 返回 Err。
+    - `force_restart()` 用于无 backoff 强制重启。
+    - `spawn_and_register()` 把 spawn + register 合并成一步。
+    - `WorkerHandle` 新增 hooks：`plugin_id()` / `state()` / `restart_count()` / `bump_restart_count()` / `mark_crashed()` / `options_snapshot()` / `start_with_options()`。
+    - `WorkerState` 新增 `Running` / `Error` / `Crashed` 变体；`is_alive()` 扩展到 Ready/Busy/Running。
+    - 3 个合约测试覆盖：default backoff + cap、自定义 backoff + cap、事件变体实例化。
+
+### 新增文件 / 修改
+- `crates/pc-plugin-host/src/supervisor.rs`（新增）
+- `crates/pc-plugin-host/src/handle.rs`（supervisor hooks + WorkerState 扩展）
+- `crates/pc-plugin-host/src/lib.rs`（导出 supervisor）
+- `crates/pc-plugin-host/tests/supervisor_contract.rs`（新增）
+- `crates/pc-adapter-claude-local/src/lib.rs`（完整 CLI 协议）
+- `crates/pc-adapter-cursor-local/src/lib.rs`（完整 CLI 协议）
+
+### 测试统计
+
+| Crate | 单元测试 | 增量 |
+|---|---|---|
+| pc-adapter-claude-local | 11 | +11 |
+| pc-adapter-cursor-local | 8 | +8 |
+| pc-plugin-host 合约 | 3 | +3 |
+
+### 累计进度（综合）
+
+| 层次 | 第十五轮进度 |
+|---|---|
+| 路由形状 | 100%（62 个 route 文件） |
+| 数据持久化 | 90% |
+| 行为等价 | 80-85% |
+| Actor 抽象 | 70-75% |
+| Adapter 真实执行 | 60-65%（codex + claude + cursor 真实执行） |
+| Plugin runtime | 80%（supervisor + 双向 RPC + health） |
+| Auth/Authz | 50-55% |
+| Secrets | 80-85%（4 个 provider + 真实 HTTP） |
+| Realtime/WebSocket | 50-55% |

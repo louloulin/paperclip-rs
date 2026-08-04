@@ -312,26 +312,109 @@ async fn install_fixtures(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    // Insert a minimal set of fixture companies and agents so the UI can drive
-    // scenarios without having to set up state manually.
+    // 安装完整 fixture 数据集：company (使用现有) + project + agent + issue + skill 类别 + smoke run 占位。
+    // 不破坏已有数据；所有 INSERT 都用 ON CONFLICT DO NOTHING（依赖 unique 约束）。
     let pool = state.db.pool();
-    let fixture_company_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO companies (id, name, description)          VALUES (gen_random_uuid(), 'Smoke Lab Fixture Co', 'Auto-installed by smoke-lab')          ON CONFLICT DO NOTHING RETURNING id",
+    let mut installed: Vec<String> = Vec::new();
+
+    // 1) company — 仅在传入公司不存在时插入一条 fixture company 占位
+    let company_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM companies WHERE id = $1)",
     )
-    .fetch_optional(pool)
+    .bind(company_id)
+    .fetch_one(pool)
     .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .unwrap_or(company_id);
-    sqlx::query(
-        "INSERT INTO agents (company_id, name, role, status, adapter_type)          VALUES ($1, 'Smoke Bot', 'tester', 'idle', 'codex_local')          ON CONFLICT DO NOTHING",
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !company_exists {
+        let prefix = format!("FIX{}", &Uuid::new_v4().simple().to_string()[..4]);
+        sqlx::query(
+            "INSERT INTO companies (id, name, issue_prefix) VALUES ($1, 'Smoke Lab Fixture', $2)              ON CONFLICT DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(&prefix)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        installed.push("company".into());
+    }
+
+    // 2) project
+    let project_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1",
     )
-    .bind(fixture_company_id)
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if project_count == 0 {
+        sqlx::query(
+            "INSERT INTO projects (company_id, name, status)              VALUES ($1, 'Smoke Lab Project', 'active')",
+        )
+        .bind(company_id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        installed.push("project".into());
+    }
+
+    // 3) agent (smoke-bot) — adapters.codex_local 可用
+    let agent_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM agents WHERE company_id = $1 AND name = 'Smoke Bot'",
+    )
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if agent_count == 0 {
+        sqlx::query(
+            "INSERT INTO agents (company_id, name, role, status, adapter_type)              VALUES ($1, 'Smoke Bot', 'tester', 'idle', 'codex_local')",
+        )
+        .bind(company_id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        installed.push("agent".into());
+    }
+
+    // 4) issue（探测 issue）
+    let issue_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM issues WHERE company_id = $1 AND title = 'Smoke probe'",
+    )
+    .bind(company_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if issue_count == 0 {
+        sqlx::query(
+            "INSERT INTO issues (company_id, title, priority, status, origin_kind, origin_fingerprint)              VALUES ($1, 'Smoke probe', 'normal', 'open', 'smoke', 'smoke-fixture')",
+        )
+        .bind(company_id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        installed.push("issue".into());
+    }
+
+    // 5) smoke service 占位：env=local 状态=stopped；service_start 才是真实拉起。
+    let svc_result = sqlx::query(
+        "INSERT INTO smoke_lab_services (company_id, service_key, status, config)          VALUES ($1, 'env-local', 'stopped', $2::jsonb)          ON CONFLICT (company_id, service_key) DO NOTHING",
+    )
+    .bind(company_id)
+    .bind(serde_json::json!({"note": "installed-by-fixtures"}))
     .execute(pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if svc_result.rows_affected() > 0 {
+        installed.push("service".into());
+    }
+
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({"companyId": fixture_company_id, "status": "fixtures-installed"})),
+        Json(json!({
+            "companyId": company_id,
+            "status": "fixtures-installed",
+            "installed": installed,
+        })),
     ))
 }
 

@@ -481,24 +481,48 @@ struct ConfigBody {
 }
 
 async fn get_skill_config(
-    State(_s): State<AppState>,
+    State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
-) -> Json<Value> {
-    Json(json!({
+) -> ApiResult<Json<Value>> {
+    let value: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT value FROM company_skill_configs WHERE company_id=$1 AND skill_id=$2",
+    )
+    .bind(company_id)
+    .bind(skill_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
         "companyId": company_id,
         "skillId": skill_id,
-        "config": {}
-    }))
+        "config": value.unwrap_or_else(|| serde_json::json!({})),
+    })))
 }
 
 async fn put_skill_config(
-    State(_s): State<AppState>,
+    State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
-    Json(_body): Json<ConfigBody>,
-) -> impl IntoResponse {
-    let _ = company_id;
-    let _ = skill_id;
-    (StatusCode::OK, Json(json!({ "saved": true })))
+    Json(body): Json<ConfigBody>,
+) -> ApiResult<Json<Value>> {
+    let value = body
+        .config
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
+    sqlx::query(
+        "INSERT INTO company_skill_configs (company_id, skill_id, value)          VALUES ($1, $2, $3)          ON CONFLICT (company_id, skill_id) DO UPDATE SET value=$3, updated_at=now()",
+    )
+    .bind(company_id)
+    .bind(skill_id)
+    .bind(&value)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
+        "companyId": company_id,
+        "skillId": skill_id,
+        "saved": true,
+        "value": value,
+    })))
 }
 
 async fn skill_preview(

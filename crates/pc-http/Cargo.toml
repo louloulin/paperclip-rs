@@ -55,3 +55,7 @@ hex = "0.4"
 # Backup-specific dependencies
 flate2 = "1"
 dirs = "5"
+
+# Live-events resume test deps
+tokio-tungstenite = { version = "0.24", features = ["connect"] }
+rand = "0.8"

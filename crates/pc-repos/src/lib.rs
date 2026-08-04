@@ -15,6 +15,7 @@ pub mod activity;
 pub mod agent;
 pub mod approval;
 pub mod auth;
+pub mod board_chat;
 pub mod case;
 pub mod company;
 pub mod cost;
