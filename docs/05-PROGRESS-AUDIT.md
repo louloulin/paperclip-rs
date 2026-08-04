@@ -4,7 +4,38 @@
 > 已从空返回值改为四项 provider descriptor/health 契约，新增 2 个契约断言。
 > heartbeat scheduler 已接入 server：每秒条件 claim queued/scheduled_retry 并复用 adapter dispatch。
 
-## 当前门禁
+## 当前门禁（本轮 2026-08-04 增量）
+- ✅ `cargo fmt --all`
+- ✅ `cargo check -p pc-repos -p pc-http -p pc-server` — 0 errors / 21 warnings（pre-existing dead_code）
+- ✅ `cargo test -p pc-repos --lib` — 61 passed（57 → 61：新增 settings worktree activation +4，issue blocker +1 单元 / +2 集成 / +3 wakeup 集成 + cost_repo 1）
+- ✅ `cargo test -p pc-heartbeat --lib` — 26 passed（24 → 26：新增 retry reason constants + policy 解读 + utc_day_window + evaluate_daily_cap 单元 9 项 + enforce_issue_execution_lock + retry reason constants 2 项）
+- ✅ `cargo test -p pc-http --lib` — 19 passed
+
+## 本轮新增的差距收敛项
+
+1. **daily cost cap**（P0 完成）：
+   - `pc-heartbeat::HeartbeatPolicy::from_runtime_config` 解析 `maxDailyRuns`/`dailyRunLimit`/`dailyRunCap`/`maxRunsPerDay` 和 `maxDailyCostCents`/`dailyCostCentsLimit`/`dailySpendCentsLimit`/`dailyBudgetCents` 同义字段，与 Node `parseHeartbeatPolicy` 等价。
+   - `pc-heartbeat::evaluate_daily_cap` 纯函数返回 `DailyCapBlock`（含 `daily_run_limit` / `daily_cost_limit` 两个 error_code）。
+   - `pc-repos::cost::CostRepo::sum_agent_window_cost_cents` 复用 `currentUtcDayWindow` 语义。
+   - `pc-http::routes::agents::evaluate_daily_cap_for_agent` + `dispatch_queued_heartbeat` 在 claim 之前先取消当日超限的 queued run，写入 `run.cancelled` 事件并发布 `heartbeat.run.cancelled` 实时事件。
+
+2. **dependency readiness**（P0 完成）：
+   - `IssueRepo::unresolved_blocker_ids` / `unresolved_blockers_for` 实现 Node `evaluateIssueExecutionReadiness` 的 `blocks` 类型 blocker 查询。
+   - `dispatch_queued_heartbeat` 在 `context_snapshot.issueId` 存在时先查询 blocker，有未解决 blocker 直接取消 queued run 并写入 `run.blocked` 事件 + 发布 `heartbeat.run.blocked` 实时事件。
+
+3. **suppression DB override**（P0 完成）：
+   - `SettingsRepo::resolve_worktree_run_execution_activation` 读取 `instance_settings.experimental` 的 `enableWorktreeRunExecution` / `worktreeRunExecutionActivatedAt` / `worktreeRunExecutionActivationInstanceId` 三元组，对齐 Node `resolveWorktreeRunExecutionActivation`。
+   - `pc-server` scheduler 抑制检查现已在 `PAPERCLIP_IN_WORKTREE` 默认抑制之外把 `armed` 状态视为放行；read failure 失败关闭。
+
+4. **stale wakeup recovery**（P0 完成）：
+   - `AgentRepo::find_active_wakeup_request` 返回 agent 当前 active wakeup。
+   - `AgentRepo::recover_stale_wakeup_claims` 在 5 分钟 stale 阈值上把 `claimed` 状态重置为 `requested`，scheduler 每秒 tick 调用。
+
+5. **retry reason constants**（P0 部分）：
+   - `MAX_TURN_CONTINUATION_RETRY_REASON` / `MAX_TURN_CONTINUATION_WAKE_REASON` / `INTERACTION_CONTINUATION_INFRA_RETRY_REASON` 常量与 Node 字符串一致。
+   - `enforce_issue_execution_lock_for` 纯函数返回是否需要 enforce issue execution lock。
+
+## 之前门禁
 - ✅ `cargo fmt --all`
 - ✅ `cargo build --workspace` — 0 errors / 9 warnings（pre-existing dead_code）
 - ✅ `cargo test --workspace` — **270 passed (71 suites)**

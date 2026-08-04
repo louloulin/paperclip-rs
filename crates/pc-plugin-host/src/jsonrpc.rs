@@ -12,7 +12,23 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
-use pc_plugin_protocol::{JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse};
+use pc_plugin_protocol::{
+    JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse,
+    WORKER_TO_HOST_METHODS,
+};
+
+/// Async trait for handling worker → host JSON-RPC requests. The host
+/// invokes this callback when a worker calls one of the registered
+/// `WORKER_TO_HOST_METHODS` methods.
+#[async_trait::async_trait]
+pub trait WorkerToHostHandler: Send + Sync {
+    /// Handle the worker request and return a JSON value (or error).
+    async fn handle(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, JsonRpcError>;
+}
 
 /// 待处理 RPC 调用的 `HashMap` 别名。
 pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, JsonRpcError>>>>>;
@@ -32,6 +48,7 @@ pub struct PendingCall {
 pub struct JsonRpcStream {
     pending: PendingMap,
     stdin: Arc<Mutex<ChildStdin>>,
+    worker_to_host: Arc<Mutex<Option<Arc<dyn WorkerToHostHandler>>>>,
     #[allow(dead_code)]
     stdout_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -51,10 +68,21 @@ impl JsonRpcStream {
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_reader = pending.clone();
+        let worker_to_host_reader = Arc::new(Mutex::new(None));
+        let stdin_reader = Arc::new(Mutex::new(
+            child.stdin.take().ok_or_else(|| "worker stdin not available".to_string())?,
+        ));
 
         // Spawn reader task
         let stdout_task = tokio::spawn(async move {
-            if let Err(err) = Self::read_loop(BufReader::new(stdout), pending_reader, stderr).await
+            if let Err(err) = Self::read_loop(
+                BufReader::new(stdout),
+                pending_reader,
+                worker_to_host_reader,
+                stdin_reader,
+                stderr,
+            )
+            .await
             {
                 tracing::warn!("plugin worker stdout read loop ended: {err}");
             }
@@ -63,8 +91,18 @@ impl JsonRpcStream {
         Ok(Self {
             pending,
             stdin: Arc::new(Mutex::new(stdin)),
+            worker_to_host: Arc::new(Mutex::new(None)),
             stdout_task: Some(stdout_task),
         })
+    }
+
+    /// Register a worker → host handler. The handler will be invoked when
+    /// the worker sends a JSON-RPC request whose method is in
+    /// `WORKER_TO_HOST_METHODS`. Responses are written back to the worker's
+    /// stdin.
+    pub async fn set_worker_to_host_handler(&self, handler: Arc<dyn WorkerToHostHandler>) {
+        let mut slot = self.worker_to_host.lock().await;
+        *slot = Some(handler);
     }
 
     /// 发送一个 RPC 调用，等待响应。
@@ -144,6 +182,8 @@ impl JsonRpcStream {
     async fn read_loop(
         mut reader: BufReader<ChildStdout>,
         pending: PendingMap,
+        worker_to_host: Arc<Mutex<Option<Arc<dyn WorkerToHostHandler>>>>,
+        stdin: Arc<Mutex<ChildStdin>>,
         mut stderr: Option<ChildStderr>,
     ) -> Result<(), String> {
         // Spawn stderr drain task if available
@@ -177,27 +217,65 @@ impl JsonRpcStream {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    let response: JsonRpcResponse<Value> = match serde_json::from_str(trimmed) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "plugin_worker_stdout",
-                                "invalid JSON-RPC line: {e}: {trimmed}"
-                            );
-                            continue;
-                        }
-                    };
-                    match response {
-                        JsonRpcResponse::Success(success) => {
-                            let mut pending = pending.lock().await;
-                            if let Some(sender) = pending.remove(&success.id) {
-                                let _ = sender.send(Ok(success.result));
+                    // First try as a JSON-RPC response from the worker.
+                    if let Ok(response) = serde_json::from_str::<JsonRpcResponse<Value>>(trimmed) {
+                        match response {
+                            JsonRpcResponse::Success(success) => {
+                                let mut pending = pending.lock().await;
+                                if let Some(sender) = pending.remove(&success.id) {
+                                    let _ = sender.send(Ok(success.result));
+                                }
+                            }
+                            JsonRpcResponse::Error(error_response) => {
+                                let mut pending = pending.lock().await;
+                                if let Some(sender) = pending.remove(&error_response.id) {
+                                    let _ = sender.send(Err(error_response.error));
+                                }
                             }
                         }
-                        JsonRpcResponse::Error(error_response) => {
-                            let mut pending = pending.lock().await;
-                            if let Some(sender) = pending.remove(&error_response.id) {
-                                let _ = sender.send(Err(error_response.error));
+                        continue;
+                    }
+                    // Otherwise try as a worker → host JSON-RPC request.
+                    if let Ok(request) = serde_json::from_str::<JsonRpcRequest<Value>>(trimmed) {
+                        if WORKER_TO_HOST_METHODS.contains(&request.method.as_str()) {
+                            let handler = {
+                                let slot = worker_to_host.lock().await;
+                                slot.clone()
+                            };
+                            if let Some(handler) = handler {
+                                let stdin = stdin.clone();
+                                let id = request.id.clone();
+                                let method = request.method.clone();
+                                let params = request.params.clone();
+                                tokio::spawn(async move {
+                                    let result = handler.handle(&method, params).await;
+                                    let response = match result {
+                                        Ok(value) => JsonRpcResponse::success(id, value),
+                                        Err(error) => JsonRpcResponse::error(id, error),
+                                    };
+                                    let line = match serde_json::to_string(&response) {
+                                        Ok(line) => line,
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                "failed to serialize worker → host response: {err}"
+                                            );
+                                            return;
+                                        }
+                                    };
+                                    let mut stdin = stdin.lock().await;
+                                    use tokio::io::AsyncWriteExt;
+                                    if let Err(err) = async {
+                                        stdin.write_all(line.as_bytes()).await?;
+                                        stdin.write_all(b"\n").await?;
+                                        stdin.flush().await
+                                    }
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            "failed to write worker → host response: {err}"
+                                        );
+                                    }
+                                });
                             }
                         }
                     }
@@ -222,6 +300,31 @@ mod tests {
             sender: tx,
         };
         assert_eq!(call.id, "test");
+    }
+
+    struct TestWorkerToHostHandler {
+        result: Value,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerToHostHandler for TestWorkerToHostHandler {
+        async fn handle(
+            &self,
+            _method: &str,
+            _params: Option<Value>,
+        ) -> Result<Value, JsonRpcError> {
+            Ok(self.result.clone())
+        }
+    }
+
+    #[test]
+    fn worker_to_host_methods_are_recognized() {
+        use pc_plugin_protocol::WORKER_TO_HOST_METHODS;
+        // Spot-check the core methods we depend on
+        assert!(WORKER_TO_HOST_METHODS.contains(&"progress"));
+        assert!(WORKER_TO_HOST_METHODS.contains(&"log"));
+        assert!(WORKER_TO_HOST_METHODS.contains(&"emitEvent"));
+        assert!(WORKER_TO_HOST_METHODS.contains(&"dataQuery"));
     }
 
     #[tokio::test]

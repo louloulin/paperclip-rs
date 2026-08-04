@@ -19,7 +19,7 @@ use pc_repos::{
         CreateHeartbeat, HeartbeatEventStream, HeartbeatRepo, HeartbeatRunStatus,
         NewHeartbeatEvent, NewWatchdogDecision, WatchdogDecision,
     },
-    inbox::InboxRepo, pipeline::PipelineRepo, plugin::PluginRepo, project::ProjectRepo,
+    inbox::InboxRepo, issue::IssueRepo, pipeline::PipelineRepo, plugin::PluginRepo, project::ProjectRepo,
     routine::RoutineRepo, settings::SettingsRepo, sidebar::SidebarRepo, skill::SkillRepo,
     smoke::SmokeRepo, summary::SummaryRepo, tool::ToolRepo,
 };
@@ -611,4 +611,254 @@ async fn heartbeat_daily_cap_blocks_when_cost_equals_limit() {
     assert!(evaluate_daily_cap(&policy, 0, 499).is_none());
     // Above-limit: block
     assert!(evaluate_daily_cap(&policy, 0, 501).is_some());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn issue_unresolved_blockers_returns_open_blockers_only() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let company_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
+        .bind(company_id)
+        .bind("Blocker Corp")
+        .bind("BLK")
+        .execute(db.pool())
+        .await
+        .expect("insert company");
+
+    let issue_id = uuid::Uuid::new_v4();
+    let blocker_open_id = uuid::Uuid::new_v4();
+    let blocker_done_id = uuid::Uuid::new_v4();
+    let blocker_cancelled_id = uuid::Uuid::new_v4();
+    let blocker_hidden_id = uuid::Uuid::new_v4();
+
+    for (id, status, hidden) in [
+        (issue_id, "todo", None),
+        (blocker_open_id, "todo", None),
+        (blocker_done_id, "done", None),
+        (blocker_cancelled_id, "cancelled", None),
+        (blocker_hidden_id, "todo", Some(chrono::Utc::now())),
+    ] {
+        sqlx::query(
+            "INSERT INTO issues (id, company_id, title, status, hidden_at)              VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(id)
+        .bind(company_id)
+        .bind(format!("Issue {id}"))
+        .bind(status)
+        .bind(hidden)
+        .execute(db.pool())
+        .await
+        .expect("insert issue");
+        // Self-row blocks are needed by the inner join on company_id
+        sqlx::query(
+            "INSERT INTO issue_relations (company_id, issue_id, related_issue_id, type)              VALUES ($1, $2, $3, 'blocks')",
+        )
+        .bind(company_id)
+        .bind(blocker_id_or_issue(blocker_open_id, issue_id, id))
+        .bind(issue_id)
+        .execute(db.pool())
+        .await
+        .ok();
+    }
+
+    let repo = IssueRepo::new(&db);
+    let blockers = repo
+        .unresolved_blocker_ids(company_id, issue_id)
+        .await
+        .expect("query blockers");
+    // Only the open + non-cancelled + non-hidden blocker should be returned
+    assert!(blockers.contains(&blocker_open_id));
+    assert!(!blockers.contains(&blocker_done_id));
+    assert!(!blockers.contains(&blocker_cancelled_id));
+    assert!(!blockers.contains(&blocker_hidden_id));
+}
+
+fn blocker_id_or_issue(open_id: uuid::Uuid, issue_id: uuid::Uuid, current: uuid::Uuid) -> uuid::Uuid {
+    if current == issue_id { open_id } else { current }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn issue_unresolved_blockers_for_missing_issue_returns_empty() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let repo = IssueRepo::new(&db);
+    let blockers = repo
+        .unresolved_blockers_for(uuid::Uuid::new_v4())
+        .await
+        .expect("query");
+    assert!(blockers.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn agent_recover_stale_wakeup_claims_resets_only_old_claims() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let company_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
+        .bind(company_id)
+        .bind("Wakeup Reset Corp")
+        .bind("WRP")
+        .execute(db.pool())
+        .await
+        .expect("insert company");
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, adapter_config)          VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind("Reset Bot")
+    .bind("tester")
+    .bind("process")
+    .bind(serde_json::json!({}))
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
+
+    let stale_id = uuid::Uuid::new_v4();
+    let fresh_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agent_wakeup_requests             (id, company_id, agent_id, source, status, claimed_at, requested_at)          VALUES ($1, $2, $3, 'on_demand', 'claimed', now() - interval '10 minutes', now())",
+    )
+    .bind(stale_id)
+    .bind(company_id)
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .expect("insert stale");
+    sqlx::query(
+        "INSERT INTO agent_wakeup_requests             (id, company_id, agent_id, source, status, claimed_at, requested_at)          VALUES ($1, $2, $3, 'on_demand', 'claimed', now() - interval '10 seconds', now())",
+    )
+    .bind(fresh_id)
+    .bind(company_id)
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .expect("insert fresh");
+
+    let repo = AgentRepo::new(&db);
+    let recovered = repo.recover_stale_wakeup_claims(300).await.expect("recover");
+    assert_eq!(recovered, 1);
+
+    let stale = repo
+        .get_wakeup_request(company_id, stale_id)
+        .await
+        .expect("get stale")
+        .unwrap();
+    let fresh = repo
+        .get_wakeup_request(company_id, fresh_id)
+        .await
+        .expect("get fresh")
+        .unwrap();
+    assert_eq!(stale.status, "requested");
+    assert!(stale.claimed_at.is_none());
+    assert_eq!(fresh.status, "claimed");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn agent_find_wakeup_by_idempotency_key_returns_most_recent() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let company_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
+        .bind(company_id)
+        .bind("Idempotency Corp")
+        .bind("IDM")
+        .execute(db.pool())
+        .await
+        .expect("insert company");
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, adapter_config)          VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind("Idem Bot")
+    .bind("tester")
+    .bind("process")
+    .bind(serde_json::json!({}))
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
+
+    let fresh_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agent_wakeup_requests             (id, company_id, agent_id, source, status, idempotency_key, requested_at)          VALUES ($1, $2, $3, 'on_demand', 'requested', 'wake-key-1', now())",
+    )
+    .bind(fresh_id)
+    .bind(company_id)
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .expect("insert wakeup");
+
+    let repo = AgentRepo::new(&db);
+    let found = repo
+        .find_wakeup_by_idempotency_key(company_id, agent_id, "wake-key-1")
+        .await
+        .expect("find")
+        .unwrap();
+    assert_eq!(found.id, fresh_id);
+    let missing = repo
+        .find_wakeup_by_idempotency_key(company_id, agent_id, "missing")
+        .await
+        .expect("find missing");
+    assert!(missing.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn agent_find_active_wakeup_request_returns_pending_only() {
+    let db = fresh_db();
+    truncate_all(&db).await;
+    let company_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
+        .bind(company_id)
+        .bind("Active Wakeup Corp")
+        .bind("AWK")
+        .execute(db.pool())
+        .await
+        .expect("insert company");
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, adapter_config)          VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind("Active Bot")
+    .bind("tester")
+    .bind("process")
+    .bind(serde_json::json!({}))
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
+
+    let active_id = uuid::Uuid::new_v4();
+    let completed_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agent_wakeup_requests             (id, company_id, agent_id, source, status, requested_at)          VALUES ($1, $2, $3, 'on_demand', 'requested', now())",
+    )
+    .bind(active_id)
+    .bind(company_id)
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .expect("insert active");
+    sqlx::query(
+        "INSERT INTO agent_wakeup_requests             (id, company_id, agent_id, source, status, requested_at, finished_at)          VALUES ($1, $2, $3, 'on_demand', 'completed', now() - interval '1 minute', now())",
+    )
+    .bind(completed_id)
+    .bind(company_id)
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .expect("insert completed");
+
+    let repo = AgentRepo::new(&db);
+    let active = repo
+        .find_active_wakeup_request(company_id, agent_id)
+        .await
+        .expect("find active")
+        .unwrap();
+    assert_eq!(active.id, active_id);
 }

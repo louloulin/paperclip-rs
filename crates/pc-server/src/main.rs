@@ -32,6 +32,7 @@ use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
 use pc_http::AppState;
 use pc_realtime::{RealtimeHandle, WsState};
+use pc_repos::agent::AgentRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::settings::SettingsRepo;
 
@@ -241,6 +242,17 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Ok(_) => {}
                 Err(error) => tracing::warn!(error = %error, "timer heartbeat scheduler failed"),
+            }
+            // Recover stale wakeup claims: any wakeup held in `claimed` state
+            // for longer than 5 minutes is reset to `requested` so it can be
+            // claimed by the next scheduler tick.
+            match AgentRepo::new(&scheduler_state.db)
+                .recover_stale_wakeup_claims(300)
+                .await
+            {
+                Ok(0) => {}
+                Ok(count) => tracing::debug!(count, "heartbeat scheduler recovered stale wakeup claims"),
+                Err(error) => tracing::warn!(error = %error, "stale wakeup recovery failed"),
             }
         }
     });

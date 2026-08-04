@@ -66,3 +66,21 @@ cargo test -p pc-http --test secrets_contract  5 passed
 cargo test -p pc-repos --lib                   57 passed
 cargo test -p pc-http --lib routes::plugins::tests 1 passed
 ```
+
+## 本轮增量
+
+## 本轮实施记录
+
+- heartbeat daily cap 已接入：`HeartbeatPolicy::from_runtime_config` + `evaluate_daily_cap` + `evaluate_daily_cap_for_agent` 配合 `dispatch_queued_heartbeat` 在 claim 之前取消当日超出 `maxDailyRuns` / `maxDailyCostCents` 限制的 queued run，并写入 `run.cancelled` 事件并发布 `heartbeat.run.cancelled` 实时事件。`CostRepo::sum_agent_window_cost_cents` 复用 Node `currentUtcDayWindow` 语义。
+- dependency readiness 已接入：`IssueRepo::unresolved_blocker_ids` / `unresolved_blockers_for` 实现 Node `evaluateIssueExecutionReadiness` 的 `blocks` 类型 blocker 查询；`dispatch_queued_heartbeat` 在 issueId 存在时先查询 blocker，有未解决 blocker 直接取消 queued run 并写入 `run.blocked` 事件。
+- suppression DB override 已接入：`SettingsRepo::resolve_worktree_run_execution_activation` 读取 `instance_settings.experimental` 的 `enableWorktreeRunExecution` / `worktreeRunExecutionActivatedAt` / `worktreeRunExecutionActivationInstanceId` 三元组，对齐 Node `resolveWorktreeRunExecutionActivation`；`pc-server` 的 scheduler 抑制检查现已在 `PAPERCLIP_IN_WORKTREE` 默认抑制之外把 `armed` 状态视为放行；read failure 失败关闭。
+- wakeup 幂等 / stale claim 恢复已接入：`AgentRepo::find_active_wakeup_request` 返回 agent 当前 active wakeup；`recover_stale_wakeup_claims` 在 5 分钟 stale 阈值上把 `claimed` 状态重置为 `requested`，scheduler 每秒 tick 调用。
+
+## 之前实施记录
+
+- 将 `/api/companies/:company_id/secret-providers` 从 `{items: []}` 改为 Node 兼容的四项 provider descriptor。
+- 将 `/api/companies/:company_id/secret-providers/health` 从空数组改为四项 provider health check。
+- 增加 `secrets_contract` 对 provider 数量、字段和 health 形状的断言。
+- 未宣称远端 provider 已可执行：GCP/Vault 明确返回未配置状态，AWS 只报告配置准备度。
+- 复核 plugin bridge：Rust 已有真实 worker pool 与 HTTP→worker JSON-RPC 调用，不能把它误列为"全 stub"；差距收敛到双向回调与生命周期恢复。
+- heartbeat scheduler 已接入 `pc-server`：每秒查询 recoverable runs，条件 claim queued/scheduled_retry，并复用 HTTP agent 的 adapter dispatch/sink；尚缺 Node 的复杂 readiness/staleness 策略。

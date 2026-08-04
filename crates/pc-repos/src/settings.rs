@@ -295,11 +295,6 @@ mod tests {
         let ok = serde_json::json!({"k": 1});
         assert!(ok.is_object());
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     fn make_experimental(map: serde_json::Value) -> WorktreeRunExecutionActivation {
         let current = Some("instance-1");

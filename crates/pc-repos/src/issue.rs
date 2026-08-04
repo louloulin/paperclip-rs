@@ -1570,6 +1570,38 @@ impl<'a> IssueRepo<'a> {
             .fetch_optional(self.db.pool())
             .await
     }
+
+    /// Returns the IDs of unresolved blockers for an issue. A blocker is
+    /// unresolved when it is not in `done` or `cancelled` status and is not
+    /// hidden. Mirrors Node `evaluateIssueExecutionReadiness` in
+    /// `services/heartbeat.ts`.
+    pub async fn unresolved_blocker_ids(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<Uuid>> {
+        sqlx::query_scalar(
+            "SELECT ir.issue_id FROM issue_relations ir              INNER JOIN issues blocker ON blocker.id = ir.issue_id                 AND blocker.company_id = ir.company_id              WHERE ir.company_id = $1 AND ir.related_issue_id = $2                AND ir.type = 'blocks'                AND blocker.status NOT IN ('done', 'cancelled')                AND blocker.hidden_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Convenience helper for dependency readiness: returns the list of
+    /// unresolved blocker IDs for an issue, or an empty list when the issue
+    /// has no blockers or the issue itself is missing.
+    pub async fn unresolved_blockers_for(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<Uuid>> {
+        let issue = match self.get(issue_id).await? {
+            Some(issue) => issue,
+            None => return Ok(Vec::new()),
+        };
+        self.unresolved_blocker_ids(issue.company_id, issue_id).await
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

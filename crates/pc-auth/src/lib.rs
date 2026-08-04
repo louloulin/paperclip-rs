@@ -84,6 +84,48 @@ impl AuthContext {
     }
 }
 
+/// Hash a plaintext password using argon2id with a random salt. The
+/// returned string is the standard PHC-formatted hash including parameters
+/// and salt, suitable for storage in the `account.password` column.
+pub fn hash_password(password: &str) -> Result<String, AuthError> {
+    use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
+    use argon2::password_hash::{PasswordHash, SaltString, rand_core::OsRng};
+    let salt = SaltString::generate(&mut OsRng);
+    let params = Params::new(19_456, 2, 1, None).map_err(|err| {
+        AuthError::Internal(format!("argon2 params invalid: {err}"))
+    })?;
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let hash = argon
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|err| AuthError::Internal(format!("argon2 hash failed: {err}")))?;
+    Ok(hash.to_string())
+}
+
+/// Verify a plaintext password against a stored argon2 PHC-formatted hash.
+/// Returns `true` when the password matches, `false` otherwise.
+pub fn verify_password(password: &str, stored_hash: &str) -> bool {
+    use argon2::{Algorithm, Argon2, PasswordVerifier, Version};
+    use argon2::password_hash::PasswordHash;
+    let Ok(parsed) = PasswordHash::new(stored_hash) else {
+        return false;
+    };
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, parsed.params.clone());
+    argon
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
+}
+
+/// Generate a new opaque session token suitable for storing in the
+/// `session.token` column. Mirrors Node-side `generateSessionToken`.
+pub fn generate_session_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Hash a session token for storage. Mirrors the existing `hash_token`.
 pub fn hash_token(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
     hex::encode(digest)
@@ -225,6 +267,37 @@ mod tests {
         let c = hash_token("world");
         assert_ne!(a, c);
     }
+    #[test]
+    fn hash_password_produces_argon2id_phc_string() {
+        let hash = hash_password("hunter2").expect("hash");
+        assert!(hash.starts_with("$argon2id$"));
+    }
+
+    #[test]
+    fn verify_password_round_trips() {
+        let hash = hash_password("CorrectHorseBatteryStaple").expect("hash");
+        assert!(verify_password("CorrectHorseBatteryStaple", &hash));
+        assert!(!verify_password("wrong-password", &hash));
+    }
+
+    #[test]
+    fn verify_password_rejects_invalid_hash_format() {
+        assert!(!verify_password("any", "not-a-valid-phc-string"));
+        assert!(!verify_password("any", ""));
+    }
+
+    #[test]
+    fn generate_session_token_is_unique_and_url_safe() {
+        let a = generate_session_token();
+        let b = generate_session_token();
+        assert_ne!(a, b);
+        assert!(a.len() >= 32);
+        // URL-safe base64: no `+` or `/` or `=`
+        assert!(!a.contains('+'));
+        assert!(!a.contains('/'));
+        assert!(!a.contains('='));
+    }
+
     #[test]
     fn new_token_format_and_uniqueness() {
         let (raw1, h1) = ApiKeyIssuer::new_token();

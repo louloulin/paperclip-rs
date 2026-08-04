@@ -20,6 +20,28 @@ pub const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS: i32 =
     BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.len() as i32;
 const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO: f64 = 0.25;
 
+/// Retry reason used when the agent exceeded the max-turn budget and the run
+/// is being continued. Mirrors Node `MAX_TURN_CONTINUATION_RETRY_REASON`.
+pub const MAX_TURN_CONTINUATION_RETRY_REASON: &str = "max_turns_continuation";
+
+/// Wake reason paired with the max-turn continuation retry. Mirrors Node
+/// `MAX_TURN_CONTINUATION_WAKE_REASON`.
+pub const MAX_TURN_CONTINUATION_WAKE_REASON: &str = "max_turns_continuation_retry";
+
+/// Retry reason for infrastructure-bound interaction continuation. Mirrors
+/// Node `INTERACTION_CONTINUATION_INFRA_RETRY_REASON`.
+pub const INTERACTION_CONTINUATION_INFRA_RETRY_REASON: &str = "interaction_continuation_infra_retry";
+
+/// Helper to check whether the given retry reason should enforce the issue
+/// execution lock. Mirrors Node's `enforceIssueExecutionLock` checks.
+pub fn enforce_issue_execution_lock_for(retry_reason: Option<&str>) -> bool {
+    matches!(
+        retry_reason,
+        Some(MAX_TURN_CONTINUATION_RETRY_REASON)
+            | Some(INTERACTION_CONTINUATION_INFRA_RETRY_REASON)
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetrySchedule {
     pub attempt: i32,
@@ -695,6 +717,33 @@ mod tests {
             Err(HeartbeatTransitionError::Invalid { .. })
         ));
     }
+    #[test]
+    fn enforce_issue_execution_lock_only_for_continuation_retry_reasons() {
+        assert!(enforce_issue_execution_lock_for(Some(
+            MAX_TURN_CONTINUATION_RETRY_REASON,
+        )));
+        assert!(enforce_issue_execution_lock_for(Some(
+            INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
+        )));
+        assert!(!enforce_issue_execution_lock_for(Some(
+            "transient_failure",
+        )));
+        assert!(!enforce_issue_execution_lock_for(Some(
+            "max_turns_continuation_retry",
+        )));
+        assert!(!enforce_issue_execution_lock_for(None));
+    }
+
+    #[test]
+    fn retry_reason_constants_match_node_strings() {
+        assert_eq!(MAX_TURN_CONTINUATION_RETRY_REASON, "max_turns_continuation");
+        assert_eq!(MAX_TURN_CONTINUATION_WAKE_REASON, "max_turns_continuation_retry");
+        assert_eq!(
+            INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
+            "interaction_continuation_infra_retry",
+        );
+    }
+
     #[test]
     fn heartbeat_policy_parses_all_runtime_config_aliases() {
         let config = serde_json::json!({

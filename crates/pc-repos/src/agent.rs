@@ -1155,6 +1155,41 @@ impl<'a> AgentRepo<'a> {
             .await
     }
 
+    /// Look up the active (non-terminal) wakeup request for an agent, if any.
+    /// Mirrors the Node-side `findActiveWakeupRequest` used to coalesce
+    /// repeated wakeups into the existing queued request.
+    pub async fn find_active_wakeup_request(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+    ) -> sqlx::Result<Option<AgentWakeupRequestRow>> {
+        let sql = format!(
+            "SELECT {WAKEUP_COLS} FROM agent_wakeup_requests              WHERE company_id=$1 AND agent_id=$2                AND status IN ('requested', 'claimed')              ORDER BY requested_at DESC, created_at DESC LIMIT 1"
+        )
+        .to_string();
+        sqlx::query_as::<_, AgentWakeupRequestRow>(&sql)
+            .bind(company_id)
+            .bind(agent_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    /// Atomically claim stale wakeup requests whose `claimed_at` is older than
+    /// the given threshold. Mirrors Node `recoverStaleWakeupClaims` /
+    /// `tickStaleWakeupClaims`. Returns the number of rows that were reset.
+    pub async fn recover_stale_wakeup_claims(
+        &self,
+        stale_threshold_seconds: i64,
+    ) -> sqlx::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE agent_wakeup_requests SET status='requested', claimed_at=NULL,                 updated_at=now()              WHERE status='claimed'                AND claimed_at IS NOT NULL                AND claimed_at <= now() - ($1 * interval '1 second')",
+        )
+        .bind(stale_threshold_seconds.clamp(1, 86_400))
+        .execute(self.db.pool())
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn increment_wakeup_coalesced_count(
         &self,
         company_id: Uuid,

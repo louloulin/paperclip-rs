@@ -1074,6 +1074,45 @@ async fn create_heartbeat_run(
 
 /// Dispatch one queued heartbeat through the same claim and adapter path used
 /// by the explicit wake endpoint. The database update is conditional on the
+/// Cancel a queued run because issue dependency readiness is not satisfied.
+macro_rules! blocker_reason {
+    ($state:expr, $repo:expr, $queued:expr, $agent:expr, $issue_id:expr, $blockers:expr) => {{
+        let blocker_ids: Vec<uuid::Uuid> = $blockers.clone();
+        if let Some(cancelled) = $repo
+            .transition_status(
+                $agent.company_id,
+                $queued.id,
+                pc_repos::heartbeat::HeartbeatRunStatus::Cancelled,
+                Some("Cancelled because the target issue still has unresolved blockers"),
+                Some("issue_dependency_unresolved"),
+            )
+            .await?
+        {
+            let _ = $repo
+                .append_event(
+                    &cancelled,
+                    "run.blocked",
+                    Some("system"),
+                    Some(json!({
+                        "issueId": $issue_id,
+                        "unresolvedBlockerIssueIds": &blocker_ids,
+                    })),
+                )
+                .await;
+            $state.realtime.publish(
+                LiveEvent::new("heartbeat.run.blocked", "heartbeat_run", cancelled.id)
+                    .with_company(cancelled.company_id)
+                    .with_data(json!({
+                        "agentId": cancelled.agent_id,
+                        "issueId": $issue_id,
+                        "unresolvedBlockerIssueIds": &blocker_ids,
+                    })),
+            );
+        }
+    }};
+}
+pub(crate) use blocker_reason;
+
 /// queued state, so concurrent scheduler ticks can safely race.
 pub async fn dispatch_queued_heartbeat(
     state: &AppState,
@@ -1098,6 +1137,21 @@ pub async fn dispatch_queued_heartbeat(
         .and_then(Value::as_i64)
         .unwrap_or(20)
         .clamp(1, 50);
+    if let Some(issue_id) = queued
+        .context_snapshot
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|snapshot| snapshot.get("issueId"))
+        .and_then(Value::as_str)
+        .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+    {
+        let issue_repo = IssueRepo::new(&state.db);
+        let blockers = issue_repo.unresolved_blockers_for(issue_id).await?;
+        if !blockers.is_empty() {
+            blocker_reason!(state, repo, queued, &agent, issue_id, blockers);
+            return Ok(None);
+        }
+    }
     if let Some(cap_block) = evaluate_daily_cap_for_agent(&state.db, &agent).await? {
         if let Some(cancelled) = repo
             .transition_status(
