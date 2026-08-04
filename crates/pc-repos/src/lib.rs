@@ -12,12 +12,10 @@
 //! - 测试通过集成测试使用真实 `PostgreSQL` 验证（`DATABASE_URL`）
 
 pub mod activity;
-pub mod agent_action_audit;
-pub mod agent_start_lock;
-pub mod agent_secret_bindings;
-pub mod default_agent_instructions;
-pub mod redact;
 pub mod agent;
+pub mod agent_action_audit;
+pub mod agent_secret_bindings;
+pub mod agent_start_lock;
 pub mod approval;
 pub mod auth;
 pub mod board_chat;
@@ -25,6 +23,8 @@ pub mod case;
 pub mod company;
 pub mod cost;
 pub mod decision;
+pub mod decision_wakeup;
+pub mod default_agent_instructions;
 pub mod document;
 pub mod environment;
 pub mod execution;
@@ -34,10 +34,12 @@ pub mod heartbeat;
 pub mod inbox;
 pub mod issue;
 pub mod issue_approvals;
+pub mod issue_change_receipt;
 pub mod membership;
 pub mod pipeline;
 pub mod plugin;
 pub mod project;
+pub mod redact;
 pub mod routine;
 pub mod secret;
 pub mod settings;

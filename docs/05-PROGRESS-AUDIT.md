@@ -1674,3 +1674,87 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 >   - `pc-secrets` crate 还没有实现 `AgentSecretBindingSync` trait 的具体 struct（只有 `secretsService` 的部分方法），下一轮可提供一个最小实现
 >   - `SecretProjectionClass` 当前用 `Option<String>` 透传；后续可强化为枚举（值如 `"env_var" | "command_arg" | "file_content"`）
 > - **本轮累计**：`pc-repos` 单测 105 → **116** ✅；`agent-secret-bindings.ts`（Node 175 行）核心解析与同步 trait 完整移植
+
+## 第五十八轮增量（Round 58 — `issue_approvals` 移植：Issue ↔ Approval 关联仓储）
+
+> 第五十八轮增量：
+> - **新增** `crates/pc-repos/src/issue_approvals.rs`：对齐 Node `paperclip/server/src/services/issue-approvals.ts` 的关联服务，提供 `IssueApprovalRepo`。
+>   - `list_approvals_for_issue(issue_id)`：先校验 issue 存在，再通过 `issue_approvals INNER JOIN approvals` 查询关联 approval，按关联创建时间倒序返回；payload 统一经过 `redact::sanitize_record`，空 payload 归一为空对象。
+>   - `list_issues_for_approval(approval_id)`：先校验 approval 存在，再通过 `issue_approvals INNER JOIN issues` 查询关联 issue。
+>   - `link(issue_id, approval_id, actor?)`：校验两端存在且属于同一 company，使用 `(issue_id, approval_id)` 主键幂等 upsert，并保留 agent/user 链接操作者。
+>   - `unlink(issue_id, approval_id)`：执行同等存在性与 company 隔离校验后删除关联。
+>   - `link_many_for_approval(approval_id, issue_ids, actor?)`：校验 approval 与全部 issue，拒绝跨 company 批量关联，在事务内逐条幂等插入。
+> - **类型与安全边界**：公开 DTO 全部使用 camelCase 序列化；公开响应 DTO 与内部 `FromRow` 数据库行分离，避免 SQL 行结构泄漏到 API；所有写路径在 SQL 前完成跨公司校验。
+> - **`crates/pc-repos/src/lib.rs`** 注册 `issue_approvals` 模块。
+> - **测试**：新增 4 个纯单测，覆盖 actor 默认值、两个 DTO 的 camelCase/payload 序列化、面向用户的错误文本。
+> - **验证**：
+>   - `cargo test -p pc-repos issue_approvals`：**4/4 通过**
+>   - `cargo test -p pc-repos --lib`：**120/120 通过**
+>   - `cargo check --workspace`：**0 errors，47 warnings**（既有警告）
+> - **关键差距**（下一轮目标）：
+>   - `pc-http` 尚未把 issue-approval 关联仓储完整接入 HTTP 路由，现有路由仍有 stub/简化授权路径。
+>   - 需要补齐路由层的 user/agent 权限校验、状态码映射与集成测试，并核对 Node 服务的响应 envelope。
+>   - `approvals` 领域仍缺少完整的状态机、决策写入及事件/通知副作用移植；本轮只覆盖 issue 关联服务。
+> - **本轮累计**：`pc-repos` 单测 116 → **120** ✅；新增 issue ↔ approval 关联的列表、单条/批量 link、unlink、同公司隔离与 payload redact 核心能力。
+
+## 第五十九轮增量（Round 59 — `decision_wakeup` 移植：决策 continuation 唤醒适配）
+
+> 第五十九轮增量：
+> - **新增** `crates/pc-repos/src/decision_wakeup.rs`，对齐 Node `server/src/services/decision-wakeup.ts::createDecisionWakeOriginAgent`。
+>   - `DecisionWakeOriginAgent::new(enabled)` 显式表达 heartbeat runtime 是否启用。
+>   - runtime 未启用时 `build_request` 返回 `None`，不会接受一个当前进程无法负责的唤醒。
+>   - runtime 启用时复用 `agent::NewAgentWakeupRequest`，固定映射为 `source=automation`、`triggerDetail=system`、`reason=decision_<outcome>`，并保留 `issueId`、`decisionId`、`outcome` payload。
+>   - 适配器只构造请求，不直接写数据库；实际入队由上层统一调用现有 `AgentRepo::create_wakeup_request`，避免重复实现 coalescing、状态机和事务副作用。
+> - **`crates/pc-repos/src/lib.rs`** 注册 `decision_wakeup` 模块。
+> - **测试**：2 个单测覆盖 runtime disabled no-op 与 enabled 字段映射。
+> - **验证**：
+>   - `cargo test -p pc-repos decision_wakeup`：**2/2 通过**
+>   - 后续全量验证需包含 workspace check；本轮新增代码未引入数据库集成依赖。
+> - **关键差距**（下一轮目标）：
+>   - `DecisionWakeOriginAgent` 尚未接入 Rust 决策完成/取消事务路径；需要定位决策状态转换入口，确保仅在 continuation policy 为 `wake_origin_agent` 时调用。
+>   - 需要将现有 heartbeat runtime 的实际 wakeup dispatcher 抽象为 trait/接口，再由 HTTP/app wiring 注入，避免调用方直接依赖 `AgentRepo`。
+> - **本轮累计**：`pc-repos` 单测 120 → **122** ✅；新增可复用的决策 continuation → 标准 heartbeat wakeup 请求映射。
+
+## 第六十轮增量（Round 60 — `issue_change_receipt` 移植并接入 Issue 更新事件）
+
+> 第六十轮增量：
+> - **新增** `crates/pc-repos/src/issue_change_receipt.rs`，对齐 Node `services/issue-change-receipt.ts::buildIssueChanges`。
+>   - 忽略 `updatedAt`，跳过未变化字段。
+>   - `description` 和超过 200 个 Unicode 字符的 `title` 使用字符级截断，避免 UTF-8 字节截断破坏文本。
+>   - `blockedByIssueIds` / `labelIds` 关系数组执行去重、排序后再比较，保证收据稳定。
+>   - 保留任意 JSON 标量/对象/数组的 from/to 原值，未对不相关字段做破坏性归一化。
+> - **`crates/pc-repos/src/issue.rs`** 新增 `IssueUpdateReceipt` 与 `update_with_receipt`：复用原有 `IssueRepo::get/update`，只负责组合前后快照与纯变更收据，不重复 SQL 更新逻辑。
+> - **`crates/pc-http/src/routes/issues.rs`** 更新 issue 路由改用 `update_with_receipt`；HTTP 返回体不变，`issue.updated` realtime 事件增加 `{ changes }` 数据。
+> - **`crates/pc-repos/src/lib.rs`** 注册 `issue_change_receipt` 模块。
+> - **测试**：5 个单测覆盖 `updatedAt`/无变化过滤、Unicode 截断、标量变更、关系数组规范化、可选关系输入。
+> - **验证**：
+>   - `cargo test -p pc-repos issue_change_receipt`：**5/5 通过**
+>   - `cargo test -p pc-repos --lib`：下一步执行全量确认
+>   - `cargo check -p pc-http -p pc-repos`：**0 errors，47 warnings**
+> - **关键差距**（下一轮目标）：
+>   - Rust `UpdateBody` 尚未暴露 `labelIds` / `blockedByIssueIds`，因此当前 HTTP 接线先覆盖基本字段；需要继续移植关系更新事务后传入 `IssueRelationChanges`。
+>   - 尚未把 changes 写入 `activity_log` 的 issue update activity；需要复用 `ActivityRepo` 并明确 actor/run 上下文，避免伪造 actor。
+> - **本轮累计**：`pc-repos` 单测 122 → **127** ✅；Issue 更新从仅返回新行升级为可生成稳定变更收据并通过 realtime 传播。
+
+## 第六十一轮增量（Round 61 — Issue 关系更新事务 + activity receipt 接线）
+
+> 第六十一轮增量：
+> - **`crates/pc-repos/src/issue.rs`** 新增 `IssueRelationUpdate` 与 `IssueRepo::update_with_relations`：
+>   - 在同一 PostgreSQL transaction 内锁定 issue、读取旧 label/blocker 快照、更新基本字段并同步关系。
+>   - `labelIds`：去重后校验全部属于 issue 的 company，原子替换 `issue_labels`。
+>   - `blockedByIssueIds`：去重、拒绝自阻塞、校验同 company，读取现有 blocks 图并拒绝形成环，原子替换当前 issue 的 blocker 边。
+>   - 使用现有 `issue_relations` schema（`issue_id=blocker`、`related_issue_id=blocked issue`、`type='blocks'`），不另造表或状态机。
+>   - 提交后将旧/新关系转成 `IssueRelationChanges`，复用 `build_issue_changes` 生成稳定 receipt。
+> - **`crates/pc-http/src/routes/issues.rs`**：PATCH `/api/issues/:id` 新增 `label_ids` / `blocked_by_issue_ids`，同时接受 Node 风格 camelCase 别名 `labelIds` / `blockedByIssueIds`；HTTP 返回体保持兼容。
+> - **activity 接线**：若请求能解析真实 user identity，则通过现有 `ActivityRepo` 写入 `issue.updated` activity，details 使用同一 changes receipt；无 identity 时不伪造 actor，不改变更新成功语义。
+> - **realtime 接线**：`issue.updated` 事件继续发送，并携带 `{ changes }`。
+> - **验证**：
+>   - `cargo fmt --all`：通过
+>   - `cargo test -p pc-repos --lib`：**127/127 通过**
+>   - `cargo check -p pc-http -p pc-repos`：**0 errors，47 warnings**
+>   - `git diff --check`：通过
+> - **集成测试限制**：关系事务、跨公司校验、环检测和 activity 写入需要 PostgreSQL 集成测试；当前仓库既有 integration suite 在未提供 `DATABASE_URL` 时会 PoolTimedOut，本轮未伪造通过结果。
+> - **关键差距**（下一轮目标）：
+>   - Node 的 issue update 还包含状态副作用（`startedAt`、`completedAt`、`cancelledAt`）、actor agent/run、relation metadata 和更完整的错误状态码，Rust 当前基本字段更新尚未完全对齐。
+>   - activity 当前在事务提交后 best-effort 写入，尚未与 issue 更新共享同一数据库事务；需把 actor 上下文提升到 repo transaction API 后再实现原子审计。
+> - **本轮累计**：Issue 更新从基本字段 + realtime receipt 扩展为基本字段 + labels + blockers 的事务化更新，`pc-repos` 单测维持 **127** ✅。
