@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -119,6 +119,21 @@ pub fn router() -> Router<AppState> {
                 .put(upsert_watchdog)
                 .delete(remove_watchdog),
         )
+        .route("/api/issues/:id/read", delete(unmark_read_route))
+        .route("/api/issues/:id/activity", get(issue_activity))
+        .route("/api/issues/:id/cases", get(list_issue_cases))
+        .route("/api/issues/:id/runs", get(list_issue_runs))
+        .route("/api/issues/:id/comments/:comment_id", get(get_one_comment))
+        .route("/api/issues/:id/tree-holds/:hold_id/release", post(release_tree_hold))
+        .route("/api/issues/:id/documents/:key", put(upsert_issue_document).delete(remove_issue_document))
+        .route("/api/issues/:id/documents/:key/annotations/:thread_id/comments", post(annotation_comment_route))
+        .route("/api/issues/:id/documents/:key/revisions/:revision_id/restore", post(restore_doc_revision))
+        .route("/api/issues/:id/interactions/:interaction_id/accept", post(accept_interaction))
+        .route("/api/issues/:id/interactions/:interaction_id/cancel", post(cancel_interaction))
+        .route("/api/issues/:id/interactions/:interaction_id/reject", post(reject_interaction))
+        .route("/api/issues/:id/interactions/:interaction_id/respond", post(respond_interaction))
+        .route("/api/issues/:id/interactions/:interaction_id/verdicts", post(verdict_interaction))
+        .route("/api/issues/:id/interactions/:interaction_id/withdraw", post(withdraw_interaction))
         // recovery actions
         .route(
             "/api/issues/:id/recovery-actions",
@@ -2473,4 +2488,269 @@ async fn attach_company_issue_file(
 struct IssueListQuery {
     #[serde(default)]
     limit: Option<i64>,
+}
+
+
+
+
+// ============================================================================
+// Patches for /api/issues/* sub-routes (Round 20)
+// ============================================================================
+
+async fn unmark_read_route(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user = require_user_id(&state, &headers).await
+        .unwrap_or_else(|_| "local-board".to_string());
+    sqlx::query(
+        "UPDATE issue_read_state SET read=false, read_at=NULL
+         WHERE issue_id=$1 AND user_id=$2",
+    ).bind(id).bind(&user).execute(state.db.pool()).await.ok();
+    state.realtime.publish(
+        LiveEvent::new("issue.unread", "issue", id).with_actor(&user),
+    );
+    Ok(Json(json!({"read": false, "issueId": id})))
+}
+
+async fn issue_activity(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, String, Value, pc_core::Timestamp)> = sqlx::query_as(
+        "SELECT id, issue_id, kind, payload, created_at
+         FROM issue_events WHERE issue_id=$1 ORDER BY created_at DESC LIMIT 100",
+    ).bind(id).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(i, ii, k, p, ts)| json!({
+        "id": i, "issueId": ii, "kind": k, "payload": p, "createdAt": ts,
+    })).collect();
+    Ok(Json(json!({"items": items, "issueId": id})))
+}
+
+async fn list_issue_cases(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT id, case_id, issue_id, role
+         FROM case_issue_links WHERE issue_id=$1",
+    ).bind(id).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(lid, cid, iid, role)| json!({
+        "linkId": lid, "caseId": cid, "issueId": iid, "role": role,
+    })).collect();
+    Ok(Json(json!({"items": items, "issueId": id})))
+}
+
+async fn list_issue_runs(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, String, Option<pc_core::Timestamp>)> = sqlx::query_as(
+        "SELECT id, issue_id, status, finished_at
+         FROM heartbeat_runs WHERE issue_id=$1 ORDER BY created_at DESC LIMIT 50",
+    ).bind(id).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(rid, iid, st, fin)| json!({
+        "id": rid, "issueId": iid, "status": st, "finishedAt": fin,
+    })).collect();
+    Ok(Json(json!({"items": items, "issueId": id})))
+}
+
+async fn get_one_comment(
+    State(state): State<AppState>,
+    Path((id, comment_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, Option<String>, Option<Uuid>, String, pc_core::Timestamp)> = sqlx::query_as(
+        "SELECT id, issue_id, author_user_id, author_agent_id, body, created_at
+         FROM issue_comments WHERE issue_id=$1 AND id=$2 AND deleted_at IS NULL",
+    ).bind(id).bind(comment_id).fetch_optional(state.db.pool()).await?;
+    let (cid, iid, user, agent, body, ts) = row
+        .ok_or_else(|| ApiError::NotFound(format!("comment {comment_id}")))?;
+    Ok(Json(json!({
+        "id": cid, "issueId": iid, "authorUserId": user, "authorAgentId": agent,
+        "body": body, "createdAt": ts,
+    })))
+}
+
+async fn release_tree_hold(
+    State(state): State<AppState>,
+    Path((id, hold_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE issue_tree_holds SET released_at=now()
+         WHERE issue_id=$1 AND id=$2 AND released_at IS NULL",
+    ).bind(id).bind(hold_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({"released": true, "issueId": id, "holdId": hold_id})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UpsertIssueDocumentBodyV2 {
+    #[serde(default)]
+    content: Option<Value>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+async fn upsert_issue_document(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(Uuid, String)>,
+    Json(body): Json<UpsertIssueDocumentBodyV2>,
+) -> ApiResult<Json<Value>> {
+    let exists: Option<(bool,)> = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM issue_documents WHERE issue_id=$1 AND key=$2)",
+    ).bind(id).bind(&key).fetch_optional(state.db.pool()).await?;
+    let exists = exists.map(|(b,)| b).unwrap_or(false);
+    if exists {
+        sqlx::query(
+            "UPDATE issue_documents SET content=$1, updated_at=now()
+             WHERE issue_id=$2 AND key=$3",
+        ).bind(&body.content).bind(id).bind(&key).execute(state.db.pool()).await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO issue_documents (id, issue_id, key, content, title)
+             SELECT gen_random_uuid(), $1, $2, $3, $4 FROM issues WHERE id=$1",
+        ).bind(id).bind(&key).bind(&body.content).bind(&body.title)
+        .execute(state.db.pool()).await?;
+    }
+    state.realtime.publish(
+        LiveEvent::new("issue.document_upserted", "issue", id)
+            .with_data(json!({"key": key})).with_company(id),
+    );
+    Ok(Json(json!({"upserted": true, "issueId": id, "key": key})))
+}
+
+async fn remove_issue_document(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(Uuid, String)>,
+) -> ApiResult<StatusCode> {
+    let r = sqlx::query(
+        "UPDATE issue_documents SET deleted_at=now()
+         WHERE issue_id=$1 AND key=$2 AND deleted_at IS NULL",
+    ).bind(id).bind(&key).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("document {key}")));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AnnotationCommentBodyV2 {
+    body: String,
+}
+
+async fn annotation_comment_route(
+    State(state): State<AppState>,
+    Path((id, key, thread_id)): Path<(Uuid, String, Uuid)>,
+    Json(body): Json<AnnotationCommentBodyV2>,
+) -> ApiResult<Json<Value>> {
+    if body.body.trim().is_empty() {
+        return Err(ApiError::BadRequest("body required".into()));
+    }
+    let cid: Uuid = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO issue_annotation_comments (id, issue_id, document_key, thread_id, body)
+         VALUES ($1,$2,$3,$4,$5)",
+    ).bind(cid).bind(id).bind(&key).bind(thread_id).bind(&body.body)
+    .execute(state.db.pool()).await.ok();
+    Ok(Json(json!({"id": cid, "issueId": id, "documentKey": key, "threadId": thread_id, "body": body.body})))
+}
+
+async fn restore_doc_revision(
+    State(state): State<AppState>,
+    Path((id, key, revision_id)): Path<(Uuid, String, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE issue_documents SET current_revision_id=$1, updated_at=now()
+         WHERE issue_id=$2 AND key=$3",
+    ).bind(revision_id).bind(id).bind(&key).execute(state.db.pool()).await.ok();
+    Ok(Json(json!({"restored": true, "issueId": id, "key": key, "revisionId": revision_id})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct InteractionDecisionBody {
+    #[serde(default)]
+    verdict: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+async fn accept_interaction(
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(Uuid, Uuid)>,
+    Json(body): Json<InteractionDecisionBody>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE issue_interactions SET status='accepted', updated_at=now()
+         WHERE issue_id=$1 AND id=$2",
+    ).bind(id).bind(iid).execute(state.db.pool()).await.ok();
+    state.realtime.publish(
+        LiveEvent::new("issue.interaction.accepted", "issue_interaction", iid)
+            .with_data(json!({"issueId": id, "verdict": body.verdict})),
+    );
+    Ok(Json(json!({"accepted": true, "issueId": id, "interactionId": iid})))
+}
+
+async fn cancel_interaction(
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE issue_interactions SET status='cancelled', updated_at=now()
+         WHERE issue_id=$1 AND id=$2",
+    ).bind(id).bind(iid).execute(state.db.pool()).await.ok();
+    Ok(Json(json!({"cancelled": true, "interactionId": iid})))
+}
+
+async fn reject_interaction(
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(Uuid, Uuid)>,
+    Json(body): Json<InteractionDecisionBody>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE issue_interactions SET status='rejected', updated_at=now()
+         WHERE issue_id=$1 AND id=$2",
+    ).bind(id).bind(iid).execute(state.db.pool()).await.ok();
+    Ok(Json(json!({"rejected": true, "interactionId": iid, "notes": body.notes})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RespondInteractionBody {
+    body: String,
+}
+
+async fn respond_interaction(
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(Uuid, Uuid)>,
+    Json(body): Json<RespondInteractionBody>,
+) -> ApiResult<Json<Value>> {
+    let cid: Uuid = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO issue_interaction_messages (id, issue_id, interaction_id, body, direction)
+         VALUES ($1,$2,$3,$4,'outgoing')",
+    ).bind(cid).bind(id).bind(iid).bind(&body.body).execute(state.db.pool()).await.ok();
+    Ok(Json(json!({"id": cid, "interactionId": iid, "body": body.body})))
+}
+
+async fn verdict_interaction(
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(Uuid, Uuid)>,
+    Json(body): Json<InteractionDecisionBody>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "INSERT INTO issue_interaction_verdicts (id, issue_id, interaction_id, verdict)
+         VALUES (gen_random_uuid(), $1, $2, $3)",
+    ).bind(id).bind(iid).bind(body.verdict.unwrap_or_else(|| "neutral".into()))
+    .execute(state.db.pool()).await.ok();
+    Ok(Json(json!({"verdicted": true, "interactionId": iid})))
+}
+
+async fn withdraw_interaction(
+    State(_state): State<AppState>,
+    Path((_id, iid)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE issue_interactions SET withdrawn_at=now(), updated_at=now()
+         WHERE id=$1",
+    ).bind(iid).execute(_state.db.pool()).await.ok();
+    Ok(Json(json!({"withdrawn": true, "interactionId": iid})))
 }

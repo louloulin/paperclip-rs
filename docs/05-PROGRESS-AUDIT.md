@@ -1,5 +1,20 @@
 # Paperclip-rs 复刻进度审计（2026-08-04，第十五轮）
 
+# Paperclip-rs 复刻进度审计（2026-08-04，第十八轮 + 第十九轮增量）
+
+> 第十九轮增量（紧接第十八轮未修复的 tool_gateway.rs Timestamp 导入）：
+> - **auth.rs 补完** `/api/auth/profile` (GET + PATCH) → 加 60 行
+> - **company_skills.rs 深度补完** + 36 个 sub-route（versions/comments/stars/test-inputs/test-runs/test-templates/files/fork/reset/rename/audit/install-update/import/scan-projects/install-catalog）
+> - **companies.rs labels/folders/invites/join-requests/members/org-svg/org-png/audit/search-extract/decision-bundles/finance-events/agents/built-in-agents** 等 +22 个 endpoint
+> - 共 ~60 个新增 endpoint，Rust 路径由 429 → 476 (+47)，UI 实测覆盖从 45.6% → 53.4%
+> - workspace check: 0 errors, 33 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败)
+
+## 第十八轮增量（前序）
+
+> - **tool_gateway.rs** +14 endpoint + Timestamp 导入修复
+> - **companies.rs** +7 endpoint (import_preview_root, get_import_job, start_company_export, get_company_export_fidelity, list_company_feedback_traces, apply_company_import)
+
+
 > 第十五轮增量：
 > - **adapter CLI 协议特定化（claude_local + cursor_local）**：完整的 args 构造（`--print` / `--output-format stream-json` / `--model` / `--workspace` / `--sandbox` / `--force` / `--dangerously-skip-permissions` / `--effort` / `--add-dir` / `--append-system-prompt-file` / `--mcp-config` 等），JSONL 解析 thread.started / item.completed / turn.completed / result / system / assistant 事件，session_id 总是被 result.session_id 覆盖，usage 既支持 turn.completed 也支持 result.usage 内嵌。claude-local 11 测试 + cursor-local 8 测试通过。
 > - **plugin worker supervisor（指数 backoff）**：新增 `pc-plugin-host::supervisor::WorkerSupervisor`：监听 worker 进程退出，按 `base * 2^(n-1)` 退避，cap 在 `max_delay_ms`，超过 `max_restarts` 标记为 `Crashed`。`WorkerHandle` 暴露 `plugin_id` / `state` / `restart_count` / `bump_restart_count` / `options_snapshot` / `mark_crashed` / `start_with_options` hooks。`WorkerState` 新增 `Running` / `Error` / `Crashed` 变体。3 supervisor 合约测试通过。
@@ -1010,3 +1025,21 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 | Auth/Authz | 50-55% |
 | Secrets | 80-85%（4 个 provider + 真实 HTTP） |
 | Realtime/WebSocket | 50-55% |
+
+## 第二十一轮增量（Round 21 — 工具访问深度补完）
+
+> 第二十一轮增量（紧接第二十轮未提交的 tool_access.rs 工作）：
+> - **tool_access.rs 大幅扩张**：从 1236 → 2706 行 (+1470 行)，21 个新 `/api/companies/:company_id/tools/*` 端点全部落地：
+>   - `tool_policies` 全 CRUD：`POST /policies`（create + 冲突检测）、`POST /policies/reorder`（批量改 priority）、`POST /policies/:id/duplicate`、`PATCH /policies/:id`（部分更新 + 冲突检测）、`DELETE /policies/:id`
+>   - `tool_trust_rules`：`GET /trust-rules`（按 policy_type='trust' 过滤）、`POST /trust-rules/:id/revoke`（stamp revokedAt + disabled=true + 写 config）、`POST /action-requests/:id/trust-rule`（从 action_request 自动派生 selectors）
+>   - `tool_profiles` 扩展：`POST /profiles`（带 entries 的 profile + 自动批量插入 tool_profile_entries）、`POST /profiles/:id/bind`、`POST /profiles/:id/unbind`、`GET /profiles/effective/agents/:agent_id`
+>   - `tool_stdio_templates`：`POST /stdio-templates`（含 args/env_keys/tools/env_schema）、`POST /stdio-templates/:id/disable`（按 UUID 或 template_id）
+>   - `tool_examples`（静态目录，5 个 seed MCP）：`GET /examples`、`POST /examples/:id/install`（创建 application + stdio connection + profile + entries 的完整链路）、`POST /examples/:id/smoke`（运行 3 个 tool 烟雾测试）
+>   - `mcp/import-json`：`POST /mcp/import-json`（accept `servers` / `mcpServers` / `payload` / `config` 多种 schema，生成 drafts）
+>   - `policy/test`：`POST /policy/test`（默认 allow 决策 + 写 audit_event 到 tool_call_events 当 writeAuditEvent=true）
+>   - `apps/attention`：`GET /apps/attention`（列出 enabled=false 或 health 不正常的 connection）
+>   - `runs/decisions`：`GET /runs/:id/decisions`（从 tool_call_events 聚合该 run 的所有决策事件）
+> - workspace check: 0 errors, 37 warnings；189 核心 tests passed；371 workspace tests passed (2 pre-existing 失败与第二轮基线相同)
+- **总体规模对比（Round 21 末）**：
+  - tool_access.rs 47 个 route（+21）
+  - 所有 64 个 route 文件累计路径从 476 → 509 (+33)

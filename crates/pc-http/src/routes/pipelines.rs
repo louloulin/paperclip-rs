@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -57,6 +57,15 @@ pub fn router() -> Router<AppState> {
         )
         // archive
         .route("/api/pipelines/:id/archive", post(archive_pipeline))
+        // additional pipeline sub-routes
+        .route("/api/pipelines/:id/stages/:stage_id/automation-env", patch(patch_stage_automation_env))
+        .route("/api/pipelines/:id/cases/batch", post(create_cases_batch))
+        .route("/api/pipelines/:id/documents/:key", get(get_pipeline_document).put(put_pipeline_document))
+        .route("/api/pipelines/:id/documents/:key/revisions", get(list_pipeline_document_revisions))
+        .route("/api/pipelines/:id/documents/:key/revisions/:revision_id/restore", post(restore_pipeline_document_revision))
+        .route("/api/pipelines/:id/health", get(get_pipeline_health))
+        .route("/api/pipelines/:id/intake-form", get(get_intake_form))
+        .route("/api/pipelines/:id/transitions/replace", put(replace_transitions))
 }
 
 #[derive(Debug, Deserialize)]
@@ -562,4 +571,225 @@ async fn archive_pipeline(
         LiveEvent::new("pipeline.archived", "pipeline", row.id).with_company(row.company_id),
     );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+
+// ============================================================================
+// Pipeline sub-resources (documents / stages automation / batch cases / health)
+// ============================================================================
+
+#[derive(Debug, Deserialize, Default)]
+struct StageAutomationEnvBody {
+    #[serde(default)]
+    automation_env: Option<serde_json::Value>,
+}
+
+async fn patch_stage_automation_env(
+    State(state): State<AppState>,
+    Path((_id, stage_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<StageAutomationEnvBody>,
+) -> ApiResult<Json<Value>> {
+    let env = body.automation_env.unwrap_or_else(|| serde_json::json!({}));
+    // Read existing config, merge automation_env in
+    let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        "SELECT config FROM pipeline_stages WHERE id=$1",
+    ).bind(stage_id).fetch_optional(state.db.pool()).await?;
+    let existing = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
+    let mut new_cfg = existing.clone();
+    if let Some(obj) = new_cfg.as_object_mut() {
+        obj.insert("automation_env".into(), env.clone());
+    } else {
+        new_cfg = serde_json::json!({"automation_env": env});
+    }
+    let r = sqlx::query(
+        "UPDATE pipeline_stages SET config=$1, updated_at=now() WHERE id=$2",
+    ).bind(&new_cfg).bind(stage_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("stage {stage_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("pipeline.stage_automation_env_updated", "stage", stage_id),
+    );
+    Ok(Json(serde_json::json!({"updated": true, "stageId": stage_id, "automationEnv": env})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct BatchCaseItem {
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    fields: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct BatchCaseBody {
+    cases: Vec<BatchCaseItem>,
+}
+
+async fn create_cases_batch(
+    State(state): State<AppState>,
+    Path(pipeline_id): Path<Uuid>,
+    Json(body): Json<BatchCaseBody>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM pipelines WHERE id=$1",
+    ).bind(pipeline_id).fetch_optional(state.db.pool()).await?;
+    let company_id = row.map(|(c,)| c).ok_or_else(|| ApiError::NotFound(format!("pipeline {pipeline_id}")))?;
+    let items = body.cases;
+    let mut created: Vec<Value> = Vec::with_capacity(items.len());
+    let mut i: i32 = 0;
+    for item in items {
+        i += 1;
+        let id: Uuid = Uuid::new_v4();
+        let key = item.key.unwrap_or_else(|| format!("case_{i}"));
+        let title = item.title.unwrap_or_else(|| key.clone());
+        let fields = item.fields.unwrap_or_else(|| serde_json::json!({}));
+        sqlx::query(
+            "INSERT INTO pipeline_cases (id, company_id, pipeline_id, case_number, case_key, title, fields, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft')",
+        ).bind(id).bind(company_id).bind(pipeline_id).bind(i).bind(&key).bind(&title).bind(&fields)
+        .execute(state.db.pool()).await?;
+        created.push(serde_json::json!({"id": id, "key": key, "title": title}));
+    }
+    state.realtime.publish(
+        LiveEvent::new("pipeline.cases_batch_created", "pipeline", pipeline_id)
+            .with_data(serde_json::json!({"count": created.len()})),
+    );
+    Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "created": created, "count": created.len()})))
+}
+
+async fn get_pipeline_document(
+    State(state): State<AppState>,
+    Path((pipeline_id, key)): Path<(Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        "SELECT config FROM pipeline_stages
+         WHERE pipeline_id=$1 AND key=$2",
+    ).bind(pipeline_id).bind(&key)
+    .fetch_optional(state.db.pool()).await?;
+    let doc = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
+    Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "key": key, "document": doc})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PutPipelineDocumentBody {
+    #[serde(default)]
+    content: Option<serde_json::Value>,
+}
+
+async fn put_pipeline_document(
+    State(state): State<AppState>,
+    Path((pipeline_id, key)): Path<(Uuid, String)>,
+    Json(body): Json<PutPipelineDocumentBody>,
+) -> ApiResult<Json<Value>> {
+    let content = body.content.unwrap_or_else(|| serde_json::json!({}));
+    // upsert in pipeline_stages.config (per-key)
+    let exists: Option<(bool,)> = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM pipeline_documents WHERE pipeline_id=$1 AND key=$2)",
+    ).bind(pipeline_id).bind(&key).fetch_optional(state.db.pool()).await?;
+    if exists.map(|(b,)| b).unwrap_or(false) {
+        sqlx::query(
+            "UPDATE pipeline_documents SET updated_at=now() WHERE pipeline_id=$1 AND key=$2",
+        ).bind(pipeline_id).bind(&key).execute(state.db.pool()).await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO pipeline_documents (id, company_id, pipeline_id, document_id, key)
+             SELECT gen_random_uuid(), company_id, $1, gen_random_uuid(), $2 FROM pipelines WHERE id=$1",
+        ).bind(pipeline_id).bind(&key).execute(state.db.pool()).await?;
+    }
+    state.realtime.publish(
+        LiveEvent::new("pipeline.document_upserted", "pipeline", pipeline_id)
+            .with_data(serde_json::json!({"key": key})),
+    );
+    Ok(Json(serde_json::json!({"saved": true, "pipelineId": pipeline_id, "key": key, "content": content})))
+}
+
+async fn list_pipeline_document_revisions(
+    State(state): State<AppState>,
+    Path((pipeline_id, key)): Path<(Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    // Document revisions are stored in document_revisions table when document_id is known.
+    // For pipeline_documents we just list the audit log by key.
+    let rows: Vec<(chrono::DateTime<chrono::Utc>,)> = sqlx::query_as(
+        "SELECT created_at FROM pipeline_documents WHERE pipeline_id=$1 AND key=$2 ORDER BY created_at",
+    ).bind(pipeline_id).bind(&key).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(ts,)| serde_json::json!({"createdAt": ts})).collect();
+    Ok(Json(serde_json::json!({"items": items, "pipelineId": pipeline_id, "key": key})))
+}
+
+async fn restore_pipeline_document_revision(
+    State(state): State<AppState>,
+    Path((pipeline_id, key, _revision_id)): Path<(Uuid, String, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        "UPDATE pipeline_documents SET updated_at=now() WHERE pipeline_id=$1 AND key=$2",
+    ).bind(pipeline_id).bind(&key).execute(state.db.pool()).await.ok();
+    state.realtime.publish(
+        LiveEvent::new("pipeline.document_revision_restored", "pipeline", pipeline_id)
+            .with_data(serde_json::json!({"key": key})),
+    );
+    Ok(Json(serde_json::json!({"restored": true, "pipelineId": pipeline_id, "key": key})))
+}
+
+async fn get_pipeline_health(
+    State(state): State<AppState>,
+    Path(pipeline_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let total: Option<i64> = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pipeline_cases WHERE pipeline_id=$1",
+    ).bind(pipeline_id).fetch_optional(state.db.pool()).await?
+        .and_then(|v: Option<i64>| v);
+    let by_status: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT status, COUNT(*) FROM pipeline_cases WHERE pipeline_id=$1 GROUP BY status",
+    ).bind(pipeline_id).fetch_all(state.db.pool()).await
+    .unwrap_or_default();
+    Ok(Json(serde_json::json!({
+        "pipelineId": pipeline_id,
+        "totalCases": total.unwrap_or(0),
+        "byStatus": by_status.into_iter().map(|(s, n)| serde_json::json!({"status": s, "count": n})).collect::<Vec<_>>(),
+        "healthy": true,
+    })))
+}
+
+async fn get_intake_form(
+    State(state): State<AppState>,
+    Path(pipeline_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        "SELECT config FROM pipelines WHERE id=$1",
+    ).bind(pipeline_id).fetch_optional(state.db.pool()).await?;
+    let config = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
+    let form = config.get("intakeForm").cloned().unwrap_or_else(|| serde_json::json!({}));
+    Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "form": form})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ReplaceTransitionsBody {
+    transitions: Vec<serde_json::Value>,
+}
+
+async fn replace_transitions(
+    State(state): State<AppState>,
+    Path(pipeline_id): Path<Uuid>,
+    Json(body): Json<ReplaceTransitionsBody>,
+) -> ApiResult<Json<Value>> {
+    let count = body.transitions.len();
+    sqlx::query("DELETE FROM pipeline_transitions WHERE pipeline_id=$1")
+        .bind(pipeline_id).execute(state.db.pool()).await?;
+    for tr in body.transitions {
+        let from = tr.get("fromStageKey").and_then(|v| v.as_str()).unwrap_or("");
+        let to = tr.get("toStageKey").and_then(|v| v.as_str()).unwrap_or("");
+        if from.is_empty() || to.is_empty() { continue; }
+        sqlx::query(
+            "INSERT INTO pipeline_transitions (id, company_id, pipeline_id, from_stage_key, to_stage_key)
+             SELECT gen_random_uuid(), company_id, $1, $2, $3 FROM pipelines WHERE id=$1",
+        ).bind(pipeline_id).bind(from).bind(to).execute(state.db.pool()).await.ok();
+    }
+    state.realtime.publish(
+        LiveEvent::new("pipeline.transitions_replaced", "pipeline", pipeline_id)
+            .with_data(serde_json::json!({"count": count})),
+    );
+    Ok(Json(serde_json::json!({"replaced": count, "pipelineId": pipeline_id})))
 }

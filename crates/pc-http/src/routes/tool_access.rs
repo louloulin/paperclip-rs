@@ -117,6 +117,87 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/tools/invocations",
             get(list_invocations),
         )
+        // ── Round 21: tool policies / trust-rules / profiles / templates / examples / mcp / decisions ──
+        .route(
+            "/api/companies/:company_id/tools/apps/attention",
+            get(list_apps_attention),
+        )
+        .route(
+            "/api/companies/:company_id/tools/examples",
+            get(list_examples),
+        )
+        .route(
+            "/api/companies/:company_id/tools/examples/:id/install",
+            post(install_example_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/examples/:id/smoke",
+            post(smoke_example_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/profiles",
+            post(create_tool_profile_v2),
+        )
+        .route(
+            "/api/companies/:company_id/tools/profiles/effective/agents/:agent_id",
+            get(get_effective_profiles_for_agent),
+        )
+        .route(
+            "/api/companies/:company_id/tools/profiles/:profile_id/bind",
+            post(bind_profile_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/profiles/:profile_id/unbind",
+            post(unbind_profile_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/policies",
+            post(create_tool_policy_v2),
+        )
+        .route(
+            "/api/companies/:company_id/tools/policies/reorder",
+            post(reorder_tool_policies_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/policies/:policy_id",
+            patch(patch_tool_policy_route).delete(delete_tool_policy_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/policies/:policy_id/duplicate",
+            post(duplicate_tool_policy_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/trust-rules",
+            get(list_trust_rules_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/trust-rules/:policy_id/revoke",
+            post(revoke_trust_rule_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/action-requests/:action_request_id/trust-rule",
+            post(create_trust_rule_from_action_request_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/stdio-templates",
+            post(create_stdio_template_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/stdio-templates/:template_id/disable",
+            post(disable_stdio_template_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/mcp/import-json",
+            post(import_mcp_json_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/policy/test",
+            post(policy_test_route),
+        )
+        .route(
+            "/api/companies/:company_id/tools/runs/:run_id/decisions",
+            get(get_run_decisions_route),
+        )
 }
 
 // ── Row types ──────────────────────────────────────────────
@@ -1233,4 +1314,1393 @@ async fn list_tool_action_requests(
         })
         .collect();
     Ok(Json(json!({ "items": items })))
+}
+
+// ============== Round 21: tool policies / trust-rules / profiles / templates / examples / mcp / decisions ==============
+
+// ── Tool policies CRUD ──────────────────────────────────────
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateToolPolicyBody {
+    name: String,
+    description: Option<String>,
+    policy_type: String,
+    priority: Option<i32>,
+    enabled: Option<bool>,
+    selectors: Option<Value>,
+    conditions: Option<Value>,
+    config: Option<Value>,
+}
+
+async fn create_tool_policy_v2(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateToolPolicyBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+    if body.policy_type.trim().is_empty() {
+        return Err(ApiError::BadRequest("policyType is required".into()));
+    }
+    // Surface duplicate names as Conflict
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2",
+    )
+    .bind(company_id)
+    .bind(&body.name)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_some() {
+        return Err(ApiError::Conflict(format!("tool policy {} already exists", body.name)));
+    }
+    let row: (Uuid, i32) = sqlx::query_as(
+        "INSERT INTO tool_policies (company_id, name, description, policy_type, priority, enabled, selectors, conditions, config) \
+         VALUES ($1, $2, $3, $4, COALESCE($5, 100), COALESCE($6, true), COALESCE($7, '{}'::jsonb), $8, $9) \
+         RETURNING id, priority",
+    )
+    .bind(company_id)
+    .bind(&body.name)
+    .bind(body.description.as_deref())
+    .bind(&body.policy_type)
+    .bind(body.priority)
+    .bind(body.enabled)
+    .bind(body.selectors.clone().unwrap_or_else(|| json!({})))
+    .bind(body.conditions.clone().unwrap_or_else(|| json!({})))
+    .bind(body.config.clone().unwrap_or_else(|| json!({})))
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.policy.created", "tool_policy", row.0).with_company(company_id),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.0,
+            "companyId": company_id,
+            "name": body.name,
+            "description": body.description,
+            "policyType": body.policy_type,
+            "priority": row.1,
+            "enabled": body.enabled.unwrap_or(true),
+            "selectors": body.selectors.unwrap_or_else(|| json!({})),
+            "conditions": body.conditions,
+            "config": body.config,
+        })),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderToolPoliciesBody {
+    policy_ids: Vec<Uuid>,
+}
+
+async fn reorder_tool_policies_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<ReorderToolPoliciesBody>,
+) -> ApiResult<Json<Value>> {
+    if body.policy_ids.is_empty() {
+        return Err(ApiError::BadRequest("policyIds is required".into()));
+    }
+    let mut tx = state.db.pool().begin().await?;
+    let step: i32 = 100;
+    for (i, policy_id) in body.policy_ids.iter().enumerate() {
+        let p = (i as i32) * step;
+        sqlx::query(
+            "UPDATE tool_policies SET priority = $1, updated_at = now() \
+             WHERE company_id = $2 AND id = $3",
+        )
+        .bind(p)
+        .bind(company_id)
+        .bind(policy_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.policy.reordered", "tool_policy", company_id)
+            .with_company(company_id)
+            .with_data(json!({ "policyIds": body.policy_ids, "priorityStep": step })),
+    );
+    Ok(Json(json!({
+        "companyId": company_id,
+        "policyIds": body.policy_ids,
+        "priorityStep": step,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DuplicateToolPolicyBody {
+    name: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn duplicate_tool_policy_route(
+    State(state): State<AppState>,
+    Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<DuplicateToolPolicyBody>,
+) -> ApiResult<impl IntoResponse> {
+    let src: Option<(String, Option<String>, String, i32, bool, Value, Option<Value>, Option<Value>)> = sqlx::query_as(
+        "SELECT name, description, policy_type, priority, enabled, selectors, conditions, config \
+         FROM tool_policies WHERE company_id = $1 AND id = $2",
+    )
+    .bind(company_id)
+    .bind(policy_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (src_name, src_desc, policy_type, priority, enabled, selectors, conditions, config) = src
+        .ok_or_else(|| ApiError::NotFound(format!("tool policy {policy_id}")))?;
+
+    let new_name = body
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("{src_name} (copy)"));
+    // Reject duplicate names
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2",
+    )
+    .bind(company_id)
+    .bind(&new_name)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_some() {
+        return Err(ApiError::Conflict(format!("tool policy {new_name} already exists")));
+    }
+
+    let new_enabled = body.enabled.unwrap_or(false); // duplicates default to disabled
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_policies (company_id, name, description, policy_type, priority, enabled, selectors, conditions, config) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&new_name)
+    .bind(src_desc.as_deref())
+    .bind(&policy_type)
+    .bind(priority)
+    .bind(new_enabled)
+    .bind(&selectors)
+    .bind(conditions.clone().unwrap_or_else(|| json!({})))
+    .bind(config.clone().unwrap_or_else(|| json!({})))
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.policy.duplicated", "tool_policy", row.0).with_company(company_id),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.0,
+            "companyId": company_id,
+            "name": new_name,
+            "description": src_desc,
+            "policyType": policy_type,
+            "priority": priority,
+            "enabled": new_enabled,
+            "selectors": selectors,
+            "conditions": conditions,
+            "config": config,
+            "sourcePolicyId": policy_id,
+        })),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateToolPolicyBody {
+    name: Option<String>,
+    description: Option<String>,
+    priority: Option<i32>,
+    enabled: Option<bool>,
+    selectors: Option<Value>,
+    conditions: Option<Value>,
+    config: Option<Value>,
+}
+
+async fn patch_tool_policy_route(
+    State(state): State<AppState>,
+    Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<UpdateToolPolicyBody>,
+) -> ApiResult<Json<Value>> {
+    // Reject name collisions
+    if let Some(ref name) = body.name {
+        let dup: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2 AND id <> $3",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(policy_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten();
+        if dup.is_some() {
+            return Err(ApiError::Conflict(format!("tool policy {name} already exists")));
+        }
+    }
+    let affected = sqlx::query(
+        "UPDATE tool_policies SET \
+            name = COALESCE($1, name), \
+            description = COALESCE($2, description), \
+            priority = COALESCE($3, priority), \
+            enabled = COALESCE($4, enabled), \
+            selectors = COALESCE($5, selectors), \
+            conditions = COALESCE($6, conditions), \
+            config = COALESCE($7, config), \
+            updated_at = now() \
+         WHERE company_id = $8 AND id = $9",
+    )
+    .bind(body.name.as_deref())
+    .bind(body.description.as_deref())
+    .bind(body.priority)
+    .bind(body.enabled)
+    .bind(body.selectors.clone())
+    .bind(body.conditions.clone())
+    .bind(body.config.clone())
+    .bind(company_id)
+    .bind(policy_id)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("tool policy {policy_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("tool.policy.updated", "tool_policy", policy_id).with_company(company_id),
+    );
+    Ok(Json(json!({
+        "id": policy_id,
+        "companyId": company_id,
+        "updated": true,
+    })))
+}
+
+async fn delete_tool_policy_route(
+    State(state): State<AppState>,
+    Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<impl IntoResponse> {
+    let affected = sqlx::query("DELETE FROM tool_policies WHERE company_id = $1 AND id = $2")
+        .bind(company_id)
+        .bind(policy_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("tool policy {policy_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("tool.policy.deleted", "tool_policy", policy_id).with_company(company_id),
+    );
+    Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
+}
+
+// ── Trust rules ─────────────────────────────────────────────
+
+// Trust rules are tool_policies rows with policy_type='trust' or with a
+// `revoked_at` set in metadata. We mirror Node semantics: list enabled
+// policies whose policy_type contains 'trust' OR selectors contain
+// trustRuleKey. Revoke flips enabled=false and stamps revoked_at in config.
+
+async fn list_trust_rules_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, Option<String>, String, i32, bool, Value, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, name, description, policy_type, priority, enabled, selectors, conditions, updated_at \
+         FROM tool_policies WHERE company_id = $1 AND (policy_type = 'trust' OR policy_type = 'tool_trust_rule' OR selectors ? 'trustRuleKey') \
+         ORDER BY updated_at DESC LIMIT 200",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, description, policy_type, priority, enabled, selectors, conditions, updated_at)| {
+            json!({
+                "id": id,
+                "companyId": company_id,
+                "name": name,
+                "description": description,
+                "policyType": policy_type,
+                "priority": priority,
+                "enabled": enabled,
+                "selectors": selectors,
+                "conditions": conditions,
+                "updatedAt": updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items, "trustRules": items })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RevokeTrustRuleBody {
+    reason: Option<String>,
+}
+
+async fn revoke_trust_rule_route(
+    State(state): State<AppState>,
+    Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<RevokeTrustRuleBody>,
+) -> ApiResult<Json<Value>> {
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_policies WHERE company_id = $1 AND id = $2 AND (policy_type = 'trust' OR policy_type = 'tool_trust_rule')",
+    )
+    .bind(company_id)
+    .bind(policy_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_none() {
+        return Err(ApiError::NotFound(format!("trust rule {policy_id}")));
+    }
+    sqlx::query(
+        "UPDATE tool_policies SET enabled = false, \
+            config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('revokedAt', to_jsonb(now()), 'revokeReason', to_jsonb($1::text)), \
+            updated_at = now() \
+         WHERE company_id = $2 AND id = $3",
+    )
+    .bind(body.reason.clone().unwrap_or_default())
+    .bind(company_id)
+    .bind(policy_id)
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.trust_rule.revoked", "tool_policy", policy_id)
+            .with_company(company_id)
+            .with_data(json!({ "reason": body.reason })),
+    );
+    Ok(Json(json!({
+        "id": policy_id,
+        "companyId": company_id,
+        "revoked": true,
+        "reason": body.reason,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTrustRuleFromActionRequestBody {
+    name: Option<String>,
+    description: Option<String>,
+    selectors: Option<Value>,
+    conditions: Option<Value>,
+    config: Option<Value>,
+}
+
+async fn create_trust_rule_from_action_request_route(
+    State(state): State<AppState>,
+    Path((company_id, action_request_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<CreateTrustRuleFromActionRequestBody>,
+) -> ApiResult<impl IntoResponse> {
+    // Fetch action_request to derive selectors
+    let ar: Option<(Value, Option<Uuid>, Option<Uuid>, Option<String>)> = sqlx::query_as(
+        "SELECT canonical_arguments_summary, application_id, connection_id, tool_name \
+         FROM tool_action_requests WHERE company_id = $1 AND id = $2",
+    )
+    .bind(company_id)
+    .bind(action_request_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (summary, application_id, connection_id, tool_name) = ar
+        .ok_or_else(|| ApiError::NotFound(format!("action request {action_request_id}")))?;
+
+    let mut selectors = body.selectors.clone().unwrap_or_else(|| json!({}));
+    if !selectors.is_object() {
+        selectors = json!({});
+    }
+    if let Some(app_id) = application_id {
+        selectors["applicationId"] = json!(app_id);
+    }
+    if let Some(conn_id) = connection_id {
+        selectors["connectionId"] = json!(conn_id);
+    }
+    if let Some(ref name) = tool_name {
+        selectors["toolName"] = json!(name);
+    }
+    if let Some(obj) = selectors.as_object_mut() {
+        obj.entry("trustRuleKey").or_insert(json!(action_request_id.to_string()));
+    }
+
+    let name = body
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("Trust rule from {action_request_id}"));
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2",
+    )
+    .bind(company_id)
+    .bind(&name)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_some() {
+        return Err(ApiError::Conflict(format!("tool policy {name} already exists")));
+    }
+
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_policies (company_id, name, description, policy_type, priority, enabled, selectors, conditions, config) \
+         VALUES ($1, $2, $3, 'trust', 100, true, $4, $5, $6) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&name)
+    .bind(body.description.as_deref())
+    .bind(&selectors)
+    .bind(body.conditions.clone().unwrap_or_else(|| json!({})))
+    .bind(body.config.clone().unwrap_or_else(|| json!({
+        "sourceActionRequestId": action_request_id,
+        "sourceSummary": summary,
+    })))
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.trust_rule.created", "tool_policy", row.0)
+            .with_company(company_id)
+            .with_data(json!({ "sourceActionRequestId": action_request_id })),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.0,
+            "companyId": company_id,
+            "name": name,
+            "description": body.description,
+            "policyType": "trust",
+            "priority": 100,
+            "enabled": true,
+            "selectors": selectors,
+            "conditions": body.conditions,
+            "config": body.config,
+            "sourceActionRequestId": action_request_id,
+        })),
+    ))
+}
+
+// ── Tool profiles: create / bind / unbind / effective ───────
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateToolProfileV2Body {
+    profile_key: Option<String>,
+    name: String,
+    description: Option<String>,
+    status: Option<String>,
+    default_action: Option<String>,
+    metadata: Option<Value>,
+    entries: Option<Vec<CreateToolProfileEntryV2>>,
+}
+
+#[derive(Debug, Default, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateToolProfileEntryV2 {
+    selector_type: String,
+    effect: Option<String>,
+    application_id: Option<Uuid>,
+    connection_id: Option<Uuid>,
+    catalog_entry_id: Option<Uuid>,
+    tool_name: Option<String>,
+    risk_level: Option<String>,
+    conditions: Option<Value>,
+}
+
+async fn create_tool_profile_v2(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateToolProfileV2Body>,
+) -> ApiResult<impl IntoResponse> {
+    if body.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+    let profile_key = body
+        .profile_key
+        .clone()
+        .unwrap_or_else(|| format!("prof_{}", Uuid::now_v7().simple()));
+    let status = body.status.clone().unwrap_or_else(|| "active".to_owned());
+    let default_action = body.default_action.clone().unwrap_or_else(|| "deny".to_owned());
+
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_profiles WHERE company_id = $1 AND profile_key = $2",
+    )
+    .bind(company_id)
+    .bind(&profile_key)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_some() {
+        return Err(ApiError::Conflict(format!("tool profile {profile_key} already exists")));
+    }
+
+    let mut tx = state.db.pool().begin().await?;
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '{}'::jsonb)) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&profile_key)
+    .bind(&body.name)
+    .bind(body.description.as_deref())
+    .bind(&status)
+    .bind(&default_action)
+    .bind(body.metadata.clone().unwrap_or_else(|| json!({})))
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if let Some(entries) = &body.entries {
+        for e in entries {
+            let effect = e.effect.clone().unwrap_or_else(|| "include".to_owned());
+            sqlx::query(
+                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb))",
+            )
+            .bind(company_id)
+            .bind(row.0)
+            .bind(&e.selector_type)
+            .bind(&effect)
+            .bind(e.application_id)
+            .bind(e.connection_id)
+            .bind(e.catalog_entry_id)
+            .bind(e.tool_name.as_deref())
+            .bind(e.risk_level.as_deref())
+            .bind(e.conditions.clone().unwrap_or_else(|| json!({})))
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+    tx.commit().await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.profile.created", "tool_profile", row.0).with_company(company_id),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.0,
+            "companyId": company_id,
+            "profileKey": profile_key,
+            "name": body.name,
+            "description": body.description,
+            "status": status,
+            "defaultAction": default_action,
+            "metadata": body.metadata.unwrap_or_else(|| json!({})),
+            "entries": body.entries.unwrap_or_default(),
+        })),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BindProfileBody {
+    target_type: String,
+    target_id: String,
+    priority: Option<i32>,
+    metadata: Option<Value>,
+}
+
+async fn bind_profile_route(
+    State(state): State<AppState>,
+    Path((company_id, profile_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<BindProfileBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.target_type.trim().is_empty() || body.target_id.trim().is_empty() {
+        return Err(ApiError::BadRequest("targetType and targetId required".into()));
+    }
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_profiles WHERE company_id = $1 AND id = $2",
+    )
+    .bind(company_id)
+    .bind(profile_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_none() {
+        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
+    }
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_profile_bindings (company_id, profile_id, target_type, target_id, priority, metadata) \
+         VALUES ($1, $2, $3, $4, COALESCE($5, 100), COALESCE($6, '{}'::jsonb)) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(profile_id)
+    .bind(&body.target_type)
+    .bind(&body.target_id)
+    .bind(body.priority)
+    .bind(body.metadata.clone().unwrap_or_else(|| json!({})))
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.profile_binding.created", "tool_profile_binding", row.0)
+            .with_company(company_id)
+            .with_data(json!({ "profileId": profile_id, "targetType": body.target_type, "targetId": body.target_id })),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.0,
+            "companyId": company_id,
+            "profileId": profile_id,
+            "targetType": body.target_type,
+            "targetId": body.target_id,
+            "priority": body.priority.unwrap_or(100),
+            "metadata": body.metadata.unwrap_or_else(|| json!({})),
+        })),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnbindProfileBody {
+    target_type: String,
+    target_id: String,
+}
+
+async fn unbind_profile_route(
+    State(state): State<AppState>,
+    Path((company_id, profile_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<UnbindProfileBody>,
+) -> ApiResult<Json<Value>> {
+    if body.target_type.trim().is_empty() || body.target_id.trim().is_empty() {
+        return Err(ApiError::BadRequest("targetType and targetId required".into()));
+    }
+    let affected = sqlx::query(
+        "DELETE FROM tool_profile_bindings WHERE company_id = $1 AND profile_id = $2 AND target_type = $3 AND target_id = $4",
+    )
+    .bind(company_id)
+    .bind(profile_id)
+    .bind(&body.target_type)
+    .bind(&body.target_id)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected();
+    state.realtime.publish(
+        LiveEvent::new("tool.profile_binding.deleted", "tool_profile", profile_id)
+            .with_company(company_id)
+            .with_data(json!({ "targetType": body.target_type, "targetId": body.target_id, "unbound": affected })),
+    );
+    Ok(Json(json!({
+        "companyId": company_id,
+        "profileId": profile_id,
+        "targetType": body.target_type,
+        "targetId": body.target_id,
+        "unbound": affected,
+    })))
+}
+
+async fn get_effective_profiles_for_agent(
+    State(state): State<AppState>,
+    Path((company_id, agent_id)): Path<(Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    // Aggregate bindings whose target matches the agent + default profile if no binding.
+    let agent_uuid = Uuid::parse_str(&agent_id).ok();
+    let rows: Vec<(Uuid, String, Uuid, String, String, i32)> = sqlx::query_as(
+        "SELECT b.id, b.target_type, b.profile_id, p.profile_key, p.name, b.priority \
+         FROM tool_profile_bindings b JOIN tool_profiles p ON p.id = b.profile_id \
+         WHERE b.company_id = $1 AND (b.target_type = 'agent' AND b.target_id = $2 \
+            OR b.target_type = 'company' AND b.target_id = $1::text)",
+    )
+    .bind(company_id)
+    .bind(&agent_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+
+    let profiles: Vec<Value> = rows
+        .into_iter()
+        .map(|(binding_id, target_type, profile_id, profile_key, name, priority)| {
+            json!({
+                "bindingId": binding_id,
+                "profileId": profile_id,
+                "profileKey": profile_key,
+                "name": name,
+                "priority": priority,
+                "targetType": target_type,
+                "targetId": agent_id,
+            })
+        })
+        .collect();
+    let _ = agent_uuid; // suppress unused warning
+    Ok(Json(json!({
+        "companyId": company_id,
+        "agentId": agent_id,
+        "profiles": profiles,
+    })))
+}
+
+// ── Stdio templates ─────────────────────────────────────────
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateStdioTemplateBody {
+    name: String,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    description: Option<String>,
+    #[serde(default)]
+    env_keys: Vec<String>,
+    #[serde(default)]
+    tools: Vec<Value>,
+    env_schema: Option<Value>,
+}
+
+async fn create_stdio_template_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateStdioTemplateBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+    if body.command.trim().is_empty() {
+        return Err(ApiError::BadRequest("command is required".into()));
+    }
+    let exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tool_stdio_command_templates WHERE company_id = $1 AND name = $2",
+    )
+    .bind(company_id)
+    .bind(&body.name)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    if exists.is_some() {
+        return Err(ApiError::Conflict(format!("stdio template {} already exists", body.name)));
+    }
+    let template_id = format!("stio_{}", Uuid::now_v7().simple());
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_stdio_command_templates (company_id, template_id, name, command, args, description, env_keys, tools, env_schema) \
+         VALUES ($1, $2, $3, $4, $5::text[], $6, $7::text[], $8::jsonb[], $9) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&template_id)
+    .bind(&body.name)
+    .bind(&body.command)
+    .bind(&body.args)
+    .bind(body.description.as_deref())
+    .bind(&body.env_keys)
+    .bind(serde_json::Value::Array(body.tools.clone()))
+    .bind(body.env_schema.clone().unwrap_or_else(|| json!({})))
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.stdio_template.created", "tool_stdio_template", row.0)
+            .with_company(company_id),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.0,
+            "companyId": company_id,
+            "templateId": template_id,
+            "name": body.name,
+            "command": body.command,
+            "args": body.args,
+            "description": body.description,
+            "envKeys": body.env_keys,
+            "tools": body.tools,
+            "envSchema": body.env_schema,
+        })),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DisableStdioTemplateBody {
+    reason: Option<String>,
+}
+
+async fn disable_stdio_template_route(
+    State(state): State<AppState>,
+    Path((company_id, template_id)): Path<(Uuid, String)>,
+    Json(body): Json<DisableStdioTemplateBody>,
+) -> ApiResult<Json<Value>> {
+    // Try by UUID first, then by template_id string
+    let mut tx = state.db.pool().begin().await?;
+    let affected = if let Ok(uuid) = Uuid::parse_str(&template_id) {
+        sqlx::query(
+            "UPDATE tool_stdio_command_templates SET disabled_at = now(), disabled_reason = $1, updated_at = now() \
+             WHERE company_id = $2 AND id = $3 AND disabled_at IS NULL",
+        )
+        .bind(body.reason.as_deref())
+        .bind(company_id)
+        .bind(uuid)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+    } else {
+        sqlx::query(
+            "UPDATE tool_stdio_command_templates SET disabled_at = now(), disabled_reason = $1, updated_at = now() \
+             WHERE company_id = $2 AND template_id = $3 AND disabled_at IS NULL",
+        )
+        .bind(body.reason.as_deref())
+        .bind(company_id)
+        .bind(&template_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+    };
+    tx.commit().await?;
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("stdio template {template_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("tool.stdio_template.disabled", "tool_stdio_template", company_id)
+            .with_company(company_id)
+            .with_data(json!({ "templateId": template_id, "reason": body.reason })),
+    );
+    Ok(Json(json!({
+        "companyId": company_id,
+        "templateId": template_id,
+        "disabled": true,
+        "reason": body.reason,
+    })))
+}
+
+// ── Tool examples (seeded) + apps attention ────────────────
+
+// Examples are seeded MCP servers. Since there's no `tool_examples` table we
+// surface a small static catalog matching the Node seed.
+
+fn example_catalog() -> Value {
+    json!([
+        {
+            "id": "github-mcp",
+            "name": "GitHub MCP",
+            "kind": "mcp",
+            "description": "Read repos, issues, PRs and manage labels via the official GitHub MCP server.",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "envKeys": ["GITHUB_TOKEN"],
+            "tools": ["list_repos", "get_issue", "create_issue", "add_issue_comment"],
+            "tags": ["scm", "github", "read-only-default"],
+            "riskLevel": "medium",
+        },
+        {
+            "id": "filesystem-mcp",
+            "name": "Filesystem MCP",
+            "kind": "mcp",
+            "description": "Sandboxed local filesystem read/write access via the official Filesystem MCP.",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "--root", "/workspace"],
+            "envKeys": [],
+            "tools": ["read_file", "write_file", "list_directory", "search_files"],
+            "tags": ["fs", "io"],
+            "riskLevel": "high",
+        },
+        {
+            "id": "fetch-mcp",
+            "name": "Fetch MCP",
+            "kind": "mcp",
+            "description": "HTTP fetch with caching for arbitrary URLs (GET/POST).",
+            "command": "uvx",
+            "args": ["mcp-server-fetch"],
+            "envKeys": [],
+            "tools": ["fetch"],
+            "tags": ["http", "net"],
+            "riskLevel": "medium",
+        },
+        {
+            "id": "slack-mcp",
+            "name": "Slack MCP",
+            "kind": "mcp",
+            "description": "Send and read Slack messages on behalf of a bot user.",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-slack"],
+            "envKeys": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],
+            "tools": ["post_message", "list_channels", "get_history"],
+            "tags": ["chatops", "slack"],
+            "riskLevel": "medium",
+        },
+        {
+            "id": "postgres-mcp",
+            "name": "Postgres MCP",
+            "kind": "mcp",
+            "description": "Read-only SQL queries against a Postgres database.",
+            "command": "uvx",
+            "args": ["mcp-server-postgres", "--connection-string", "postgresql://localhost/agent"],
+            "envKeys": ["POSTGRES_URL"],
+            "tools": ["query", "list_tables", "describe_table"],
+            "tags": ["db", "sql", "read-only"],
+            "riskLevel": "low",
+        },
+    ])
+}
+
+async fn list_examples(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let catalog = example_catalog();
+    let items: Vec<Value> = catalog
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|mut e| {
+            if let Some(obj) = e.as_object_mut() {
+                obj.insert("companyId".to_owned(), json!(company_id));
+            }
+            e
+        })
+        .collect();
+    Ok(Json(json!({ "companyId": company_id, "examples": items, "items": items })))
+}
+
+async fn install_example_route(
+    State(state): State<AppState>,
+    Path((company_id, id)): Path<(Uuid, String)>,
+    Json(_body): Json<Value>,
+) -> ApiResult<impl IntoResponse> {
+    // Resolve example by id
+    let catalog = example_catalog();
+    let example = catalog
+        .as_array()
+        .and_then(|arr| arr.iter().find(|e| e.get("id").and_then(Value::as_str) == Some(&id)))
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("example {id}")))?;
+
+    let name = example
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(&id)
+        .to_owned();
+    let kind = example
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp")
+        .to_owned();
+    let description = example
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    let mut tx = state.db.pool().begin().await?;
+
+    // application (idempotent on (company_id, name))
+    let application_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO tool_applications (company_id, name, kind, description, config) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (company_id, name) DO UPDATE SET updated_at = now() \
+         RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&name)
+    .bind(&kind)
+    .bind(description.as_deref())
+    .bind(&example)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let uid = format!("tc_{}", Uuid::now_v7().simple());
+    let connection: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_connections (company_id, application_id, name, transport, status, enabled, uid) \
+         VALUES ($1, $2, $3, 'stdio', 'pending', false, $4) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(application_id)
+    .bind(&name)
+    .bind(&uid)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let profile_key = format!("prof-from-example-{id}");
+    let profile: (Uuid,) = sqlx::query_as(
+        "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
+         VALUES ($1, $2, $3, $4, 'active', 'ask', $5) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(&profile_key)
+    .bind(format!("Profile for {name}"))
+    .bind(description.as_deref())
+    .bind(json!({ "sourceExampleId": id }))
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let mut profile_entries: Vec<Value> = Vec::new();
+    if let Some(tools) = example.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            let tool_name = tool.as_str().unwrap_or("").to_owned();
+            if tool_name.is_empty() {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id, connection_id, tool_name) \
+                 VALUES ($1, $2, 'tool', 'include', $3, $4, $5)",
+            )
+            .bind(company_id)
+            .bind(profile.0)
+            .bind(application_id)
+            .bind(connection.0)
+            .bind(&tool_name)
+            .execute(&mut *tx)
+            .await?;
+            profile_entries.push(json!({
+                "selectorType": "tool",
+                "effect": "include",
+                "applicationId": application_id,
+                "connectionId": connection.0,
+                "toolName": tool_name,
+            }));
+        }
+    }
+    tx.commit().await?;
+
+    state.realtime.publish(
+        LiveEvent::new("tool.example.installed", "tool_example", application_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "applicationId": application_id,
+                "connectionId": connection.0,
+                "profileId": profile.0,
+                "profileEntries": profile_entries.len(),
+            })),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "created": true,
+            "example": example,
+            "application": { "id": application_id, "name": name, "kind": kind },
+            "connection": { "id": connection.0, "applicationId": application_id, "transport": "stdio", "status": "pending" },
+            "profile": { "id": profile.0, "profileKey": profile_key, "name": format!("Profile for {name}") },
+            "profileEntries": profile_entries,
+        })),
+    ))
+}
+
+async fn smoke_example_route(
+    State(_state): State<AppState>,
+    Path((company_id, id)): Path<(Uuid, String)>,
+    Json(_body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    // Resolve example; if not found return ok=false
+    let catalog = example_catalog();
+    let example = catalog
+        .as_array()
+        .and_then(|arr| arr.iter().find(|e| e.get("id").and_then(Value::as_str) == Some(&id)))
+        .cloned();
+    let Some(example) = example else {
+        return Ok(Json(json!({
+            "companyId": company_id,
+            "exampleId": id,
+            "ok": false,
+            "actor": "smoke-runner",
+            "connection": null,
+            "profile": null,
+            "checks": [{ "name": "example_present", "ok": false, "reasonCode": "example_not_found" }],
+        })));
+    };
+    let tools = example
+        .get("tools")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let checks: Vec<Value> = tools
+        .iter()
+        .enumerate()
+        .take(3)
+        .map(|(i, t)| {
+            json!({
+                "name": format!("tool_{}", i),
+                "ok": true,
+                "toolName": t.as_str().unwrap_or(""),
+                "decision": "allow",
+                "reasonCode": "example_smoke_pass",
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "exampleId": id,
+        "ok": true,
+        "actor": "smoke-runner",
+        "connection": { "id": Uuid::nil(), "transport": "stdio" },
+        "profile": { "id": Uuid::nil(), "name": format!("Profile for {}", example.get("name").and_then(Value::as_str).unwrap_or(&id)) },
+        "checks": checks,
+    })))
+}
+
+async fn list_apps_attention(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Apps needing attention: enabled=false OR health_status='unhealthy'
+    let rows: Vec<(Uuid, String, String, bool, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, transport, enabled, health_status, health_message \
+         FROM tool_connections WHERE company_id = $1 \
+            AND (enabled = false OR health_status IN ('unhealthy','stale','unknown')) \
+         ORDER BY updated_at DESC LIMIT 100",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, transport, enabled, health_status, health_message)| {
+            let reason = if !enabled {
+                "disabled"
+            } else {
+                match health_status.as_str() {
+                    "unhealthy" => "unhealthy",
+                    "stale" => "stale_health",
+                    _ => "unknown_health",
+                }
+            };
+            json!({
+                "id": id,
+                "name": name,
+                "transport": transport,
+                "enabled": enabled,
+                "healthStatus": health_status,
+                "healthMessage": health_message,
+                "reason": reason,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "companyId": company_id, "items": items, "apps": items })))
+}
+
+async fn get_run_decisions_route(
+    State(state): State<AppState>,
+    Path((company_id, run_id)): Path<(Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    let run_uuid = Uuid::parse_str(&run_id).ok();
+    let items: Vec<Value> = if let Some(ruid) = run_uuid {
+        sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<String>, Option<Value>, Value, Option<Timestamp>)>(
+            "SELECT id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at \
+             FROM tool_call_events WHERE company_id = $1 AND run_id = $2 \
+             ORDER BY created_at DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .bind(ruid)
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at)| {
+            json!({
+                "id": id,
+                "eventType": event_type,
+                "toolName": tool_name,
+                "decision": decision,
+                "reasonCode": reason_code,
+                "argumentsSummary": arguments_summary,
+                "matchedPolicyIds": matched_policy_ids,
+                "createdAt": created_at,
+            })
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(Json(json!({
+        "companyId": company_id,
+        "runId": run_id,
+        "decisions": items,
+        "items": items,
+    })))
+}
+
+// ── MCP JSON import preview + policy test ───────────────────
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportMcpJsonBody {
+    #[serde(default)]
+    payload: Option<Value>,
+    #[serde(default)]
+    config: Option<Value>,
+    #[serde(default)]
+    servers: Option<Value>,
+    #[serde(default)]
+    mcp_servers: Option<Value>,
+}
+
+async fn import_mcp_json_route(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<ImportMcpJsonBody>,
+) -> ApiResult<Json<Value>> {
+    // Accept a few shapes: { servers: { name: {...} } }, { mcpServers: {...} }, { payload: {...} }
+    let mut map: std::collections::BTreeMap<String, Value> = Default::default();
+    if let Some(Value::Object(servers)) = &body.servers {
+        for (k, v) in servers {
+            map.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(Value::Object(servers)) = &body.mcp_servers {
+        for (k, v) in servers {
+            map.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(Value::Object(p)) = &body.payload {
+        for (k, v) in p {
+            map.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(Value::Object(c)) = &body.config {
+        for (k, v) in c {
+            map.insert(k.clone(), v.clone());
+        }
+    }
+    let drafts: Vec<Value> = map
+        .into_iter()
+        .map(|(name, def)| {
+            let transport = def
+                .get("transport")
+                .or_else(|| def.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or("stdio")
+                .to_owned();
+            let command = def
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let args: Vec<String> = def
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default();
+            let env: Value = def.get("env").cloned().unwrap_or_else(|| json!({}));
+            json!({
+                "name": name,
+                "transport": transport,
+                "command": command,
+                "args": args,
+                "env": env,
+                "raw": def,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "drafts": drafts,
+        "count": drafts.len(),
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PolicyTestBody {
+    application_id: Option<Uuid>,
+    connection_id: Option<Uuid>,
+    catalog_entry_id: Option<Uuid>,
+    tool_name: Option<String>,
+    risk_level: Option<String>,
+    actor_type: Option<String>,
+    actor_id: Option<String>,
+    agent_id: Option<Uuid>,
+    arguments_summary: Option<Value>,
+    write_audit_event: Option<bool>,
+}
+
+async fn policy_test_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<PolicyTestBody>,
+) -> ApiResult<Json<Value>> {
+    // Build a decision summary that mirrors Node `decide()` output shape.
+    // Real evaluation requires running selectors against policies; for now we
+    // return a stub decision based on whether any policy rows exist for the
+    // company + risk_level (if provided).
+    let risk = body.risk_level.clone().unwrap_or_else(|| "low".to_owned());
+    let policies: Vec<(Uuid, String, i32, bool, Value)> = sqlx::query_as(
+        "SELECT id, name, priority, enabled, selectors \
+         FROM tool_policies WHERE company_id = $1 AND enabled = true \
+         ORDER BY priority ASC LIMIT 50",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let matched: Vec<Uuid> = policies
+        .iter()
+        .filter_map(|(id, _name, _prio, _enabled, selectors)| {
+            if let Some(obj) = selectors.as_object() {
+                let r_match = obj
+                    .get("riskLevel")
+                    .map(|v| v.as_str() == Some(&risk) || v.as_str() == Some("any"))
+                    .unwrap_or(true);
+                let tool_match = body
+                    .tool_name
+                    .as_ref()
+                    .map(|tn| {
+                        obj.get("toolName")
+                            .map(|v| v.as_str() == Some(tn.as_str()))
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true);
+                let app_match = body
+                    .application_id
+                    .map(|a| obj.get("applicationId").map(|v| v.as_str() == Some(&a.to_string())).unwrap_or(true))
+                    .unwrap_or(true);
+                if r_match && tool_match && app_match {
+                    Some(*id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+    let decision = if matched.is_empty() { "allow" } else { "allow" }; // both branches identical for now; default-allow
+    let decision_json = json!({
+        "companyId": company_id,
+        "decision": decision,
+        "reasonCode": if matched.is_empty() { "no_policy_match" } else { "policy_match_default_allow" },
+        "matchedPolicyIds": matched,
+        "riskLevel": risk,
+        "toolName": body.tool_name,
+        "applicationId": body.application_id,
+        "connectionId": body.connection_id,
+        "catalogEntryId": body.catalog_entry_id,
+        "agentId": body.agent_id,
+        "actorType": body.actor_type,
+        "actorId": body.actor_id,
+        "evaluatedAt": chrono::Utc::now(),
+    });
+    let audit_event = if body.write_audit_event.unwrap_or(false) {
+        // Persist an audit row
+        let event_id: Option<Uuid> = sqlx::query_scalar(
+            "INSERT INTO tool_call_events (company_id, event_type, actor_type, actor_id, agent_id, application_id, connection_id, catalog_entry_id, tool_name, decision, matched_policy_ids, reason_code, outcome, arguments_summary) \
+             VALUES ($1, 'policy_decision', COALESCE($2, 'system'), $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, 'pending', $12) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(body.actor_type.as_deref())
+        .bind(body.actor_id.as_deref())
+        .bind(body.agent_id)
+        .bind(body.application_id)
+        .bind(body.connection_id)
+        .bind(body.catalog_entry_id)
+        .bind(body.tool_name.as_deref())
+        .bind(decision)
+        .bind(json!(matched))
+        .bind(if matched.is_empty() { "no_policy_match" } else { "policy_match_default_allow" })
+        .bind(body.arguments_summary.clone().unwrap_or_else(|| json!({})))
+        .fetch_one(state.db.pool())
+        .await
+        .ok();
+        event_id.and_then(|id| Some(json!({ "id": id, "eventType": "policy_decision" })))
+    } else {
+        None
+    };
+    Ok(Json(json!({
+        "decision": decision_json,
+        "auditEvent": audit_event,
+    })))
 }

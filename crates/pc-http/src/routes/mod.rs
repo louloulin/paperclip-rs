@@ -54,6 +54,7 @@ pub mod storage;
 pub mod summary_slots;
 pub mod teams_catalog;
 pub mod tool_access;
+pub mod tool_connections;
 pub mod tool_gateway;
 pub mod user_profiles;
 pub mod workflows;
@@ -98,6 +99,7 @@ pub fn router() -> Router<AppState> {
         .merge(summary_slots::router())
         .merge(teams_catalog::router())
         .merge(tool_access::router())
+        .merge(tool_connections::router())
         .merge(tool_gateway::router())
         .merge(user_profiles::router())
         .merge(resource_memberships::router())

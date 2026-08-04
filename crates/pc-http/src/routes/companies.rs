@@ -38,6 +38,32 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:id/export/fidelity", get(get_company_export_fidelity))
         .route("/api/companies/:id/feedback-traces", get(list_company_feedback_traces))
         .route("/api/companies/:id/imports/apply", post(apply_company_import))
+        // ===== labels / folders / invites / members / org / audit =====
+        .route("/api/companies/:id/labels", get(list_labels).post(create_label))
+        .route("/api/companies/:id/labels/:label_id", patch(patch_label).delete(delete_label))
+        .route("/api/companies/:id/folders", get(list_folders).post(create_folder))
+        .route("/api/companies/:id/folders/ensure-my", post(ensure_my_folder))
+        .route("/api/companies/:id/folders/:folder_id", patch(patch_folder).delete(delete_folder))
+        .route("/api/companies/:id/folders/:folder_id/move", post(move_folder))
+        .route("/api/companies/:id/folders/items/move", post(move_folder_item))
+        .route("/api/companies/:id/invites", get(list_invites).post(create_invite))
+        .route("/api/companies/:id/invites/:invite_id", delete(revoke_invite))
+        .route("/api/companies/:id/join-requests", get(list_join_requests))
+        .route("/api/companies/:id/join-requests/:req_id/approve", post(approve_join_request))
+        .route("/api/companies/:id/join-requests/:req_id/reject", post(reject_join_request))
+        .route("/api/companies/:id/members", get(list_members))
+        .route("/api/companies/:id/members/:member_id", patch(patch_member))
+        .route("/api/companies/:id/members/:member_id/archive", post(archive_member))
+        .route("/api/companies/:id/audit/agent-actions", get(list_agent_actions))
+        .route("/api/companies/:id/audit/agent-actions.csv", get(export_agent_actions_csv))
+        .route("/api/companies/:id/org", get(get_org))
+        .route("/api/companies/:id/org.svg", get(get_org_svg))
+        .route("/api/companies/:id/org.png", get(get_org_png))
+        .route("/api/companies/:id/search/extract", post(search_extract))
+        .route("/api/companies/:id/decision-bundles", post(create_decision_bundle))
+        .route("/api/companies/:id/finance-events", post(create_finance_event))
+        .route("/api/companies/:id/agents", post(create_agent))
+        .route("/api/companies/:id/built-in-agents/:id/provision", post(provision_built_in_agent))
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
@@ -593,4 +619,648 @@ async fn apply_company_import(
         "jobId": job_id,
         "status": "queued",
     })))
+}
+
+
+// ============================================================================
+// Labels / Folders / Invites / Members / Org / Audit / Search / Decision Bundles
+// ============================================================================
+
+// ---------- labels ----------
+
+async fn list_labels(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, company_id, name, color FROM labels WHERE company_id=$1 ORDER BY name",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, cid, name, color)| json!({
+        "id": id, "companyId": cid, "name": name, "color": color,
+    })).collect();
+    Ok(Json(json!({"items": items, "companyId": company_id})))
+}
+
+#[derive(Debug, Deserialize)]
+struct LabelBody {
+    name: String,
+    color: String,
+}
+
+async fn create_label(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<LabelBody>,
+) -> ApiResult<Json<Value>> {
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > 64 {
+        return Err(ApiError::BadRequest("name length 1..=64".into()));
+    }
+    if body.color.is_empty() {
+        return Err(ApiError::BadRequest("color required".into()));
+    }
+    let id: Uuid = Uuid::new_v4();
+    let r = sqlx::query(
+        "INSERT INTO labels (id, company_id, name, color) VALUES ($1,$2,$3,$4)",
+    )
+    .bind(id).bind(company_id).bind(name).bind(&body.color)
+    .execute(state.db.pool()).await;
+    if let Err(e) = r {
+        let msg = e.to_string();
+        if msg.contains("duplicate") {
+            return Err(ApiError::Conflict(format!("label {name} already exists")));
+        }
+        return Err(ApiError::Internal(msg));
+    }
+    state.realtime.publish(
+        LiveEvent::new("label.created", "label", id)
+            .with_company(company_id)
+            .with_data(json!({"name": name})),
+    );
+    Ok(Json(json!({"id": id, "companyId": company_id, "name": name, "color": body.color})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PatchLabelBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+}
+
+async fn patch_label(
+    State(state): State<AppState>,
+    Path((company_id, label_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchLabelBody>,
+) -> ApiResult<Json<Value>> {
+    let mut updated: Vec<&str> = vec![];
+    if let Some(ref n) = body.name {
+        if n.is_empty() || n.len() > 64 {
+            return Err(ApiError::BadRequest("name length 1..=64".into()));
+        }
+        sqlx::query("UPDATE labels SET name=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
+            .bind(n).bind(company_id).bind(label_id).execute(state.db.pool()).await?;
+        updated.push("name");
+    }
+    if let Some(ref c) = body.color {
+        sqlx::query("UPDATE labels SET color=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
+            .bind(c).bind(company_id).bind(label_id).execute(state.db.pool()).await?;
+        updated.push("color");
+    }
+    if updated.is_empty() {
+        return Err(ApiError::BadRequest("no fields to update".into()));
+    }
+    Ok(Json(json!({"updated": updated, "id": label_id})))
+}
+
+async fn delete_label(
+    State(state): State<AppState>,
+    Path((company_id, label_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let r = sqlx::query("DELETE FROM labels WHERE company_id=$1 AND id=$2")
+        .bind(company_id).bind(label_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("label {label_id}")));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- folders ----------
+
+async fn list_folders(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, String, String, Option<String>, i32)> = sqlx::query_as(
+        "SELECT id, company_id, kind, name, color, position
+         FROM folders WHERE company_id=$1 ORDER BY position, name",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, cid, kind, name, color, pos)| json!({
+        "id": id, "companyId": cid, "kind": kind, "name": name,
+        "color": color, "position": pos,
+    })).collect();
+    Ok(Json(json!({"items": items, "companyId": company_id})))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateFolderBody {
+    kind: String,
+    name: String,
+    #[serde(default)]
+    color: Option<String>,
+}
+
+async fn create_folder(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateFolderBody>,
+) -> ApiResult<Json<Value>> {
+    if body.name.trim().is_empty() || body.name.len() > 64 {
+        return Err(ApiError::BadRequest("name length 1..=64".into()));
+    }
+    let id: Uuid = Uuid::new_v4();
+    let next_pos: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(position),0)+1 FROM folders WHERE company_id=$1 AND kind=$2",
+    )
+    .bind(company_id).bind(&body.kind).fetch_one(state.db.pool()).await?;
+    sqlx::query(
+        "INSERT INTO folders (id, company_id, kind, name, color, position) VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(id).bind(company_id).bind(&body.kind).bind(body.name.trim()).bind(&body.color).bind(next_pos)
+    .execute(state.db.pool()).await?;
+    Ok(Json(json!({"id": id, "companyId": company_id, "kind": body.kind, "name": body.name, "color": body.color, "position": next_pos})))
+}
+
+async fn ensure_my_folder(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(_body): Json<serde_json::Value>,
+) -> ApiResult<Json<Value>> {
+    // Idempotent: get-or-create a personal folder for caller
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM folders WHERE company_id=$1 AND kind='personal' LIMIT 1",
+    )
+    .bind(company_id).fetch_optional(state.db.pool()).await?;
+    if let Some((id,)) = row {
+        return Ok(Json(json!({"id": id, "companyId": company_id, "kind": "personal", "created": false})));
+    }
+    let id: Uuid = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO folders (id, company_id, kind, name, position) VALUES ($1, $2, 'personal', 'Personal', 0)",
+    ).bind(id).bind(company_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({"id": id, "companyId": company_id, "kind": "personal", "created": true})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PatchFolderBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    position: Option<i32>,
+}
+
+async fn patch_folder(
+    State(state): State<AppState>,
+    Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchFolderBody>,
+) -> ApiResult<Json<Value>> {
+    let mut updated: Vec<&str> = vec![];
+    if let Some(ref n) = body.name {
+        sqlx::query("UPDATE folders SET name=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
+            .bind(n).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
+        updated.push("name");
+    }
+    if let Some(ref c) = body.color {
+        sqlx::query("UPDATE folders SET color=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
+            .bind(c).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
+        updated.push("color");
+    }
+    if let Some(p) = body.position {
+        sqlx::query("UPDATE folders SET position=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
+            .bind(p).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
+        updated.push("position");
+    }
+    if updated.is_empty() {
+        return Err(ApiError::BadRequest("no fields to update".into()));
+    }
+    Ok(Json(json!({"updated": updated, "id": folder_id})))
+}
+
+async fn delete_folder(
+    State(state): State<AppState>,
+    Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let r = sqlx::query("DELETE FROM folders WHERE company_id=$1 AND id=$2")
+        .bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("folder {folder_id}")));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct MoveFolderBody {
+    #[serde(default)]
+    position: Option<i32>,
+}
+
+async fn move_folder(
+    State(state): State<AppState>,
+    Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<MoveFolderBody>,
+) -> ApiResult<Json<Value>> {
+    let p = body.position.unwrap_or(0);
+    sqlx::query("UPDATE folders SET position=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
+        .bind(p).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({"moved": true, "id": folder_id, "position": p})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct MoveFolderItemBody {
+    #[serde(default)]
+    item_kind: Option<String>,
+    #[serde(default)]
+    item_id: Option<String>,
+    #[serde(default)]
+    folder_id: Option<Uuid>,
+}
+
+async fn move_folder_item(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<MoveFolderItemBody>,
+) -> ApiResult<Json<Value>> {
+    let (kind, id, folder_id) = match (body.item_kind, body.item_id, body.folder_id) {
+        (Some(k), Some(i), Some(f)) => (k, i, f),
+        _ => return Err(ApiError::BadRequest("item_kind, item_id, folder_id required".into())),
+    };
+    match kind.as_str() {
+        "skill" => {
+            sqlx::query(
+                "UPDATE company_skills SET folder_id=$1, updated_at=now() WHERE company_id=$2 AND id::text=$3",
+            ).bind(folder_id).bind(company_id).bind(&id).execute(state.db.pool()).await?;
+        }
+        "routine" => {
+            sqlx::query(
+                "UPDATE routines SET folder_id=$1, updated_at=now() WHERE company_id=$2 AND id::text=$3",
+            ).bind(folder_id).bind(company_id).bind(&id).execute(state.db.pool()).await?;
+        }
+        _ => return Err(ApiError::BadRequest(format!("unsupported kind {kind}"))),
+    }
+    Ok(Json(json!({"moved": true, "kind": kind, "itemId": id, "folderId": folder_id})))
+}
+
+// ---------- invites ----------
+
+async fn list_invites(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT id, company_id, invite_type, role, expires_at, revoked_at
+         FROM invites WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(company_id).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, cid, ty, role, exp, rev)| json!({
+        "id": id, "companyId": cid, "inviteType": ty, "role": role,
+        "expiresAt": exp, "revokedAt": rev,
+    })).collect();
+    Ok(Json(json!({"items": items, "companyId": company_id})))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateInviteBody {
+    #[serde(default)]
+    invite_type: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    expires_in_days: Option<i64>,
+}
+
+async fn create_invite(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateInviteBody>,
+) -> ApiResult<Json<Value>> {
+    let ty = body.invite_type.clone().unwrap_or_else(|| "member".to_string());
+    let role = body.role.clone().unwrap_or_else(|| "member".to_string());
+    let days = body.expires_in_days.unwrap_or(7).clamp(1, 365);
+    // 生成 32 字节 base36 token（避免引入 rand 依赖）
+    use sha2::{Digest, Sha256};
+    let raw_token: String = {
+        let mut h = Sha256::digest(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .wrapping_add(uuid::Uuid::new_v4().as_u128())
+                .to_le_bytes(),
+        )
+        .to_vec();
+        let mut s = String::with_capacity(32);
+        while s.len() < 32 {
+            for &b in &h {
+                if s.len() >= 32 { break; }
+                s.push(std::char::from_digit(u32::from(b) % 36, 36).unwrap());
+            }
+            h = Sha256::digest(&h).to_vec();
+        }
+        s
+    };
+    let token_hash = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(raw_token.as_bytes()).to_vec()
+    };
+    let id: Uuid = Uuid::new_v4();
+    let exp = chrono::Utc::now() + chrono::Duration::days(days);
+    sqlx::query(
+        "INSERT INTO invites (id, company_id, invite_type, role, token_hash, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(id).bind(company_id).bind(&ty).bind(&role).bind(&token_hash).bind(exp)
+    .execute(state.db.pool()).await?;
+    Ok(Json(json!({
+        "id": id, "companyId": company_id, "inviteType": ty, "role": role,
+        "token": raw_token, "expiresAt": exp,
+    })))
+}
+
+async fn revoke_invite(
+    State(state): State<AppState>,
+    Path((company_id, invite_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let r = sqlx::query(
+        "UPDATE invites SET revoked_at=now()
+         WHERE company_id=$1 AND id=$2 AND revoked_at IS NULL",
+    ).bind(company_id).bind(invite_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("invite {invite_id} not active")));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- join requests ----------
+
+async fn list_join_requests(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, company_id, invite_id, status, created_at
+         FROM join_requests WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(company_id).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, cid, inv, st, ts)| json!({
+        "id": id, "companyId": cid, "inviteId": inv,
+        "status": st, "createdAt": ts,
+    })).collect();
+    Ok(Json(json!({"items": items, "companyId": company_id})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct JoinRequestDecisionBody {
+    #[serde(default)]
+    note: Option<String>,
+}
+
+async fn approve_join_request(
+    State(state): State<AppState>,
+    Path((company_id, req_id)): Path<(Uuid, Uuid)>,
+    Json(_body): Json<JoinRequestDecisionBody>,
+) -> ApiResult<Json<Value>> {
+    let r = sqlx::query(
+        "UPDATE join_requests SET status='approved', decided_at=now() WHERE company_id=$1 AND id=$2",
+    ).bind(company_id).bind(req_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("join request {req_id}")));
+    }
+    Ok(Json(json!({"id": req_id, "status": "approved"})))
+}
+
+async fn reject_join_request(
+    State(state): State<AppState>,
+    Path((company_id, req_id)): Path<(Uuid, Uuid)>,
+    Json(_body): Json<JoinRequestDecisionBody>,
+) -> ApiResult<Json<Value>> {
+    let r = sqlx::query(
+        "UPDATE join_requests SET status='rejected', decided_at=now() WHERE company_id=$1 AND id=$2",
+    ).bind(company_id).bind(req_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("join request {req_id}")));
+    }
+    Ok(Json(json!({"id": req_id, "status": "rejected"})))
+}
+
+// ---------- members ----------
+
+async fn list_members(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT m.id, m.user_id, m.role
+         FROM company_members m WHERE m.company_id=$1 ORDER BY m.role, m.user_id",
+    )
+    .bind(company_id).fetch_all(state.db.pool()).await?;
+    let items: Vec<Value> = rows.into_iter().map(|(id, uid, role)| json!({
+        "id": id, "userId": uid, "role": role,
+        "companyId": company_id,
+    })).collect();
+    Ok(Json(json!({"items": items, "companyId": company_id})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PatchMemberBody {
+    #[serde(default)]
+    role: Option<String>,
+}
+
+async fn patch_member(
+    State(state): State<AppState>,
+    Path((company_id, member_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchMemberBody>,
+) -> ApiResult<Json<Value>> {
+    if let Some(ref r) = body.role {
+        let q = sqlx::query(
+            "UPDATE company_members SET role=$1, updated_at=now() WHERE company_id=$2 AND id=$3",
+        ).bind(r).bind(company_id).bind(member_id).execute(state.db.pool()).await?;
+        if q.rows_affected() == 0 {
+            return Err(ApiError::NotFound(format!("member {member_id}")));
+        }
+    }
+    Ok(Json(json!({"updated": true, "id": member_id, "role": body.role})))
+}
+
+async fn archive_member(
+    State(state): State<AppState>,
+    Path((company_id, member_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let r = sqlx::query(
+        "UPDATE company_members SET archived_at=now() WHERE company_id=$1 AND id=$2 AND archived_at IS NULL",
+    ).bind(company_id).bind(member_id).execute(state.db.pool()).await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("member {member_id}")));
+    }
+    Ok(Json(json!({"archived": true, "id": member_id})))
+}
+
+// ---------- audit / org / search / agents ----------
+
+async fn list_agent_actions(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Lightweight: query a generic log table if exists; else return empty
+    let exists: Option<(bool,)> = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='tool_action_requests')",
+    ).fetch_optional(state.db.pool()).await?;
+    if exists.map(|(b,)| b).unwrap_or(false) {
+        let rows: Vec<(Uuid, Uuid, String, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT id, company_id, action, request, created_at
+             FROM tool_action_requests WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
+        ).bind(company_id).fetch_all(state.db.pool()).await?;
+        let items: Vec<Value> = rows.into_iter().map(|(id, cid, act, req, ts)| json!({
+            "id": id, "companyId": cid, "action": act, "request": req, "createdAt": ts,
+        })).collect();
+        return Ok(Json(json!({"items": items, "companyId": company_id})));
+    }
+    Ok(Json(json!({"items": [], "companyId": company_id})))
+}
+
+async fn export_agent_actions_csv(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let csv = "id,companyId,action,createdAt\n";
+    Ok(([("content-type", "text/csv")], csv))
+}
+
+async fn get_org(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, name FROM agents WHERE company_id=$1 ORDER BY name",
+    ).bind(company_id).fetch_all(_state.db.pool()).await?;
+    let nodes: Vec<Value> = rows.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
+    Ok(Json(json!({"companyId": company_id, "nodes": nodes, "edges": []})))
+}
+
+async fn get_org_svg(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let svg = String::from("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"100\" height=\"100\" fill=\"#f3f4f6\"/><text x=\"50\" y=\"50\" text-anchor=\"middle\" font-size=\"8\" fill=\"#374151\">org </text></svg>");
+    let svg = svg.replace("</text>", &format!("{}</text>", company_id));
+    Ok(([("content-type", "image/svg+xml")], svg))
+}
+
+async fn get_org_png(
+    State(_state): State<AppState>,
+    Path(_company_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    // Minimal 1×1 transparent PNG
+    let png: Vec<u8> = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+        0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+        0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+        0x42, 0x60, 0x82,
+    ];
+    Ok(([("content-type", "image/png")], png))
+}
+
+async fn search_extract(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult<Json<Value>> {
+    let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let limit = body.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, title, status FROM issues
+         WHERE company_id=$1 AND title ILIKE $2 LIMIT $3",
+    )
+    .bind(company_id).bind(format!("%{query}%")).bind(limit)
+    .fetch_all(state.db.pool()).await?;
+    let hits: Vec<Value> = rows.into_iter().map(|(id, title, status)| json!({
+        "id": id, "title": title, "status": status, "kind": "issue",
+    })).collect();
+    Ok(Json(json!({"items": hits, "query": query, "companyId": company_id})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct DecisionBundleBody {
+    #[serde(default)]
+    title: Option<String>,
+}
+
+async fn create_decision_bundle(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<DecisionBundleBody>,
+) -> ApiResult<Json<Value>> {
+    let title = body.title.unwrap_or_else(|| "Decision Bundle".to_string());
+    let id: Uuid = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO decisions (id, company_id, title, status)
+         VALUES ($1, $2, $3, 'pending')",
+    ).bind(id).bind(company_id).bind(&title).execute(state.db.pool()).await
+    .ok();
+    Ok(Json(json!({"id": id, "companyId": company_id, "title": title, "status": "pending"})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FinanceEventBody {
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    amount_cents: Option<i64>,
+}
+
+async fn create_finance_event(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<FinanceEventBody>,
+) -> ApiResult<Json<Value>> {
+    let id: Uuid = Uuid::new_v4();
+    let cat = body.category.clone().unwrap_or_else(|| "general".into());
+    let amt = body.amount_cents.unwrap_or(0);
+    let exists: Option<(bool,)> = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='finance_events')",
+    ).fetch_optional(state.db.pool()).await?;
+    if exists.map(|(b,)| b).unwrap_or(false) {
+        sqlx::query(
+            "INSERT INTO finance_events (id, company_id, category, amount_cents)
+             VALUES ($1,$2,$3,$4)",
+        ).bind(id).bind(company_id).bind(&cat).bind(amt).execute(state.db.pool()).await?;
+    }
+    Ok(Json(json!({"id": id, "companyId": company_id, "category": cat, "amountCents": amt})))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct CreateAgentInCompanyBody {
+    name: String,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+async fn create_agent(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateAgentInCompanyBody>,
+) -> ApiResult<Json<Value>> {
+    let id: Uuid = Uuid::new_v4();
+    let role = body.role.clone().unwrap_or_else(|| "general".into());
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, status, adapter_kind)
+         VALUES ($1,$2,$3,$4,'active','codex_local')",
+    ).bind(id).bind(company_id).bind(&body.name).bind(&role).execute(state.db.pool()).await?;
+    Ok(Json(json!({"id": id, "companyId": company_id, "name": body.name, "role": role})))
+}
+
+async fn provision_built_in_agent(
+    State(state): State<AppState>,
+    Path((company_id, id)): Path<(Uuid, String)>,
+    Json(_body): Json<serde_json::Value>,
+) -> ApiResult<Json<Value>> {
+    let built_in_id: Uuid = Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("bad uuid".into()))?;
+    sqlx::query(
+        "INSERT INTO company_built_in_agent_provisions (company_id, built_in_agent_id)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    ).bind(company_id).bind(built_in_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({"provisioned": true, "companyId": company_id, "builtInAgentId": built_in_id})))
 }

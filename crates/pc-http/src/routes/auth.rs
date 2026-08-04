@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/sign-out", post(sign_out))
         .route("/api/auth/issue-key", post(issue_key))
         .route("/api/auth/revoke-key", post(revoke_key))
+        .route("/api/auth/profile", get(get_profile).patch(patch_profile))
 }
 
 #[derive(Debug, Serialize)]
@@ -333,4 +334,101 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
         }
     }
     None
+}
+
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct ProfilePayload {
+    id: String,
+    email: Option<String>,
+    name: Option<String>,
+    image: Option<String>,
+}
+
+async fn get_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<ProfilePayload>> {
+    let user_id = require_user(&state, &headers).await?;
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, email, name, image FROM \"user\" WHERE id = $1",
+    )
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (id, email, name, image) =
+        row.ok_or_else(|| ApiError::Unauthorized("user not found".into()))?;
+    Ok(Json(ProfilePayload {
+        id,
+        email,
+        name,
+        image,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct PatchProfileBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    image: Option<String>,
+}
+
+async fn patch_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<PatchProfileBody>,
+) -> ApiResult<Json<ProfilePayload>> {
+    let user_id = require_user(&state, &headers).await?;
+    // 仅当至少一个字段提供才更新
+    if body.name.is_none() && body.image.is_none() {
+        return Err(ApiError::BadRequest(
+            "at least one of `name` or `image` required".into(),
+        ));
+    }
+    if let Some(ref n) = body.name {
+        if n.len() > 200 {
+            return Err(ApiError::BadRequest("name too long".into()));
+        }
+    }
+    if let Some(ref img) = body.image {
+        if img.len() > 4096 {
+            return Err(ApiError::BadRequest("image url too long".into()));
+        }
+    }
+    // 动态构建 update
+    if let Some(name) = body.name.as_ref() {
+        sqlx::query("UPDATE \"user\" SET name = $1, updated_at = now() WHERE id = $2")
+            .bind(name)
+            .bind(&user_id)
+            .execute(state.db.pool())
+            .await?;
+    }
+    if let Some(image) = body.image.as_ref() {
+        sqlx::query("UPDATE \"user\" SET image = $1, updated_at = now() WHERE id = $2")
+            .bind(image)
+            .bind(&user_id)
+            .execute(state.db.pool())
+            .await?;
+    }
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("auth.profile_updated", "user", Uuid::nil())
+            .with_actor(&user_id),
+    );
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, email, name, image FROM \"user\" WHERE id = $1",
+    )
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (id, email, name, image) =
+        row.ok_or_else(|| ApiError::Unauthorized("user not found".into()))?;
+    Ok(Json(ProfilePayload {
+        id,
+        email,
+        name,
+        image,
+    }))
 }
