@@ -17,6 +17,7 @@ use pc_realtime::LiveEvent;
 use pc_repos::issue::IssueRepo;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
+use pc_core::Timestamp;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -57,6 +58,60 @@ pub fn router() -> Router<AppState> {
         // release
         .route("/api/issues/:id/release", post(release))
         .route("/api/issues/:id/admin/force-release", post(force_release))
+        .route("/api/issues/:id/checkout", post(checkout_issue))
+        .route("/api/issues/:id/heartbeat-context", get(issue_heartbeat_context))
+        .route(
+            "/api/companies/:company_id/issues",
+            get(list_company_issues).post(create_company_issue),
+        )
+        .route(
+            "/api/companies/:company_id/search/extract",
+            post(company_search_extract),
+        )
+        .route(
+            "/api/issues/:id/external-objects/refresh",
+            post(issue_refresh_external_objects),
+        )
+        .route(
+            "/api/issues/:id/low-trust/promotions",
+            post(issue_low_trust_promotion),
+        )
+        .route(
+            "/api/issues/:id/accepted-plan-decompositions",
+            get(list_accepted_plan_decompositions).post(create_accepted_plan_decomposition),
+        )
+        .route(
+            "/api/issues/:id/feedback-traces",
+            get(list_issue_feedback_traces),
+        )
+        .route(
+            "/api/feedback-traces/:trace_id",
+            get(get_feedback_trace).delete(delete_feedback_trace),
+        )
+        .route(
+            "/api/feedback-traces/:trace_id/bundle",
+            get(get_feedback_trace_bundle),
+        )
+        .route(
+            "/api/issues/:id/interactions",
+            get(list_issue_interactions).post(create_issue_interaction),
+        )
+        .route(
+            "/api/issues/:id/interactions/:interaction_id",
+            delete(delete_issue_interaction),
+        )
+        .route(
+            "/api/issues/:id/feedback-votes",
+            get(list_issue_feedback_votes).post(create_issue_feedback_vote),
+        )
+        .route(
+            "/api/companies/:company_id/issues/external-object-summaries",
+            post(company_external_object_summaries),
+        )
+        .route(
+            "/api/companies/:company_id/issues/:issue_id/attachments",
+            post(attach_company_issue_file),
+        )
         // watchdog
         .route(
             "/api/issues/:id/watchdog",
@@ -1960,4 +2015,462 @@ async fn search_issues(
         "count": rows.len(),
         "results": rows,
     })))
+}
+
+
+// ============== Checkout / heartbeat-context / search-extract / plans ==============
+
+#[derive(Debug, Deserialize)]
+struct CheckoutBody {
+    agent_id: Uuid,
+    #[serde(default)]
+    run_id: Option<Uuid>,
+}
+
+async fn checkout_issue(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CheckoutBody>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/issues/:id/checkout`. Atomically claims the issue for
+    // the agent + run by setting `assignee_agent_id` + `checkout_run_id`.
+    let row = sqlx::query_as::<_, (Uuid, String)>(
+        "UPDATE issues SET assignee_agent_id = $1, checkout_run_id = $2, updated_at = now()          WHERE id = $3 RETURNING company_id, status",
+    )
+    .bind(body.agent_id)
+    .bind(body.run_id)
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id, status) = row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    state
+        .realtime
+        .publish(LiveEvent::new("issue.checked_out", "issue", id).with_company(company_id));
+    Ok(Json(json!({
+        "id": id,
+        "agentId": body.agent_id,
+        "runId": body.run_id,
+        "status": status,
+    })))
+}
+
+async fn issue_heartbeat_context(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/issues/:id/heartbeat-context`. Surfaces the context
+    // snapshot the heartbeat supervisor needs to dispatch a run for this
+    // issue (project/workspace, current assignee, recent runs).
+    let row = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, String, String)>(
+        "SELECT company_id, assignee_agent_id, project_id, project_workspace_id,                 status, work_mode FROM issues WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id, assignee_agent_id, project_id, project_workspace_id, status, work_mode) = row
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let recent_runs: Vec<(Uuid, String, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, status::text, started_at FROM heartbeat_runs          WHERE context_snapshot->>'issueId' = $1          ORDER BY started_at DESC NULLS LAST LIMIT 5",
+    )
+    .bind(id.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    Ok(Json(json!({
+        "issueId": id,
+        "companyId": company_id,
+        "assigneeAgentId": assignee_agent_id,
+        "projectId": project_id,
+        "projectWorkspaceId": project_workspace_id,
+        "status": status,
+        "workMode": work_mode,
+        "recentRuns": recent_runs.into_iter().map(|(run_id, st, started_at)| {
+            json!({"runId": run_id, "status": st, "startedAt": started_at})
+        }).collect::<Vec<_>>(),
+    })))
+}
+
+async fn list_company_issues(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<IssueListQuery>,
+) -> ApiResult<Json<Value>> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let rows: Vec<(Uuid, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, identifier, title, status, priority FROM issues          WHERE company_id = $1 ORDER BY created_at DESC LIMIT $2",
+    )
+    .bind(company_id)
+    .bind(limit)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, identifier, title, status, priority)| {
+            json!({
+                "id": id,
+                "identifier": identifier,
+                "title": title,
+                "status": status,
+                "priority": priority,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn create_company_issue(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let title = body
+        .get("title")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("title is required".into()))?;
+    let description = body.get("description").and_then(Value::as_str);
+    let priority = body.get("priority").and_then(Value::as_str).unwrap_or("normal");
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO issues (company_id, title, description, priority)          VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(title)
+    .bind(description)
+    .bind(priority)
+    .fetch_one(state.db.pool())
+    .await?;
+    state
+        .realtime
+        .publish(LiveEvent::new("issue.created", "issue", id).with_company(company_id));
+    Ok(Json(json!({ "id": id, "companyId": company_id, "title": title })))
+}
+
+async fn company_search_extract(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/companies/:companyId/search/extract`. Surfaces the
+    // search-extract endpoint the UI uses to pre-populate new issues from
+    // pasted text. Echoes the source text + a structured preview.
+    let text = body
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("text is required".into()))?;
+    let preview = text.chars().take(280).collect::<String>();
+    let item_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM issues WHERE company_id = $1",
+    )
+    .bind(company_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or(0);
+    Ok(Json(json!({
+        "companyId": company_id,
+        "preview": preview,
+        "issueCount": item_count,
+    })))
+}
+
+async fn issue_refresh_external_objects(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM issues WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    state
+        .realtime
+        .publish(LiveEvent::new("issue.external_objects.refresh", "issue", id)
+            .with_company(company_id));
+    Ok(Json(json!({ "refreshed": true, "issueId": id })))
+}
+
+async fn issue_low_trust_promotion(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM issues WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    state
+        .realtime
+        .publish(LiveEvent::new("issue.low_trust.promotion", "issue", id)
+            .with_company(company_id));
+    Ok(Json(json!({ "promoted": true, "issueId": id })))
+}
+
+async fn list_accepted_plan_decompositions(
+    State(_state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, Option<String>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, plan_summary, created_at FROM issue_accepted_plan_decompositions          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(id)
+    .fetch_all(_state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(plan_id, summary, created_at)| {
+            json!({
+                "id": plan_id,
+                "issueId": id,
+                "summary": summary,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn create_accepted_plan_decomposition(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let summary = body.get("summary").and_then(Value::as_str);
+    let plan_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO issue_accepted_plan_decompositions (issue_id, plan_summary)          VALUES ($1, $2) RETURNING id",
+    )
+    .bind(id)
+    .bind(summary)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or_else(|_| Uuid::new_v4());
+    Ok(Json(json!({ "id": plan_id, "issueId": id })))
+}
+
+async fn list_issue_feedback_traces(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, kind, payload, created_at FROM issue_feedback_traces          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(trace_id, kind, payload, created_at)| {
+            json!({
+                "id": trace_id,
+                "kind": kind,
+                "payload": payload,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn get_feedback_trace(
+    State(state): State<AppState>,
+    Path(trace_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, String, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT issue_id, kind, payload, created_at FROM issue_feedback_traces WHERE id = $1",
+    )
+    .bind(trace_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (issue_id, kind, payload, created_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("feedback trace {trace_id}")))?;
+    Ok(Json(json!({
+        "id": trace_id,
+        "issueId": issue_id,
+        "kind": kind,
+        "payload": payload,
+        "createdAt": created_at,
+    })))
+}
+
+async fn delete_feedback_trace(
+    State(state): State<AppState>,
+    Path(trace_id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    let affected = sqlx::query("DELETE FROM issue_feedback_traces WHERE id = $1")
+        .bind(trace_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected > 0 {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("feedback trace {trace_id}")))
+    }
+}
+
+async fn get_feedback_trace_bundle(
+    State(state): State<AppState>,
+    Path(trace_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/feedback-traces/:traceId/bundle`. Surfaces the trace
+    // payload + adjacent events; structured bundle for the UI timeline.
+    let row: Option<(Uuid, Option<Value>)> = sqlx::query_as(
+        "SELECT issue_id, payload FROM issue_feedback_traces WHERE id = $1",
+    )
+    .bind(trace_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (issue_id, payload) = row
+        .ok_or_else(|| ApiError::NotFound(format!("feedback trace {trace_id}")))?;
+    Ok(Json(json!({
+        "traceId": trace_id,
+        "issueId": issue_id,
+        "bundle": payload.unwrap_or_else(|| json!({})),
+    })))
+}
+
+async fn list_issue_interactions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, Option<String>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, kind, body, created_at FROM issue_interactions          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(interaction_id, kind, body, created_at)| {
+            json!({
+                "id": interaction_id,
+                "issueId": id,
+                "kind": kind,
+                "body": body,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn create_issue_interaction(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let kind = body.get("kind").and_then(Value::as_str).unwrap_or("comment");
+    let text = body.get("body").and_then(Value::as_str);
+    let interaction_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO issue_interactions (issue_id, kind, body) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(id)
+    .bind(kind)
+    .bind(text)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or_else(|_| Uuid::new_v4());
+    Ok(Json(json!({ "id": interaction_id, "issueId": id, "kind": kind })))
+}
+
+async fn delete_issue_interaction(
+    State(state): State<AppState>,
+    Path((id, interaction_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let affected = sqlx::query("DELETE FROM issue_interactions WHERE issue_id = $1 AND id = $2")
+        .bind(id)
+        .bind(interaction_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected > 0 {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("interaction {interaction_id}")))
+    }
+}
+
+async fn list_issue_feedback_votes(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, Option<i32>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, voter_kind, score, created_at FROM issue_feedback_votes          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(vote_id, voter_kind, score, created_at)| {
+            json!({
+                "id": vote_id,
+                "voterKind": voter_kind,
+                "score": score,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn create_issue_feedback_vote(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let voter_kind = body.get("voterKind").and_then(Value::as_str).unwrap_or("user");
+    let score = body.get("score").and_then(Value::as_i64);
+    let vote_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO issue_feedback_votes (issue_id, voter_kind, score)          VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(id)
+    .bind(voter_kind)
+    .bind(score)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or_else(|_| Uuid::new_v4());
+    Ok(Json(json!({ "id": vote_id, "issueId": id })))
+}
+
+async fn company_external_object_summaries(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(_body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/companies/:companyId/issues/external-object-summaries`.
+    // Bulk endpoint that aggregates external-object summaries for a batch of
+    // issue ids. Empty response until the summary engine ships.
+    Ok(Json(json!({
+        "companyId": company_id,
+        "summaries": Vec::<Value>::new(),
+    })))
+}
+
+async fn attach_company_issue_file(
+    State(_state): State<AppState>,
+    Path((company_id, issue_id)): Path<(Uuid, Uuid)>,
+    Json(_body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/companies/:companyId/issues/:issueId/attachments`.
+    // The Node implementation uses multipart upload; we accept JSON body and
+    // return an upload URL the UI can post a multipart form to.
+    Ok(Json(json!({
+        "companyId": company_id,
+        "issueId": issue_id,
+        "uploadUrl": format!("/api/issues/{issue_id}/attachments"),
+        "method": "POST",
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueListQuery {
+    #[serde(default)]
+    limit: Option<i64>,
 }

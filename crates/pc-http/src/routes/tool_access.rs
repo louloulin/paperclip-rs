@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -13,6 +13,7 @@ use std::fmt::Write;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 
 pub fn router() -> Router<AppState> {
@@ -39,6 +40,54 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/tools/oauth/:connection_id/start", post(oauth_start))
         .route("/api/tools/oauth/callback", get(oauth_callback))
+        .route(
+            "/api/companies/:company_id/tools/applications",
+            get(list_tool_applications).post(create_tool_application),
+        )
+        .route(
+            "/api/companies/:company_id/tools/applications/:application_id",
+            patch(patch_tool_application).delete(delete_tool_application),
+        )
+        .route(
+            "/api/tool-applications/:application_id",
+            get(get_tool_application).patch(patch_tool_application_by_id).delete(delete_tool_application_by_id),
+        )
+        .route(
+            "/api/companies/:company_id/tools/profiles",
+            get(list_tool_profiles),
+        )
+        .route(
+            "/api/tool-profiles/:profile_id",
+            delete(delete_tool_profile),
+        )
+        .route(
+            "/api/companies/:company_id/tools/policies",
+            get(list_tool_policies),
+        )
+        .route(
+            "/api/tool-applications/:application_id/grants",
+            get(list_application_grants),
+        )
+        .route(
+            "/api/companies/:company_id/tools/runtime-health",
+            get(tool_runtime_health),
+        )
+        .route(
+            "/api/companies/:company_id/tools/runtime-slots",
+            get(list_tool_runtime_slots),
+        )
+        .route(
+            "/api/companies/:company_id/tools/stdio-templates",
+            get(list_tool_stdio_templates),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/grants",
+            get(list_connection_grants),
+        )
+        .route(
+            "/api/companies/:company_id/tools/action-requests",
+            get(list_tool_action_requests),
+        )
         .route(
             "/api/companies/:company_id/tools/apps/:connection_id/finish",
             post(finish_oauth),
@@ -789,4 +838,399 @@ async fn upsert_oauth_state(state: &AppState, company_id: Uuid, conn: Uuid) -> A
     Ok(format!(
         "/oauth/authorize?response_type=code&client_id=paperclip&state={state_token}"
     ))
+}
+
+
+// ============== Tool applications / profiles / policies / runtime ==============
+
+async fn list_tool_applications(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/companies/:companyId/tools/applications`. Returns the
+    // company's registered tool applications (MCP server descriptors, OAuth
+    // clients, stdio templates). Empty array when no rows exist.
+    let rows: Vec<(Uuid, String, String, Option<String>, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, name, kind, description, config, created_at FROM tool_applications          WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, kind, description, config, created_at)| {
+            json!({
+                "id": id,
+                "name": name,
+                "kind": kind,
+                "description": description,
+                "config": config.unwrap_or_else(|| json!({})),
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn create_tool_application(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let name = body
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("name is required".into()))?;
+    let kind = body
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let description = body.get("description").and_then(Value::as_str);
+    let config = body.get("config").cloned().unwrap_or_else(|| json!({}));
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO tool_applications (company_id, name, kind, description, config)          VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(name)
+    .bind(kind)
+    .bind(description)
+    .bind(&config)
+    .fetch_one(state.db.pool())
+    .await?;
+    state
+        .realtime
+        .publish(LiveEvent::new("tool.application.created", "tool_application", id)
+            .with_company(company_id));
+    Ok(Json(json!({
+        "id": id,
+        "companyId": company_id,
+        "name": name,
+        "kind": kind,
+        "description": description,
+        "config": config,
+    })))
+}
+
+async fn get_tool_application(
+    State(state): State<AppState>,
+    Path(application_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, String, String, Option<String>, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT company_id, name, kind, description, config, created_at FROM tool_applications WHERE id = $1",
+    )
+    .bind(application_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id, name, kind, description, config, created_at) = row
+        .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
+    Ok(Json(json!({
+        "id": application_id,
+        "companyId": company_id,
+        "name": name,
+        "kind": kind,
+        "description": description,
+        "config": config.unwrap_or_else(|| json!({})),
+        "createdAt": created_at,
+    })))
+}
+
+async fn patch_tool_application(
+    State(state): State<AppState>,
+    Path((company_id, application_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let name = body.get("name").and_then(Value::as_str);
+    let description = body.get("description").and_then(Value::as_str);
+    let config = body.get("config").cloned();
+    sqlx::query(
+        "UPDATE tool_applications SET             name = COALESCE($1, name),             description = COALESCE($2, description),             config = COALESCE($3, config),             updated_at = now()          WHERE company_id = $4 AND id = $5",
+    )
+    .bind(name)
+    .bind(description)
+    .bind(config)
+    .bind(company_id)
+    .bind(application_id)
+    .execute(state.db.pool())
+    .await?;
+    state
+        .realtime
+        .publish(LiveEvent::new("tool.application.updated", "tool_application", application_id)
+            .with_company(company_id));
+    Ok(Json(json!({ "id": application_id, "updated": true })))
+}
+
+async fn patch_tool_application_by_id(
+    State(state): State<AppState>,
+    Path(application_id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM tool_applications WHERE id = $1",
+    )
+    .bind(application_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id,) = row
+        .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
+    patch_tool_application(State(state), Path((company_id, application_id)), Json(body)).await
+}
+
+async fn delete_tool_application(
+    State(state): State<AppState>,
+    Path((company_id, application_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let affected = sqlx::query("DELETE FROM tool_applications WHERE company_id = $1 AND id = $2")
+        .bind(company_id)
+        .bind(application_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected > 0 {
+        state
+            .realtime
+            .publish(LiveEvent::new("tool.application.deleted", "tool_application", application_id)
+                .with_company(company_id));
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("tool application {application_id}")))
+    }
+}
+
+async fn delete_tool_application_by_id(
+    State(state): State<AppState>,
+    Path(application_id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM tool_applications WHERE id = $1",
+    )
+    .bind(application_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let (company_id,) = row
+        .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
+    delete_tool_application(State(state), Path((company_id, application_id))).await
+}
+
+async fn list_tool_profiles(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, String, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, name, kind, scope, updated_at FROM tool_profiles          WHERE company_id = $1 ORDER BY updated_at DESC LIMIT 200",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, kind, scope, updated_at)| {
+            json!({
+                "id": id,
+                "name": name,
+                "kind": kind,
+                "scope": scope,
+                "updatedAt": updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn delete_tool_profile(
+    State(state): State<AppState>,
+    Path(profile_id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    let affected = sqlx::query("DELETE FROM tool_profiles WHERE id = $1")
+        .bind(profile_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected > 0 {
+        state
+            .realtime
+            .publish(LiveEvent::new("tool.profile.deleted", "tool_profile", profile_id));
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("tool profile {profile_id}")))
+    }
+}
+
+async fn list_tool_policies(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, String, Option<Value>)> = sqlx::query_as(
+        "SELECT id, name, decision, scope FROM tool_policies          WHERE company_id = $1 ORDER BY name ASC LIMIT 200",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, decision, scope)| {
+            json!({
+                "id": id,
+                "name": name,
+                "decision": decision,
+                "scope": scope,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_application_grants(
+    State(_state): State<AppState>,
+    Path(application_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/tool-applications/:applicationId/grants`. Surfaces the
+    // OAuth grants (connection-level access tokens) bound to the application.
+    let rows: Vec<(Uuid, Uuid, String, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, connection_id, scope, expires_at FROM tool_oauth_grants          WHERE application_id = $1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(application_id)
+    .fetch_all(_state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, connection_id, scope, expires_at)| {
+            json!({
+                "id": id,
+                "connectionId": connection_id,
+                "scope": scope,
+                "expiresAt": expires_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn tool_runtime_health(
+    State(_state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    // Mirrors Node `/companies/:companyId/tools/runtime-health`. Aggregates
+    // the latest runtime slot heartbeat into a coarse health summary.
+    let row: Option<(i64, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT COUNT(*) AS active, MAX(last_heartbeat_at) AS last_heartbeat          FROM tool_runtime_slots WHERE company_id = $1 AND status = 'active'",
+    )
+    .bind(company_id)
+    .fetch_optional(_state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (active, last_heartbeat) = row.unwrap_or((0, None));
+    Ok(Json(json!({
+        "companyId": company_id,
+        "activeSlots": active,
+        "lastHeartbeatAt": last_heartbeat,
+        "ok": active > 0,
+    })))
+}
+
+async fn list_tool_runtime_slots(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, String, Option<Timestamp>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, slot_kind, status::text, acquired_at, last_heartbeat_at          FROM tool_runtime_slots WHERE company_id = $1 ORDER BY acquired_at DESC LIMIT 100",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, slot_kind, status, acquired_at, last_heartbeat_at)| {
+            json!({
+                "id": id,
+                "slotKind": slot_kind,
+                "status": status,
+                "acquiredAt": acquired_at,
+                "lastHeartbeatAt": last_heartbeat_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_tool_stdio_templates(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, String, Option<String>, Option<Value>)> = sqlx::query_as(
+        "SELECT id, name, command, description, env_schema FROM tool_stdio_command_templates          WHERE company_id = $1 ORDER BY name ASC LIMIT 200",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, command, description, env_schema)| {
+            json!({
+                "id": id,
+                "name": name,
+                "command": command,
+                "description": description,
+                "envSchema": env_schema,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_connection_grants(
+    State(_state): State<AppState>,
+    Path(connection_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, scope, expires_at FROM tool_oauth_grants          WHERE connection_id = $1 ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(connection_id)
+    .fetch_all(_state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, scope, expires_at)| {
+            json!({
+                "id": id,
+                "scope": scope,
+                "expiresAt": expires_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn list_tool_action_requests(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(Uuid, String, String, Option<String>, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
+        "SELECT id, status::text, action_kind, requested_by, payload, created_at FROM tool_action_requests          WHERE company_id = $1 ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(company_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, status, action_kind, requested_by, payload, created_at)| {
+            json!({
+                "id": id,
+                "status": status,
+                "actionKind": action_kind,
+                "requestedBy": requested_by,
+                "payload": payload,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
 }

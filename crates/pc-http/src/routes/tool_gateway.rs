@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -21,7 +21,51 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/tool-gateway/gateways/:gateway_id",
-            get(get_gateway).post(post_gateway),
+            get(get_gateway).patch(patch_gateway),
+        )
+        .route(
+            "/api/tool-gateway/gateways/:gateway_id/mcp",
+            get(gateway_mcp_get).post(gateway_mcp_post),
+        )
+        .route(
+            "/api/mcp/gateways/:gateway_public_id",
+            get(mcp_public_get).post(mcp_public_post),
+        )
+        .route("/api/tool-gateway/tools", get(list_gateway_tools))
+        .route("/api/tool-gateway/tools/call", post(call_gateway_tool))
+        .route("/api/tool-gateway/sessions", get(list_sessions).post(create_session))
+        .route(
+            "/api/tool-gateway/sessions/:session_id/revoke",
+            post(revoke_session),
+        )
+        .route(
+            "/api/tool-gateway/runtime-slots",
+            get(list_runtime_slots),
+        )
+        .route(
+            "/api/tool-gateway/runtime-slots/:slot_id/restart",
+            post(restart_runtime_slot),
+        )
+        .route(
+            "/api/tool-gateway/runtime-slots/:slot_id/stop",
+            post(stop_runtime_slot),
+        )
+        .route("/api/tool-gateway/audit", get(list_audit_events))
+        .route(
+            "/api/tool-gateway/action-requests/:request_id/approve",
+            post(approve_action_request),
+        )
+        .route(
+            "/api/tool-gateway/action-requests/:request_id/decline",
+            post(decline_action_request),
+        )
+        .route(
+            "/api/tool-gateway/gateways/:gateway_id/tokens",
+            post(issue_gateway_token),
+        )
+        .route(
+            "/api/tool-gateway/gateway-tokens/:token_id/revoke",
+            post(revoke_gateway_token),
         )
 }
 

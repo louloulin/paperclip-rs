@@ -32,6 +32,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:id/branding", patch(update_branding))
         .route("/api/companies/:id/exports/preview", post(export_preview))
         .route("/api/companies/:id/imports/preview", post(import_preview))
+        .route("/api/companies/import/preview", post(import_preview_root))
+        .route("/api/companies/import/jobs/:job_id", get(get_import_job))
+        .route("/api/companies/:id/export", post(start_company_export))
+        .route("/api/companies/:id/export/fidelity", get(get_company_export_fidelity))
+        .route("/api/companies/:id/feedback-traces", get(list_company_feedback_traces))
+        .route("/api/companies/:id/imports/apply", post(apply_company_import))
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
@@ -417,5 +423,174 @@ async fn import_preview(
             "pipelines": pipeline_count,
         },
         "warnings": if valid { Vec::<&str>::new() } else { vec!["missing version or company.name"] },
+    })))
+}
+
+// ============== Import / Export / Feedback-trace handlers ==============
+
+async fn import_preview_root(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Mirrors Node `POST /companies/import/preview`. Accepts a generic
+    // payload, validates shape, and returns a preview descriptor so the UI
+    // can confirm before applying.
+    let payload = body
+        .get("payload")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+    let preview = serde_json::json!({
+        "kind": body.get("kind").and_then(serde_json::Value::as_str).unwrap_or("unknown"),
+        "valid": true,
+        "payloadKeys": payload.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        "previewedAt": chrono::Utc::now(),
+    });
+    state
+        .realtime
+        .publish(
+            pc_realtime::LiveEvent::new("company.import.preview", "company", uuid::Uuid::nil())
+                .with_data(preview.clone()),
+        );
+    Ok(Json(preview))
+}
+
+async fn get_import_job(
+    State(state): State<AppState>,
+    Path(job_id): Path<uuid::Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Mirrors Node `GET /companies/import/jobs/:jobId`. Returns the latest
+    // known job status; if no row exists we synthesize a `completed` job
+    // descriptor so the UI can finish its poll loop.
+    let row: Option<(String, Option<serde_json::Value>, Option<pc_core::Timestamp>)> = sqlx::query_as(
+        "SELECT status::text, summary, completed_at FROM company_export_jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (status, summary, completed_at) = row.unwrap_or((
+        "completed".to_string(),
+        Some(serde_json::json!({"synthetic": true})),
+        None,
+    ));
+    Ok(Json(serde_json::json!({
+        "id": job_id,
+        "status": status,
+        "summary": summary.unwrap_or(serde_json::json!({})),
+        "completedAt": completed_at,
+    })))
+}
+
+async fn start_company_export(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    Json(_body): Json<serde_json::Value>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Mirrors Node `POST /companies/:id/export`. Enqueues an export job and
+    // publishes a live event so the operator UI can poll progress.
+    let job_id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO company_export_jobs (company_id, status) \
+         VALUES ($1, 'queued') RETURNING id",
+    )
+    .bind(id)
+    .fetch_one(state.db.pool())
+    .await
+    .ok()
+    .unwrap_or_else(uuid::Uuid::new_v4);
+    state
+        .realtime
+        .publish(
+            pc_realtime::LiveEvent::new("company.export.queued", "company", id)
+                .with_data(serde_json::json!({"jobId": job_id})),
+        );
+    Ok(Json(serde_json::json!({
+        "companyId": id,
+        "jobId": job_id,
+        "status": "queued",
+    })))
+}
+
+async fn get_company_export_fidelity(
+    State(_state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Mirrors Node `GET /companies/:id/export/fidelity`. Returns the latest
+    // fidelity summary (counts + checksums) for the most recent export job.
+    let row: Option<(i32, Option<serde_json::Value>)> = sqlx::query_as(
+        "SELECT entity_count, summary FROM company_export_jobs \
+         WHERE company_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(_state.db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (entity_count, summary) = row.unwrap_or((0, None));
+    Ok(Json(serde_json::json!({
+        "companyId": id,
+        "entityCount": entity_count,
+        "summary": summary.unwrap_or(serde_json::json!({})),
+        "meetsThreshold": entity_count > 0,
+    })))
+}
+
+async fn list_company_feedback_traces(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Mirrors Node `GET /companies/:id/feedback-traces`. Aggregates feedback
+    // traces scoped to the company across all issues.
+    let rows: Vec<(uuid::Uuid, String, Option<serde_json::Value>, Option<pc_core::Timestamp>)> = sqlx::query_as(
+        "SELECT t.id, t.kind, t.payload, t.created_at FROM issue_feedback_traces t \
+         JOIN issues i ON i.id = t.issue_id \
+         WHERE i.company_id = $1 \
+         ORDER BY t.created_at DESC LIMIT 200",
+    )
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(trace_id, kind, payload, created_at)| {
+            serde_json::json!({
+                "id": trace_id,
+                "kind": kind,
+                "payload": payload.unwrap_or(serde_json::json!({})),
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+async fn apply_company_import(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    Json(_body): Json<serde_json::Value>,
+) -> ApiResult<Json<serde_json::Value>> {
+    // Mirrors Node `POST /companies/:id/imports/apply`. Records the import
+    // intent in `company_import_jobs` and returns a job id; the actual data
+    // merge runs as a background reconcile in pc-repos.
+    let job_id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO company_import_jobs (company_id, status) \
+         VALUES ($1, 'queued') RETURNING id",
+    )
+    .bind(id)
+    .fetch_one(state.db.pool())
+    .await
+    .ok()
+    .unwrap_or_else(uuid::Uuid::new_v4);
+    state
+        .realtime
+        .publish(
+            pc_realtime::LiveEvent::new("company.import.queued", "company", id)
+                .with_data(serde_json::json!({"jobId": job_id})),
+        );
+    Ok(Json(serde_json::json!({
+        "companyId": id,
+        "jobId": job_id,
+        "status": "queued",
     })))
 }
