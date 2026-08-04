@@ -1267,3 +1267,53 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 > - 修复 1 处编译错：`content.unwrap_or_default()` — content 已是 `String` 不是 `Option<String>`
 > - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
 > - **本轮累计**：invites 公开端点从 ~25% → **~90%**（修复了关键 bug + 6 个新 endpoint）
+
+## 第三十九轮增量（Round 39 — tool-profiles / tool-profile-entries CRUD 深补）
+
+> 第三十九轮增量：
+> - **tool_access.rs** 2706 → 3005+ 行（**7 个新 endpoint / +299 行**）：
+>   - **`GET /api/tool-profiles/:profile_id/new-tools`**：列出 `tool_applications` 中**未在 profile entries** 出现过的工具（`NOT EXISTS` 子查询），最多 100 条
+>   - **`POST /api/tool-profiles/:profile_id/new-tools/review`**：body `{approve: Uuid[], dismiss: Uuid[]}`；approve 列表批量 INSERT 到 `tool_profile_entries`（ON CONFLICT DO NOTHING），发 `tool_profile.new_tools_reviewed` LiveEvent
+>   - **`POST /api/tool-profiles/:profile_id/duplicate`**：在事务中复制 profile + 全部 entries（保留 selector_type/effect/application_id/connection_id/catalog_entry_id/tool_name/risk_level/conditions）；返回 `{id, profileKey, sourceProfileId}` + 发 `tool_profile.duplicated` LiveEvent
+>   - **`POST /api/tool-profiles/:profile_id/entries`**：新增 entry（defaults: selector_type='tool_name', effect='include'），返回 201 + 发 `tool_profile_entry.created`
+>   - **`GET /api/tool-profile-entries/:entry_id`**：读单 entry 全部字段（含 conditions jsonb）
+>   - **`PATCH /api/tool-profile-entries/:entry_id`**：用 `COALESCE($2, effect)` 部分更新 effect/risk_level/conditions；至少一个字段必须提供否则 400
+>   - **`DELETE /api/tool-profile-entries/:entry_id`**：硬删 + 发 `tool_profile_entry.deleted` LiveEvent
+> - 新增 5 个结构体：`ReviewNewToolsBody` / `DuplicateToolProfileBody` / `CreateToolProfileEntryBody` / `PatchToolProfileEntryBody`（全部 `#[serde(rename_all = "camelCase")]`）
+> - 修复 2 处编译错：handler 返回类型从 `Json<(StatusCode, Json<Value>)>` 改为 `impl IntoResponse`（axum 不能解析嵌套 Json tuple）
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：tool-profiles/entries 模块从 ~70% → **~95%**（duplicate + new-tools review + entries CRUD 全闭环）
+
+## 第四十轮增量（Round 40 — cases automation 生命周期深补）
+
+> 第四十轮增量：
+> - **cases.rs** 1523 → 1895+ 行（**8 个新 endpoint / +372 行**）：
+>   - **`POST /api/cases/:case_id/breakdown`**：事务内批量创建子 case（sequential `case_number` + `CASE-<n>` identifier），每个子 case `parent_case_id = :case_id`；写 `case_events.kind='child_linked'` + `case.broken_down` LiveEvent
+>   - **`POST /api/cases/:case_id/suggest-transition`**：记录 transition 建议（toStageKey/reason/confidence），写 `case_events.kind='fields_changed'` + `case.transition_suggested` LiveEvent（返回随机 suggestion_id）
+>   - **`POST /api/cases/:case_id/resolve-suggestion`**：decision ∈ `{accepted|rejected}`，写 `case_events.kind='fields_changed'` + `case.suggestion_resolved` LiveEvent
+>   - **`POST /api/cases/:case_id/acknowledge-drift`**：写 `case_events` + `case.drift_acknowledged` LiveEvent（无 body）
+>   - **`PUT /api/cases/:case_id/blockers`**：用 `pipeline_case_blockers` 表做 idempotent 替换（先 DELETE 全部再 INSERT 新的，ON CONFLICT DO NOTHING），自动排除 self-block（`blocker_id == case_id`）
+>   - **`POST /api/cases/:case_id/open-conversation`**：缺 `case_conversations` 表时合成 — 创建 `issues` row with `origin_kind='case_conversation'` + `origin_fingerprint='case-conversation:<id>'`，通过 `case_issue_links.role='origin'` 反向关联
+>   - **`GET /api/cases/:case_id/context-pack`**：bundle `{case, linkedIssues[], childCount, events[<=50], recentEventCount}` — events 按 `created_at DESC` 取最近 50 条；linkedIssues INNER JOIN issues
+>   - **`GET /api/cases/:case_id/outputs`**：聚合 linkRole + completedAt — INNER JOIN `case_issue_links` + `issues`
+> - 新增 6 个结构体：`BreakdownCaseBody` / `BreakdownChild` / `SuggestTransitionBody` / `ResolveSuggestionBody` / `ReplaceBlockersBody` / `OpenConversationBody`（全部 `#[serde(rename_all = "camelCase")]`）
+> - 修复 1 处编译错：routing import 加 `put`（PUT blockers endpoint 需要）
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：cases 模块从 ~70% → **~88%**（automation 生命周期 8 个端点全闭环，仅剩 automation/retry* 4 个端点 + context-pack 已经在 round 40 实现）
+
+## 第四十一轮增量（Round 41 — instance-level admin + legacy short aliases + pipelines-attention + bulk-review-cases）
+
+> 第四十一轮增量：
+> - **auth.rs** 762 → 856+ 行（**2 个新 endpoint / +94 行**）：
+>   - **`GET /api/get-session`**：legacy 别名（Node 老版路径），返回 `{session:{id,userId}, user:{id,name,email,image}}`；未认证返回 `null/null`（不强制 401，兼容老调用）
+>   - **`GET /api/profile`**：legacy 别名，返回 user 完整 profile + 关联 `company_memberships` 公司 ID 列表
+> - **instance_settings.rs** 99 → 195+ 行（**2 个新 endpoint / +96 行**）：
+>   - **`GET /api/stats`**：聚合 per-company `{agentCount/issueCount/caseCount/userCount}` + `instance.totalCompanies/generatedAt`
+>   - **`POST /api/dev-server/restart`**：发 `dev_server.restart_requested` LiveEvent，返回 `{status:"restart_requested"}`（202 sentinel，supervisor 进程独立）
+> - **pipelines.rs** 795 → 1000+ 行（**2 个新 endpoint / +205 行**）：
+>   - **`GET /api/companies/:company_id/pipelines-attention`**：LEFT JOIN pipelines + pipeline_cases + cases，GROUP BY + FILTER 计算 `review_count`（status='in_review'），返回需要关注的 pipelines（review_count > 0 或 total=0）
+>   - **`POST /api/companies/:company_id/review-cases/bulk`**：批量 review — body `{items:[{caseId, decision, note, expectedVersion}]}`，每个 item 调 `CaseRepo::update(status)`，写 `case_events.kind='status_changed'` + `cases.bulk_reviewed` LiveEvent；返回 `{results:[], succeeded, failed, total}`
+> - 新增 4 个结构体：`PipelinesAttentionQuery` / `BulkReviewBody` / `BulkReviewItem`（全部 camelCase）
+> - 修复 3 处编译错：移除 `instance_settings.rs` 重复 `use uuid::Uuid;`；补 `serde_json::{json, Value}` imports 到 instance_settings.rs 和 auth.rs
+> - workspace check: 0 errors, 43 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：instance-level admin endpoints 从 ~50% → **~85%**（legacy aliases + stats + dev-server + pipelines-attention + bulk-review 全覆盖）

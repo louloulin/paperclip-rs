@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
+use pc_repos::case::CaseRepo;
 use pc_repos::pipeline::PipelineRepo;
 
 use crate::{ApiError, ApiResult, AppState};
@@ -66,6 +67,15 @@ pub fn router() -> Router<AppState> {
         .route("/api/pipelines/:id/health", get(get_pipeline_health))
         .route("/api/pipelines/:id/intake-form", get(get_intake_form))
         .route("/api/pipelines/:id/transitions/replace", put(replace_transitions))
+        // ---- Round 41: pipelines-attention + bulk review-cases ----
+        .route(
+            "/api/companies/:company_id/pipelines-attention",
+            get(list_pipelines_attention_route),
+        )
+        .route(
+            "/api/companies/:company_id/review-cases/bulk",
+            post(bulk_review_cases_route),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -792,4 +802,184 @@ async fn replace_transitions(
             .with_data(serde_json::json!({"count": count})),
     );
     Ok(Json(serde_json::json!({"replaced": count, "pipelineId": pipeline_id})))
+}
+
+
+// ============================================================================
+// Round 41: company-scoped pipelines-attention + bulk review-cases
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct PipelinesAttentionQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+/// `GET /api/companies/:company_id/pipelines-attention` — pipelines with
+/// recent activity / cases needing follow-up.  Mirrors Node
+/// `/companies/:companyId/pipelines-attention`.  Synthesized via LEFT JOIN
+/// to recent `case_events` grouped by pipeline (via cases.pipeline_id if
+/// present, else just counts).
+async fn list_pipelines_attention_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<PipelinesAttentionQuery>,
+) -> ApiResult<Json<Value>> {
+    let limit = q.limit.unwrap_or(20).clamp(1, 100);
+    // Pipelines that have at least one case needing review (status = in_review).
+    let rows: Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT p.id, p.name, p.description, \
+                count(case_review.id) FILTER (WHERE case_review.status='in_review') AS review_count, \
+                count(case_all.id) AS total_count, \
+                p.updated_at \
+         FROM pipelines p \
+         LEFT JOIN pipeline_cases pc ON pc.pipeline_id=p.id \
+         LEFT JOIN cases case_all ON case_all.id=pc.case_id \
+         LEFT JOIN cases case_review ON case_review.id=pc.case_id AND case_review.status='in_review' \
+         WHERE p.company_id=$1 \
+         GROUP BY p.id, p.name, p.description, p.updated_at \
+         HAVING count(case_review.id) > 0 OR count(case_all.id) = 0 \
+         ORDER BY review_count DESC, p.updated_at DESC \
+         LIMIT $2",
+    )
+    .bind(company_id)
+    .bind(limit)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, description, review_count, total_count, updated_at)| {
+            json!({
+                "id": id,
+                "name": name,
+                "description": description,
+                "reviewCount": review_count,
+                "totalCaseCount": total_count,
+                "needsAttention": review_count > 0,
+                "updatedAt": updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct BulkReviewBody {
+    items: Vec<BulkReviewItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct BulkReviewItem {
+    case_id: Uuid,
+    decision: String,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    expected_version: Option<i32>,
+}
+
+/// `POST /api/companies/:company_id/review-cases/bulk` — bulk review.
+/// Mirrors Node `/companies/:companyId/review-cases/bulk`.  For each item,
+/// translates `decision` to status and updates the case.
+async fn bulk_review_cases_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<BulkReviewBody>,
+) -> ApiResult<Json<Value>> {
+    let mut results: Vec<Value> = Vec::with_capacity(body.items.len());
+    let mut succeeded = 0i64;
+    let mut failed = 0i64;
+    for item in body.items.iter() {
+        let new_status = match item.decision.as_str() {
+            "approved" => "approved",
+            "rejected" | "request_changes" => "in_progress",
+            "in_review" => "in_review",
+            other => {
+                results.push(json!({
+                    "caseId": item.case_id,
+                    "ok": false,
+                    "error": {
+                        "status": 400,
+                        "message": format!("unsupported review decision: {other}"),
+                    },
+                }));
+                failed += 1;
+                continue;
+            }
+        };
+        let updated = CaseRepo::new(&state.db)
+            .update(item.case_id, None, None, Some(new_status))
+            .await;
+        match updated {
+            Ok(Some(row)) => {
+                let _ = sqlx::query(
+                    "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+                     VALUES ($1, $2, 'status_changed', 'user', jsonb_build_object('decision',$3::text,'note',$4::text,'source','bulk'))",
+                )
+                .bind(company_id)
+                .bind(item.case_id)
+                .bind(&item.decision)
+                .bind(item.note.as_deref().unwrap_or(""))
+                .execute(state.db.pool())
+                .await;
+                results.push(json!({
+                    "caseId": item.case_id,
+                    "ok": true,
+                    "newStatus": new_status,
+                    "case": {
+                        "id": row.id,
+                        "caseNumber": row.case_number,
+                        "identifier": row.identifier,
+                        "status": row.status,
+                    },
+                }));
+                succeeded += 1;
+            }
+            Ok(None) => {
+                results.push(json!({
+                    "caseId": item.case_id,
+                    "ok": false,
+                    "error": {
+                        "status": 404,
+                        "message": "case not found",
+                    },
+                }));
+                failed += 1;
+            }
+            Err(e) => {
+                results.push(json!({
+                    "caseId": item.case_id,
+                    "ok": false,
+                    "error": {
+                        "status": 500,
+                        "message": e.to_string(),
+                    },
+                }));
+                failed += 1;
+            }
+        }
+    }
+    state.realtime.publish(
+        LiveEvent::new("cases.bulk_reviewed", "company", company_id)
+            .with_company(company_id)
+            .with_data(json!({"succeeded": succeeded, "failed": failed, "total": body.items.len()})),
+    );
+    Ok(Json(json!({
+        "companyId": company_id,
+        "results": results,
+        "succeeded": succeeded,
+        "failed": failed,
+        "total": body.items.len(),
+    })))
 }

@@ -13,6 +13,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{require_user_id, ApiError, ApiResult, AppState};
+use pc_realtime::LiveEvent;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -46,6 +47,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/skills/available", get(skills_available))
         .route("/api/skills/index", get(skills_index))
         .route("/api/skills/:skill_name", get(skill_get))
+        // ---- Round 42: admin endpoints ----
+        .route("/api/admin/users", get(list_admin_users))
+        .route("/api/admin/users/:user_id/company-access", get(get_user_company_access).put(put_user_company_access))
+        .route("/api/admin/users/:user_id/promote-instance-admin", post(promote_instance_admin))
+        .route("/api/admin/users/:user_id/demote-instance-admin", post(demote_instance_admin))
 }
 
 #[derive(Debug, FromRow)]
@@ -780,5 +786,196 @@ async fn revoke_invite_by_token(
         "id": id,
         "revoked": true,
         "revokedAt": chrono::Utc::now(),
+    })))
+}
+
+
+// ============================================================================
+// Round 42: instance admin endpoints (list users / company-access / promote / demote)
+// ============================================================================
+
+/// `GET /api/admin/users` — instance admin user directory.  Mirrors Node
+/// `/admin/users`.  Limited to first 50 rows by `updated_at DESC`.
+async fn list_admin_users(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, name, email, image, updated_at FROM \"user\" \
+         ORDER BY updated_at DESC LIMIT 50",
+    )
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, email, image, updated_at)| {
+            json!({
+                "id": id,
+                "name": name,
+                "email": email,
+                "image": image,
+                "updatedAt": updated_at,
+            })
+        })
+        .collect();
+    let user_ids: Vec<String> = items.iter().filter_map(|i| i.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())).collect();
+    let admin_rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT user_id FROM instance_user_roles WHERE user_id = ANY($1::text[])",
+    )
+    .bind(&user_ids)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let admin_set: std::collections::HashSet<String> = admin_rows.into_iter().map(|(u,)| u).collect();
+    let decorated: Vec<Value> = items
+        .into_iter()
+        .map(|mut v| {
+            let is_admin = v
+                .get("id")
+                .and_then(|x| x.as_str())
+                .map(|s| admin_set.contains(s))
+                .unwrap_or(false);
+            v["isInstanceAdmin"] = json!(is_admin);
+            v
+        })
+        .collect();
+    Ok(Json(json!({
+        "items": decorated,
+        "count": decorated.len(),
+    })))
+}
+
+/// `GET /api/admin/users/:user_id/company-access` — list the user's
+/// company access (memberships + invitations).
+async fn get_user_company_access(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    let memberships: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT c.id, c.name, cm.role, cm.status \
+         FROM company_memberships cm \
+         INNER JOIN companies c ON c.id = cm.company_id \
+         WHERE cm.user_id=$1 \
+         ORDER BY c.name",
+    )
+    .bind(&user_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = memberships
+        .into_iter()
+        .map(|(id, name, role, status)| {
+            json!({
+                "companyId": id,
+                "companyName": name,
+                "role": role,
+                "status": status,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "userId": user_id,
+        "memberships": items,
+        "count": items.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PutUserCompanyAccessBody {
+    #[serde(default)]
+    company_ids: Vec<Uuid>,
+}
+
+/// `PUT /api/admin/users/:user_id/company-access` — replace the user's full
+/// company access set.  Mirrors Node `PUT /admin/users/:userId/company-access`.
+async fn put_user_company_access(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PutUserCompanyAccessBody>,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    let mut tx = state.db.pool().begin().await?;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE user_id=$1")
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
+    for company_id in &body.company_ids {
+        let _ = sqlx::query(
+            "INSERT INTO company_memberships (user_id, company_id, role, status) \
+             VALUES ($1, $2, 'member', 'active') ON CONFLICT DO NOTHING",
+        )
+        .bind(&user_id)
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await;
+    }
+    tx.commit().await?;
+    state.realtime.publish(
+        LiveEvent::new("user.company_access_updated", "user", Uuid::nil())
+            .with_data(json!({"userId": user_id, "companyCount": body.company_ids.len()})),
+    );
+    Ok(Json(json!({
+        "userId": user_id,
+        "companyIds": body.company_ids,
+        "count": body.company_ids.len(),
+    })))
+}
+
+/// `POST /api/admin/users/:user_id/promote-instance-admin` — grant instance
+/// admin role.  Mirrors Node `POST /admin/users/:userId/promote-instance-admin`.
+async fn promote_instance_admin(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin') \
+         ON CONFLICT (user_id) DO UPDATE SET updated_at=now() \
+         RETURNING id",
+    )
+    .bind(&user_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("user.promoted_instance_admin", "user", Uuid::nil())
+            .with_data(json!({"userId": user_id})),
+    );
+    Ok(Json(json!({
+        "userId": user_id,
+        "roleAssignmentId": row.0,
+        "role": "instance_admin",
+        "promoted": true,
+    })))
+}
+
+/// `POST /api/admin/users/:user_id/demote-instance-admin` — revoke instance
+/// admin role.  Mirrors Node `POST /admin/users/:userId/demote-instance-admin`.
+async fn demote_instance_admin(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    let affected = sqlx::query("DELETE FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin'")
+        .bind(&user_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("instance admin role for {user_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("user.demoted_instance_admin", "user", Uuid::nil())
+            .with_data(json!({"userId": user_id})),
+    );
+    Ok(Json(json!({
+        "userId": user_id,
+        "demoted": true,
     })))
 }

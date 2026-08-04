@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -96,6 +96,15 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/cases/:case_id/rollup", get(get_case_rollup))
         .route("/api/cases/:case_id/review", post(review_case_route))
+        // ---- Round 40: case automation lifecycle (breakdown / suggest-transition / resolve-suggestion / acknowledge-drift / blockers / open-conversation / context-pack / outputs) ----
+        .route("/api/cases/:case_id/breakdown", post(breakdown_case_route))
+        .route("/api/cases/:case_id/suggest-transition", post(suggest_transition_route))
+        .route("/api/cases/:case_id/resolve-suggestion", post(resolve_suggestion_route))
+        .route("/api/cases/:case_id/acknowledge-drift", post(acknowledge_drift_route))
+        .route("/api/cases/:case_id/blockers", put(replace_case_blockers_route))
+        .route("/api/cases/:case_id/open-conversation", post(open_conversation_route))
+        .route("/api/cases/:case_id/context-pack", get(get_case_context_pack))
+        .route("/api/cases/:case_id/outputs", get(get_case_outputs))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1520,4 +1529,506 @@ async fn review_case_route(
             })),
     );
     Ok(Json(serde_json::to_value(updated).unwrap_or_default()))
+}
+
+
+// ============================================================================
+// Round 40: case automation lifecycle
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BreakdownCaseBody {
+    /// Subcase specs to create as children of this case.
+    children: Vec<BreakdownChild>,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BreakdownChild {
+    title: String,
+    #[serde(default)]
+    case_type: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    fields: Option<serde_json::Value>,
+}
+
+/// `POST /api/cases/:case_id/breakdown` — create child cases from a breakdown.
+/// Mirrors Node `/cases/:caseId/breakdown`.  For each child we INSERT a new
+/// case with `parent_case_id = :case_id`, generate a sequential `case_number`
+/// and `identifier` (CASE-<n>), and emit a `case.created` event.
+async fn breakdown_case_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(body): Json<BreakdownCaseBody>,
+) -> ApiResult<Json<Value>> {
+    let parent = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    if body.children.is_empty() {
+        return Err(ApiError::BadRequest("children must not be empty".into()));
+    }
+    let max_number: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(case_number), 0) FROM cases WHERE company_id=$1",
+    )
+    .bind(parent.company_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let mut created_ids: Vec<Uuid> = Vec::with_capacity(body.children.len());
+    let mut next_number = max_number + 1;
+    let mut tx = state.db.pool().begin().await?;
+    for child in &body.children {
+        let case_type = child.case_type.clone().unwrap_or_else(|| parent.case_type.clone());
+        let identifier = format!("CASE-{}", next_number);
+        let new_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO cases (company_id, project_id, case_number, identifier, case_type, key, \
+                                title, summary, status, fields, parent_case_id, created_by_user_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9, $10, $11) RETURNING id",
+        )
+        .bind(parent.company_id)
+        .bind(parent.project_id)
+        .bind(next_number)
+        .bind(&identifier)
+        .bind(&case_type)
+        .bind::<Option<String>>(None)
+        .bind(&child.title)
+        .bind(child.summary.as_deref())
+        .bind(child.fields.clone().unwrap_or_else(|| serde_json::json!({})))
+        .bind(case_id)
+        .bind::<Option<String>>(None)
+        .fetch_one(&mut *tx)
+        .await?;
+        created_ids.push(new_id);
+        let _ = sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+             VALUES ($1, $2, 'child_linked', 'user', jsonb_build_object('childCaseId',$3::text,'note',$4::text))",
+        )
+        .bind(parent.company_id)
+        .bind(case_id)
+        .bind(new_id.to_string())
+        .bind(body.note.as_deref().unwrap_or(""))
+        .execute(&mut *tx)
+        .await;
+        next_number += 1;
+    }
+    tx.commit().await?;
+    state.realtime.publish(
+        LiveEvent::new("case.broken_down", "case", case_id)
+            .with_company(parent.company_id)
+            .with_data(json!({"childCaseIds": created_ids, "count": created_ids.len()})),
+    );
+    Ok(Json(json!({
+        "caseId": case_id,
+        "childCaseIds": created_ids,
+        "count": created_ids.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SuggestTransitionBody {
+    to_stage_key: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    confidence: Option<f64>,
+}
+
+/// `POST /api/cases/:case_id/suggest-transition` — record a transition
+/// suggestion.  Mirrors Node `/cases/:caseId/suggest-transition`.  We don't
+/// actually transition the case; we record an event + suggestion payload
+/// that the UI/agent can later accept or reject.
+async fn suggest_transition_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(body): Json<SuggestTransitionBody>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    if body.to_stage_key.trim().is_empty() {
+        return Err(ApiError::BadRequest("toStageKey must not be empty".into()));
+    }
+    let payload = json!({
+        "toStageKey": body.to_stage_key,
+        "reason": body.reason,
+        "confidence": body.confidence,
+    });
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'fields_changed', 'system', $3::jsonb)",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(&payload)
+    .execute(state.db.pool())
+    .await;
+    let suggestion_id = Uuid::new_v4();
+    state.realtime.publish(
+        LiveEvent::new("case.transition_suggested", "case", case_id)
+            .with_company(case.company_id)
+            .with_data(json!({
+                "suggestionId": suggestion_id,
+                "toStageKey": body.to_stage_key,
+                "confidence": body.confidence,
+            })),
+    );
+    Ok(Json(json!({
+        "caseId": case_id,
+        "suggestionId": suggestion_id,
+        "toStageKey": body.to_stage_key,
+        "reason": body.reason,
+        "confidence": body.confidence,
+        "createdAt": chrono::Utc::now(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolveSuggestionBody {
+    suggestion_id: Uuid,
+    decision: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// `POST /api/cases/:case_id/resolve-suggestion` — accept or reject a
+/// previously recorded suggestion.  Mirrors Node
+/// `/cases/:caseId/resolve-suggestion`.
+async fn resolve_suggestion_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(body): Json<ResolveSuggestionBody>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let decision = body.decision.to_lowercase();
+    if !matches!(decision.as_str(), "accepted" | "rejected") {
+        return Err(ApiError::BadRequest("decision must be 'accepted' or 'rejected'".into()));
+    }
+    let payload = json!({
+        "suggestionId": body.suggestion_id,
+        "decision": decision,
+        "reason": body.reason,
+    });
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'fields_changed', 'user', $3::jsonb)",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(&payload)
+    .execute(state.db.pool())
+    .await;
+    state.realtime.publish(
+        LiveEvent::new("case.suggestion_resolved", "case", case_id)
+            .with_company(case.company_id)
+            .with_data(json!({
+                "suggestionId": body.suggestion_id,
+                "decision": decision,
+            })),
+    );
+    Ok(Json(json!({
+        "caseId": case_id,
+        "suggestionId": body.suggestion_id,
+        "decision": decision,
+        "resolvedAt": chrono::Utc::now(),
+    })))
+}
+
+/// `POST /api/cases/:case_id/acknowledge-drift` — record drift acknowledgment.
+/// Mirrors Node `/cases/:caseId/acknowledge-drift`.
+async fn acknowledge_drift_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'fields_changed', 'user', jsonb_build_object('event','drift_acknowledged'))",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .execute(state.db.pool())
+    .await;
+    state.realtime.publish(
+        LiveEvent::new("case.drift_acknowledged", "case", case_id)
+            .with_company(case.company_id),
+    );
+    Ok(Json(json!({
+        "caseId": case_id,
+        "acknowledged": true,
+        "acknowledgedAt": chrono::Utc::now(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplaceBlockersBody {
+    /// Case IDs that block this case.
+    #[serde(default)]
+    blocked_by_case_ids: Vec<Uuid>,
+}
+
+/// `PUT /api/cases/:case_id/blockers` — replace the full blocker set for a
+/// case (idempotent replace).  Mirrors Node `/cases/:caseId/blockers`.  Uses
+/// the `pipeline_case_blockers` table.
+async fn replace_case_blockers_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(body): Json<ReplaceBlockersBody>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let mut tx = state.db.pool().begin().await?;
+    let _ = sqlx::query("DELETE FROM pipeline_case_blockers WHERE case_id=$1")
+        .bind(case_id)
+        .execute(&mut *tx)
+        .await?;
+    for blocker_id in &body.blocked_by_case_ids {
+        if *blocker_id == case_id {
+            continue;
+        }
+        let _ = sqlx::query(
+            "INSERT INTO pipeline_case_blockers (company_id, case_id, blocked_by_case_id) \
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        )
+        .bind(case.company_id)
+        .bind(case_id)
+        .bind(blocker_id)
+        .execute(&mut *tx)
+        .await;
+    }
+    tx.commit().await?;
+    let payload = json!({
+        "blockedByCaseIds": body.blocked_by_case_ids,
+        "count": body.blocked_by_case_ids.len(),
+    });
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'fields_changed', 'user', $3::jsonb)",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(&payload)
+    .execute(state.db.pool())
+    .await;
+    state.realtime.publish(
+        LiveEvent::new("case.blockers_set", "case", case_id)
+            .with_company(case.company_id)
+            .with_data(payload.clone()),
+    );
+    Ok(Json(json!({
+        "caseId": case_id,
+        "blockedByCaseIds": body.blocked_by_case_ids,
+        "count": body.blocked_by_case_ids.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenConversationBody {
+    #[serde(default)]
+    issue_id: Option<Uuid>,
+    #[serde(default)]
+    initial_message: Option<String>,
+}
+
+/// `POST /api/cases/:case_id/open-conversation` — open a conversation thread
+/// linked to this case.  Mirrors Node `/cases/:caseId/open-conversation`.
+/// Since the dedicated conversation table is missing, we synthesize by
+/// creating an `issue` with `origin_kind='case_conversation'` and linking it
+/// back to the case via `case_issue_links`.
+async fn open_conversation_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(body): Json<OpenConversationBody>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let issue_id = if let Some(id) = body.issue_id {
+        id
+    } else {
+        let title = format!("Conversation: {}", case.title);
+        sqlx::query_scalar(
+            "INSERT INTO issues (company_id, title, description, status, priority, origin_kind, origin_fingerprint) \
+             VALUES ($1, $2, $3, 'todo', 'medium', 'case_conversation', $4) RETURNING id",
+        )
+        .bind(case.company_id)
+        .bind(&title)
+        .bind(body.initial_message.as_deref().unwrap_or(""))
+        .bind(format!("case-conversation:{}", case_id))
+        .fetch_one(state.db.pool())
+        .await?
+    };
+    let _ = sqlx::query(
+        "INSERT INTO case_issue_links (company_id, case_id, issue_id, role) \
+         VALUES ($1, $2, $3, 'origin') ON CONFLICT (case_id, issue_id) DO NOTHING",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(issue_id)
+    .execute(state.db.pool())
+    .await;
+    let payload = json!({
+        "issueId": issue_id,
+        "initialMessage": body.initial_message,
+    });
+    let _ = sqlx::query(
+        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+         VALUES ($1, $2, 'issue_linked', 'user', $3::jsonb)",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .bind(&payload)
+    .execute(state.db.pool())
+    .await;
+    state.realtime.publish(
+        LiveEvent::new("case.conversation_opened", "case", case_id)
+            .with_company(case.company_id)
+            .with_data(json!({"issueId": issue_id})),
+    );
+    Ok(Json(json!({
+        "caseId": case_id,
+        "issueId": issue_id,
+        "openedAt": chrono::Utc::now(),
+    })))
+}
+
+/// `GET /api/cases/:case_id/context-pack` — bundle of case context for AI.
+/// Mirrors Node `/cases/:caseId/context-pack`.  We synthesize the response
+/// from `cases` + `case_events` + `case_issue_links` + `issues`.
+async fn get_case_context_pack(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let events: Vec<(String, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
+         FROM case_events WHERE company_id=$1 AND case_id=$2 \
+         ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let linked_issues: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT i.id, i.title, i.status \
+         FROM case_issue_links cil \
+         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
+         WHERE cil.company_id=$1 AND cil.case_id=$2 \
+         ORDER BY cil.created_at ASC",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let children_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let event_items: Vec<Value> = events
+        .into_iter()
+        .map(|(kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at)| {
+            json!({
+                "kind": kind,
+                "actorType": actor_type,
+                "actorUserId": actor_user_id,
+                "actorAgentId": actor_agent_id,
+                "runId": run_id,
+                "payload": payload,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    let issue_items: Vec<Value> = linked_issues
+        .into_iter()
+        .map(|(id, title, status)| {
+            json!({
+                "id": id,
+                "title": title,
+                "status": status,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "case": {
+            "id": case.id,
+            "caseNumber": case.case_number,
+            "identifier": case.identifier,
+            "title": case.title,
+            "summary": case.summary,
+            "status": case.status,
+            "caseType": case.case_type,
+            "fields": case.fields,
+        },
+        "linkedIssues": issue_items,
+        "childCount": children_count,
+        "events": event_items,
+        "recentEventCount": event_items.len(),
+    })))
+}
+
+/// `GET /api/cases/:case_id/outputs` — aggregate case outputs (linked issue
+/// summaries).  Mirrors Node `/cases/:caseId/outputs`.
+async fn get_case_outputs(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let case = CaseRepo::new(&state.db)
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT i.id, i.title, i.status, cil.role, i.completed_at \
+         FROM case_issue_links cil \
+         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
+         WHERE cil.company_id=$1 AND cil.case_id=$2 \
+         ORDER BY cil.created_at ASC",
+    )
+    .bind(case.company_id)
+    .bind(case_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, title, status, role, completed_at)| {
+            json!({
+                "id": id,
+                "title": title,
+                "status": status,
+                "linkRole": role,
+                "completedAt": completed_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "caseId": case_id,
+        "items": items,
+        "count": items.len(),
+    })))
 }

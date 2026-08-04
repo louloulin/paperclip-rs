@@ -10,7 +10,7 @@ use axum::{
 use chrono::{Duration, Utc};
 use pc_auth::ApiKeyIssuer;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
@@ -19,6 +19,9 @@ pub fn router() -> Router<AppState> {
     Router::new()
         // ===== Better-Auth 风格 wire 端点 (Round 29) =====
         .route("/api/auth/get-session", get(get_session))
+        // ---- Round 41: legacy short aliases ----
+        .route("/api/get-session", get(get_session_short))
+        .route("/api/profile", get(get_profile_short))
         .route("/api/auth/sign-in/email", post(sign_in_email))
         .route("/api/auth/sign-up/email", post(sign_up_email))
         .route("/api/auth/sign-out", post(sign_out))
@@ -759,4 +762,80 @@ async fn refresh_session(
         token: new_token,
         expires_at,
     }))
+}
+
+
+// ============================================================================
+// Round 41: legacy short aliases for /api/get-session and /api/profile.
+// These mirror Node's older (pre-/api/auth/) routes — still used by some
+// UI code paths and CLI tooling.  Both require a board session token.
+// ============================================================================
+
+async fn get_session_short(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = match crate::state::require_user_id(&state, &headers).await {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(Json(json!({
+                "session": null,
+                "user": null,
+            })));
+        }
+    };
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, email, image FROM \"user\" WHERE id=$1",
+    )
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let user = row.map(|(id, name, email, image)| {
+        json!({
+            "id": id,
+            "name": name,
+            "email": email,
+            "image": image,
+        })
+    });
+    Ok(Json(json!({
+        "session": {
+            "id": format!("paperclip:session:{user_id}"),
+            "userId": user_id,
+        },
+        "user": user,
+    })))
+}
+
+async fn get_profile_short(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let row: Option<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, name, email, image, created_at FROM \"user\" WHERE id=$1",
+    )
+    .bind(&user_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some((id, name, email, image, created_at)) = row else {
+        return Err(ApiError::NotFound(format!("user {user_id}")));
+    };
+    let companies: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM company_memberships WHERE user_id=$1",
+    )
+    .bind(&user_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({
+        "id": id,
+        "name": name,
+        "email": email,
+        "image": image,
+        "createdAt": created_at,
+        "companyIds": companies.into_iter().map(|(c,)| c).collect::<Vec<_>>(),
+    })))
 }

@@ -198,6 +198,36 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/tools/runs/:run_id/decisions",
             get(get_run_decisions_route),
         )
+        // ---- Round 39: tool-profiles / tool-profile-entries CRUD ----
+        .route(
+            "/api/tool-profiles/:profile_id/new-tools",
+            get(list_tool_profile_new_tools),
+        )
+        .route(
+            "/api/tool-profiles/:profile_id/new-tools/review",
+            post(review_tool_profile_new_tools),
+        )
+        .route(
+            "/api/tool-profiles/:profile_id/duplicate",
+            post(duplicate_tool_profile),
+        )
+        .route(
+            "/api/tool-profiles/:profile_id/entries",
+            post(create_tool_profile_entry_for_profile),
+        )
+        .route(
+            "/api/tool-profile-entries/:entry_id",
+            get(get_tool_profile_entry).patch(patch_tool_profile_entry).delete(delete_tool_profile_entry),
+        )
+        // ---- Round 42: runtime-slot lifecycle ----
+        .route(
+            "/api/companies/:company_id/tools/runtime-slots/:slot_id/restart",
+            post(restart_tool_runtime_slot),
+        )
+        .route(
+            "/api/companies/:company_id/tools/runtime-slots/:slot_id/stop",
+            post(stop_tool_runtime_slot),
+        )
 }
 
 // ── Row types ──────────────────────────────────────────────
@@ -2702,5 +2732,431 @@ async fn policy_test_route(
     Ok(Json(json!({
         "decision": decision_json,
         "auditEvent": audit_event,
+    })))
+}
+
+
+// ============================================================================
+// Round 39: tool-profiles / tool-profile-entries CRUD
+// ============================================================================
+
+/// `GET /api/tool-profiles/:profile_id/new-tools` — surface tool catalog
+/// entries that this profile does not yet reference.  Mirrors Node
+/// `/tool-profiles/:profileId/new-tools`.  We approximate by listing active
+/// tools in `tool_applications` for the profile's company that have no
+/// matching `tool_profile_entries.catalog_entry_id`.
+async fn list_tool_profile_new_tools(
+    State(state): State<AppState>,
+    Path(profile_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let profile: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
+        .bind(profile_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = profile else {
+        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
+    };
+    // Synthesize a "new tools" list: tools with no entry in this profile.
+    let rows: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT ta.id, ta.application_key, ta.display_name, ta.risk_level \
+         FROM tool_applications ta \
+         WHERE ta.company_id=$1 AND ta.status='active' \
+         AND NOT EXISTS ( \
+            SELECT 1 FROM tool_profile_entries tpe \
+            WHERE tpe.profile_id=$2 AND tpe.application_id=ta.id \
+         ) \
+         ORDER BY ta.display_name LIMIT 100",
+    )
+    .bind(company_id)
+    .bind(profile_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, key, name, risk)| {
+            json!({
+                "id": id,
+                "applicationKey": key,
+                "displayName": name,
+                "riskLevel": risk,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "profileId": profile_id,
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewNewToolsBody {
+    /// application_ids to mark as reviewed (added to profile entries)
+    #[serde(default)]
+    approve: Vec<Uuid>,
+    /// application_ids to dismiss
+    #[serde(default)]
+    dismiss: Vec<Uuid>,
+}
+
+/// `POST /api/tool-profiles/:profile_id/new-tools/review` — bulk approve/dismiss.
+/// Mirrors Node `/tool-profiles/:profileId/new-tools/review`.
+async fn review_tool_profile_new_tools(
+    State(state): State<AppState>,
+    Path(profile_id): Path<Uuid>,
+    Json(body): Json<ReviewNewToolsBody>,
+) -> ApiResult<Json<Value>> {
+    let profile: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
+        .bind(profile_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = profile else {
+        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
+    };
+    let mut approved = 0i64;
+    for app_id in &body.approve {
+        let r = sqlx::query(
+            "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id) \
+             VALUES ($1, $2, 'application', 'include', $3) ON CONFLICT DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .bind(app_id)
+        .execute(state.db.pool())
+        .await?;
+        approved += r.rows_affected() as i64;
+    }
+    state.realtime.publish(
+        LiveEvent::new("tool_profile.new_tools_reviewed", "tool_profile", profile_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "approvedCount": approved,
+                "dismissedCount": body.dismiss.len(),
+            })),
+    );
+    Ok(Json(json!({
+        "profileId": profile_id,
+        "approvedCount": approved,
+        "dismissedCount": body.dismiss.len(),
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DuplicateToolProfileBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    profile_key: Option<String>,
+}
+
+/// `POST /api/tool-profiles/:profile_id/duplicate` — clone profile + entries.
+/// Mirrors Node `/tool-profiles/:profileId/duplicate`.
+async fn duplicate_tool_profile(
+    State(state): State<AppState>,
+    Path(profile_id): Path<Uuid>,
+    Json(body): Json<DuplicateToolProfileBody>,
+) -> ApiResult<impl IntoResponse> {
+    let original: Option<(Uuid, String, String, Option<String>, String, Option<serde_json::Value>)> = sqlx::query_as(
+        "SELECT company_id, profile_key, name, description, status, metadata FROM tool_profiles WHERE id=$1",
+    )
+    .bind(profile_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((company_id, old_key, old_name, description, status, metadata)) = original else {
+        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
+    };
+    let new_key = body.profile_key.clone().unwrap_or_else(|| {
+        let ts = chrono::Utc::now().timestamp();
+        format!("{}_copy_{}", old_key, ts)
+    });
+    let new_name = body.name.clone().unwrap_or_else(|| format!("{} (copy)", old_name));
+    let mut tx = state.db.pool().begin().await?;
+    let new_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
+         SELECT company_id, $2, $3, description, status, default_action, metadata \
+         FROM tool_profiles WHERE id=$1 RETURNING id",
+    )
+    .bind(profile_id)
+    .bind(&new_key)
+    .bind(&new_name)
+    .fetch_one(&mut *tx)
+    .await?;
+    let _ = sqlx::query(
+        "INSERT INTO tool_profile_entries \
+            (company_id, profile_id, selector_type, effect, application_id, connection_id, \
+             catalog_entry_id, tool_name, risk_level, conditions) \
+         SELECT company_id, $2, selector_type, effect, application_id, connection_id, \
+                catalog_entry_id, tool_name, risk_level, conditions \
+         FROM tool_profile_entries WHERE profile_id=$1",
+    )
+    .bind(profile_id)
+    .bind(new_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    state.realtime.publish(
+        LiveEvent::new("tool_profile.duplicated", "tool_profile", new_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "sourceProfileId": profile_id,
+                "newProfileId": new_id,
+                "newProfileKey": new_key,
+            })),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": new_id,
+            "companyId": company_id,
+            "profileKey": new_key,
+            "name": new_name,
+            "description": description,
+            "status": status,
+            "metadata": metadata,
+            "sourceProfileId": profile_id,
+        })),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateToolProfileEntryBody {
+    #[serde(default)]
+    selector_type: Option<String>,
+    #[serde(default)]
+    effect: Option<String>,
+    #[serde(default)]
+    application_id: Option<Uuid>,
+    #[serde(default)]
+    connection_id: Option<Uuid>,
+    #[serde(default)]
+    catalog_entry_id: Option<Uuid>,
+    #[serde(default)]
+    tool_name: Option<String>,
+    #[serde(default)]
+    risk_level: Option<String>,
+    #[serde(default)]
+    conditions: Option<serde_json::Value>,
+}
+
+/// `POST /api/tool-profiles/:profile_id/entries` — add entry to a profile.
+/// Mirrors Node `/tool-profiles/:profileId/entries`.
+async fn create_tool_profile_entry_for_profile(
+    State(state): State<AppState>,
+    Path(profile_id): Path<Uuid>,
+    Json(body): Json<CreateToolProfileEntryBody>,
+) -> ApiResult<impl IntoResponse> {
+    let profile: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
+        .bind(profile_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = profile else {
+        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
+    };
+    let selector = body.selector_type.unwrap_or_else(|| "tool_name".to_string());
+    let effect = body.effect.unwrap_or_else(|| "include".to_string());
+    let entry_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO tool_profile_entries \
+            (company_id, profile_id, selector_type, effect, application_id, connection_id, \
+             catalog_entry_id, tool_name, risk_level, conditions) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+    )
+    .bind(company_id)
+    .bind(profile_id)
+    .bind(&selector)
+    .bind(&effect)
+    .bind(body.application_id)
+    .bind(body.connection_id)
+    .bind(body.catalog_entry_id)
+    .bind(body.tool_name.as_deref())
+    .bind(body.risk_level.as_deref())
+    .bind(body.conditions.clone().unwrap_or_else(|| serde_json::json!({})))
+    .fetch_one(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool_profile_entry.created", "tool_profile_entry", entry_id)
+            .with_company(company_id)
+            .with_data(json!({"profileId": profile_id, "selectorType": selector})),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": entry_id,
+            "profileId": profile_id,
+            "companyId": company_id,
+            "selectorType": selector,
+            "effect": effect,
+        })),
+    ))
+}
+
+/// `GET /api/tool-profile-entries/:entry_id` — read single entry.
+async fn get_tool_profile_entry(
+    State(state): State<AppState>,
+    Path(entry_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, Uuid, String, String, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<String>, Option<String>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, company_id, profile_id, selector_type, effect, application_id, connection_id, \
+                catalog_entry_id, tool_name, risk_level, conditions, created_at, updated_at \
+         FROM tool_profile_entries WHERE id=$1",
+    )
+    .bind(entry_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((id, company_id, profile_id, selector_type, effect, app_id, conn_id, cat_id, tool_name, risk_level, conditions, created_at, updated_at)) = row else {
+        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
+    };
+    Ok(Json(json!({
+        "id": id,
+        "companyId": company_id,
+        "profileId": profile_id,
+        "selectorType": selector_type,
+        "effect": effect,
+        "applicationId": app_id,
+        "connectionId": conn_id,
+        "catalogEntryId": cat_id,
+        "toolName": tool_name,
+        "riskLevel": risk_level,
+        "conditions": conditions,
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatchToolProfileEntryBody {
+    #[serde(default)]
+    effect: Option<String>,
+    #[serde(default)]
+    risk_level: Option<String>,
+    #[serde(default)]
+    conditions: Option<serde_json::Value>,
+}
+
+/// `PATCH /api/tool-profile-entries/:entry_id` — update effect/risk/conditions.
+async fn patch_tool_profile_entry(
+    State(state): State<AppState>,
+    Path(entry_id): Path<Uuid>,
+    Json(body): Json<PatchToolProfileEntryBody>,
+) -> ApiResult<Json<Value>> {
+    let existing: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profile_entries WHERE id=$1")
+        .bind(entry_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = existing else {
+        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
+    };
+    if body.effect.is_none() && body.risk_level.is_none() && body.conditions.is_none() {
+        return Err(ApiError::BadRequest("no fields to update".into()));
+    }
+    sqlx::query(
+        "UPDATE tool_profile_entries SET \
+            effect=COALESCE($2, effect), \
+            risk_level=COALESCE($3, risk_level), \
+            conditions=COALESCE($4, conditions), \
+            updated_at=now() \
+         WHERE id=$1",
+    )
+    .bind(entry_id)
+    .bind(body.effect.as_deref())
+    .bind(body.risk_level.as_deref())
+    .bind(body.conditions.clone())
+    .execute(state.db.pool())
+    .await?;
+    state.realtime.publish(
+        LiveEvent::new("tool_profile_entry.updated", "tool_profile_entry", entry_id)
+            .with_company(company_id),
+    );
+    Ok(Json(json!({"id": entry_id, "updated": true})))
+}
+
+/// `DELETE /api/tool-profile-entries/:entry_id` — remove entry.
+async fn delete_tool_profile_entry(
+    State(state): State<AppState>,
+    Path(entry_id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    let existing: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profile_entries WHERE id=$1")
+        .bind(entry_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+    let Some((company_id,)) = existing else {
+        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
+    };
+    let affected = sqlx::query("DELETE FROM tool_profile_entries WHERE id=$1")
+        .bind(entry_id)
+        .execute(state.db.pool())
+        .await?
+        .rows_affected();
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("tool_profile_entry.deleted", "tool_profile_entry", entry_id)
+            .with_company(company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+
+// ============================================================================
+// Round 42: runtime-slot restart/stop (company-scoped)
+// ============================================================================
+
+/// `POST /api/companies/:company_id/tools/runtime-slots/:slot_id/restart` —
+/// request restart of a runtime slot.  Mirrors Node
+/// `/companies/:companyId/tools/runtime-slots/:slotId/restart`.  The
+/// runtime supervisor is a separate process; we record the intent via
+/// LiveEvent and return immediately.
+async fn restart_tool_runtime_slot(
+    State(state): State<AppState>,
+    Path((company_id, slot_id)): Path<(Uuid, String)>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    state.realtime.publish(
+        LiveEvent::new("tool_runtime_slot.restart_requested", "tool_runtime_slot", Uuid::nil())
+            .with_company(company_id)
+            .with_data(json!({
+                "slotId": slot_id,
+                "action": "restart",
+                "requestedAt": chrono::Utc::now(),
+            })),
+    );
+    Ok(Json(json!({
+        "slotId": slot_id,
+        "companyId": company_id,
+        "status": "restart_requested",
+        "requestedAt": chrono::Utc::now(),
+    })))
+}
+
+/// `POST /api/companies/:company_id/tools/runtime-slots/:slot_id/stop` —
+/// request stop of a runtime slot.  Mirrors Node
+/// `/companies/:companyId/tools/runtime-slots/:slotId/stop`.
+async fn stop_tool_runtime_slot(
+    State(state): State<AppState>,
+    Path((company_id, slot_id)): Path<(Uuid, String)>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _ = crate::state::require_user_id(&state, &headers).await?;
+    state.realtime.publish(
+        LiveEvent::new("tool_runtime_slot.stop_requested", "tool_runtime_slot", Uuid::nil())
+            .with_company(company_id)
+            .with_data(json!({
+                "slotId": slot_id,
+                "action": "stop",
+                "requestedAt": chrono::Utc::now(),
+            })),
+    );
+    Ok(Json(json!({
+        "slotId": slot_id,
+        "companyId": company_id,
+        "status": "stop_requested",
+        "requestedAt": chrono::Utc::now(),
     })))
 }
