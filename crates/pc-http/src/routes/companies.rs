@@ -942,32 +942,53 @@ async fn move_folder_item(
 }
 
 // ---------- invites ----------
+//
+// 与原 Node `companies.ts` 同名 handler：
+// - list  / create / revoke
+// - join_requests: list / approve / reject
+//
+// 业务逻辑迁出到 `pc_repos::invite` + `pc_repos::join_request`，本文件只做：
+// - request DTO 解析
+// - 调用 Repo 并把结果转成 JSON 响应
+
+#[derive(Debug, Deserialize, Default)]
+struct ListInvitesQuery {
+    #[serde(default)]
+    role: Option<String>,
+}
 
 async fn list_invites(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 28: invites.role 不是真实列 — role 存在 defaults_payload jsonb
-    let rows: Vec<(Uuid, Uuid, String, Value, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> = sqlx::query_as(
-        "SELECT id, company_id, invite_type, defaults_payload, expires_at, revoked_at, accepted_at, invited_by_user_id
-         FROM invites WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(company_id).fetch_all(state.db.pool()).await?;
-    let now = chrono::Utc::now();
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, ty, defaults, exp, rev, acc, inv_by)| {
-        let role = defaults.get("role").and_then(|v| v.as_str()).unwrap_or("member").to_string();
-        let status = if rev.is_some() { "revoked" }
-            else if acc.is_some() { "accepted" }
-            else if exp.map(|e| e < now).unwrap_or(false) { "expired" }
-            else { "pending" };
-        json!({
-            "id": id, "companyId": cid, "inviteType": ty, "role": role,
-            "defaults": defaults, "status": status,
-            "invitedByUserId": inv_by,
-            "expiresAt": exp, "revokedAt": rev, "acceptedAt": acc,
+    let items = pc_repos::invite::InviteRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let payload: Vec<Value> = items
+        .into_iter()
+        .map(|invite| {
+            let status = match invite.status {
+                pc_repos::invite::InviteStatus::Pending => "pending",
+                pc_repos::invite::InviteStatus::Accepted => "accepted",
+                pc_repos::invite::InviteStatus::Revoked => "revoked",
+                pc_repos::invite::InviteStatus::Expired => "expired",
+            };
+            json!({
+                "id": invite.row.id,
+                "companyId": invite.row.company_id,
+                "inviteType": invite.row.invite_type,
+                "role": invite.role,
+                "defaults": invite.row.defaults_payload,
+                "status": status,
+                "invitedByUserId": invite.row.invited_by_user_id,
+                "expiresAt": invite.row.expires_at,
+                "revokedAt": invite.row.revoked_at,
+                "acceptedAt": invite.row.accepted_at,
+            })
         })
-    }).collect();
-    Ok(Json(json!({"items": items, "companyId": company_id})))
+        .collect();
+    Ok(Json(json!({"items": payload, "companyId": company_id})))
 }
 
 #[derive(Debug, Deserialize)]
@@ -985,48 +1006,36 @@ async fn create_invite(
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateInviteBody>,
 ) -> ApiResult<Json<Value>> {
-    let ty = body.invite_type.clone().unwrap_or_else(|| "member".to_string());
-    let role = body.role.clone().unwrap_or_else(|| "member".to_string());
+    let ty = body
+        .invite_type
+        .clone()
+        .unwrap_or_else(|| "member".to_string());
+    let role = body
+        .role
+        .clone()
+        .unwrap_or_else(|| "member".to_string());
     let days = body.expires_in_days.unwrap_or(7).clamp(1, 365);
-    // 生成 32 字节 base36 token（避免引入 rand 依赖）
-    use sha2::{Digest, Sha256};
-    let raw_token: String = {
-        let mut h = Sha256::digest(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                .wrapping_add(uuid::Uuid::new_v4().as_u128())
-                .to_le_bytes(),
-        )
-        .to_vec();
-        let mut s = String::with_capacity(32);
-        while s.len() < 32 {
-            for &b in &h {
-                if s.len() >= 32 { break; }
-                s.push(std::char::from_digit(u32::from(b) % 36, 36).unwrap());
-            }
-            h = Sha256::digest(&h).to_vec();
-        }
-        s
-    };
-    let token_hash = {
-        use sha2::{Digest, Sha256};
-        Sha256::digest(raw_token.as_bytes()).to_vec()
-    };
-    let id: Uuid = Uuid::new_v4();
-    let exp = chrono::Utc::now() + chrono::Duration::days(days);
-    // Round 28: invites.role 不是真实列 — role 写到 defaults_payload jsonb
+    let expires_at =
+        pc_core::Timestamp::from_dt(chrono::Utc::now() + chrono::Duration::days(days));
     let defaults = serde_json::json!({"role": role});
-    sqlx::query(
-        "INSERT INTO invites (id, company_id, invite_type, allowed_join_types, defaults_payload, token_hash, expires_at)
-         VALUES ($1,$2,$3,'both',$4,$5,$6)",
-    )
-    .bind(id).bind(company_id).bind(&ty).bind(&defaults).bind(&token_hash).bind(exp)
-    .execute(state.db.pool()).await?;
+    let created = pc_repos::invite::InviteRepo::new(&state.db)
+        .create(pc_repos::invite::NewInvite {
+            company_id,
+            invite_type: ty,
+            allowed_join_types: "both".to_string(),
+            defaults_payload: Some(defaults),
+            expires_at,
+            invited_by_user_id: None,
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
-        "id": id, "companyId": company_id, "inviteType": ty, "role": role,
-        "token": raw_token, "expiresAt": exp,
+        "id": created.row.id,
+        "companyId": created.row.company_id,
+        "inviteType": created.row.invite_type,
+        "role": created.role,
+        "token": created.token,
+        "expiresAt": created.row.expires_at,
     })))
 }
 
@@ -1034,11 +1043,11 @@ async fn revoke_invite(
     State(state): State<AppState>,
     Path((company_id, invite_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query(
-        "UPDATE invites SET revoked_at=now()
-         WHERE company_id=$1 AND id=$2 AND revoked_at IS NULL",
-    ).bind(company_id).bind(invite_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = pc_repos::invite::InviteRepo::new(&state.db)
+        .revoke(company_id, invite_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !ok {
         return Err(ApiError::NotFound(format!("invite {invite_id} not active")));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1050,15 +1059,36 @@ async fn list_join_requests(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, company_id, invite_id, status, created_at
-         FROM join_requests WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(company_id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, inv, st, ts)| json!({
-        "id": id, "companyId": cid, "inviteId": inv,
-        "status": st, "createdAt": ts,
-    })).collect();
+    let rows = pc_repos::join_request::JoinRequestRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "companyId": r.company_id,
+                "inviteId": r.invite_id,
+                "status": r.status,
+                "requestType": r.request_type,
+                "requestIp": r.request_ip,
+                "requestingUserId": r.requesting_user_id,
+                "requestEmailSnapshot": r.request_email_snapshot,
+                "agentName": r.agent_name,
+                "adapterType": r.adapter_type,
+                "capabilities": r.capabilities,
+                "agentDefaultsPayload": r.agent_defaults_payload,
+                "createdAgentId": r.created_agent_id,
+                "approvedByUserId": r.approved_by_user_id,
+                "approvedAt": r.approved_at,
+                "rejectedByUserId": r.rejected_by_user_id,
+                "rejectedAt": r.rejected_at,
+                "createdAt": r.created_at,
+                "updatedAt": r.updated_at,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
 
@@ -1066,6 +1096,8 @@ async fn list_join_requests(
 struct JoinRequestDecisionBody {
     #[serde(default)]
     note: Option<String>,
+    #[serde(default)]
+    by_user_id: Option<String>,
 }
 
 async fn approve_join_request(
@@ -1073,59 +1105,31 @@ async fn approve_join_request(
     Path((company_id, req_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<JoinRequestDecisionBody>,
 ) -> ApiResult<Json<Value>> {
-    // Round 28: decided_at 不是列 — 改用 approved_at；级联写 membership / agent
-    let mut tx = state.db.pool().begin().await?;
-    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT request_type, requesting_user_id, request_email_snapshot, agent_name, adapter_type, status
-         FROM join_requests WHERE company_id=$1 AND id=$2 FOR UPDATE",
-    ).bind(company_id).bind(req_id).fetch_optional(&mut *tx).await?;
-    let (request_type, requesting_user_id, _email, agent_name, adapter_type, status) = row
-        .ok_or_else(|| ApiError::NotFound(format!("join request {req_id}")))?;
-    if status != "pending_approval" {
-        return Err(ApiError::Conflict(format!("join request already {status}")));
-    }
-    let mut created_membership_id: Option<Uuid> = None;
-    let mut created_agent_id: Option<Uuid> = None;
-    match request_type.as_str() {
-        "company_join" | "user" => {
-            if let Some(uid) = requesting_user_id.as_ref() {
-                let exists: Option<(Uuid,)> = sqlx::query_as(
-                    "SELECT id FROM company_memberships WHERE company_id=$1 AND principal_type='user' AND principal_id=$2",
-                ).bind(company_id).bind(uid).fetch_optional(&mut *tx).await?;
-                if let Some((mid,)) = exists {
-                    sqlx::query("UPDATE company_memberships SET status='active', updated_at=now() WHERE id=$1")
-                        .bind(mid).execute(&mut *tx).await?;
-                    created_membership_id = Some(mid);
-                } else {
-                    let mid: Uuid = Uuid::new_v4();
-                    sqlx::query("INSERT INTO company_memberships (id, company_id, principal_type, principal_id, status, membership_role) VALUES ($1,$2,'user',$3,'active','member')")
-                        .bind(mid).bind(company_id).bind(uid).execute(&mut *tx).await?;
-                    created_membership_id = Some(mid);
-                }
+    let by_user_id = body.by_user_id.clone().unwrap_or_default();
+    let effects = pc_repos::join_request::JoinRequestRepo::new(&state.db)
+        .approve(
+            company_id,
+            req_id,
+            pc_repos::join_request::JoinRequestDecision {
+                note: body.note.clone(),
+                by_user_id,
+            },
+        )
+        .await
+        .map_err(|e| {
+            use pc_repos::join_request::JoinRequestError::*;
+            match e {
+                NotPending(_) => ApiError::Conflict("join request not pending".to_string()),
+                UnknownRequestType(s) => ApiError::BadRequest(format!("unknown request_type '{s}'")),
+                Db(err) => ApiError::Internal(format!("{err}")),
             }
-        }
-        "agent" => {
-            if let Some(name) = agent_name.as_ref() {
-                let aid: Uuid = Uuid::new_v4();
-                let at = adapter_type.clone().unwrap_or_else(|| "process".into());
-                sqlx::query(
-                    "INSERT INTO agents (id, company_id, name, role, adapter_type, status)
-                     VALUES ($1,$2,$3,'general',$4,'idle')",
-                ).bind(aid).bind(company_id).bind(name).bind(&at).execute(&mut *tx).await?;
-                created_agent_id = Some(aid);
-            }
-        }
-        _ => {}
-    }
-    let now = chrono::Utc::now();
-    sqlx::query(
-        "UPDATE join_requests SET status='approved', approved_at=$1 WHERE id=$2",
-    ).bind(now).bind(req_id).execute(&mut *tx).await?;
-    tx.commit().await?;
+        })?;
     Ok(Json(json!({
-        "id": req_id, "status": "approved", "note": body.note,
-        "createdMembershipId": created_membership_id,
-        "createdAgentId": created_agent_id,
+        "id": req_id,
+        "status": "approved",
+        "note": body.note,
+        "createdMembershipId": effects.created_membership_id,
+        "createdAgentId": effects.created_agent_id,
     })))
 }
 
@@ -1134,12 +1138,22 @@ async fn reject_join_request(
     Path((company_id, req_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<JoinRequestDecisionBody>,
 ) -> ApiResult<Json<Value>> {
-    // Round 28: decided_at 不是列 — 改用 rejected_at
-    let r = sqlx::query(
-        "UPDATE join_requests SET status='rejected', rejected_at=now() WHERE company_id=$1 AND id=$2 AND status='pending_approval'",
-    ).bind(company_id).bind(req_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("join request {req_id} not pending")));
+    let by_user_id = body.by_user_id.clone().unwrap_or_default();
+    let ok = pc_repos::join_request::JoinRequestRepo::new(&state.db)
+        .reject(
+            company_id,
+            req_id,
+            pc_repos::join_request::JoinRequestDecision {
+                note: body.note.clone(),
+                by_user_id,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+    if !ok {
+        return Err(ApiError::NotFound(format!(
+            "join request {req_id} not pending"
+        )));
     }
     Ok(Json(json!({"id": req_id, "status": "rejected", "note": body.note})))
 }

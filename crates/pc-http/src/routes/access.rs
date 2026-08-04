@@ -453,42 +453,37 @@ async fn invites_get(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    // Round 38 fix: invites table stores token_hash (SHA-256 hex of the
-    // opaque token).  Previously the handler queried `token = $1` which
-    // matched no rows because the column is named `token_hash`.
-    let token_hash = sha2_sha256(&token);
-    let row: Option<(Uuid, Uuid, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<String>)> = sqlx::query_as(
-        "SELECT id, company_id, expires_at, accepted_at, revoked_at, invited_by_user_id          FROM invites WHERE token_hash = $1 LIMIT 1",
-    )
-    .bind(&token_hash)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let Some((id, company_id, expires_at, accepted_at, revoked_at, invited_by_user_id)) = row else {
+    // 通过 pc_repos::invite::InviteRepo 按 token_hash 查 active 邀请。
+    let token_hash = pc_repos::invite::hash_token_hex(&token);
+    let row = pc_repos::invite::InviteRepo::new(&state.db)
+        .find_active_by_token_hash(&token_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some(inv) = row else {
         return Ok(Json(
             json!({"token": token, "valid": false, "reason": "not found"}),
         ));
     };
     let now = chrono::Utc::now();
-    let valid = revoked_at.is_none() && accepted_at.is_none() && expires_at.map_or(false, |exp| exp.as_datetime() > now);
-    // Role lives in defaults_payload jsonb (per Round 28 audit fix)
-    let role: Option<String> = sqlx::query_scalar(
-        "SELECT defaults_payload->>'role' FROM invites WHERE id=$1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .flatten();
+    let valid = inv.revoked_at.is_none()
+        && inv.accepted_at.is_none()
+        && inv.expires_at.as_datetime() > now;
+    // role 从 defaults_payload 提取（与 Round 28 audit 一致）
+    let role = inv
+        .defaults_payload
+        .as_ref()
+        .and_then(|v| v.get("role"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
     Ok(Json(json!({
-        "id": id,
+        "id": inv.id,
         "token": token,
-        "companyId": company_id,
+        "companyId": inv.company_id,
         "role": role,
-        "expiresAt": expires_at,
-        "acceptedAt": accepted_at,
-        "revokedAt": revoked_at,
-        "invitedByUserId": invited_by_user_id,
+        "expiresAt": inv.expires_at,
+        "acceptedAt": inv.accepted_at,
+        "revokedAt": inv.revoked_at,
+        "invitedByUserId": inv.invited_by_user_id,
         "valid": valid,
     })))
 }
@@ -502,23 +497,25 @@ async fn invites_accept(
         .user_id
         .clone()
         .unwrap_or_else(|| "u_invited".to_owned());
-    let updated = sqlx::query(
-        "UPDATE invites SET status = 'accepted', accepted_by = $1, accepted_at = now()          WHERE token = $2 AND status = 'pending'",
-    )
-    .bind(&user_id)
-    .bind(&token)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if updated.rows_affected() == 0 {
+    let token_hash = pc_repos::invite::hash_token_hex(&token);
+    let inv = pc_repos::invite::InviteRepo::new(&state.db)
+        .find_active_by_token_hash(&token_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some(inv) = inv else {
         return Err(ApiError::BadRequest(
             "invite already used or expired".into(),
         ));
-    }
+    };
+    // mark_accepted 在 accepted_at IS NULL 上幂等。
+    pc_repos::invite::InviteRepo::new(&state.db)
+        .mark_accepted(inv.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::OK,
-        Json(json!({"accepted": true, "userId": user_id})),
-    ))
+        Json(json!({"accepted": true, "userId": user_id}),
+    )))
 }
 
 async fn skills_available(State(state): State<AppState>) -> ApiResult<Json<Value>> {

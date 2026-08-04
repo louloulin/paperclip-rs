@@ -39,6 +39,8 @@ pub mod folder;
 pub mod goal;
 pub mod heartbeat;
 pub mod inbox;
+pub mod invite;
+pub mod join_request;
 pub mod inbox_agent_policy;
 pub mod issue;
 pub mod issue_approvals;
