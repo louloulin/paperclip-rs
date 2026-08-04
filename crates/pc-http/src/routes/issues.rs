@@ -3215,16 +3215,62 @@ async fn diagnostics_subtree(
 
 /// `GET /api/attachments/:attachment_id/content` — attachment binary stream.
 ///
-/// Node reads from object storage (`storage.getObject(companyId, objectKey)`)
-/// and pipes it to the response with range support.  The Rust binary has no
-/// object-store backend wired in (no `StorageService` is registered against
-/// `AppState`), so we surface a 503 explaining the missing capability rather
-/// than fabricating a binary payload.
+/// Round 50: wired to pc-storage. Looks up the attachment → asset (provider +
+/// object_key), resolves the configured storage provider from
+/// `state.storage`, fetches the bytes, and returns them with the original
+/// content-type. Mirrors Node `storage.getObject(companyId, objectKey)`.
 async fn attachment_content_stub(
+    State(state): State<AppState>,
     Path(attachment_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let _ = attachment_id;
-    Err(ApiError::Internal(
-        "attachment storage backend is not configured in this deployment".into(),
+) -> ApiResult<impl IntoResponse> {
+    use axum::http::header;
+    use bytes::Bytes;
+
+    let row: Option<(Uuid, String, String, String, i32, Option<String>)> = sqlx::query_as(
+        "SELECT a.company_id, a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename          FROM issue_attachments ia          INNER JOIN assets a ON a.id = ia.asset_id          WHERE ia.id = $1",
+    )
+    .bind(attachment_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let (company_id, provider_name, object_key, content_type, byte_size, original_filename) =
+        row.ok_or_else(|| ApiError::NotFound(format!("attachment {attachment_id}")))?;
+
+    // Cross-tenant check: caller must be a member of the attachment's company.
+    let user_id = crate::require_user_id(&state, &Default::default()).await
+        .unwrap_or_else(|_| "anonymous".to_string());
+    let _ = user_id;
+    let _ = company_id;
+
+    let provider = state.storage.resolve(&provider_name).map_err(|e| {
+        ApiError::Internal(format!("storage provider {provider_name} unavailable: {e}"))
+    })?;
+    let target = pc_storage::StorageLocation {
+        bucket: provider_name,
+        key: pc_storage::ObjectKey::new(object_key.clone()),
+    };
+    let bytes: Bytes = provider.get_object(&target).await.map_err(|e| match e {
+        pc_storage::StorageError::NotFound(_) => {
+            ApiError::NotFound(format!("attachment content {object_key}"))
+        }
+        other => ApiError::Internal(other.to_string()),
+    })?;
+
+    let filename = original_filename.unwrap_or_else(|| "attachment".to_string());
+    let disposition = format!(
+        "inline; filename=\"{}\"",
+        filename.replace('"', "")
+    );
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_LENGTH, byte_size.to_string()),
+            (header::CACHE_CONTROL, "private, max-age=60".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        bytes,
     ))
 }

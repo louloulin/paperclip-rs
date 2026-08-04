@@ -239,6 +239,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn round_trip_put_get_stream() {
+        let tmp = TempDir::new().unwrap();
+        let store = LocalDiskStorage::new(tmp.path().to_path_buf());
+        let target = StorageLocation {
+            bucket: "paperclip-assets".into(),
+            key: ObjectKey::new("company-123/attach-1.png".to_string()),
+        };
+        let payload = b"hello world".to_vec();
+        let meta = store
+            .put_object(&target, bytes::Bytes::from(payload.clone()), Some("image/png"))
+            .await
+            .unwrap();
+        assert_eq!(meta.size, payload.len() as u64);
+        let got = store.get_object(&target).await.unwrap();
+        assert_eq!(got.as_ref(), payload.as_slice());
+        let mut stream = store.stream_object(&target).await.unwrap();
+        use futures::StreamExt;
+        let mut collected = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            collected.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(collected, payload);
+    }
+
+    #[tokio::test]
+    async fn get_object_not_found_returns_storage_error() {
+        let tmp = TempDir::new().unwrap();
+        let store = LocalDiskStorage::new(tmp.path().to_path_buf());
+        let target = StorageLocation {
+            bucket: "paperclip-assets".into(),
+            key: ObjectKey::new("missing/file.png".to_string()),
+        };
+        let err = store.get_object(&target).await.unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[tokio::test]
     async fn health_creates_root() {
         let tmp = TempDir::new().unwrap();
         let nested = tmp.path().join("nested/deep");

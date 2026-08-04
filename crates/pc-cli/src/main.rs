@@ -116,6 +116,16 @@ enum Command {
         #[command(subcommand)]
         action: ClientCommand,
     },
+    /// Pipeline + pipeline case operations (CLI parity with `paperclip/cli/src/commands/pipelines.ts`)
+    Pipelines {
+        #[command(subcommand)]
+        action: PipelinesAction,
+    },
+    /// Routine operations (CLI parity with `paperclip/cli/src/commands/routines.ts`)
+    Routines {
+        #[command(subcommand)]
+        action: RoutinesAction,
+    },
     /// Show CLI version
     Version,
 }
@@ -168,6 +178,82 @@ enum WorktreeAction {
 }
 
 #[derive(Subcommand, Debug)]
+enum PipelinesAction {
+    /// List pipelines (filter by company)
+    List {
+        #[arg(long)]
+        company: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Get a single pipeline by id (and stages)
+    Get {
+        /// Pipeline id (UUID)
+        id: String,
+    },
+    /// Create a new pipeline for a company
+    Create {
+        #[arg(long)]
+        company: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// List cases for a pipeline (or across company)
+    CaseList {
+        #[arg(long)]
+        pipeline: Option<String>,
+        #[arg(long)]
+        company: Option<String>,
+        #[arg(long)]
+        stage: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Get a single pipeline case (full detail)
+    CaseGet {
+        /// Case id (UUID)
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RoutinesAction {
+    /// List routines (filter by company)
+    List {
+        #[arg(long)]
+        company: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Get a single routine by id
+    Get {
+        /// Routine id (UUID)
+        id: String,
+    },
+    /// Pause a routine (status -> paused)
+    Pause {
+        /// Routine id (UUID)
+        id: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Resume a paused routine (status -> active)
+    Resume {
+        /// Routine id (UUID)
+        id: String,
+    },
+    /// Trigger a routine run now (ad-hoc execution)
+    Trigger {
+        /// Routine id (UUID)
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum ServiceAction {
     /// Print service install hint (systemd / launchd) for current OS
     InstallHint,
@@ -176,6 +262,100 @@ enum ServiceAction {
         #[arg(long, default_value = "http://127.0.0.1:3100")]
         url: String,
     },
+}
+
+/// Round 48: pipelines subcommand (CLI parity with `paperclip/cli/src/commands/pipelines.ts`).
+async fn pipelines_command(client: CliClient, action: PipelinesAction) -> Result<()> {
+    match action {
+        PipelinesAction::List { company, limit } => {
+            let mut path = "/api/pipelines".to_string();
+            if let Some(c) = company {
+                path.push_str(&format!("?companyId={}", c));
+            } else {
+                path.push_str(&format!("?limit={}", limit));
+            }
+            let data = client.get(&path).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        PipelinesAction::Get { id } => {
+            let data = client.get(&format!("/api/pipelines/{}", id)).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        PipelinesAction::Create { company, key, name, description } => {
+            let body = serde_json::json!({
+                "companyId": company,
+                "key": key,
+                "name": name,
+                "description": description,
+            });
+            let data = client.post("/api/pipelines", body).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        PipelinesAction::CaseList { pipeline, company, stage, limit } => {
+            let mut q = format!("limit={}", limit);
+            if let Some(p) = pipeline {
+                q.push_str(&format!("&pipelineId={}", p));
+            }
+            if let Some(c) = company {
+                q.push_str(&format!("&companyId={}", c));
+            }
+            if let Some(s) = stage {
+                q.push_str(&format!("&stageId={}", s));
+            }
+            let data = client.get(&format!("/api/pipelines/cases?{}", q)).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        PipelinesAction::CaseGet { id } => {
+            let data = client.get(&format!("/api/cases/{}", id)).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+    }
+}
+
+/// Round 49: routines subcommand (CLI parity with `paperclip/cli/src/commands/routines.ts`).
+async fn routines_command(client: CliClient, action: RoutinesAction) -> Result<()> {
+    match action {
+        RoutinesAction::List { company, limit } => {
+            let mut q = format!("limit={}", limit);
+            if let Some(c) = company {
+                q.push_str(&format!("&companyId={}", c));
+            }
+            let data = client.get(&format!("/api/routines?{}", q)).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        RoutinesAction::Get { id } => {
+            let data = client.get(&format!("/api/routines/{}", id)).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        RoutinesAction::Pause { id, reason } => {
+            let body = match reason {
+                Some(r) => serde_json::json!({"status": "paused", "reason": r}),
+                None => serde_json::json!({"status": "paused"}),
+            };
+            let data = client.post(&format!("/api/routines/{}/pause", id), body).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        RoutinesAction::Resume { id } => {
+            let body = serde_json::json!({"status": "active"});
+            let data = client.post(&format!("/api/routines/{}/resume", id), body).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+        RoutinesAction::Trigger { id } => {
+            let body = serde_json::json!({});
+            let data = client.post(&format!("/api/routines/{}/trigger", id), body).await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -222,6 +402,7 @@ enum ClientCommand {
         #[arg(long)]
         body: Option<String>,
     },
+
 }
 
 #[tokio::main]
@@ -255,6 +436,8 @@ async fn main() -> Result<()> {
         Command::Heartbeat { action } => heartbeat_command(client.clone(), action).await,
         Command::Auth { action } => auth_command(client.clone(), action).await,
         Command::Client { action } => client_command(client, action).await,
+        Command::Pipelines { action } => pipelines_command(client.clone(), action).await,
+        Command::Routines { action } => routines_command(client.clone(), action).await,
         Command::Version => {
             println!("paperclipai {}", env!("CARGO_PKG_VERSION"));
             Ok(())

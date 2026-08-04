@@ -1507,7 +1507,6 @@ async fn inspect_local_folder(
         .map(|c| c.required_files.clone())
         .or_else(|| stored.map(|c| c.required_files.clone()))
         .unwrap_or_default();
-    let _ = (required_directories.clone(), required_files.clone());
     let configured_path = override_cfg
         .map(|c| c.path.clone())
         .or_else(|| stored.map(|c| c.path.clone()));
@@ -1521,10 +1520,10 @@ async fn inspect_local_folder(
             access,
             readable: false,
             writable: false,
-            required_directories,
-            required_files,
-            missing_directories: required_directories.clone(),
-            missing_files: required_files.clone(),
+            required_directories: required_directories.clone(),
+            required_files: required_files.clone(),
+            missing_directories: required_directories,
+            missing_files: required_files,
             healthy: false,
             problems: vec![LocalFolderProblem {
                 code: "not_configured".into(),

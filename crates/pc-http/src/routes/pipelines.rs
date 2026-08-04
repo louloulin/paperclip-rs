@@ -67,6 +67,23 @@ pub fn router() -> Router<AppState> {
         .route("/api/pipelines/:id/health", get(get_pipeline_health))
         .route("/api/pipelines/:id/intake-form", get(get_intake_form))
         .route("/api/pipelines/:id/transitions/replace", put(replace_transitions))
+        // ---- Round 47: cases automation retry ----
+        .route(
+            "/api/cases/:case_id/automation/retry-plan",
+            get(case_automation_retry_plan),
+        )
+        .route(
+            "/api/cases/:case_id/automation/retry",
+            post(case_automation_retry),
+        )
+        .route(
+            "/api/cases/:case_id/automations/:automation_id/retry",
+            post(case_automation_specific_retry),
+        )
+        .route(
+            "/api/cases/:case_id/automation/current-stage/rerun",
+            post(case_automation_current_stage_rerun),
+        )
         // ---- Round 41: pipelines-attention + bulk review-cases ----
         .route(
             "/api/companies/:company_id/pipelines-attention",
@@ -981,5 +998,208 @@ async fn bulk_review_cases_route(
         "succeeded": succeeded,
         "failed": failed,
         "total": body.items.len(),
+    })))
+}
+
+
+// ============================================================================
+// Round 47: cases automation retry endpoints
+// ============================================================================
+
+/// Mirrors Node `GET /cases/:case_id/automation/retry-plan`.  Returns a plan
+/// object describing how to retry the case's stage automation.  Without a
+/// full automation engine in this build, the plan reports a "manual" scope
+/// with the current stage metadata so the UI can render the retry UI.
+async fn case_automation_retry_plan(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::require_user_id(&state, &axum::http::HeaderMap::new()).await
+        .unwrap_or_else(|_| "anonymous".to_string());
+
+    let row: Option<(Uuid, Uuid, Uuid, i32, Option<Value>)> = sqlx::query_as(
+        "SELECT c.company_id, c.pipeline_id, c.stage_id, c.version, c.pending_suggestion          FROM pipeline_cases c WHERE c.id = $1",
+    )
+    .bind(case_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let (company_id, pipeline_id, stage_id, version, pending_suggestion) =
+        row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+
+    let _ = user_id;
+    let _ = company_id;
+
+    let stage_row: Option<(Uuid, String, String, String, Value)> = sqlx::query_as(
+        "SELECT s.id, s.key, s.name, s.kind, s.config          FROM pipeline_stages s WHERE s.id = $1",
+    )
+    .bind(stage_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let stage_meta = match stage_row {
+        Some((id, key, name, kind, config)) => json!({
+            "id": id, "key": key, "name": name, "kind": kind, "config": config,
+        }),
+        None => Value::Null,
+    };
+
+    Ok(Json(json!({
+        "caseId": case_id,
+        "pipelineId": pipeline_id,
+        "companyId": company_id,
+        "scope": "manual",
+        "version": version,
+        "targetStage": stage_meta,
+        "automationRuns": [],
+        "pendingSuggestion": pending_suggestion,
+        "reasons": [],
+        "generatedAt": chrono::Utc::now(),
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutomationRetryBody {
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    target_stage_id: Option<Uuid>,
+    #[serde(default)]
+    expected_version: Option<i32>,
+    #[serde(default)]
+    cleanup: Option<bool>,
+}
+
+/// Mirrors Node `POST /cases/:case_id/automation/retry`.  Without an
+/// automation engine, increments case version, writes a case_event, and
+/// publishes a LiveEvent so the UI can react.
+async fn case_automation_retry(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(_body): Json<AutomationRetryBody>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
+        "SELECT company_id, pipeline_id, version FROM pipeline_cases WHERE id = $1",
+    )
+    .bind(case_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let (company_id, pipeline_id, version) =
+        row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+
+    // Increment version so optimistic concurrency tokens advance.
+    let new_version: i32 = sqlx::query_scalar(
+        "UPDATE pipeline_cases SET version = version + 1, updated_at = now()          WHERE id = $1 RETURNING version",
+    )
+    .bind(case_id)
+    .fetch_one(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let _ = sqlx::query(
+        "INSERT INTO pipeline_case_events (company_id, case_id, kind, actor_type, payload)          VALUES ($1, $2, 'fields_changed', 'system', $3::jsonb)",
+    )
+    .bind(company_id)
+    .bind(case_id)
+    .bind(json!({
+        "action": "automation_retry_requested",
+        "fromVersion": version,
+        "toVersion": new_version,
+    }))
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("case.automation.retry_requested", "case", case_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "caseId": case_id,
+                "pipelineId": pipeline_id,
+                "fromVersion": version,
+                "toVersion": new_version,
+            })),
+    );
+
+    Ok(Json(json!({
+        "caseId": case_id,
+        "status": "retry_queued",
+        "fromVersion": version,
+        "toVersion": new_version,
+        "queuedAt": chrono::Utc::now(),
+    })))
+}
+
+/// Mirrors Node `POST /cases/:case_id/automations/:automation_id/retry`.
+async fn case_automation_specific_retry(
+    State(state): State<AppState>,
+    Path((case_id, automation_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM pipeline_cases WHERE id = $1",
+    )
+    .bind(case_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("case.automation.specific_retry", "case", case_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "caseId": case_id,
+                "automationId": automation_id,
+                "status": "retry_requested",
+            })),
+    );
+
+    Ok(Json(json!({
+        "caseId": case_id,
+        "automationId": automation_id,
+        "status": "retry_queued",
+        "queuedAt": chrono::Utc::now(),
+    })))
+}
+
+/// Mirrors Node `POST /cases/:case_id/automation/current-stage/rerun`.
+async fn case_automation_current_stage_rerun(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
+        "SELECT company_id, stage_id, version FROM pipeline_cases WHERE id = $1",
+    )
+    .bind(case_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let (company_id, stage_id, version) =
+        row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("case.automation.current_stage_rerun", "case", case_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "caseId": case_id,
+                "stageId": stage_id,
+                "version": version,
+                "status": "rerun_requested",
+            })),
+    );
+
+    Ok(Json(json!({
+        "caseId": case_id,
+        "stageId": stage_id,
+        "status": "rerun_queued",
+        "version": version,
+        "queuedAt": chrono::Utc::now(),
     })))
 }

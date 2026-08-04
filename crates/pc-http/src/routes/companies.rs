@@ -44,8 +44,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/stats", get(get_companies_stats))
         .route("/api/companies/issues", get(get_companies_issues_malformed))
         .route("/api/companies/:company_id/exports", post(start_company_export))
-        // ── Round 45: plugin UI static alias (root-mount) ──
-        .route("/_plugins/:plugin_id/ui/*filePath", get(plugin_ui_static))
+        // ── Round 49: removed duplicate plugin_ui_static alias ──
+        // Real impl lives in routes/plugin_ui_static.rs (registered via routes/mod.rs)
         .route("/api/companies/:id/export/fidelity", get(get_company_export_fidelity))
         .route("/api/companies/:id/feedback-traces", get(list_company_feedback_traces))
         .route("/api/companies/:id/imports/apply", post(apply_company_import))
@@ -2076,17 +2076,3 @@ async fn get_companies_issues_malformed() -> ApiResult<Json<Value>> {
     ))
 }
 
-/// `GET /_plugins/:plugin_id/companies/:company_id/ui/*file_path`
-///
-/// Mirrors Node `/api/_plugins/:pluginId/companies/:companyId/ui/*filePath`.
-/// Node serves these from on-disk plugin asset directories.  The Rust
-/// binary has no plugin-asset static serving wired in, so the route
-/// honestly surfaces 503 (mirroring the `invite_logo` / `attachment_content`
-/// pattern from earlier rounds).
-async fn plugin_ui_static(
-    Path((_plugin_id, _file_path)): Path<(Uuid, String)>,
-) -> ApiResult<Json<Value>> {
-    Err(ApiError::Internal(
-        "plugin UI static serving is not configured in this deployment".into(),
-    ))
-}

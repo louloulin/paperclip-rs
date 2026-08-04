@@ -692,16 +692,18 @@ async fn invite_onboarding_txt(
     ))
 }
 
-/// `GET /api/invites/:token/logo` — company logo asset proxy.
+/// `GET /api/invites/:token/logo` — company logo asset stream.
 ///
-/// Mirrors Node `/invites/:token/logo`.  Node streams from object storage
-/// (S3-like).  The Rust binary currently has no storage service registered;
-/// returning 404 keeps the route surface parity while honestly surfacing the
-/// missing capability (instead of fabricating a logo payload).
+/// Round 50: wired to pc-storage. Mirrors Node `/invites/:token/logo` which
+/// streams from object storage. We look up the invite → company → logo asset,
+/// resolve the storage provider, and stream the bytes with cache headers.
 async fn invite_logo(
     State(state): State<AppState>,
     Path(token): Path<String>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<impl IntoResponse> {
+    use axum::http::header;
+    use bytes::Bytes;
+
     let invite = lookup_invite_by_token(&state, &token).await?;
     let Some((_, company_id, _, _, accepted_at, revoked_at)) = invite else {
         return Err(ApiError::NotFound("Invite not found".into()));
@@ -709,21 +711,51 @@ async fn invite_logo(
     if revoked_at.is_some() || accepted_at.is_some() {
         return Err(ApiError::NotFound("Invite not found".into()));
     }
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT asset_id FROM company_logos WHERE company_id = $1 LIMIT 1",
+
+    let row: Option<(String, String, String, i32, Option<String>)> = sqlx::query_as(
+        "SELECT a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename          FROM company_logos cl          INNER JOIN assets a ON a.id = cl.asset_id          WHERE cl.company_id = $1 LIMIT 1",
     )
     .bind(company_id)
     .fetch_optional(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if row.is_none() {
-        return Err(ApiError::NotFound("Invite logo not found".into()));
+
+    let (provider_name, object_key, content_type, byte_size, original_filename) = row
+        .ok_or_else(|| ApiError::NotFound("Invite logo not found".into()))?;
+
+    let provider = state.storage.resolve(&provider_name).map_err(|e| {
+        ApiError::Internal(format!("storage provider {provider_name} unavailable: {e}"))
+    })?;
+    let target = pc_storage::StorageLocation {
+        bucket: provider_name,
+        key: pc_storage::ObjectKey::new(object_key.clone()),
+    };
+    let bytes: Bytes = provider.get_object(&target).await.map_err(|e| match e {
+        pc_storage::StorageError::NotFound(_) => {
+            ApiError::NotFound(format!("Invite logo content {object_key}"))
+        }
+        other => ApiError::Internal(other.to_string()),
+    })?;
+
+    let filename = original_filename.unwrap_or_else(|| "company-logo".to_string());
+    let content_type_for_check = content_type.clone();
+    let mut response = axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, byte_size.to_string())
+        .header(header::CACHE_CONTROL, "private, max-age=60")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("inline; filename=\"{}\"", filename.replace('"', "")),
+        )
+        .header("x-content-type-options", "nosniff");
+    if content_type_for_check == "image/svg+xml" {
+        response = response.header(
+            "content-security-policy",
+            "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+        );
     }
-    // Asset registered but the Rust binary has no storage backend wired in.
-    // Returning 503 makes the gap observable to the UI without a 500 crash.
-    Err(ApiError::Internal(
-        "company logo storage backend is not configured in this deployment".into(),
-    ))
+    Ok(response.body(axum::body::Body::from(bytes)).map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 /// `GET /api/invites/:token/skills/index` — public skill catalog reachable

@@ -10,7 +10,7 @@ use uuid::Uuid;
 pub const PLUGIN_MANIFEST_VERSION: &str = "v1";
 
 /// Manifest 作者。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginManifestAuthor {
     pub name: String,
@@ -90,7 +90,7 @@ pub enum PluginLocalFolderAccess {
 }
 
 /// Paperclip 插件 manifest v1。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaperclipPluginManifestV1 {
     pub id: String,
@@ -170,6 +170,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
+        local_folders: vec![],
         };
         assert!(m.validate().is_ok());
     }
@@ -188,6 +189,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
+        local_folders: vec![],
         };
         assert!(m.validate().is_err());
     }
@@ -206,6 +208,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
+        local_folders: vec![],
         };
         let err = m.validate().unwrap_err();
         assert!(err.contains("unsupported manifest_version"));
@@ -228,6 +231,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
+        local_folders: vec![],
         };
         assert!(m.has_capability(&PluginManifestCapabilityKind::Jobs));
         assert!(!m.has_capability(&PluginManifestCapabilityKind::Tools));
