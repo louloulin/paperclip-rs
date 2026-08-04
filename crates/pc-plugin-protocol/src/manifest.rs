@@ -57,6 +57,38 @@ pub struct PluginManifestUiContribution {
     pub metadata: Value,
 }
 
+/// Plugin 声明的本地文件夹（公司范围内的文件系统根）。
+///
+/// Mirrors `@paperclipai/shared` `PluginLocalFolderDeclaration`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginLocalFolderDeclaration {
+    /// 稳定标识符，在插件内唯一。
+    pub folder_key: String,
+    /// 显示名称。
+    pub display_name: String,
+    /// 可选的描述。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 访问级别，默认为 `readWrite`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<PluginLocalFolderAccess>,
+    /// 必需子目录（相对路径）。
+    #[serde(default)]
+    pub required_directories: Vec<String>,
+    /// 必需文件（相对路径）。
+    #[serde(default)]
+    pub required_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginLocalFolderAccess {
+    Read,
+    #[default]
+    ReadWrite,
+}
+
 /// Paperclip 插件 manifest v1。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +109,9 @@ pub struct PaperclipPluginManifestV1 {
     pub ui_contributions: Vec<PluginManifestUiContribution>,
     #[serde(default)]
     pub metadata: Value,
+    /// 插件声明的本地文件夹列表。
+    #[serde(default)]
+    pub local_folders: Vec<PluginLocalFolderDeclaration>,
 }
 
 impl PaperclipPluginManifestV1 {

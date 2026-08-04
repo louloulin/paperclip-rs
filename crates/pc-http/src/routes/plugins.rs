@@ -7,7 +7,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -21,7 +21,10 @@ use pc_plugin_host::{
     notifications::{StreamBridgeEvent, SubscriptionKey},
     WorkerHandle,
 };
-use pc_plugin_protocol::{ExecuteToolParams, RunJobParams};
+use pc_plugin_protocol::{
+    ExecuteToolParams, PaperclipPluginManifestV1, PluginLocalFolderAccess, PluginLocalFolderDeclaration,
+    RunJobParams,
+};
 use pc_plugin_protocol::{GetDataParams, PerformActionParams};
 use pc_realtime::LiveEvent;
 use pc_repos::plugin::{
@@ -87,6 +90,23 @@ pub fn router() -> Router<AppState> {
             post(receive_plugin_webhook),
         )
         .route("/api/plugins/:plugin_id/dashboard", get(plugin_dashboard))
+        // ── Round 46: plugin local folders endpoints ──
+        .route(
+            "/api/plugins/:plugin_id/companies/:company_id/local-folders",
+            get(plugin_local_folders_list),
+        )
+        .route(
+            "/api/plugins/:plugin_id/companies/:company_id/local-folders/:folder_key/status",
+            get(plugin_local_folder_status),
+        )
+        .route(
+            "/api/plugins/:plugin_id/companies/:company_id/local-folders/:folder_key/validate",
+            post(plugin_local_folder_validate),
+        )
+        .route(
+            "/api/plugins/:plugin_id/companies/:company_id/local-folders/:folder_key",
+            put(plugin_local_folder_save),
+        )
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1358,4 +1378,408 @@ mod tests {
         assert_eq!(body.0["error"], "plugin worker not running");
         assert_eq!(body.0["pluginId"], "plugin-1");
     }
+}
+
+
+// ============================================================================
+// Round 46: Plugin local folders
+// ============================================================================
+
+#[derive(Debug, Default, Deserialize)]
+struct LocalFolderValidateBody {
+    path: Option<String>,
+    #[serde(default)]
+    access: Option<PluginLocalFolderAccess>,
+    #[serde(default)]
+    required_directories: Vec<String>,
+    #[serde(default)]
+    required_files: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LocalFolderSaveBody {
+    path: String,
+    #[serde(default)]
+    access: PluginLocalFolderAccess,
+    #[serde(default)]
+    required_directories: Vec<String>,
+    #[serde(default)]
+    required_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LocalFolderStoredConfig {
+    path: String,
+    #[serde(default)]
+    access: PluginLocalFolderAccess,
+    #[serde(default)]
+    required_directories: Vec<String>,
+    #[serde(default)]
+    required_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LocalFolderProblem {
+    code: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LocalFolderStatus {
+    folder_key: String,
+    configured: bool,
+    path: Option<String>,
+    real_path: Option<String>,
+    access: PluginLocalFolderAccess,
+    readable: bool,
+    writable: bool,
+    required_directories: Vec<String>,
+    required_files: Vec<String>,
+    missing_directories: Vec<String>,
+    missing_files: Vec<String>,
+    healthy: bool,
+    problems: Vec<LocalFolderProblem>,
+    checked_at: chrono::DateTime<chrono::Utc>,
+}
+
+async fn get_plugin_manifest_from_db(state: &AppState, plugin_id: Uuid) -> ApiResult<Option<PaperclipPluginManifestV1>> {
+    use pc_repos::plugin::PluginRepo;
+    let row = PluginRepo::new(&state.db)
+        .get_by_id(plugin_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(row.and_then(|r| serde_json::from_value(r.manifest_json).ok()))
+}
+
+fn get_stored_local_folders(settings_json: Option<&Value>) -> std::collections::HashMap<String, LocalFolderStoredConfig> {
+    let mut out = std::collections::HashMap::new();
+    let Some(v) = settings_json else { return out };
+    let Some(map) = v.get("localFolders").and_then(|x| x.as_object()) else { return out };
+    for (k, val) in map {
+        if let Ok(cfg) = serde_json::from_value::<LocalFolderStoredConfig>(val.clone()) {
+            out.insert(k.clone(), cfg);
+        }
+    }
+    out
+}
+
+fn upsert_stored_local_folder(settings_json: Option<Value>, folder_key: &str, cfg: LocalFolderStoredConfig) -> Value {
+    let mut v = settings_json.unwrap_or_else(|| serde_json::json!({}));
+    if !v.is_object() {
+        v = serde_json::json!({});
+    }
+    let obj = v.as_object_mut().unwrap();
+    let lf = obj.entry("localFolders".to_string()).or_insert_with(|| serde_json::json!({}));
+    if !lf.is_object() {
+        *lf = serde_json::json!({});
+    }
+    let lf_obj = lf.as_object_mut().unwrap();
+    lf_obj.insert(
+        folder_key.to_string(),
+        serde_json::to_value(&cfg).unwrap_or(serde_json::json!({})),
+    );
+    v
+}
+
+fn access_default(access: Option<PluginLocalFolderAccess>) -> PluginLocalFolderAccess {
+    access.unwrap_or(PluginLocalFolderAccess::ReadWrite)
+}
+
+async fn inspect_local_folder(
+    folder_key: &str,
+    declaration: Option<&PluginLocalFolderDeclaration>,
+    stored: Option<&LocalFolderStoredConfig>,
+    override_cfg: Option<&LocalFolderStoredConfig>,
+) -> LocalFolderStatus {
+    let now = chrono::Utc::now();
+    let access = override_cfg
+        .map(|c| c.access.clone())
+        .or_else(|| stored.map(|c| c.access.clone()))
+        .or_else(|| declaration.and_then(|d| d.access.clone()))
+        .unwrap_or(PluginLocalFolderAccess::ReadWrite);
+    let required_directories = override_cfg
+        .map(|c| c.required_directories.clone())
+        .or_else(|| stored.map(|c| c.required_directories.clone()))
+        .unwrap_or_default();
+    let required_files = override_cfg
+        .map(|c| c.required_files.clone())
+        .or_else(|| stored.map(|c| c.required_files.clone()))
+        .unwrap_or_default();
+    let _ = (required_directories.clone(), required_files.clone());
+    let configured_path = override_cfg
+        .map(|c| c.path.clone())
+        .or_else(|| stored.map(|c| c.path.clone()));
+
+    let Some(path) = configured_path else {
+        return LocalFolderStatus {
+            folder_key: folder_key.to_string(),
+            configured: false,
+            path: None,
+            real_path: None,
+            access,
+            readable: false,
+            writable: false,
+            required_directories,
+            required_files,
+            missing_directories: required_directories.clone(),
+            missing_files: required_files.clone(),
+            healthy: false,
+            problems: vec![LocalFolderProblem {
+                code: "not_configured".into(),
+                message: "No local folder path is configured.".into(),
+                detail: None,
+            }],
+            checked_at: now,
+        };
+    };
+
+    let mut problems: Vec<LocalFolderProblem> = Vec::new();
+    let mut missing_directories: Vec<String> = Vec::new();
+    let mut missing_files: Vec<String> = Vec::new();
+    let mut readable = false;
+    let mut writable = false;
+    let mut real_path: Option<String> = None;
+    let mut configured = true;
+    let mut healthy = true;
+
+    if !std::path::Path::new(&path).is_absolute() {
+        problems.push(LocalFolderProblem {
+            code: "not_absolute".into(),
+            message: "Local folder path must be absolute.".into(),
+            detail: Some(path.clone()),
+        });
+        healthy = false;
+    }
+
+    match tokio::fs::metadata(&path).await {
+        Ok(meta) if meta.is_dir() => {
+            real_path = tokio::fs::canonicalize(&path)
+                .await
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned());
+            match tokio::fs::try_exists(&path).await {
+                Ok(true) => readable = true,
+                _ => {}
+            }
+            if access == PluginLocalFolderAccess::ReadWrite {
+                // Probe write access by attempting to create a temp file.
+                let probe = format!("{}/.paperclip-write-probe", path.trim_end_matches('/'));
+                if tokio::fs::write(&probe, b"ok").await.is_ok() {
+                    writable = true;
+                    let _ = tokio::fs::remove_file(&probe).await;
+                }
+            } else {
+                writable = false;
+            }
+            for sub in &required_directories {
+                let full = format!("{}/{}", path.trim_end_matches('/'), sub);
+                if !tokio::fs::try_exists(&full).await.unwrap_or(false) {
+                    missing_directories.push(sub.clone());
+                }
+            }
+            for f in &required_files {
+                let full = format!("{}/{}", path.trim_end_matches('/'), f);
+                if !tokio::fs::try_exists(&full).await.unwrap_or(false) {
+                    missing_files.push(f.clone());
+                }
+            }
+            if !missing_directories.is_empty() || !missing_files.is_empty() {
+                healthy = false;
+            }
+        }
+        Ok(_) => {
+            problems.push(LocalFolderProblem {
+                code: "not_directory".into(),
+                message: "Configured local folder path is not a directory.".into(),
+                detail: Some(path.clone()),
+            });
+            healthy = false;
+        }
+        Err(_) => {
+            configured = false;
+            problems.push(LocalFolderProblem {
+                code: "path_missing".into(),
+                message: "Configured path does not exist.".into(),
+                detail: Some(path.clone()),
+            });
+            healthy = false;
+        }
+    }
+
+    LocalFolderStatus {
+        folder_key: folder_key.to_string(),
+        configured,
+        path: Some(path),
+        real_path,
+        access,
+        readable,
+        writable,
+        required_directories,
+        required_files,
+        missing_directories,
+        missing_files,
+        healthy,
+        problems,
+        checked_at: now,
+    }
+}
+
+async fn plugin_local_folders_list(
+    State(state): State<AppState>,
+    Path((plugin_id, company_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    // Optional auth: list endpoints are informational; tolerate anonymous.
+    let _ = crate::require_user_id(
+        &state,
+        &<axum::http::HeaderMap as std::default::Default>::default(),
+    )
+    .await;
+
+    let manifest = get_plugin_manifest_from_db(&state, plugin_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("plugin not found".into()))?;
+    let settings = pc_repos::plugin::PluginRepo::new(&state.db)
+        .get_company_settings(plugin_id, company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map(|r| r.settings_json);
+    let stored = get_stored_local_folders(settings.as_ref());
+
+    let declarations = manifest.local_folders.clone();
+    let mut statuses = Vec::with_capacity(declarations.len());
+    for decl in &declarations {
+        let status = inspect_local_folder(
+            &decl.folder_key,
+            Some(decl),
+            stored.get(&decl.folder_key),
+            None,
+        )
+        .await;
+        statuses.push(serde_json::to_value(&status).unwrap_or(Value::Null));
+    }
+    Ok(Json(serde_json::json!({
+        "pluginId": plugin_id,
+        "companyId": company_id,
+        "declarations": declarations,
+        "folders": statuses,
+    })))
+}
+
+async fn plugin_local_folder_status(
+    State(state): State<AppState>,
+    Path((plugin_id, company_id, folder_key)): Path<(Uuid, Uuid, String)>,
+) -> ApiResult<Json<Value>> {
+    let Some(manifest) = get_plugin_manifest_from_db(&state, plugin_id).await? else {
+        return Err(ApiError::NotFound("plugin not found".into()));
+    };
+    let declaration = manifest.local_folders.iter().find(|d| d.folder_key == folder_key).cloned();
+    if declaration.is_none() {
+        return Err(ApiError::NotFound(format!("folder {folder_key} not declared by plugin")));
+    }
+    let settings = pc_repos::plugin::PluginRepo::new(&state.db)
+        .get_company_settings(plugin_id, company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map(|r| r.settings_json);
+    let stored = get_stored_local_folders(settings.as_ref())
+        .remove(&folder_key);
+    let status = inspect_local_folder(
+        &folder_key,
+        declaration.as_ref(),
+        stored.as_ref(),
+        None,
+    )
+    .await;
+    Ok(Json(serde_json::to_value(&status).unwrap_or(Value::Null)))
+}
+
+async fn plugin_local_folder_validate(
+    State(state): State<AppState>,
+    Path((plugin_id, company_id, folder_key)): Path<(Uuid, Uuid, String)>,
+    Json(body): Json<LocalFolderValidateBody>,
+) -> ApiResult<Json<Value>> {
+    let _ = (plugin_id, company_id);
+    let Some(path) = body.path else {
+        return Err(ApiError::BadRequest("\"path\" is required and must be a non-empty string".into()));
+    };
+    if path.trim().is_empty() {
+        return Err(ApiError::BadRequest("\"path\" is required and must be a non-empty string".into()));
+    }
+    let override_cfg = LocalFolderStoredConfig {
+        path: path.clone(),
+        access: access_default(body.access.clone()),
+        required_directories: body.required_directories.clone(),
+        required_files: body.required_files.clone(),
+    };
+    let status = inspect_local_folder(&folder_key, None, None, Some(&override_cfg)).await;
+    Ok(Json(serde_json::to_value(&status).unwrap_or(Value::Null)))
+}
+
+async fn plugin_local_folder_save(
+    State(state): State<AppState>,
+    Path((plugin_id, company_id, folder_key)): Path<(Uuid, Uuid, String)>,
+    Json(body): Json<LocalFolderSaveBody>,
+) -> ApiResult<Json<Value>> {
+    if body.path.trim().is_empty() {
+        return Err(ApiError::BadRequest("\"path\" is required and must be a non-empty string".into()));
+    }
+    let Some(manifest) = get_plugin_manifest_from_db(&state, plugin_id).await? else {
+        return Err(ApiError::NotFound("plugin not found".into()));
+    };
+    let declaration = manifest
+        .local_folders
+        .iter()
+        .find(|d| d.folder_key == folder_key)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("folder {folder_key} not declared by plugin")))?;
+
+    let cfg = LocalFolderStoredConfig {
+        path: body.path.clone(),
+        access: body.access.clone(),
+        required_directories: body.required_directories.clone(),
+        required_files: body.required_files.clone(),
+    };
+
+    // Read-modify-write plugin_company_settings.settings_json
+    let existing = pc_repos::plugin::PluginRepo::new(&state.db)
+        .get_company_settings(plugin_id, company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map(|r| r.settings_json);
+    let new_settings = upsert_stored_local_folder(existing, &folder_key, cfg.clone());
+    pc_repos::plugin::PluginRepo::new(&state.db)
+        .upsert_company_settings(plugin_id, company_id, true, &new_settings)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new(
+            "plugin.local_folder.saved",
+            "plugin",
+            plugin_id,
+        )
+        .with_data(serde_json::json!({
+            "pluginId": plugin_id,
+            "companyId": company_id,
+            "folderKey": folder_key,
+        })),
+    );
+
+    let stored = Some(cfg.clone());
+    let status = inspect_local_folder(
+        &folder_key,
+        Some(&declaration),
+        stored.as_ref(),
+        None,
+    )
+    .await;
+    Ok(Json(serde_json::json!({
+        "pluginId": plugin_id,
+        "companyId": company_id,
+        "folderKey": folder_key,
+        "config": cfg,
+        "status": serde_json::to_value(&status).unwrap_or(Value::Null),
+    })))
 }

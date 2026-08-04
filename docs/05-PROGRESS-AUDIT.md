@@ -1364,3 +1364,17 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 > - **覆盖率**：97.6% → **97.9%**（568/580 paths registered，仅 12 missing）；missing 全部为 plugins local-folders (4) + cases automation retry (4) + plugins-ui-static (1) + companies/issues (1) + companies/stats (1) + companies/:id/exports (1) — 都需要新 service 层或 manifest extension
 > - workspace check: 0 errors, 44 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
 > - **本轮累计**：5 个 path alias/stub 加完，「单 endpoint CRUD 补全」阶段基本完成；剩余 12 missing 都是 service-layer synthesis 工作（plugin manifest 扩展 / automation engine / object storage）
+
+## 第四十五轮增量（Round 45 — cross-company aggregations + plugin-ui-static alias）
+
+> 第四十五轮增量：
+> - **companies.rs** 2034 → 2092 行（**+3 endpoint / +58 行**）：
+  - **`GET /api/companies/stats`**：board 跨公司聚合统计 — `LEFT JOIN companies + company_memberships WHERE principal_id=$1 AND status='active'` 拿可访问公司列表，对每家公司跑 4 个 COUNT 查询（issues/agents/pipeline_cases/users），返回 `{stats: {companyId: {companyId, name, agentCount, issueCount, caseCount, userCount}}}`
+  - **`GET /api/companies/issues`**：malformed path handler — 直接返回 400 + 提示文案（与 node 完全一致：`"Missing companyId in path. Use /api/companies/{companyId}/issues."`）
+  - **`GET /_plugins/:plugin_id/ui/*filePath`**：plugin UI static alias — 同 `invite_logo` / `attachment_content` 模式，Rust 没有 plugin-asset static serving，返回 503（诚实暴露 capability 缺口）。**复用现有 stub 模式**
+  - **`POST /api/companies/:company_id/exports`**：plural alias to `start_company_export`（node `/:companyId/exports` 与 `/api/companies/:id/export` 是同一语义不同路径）
+> - 新增 2 个 handler：`get_companies_stats`（用 `require_user_id` 拿 user_id）+ `get_companies_issues_malformed`（BadRequest）+ `plugin_ui_static`（InternalError stub）
+> - 修复：`*file_path` → `*filePath`（axum 路由参数命名与 node 完全对齐）
+> - **覆盖率**：97.9% → **98.6%**（572/580 paths registered，仅 8 missing）；剩余 8 全部需要新 service 层（plugins local-folders 4 + cases automation retry 4）
+> - workspace check: 0 errors, 44 warnings；189 核心 tests passed；371 workspace tests passed（2 pre-existing 失败不变）
+> - **本轮累计**：跨公司聚合 + plugin UI static 路径补齐；剩余 8 missing 是 service-layer synthesis 工作

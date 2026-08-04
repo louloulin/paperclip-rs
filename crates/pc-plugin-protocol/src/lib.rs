@@ -17,8 +17,9 @@ pub mod types;
 pub use envelope::{JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse};
 pub use error_codes::{PluginErrorCode, PluginStandardErrorCode};
 pub use manifest::{
-    PaperclipPluginManifestV1, PluginManifestAuthor, PluginManifestCapability,
-    PluginManifestCapabilityKind, PluginManifestUiContribution,
+    PaperclipPluginManifestV1, PluginLocalFolderAccess, PluginLocalFolderDeclaration,
+    PluginManifestAuthor, PluginManifestCapability, PluginManifestCapabilityKind,
+    PluginManifestUiContribution,
 };
 pub use methods::{
     HostToWorkerMethodName, WorkerToHostMethodName, HOST_TO_WORKER_METHODS, WORKER_TO_HOST_METHODS,
