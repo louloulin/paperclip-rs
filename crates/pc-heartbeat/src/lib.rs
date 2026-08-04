@@ -426,6 +426,8 @@ pub enum HeartbeatSupervisorError {
     Registry(String),
     #[error("heartbeat run transition failed: {0}")]
     Transition(String),
+    #[error("heartbeat supervisor send failed: {0}")]
+    Send(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -645,6 +647,29 @@ pub fn spawn_heartbeat_supervisor(
 ) -> ActorRef<HeartbeatSupervisor> {
     HeartbeatSupervisor::spawn(HeartbeatSupervisor::new(max_concurrent_runs, registry))
 }
+
+/// 在 [`AgentStartLock`] 保护下发送 `StartHeartbeat` 消息。
+///
+/// 与直接 `supervisor.ask(msg)` 相比：同一 agent 的多次 start
+/// 调用按到达顺序串行执行；若上一次卡死超过 30s 则跳过等待继续，
+/// 避免一个挂死的 run 把后续 run 全堵住。对齐
+/// `server/src/services/agent-start-lock.ts::withAgentStartLock` 的
+/// Node 行为。
+pub async fn start_heartbeat_with_lock(
+    supervisor: &ActorRef<HeartbeatSupervisor>,
+    lock: &pc_repos::agent_start_lock::AgentStartLock,
+    agent_id: uuid::Uuid,
+    msg: StartHeartbeat,
+) -> Result<StartHeartbeatResult, HeartbeatSupervisorError> {
+    lock.with_default_lock(agent_id, || async move {
+        supervisor
+            .ask(msg)
+            .await
+            .map_err(|e| HeartbeatSupervisorError::Send(e.to_string()))
+    })
+    .await
+}
+
 
 #[cfg(test)]
 mod tests {

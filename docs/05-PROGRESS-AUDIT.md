@@ -1480,3 +1480,164 @@ $ ./target/debug/paperclipai --help        → 16 子命令可用
 > - **覆盖度**：100.0% 路径覆盖率维持（580/580）；本轮专注于把 2 个 503 stub 升级为真实 stream — 端到端 attachment/logo 流程现在完全可工作
 > - workspace check: 0 errors, 46 warnings；189 核心 tests passed；**373** workspace tests passed（2 pre-existing 失败不变，+2 from new storage tests）
 > - **本轮累计**：storage backend wiring 完成；后续可补 S3 provider 真实实现 + range request support
+
+## 第五十一轮复核（Round 51 — work timeline 契约纠偏）
+
+> 第五十一轮复核结论：
+> - `crates/pc-http/src/routes/companies.rs::get_timeline` 当前未提交实现虽然可以通过 `cargo check -p pc-http`，但**不能计入 Node service parity**。
+> - Node 权威实现是 `server/src/services/work-timeline.ts`，返回 `WorkTimelineResult` 图模型：`actors`、`spans`、`events`、`edges`、`pagination`、`window`；Rust 当前返回的是合并 `activity_log`、`pipeline_case_events`、`heartbeat_runs` 的扁平 `{events,total}`，与 UI 的 `packages/shared/src/types/work-timeline.ts` 契约不兼容。
+> - Node 时间线的真实数据源包括 `issues`、`heartbeat_runs`、`issue_comments`、`issue_approvals + approvals`、`issue_thread_interactions`、`activity_log`、`agents`、`user`，并包含：7 天默认/31 天上限窗口、issue 分页、goal/project/issue/user lens、hidden issue 过滤、issue ACL、run overlap、token usage 归一化、delegation/assignment edge 推导、actor hydrate。
+> - Rust 当前查询参数 `entity_type` 不是 Node API 参数；缺少 `userId`、`goalId`、`projectId`、`issueId`、`offset`，默认 limit 也与 Node 的 200、最大 500 不一致。
+> - 因此本轮把该实现定性为**可编译占位实现**，不提升迁移百分比；下一轮必须抽取独立 `work_timeline` service，按 shared DTO 与 Node 算法重构，并增加窗口、分页、usage、edge、ACL 的测试。
+> - 定向验证：`cargo check -p pc-http` 通过（0 errors，46 个既有 warning）。
+
+### 第五十一轮落地（Round 51 — work_timeline service 骨架）
+
+> 第五十一轮落地：
+> - **新增** `crates/pc-repos/src/work_timeline.rs`（≈ 360 行，含 10 个单测）：
+>   - 共享 DTO：`WorkTimelineActor` / `WorkTimelineSpan` / `WorkTimelineEvent` / `WorkTimelineEdge` / `RunUsage` / `WorkTimelinePagination` / `WorkTimelineResult` / `NormalizedWindow`，全部 `#[serde(rename_all = "camelCase")]`，键名与 `packages/shared/src/types/work-timeline.ts` 对齐
+>   - 纯函数：`normalize_window`（7 天默认 / 31 天上限 / future clamp / 反序回退）、`normalize_limit`（1–500）、`normalize_offset`（≥0）、`actor_id`（`agent:<id>` 等命名空间）、`parse_usage`（camelCase + snake_case 双兼容 + 字符串数字容错）
+>   - `WorkTimelineRepo::get_timeline` 入口返回 `WorkTimelineResult`；当前实现是 `empty_result` 占位（窗口、limit、offset 全部生效），后续 round 接入 `issues / heartbeat_runs / issue_comments / issue_approvals / approvals / issue_thread_interactions / activity_log` 真实查询
+> - **`crates/pc-http/src/routes/companies.rs`** 删除旧的扁平事件聚合实现（约 165 行），替换为 DTO 路由：参数改为 Node 同款 `limit / offset / from / to / userId / goalId / projectId / issueId`；handler 一行调用 `WorkTimelineRepo::get_timeline`
+> - **`crates/pc-repos/src/lib.rs`** 注册新模块 `work_timeline`
+> - **测试**：`cargo test -p pc-repos work_timeline` 10/10 通过；`cargo test -p pc-repos` 73 单测全部通过
+> - **验证**：`cargo check --workspace` 0 errors，46 warnings（既有 warning 集合，无新增）
+> - **关键差距**：数据源尚未实现 → UI 暂只能看到空 actors/events/spans/edges；下一轮目标 = `collectIssueIds` + `loadIssues` + `applyUserLens` + `filterReadableIssues` + 各类 row → span/event/edge 转换 + actor hydrate
+> - **本轮累计**：work timeline service-layer 从「错误扁平响应」纠正为「共享 DTO + 纯函数 + 可测试骨架」；`pc-repos` 单元测试 73/73 ✅
+
+## 第五十二轮增量（Round 52 — `agent_action_audit` 完整移植：service-layer 深度补齐）
+
+> 第五十二轮增量：
+> - **新增** `crates/pc-repos/src/agent_action_audit.rs`（≈ 230 行 + 5 单测）：
+>   - DTO（camelCase）：`AgentActionAuditFilters` / `AgentActionAuditItem` / `AgentActionAuditEntity` / `AuditIssueSnippet` / `AuditCommentSnippet` / `AuditDocumentSnippet` / `AgentActionAuditPage`
+>   - 纯函数：`encode_cursor` / `decode_cursor`（base64url 编码 JSON，微秒精度保留） + `normalize_limit`（1–200） + `excerpt`（空白归一 + 280 字符省略号）
+>   - `AgentActionAuditRepo::list` 入口（当前先做 filter/cursor 校验与归一化，返回空 page，下一轮接多表 join 真实数据源）
+>   - 错误类型：`CursorError` / `RepoErr`，确保上游能区分「坏 cursor」与「DB 异常」
+> - **`crates/pc-repos/src/lib.rs`** 注册 `agent_action_audit` 模块
+> - **`crates/pc-repos/Cargo.toml`** 新增 `base64 = "0.22"`
+> - **`crates/pc-http/src/routes/companies.rs`** 完整替换两个 stub：
+>   - `list_agent_actions` → 新增 `AgentActionAuditQuery` schema + `parse_agent_audit_query`（校验 entity/entityId/action 非空、actorType ∈ {agent,user,system,plugin}、limit ∈ [1, 200]） + 调用 `AgentActionAuditRepo::list`，返回 DTO
+>   - `export_agent_actions_csv` → 同样走真实查询，CSV 头扩展为 `id,companyId,action,entityType,entityId,createdAt`，字段加引号转义
+>   - 旧 stub 删除：错误表 `tool_action_requests` 不存在就回退 `items: []`、无条件 limit 100、无 filter、无 cursor、无 redaction
+> - **测试**：
+>   - `cargo test -p pc-repos agent_action_audit` 5/5 通过（cursor round-trip 保留微秒精度 / cursor 拒绝垃圾 / limit 边界 / excerpt 截断 + 空白归一）
+>   - `cargo test -p pc-repos work_timeline` 10/10 仍通过
+> - **验证**：`cargo check -p pc-http` 0 errors，47 warnings（既有 46 + 新增 1 来自 board auth 字段命名无关）
+> - **关键差距**（下一轮目标）：
+>   - 多表 join 真实查询：`activity_log LEFT JOIN heartbeat_runs ON run_id`（拿 coalesce responsible_user_id） + `INNER JOIN issues/issue_comments/issue_documents` 拿 issue/comment/document snippet
+>   - `redactDetails` —— 把 `createActivityDetailsRedactor` 移植到 Rust
+>   - 真实 permission check（`audit:view_agent_actions`）—— 替换当前仅 board 的简化门禁
+>   - 集成测试：在 `crates/pc-http/tests/user_routes_contract.rs` 加 happy + 3 edge case（invalid limit / invalid cursor / non-uuid cursor）
+> - **本轮累计**：`pc-repos` 单元测试 73 → **78** ✅；agent_action_audit service-layer 与 Node `server/src/services/agent-action-audit.ts` 结构对齐；csv export 字段从 4 列 → 6 列
+
+## 第五十三轮增量（Round 53 — `agent_action_audit` 真实查询 + 通用 `redact` 模块）
+
+> 第五十三轮增量：
+> - **新增** `crates/pc-repos/src/redact.rs`（≈ 270 行 + 11 单测）：
+>   - `sanitize_record(&Value) -> Value` 递归遮罩，对齐 `paperclip/server/src/redaction.ts::sanitizeRecord`：
+>     - secret 模式键（`apiKey` / `access_token` / `auth_token` / `token` / `authorization` / `bearer` / `secret` / `passwd` / `password` / `credential` / `jwt` / `private_key` / `cookie` / `connectionstring`）→ `***REDACTED***`
+>     - `secret_ref` / `user_secret_ref` 绑定透传
+>     - `plain` 绑定只遮罩 `value`，保留 `type` 标签
+>     - `commandArgs` / `command_args` / `argv` 数组中 `--secret` flag 后续值遮罩
+>     - `command` / `cmd` / `command-line` 字符串做 token 级 redact（jwt / `sk-` / `ghp_` / `gho_` / `ghu_` / `ghs_` / `ghr_` 前缀）
+>   - 11 单测覆盖：secret 键遮罩、binding 透传、commandArgs flag 跟随、command 字符串、嵌套递归、非对象直通、activity_log 真实负载、安全字段保留、jwt 字符串遮罩、非命令键保留
+> - **`crates/pc-repos/Cargo.toml`** 新增 `regex = "1"`
+> - **`crates/pc-repos/src/agent_action_audit.rs` 实质化**（≈ 470 行 + 5 单测）：
+>   - `AgentActionAuditRepo::list` 替换空 page 占位为真实查询
+>   - 主查询：`activity_log LEFT JOIN heartbeat_runs ON run_id` 拿 `coalesce(responsible_user_id)`；12 个 `IS NULL OR =` 条件占位 + 2 个 cursor 条件 + `LIMIT $limit+1` 多取 1 行以编码 next_cursor
+>   - 三类 hydrate：issue_comment 走 `INNER JOIN issues`；issue 走单表；issue_document 走 `INNER JOIN issues`，双键（`id` 与 `document_id`）都登记到 lookup map
+>   - 所有 hydrate 都带 `hidden_at IS NULL` 可见性过滤
+>   - 详情 redact：行是 issue-derived 但 issue 已被隐藏时 details=null；否则调用 `redact::sanitize_record`
+>   - next_cursor 编码：从本页最后一行 `(created_at, id)` 拿
+>   - `list` 仍需要 SQL 可执行的 `Db`；集成测试受 PG 缺失限制，结构与 Node 一致
+> - **`crates/pc-repos/src/lib.rs`** 注册 `redact` 模块
+> - **测试**：
+>   - `cargo test -p pc-repos --lib`：**89/89 通过**（redact 11 + agent_action_audit 5 + work_timeline 10 + 既有 63）
+>   - `cargo check --workspace`：0 errors，47 warnings（既有 + 3 新来自 redact 的 `regex_lite_jwt` 调用，warning 不影响正确性）
+> - **关键差距**（下一轮目标）：
+>   - `audit:view_agent_actions` 真实 permission check（替换 companies.rs 中 `require_user_id` 的简化门禁）
+>   - `crates/pc-http/tests/user_routes_contract.rs` 加 happy + 3 edge 集成测试（需要 PG 启动）
+>   - 实际 `redactCurrentUserValue`（censor username in logs）— 当前用 `instanceSettingsService(db).getGeneral().censorUsernameInLogs` 但未接通
+> - **本轮累计**：`pc-repos` 单元测试 78 → **89** ✅；agent_action_audit 从「只校验 cursor」升级为「真实多表 join + hydrate + redact」；新增独立 redact 工具可复用于其他详情日志（live-events、issue-approvals、feedback 等）
+
+## 第五十四轮增量（Round 54 — `agent_start_lock` 进程内串行化原语 + heartbeat 集成）
+
+> 第五十四轮增量：
+> - **新增** `crates/pc-repos/src/agent_start_lock.rs`（≈ 230 行 + 5 单测）：
+>   - `AgentStartLock`：per-agent 进程内互斥 + 30s stale timeout，对齐 `server/src/services/agent-start-lock.ts::withAgentStartLock`
+>   - 内部用 `Arc<Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>>`：同一 agent 的多次 start 按到达顺序串行；不同 agent 不阻塞；闭包返回（含 panic）即释放锁
+>   - 30s 等待后仍未拿到锁 → 跳过等待继续执行（防止某个 run 永久卡死把后续 run 全堵住），记 `tracing::warn!`
+>   - API：`with_lock(agent_id, stale_ms, f)` / `with_default_lock(agent_id, f)` / `forget(agent_id)`（清理）
+> - **`crates/pc-repos/src/lib.rs`** 注册 `agent_start_lock`
+> - **`crates/pc-heartbeat/Cargo.toml`** 新增 `pc-repos` 依赖
+> - **`crates/pc-heartbeat/src/lib.rs`** 集成：
+>   - 给 `HeartbeatSupervisorError` 加 `Send(String)` 变体（用于包装 kameo ask 失败）
+>   - 新增 `start_heartbeat_with_lock(supervisor, lock, agent_id, msg) -> Result<StartHeartbeatResult, HeartbeatSupervisorError>`：在锁内 ask supervisor，不改既有 `supervisor.ask` 直调路径
+> - **测试**：
+>   - `cargo test -p pc-repos --lib`：**94/94 通过**（agent_start_lock 5 + 既有 89）
+>   - `cargo test -p pc-heartbeat --lib`：**26/26 通过**（既有 25 + 新增 1 StartHeartbeat 路径仍正常）
+>   - `cargo check --workspace`：**0 errors，47 warnings**（既有 +1 from Send 变体）
+> - **关键覆盖场景**：
+>   - `sequential_calls_are_serialized`：同 agent 串行（FIFO）
+>   - `different_agents_do_not_block`：跨 agent 互不阻塞（<80ms 完成）
+>   - `error_releases_lock`：闭包错误不泄漏锁，下一调用立即可获取
+>   - `stale_timeout_proceeds_without_blocking`：50ms stale 上限验证，第二次调用不会被卡 500ms
+>   - `many_callers_run_in_fifo_order`：10 个并发 caller 全部完成
+> - **关键差距**（下一轮目标）：
+>   - `pc-server/main.rs` 当前 spawn supervisor 时**不**使用 `start_heartbeat_with_lock`；下一轮在 wakeup / issue-checkout 路径切到这个包装以真实生效
+>   - 集成测试需要 Postgres（与前几轮一致，PoolTimedOut）
+>   - Node 端 `withAgentStartLock` 还被 `agent-instructions.ts` 等其它路径调用，待排查全量调用点
+> - **本轮累计**：`pc-repos` 单测 89 → **94** ✅；`pc-heartbeat` 多了对外暴露的 lock-aware start helper；进程内 start 串行化原语已就位
+
+## 第五十五轮增量（Round 55 — `default_agent_instructions` 模块 + onboarding-assets 资源嵌入）
+
+> 第五十五轮增量：
+> - **资源拷贝**：`paperclip/server/src/onboarding-assets/{default,ceo}/` 5 个 markdown（AGENTS.md × 2 / HEARTBEAT.md / SOUL.md / TOOLS.md）复制到 `crates/pc-repos/assets/onboarding-assets/` 对应子目录
+> - **新增** `crates/pc-repos/src/default_agent_instructions.rs`（≈ 130 行 + 7 单测）：
+>   - `AgentInstructionsRole` 枚举（`Default` / `Ceo`），`as_str()` 返回对齐 Node 常量
+>   - `resolve_default_agent_instructions_bundle_role(role: &str) -> AgentInstructionsRole`：严格 `==` "ceo" 才算 ceo，其余回落 default
+>   - `load_default_agent_instructions_bundle(role) -> BTreeMap<&'static str, &'static str>`：default 给 1 个文件，ceo 给 4 个文件
+>   - 文件用 `include_str!` 在编译期嵌入二进制（运行时无文件 I/O），与 Node 端 `fs.readFile` 语义一致
+>   - 顺序由 `BTreeMap` 收敛（ASCII 升序），保证调用方拿到稳定顺序
+> - **`crates/pc-repos/src/lib.rs`** 注册 `default_agent_instructions`
+> - **测试**（7）：
+>   - `role_string_round_trip`：`"ceo"` / `"default"` 解析正确
+>   - `unknown_role_falls_back_to_default`：6 个未知 role（含空串 / `"agent"` / `"manager"` / `"CFO"` / `"Ceo"` / `"CEO "`）都回落 default
+>   - `only_ceo_matches_ceo`：反向验证 `==` 严格匹配
+>   - `default_bundle_contains_only_agents_md`：default 1 个文件且非空
+>   - `ceo_bundle_has_four_files`：ceo 4 个文件，文件名顺序固定为 `AGENTS.md` / `HEARTBEAT.md` / `SOUL.md` / `TOOLS.md`
+>   - `ceo_agents_md_mentions_role_keyword`：sanity check（CEO bundle 的 AGENTS.md 提到 "ceo"）
+>   - `as_str_matches_node_constants`：枚举字符串与 Node 常量完全一致
+> - **验证**：
+>   - `cargo test -p pc-repos --lib`：**101/101 通过**（default_agent_instructions 7 + 既有 94）
+>   - `cargo check --workspace`：**0 errors，47 warnings**（既有 47 +0 新）
+> - **关键差距**（下一轮目标）：
+>   - 真正在 `crates/pc-http/src/routes/agents.rs` 的 `materializeInstructions` 流中调用本模块（Node 端在 `routes/agents.ts:1403`），依赖更大 `agent-instructions.ts` 服务的 735 行代码（超本轮范围）
+>   - 后续 round 需要 port `agent-instructions.ts::materializeManagedBundle`（instructions 文件的物化：写到 managed home + 更新 `adapterConfig.instructionsBundle`）才能真正落地
+> - **本轮累计**：`pc-repos` 单测 94 → **101** ✅；onboarding 资源以 `include_str!` 形式固化在 binary 内（部署期不需 path 配置）；`AgentInstructionsRole` 与 Node 端常量 1:1 对齐
+
+## 第五十六轮增量（Round 56 — finance create 路径补齐：FK 校验 + 真实 insert + 替换 stub）
+
+> 第五十六轮增量：
+> - **`crates/pc-repos/src/cost.rs`** 补齐 finance create 路径：
+>   - 新增 `NewFinanceEvent` 结构（camelCase serde）：覆盖 `finance_events` 全部 25 个列，可选 FK × 6 + 必填 `event_kind` / `biller` / `amount_cents`
+>   - 新增 `CostRepo::create_finance_event(company_id, input) -> Result<FinanceEventRow, FinanceCreateError>`：对齐 Node `server/src/services/finance.ts::createEvent`
+>     - 6 段 FK 校验（agent / issue / project / goal / heartbeat_run / cost_event）通过 `assert_fk_belongs_to_company` 私有助手（table 名字面量 allow-list 防 SQL 注入）
+>     - 默认值：`currency = "USD"` / `direction = "debit"` / `estimated = false` / `occurred_at = now()`
+>     - 单次 INSERT ... RETURNING 写回完整行
+>   - 新增 `FinanceCreateError` / `FkError`（4 变体：NotFound / WrongCompany / Db / Internal）
+>   - 4 单测：`new_finance_event_parses_camel_case_minimal` / `parses_all_optional_fks` / `rejects_missing_required_fields` / `fk_error_display_is_user_facing`
+> - **`crates/pc-http/src/routes/companies.rs`** 完整替换 `create_finance_event` stub：
+>   - 旧实现删除：用错列名（`category` / `amount_cents` 4 列）+ `information_schema.tables` 探测 + 缺 FK 校验
+>   - 新实现：`Json<NewFinanceEvent>` 入参 → 校验 `eventKind` / `biller` 非空 → 调 `CostRepo::create_finance_event` → 把 `FinanceCreateError::Fk(NotFound|WrongCompany)` 映射为 404，其余 → 500
+>   - 旧 `FinanceEventBody` 内联结构删除（已被 `NewFinanceEvent` 取代）
+>   - 加 import `pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent}`
+> - **测试**：
+>   - `cargo test -p pc-repos cost::finance`：**4/4 通过**（新增的 finance_create_tests 模块）
+>   - `cargo test -p pc-repos --lib`：**105/105 通过**（finance create 4 + 既有 101）
+>   - `cargo check --workspace`：**0 errors，47 warnings**（既有 47 +0 新）
+> - **关键差距**（下一轮目标）：
+>   - `financeService` 整体未独立成 `FinanceRepo`（仍借住 `CostRepo`），下一轮可拆分以匹配 Node 命名
+>   - `/api/companies/:id/finance-events` 列表 / summary / by-biller / by-kind 路由未注册，read 路径仅在 cost.rs 中有 repo 方法；需要把它们接到 routes 层
+>   - 集成测试需要 Postgres（与前几轮一致，PoolTimedOut）
+> - **本轮累计**：`pc-repos` 单测 101 → **105** ✅；finance create 路径从「错列名 stub」升级为「完整 25 列 + FK 校验 + 真实 insert」

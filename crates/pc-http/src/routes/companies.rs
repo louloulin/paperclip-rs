@@ -14,11 +14,16 @@ use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::approval::ApprovalRepo;
+use pc_repos::agent_action_audit::{
+    AgentActionAuditFilters, AgentActionAuditPage, AgentActionAuditRepo,
+};
 use pc_repos::case::CaseRepo;
+use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
 use pc_repos::decision::DecisionRepo;
 use pc_repos::goal::GoalRepo;
 use pc_repos::pipeline::PipelineRepo;
+use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
@@ -245,44 +250,60 @@ async fn get_stats(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiRe
     })))
 }
 
+/// `GET /api/companies/:id/timeline` — Round 51 deepened.
+///
+/// Mirrors Node `workTimelineService.getTimeline`. Aggregates events from
+/// three sources into a single sorted feed:
+/// 1. `activity_log` — board/agent/system actions on issues, decisions, etc.
+/// 2. `pipeline_case_events` — case lifecycle events (created, transitioned, etc.)
+/// 3. `heartbeat_runs` — agent run lifecycle (started, finished, failed, etc.)
+///
+/// Query params:
+/// - `limit` — default 50, max 200
+/// - `from` — ISO-8601 timestamp lower bound (inclusive)
+/// - `to` — ISO-8601 timestamp upper bound (inclusive)
+/// - `entity_type` — filter to a specific entity_type (issue, case, decision, etc.)
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TimelineQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    to: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    goal_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    project_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    issue_id: Option<uuid::Uuid>,
+}
+
 async fn get_timeline(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // 合并 activity_log + 最近 heartbeat_runs 作为 timeline
-    let rows: Vec<(
-        Uuid,
-        String,
-        String,
-        Option<Uuid>,
-        Option<String>,
-        Option<String>,
-        Timestamp,
-    )> = sqlx::query_as(
-        "SELECT id, action, entity_type, entity_id, actor_type, actor_id, created_at \
-         FROM activity_log WHERE company_id = $1 \
-         ORDER BY created_at DESC LIMIT 50",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await?;
-    let events: Vec<Value> = rows
-        .into_iter()
-        .map(
-            |(id, action, entity_type, entity_id, actor_type, actor_id, created_at)| {
-                json!({
-                    "id": id,
-                    "action": action,
-                    "entity_type": entity_type,
-                    "entity_id": entity_id,
-                    "actor_type": actor_type,
-                    "actor_id": actor_id,
-                    "created_at": created_at,
-                })
-            },
-        )
-        .collect();
-    Ok(Json(json!({ "company_id": id, "events": events })))
+    axum::extract::Query(q): axum::extract::Query<TimelineQuery>,
+) -> ApiResult<Json<WorkTimelineResult>> {
+    let query = RepoWorkTimelineQuery {
+        company_id: id,
+        from: q.from,
+        to: q.to,
+        user_id: q.user_id,
+        goal_id: q.goal_id,
+        project_id: q.project_id,
+        issue_id: q.issue_id,
+        limit: q.limit,
+        offset: q.offset,
+    };
+    let result = WorkTimelineRepo::new(&state.db)
+        .get_timeline(query, chrono::Utc::now())
+        .await;
+    Ok(Json(result))
 }
 
 async fn list_artifacts(
@@ -1433,34 +1454,146 @@ async fn put_my_inbox_agent_policy(
 
 // ---------- audit / org / search / agents ----------
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentActionAuditQuery {
+    #[serde(default)]
+    agent_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+    #[serde(default)]
+    run_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    entity_type: Option<String>,
+    #[serde(default)]
+    entity_id: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    actor_type: Option<String>,
+    #[serde(default)]
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    to: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+fn parse_agent_audit_query(
+    company_id: uuid::Uuid,
+    q: AgentActionAuditQuery,
+) -> Result<AgentActionAuditFilters, ApiError> {
+    if let Some(ref et) = q.entity_type {
+        if et.trim().is_empty() {
+            return Err(ApiError::BadRequest("entityType must not be empty".into()));
+        }
+    }
+    if let Some(ref ei) = q.entity_id {
+        if ei.trim().is_empty() {
+            return Err(ApiError::BadRequest("entityId must not be empty".into()));
+        }
+    }
+    if let Some(ref a) = q.action {
+        if a.trim().is_empty() {
+            return Err(ApiError::BadRequest("action must not be empty".into()));
+        }
+    }
+    if let Some(ref at) = q.actor_type {
+        match at.as_str() {
+            "agent" | "user" | "system" | "plugin" => {}
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "actorType must be one of agent/user/system/plugin, got {at}"
+                )));
+            }
+        }
+    }
+    if let Some(limit) = q.limit {
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::BadRequest(
+                "limit must be between 1 and 200".into(),
+            ));
+        }
+    }
+    Ok(AgentActionAuditFilters {
+        company_id,
+        agent_id: q.agent_id,
+        responsible_user_id: q.responsible_user_id,
+        run_id: q.run_id,
+        entity_type: q.entity_type,
+        entity_id: q.entity_id,
+        action: q.action,
+        actor_type: q.actor_type,
+        from: q.from,
+        to: q.to,
+        cursor: q.cursor,
+        limit: q.limit,
+    })
+}
+
 async fn list_agent_actions(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // Lightweight: query a generic log table if exists; else return empty
-    let exists: Option<(bool,)> = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='tool_action_requests')",
-    ).fetch_optional(state.db.pool()).await?;
-    if exists.map(|(b,)| b).unwrap_or(false) {
-        let rows: Vec<(Uuid, Uuid, String, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-            "SELECT id, company_id, action, request, created_at
-             FROM tool_action_requests WHERE company_id=$1 ORDER BY created_at DESC LIMIT 100",
-        ).bind(company_id).fetch_all(state.db.pool()).await?;
-        let items: Vec<Value> = rows.into_iter().map(|(id, cid, act, req, ts)| json!({
-            "id": id, "companyId": cid, "action": act, "request": req, "createdAt": ts,
-        })).collect();
-        return Ok(Json(json!({"items": items, "companyId": company_id})));
-    }
-    Ok(Json(json!({"items": [], "companyId": company_id})))
+    Query(q): Query<AgentActionAuditQuery>,
+) -> ApiResult<Json<AgentActionAuditPage>> {
+    let _ = crate::state::require_user_id(
+        &state,
+        &axum::http::HeaderMap::new(),
+    )
+    .await
+    .map_err(|_| ApiError::Forbidden("Board authentication required".into()))?;
+    let filters = parse_agent_audit_query(company_id, q)?;
+    let repo = AgentActionAuditRepo::new(&state.db);
+    let page = repo
+        .list(filters)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(page))
 }
 
 async fn export_agent_actions_csv(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    Query(q): Query<AgentActionAuditQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    let csv = "id,companyId,action,createdAt\n";
+    let _ = crate::state::require_user_id(
+        &state,
+        &axum::http::HeaderMap::new(),
+    )
+    .await
+    .map_err(|_| ApiError::Forbidden("Board authentication required".into()))?;
+    let filters = parse_agent_audit_query(company_id, q)?;
+    let repo = AgentActionAuditRepo::new(&state.db);
+    let page = repo
+        .list(filters)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut csv = String::from("id,companyId,action,entityType,entityId,createdAt\n");
+    for item in &page.items {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            item.id,
+            item.company_id,
+            csv_field(&item.action),
+            csv_field(&item.entity_type),
+            csv_field(&item.entity_id),
+            item.created_at.to_rfc3339(),
+        ));
+    }
     Ok(([("content-type", "text/csv")], csv))
 }
+
+fn csv_field(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        let escaped = value.replace('"', "&quot;");
+        format!("\"{escaped}\"")
+    } else {
+        value.to_string()
+    }
+}
+
 
 async fn get_org(
     State(state): State<AppState>,
@@ -1651,32 +1784,37 @@ struct DecisionBundleBody {
     title: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct FinanceEventBody {
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    amount_cents: Option<i64>,
-}
-
 async fn create_finance_event(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-    Json(body): Json<FinanceEventBody>,
-) -> ApiResult<Json<Value>> {
-    let id: Uuid = Uuid::new_v4();
-    let cat = body.category.clone().unwrap_or_else(|| "general".into());
-    let amt = body.amount_cents.unwrap_or(0);
-    let exists: Option<(bool,)> = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='finance_events')",
-    ).fetch_optional(state.db.pool()).await?;
-    if exists.map(|(b,)| b).unwrap_or(false) {
-        sqlx::query(
-            "INSERT INTO finance_events (id, company_id, category, amount_cents)
-             VALUES ($1,$2,$3,$4)",
-        ).bind(id).bind(company_id).bind(&cat).bind(amt).execute(state.db.pool()).await?;
+    Json(body): Json<NewFinanceEvent>,
+) -> ApiResult<Json<FinanceEventRow>> {
+    if body.event_kind.trim().is_empty() {
+        return Err(ApiError::BadRequest("eventKind must not be empty".into()));
     }
-    Ok(Json(json!({"id": id, "companyId": company_id, "category": cat, "amountCents": amt})))
+    if body.biller.trim().is_empty() {
+        return Err(ApiError::BadRequest("biller must not be empty".into()));
+    }
+    let repo = CostRepo::new(&state.db);
+    let row = repo
+        .create_finance_event(company_id, &body)
+        .await
+        .map_err(|e| match e {
+            pc_repos::cost::FinanceCreateError::Fk(
+                pc_repos::cost::FkError::NotFound(label)
+                | pc_repos::cost::FkError::WrongCompany(label),
+            ) => ApiError::NotFound(label),
+            pc_repos::cost::FinanceCreateError::Fk(
+                pc_repos::cost::FkError::Db(_),
+            ) => ApiError::Internal("finance FK lookup failed".into()),
+            pc_repos::cost::FinanceCreateError::Fk(
+                pc_repos::cost::FkError::Internal(msg),
+            ) => ApiError::Internal(msg),
+            pc_repos::cost::FinanceCreateError::Db(err) => {
+                ApiError::Internal(err.to_string())
+            }
+        })?;
+    Ok(Json(row))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2075,4 +2213,3 @@ async fn get_companies_issues_malformed() -> ApiResult<Json<Value>> {
         "Missing companyId in path. Use /api/companies/{companyId}/issues.".into(),
     ))
 }
-

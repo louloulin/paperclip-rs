@@ -12,6 +12,11 @@
 //! - 测试通过集成测试使用真实 `PostgreSQL` 验证（`DATABASE_URL`）
 
 pub mod activity;
+pub mod agent_action_audit;
+pub mod agent_start_lock;
+pub mod agent_secret_bindings;
+pub mod default_agent_instructions;
+pub mod redact;
 pub mod agent;
 pub mod approval;
 pub mod auth;
@@ -41,6 +46,7 @@ pub mod smoke;
 pub mod summary;
 pub mod tool;
 pub mod user_profile;
+pub mod work_timeline;
 
 pub use pc_db::Db;
 

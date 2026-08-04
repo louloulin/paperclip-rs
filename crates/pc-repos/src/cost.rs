@@ -181,6 +181,38 @@ pub struct FinanceEventRow {
     pub created_at: Timestamp,
 }
 
+/// Insert payload for `finance_events`. Mirrors Node
+/// `paperclip/server/src/services/finance.ts::createEvent`.
+/// All FK columns are optional; if set, the FK row must belong to the same company.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NewFinanceEvent {
+    pub agent_id: Option<Uuid>,
+    pub issue_id: Option<Uuid>,
+    pub project_id: Option<Uuid>,
+    pub goal_id: Option<Uuid>,
+    pub heartbeat_run_id: Option<Uuid>,
+    pub cost_event_id: Option<Uuid>,
+    pub billing_code: Option<String>,
+    pub description: Option<String>,
+    pub event_kind: String,
+    pub direction: Option<String>,
+    pub biller: String,
+    pub provider: Option<String>,
+    pub execution_adapter_type: Option<String>,
+    pub pricing_tier: Option<String>,
+    pub region: Option<String>,
+    pub model: Option<String>,
+    pub quantity: Option<i32>,
+    pub unit: Option<String>,
+    pub amount_cents: i32,
+    pub currency: Option<String>,
+    pub estimated: Option<bool>,
+    pub external_invoice_id: Option<String>,
+    pub metadata_json: Option<serde_json::Value>,
+    pub occurred_at: Option<Timestamp>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCostEvent {
@@ -507,6 +539,178 @@ impl<'a> CostRepo<'a> {
         .bind(limit.clamp(1, 500));
         query.fetch_all(self.db.pool()).await
     }
+
+    /// Insert a `finance_events` row.
+    ///
+    /// Mirrors `server/src/services/finance.ts::createEvent`:
+    /// 1. Validate any provided FK (agent / issue / project / goal /
+    ///    heartbeat_run / cost_event) belongs to the same company.
+    /// 2. Defaults: `currency = "USD"`, `direction = "debit"`,
+    ///    `estimated = false`, `occurred_at = now()`.
+    /// 3. Return the inserted row.
+    pub async fn create_finance_event(
+        &self,
+        company_id: Uuid,
+        input: &NewFinanceEvent,
+    ) -> Result<FinanceEventRow, FinanceCreateError> {
+        if let Some(id) = input.agent_id {
+            Self::assert_fk_belongs_to_company(
+                self.db.pool(),
+                "agents",
+                id,
+                company_id,
+                "Agent",
+            )
+            .await
+            .map_err(FinanceCreateError::Fk)?;
+        }
+        if let Some(id) = input.issue_id {
+            Self::assert_fk_belongs_to_company(
+                self.db.pool(),
+                "issues",
+                id,
+                company_id,
+                "Issue",
+            )
+            .await
+            .map_err(FinanceCreateError::Fk)?;
+        }
+        if let Some(id) = input.project_id {
+            Self::assert_fk_belongs_to_company(
+                self.db.pool(),
+                "projects",
+                id,
+                company_id,
+                "Project",
+            )
+            .await
+            .map_err(FinanceCreateError::Fk)?;
+        }
+        if let Some(id) = input.goal_id {
+            Self::assert_fk_belongs_to_company(
+                self.db.pool(),
+                "goals",
+                id,
+                company_id,
+                "Goal",
+            )
+            .await
+            .map_err(FinanceCreateError::Fk)?;
+        }
+        if let Some(id) = input.heartbeat_run_id {
+            Self::assert_fk_belongs_to_company(
+                self.db.pool(),
+                "heartbeat_runs",
+                id,
+                company_id,
+                "Heartbeat run",
+            )
+            .await
+            .map_err(FinanceCreateError::Fk)?;
+        }
+        if let Some(id) = input.cost_event_id {
+            Self::assert_fk_belongs_to_company(
+                self.db.pool(),
+                "cost_events",
+                id,
+                company_id,
+                "Cost event",
+            )
+            .await
+            .map_err(FinanceCreateError::Fk)?;
+        }
+
+        let direction = input.direction.clone().unwrap_or_else(|| "debit".into());
+        let currency = input.currency.clone().unwrap_or_else(|| "USD".into());
+        let estimated = input.estimated.unwrap_or(false);
+        let occurred_at = input.occurred_at.unwrap_or_else(Timestamp::now);
+
+        let row: FinanceEventRow = sqlx::query_as(
+            r#"
+            INSERT INTO finance_events (
+              company_id, agent_id, issue_id, project_id, goal_id,
+              heartbeat_run_id, cost_event_id, billing_code, description,
+              event_kind, direction, biller, provider, execution_adapter_type,
+              pricing_tier, region, model, quantity, unit, amount_cents,
+              currency, estimated, external_invoice_id, metadata_json, occurred_at
+            ) VALUES (
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+              $21,$22,$23,$24,$25
+            )
+            RETURNING id, company_id, agent_id, issue_id, project_id, goal_id,
+              heartbeat_run_id, cost_event_id, billing_code, description,
+              event_kind, direction, biller, provider, execution_adapter_type,
+              pricing_tier, region, model, quantity, unit, amount_cents,
+              currency, estimated, external_invoice_id, metadata_json,
+              occurred_at, created_at
+            "#,
+        )
+        .bind(company_id)
+        .bind(input.agent_id)
+        .bind(input.issue_id)
+        .bind(input.project_id)
+        .bind(input.goal_id)
+        .bind(input.heartbeat_run_id)
+        .bind(input.cost_event_id)
+        .bind(input.billing_code.as_deref())
+        .bind(input.description.as_deref())
+        .bind(&input.event_kind)
+        .bind(&direction)
+        .bind(&input.biller)
+        .bind(input.provider.as_deref())
+        .bind(input.execution_adapter_type.as_deref())
+        .bind(input.pricing_tier.as_deref())
+        .bind(input.region.as_deref())
+        .bind(input.model.as_deref())
+        .bind(input.quantity)
+        .bind(input.unit.as_deref())
+        .bind(input.amount_cents)
+        .bind(&currency)
+        .bind(estimated)
+        .bind(input.external_invoice_id.as_deref())
+        .bind(input.metadata_json.clone())
+        .bind(occurred_at)
+        .fetch_one(self.db.pool())
+        .await
+        .map_err(FinanceCreateError::Db)?;
+        Ok(row)
+    }
+
+    /// Validate that a row in `table` with `id` belongs to `company_id`.
+    /// Returns `FkError::NotFound` if the row is missing, or
+    /// `FkError::WrongCompany` if `company_id` doesn't match.
+    /// `table` is restricted to a small allow-list to prevent SQL injection.
+    async fn assert_fk_belongs_to_company(
+        pool: &sqlx::PgPool,
+        table: &'static str,
+        id: Uuid,
+        company_id: Uuid,
+        label: &str,
+    ) -> Result<(), FkError> {
+        let sql = match table {
+            "agents" => "SELECT company_id FROM agents WHERE id = $1",
+            "issues" => "SELECT company_id FROM issues WHERE id = $1",
+            "projects" => "SELECT company_id FROM projects WHERE id = $1",
+            "goals" => "SELECT company_id FROM goals WHERE id = $1",
+            "heartbeat_runs" => {
+                "SELECT company_id FROM heartbeat_runs WHERE id = $1"
+            }
+            "cost_events" => "SELECT company_id FROM cost_events WHERE id = $1",
+            _ => return Err(FkError::Internal(format!("unknown table: {table}"))),
+        };
+        let row: Option<(Uuid,)> = sqlx::query_as(sql)
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(FkError::Db)?;
+        match row {
+            None => Err(FkError::NotFound(label.to_string())),
+            Some((owner,)) if owner != company_id => {
+                Err(FkError::WrongCompany(label.to_string()))
+            }
+            Some(_) => Ok(()),
+        }
+    }
 }
 
 /// Daily cost window for a single agent. Returns the sum of `cost_cents` for
@@ -539,5 +743,122 @@ impl<'a> CostRepo<'a> {
         .fetch_one(self.db.pool())
         .await?;
         Ok(row.0.unwrap_or(0))
+    }
+}
+
+/// Errors for `CostRepo::create_finance_event`.
+#[derive(Debug, thiserror::Error)]
+pub enum FinanceCreateError {
+    /// Provided FK id is missing or belongs to a different company.
+    #[error("finance event FK error: {0}")]
+    Fk(#[from] FkError),
+    /// Underlying DB error.
+    #[error(transparent)]
+    Db(sqlx::Error),
+}
+
+/// Specific failure modes for FK validation.
+#[derive(Debug, thiserror::Error)]
+pub enum FkError {
+    #[error("{0} not found")]
+    NotFound(String),
+    #[error("{0} does not belong to company")]
+    WrongCompany(String),
+    #[error("finance FK lookup failed: {0}")]
+    Db(sqlx::Error),
+    #[error("finance FK lookup internal error: {0}")]
+    Internal(String),
+}
+
+#[cfg(test)]
+mod finance_create_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn new_finance_event_parses_camel_case_minimal() {
+        let body = json!({
+            "eventKind": "compute.usage",
+            "biller": "openai",
+            "amountCents": 123,
+        });
+        let parsed: NewFinanceEvent = serde_json::from_value(body).unwrap();
+        assert_eq!(parsed.event_kind, "compute.usage");
+        assert_eq!(parsed.biller, "openai");
+        assert_eq!(parsed.amount_cents, 123);
+        assert!(parsed.agent_id.is_none());
+        assert!(parsed.issue_id.is_none());
+        assert_eq!(parsed.direction, None);
+        assert_eq!(parsed.currency, None);
+        assert_eq!(parsed.estimated, None);
+    }
+
+    #[test]
+    fn new_finance_event_parses_all_optional_fks() {
+        let body = json!({
+            "eventKind": "tool.usage",
+            "biller": "openai",
+            "amountCents": 50,
+            "agentId": "11111111-1111-1111-1111-111111111111",
+            "issueId": "22222222-2222-2222-2222-222222222222",
+            "projectId": "33333333-3333-3333-3333-333333333333",
+            "goalId": "44444444-4444-4444-4444-444444444444",
+            "heartbeatRunId": "55555555-5555-5555-5555-555555555555",
+            "costEventId": "66666666-6666-6666-6666-666666666666",
+            "description": "gpt-4o batch",
+            "direction": "credit",
+            "currency": "EUR",
+            "estimated": true,
+            "externalInvoiceId": "inv-1",
+            "metadataJson": {"foo": "bar"},
+        });
+        let parsed: NewFinanceEvent = serde_json::from_value(body).unwrap();
+        assert_eq!(parsed.event_kind, "tool.usage");
+        assert_eq!(parsed.biller, "openai");
+        assert_eq!(parsed.amount_cents, 50);
+        assert_eq!(
+            parsed.agent_id,
+            Some(Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap())
+        );
+        assert_eq!(parsed.issue_id.is_some(), true);
+        assert_eq!(parsed.direction.as_deref(), Some("credit"));
+        assert_eq!(parsed.currency.as_deref(), Some("EUR"));
+        assert_eq!(parsed.estimated, Some(true));
+        assert_eq!(parsed.external_invoice_id.as_deref(), Some("inv-1"));
+        assert_eq!(parsed.metadata_json, Some(json!({"foo": "bar"})));
+    }
+
+    #[test]
+    fn new_finance_event_rejects_missing_required_fields() {
+        // missing eventKind
+        let body = json!({
+            "biller": "openai",
+            "amountCents": 0,
+        });
+        let parsed: Result<NewFinanceEvent, _> = serde_json::from_value(body);
+        assert!(parsed.is_err());
+        // missing biller
+        let body = json!({
+            "eventKind": "x",
+            "amountCents": 0,
+        });
+        let parsed: Result<NewFinanceEvent, _> = serde_json::from_value(body);
+        assert!(parsed.is_err());
+        // missing amountCents
+        let body = json!({
+            "eventKind": "x",
+            "biller": "openai",
+        });
+        let parsed: Result<NewFinanceEvent, _> = serde_json::from_value(body);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn fk_error_display_is_user_facing() {
+        assert_eq!(FkError::NotFound("Agent".into()).to_string(), "Agent not found");
+        assert_eq!(
+            FkError::WrongCompany("Issue".into()).to_string(),
+            "Issue does not belong to company"
+        );
     }
 }
