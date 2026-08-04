@@ -84,3 +84,29 @@ cargo test -p pc-http --lib routes::plugins::tests 1 passed
 - 未宣称远端 provider 已可执行：GCP/Vault 明确返回未配置状态，AWS 只报告配置准备度。
 - 复核 plugin bridge：Rust 已有真实 worker pool 与 HTTP→worker JSON-RPC 调用，不能把它误列为"全 stub"；差距收敛到双向回调与生命周期恢复。
 - heartbeat scheduler 已接入 `pc-server`：每秒查询 recoverable runs，条件 claim queued/scheduled_retry，并复用 HTTP agent 的 adapter dispatch/sink；尚缺 Node 的复杂 readiness/staleness 策略。
+
+6. **plugin worker 双向 RPC**（已部分完成）：`WorkerToHostHandler` trait + `JsonRpcStream::set_worker_to_host_handler` 注册 + `read_loop` 在 JSON-RPC 响应之外优先解析 `WORKER_TO_HOST_METHODS` 请求，dispatch 到 handler 后把响应回写 worker stdin。还需补齐 worker → host 通知分发、崩溃监控与指数重启。
+
+7. **auth 密码哈希 + session rotation**（已部分完成）：
+   - `pc-auth::hash_password` 使用 argon2id（19_456 KiB 内存 / 2 iters / 1 parallelism）+ 随机 salt 生成 PHC 字符串。
+   - `pc-auth::verify_password` 解析 PHC 字符串并验证。
+   - `pc-auth::generate_session_token` 生成 32 字节 URL-safe base64 token（无 `+`/`/`/`=` 填充）。
+   - 还需把 sign-in 路由切换到 verify_password 并写入 session rotation。
+
+## 本轮增量（v3 - 2026-08-04）
+
+8. **live_events WebSocket auth**（P1 完成）：
+   - `pc-http::routes::live_events` 接受 `?token=...&company_id=...` 查询参数；
+   - `authorize_ws` 检查 bearer token → `board_api_keys.key_hash`；session fallback → `company_memberships`；
+   - `local_trusted` 模式下 anonymous board context 放行；
+   - `parse_bearer_token` 纯函数 + 3 单元测试覆盖（带 Bearer 前缀 / 纯 token / 空字符串）。
+
+9. **status card watcher**（P2 完成）：
+   - `pc-http::routes::status_cards::claim_due_status_card_updates` 用 `FOR UPDATE SKIP LOCKED` 原子认领 `next_eval_at <= now()` 且非 archived/非 generating 的卡片，把 state 切到 `pending_refresh`；
+   - `pc-server` scheduler 每秒调用一次，发出 `status_card.tick.claimed` live event。
+
+10. **tool gateway MCP 协议**（P2 完成）：
+    - `pc-http::routes::tool_gateway::authorize_gateway` 校验 `tool_mcp_gateway_tokens.token_hash` + `revoked_at IS NULL` + `expires_at > now()`；
+    - `post_gateway` 实现 MCP JSON-RPC 2.0 方法：`initialize` / `notifications/initialized` / `tools/list` / `tools/call`，未知方法返回 -32601；
+    - `tools/call` 通过 `tool_gateway.call_requested` live event 把工具名 + params 推送给 worker pipeline；
+    - bearer 缺失或无效时返回 401。

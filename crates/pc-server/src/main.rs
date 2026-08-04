@@ -254,6 +254,18 @@ async fn main() -> anyhow::Result<()> {
                 Ok(count) => tracing::debug!(count, "heartbeat scheduler recovered stale wakeup claims"),
                 Err(error) => tracing::warn!(error = %error, "stale wakeup recovery failed"),
             }
+            // Status card tick: claim pending status cards whose next_eval_at
+            // has passed and dispatch them to the refresh pipeline.
+            match pc_http::routes::status_cards::claim_due_status_card_updates(
+                &scheduler_state,
+                50,
+            )
+            .await
+            {
+                Ok(0) => {}
+                Ok(count) => tracing::debug!(count, "status card scheduler claimed updates"),
+                Err(error) => tracing::warn!(error = %error, "status card scheduler failed"),
+            }
         }
     });
     // ---- Bootstrap runtime services into AppState ----

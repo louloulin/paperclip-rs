@@ -333,6 +333,34 @@ async fn card_refresh(
     ))
 }
 
+/// Claim status cards whose `next_eval_at <= now()` and are in a state
+/// that admits a refresh. Mirrors Node `claimDueStatusCardUpdates` in
+/// `services/status-cards.ts`. Returns the claimed rows so the caller can
+/// hand them to the refresh / recompile pipeline.
+pub async fn claim_due_status_card_updates(
+    state: &AppState,
+    limit: i64,
+) -> ApiResult<usize> {
+    let claimed = sqlx::query(
+        "UPDATE status_cards          SET state = 'pending_refresh', updated_at = now()          WHERE id IN (              SELECT id FROM status_cards              WHERE next_eval_at IS NOT NULL AND next_eval_at <= now()                AND state IN ('idle', 'pending_refresh', 'compiling')                AND archived_at IS NULL                AND generating_issue_id IS NULL              ORDER BY next_eval_at ASC LIMIT $1              FOR UPDATE SKIP LOCKED          )",
+    )
+    .bind(limit.clamp(1, 200))
+    .execute(state.db.pool())
+    .await?;
+    let count = claimed.rows_affected();
+    if count > 0 {
+        state.realtime.publish(
+            pc_realtime::LiveEvent::new(
+                "status_card.tick.claimed",
+                "status_card",
+                Uuid::nil(),
+            )
+            .with_data(json!({ "claimedCount": count })),
+        );
+    }
+    Ok(count as usize)
+}
+
 async fn card_dry_run(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

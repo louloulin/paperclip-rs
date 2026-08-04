@@ -92,24 +92,24 @@ pub fn hash_password(password: &str) -> Result<String, AuthError> {
     use argon2::password_hash::{PasswordHash, SaltString, rand_core::OsRng};
     let salt = SaltString::generate(&mut OsRng);
     let params = Params::new(19_456, 2, 1, None).map_err(|err| {
-        AuthError::Internal(format!("argon2 params invalid: {err}"))
+        AuthError::Hash(format!("argon2 params invalid: {err}"))
     })?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let hash = argon
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|err| AuthError::Internal(format!("argon2 hash failed: {err}")))?;
+        .map_err(|err| AuthError::Hash(format!("argon2 hash failed: {err}")))?;
     Ok(hash.to_string())
 }
 
 /// Verify a plaintext password against a stored argon2 PHC-formatted hash.
 /// Returns `true` when the password matches, `false` otherwise.
 pub fn verify_password(password: &str, stored_hash: &str) -> bool {
-    use argon2::{Algorithm, Argon2, PasswordVerifier, Version};
+    use argon2::{Argon2, PasswordVerifier};
     use argon2::password_hash::PasswordHash;
     let Ok(parsed) = PasswordHash::new(stored_hash) else {
         return false;
     };
-    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, parsed.params.clone());
+    let argon = Argon2::default();
     argon
         .verify_password(password.as_bytes(), &parsed)
         .is_ok()

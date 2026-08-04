@@ -78,6 +78,14 @@ struct SignInBody {
     /// 简化版：直接传入 `user_id`（不实现密码哈希）
     #[serde(default)]
     user_id: Option<String>,
+    /// Optional plaintext password. When provided, the server verifies
+    /// against the stored argon2id hash on the user's `account` row.
+    #[serde(default)]
+    password: Option<String>,
+    /// When true, rotate the session token even if a valid session already
+    /// exists for the user. Mirrors Node-side `rotateSessionOnSignIn`.
+    #[serde(default)]
+    rotate_session: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +155,39 @@ async fn sign_in(
     } else {
         return Err(ApiError::BadRequest("email or user_id required".into()));
     };
+
+    // Password verification: when a password is provided, look up the
+    // `account` row for this user and verify the argon2id hash. If no
+    // password is provided, fall back to the legacy email-only flow.
+    if let Some(plaintext) = body.password.as_deref() {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT password FROM account WHERE user_id = $1 AND provider_id = 'credential'",
+        )
+        .bind(&user_id)
+        .fetch_optional(state.db.pool())
+        .await?;
+        let stored = row.map(|(p,)| p);
+        match stored {
+            Some(hash) if !hash.is_empty() => {
+                if !pc_auth::verify_password(plaintext, &hash) {
+                    return Err(ApiError::Unauthorized("invalid credentials".into()));
+                }
+            }
+            _ => {
+                return Err(ApiError::Unauthorized("password not set for user".into()));
+            }
+        }
+    }
+
+    // Session rotation: drop any existing active sessions for this user
+    // when `rotate_session` is true (or always when password auth was used).
+    let should_rotate = body.rotate_session || body.password.is_some();
+    if should_rotate {
+        sqlx::query("DELETE FROM session WHERE user_id = $1")
+            .bind(&user_id)
+            .execute(state.db.pool())
+            .await?;
+    }
 
     // 创建 session（7 天有效）
     let session_id = format!("s_{}", random_id(32));

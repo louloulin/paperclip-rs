@@ -4,12 +4,34 @@
 > 已从空返回值改为四项 provider descriptor/health 契约，新增 2 个契约断言。
 > heartbeat scheduler 已接入 server：每秒条件 claim queued/scheduled_retry 并复用 adapter dispatch。
 
-## 当前门禁（本轮 2026-08-04 增量）
+## 当前门禁（本轮 2026-08-04 增量 v2）
 - ✅ `cargo fmt --all`
-- ✅ `cargo check -p pc-repos -p pc-http -p pc-server` — 0 errors / 21 warnings（pre-existing dead_code）
+- ✅ `cargo check -p pc-repos -p pc-http -p pc-heartbeat -p pc-auth -p pc-plugin-host` — 0 errors
+- ✅ `cargo test -p pc-heartbeat -p pc-repos -p pc-auth -p pc-http --lib` — **112 passed (4 suites, 1.73s)**
 - ✅ `cargo test -p pc-repos --lib` — 61 passed（57 → 61：新增 settings worktree activation +4，issue blocker +1 单元 / +2 集成 / +3 wakeup 集成 + cost_repo 1）
 - ✅ `cargo test -p pc-heartbeat --lib` — 26 passed（24 → 26：新增 retry reason constants + policy 解读 + utc_day_window + evaluate_daily_cap 单元 9 项 + enforce_issue_execution_lock + retry reason constants 2 项）
+- ✅ `cargo test -p pc-auth --lib` — 6 passed（2 → 6：新增 hash_password / verify_password / generate_session_token + 4 单元测试）
 - ✅ `cargo test -p pc-http --lib` — 19 passed
+
+## 本轮新增的差距收敛项（v2 增量）
+
+6. **plugin worker 双向 RPC**（P0 部分完成）：
+   - `pc-plugin-host::WorkerToHostHandler` trait + `JsonRpcStream::set_worker_to_host_handler` 注册。
+   - `JsonRpcStream::read_loop` 在 JSON-RPC 响应之外优先解析 `WORKER_TO_HOST_METHODS` 请求，dispatch 到 handler 后把响应回写 worker stdin。
+   - 1 个单元测试验证方法名常量集合。
+
+7. **auth 密码哈希 + session rotation**（P1 部分完成）：
+   - `pc-auth::hash_password` 使用 argon2id（19_456 KiB 内存 / 2 iters / 1 parallelism）+ 随机 salt 生成 PHC 字符串。
+   - `pc-auth::verify_password` 解析 PHC 字符串并 verify_password 验证。
+   - `pc-auth::generate_session_token` 生成 32 字节 URL-safe base64 token（无 `+`/`/`/`=` 填充）。
+   - 4 个单元测试覆盖：hash_password 产生 argon2id 字符串、verify_password round-trip、无效哈希拒绝、generate_session_token 唯一性。
+   - `pc-http::routes::auth::sign_in` 接受可选 `password` 字段，验证 `account.password` 上的 argon2id 哈希；接受 `rotate_session` 字段（在 password 验证时默认 rotate）。
+   - 已接入：sign-in 失败时返回 401 invalid credentials。
+
+## 之前门禁
+- ✅ `cargo fmt --all`
+- ✅ `cargo build --workspace` — 0 errors / 9 warnings（pre-existing dead_code）
+- ✅ `cargo test --workspace` — **270 passed (71 suites)**
 
 ## 本轮新增的差距收敛项
 
