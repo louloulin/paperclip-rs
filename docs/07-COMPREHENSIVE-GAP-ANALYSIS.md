@@ -4355,3 +4355,56 @@ Audit + Actions:
 1. **扫描全仓 `deprecated.*true` 模式** — 类似 R96 的隐藏缺口可能在其他文件存在
 2. **继续扫描 Node 端未同步的特性**（commit log diff）
 3. **修复剩余 ~7 个端点差异**（多为路径正则命名或前缀嵌套问题）
+
+## 57. 第二百一十八轮增量（Round 218 — unmark_read_route 真实实现）
+
+### 端口覆盖
+- 修复 1 个端口（继续清理 R96 deprecated stub）：
+  - `DELETE /api/issues/:id/read`
+
+### 仓储层新增
+- `IssueRepo::delete_read_state(issue_id, user_id) -> sqlx::Result<bool>`
+  - 删除 issue_read_states 表中指定 issue+user 的记录
+  - 返回是否实际删除（false 表示原本就不存在）
+  - 与 Node `svc.markUnread` 对齐
+
+### 路由层
+- `unmark_read_route` 真实实现：
+  1. 通过 `require_user_id` 校验 board 认证
+  2. 加载 issue 验证存在
+  3. 调 `IssueRepo::delete_read_state`
+  4. 返回 `{ id, companyId, removed }`
+
+### Node 语义对齐
+- 仅 board 用户可调用（require_user_id 隐含 board 上下文）
+- Node `markUnread` 同步记录 `issue.read_unmarked` 活动事件
+  - 本轮实现未含活动事件记录（best-effort 留待后续）
+- 仓储 `markUnread` 调用通过 `delete_read_state` 完成
+
+### 测试
+- 集成测试 `round218_issue_read_state_repo.rs`（3 个 case，DB blocked 时 #[ignore]）：
+  - delete_removes_existing
+  - delete_returns_false_when_missing
+  - upsert_after_delete_succeeds
+
+### 累计进展（R217+R218）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R217 | issues.rs | 修复4 | accept/reject/respond/verdicts interaction 真实实现 |
+| R218 | issues.rs | 修复1 | unmark_read_route 真实实现 + delete_read_state |
+
+### 综合状态（截至 R218）
+- 工作空间编译：`cargo check --workspace --lib` 0 errors
+- 集成测试文件 +1，3 个测试 case（R218 单轮）
+- **R96 留下的 deprecated stub 已清理 7/12 个**（R216: 2, R217: 4, R218: 1）
+- 累计端点覆盖率：~7 个真正剩余
+
+### 下一步高 ROI 工作
+1. **继续清理 R96 剩余 5 个 deprecated stub**：
+   - list/create_accepted_plan_decompositions（需新增 issue_plan_decompositions repo）
+   - list_issue_interactions / create_issue_interaction（注意：与 issue_thread_interactions 区分）
+   - issue_activity（需新增 issue_events repo）
+   - annotation_comment_route（需新增 issue_annotation_comments repo 或 document_annotation_comments）
+2. **继续扫描其他文件的 deprecated 模式**
+3. **tool_gateway / tool_access 的 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
