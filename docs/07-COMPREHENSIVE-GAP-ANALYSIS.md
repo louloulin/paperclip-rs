@@ -3562,3 +3562,27 @@ Audit + Actions:
 - 累计 routes 0 SQL 文件: 11 个（共 179 SQL 移除）
 - `pc-repos` 新增 `round161_issues_repo.rs` (9 测试用例)
 - 剩余 SQL 总数: 208 (最大: company_skills.rs 55 / status_cards.rs 17)
+
+## 30. 第一百六十二轮增量（Round 162 — status_cards.rs 仓储化）
+
+### 仓储化覆盖（新建 pc_repos::status_card 模块）
+- **13 个 repo 方法** + **3 个 1:1 schema projection DTO**
+- 完整生命周期: list_active/get_by_id/create/patch/delete + updates + summary + state machine + claim_due
+
+### 跨表复用
+- `card_summary_revisions` 端点：通过 `get_doc_link` + `DocumentRepo::list_revisions_in_company` (复用 Round 158)
+- route 内部做 DocumentRevision → SummaryRevision 形状适配
+
+### 路由重构 status_cards.rs
+- 17 SQL → 0
+- 删除 3 个本地 DTO (CardRow/UpdateRow/SummaryRevisionRow) → 1:1 复用 pc_repos
+
+### Pre-existing schema inconsistencies (保留)
+- `status_card_updates.query_version / change_summary` 在 schema 不存在（保留 SQL 行为）
+- `status_cards.mentioned_issue_ids` 在 schema 不存在（保留 SQL 行为）
+
+### 进度影响
+- `status_cards.rs` 累计 SQL: 17 → 0
+- 累计 routes 0 SQL 文件: 12 个（共 196 SQL 移除）
+- `pc-repos` 新增 `round162_status_card_repo.rs` (14 测试用例)
+- 剩余 SQL 总数: 191 (最大: company_skills.rs 55 / tool_access.rs 8 / issue_tree_control.rs 8 / plugins.rs 7 / environments.rs 7 / dashboard.rs 7 / built_in_agents.rs 7 / approvals.rs 7)
