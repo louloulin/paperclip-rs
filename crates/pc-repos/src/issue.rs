@@ -661,6 +661,29 @@ impl<'a> IssueRepo<'a> {
         .fetch_all(self.db.pool())
         .await
     }
+    /// Round 190: board_chat -- idempotent comment insert (caller provides id).
+    pub async fn insert_comment_idempotent(
+        &self,
+        id: Uuid,
+        issue_id: Uuid,
+        author_user_id: &str,
+        body: &str,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "INSERT INTO issue_comments (id, issue_id, author_user_id, body, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, now(), now()) \
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(issue_id)
+        .bind(author_user_id)
+        .bind(body)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
 
 
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {

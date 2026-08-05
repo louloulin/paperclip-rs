@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_repos::board_chat::{BoardChatRepo, ChatMessageStatus, ChatRole, NewMessage, NewThread};
+use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -170,17 +171,14 @@ async fn board_chat_stream(
             // Persist assistant turn as a comment on the standing issue AND as a
             // board_chat_messages entry. We rely on the parent DB pool rather than
             // a fresh PgPool (avoids extra connection slot).
-            let _ = sqlx::query(
-                "INSERT INTO issue_comments (id, issue_id, author_user_id, body, created_at, updated_at) \
-                 VALUES ($1, $2, $3, $4, now(), now()) \
-                 ON CONFLICT (id) DO NOTHING",
-            )
-            .bind(Uuid::new_v4())
-            .bind(resolved_issue_id)
-            .bind("board-concierge")
-            .bind(&full_response)
-            .execute(db.pool())
-            .await;
+            let _ = IssueRepo::new(&db)
+                .insert_comment_idempotent(
+                    Uuid::new_v4(),
+                    resolved_issue_id,
+                    "board-concierge",
+                    &full_response,
+                )
+                .await;
             // Also persist into the board_chat thread tied to the issue (if any).
             let repo = BoardChatRepo::new(&db);
             if let Ok(thread) = repo
