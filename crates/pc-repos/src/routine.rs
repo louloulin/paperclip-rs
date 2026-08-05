@@ -374,6 +374,93 @@ pub struct UpdateRoutineRecord {
     pub created_by_run_id: Option<Uuid>,
 }
 
+// -- Round 111: routine description annotations types --
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineAnnotationThreadRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub routine_id: Uuid,
+    pub document_id: Uuid,
+    pub document_key: String,
+    pub status: String,
+    pub anchor_state: String,
+    pub original_revision_number: i32,
+    pub current_revision_number: i32,
+    pub selected_text: String,
+    pub prefix_text: String,
+    pub suffix_text: String,
+    pub normalized_start: i32,
+    pub normalized_end: i32,
+    pub markdown_start: i32,
+    pub markdown_end: i32,
+    pub anchor_confidence: String,
+    pub anchor_selector: Value,
+    pub current_revision_id: Option<Uuid>,
+    pub resolved_at: Option<Timestamp>,
+    pub resolved_by_user_id: Option<String>,
+    pub resolved_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineAnnotationCommentRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub routine_id: Uuid,
+    pub thread_id: Uuid,
+    pub document_id: Uuid,
+    pub body: String,
+    pub author_type: String,
+    pub author_user_id: Option<String>,
+    pub author_agent_id: Option<Uuid>,
+    pub created_at: Timestamp,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewRoutineAnnotationThread {
+    pub company_id: Uuid,
+    pub routine_id: Uuid,
+    pub document_id: Uuid,
+    pub document_key: String,
+    pub status: Option<String>,
+    pub revision_number: i32,
+    pub selected_text: String,
+    pub prefix_text: Option<String>,
+    pub suffix_text: Option<String>,
+    pub normalized_start: i32,
+    pub normalized_end: i32,
+    pub markdown_start: i32,
+    pub markdown_end: i32,
+    pub anchor_confidence: Option<String>,
+    pub anchor_selector: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewRoutineAnnotationComment {
+    pub company_id: Uuid,
+    pub routine_id: Uuid,
+    pub thread_id: Uuid,
+    pub document_id: Uuid,
+    pub body: String,
+    pub author_type: String,
+    pub author_user_id: Option<String>,
+    pub author_agent_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RoutineAnnotationPatch {
+    pub status: Option<String>,
+    pub anchor_selector: Option<Value>,
+    pub anchor_state: Option<String>,
+    pub current_revision_id: Option<Uuid>,
+    pub current_revision_number: Option<i32>,
+}
+
 pub struct RoutineRepo<'a> {
     pub db: &'a Db,
 }
@@ -2330,6 +2417,170 @@ impl<'a> RoutineRepo<'a> {
             .execute(self.db.pool())
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    // ---- Round 111: routine description annotations ----
+
+    /// Round 111: 查 routine 的 company_id（auth 辅助，4× 用法）。
+    pub async fn get_company_id(&self, routine_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
+                .bind(routine_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 111: 列出 routine 描述批注 threads。
+    /// `status_filter` ∈ {Some("open"), Some("resolved"), None = 全部}。
+    pub async fn list_annotation_threads(
+        &self,
+        routine_id: Uuid,
+        status_filter: Option<&str>,
+        limit: i64,
+    ) -> sqlx::Result<Vec<RoutineAnnotationThreadRow>> {
+        let mut sql = String::from(
+            "SELECT id, company_id, routine_id, document_id, document_key, status,                     anchor_state, original_revision_number, current_revision_number,                     selected_text, prefix_text, suffix_text, normalized_start,                     normalized_end, markdown_start, markdown_end, anchor_confidence,                     anchor_selector, current_revision_id, resolved_at,                     resolved_by_user_id, resolved_by_agent_id, created_by_user_id,                     created_by_agent_id, created_at, updated_at              FROM document_annotation_threads              WHERE routine_id = $1 AND document_key = 'description'",
+        );
+        if let Some(s) = status_filter {
+            sql.push_str(&format!(" AND status = '{}'", s));
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT $2");
+        sqlx::query_as::<_, RoutineAnnotationThreadRow>(&sql)
+            .bind(routine_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// Round 111: 取单个 annotation thread (routine_id + thread_id + document_key='description')。
+    pub async fn get_annotation_thread(
+        &self,
+        routine_id: Uuid,
+        thread_id: Uuid,
+    ) -> sqlx::Result<Option<RoutineAnnotationThreadRow>> {
+        sqlx::query_as::<_, RoutineAnnotationThreadRow>(
+            "SELECT id, company_id, routine_id, document_id, document_key, status,                     anchor_state, original_revision_number, current_revision_number,                     selected_text, prefix_text, suffix_text, normalized_start,                     normalized_end, markdown_start, markdown_end, anchor_confidence,                     anchor_selector, current_revision_id, resolved_at,                     resolved_by_user_id, resolved_by_agent_id, created_by_user_id,                     created_by_agent_id, created_at, updated_at              FROM document_annotation_threads              WHERE id = $1 AND routine_id = $2 AND document_key = 'description'",
+        )
+        .bind(thread_id)
+        .bind(routine_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// Round 111: 列出 thread 的 comments (按 created_at ASC)。
+    pub async fn list_thread_comments(
+        &self,
+        thread_id: Uuid,
+    ) -> sqlx::Result<Vec<RoutineAnnotationCommentRow>> {
+        sqlx::query_as::<_, RoutineAnnotationCommentRow>(
+            "SELECT id, company_id, routine_id, thread_id, document_id, body, author_type,                     author_user_id, author_agent_id, created_at              FROM document_annotation_comments              WHERE thread_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(thread_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 111: 批量取多个 thread 的 comments (按 created_at ASC)。
+    /// 优化 list_routine_description_annotations?include_comments=true 路径。
+    pub async fn list_thread_comments_bulk(
+        &self,
+        thread_ids: &[Uuid],
+    ) -> sqlx::Result<Vec<RoutineAnnotationCommentRow>> {
+        sqlx::query_as::<_, RoutineAnnotationCommentRow>(
+            "SELECT id, company_id, routine_id, thread_id, document_id, body, author_type,                     author_user_id, author_agent_id, created_at              FROM document_annotation_comments              WHERE thread_id = ANY($1::uuid[]) ORDER BY created_at ASC",
+        )
+        .bind(thread_ids)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 111: 创建 annotation thread，返回 id。
+    pub async fn create_annotation_thread(
+        &self,
+        input: &NewRoutineAnnotationThread,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO document_annotation_threads (                company_id, routine_id, document_id, document_key, status, anchor_state,                 original_revision_number, current_revision_number, selected_text,                 prefix_text, suffix_text, normalized_start, normalized_end,                 markdown_start, markdown_end, anchor_confidence, anchor_selector)              VALUES ($1, $2, $3, $4, COALESCE($5, 'open'), 'active', $6, $6, $7,                      COALESCE($8, ''), COALESCE($9, ''), $10, $11, $12, $13, $14, $15)              RETURNING id",
+        )
+        .bind(input.company_id)
+        .bind(input.routine_id)
+        .bind(input.document_id)
+        .bind(&input.document_key)
+        .bind(input.status.as_deref())
+        .bind(input.revision_number)
+        .bind(&input.selected_text)
+        .bind(input.prefix_text.as_deref())
+        .bind(input.suffix_text.as_deref())
+        .bind(input.normalized_start)
+        .bind(input.normalized_end)
+        .bind(input.markdown_start)
+        .bind(input.markdown_end)
+        .bind(input.anchor_confidence.as_deref().unwrap_or("exact"))
+        .bind(input.anchor_selector.clone().unwrap_or_else(|| Value::Object(Default::default())))
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 111: 创建 annotation comment，返回 id。
+    pub async fn create_thread_comment(
+        &self,
+        input: &NewRoutineAnnotationComment,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO document_annotation_comments (                company_id, routine_id, thread_id, document_id, body, author_type,                 author_user_id, author_agent_id)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+        )
+        .bind(input.company_id)
+        .bind(input.routine_id)
+        .bind(input.thread_id)
+        .bind(input.document_id)
+        .bind(&input.body)
+        .bind(&input.author_type)
+        .bind(input.author_user_id.as_deref())
+        .bind(input.author_agent_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 111: 更新 annotation thread（COALESCE 部分更新 + status 切换触发 resolved_at）。
+    /// 返回受影响行数 (0 = 找不到)。
+    pub async fn update_annotation_thread(
+        &self,
+        routine_id: Uuid,
+        thread_id: Uuid,
+        patch: &RoutineAnnotationPatch,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE document_annotation_threads SET                 status = COALESCE($1, status),                 anchor_selector = COALESCE($2, anchor_selector),                 anchor_state = COALESCE($3, anchor_state),                 current_revision_id = COALESCE($4, current_revision_id),                 current_revision_number = COALESCE($5, current_revision_number),                 resolved_at = CASE WHEN $1 = 'resolved' THEN now()                                    WHEN $1 IN ('open', 'outdated') THEN NULL                                    ELSE resolved_at END,                 updated_at = now()              WHERE id = $6 AND routine_id = $7 AND document_key = 'description'",
+        )
+        .bind(patch.status.as_deref())
+        .bind(patch.anchor_selector.clone())
+        .bind(patch.anchor_state.as_deref())
+        .bind(patch.current_revision_id)
+        .bind(patch.current_revision_number)
+        .bind(thread_id)
+        .bind(routine_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Round 111: 查 thread 的 document_id（comment insert 需要）。
+    pub async fn get_thread_document_id(
+        &self,
+        routine_id: Uuid,
+        thread_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT document_id FROM document_annotation_threads              WHERE id = $1 AND routine_id = $2 AND document_key = 'description'",
+        )
+        .bind(thread_id)
+        .bind(routine_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(d,)| d))
     }
 }
 

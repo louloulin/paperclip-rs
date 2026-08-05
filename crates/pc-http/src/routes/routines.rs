@@ -15,8 +15,9 @@ use uuid::Uuid;
 use pc_realtime::LiveEvent;
 use pc_repos::routine::{
     CreateRoutineRecord, CreateRoutineTriggerRecord, CreateWebhookSecretInput,
-    FireTriggerInput, RoutineRepo, RunRoutineRecord, UpdateRoutineRecord,
-    UpdateRoutineTriggerRecord,
+    FireTriggerInput, NewRoutineAnnotationComment, NewRoutineAnnotationThread,
+    RoutineAnnotationCommentRow, RoutineAnnotationPatch, RoutineAnnotationThreadRow,
+    RoutineRepo, RunRoutineRecord, UpdateRoutineRecord, UpdateRoutineTriggerRecord,
 };
 use pc_secrets::local_encrypted::LocalEncryptedProvider;
 use pc_secrets::SecretProvider;
@@ -1007,37 +1008,13 @@ async fn fire_public_trigger(
     ))
 }
 
-// ============== Round 23: routine description annotations + trigger secret rotation ==============
+// ============== Round 111: routine description annotations 仓储化 ==============
+// types `RoutineAnnotationThreadRow` / `RoutineAnnotationCommentRow` 已迁移到 pc-repos::routine。
+// route 改用 `RoutineRepo::list_annotation_threads` / `get_annotation_thread` / etc.
 
-#[derive(sqlx::FromRow)]
-struct RoutineAnnotationThreadRow {
-    id: Uuid,
-    document_id: Uuid,
-    status: String,
-    anchor_state: String,
-    original_revision_number: i32,
-    current_revision_number: i32,
-    selected_text: String,
-    prefix_text: String,
-    suffix_text: String,
-    normalized_start: i32,
-    normalized_end: i32,
-    markdown_start: i32,
-    markdown_end: i32,
-    anchor_confidence: String,
-    anchor_selector: Value,
-    resolved_at: Option<chrono::DateTime<chrono::Utc>>,
-    resolved_by_user_id: Option<String>,
-    resolved_by_agent_id: Option<Uuid>,
-    created_by_user_id: Option<String>,
-    created_by_agent_id: Option<Uuid>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-// routine description uses literal "description" as the document_key in
-// document_annotation_threads/comments. The routine_id column is set on the
-// thread and comment rows.
+/// routine description uses literal "description" as the document_key in
+/// document_annotation_threads/comments. The routine_id column is set on the
+/// thread and comment rows.
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1046,36 +1023,25 @@ struct ListRoutineAnnotationsQuery {
     include_comments: Option<bool>,
 }
 
+// Round 111: 仓储化。RoutineRepo::get_company_id + list_annotation_threads +
+//             list_thread_comments_bulk。
 async fn list_routine_description_annotations(
     State(state): State<AppState>,
     Path(routine_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<ListRoutineAnnotationsQuery>,
 ) -> ApiResult<Json<Value>> {
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
-        .bind(routine_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let repo = RoutineRepo::new(&state.db);
+    let _company_id = repo
+        .get_company_id(routine_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
-    let mut sql = String::from(
-        "SELECT id, document_id, status, anchor_state, original_revision_number, current_revision_number, \
-                selected_text, prefix_text, suffix_text, normalized_start, normalized_end, markdown_start, markdown_end, \
-                anchor_confidence, anchor_selector, resolved_at, resolved_by_user_id, resolved_by_agent_id, \
-                created_by_user_id, created_by_agent_id, created_at, updated_at \
-         FROM document_annotation_threads WHERE routine_id = $1 AND document_key = 'description'",
-    );
-    if let Some(s) = q.status.as_deref() {
-        if s == "open" || s == "resolved" {
-            sql.push_str(&format!(" AND status = '{}'", s));
-        }
-    }
-    sql.push_str(" ORDER BY created_at DESC LIMIT 200");
-    let rows: Vec<RoutineAnnotationThreadRow> = sqlx::query_as(&sql)
-        .bind(routine_id)
-        .fetch_all(state.db.pool())
-        .await
-        .unwrap_or_default();
+    let status_filter = q
+        .status
+        .as_deref()
+        .and_then(|s| if s == "open" || s == "resolved" { Some(s) } else { None });
+    let rows = repo
+        .list_annotation_threads(routine_id, status_filter, 200)
+        .await?;
     let include_comments = q.include_comments.unwrap_or(false);
     let mut items: Vec<Value> = rows
         .into_iter()
@@ -1110,35 +1076,26 @@ async fn list_routine_description_annotations(
     if include_comments {
         let thread_ids: Vec<Uuid> = items
             .iter()
-            .map(|v| v.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()))
-            .flatten()
+            .filter_map(|v| v.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()))
             .collect();
         if !thread_ids.is_empty() {
-            let comments: Vec<(Uuid, Uuid, String, String, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-                "SELECT id, thread_id, body, author_type, author_agent_id, author_user_id, created_at \
-                 FROM document_annotation_comments \
-                 WHERE company_id = $1 AND routine_id = $2 AND thread_id = ANY($3::uuid[]) \
-                 ORDER BY created_at ASC",
-            )
-            .bind(company_id)
-            .bind(routine_id)
-            .bind(&thread_ids)
-            .fetch_all(state.db.pool())
-            .await
-            .unwrap_or_default();
+            let comments = repo.list_thread_comments_bulk(&thread_ids).await?;
             for t in items.iter_mut() {
-                let tid = t.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok());
+                let tid = t
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok());
                 let cs: Vec<Value> = comments
                     .iter()
-                    .filter(|c| Some(c.1) == tid)
-                    .map(|(id, _tid, body, author_type, author_agent_id, author_user_id, created_at)| {
+                    .filter(|c| Some(c.thread_id) == tid)
+                    .map(|c| {
                         json!({
-                            "id": id,
-                            "body": body,
-                            "authorType": author_type,
-                            "authorAgentId": author_agent_id,
-                            "authorUserId": author_user_id,
-                            "createdAt": created_at,
+                            "id": c.id,
+                            "body": c.body,
+                            "authorType": c.author_type,
+                            "authorAgentId": c.author_agent_id,
+                            "authorUserId": c.author_user_id,
+                            "createdAt": c.created_at,
                         })
                     })
                     .collect();
@@ -1172,6 +1129,8 @@ struct CreateRoutineAnnotationBody {
     status: Option<String>,
 }
 
+// Round 111: 仓储化。RoutineRepo::get_company_id + create_annotation_thread +
+//             create_thread_comment。
 async fn create_routine_description_annotation(
     State(state): State<AppState>,
     Path(routine_id): Path<Uuid>,
@@ -1180,13 +1139,11 @@ async fn create_routine_description_annotation(
     if body.selected_text.is_empty() {
         return Err(ApiError::BadRequest("selectedText is required".into()));
     }
-    let company_id: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
-        .bind(routine_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-    let (company_id,) = company_id.ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
+    let repo = RoutineRepo::new(&state.db);
+    let company_id = repo
+        .get_company_id(routine_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
     let document_id = body
         .document_id
         .ok_or_else(|| ApiError::BadRequest("documentId is required".into()))?;
@@ -1194,42 +1151,40 @@ async fn create_routine_description_annotation(
     let norm_end = body.normalized_end.unwrap_or(body.selected_text.len() as i32);
     let md_start = body.markdown_start.unwrap_or(0);
     let md_end = body.markdown_end.unwrap_or(body.selected_text.len() as i32);
-    let confidence = body.anchor_confidence.unwrap_or_else(|| "exact".to_owned());
+    let confidence = body.anchor_confidence.clone().unwrap_or_else(|| "exact".to_owned());
     let selector = body.anchor_selector.clone().unwrap_or_else(|| json!({}));
     let revision_number = body.revision_number.unwrap_or(1);
-    let thread_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO document_annotation_threads (company_id, routine_id, document_id, document_key, status, anchor_state, original_revision_number, current_revision_number, selected_text, prefix_text, suffix_text, normalized_start, normalized_end, markdown_start, markdown_end, anchor_confidence, anchor_selector) \
-         VALUES ($1, $2, $3, 'description', COALESCE($4, 'open'), 'active', $5, $5, $6, COALESCE($7, ''), COALESCE($8, ''), $9, $10, $11, $12, $13, $14) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(routine_id)
-    .bind(document_id)
-    .bind(body.status.as_deref())
-    .bind(revision_number)
-    .bind(&body.selected_text)
-    .bind(body.prefix_text.as_deref().unwrap_or(""))
-    .bind(body.suffix_text.as_deref().unwrap_or(""))
-    .bind(norm_start)
-    .bind(norm_end)
-    .bind(md_start)
-    .bind(md_end)
-    .bind(&confidence)
-    .bind(&selector)
-    .fetch_one(state.db.pool())
-    .await?;
+    let input = NewRoutineAnnotationThread {
+        company_id,
+        routine_id,
+        document_id,
+        document_key: "description".to_owned(),
+        status: body.status.clone(),
+        revision_number,
+        selected_text: body.selected_text.clone(),
+        prefix_text: body.prefix_text.clone(),
+        suffix_text: body.suffix_text.clone(),
+        normalized_start: norm_start,
+        normalized_end: norm_end,
+        markdown_start: md_start,
+        markdown_end: md_end,
+        anchor_confidence: Some(confidence.clone()),
+        anchor_selector: Some(selector.clone()),
+    };
+    let thread_id = repo.create_annotation_thread(&input).await?;
     if let Some(initial_body) = body.body.as_deref() {
         if !initial_body.is_empty() {
-            sqlx::query(
-                "INSERT INTO document_annotation_comments (company_id, routine_id, thread_id, document_id, body, author_type) \
-                 VALUES ($1, $2, $3, $4, $5, 'user')",
-            )
-            .bind(company_id)
-            .bind(routine_id)
-            .bind(thread_id)
-            .bind(document_id)
-            .bind(initial_body)
-            .execute(state.db.pool())
-            .await?;
+            let comment = NewRoutineAnnotationComment {
+                company_id,
+                routine_id,
+                thread_id,
+                document_id,
+                body: initial_body.to_owned(),
+                author_type: "user".to_owned(),
+                author_user_id: None,
+                author_agent_id: None,
+            };
+            repo.create_thread_comment(&comment).await?;
         }
     }
     state.realtime.publish(
@@ -1251,74 +1206,49 @@ async fn create_routine_description_annotation(
     ))
 }
 
+// Round 111: 仓储化。RoutineRepo::get_annotation_thread + list_thread_comments。
 async fn get_routine_description_annotation(
     State(state): State<AppState>,
     Path((routine_id, thread_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
-        .bind(routine_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let repo = RoutineRepo::new(&state.db);
+    let _company_id = repo
+        .get_company_id(routine_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
-    let row: Option<(
-        Uuid, Uuid, String, String, i32, i32,
-        String, Value,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<Uuid>, Option<String>,
-        chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(
-        "SELECT id, document_id, status, anchor_confidence, normalized_start, normalized_end, selected_text, anchor_selector, resolved_at, resolved_by_agent_id, resolved_by_user_id, created_at \
-         FROM document_annotation_threads WHERE id = $1 AND routine_id = $2 AND document_key = 'description'",
-    )
-    .bind(thread_id)
-    .bind(routine_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (id, document_id, status, anchor_confidence, normalized_start, normalized_end, selected_text, anchor_selector, resolved_at, resolved_by_agent_id, resolved_by_user_id, created_at) = row
+    let row = repo
+        .get_annotation_thread(routine_id, thread_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
-    let comments: Vec<(Uuid, String, String, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, body, author_type, author_agent_id, author_user_id, created_at \
-         FROM document_annotation_comments \
-         WHERE company_id = $1 AND routine_id = $2 AND thread_id = $3 ORDER BY created_at ASC",
-    )
-    .bind(company_id)
-    .bind(routine_id)
-    .bind(thread_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let comments = repo.list_thread_comments(thread_id).await?;
     let comment_items: Vec<Value> = comments
         .into_iter()
-        .map(|(id, body, author_type, author_agent_id, author_user_id, created_at)| {
+        .map(|c| {
             json!({
-                "id": id,
-                "body": body,
-                "authorType": author_type,
-                "authorAgentId": author_agent_id,
-                "authorUserId": author_user_id,
-                "createdAt": created_at,
+                "id": c.id,
+                "body": c.body,
+                "authorType": c.author_type,
+                "authorAgentId": c.author_agent_id,
+                "authorUserId": c.author_user_id,
+                "createdAt": c.created_at,
             })
         })
         .collect();
     Ok(Json(json!({
-        "id": id,
+        "id": row.id,
         "routineId": routine_id,
-        "documentId": document_id,
+        "documentId": row.document_id,
         "documentKey": "description",
-        "status": status,
-        "anchorConfidence": anchor_confidence,
-        "normalizedStart": normalized_start,
-        "normalizedEnd": normalized_end,
-        "selectedText": selected_text,
-        "anchorSelector": anchor_selector,
-        "resolvedAt": resolved_at,
-        "resolvedByAgentId": resolved_by_agent_id,
-        "resolvedByUserId": resolved_by_user_id,
-        "createdAt": created_at,
+        "status": row.status,
+        "anchorConfidence": row.anchor_confidence,
+        "normalizedStart": row.normalized_start,
+        "normalizedEnd": row.normalized_end,
+        "selectedText": row.selected_text,
+        "anchorSelector": row.anchor_selector,
+        "resolvedAt": row.resolved_at,
+        "resolvedByAgentId": row.resolved_by_agent_id,
+        "resolvedByUserId": row.resolved_by_user_id,
+        "createdAt": row.created_at,
         "comments": comment_items,
     })))
 }
@@ -1333,44 +1263,32 @@ struct PatchRoutineAnnotationBody {
     current_revision_number: Option<i32>,
 }
 
+// Round 111: 仓储化。RoutineRepo::get_company_id + update_annotation_thread。
 async fn patch_routine_description_annotation(
     State(state): State<AppState>,
     Path((routine_id, thread_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchRoutineAnnotationBody>,
 ) -> ApiResult<Json<Value>> {
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
-        .bind(routine_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let repo = RoutineRepo::new(&state.db);
+    let company_id = repo
+        .get_company_id(routine_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
     if let Some(s) = body.status.as_deref() {
         if !matches!(s, "open" | "resolved" | "outdated") {
             return Err(ApiError::BadRequest(format!("invalid status '{s}'")));
         }
     }
-    let affected = sqlx::query(
-        "UPDATE document_annotation_threads SET \
-            status = COALESCE($1, status), \
-            anchor_selector = COALESCE($2, anchor_selector), \
-            anchor_state = COALESCE($3, anchor_state), \
-            current_revision_id = COALESCE($4, current_revision_id), \
-            current_revision_number = COALESCE($5, current_revision_number), \
-            resolved_at = CASE WHEN $1 = 'resolved' THEN now() WHEN $1 IN ('open', 'outdated') THEN NULL ELSE resolved_at END, \
-            updated_at = now() \
-         WHERE id = $6 AND routine_id = $7 AND document_key = 'description'",
-    )
-    .bind(body.status.as_deref())
-    .bind(body.anchor_selector.clone())
-    .bind(body.anchor_state.as_deref())
-    .bind(body.current_revision_id)
-    .bind(body.current_revision_number)
-    .bind(thread_id)
-    .bind(routine_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
+    let patch = RoutineAnnotationPatch {
+        status: body.status.clone(),
+        anchor_selector: body.anchor_selector.clone(),
+        anchor_state: body.anchor_state.clone(),
+        current_revision_id: body.current_revision_id,
+        current_revision_number: body.current_revision_number,
+    };
+    let affected = repo
+        .update_annotation_thread(routine_id, thread_id, &patch)
+        .await?;
     if affected == 0 {
         return Err(ApiError::NotFound(format!("annotation thread {thread_id}")));
     }
@@ -1395,6 +1313,8 @@ struct AddRoutineAnnotationCommentBody {
     author_agent_id: Option<Uuid>,
 }
 
+// Round 111: 仓储化。RoutineRepo::get_company_id + get_thread_document_id +
+//             create_thread_comment。
 async fn add_routine_description_annotation_comment(
     State(state): State<AppState>,
     Path((routine_id, thread_id)): Path<(Uuid, Uuid)>,
@@ -1403,38 +1323,27 @@ async fn add_routine_description_annotation_comment(
     if body.body.trim().is_empty() {
         return Err(ApiError::BadRequest("body is required".into()));
     }
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
-        .bind(routine_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let repo = RoutineRepo::new(&state.db);
+    let company_id = repo
+        .get_company_id(routine_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
-    let thread: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT document_id FROM document_annotation_threads WHERE id = $1 AND routine_id = $2 AND document_key = 'description'",
-    )
-    .bind(thread_id)
-    .bind(routine_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (document_id,) = thread.ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
-    let author_type = body.author_type.unwrap_or_else(|| "user".to_owned());
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO document_annotation_comments (company_id, routine_id, thread_id, document_id, body, author_type, author_user_id, author_agent_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(routine_id)
-    .bind(thread_id)
-    .bind(document_id)
-    .bind(&body.body)
-    .bind(&author_type)
-    .bind(body.author_user_id.as_deref())
-    .bind(body.author_agent_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let document_id = repo
+        .get_thread_document_id(routine_id, thread_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
+    let author_type = body.author_type.clone().unwrap_or_else(|| "user".to_owned());
+    let input = NewRoutineAnnotationComment {
+        company_id,
+        routine_id,
+        thread_id,
+        document_id,
+        body: body.body.clone(),
+        author_type: author_type.clone(),
+        author_user_id: body.author_user_id.clone(),
+        author_agent_id: body.author_agent_id,
+    };
+    let id = repo.create_thread_comment(&input).await?;
     state.realtime.publish(
         LiveEvent::new("routine.annotation.comment_added", "routine_annotation_comment", id)
             .with_company(company_id)

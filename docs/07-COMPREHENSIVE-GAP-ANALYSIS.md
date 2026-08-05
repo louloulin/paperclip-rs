@@ -713,6 +713,59 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 34. 第一百一十一轮增量（Round 111 — routines.rs 描述批注子模块仓储化)
+
+### 目标
+`routines.rs` 还有 17 个内联 SQL 散落在 5 个描述批注端点
+（list_routine_description_annotations / create / get / patch / add_comment）。
+Round 111 把这 5 个端点全部仓储化（17 → 3 SQL：剩余 3 个是 trigger secret rotation + 
+create_revision pointer update，留给 Round 112）。
+
+### 新增 `pc_repos::routine::RoutineRepo` 方法（8 + 1 bulk）
+- `get_company_id(routine_id) -> Option<Uuid>` — auth 辅助，4× 复用
+- `list_annotation_threads(routine_id, status_filter, limit) -> Vec<RoutineAnnotationThreadRow>`
+- `get_annotation_thread(routine_id, thread_id) -> Option<RoutineAnnotationThreadRow>`
+- `list_thread_comments(thread_id) -> Vec<RoutineAnnotationCommentRow>`
+- `list_thread_comments_bulk(thread_ids) -> Vec<RoutineAnnotationCommentRow>` — 优化 list 路径
+- `create_annotation_thread(&NewRoutineAnnotationThread) -> Uuid`
+- `create_thread_comment(&NewRoutineAnnotationComment) -> Uuid`
+- `update_annotation_thread(routine_id, thread_id, &RoutineAnnotationPatch) -> u64`
+  - COALESCE 部分更新 + status 切换触发 resolved_at 写入/清空
+- `get_thread_document_id(routine_id, thread_id) -> Option<Uuid>` — comment insert 需要
+
+### 移动 DTO 到 pc-repos
+- `RoutineAnnotationThreadRow` (1:1 schema 投影) — 之前散在 routes/routines.rs
+- `RoutineAnnotationCommentRow` (1:1 schema 投影)
+- `NewRoutineAnnotationThread` / `NewRoutineAnnotationComment` (write input)
+- `RoutineAnnotationPatch` (partial update)
+
+### 重构 `routines.rs` 5 个端点
+- `list_routine_description_annotations` — `get_company_id + list_annotation_threads + list_thread_comments_bulk`
+- `create_routine_description_annotation` — `get_company_id + create_annotation_thread + create_thread_comment`
+- `get_routine_description_annotation` — `get_company_id + get_annotation_thread + list_thread_comments`
+- `patch_routine_description_annotation` — `get_company_id + update_annotation_thread`
+- `add_routine_description_annotation_comment` — `get_company_id + get_thread_document_id + create_thread_comment`
+
+### 新增集成测试 9 个 (`crates/pc-repos/tests/round111_routine_annotation_repo.rs`)
+1. `routine_get_company_id_round_trip` — 找到 / 找不到
+2. `annotation_thread_create_get_round_trip` — create + get 全字段回填
+3. `annotation_threads_list_filters_by_status` — status filter
+4. `annotation_thread_comments_list_single_and_bulk` — list 单 thread + bulk 多 thread
+5. `annotation_thread_create_comment_writes` — comment insert
+6. `annotation_thread_update_resolved_sets_timestamp` — status='resolved' 触发 resolved_at
+7. `annotation_thread_update_open_clears_timestamp` — status='open' 清除 resolved_at
+8. `annotation_thread_update_missing_returns_zero` — 未知 thread 返 0
+9. `annotation_thread_document_id_round_trip` — get_thread_document_id 双向
+
+### 进度影响
+- 综合进度从 **≈ 89.8% → ≈ 90.4%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round111_*` 编译通过
+- 11 个 pc-repos 集成测试文件累计 51+9=60 test 函数
+- routines.rs SQL 数 17 → 3（annotation 子模块全部清空）
+- 累计 Round 95-111 修复 **53+6+5=64 个路由从 500 → 200**
+
 ## 33. 第一百一十轮增量（Round 110 — pipelines.rs 仓储化 + stage_id NOT NULL bug 修复)
 
 ### 目标
