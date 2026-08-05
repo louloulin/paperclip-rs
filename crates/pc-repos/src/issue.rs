@@ -530,6 +530,25 @@ impl<'a> IssueRepo<'a> {
 
     // ---------- create / update / delete ----------
 
+    /// Round 163: 给 skill test run 创建 harness issue（专用 status='todo'，固定 title）。
+    pub async fn create_harness_issue(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<()> {
+        let now = chrono::Utc::now();
+        sqlx::query(
+            "INSERT INTO issues (id, company_id, title, status, created_at, updated_at)
+             VALUES ($1, $2, 'Skill test run', 'todo', $3, $3)",
+        )
+        .bind(issue_id)
+        .bind(company_id)
+        .bind(now)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn create(
         &self,
         company_id: Uuid,

@@ -1122,6 +1122,669 @@ impl<'a> SkillRepo<'a> {
         .fetch_one(self.db.pool())
         .await?)
     }
+
+    // ---- Round 163: company_skills route 仓储化新增方法 ----
+
+    /// 安装/upsert 一条 company_skill（install_company_skill 用）。
+    /// 与 `create` 不同：`install_company_skill` 接收字符串字段（来自 HTTP body），
+    /// 触发 ON CONFLICT (company_id, key) DO UPDATE 完整 upsert，返回更新后的 row。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_install(
+        &self,
+        company_id: Uuid,
+        key: &str,
+        slug: &str,
+        name: &str,
+        description: Option<&str>,
+        markdown: &str,
+        source_type: &str,
+        source_locator: Option<&str>,
+        source_ref: Option<&str>,
+        trust_level: &str,
+        categories: &[String],
+    ) -> RepoResult<CompanySkillRow> {
+        let sql = format!(
+            "INSERT INTO company_skills                 (company_id, key, slug, name, description, markdown, source_type, source_locator,                  source_ref, trust_level, categories)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)              ON CONFLICT (company_id, key) DO UPDATE SET                 slug = EXCLUDED.slug, name = EXCLUDED.name, description = EXCLUDED.description,                 markdown = EXCLUDED.markdown, source_type = EXCLUDED.source_type,                 source_locator = EXCLUDED.source_locator, source_ref = EXCLUDED.source_ref,                 trust_level = EXCLUDED.trust_level, categories = EXCLUDED.categories,                 updated_at = now()              RETURNING {SKILL_COLS}",
+        );
+        Ok(sqlx::query_as::<_, CompanySkillRow>(&sql)
+            .bind(company_id)
+            .bind(key)
+            .bind(slug)
+            .bind(name)
+            .bind(description)
+            .bind(markdown)
+            .bind(source_type)
+            .bind(source_locator)
+            .bind(source_ref)
+            .bind(trust_level)
+            .bind(categories)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    /// 取 fork-precheck 用的核心字段。
+    pub async fn fork_precheck(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+    ) -> RepoResult<Option<(String, Option<Uuid>, i32, Option<String>)>> {
+        let row: Option<(String, Option<Uuid>, i32, Option<String>)> = sqlx::query_as(
+            "SELECT trust_level, forked_from_skill_id, fork_count, source_locator              FROM company_skills WHERE company_id=$1 AND id=$2",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// 列出某 skill 的版本（带 limit/offset，按 revision_number DESC）。
+    pub async fn list_versions_paged(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> RepoResult<Vec<(Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)>> {
+        let rows: Vec<(Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)> =
+            sqlx::query_as(
+                "SELECT id, revision_number, label, file_inventory, author_agent_id, author_user_id, created_at                  FROM company_skill_versions WHERE company_id=$1 AND company_skill_id=$2                  ORDER BY revision_number DESC LIMIT $3 OFFSET $4",
+            )
+            .bind(company_id)
+            .bind(skill_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self.db.pool())
+            .await?;
+        Ok(rows)
+    }
+
+    /// 事务：写新版本 + 更新 skill.current_version_id，返回 (id, revision)。
+    pub async fn create_version_and_update_current(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        label: Option<&str>,
+        file_inventory: &Value,
+        author_agent_id: Option<Uuid>,
+        author_user_id: Option<&str>,
+    ) -> RepoResult<(Uuid, i32)> {
+        let mut tx = self.db.pool().begin().await?;
+        let next_rev: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(revision_number),0)+1              FROM company_skill_versions WHERE company_id=$1 AND company_skill_id=$2",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO company_skill_versions                 (id, company_id, company_skill_id, revision_number, label, file_inventory,                  author_agent_id, author_user_id)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        )
+        .bind(id)
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(next_rev)
+        .bind(label)
+        .bind(file_inventory)
+        .bind(author_agent_id)
+        .bind(author_user_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE company_skills SET current_version_id=$1, updated_at=now()              WHERE id=$2 AND company_id=$3",
+        )
+        .bind(id)
+        .bind(skill_id)
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((id, next_rev))
+    }
+
+    /// 取一条 version。
+    pub async fn get_version(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        version_id: Uuid,
+    ) -> RepoResult<Option<(Uuid, Uuid, Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)>> {
+        let row: Option<(Uuid, Uuid, Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)> =
+            sqlx::query_as(
+                "SELECT id, company_id, company_skill_id, revision_number, label, file_inventory,                  author_agent_id, author_user_id, created_at                  FROM company_skill_versions                  WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
+            )
+            .bind(company_id)
+            .bind(skill_id)
+            .bind(version_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    /// 列评论（按 company_skill_id 过滤）。
+    pub async fn list_comments_in_skill(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Timestamp)>> {
+        let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Timestamp)> =
+            sqlx::query_as(
+                "SELECT id, company_skill_id, parent_comment_id, author_agent_id, author_user_id, body, created_at                  FROM company_skill_comments                  WHERE company_id=$1 AND company_skill_id=$2 AND deleted_at IS NULL                  ORDER BY created_at ASC",
+            )
+            .bind(company_id)
+            .bind(skill_id)
+            .fetch_all(self.db.pool())
+            .await?;
+        Ok(rows)
+    }
+
+    /// 写一条新评论。返回 id。
+    pub async fn add_comment_raw(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        parent_comment_id: Option<Uuid>,
+        author_agent_id: Option<Uuid>,
+        author_user_id: Option<&str>,
+        body: &str,
+    ) -> RepoResult<Uuid> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO company_skill_comments                 (id, company_id, company_skill_id, parent_comment_id, author_agent_id, author_user_id, body)              VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(id)
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(parent_comment_id)
+        .bind(author_agent_id)
+        .bind(author_user_id)
+        .bind(body)
+        .execute(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// 改评论（按 company_id + skill_id + id 定位）。
+    pub async fn patch_comment(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        comment_id: Uuid,
+        body: &str,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE company_skill_comments SET body=$1, updated_at=now()              WHERE company_id=$2 AND company_skill_id=$3 AND id=$4 AND deleted_at IS NULL",
+        )
+        .bind(body)
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(comment_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 软删评论。
+    pub async fn soft_delete_comment(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        comment_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE company_skill_comments SET deleted_at=now()              WHERE company_id=$1 AND company_skill_id=$2 AND id=$3 AND deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(comment_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 取单条评论（按 id）。
+    pub async fn get_comment_by_id(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        comment_id: Uuid,
+    ) -> RepoResult<Option<(Uuid, Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Option<Timestamp>, Timestamp, Timestamp)>> {
+        let row: Option<(Uuid, Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Option<Timestamp>, Timestamp, Timestamp)> =
+            sqlx::query_as(
+                "SELECT id, company_id, company_skill_id, parent_comment_id, author_agent_id, author_user_id,                         body, deleted_at, created_at, updated_at                  FROM company_skill_comments                  WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
+            )
+            .bind(company_id)
+            .bind(skill_id)
+            .bind(comment_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    /// 重命名 skill。
+    pub async fn rename_skill(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        name: &str,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE company_skills SET name=$1, updated_at=now()              WHERE company_id=$2 AND id=$3 AND deleted_at IS NULL",
+        )
+        .bind(name)
+        .bind(company_id)
+        .bind(skill_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 增加 install_count（按 company_id + id 定位）。
+    pub async fn increment_install_count_for_company(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE company_skills SET install_count=install_count+1, updated_at=now()              WHERE company_id=$1 AND id=$2",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 重置 install/star/fork 计数器。
+    pub async fn reset_skill_counters(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE company_skills SET install_count=0, star_count=0, fork_count=0, updated_at=now()              WHERE company_id=$1 AND id=$2",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 从源 skill 派生 fork：复制大部分字段，写入新 id，并把源 skill 的 fork_count +1。
+    pub async fn fork_from_skill(
+        &self,
+        company_id: Uuid,
+        source_skill_id: Uuid,
+        new_id: Uuid,
+        name: &str,
+    ) -> RepoResult<()> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "INSERT INTO company_skills                 (id, company_id, key, slug, name, description, markdown, source_type, source_locator,                  source_ref, trust_level, compatibility, file_inventory, forked_from_skill_id, forked_from_company_id)              SELECT $1, $2, (key || '-fork-' || substring($1::text,1,8)), (slug || '-fork'), $3,                     description, markdown, source_type, source_locator, source_ref, 'company',                     compatibility, file_inventory, id, company_id              FROM company_skills WHERE company_id=$2 AND id=$4",
+        )
+        .bind(new_id)
+        .bind(company_id)
+        .bind(name)
+        .bind(source_skill_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE company_skills SET fork_count=COALESCE(fork_count,0)+1, updated_at=now()              WHERE id=$1",
+        )
+        .bind(source_skill_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 动态 UPDATE：把 PatchSkill 字段逐个 COALESCE 应用。
+    pub async fn patch_skill_fields(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+        markdown: Option<&str>,
+        metadata: Option<&Value>,
+        tagline: Option<&str>,
+        icon_url: Option<&str>,
+        color: Option<&str>,
+        categories: Option<&[String]>,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE company_skills SET                 name = COALESCE($1, name),                 description = COALESCE($2, description),                 markdown = COALESCE($3, markdown),                 metadata = COALESCE($4, metadata),                 tagline = COALESCE($5, tagline),                 icon_url = COALESCE($6, icon_url),                 color = COALESCE($7, color),                 categories = COALESCE($8, categories),                 updated_at = now()              WHERE company_id=$9 AND id=$10",
+        )
+        .bind(name)
+        .bind(description)
+        .bind(markdown)
+        .bind(metadata)
+        .bind(tagline)
+        .bind(icon_url)
+        .bind(color)
+        .bind(categories)
+        .bind(company_id)
+        .bind(skill_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 列出 test inputs（支持 include_deleted 过滤）。
+    pub async fn list_test_inputs_with_filter(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        include_deleted: bool,
+    ) -> RepoResult<Vec<(Uuid, String, String, Option<String>, Timestamp, Timestamp)>> {
+        let filter = if include_deleted { "" } else { "AND deleted_at IS NULL" };
+        let sql = format!(
+            "SELECT id, name, content, created_by, created_at, updated_at              FROM company_skill_test_inputs              WHERE company_id=$1 AND skill_id=$2 {filter}              ORDER BY name ASC"
+        );
+        let rows: Vec<(Uuid, String, String, Option<String>, Timestamp, Timestamp)> =
+            sqlx::query_as(&sql)
+                .bind(company_id)
+                .bind(skill_id)
+                .fetch_all(self.db.pool())
+                .await?;
+        Ok(rows)
+    }
+
+    /// 写一条 test input。
+    pub async fn create_test_input_raw(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        name: &str,
+        content: &str,
+        created_by: Option<&str>,
+    ) -> RepoResult<Uuid> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO company_skill_test_inputs                 (id, company_id, skill_id, name, content, created_by)              VALUES ($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(id)
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(name)
+        .bind(content)
+        .bind(created_by)
+        .execute(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// 动态 UPDATE：name/content 任一更新。
+    pub async fn patch_test_input_fields(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        input_id: Uuid,
+        name: Option<&str>,
+        content: Option<&str>,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE company_skill_test_inputs SET                 name = COALESCE($1, name),                 content = COALESCE($2, content),                 updated_at = now()              WHERE company_id=$3 AND skill_id=$4 AND id=$5 AND deleted_at IS NULL",
+        )
+        .bind(name)
+        .bind(content)
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(input_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 软删 test input。
+    pub async fn soft_delete_test_input(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        input_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE company_skill_test_inputs SET deleted_at=now()              WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(input_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 取 test input 的 content 快照（创建 test run 时用）。
+    pub async fn get_test_input_content(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        input_id: Uuid,
+    ) -> RepoResult<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT content FROM company_skill_test_inputs              WHERE company_id=$1 AND skill_id=$2 AND id=$3",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(input_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(s,)| s))
+    }
+
+    /// 列 test runs（带 status 过滤与 limit）。
+    pub async fn list_test_runs_with_filter(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        status: Option<&str>,
+        limit: i64,
+    ) -> RepoResult<Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Timestamp, Timestamp)>> {
+        let status_filter = match status {
+            Some(s) if !s.is_empty() => {
+                let safe = s.replace('\'', "");
+                format!("AND status='{safe}'")
+            }
+            _ => String::new(),
+        };
+        let sql = format!(
+            "SELECT id, status, input_id, agent_id, issue_id, created_at, updated_at              FROM company_skill_test_runs WHERE company_id=$1 AND skill_id=$2 {status_filter}              ORDER BY created_at DESC LIMIT $3"
+        );
+        let rows: Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Timestamp, Timestamp)> =
+            sqlx::query_as(&sql)
+                .bind(company_id)
+                .bind(skill_id)
+                .bind(limit)
+                .fetch_all(self.db.pool())
+                .await?;
+        Ok(rows)
+    }
+
+    /// 创建一条 test run。
+    pub async fn create_test_run(
+        &self,
+        run_id: Uuid,
+        company_id: Uuid,
+        skill_id: Uuid,
+        input_id: Option<Uuid>,
+        input_snapshot: &str,
+        skill_version_id: Uuid,
+        agent_id: Uuid,
+        issue_id: Uuid,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "INSERT INTO company_skill_test_runs                 (id, company_id, skill_id, input_id, input_snapshot, skill_version_id, agent_id,                  agent_config_snapshot, issue_id, status)              VALUES ($1,$2,$3,$4,$5,$6,$7,'{}'::jsonb,$8,'queued')",
+        )
+        .bind(run_id)
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(input_id)
+        .bind(input_snapshot)
+        .bind(skill_version_id)
+        .bind(agent_id)
+        .bind(issue_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 取一条 test run（按 company_id+skill_id+id 定位）。
+    pub async fn get_test_run(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        run_id: Uuid,
+    ) -> RepoResult<Option<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Option<String>, String, String, Option<String>, Timestamp, Timestamp)>> {
+        let row: Option<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Option<String>, String, String, Option<String>, Timestamp, Timestamp)> =
+            sqlx::query_as(
+                "SELECT id, status, input_id, agent_id, issue_id, template_id, input_snapshot,                  output_snapshot, error, created_at, updated_at                  FROM company_skill_test_runs                  WHERE company_id=$1 AND skill_id=$2 AND id=$3",
+            )
+            .bind(company_id)
+            .bind(skill_id)
+            .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    /// 取消 test run（仅 queued/running 可取消）。
+    pub async fn cancel_test_run(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        run_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE company_skill_test_runs SET status='cancelled', updated_at=now()              WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND status IN ('queued','running')",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(run_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 硬删 test run。
+    pub async fn delete_test_run(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        run_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "DELETE FROM company_skill_test_runs              WHERE company_id=$1 AND skill_id=$2 AND id=$3",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(run_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 取 skill 的 file_inventory。
+    pub async fn get_file_inventory(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+    ) -> RepoResult<Option<Value>> {
+        let row: Option<(Value,)> = sqlx::query_as(
+            "SELECT file_inventory FROM company_skills WHERE company_id=$1 AND id=$2",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// 写整个 file_inventory。
+    pub async fn set_file_inventory(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        inv: &Value,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE company_skills SET file_inventory=$1, updated_at=now()              WHERE company_id=$2 AND id=$3",
+        )
+        .bind(inv)
+        .bind(company_id)
+        .bind(skill_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 动态 UPDATE：test run template 的 name/description/body。
+    pub async fn patch_test_run_template_fields(
+        &self,
+        company_id: Uuid,
+        template_id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+        body: Option<&str>,
+    ) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE company_skill_test_run_templates SET                 name = COALESCE($1, name),                 description = COALESCE($2, description),                 body = COALESCE($3, body),                 updated_at = now()              WHERE company_id=$4 AND id=$5 AND deleted_at IS NULL",
+        )
+        .bind(name)
+        .bind(description)
+        .bind(body)
+        .bind(company_id)
+        .bind(template_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 软删 test run template。
+    pub async fn soft_delete_test_run_template(
+        &self,
+        company_id: Uuid,
+        template_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE company_skill_test_run_templates SET deleted_at=now()              WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(template_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 导入一条 skill（带 ON CONFLICT DO NOTHING）。
+    pub async fn insert_imported_skill(
+        &self,
+        company_id: Uuid,
+        key: &str,
+        name: &str,
+        markdown: &str,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "INSERT INTO company_skills                 (id, company_id, key, slug, name, markdown, source_type, trust_level,                  compatibility, file_inventory)              VALUES (gen_random_uuid(), $1, $2, $2, $3, $4, 'imported', 'company', '{}', '[]'::jsonb)              ON CONFLICT (company_id, key) DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(key)
+        .bind(name)
+        .bind(markdown)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
 }
 
 #[cfg(test)]

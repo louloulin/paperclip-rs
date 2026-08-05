@@ -9,7 +9,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::FromRow;
 use tokio::fs;
 use uuid::Uuid;
 
@@ -400,34 +399,22 @@ async fn install_company_skill(
         .clone()
         .unwrap_or_else(|| "markdown_only".to_owned());
     let categories = body.categories.clone().unwrap_or_default();
-    let row: CompanySkillRow = sqlx::query_as(
-        "INSERT INTO company_skills \
-            (company_id, key, slug, name, description, markdown, source_type, source_locator, \
-             source_ref, trust_level, categories) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
-         ON CONFLICT (company_id, key) DO UPDATE SET \
-            slug = EXCLUDED.slug, name = EXCLUDED.name, description = EXCLUDED.description, \
-            markdown = EXCLUDED.markdown, source_type = EXCLUDED.source_type, \
-            source_locator = EXCLUDED.source_locator, source_ref = EXCLUDED.source_ref, \
-            trust_level = EXCLUDED.trust_level, categories = EXCLUDED.categories, \
-            updated_at = now() \
-         RETURNING id, company_id, key, slug, name, description, markdown, source_type, \
-                   source_locator, source_ref, trust_level, compatibility, file_inventory, metadata, \
-                   icon_url, color, tagline, author_name, homepage_url, categories, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .bind(&slug)
-    .bind(&name)
-    .bind(body.description.clone())
-    .bind(&markdown)
-    .bind(&source_type)
-    .bind(body.source_locator.clone())
-    .bind(body.source_ref.clone())
-    .bind(&trust_level)
-    .bind(&categories)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = SkillRepo::new(&state.db)
+        .upsert_install(
+            company_id,
+            &key,
+            &slug,
+            &name,
+            body.description.as_deref(),
+            &markdown,
+            &source_type,
+            body.source_locator.as_deref(),
+            body.source_ref.as_deref(),
+            &trust_level,
+            &categories,
+        )
+        .await
+        .map_err(map_skill_repo_error)?;
     Ok((StatusCode::CREATED, Json(skill_json(&row))))
 }
 
@@ -476,18 +463,15 @@ async fn get_skill_config(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let value: Option<serde_json::Value> = sqlx::query_scalar(
-        "SELECT value FROM company_skill_configs WHERE company_id=$1 AND skill_id=$2",
-    )
-    .bind(company_id)
-    .bind(skill_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let value = SkillRepo::new(&state.db)
+        .get_config(company_id, skill_id)
+        .await
+        .map_err(map_skill_repo_error)?
+        .unwrap_or_else(|| serde_json::json!({}));
     Ok(Json(json!({
         "companyId": company_id,
         "skillId": skill_id,
-        "config": value.unwrap_or_else(|| serde_json::json!({})),
+        "config": value,
     })))
 }
 
@@ -539,13 +523,9 @@ async fn skill_fork_precheck(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(String, Option<Uuid>, i32, Option<String>)> = sqlx::query_as(
-        "SELECT trust_level, forked_from_skill_id, fork_count, source_locator
-         FROM company_skills WHERE company_id=$1 AND id=$2",
-    )
-    .bind(company_id).bind(skill_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = SkillRepo::new(&state.db)
+        .fork_precheck(company_id, skill_id)
+        .await?;
     let (trust, forked_from, fork_count, src) = row
         .ok_or_else(|| ApiError::NotFound(format!("skill {skill_id}")))?;
     Ok(Json(json!({
@@ -575,13 +555,9 @@ async fn list_skill_versions(
 ) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
-    let rows: Vec<(Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, revision_number, label, file_inventory, author_agent_id, author_user_id, created_at
-         FROM company_skill_versions WHERE company_id=$1 AND company_skill_id=$2
-         ORDER BY revision_number DESC LIMIT $3 OFFSET $4",
-    )
-    .bind(company_id).bind(skill_id).bind(limit).bind(offset)
-    .fetch_all(state.db.pool()).await?;
+    let rows = SkillRepo::new(&state.db)
+        .list_versions_paged(company_id, skill_id, limit, offset)
+        .await?;
     let versions: Vec<Value> = rows.into_iter().map(|(id, rev, label, inv, agent, user, ts)| json!({
         "id": id,
         "revisionNumber": rev,
@@ -614,24 +590,17 @@ async fn create_skill_version(
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<CreateVersionBody>,
 ) -> ApiResult<Json<Value>> {
-    let next_rev: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(revision_number),0)+1
-         FROM company_skill_versions WHERE company_id=$1 AND company_skill_id=$2",
-    )
-    .bind(company_id).bind(skill_id).fetch_one(state.db.pool()).await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let id: Uuid = Uuid::new_v4();
     let file_inv = body.file_inventory.clone().unwrap_or_else(|| json!([]));
-    sqlx::query(
-        "INSERT INTO company_skill_versions (id, company_id, company_skill_id, revision_number,
-         label, file_inventory, author_agent_id, author_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-    )
-    .bind(id).bind(company_id).bind(skill_id).bind(next_rev)
-    .bind(&body.label).bind(&file_inv).bind(body.author_agent_id).bind(&body.author_user_id)
-    .execute(state.db.pool()).await?;
-    sqlx::query("UPDATE company_skills SET current_version_id=$1, updated_at=now() WHERE id=$2 AND company_id=$3")
-        .bind(id).bind(skill_id).bind(company_id).execute(state.db.pool()).await?;
+    let (id, next_rev) = SkillRepo::new(&state.db)
+        .create_version_and_update_current(
+            company_id,
+            skill_id,
+            body.label.as_deref(),
+            &file_inv,
+            body.author_agent_id,
+            body.author_user_id.as_deref(),
+        )
+        .await?;
     state.realtime.publish(
     LiveEvent::new("skills.version_created", "skill", skill_id)
         .with_company(company_id)
@@ -645,13 +614,9 @@ async fn get_skill_version(
     State(state): State<AppState>,
     Path((company_id, skill_id, version_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, company_id, company_skill_id, revision_number, label, file_inventory,
-         author_agent_id, author_user_id, created_at
-         FROM company_skill_versions WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
-    )
-    .bind(company_id).bind(skill_id).bind(version_id)
-    .fetch_optional(state.db.pool()).await?;
+    let row = SkillRepo::new(&state.db)
+        .get_version(company_id, skill_id, version_id)
+        .await?;
     let (id, cid, sid, rev, label, inv, agent, user, ts) = row
         .ok_or_else(|| ApiError::NotFound(format!("version {version_id}")))?;
     Ok(Json(json!({
@@ -677,15 +642,9 @@ async fn list_skill_comments(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, pc_core::Timestamp)> =
-        sqlx::query_as(
-            "SELECT id, company_skill_id, parent_comment_id, author_agent_id, author_user_id, body, created_at
-             FROM company_skill_comments
-             WHERE company_id=$1 AND company_skill_id=$2 AND deleted_at IS NULL
-             ORDER BY created_at ASC",
-        )
-        .bind(company_id).bind(skill_id)
-        .fetch_all(state.db.pool()).await?;
+    let rows = SkillRepo::new(&state.db)
+        .list_comments_in_skill(company_id, skill_id)
+        .await?;
     let items: Vec<Value> = rows.into_iter().map(|(id, sid, parent, agent, user, body, ts)| json!({
         "id": id, "skillId": sid, "parentCommentId": parent,
         "authorAgentId": agent, "authorUserId": user,
@@ -706,16 +665,16 @@ async fn create_skill_comment(
     if text.len() > 16_000 {
         return Err(ApiError::BadRequest("body too long".into()));
     }
-    let id: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO company_skill_comments (id, company_id, company_skill_id, parent_comment_id,
-         author_agent_id, author_user_id, body)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    )
-    .bind(id).bind(company_id).bind(skill_id)
-    .bind(body.parent_comment_id).bind(body.author_agent_id).bind(&body.author_user_id)
-    .bind(&text)
-    .execute(state.db.pool()).await?;
+    let id = SkillRepo::new(&state.db)
+        .add_comment_raw(
+            company_id,
+            skill_id,
+            body.parent_comment_id,
+            body.author_agent_id,
+            body.author_user_id.as_deref(),
+            &text,
+        )
+        .await?;
     state.realtime.publish(
     LiveEvent::new("skills.comment_created", "skill", skill_id)
         .with_company(company_id)
@@ -743,13 +702,10 @@ async fn patch_skill_comment(
     if text.len() > 16_000 {
         return Err(ApiError::BadRequest("body too long".into()));
     }
-    let r = sqlx::query(
-        "UPDATE company_skill_comments SET body=$1, updated_at=now()
-         WHERE company_id=$2 AND company_skill_id=$3 AND id=$4 AND deleted_at IS NULL",
-    )
-    .bind(&text).bind(company_id).bind(skill_id).bind(comment_id)
-    .execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .patch_comment(company_id, skill_id, comment_id, &text)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("comment {comment_id}")));
     }
     Ok(Json(json!({"id": comment_id, "body": text, "updated": true})))
@@ -759,13 +715,10 @@ async fn delete_skill_comment(
     State(state): State<AppState>,
     Path((company_id, skill_id, comment_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query(
-        "UPDATE company_skill_comments SET deleted_at=now()
-         WHERE company_id=$1 AND company_skill_id=$2 AND id=$3 AND deleted_at IS NULL",
-    )
-    .bind(company_id).bind(skill_id).bind(comment_id)
-    .execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .soft_delete_comment(company_id, skill_id, comment_id)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("comment {comment_id}")));
     }
     state.realtime.publish(
@@ -793,21 +746,10 @@ async fn star_skill(
     if body.agent_id.is_none() && body.user_id.is_none() {
         return Err(ApiError::BadRequest("agent_id or user_id required".into()));
     }
-    // Round 31: 用 ON CONFLICT DO NOTHING + RETURNING 检测真正新增的行；同步 star_count
-    let inserted: Option<(Uuid,)> = sqlx::query_as(
-        "INSERT INTO company_skill_stars (company_id, company_skill_id, agent_id, user_id)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT DO NOTHING RETURNING id",
-    ).bind(company_id).bind(skill_id).bind(body.agent_id).bind(&body.user_id)
-    .fetch_optional(state.db.pool()).await?;
-    let new_star = inserted.is_some();
-    if new_star {
-        sqlx::query(
-            "UPDATE company_skills SET star_count = star_count + 1, updated_at=now()
-             WHERE company_id=$1 AND id=$2",
-        ).bind(company_id).bind(skill_id)
-        .execute(state.db.pool()).await?;
-    }
+    let new_star = SkillRepo::new(&state.db)
+        .star(company_id, skill_id, body.agent_id, body.user_id.as_deref())
+        .await
+        .map_err(map_skill_repo_error)?;
     Ok(Json(json!({
         "starred": true, "companyId": company_id, "skillId": skill_id, "newStar": new_star,
     })))
@@ -818,32 +760,10 @@ async fn unstar_skill(
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<StarBody>,
 ) -> ApiResult<Json<Value>> {
-    // Round 31: 按 actor 删（agent_id 或 user_id），不再误删全部 star
-    let mut deleted = 0;
-    if let Some(aid) = body.agent_id {
-        let r = sqlx::query(
-            "DELETE FROM company_skill_stars
-             WHERE company_id=$1 AND company_skill_id=$2 AND agent_id=$3",
-        ).bind(company_id).bind(skill_id).bind(aid)
-        .execute(state.db.pool()).await?;
-        deleted += r.rows_affected();
-    }
-    if let Some(uid) = body.user_id.as_ref() {
-        let r = sqlx::query(
-            "DELETE FROM company_skill_stars
-             WHERE company_id=$1 AND company_skill_id=$2 AND user_id=$3",
-        ).bind(company_id).bind(skill_id).bind(uid)
-        .execute(state.db.pool()).await?;
-        deleted += r.rows_affected();
-    }
-    // sync star_count
-    if deleted > 0 {
-        sqlx::query(
-            "UPDATE company_skills SET star_count = GREATEST(star_count - $1, 0), updated_at=now()
-             WHERE company_id=$2 AND id=$3",
-        ).bind(deleted as i32).bind(company_id).bind(skill_id)
-        .execute(state.db.pool()).await?;
-    }
+    let deleted = SkillRepo::new(&state.db)
+        .unstar(company_id, skill_id, body.agent_id, body.user_id.as_deref())
+        .await
+        .map_err(map_skill_repo_error)?;
     Ok(Json(json!({"unstarred": true, "skillId": skill_id, "deletedStars": deleted})))
 }
 
@@ -885,11 +805,9 @@ async fn install_skill_update(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE company_skills SET install_count=install_count+1, updated_at=now()
-         WHERE company_id=$1 AND id=$2",
-    ).bind(company_id).bind(skill_id)
-    .execute(state.db.pool()).await?;
+    SkillRepo::new(&state.db)
+        .increment_install_count_for_company(company_id, skill_id)
+        .await?;
     Ok(Json(json!({"updated": true, "skillId": skill_id, "companyId": company_id})))
 }
 
@@ -900,20 +818,9 @@ async fn fork_skill(
 ) -> ApiResult<Json<Value>> {
     let new_id: Uuid = Uuid::new_v4();
     let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("Forked Skill");
-    sqlx::query(
-        "INSERT INTO company_skills (id, company_id, key, slug, name, description, markdown,
-          source_type, source_locator, source_ref, trust_level, compatibility, file_inventory,
-          forked_from_skill_id, forked_from_company_id)
-         SELECT $1, $2, (key || '-fork-' || substring($1::text,1,8)), (slug || '-fork'), $3, description,
-                markdown, source_type, source_locator, source_ref, 'company', compatibility,
-                file_inventory, id, company_id
-         FROM company_skills WHERE company_id=$2 AND id=$4",
-    )
-    .bind(new_id).bind(company_id).bind(name).bind(skill_id)
-    .execute(state.db.pool()).await?;
-    sqlx::query(
-        "UPDATE company_skills SET fork_count=COALESCE(fork_count,0)+1 WHERE id=$1",
-    ).bind(skill_id).execute(state.db.pool()).await?;
+    SkillRepo::new(&state.db)
+        .fork_from_skill(company_id, skill_id, new_id, name)
+        .await?;
     state.realtime.publish(
     LiveEvent::new("skills.forked", "skill", skill_id)
         .with_company(company_id)
@@ -927,10 +834,9 @@ async fn reset_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE company_skills SET install_count=0, star_count=0, fork_count=0, updated_at=now()
-         WHERE company_id=$1 AND id=$2",
-    ).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
+    SkillRepo::new(&state.db)
+        .reset_skill_counters(company_id, skill_id)
+        .await?;
     Ok(Json(json!({"reset": true, "skillId": skill_id})))
 }
 
@@ -948,10 +854,10 @@ async fn rename_skill(
     if n.is_empty() || n.len() > 200 {
         return Err(ApiError::BadRequest("name length 1..=200".into()));
     }
-    let r = sqlx::query(
-        "UPDATE company_skills SET name=$1, updated_at=now() WHERE company_id=$2 AND id=$3",
-    ).bind(n).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .rename_skill(company_id, skill_id, n)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("skill {skill_id}")));
     }
     state.realtime.publish(
@@ -996,51 +902,35 @@ async fn patch_skill(
         vec![skill_change_target_key(skill_id)],
     )
     .await?;
-    let mut updated: Vec<&str> = vec![];
     if let Some(ref n) = body.name {
         if n.len() > 200 { return Err(ApiError::BadRequest("name too long".into())); }
-        sqlx::query("UPDATE company_skills SET name=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(n).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("name");
     }
-    if let Some(ref d) = body.description {
-        sqlx::query("UPDATE company_skills SET description=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(d).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("description");
-    }
-    if let Some(ref m) = body.markdown {
-        sqlx::query("UPDATE company_skills SET markdown=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(m).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("markdown");
-    }
-    if let Some(ref meta) = body.metadata {
-        sqlx::query("UPDATE company_skills SET metadata=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(meta).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("metadata");
-    }
-    if let Some(ref t) = body.tagline {
-        sqlx::query("UPDATE company_skills SET tagline=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(t).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("tagline");
-    }
-    if let Some(ref u) = body.icon_url {
-        sqlx::query("UPDATE company_skills SET icon_url=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(u).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("iconUrl");
-    }
-    if let Some(ref c) = body.color {
-        sqlx::query("UPDATE company_skills SET color=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(c).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("color");
-    }
-    if let Some(ref cats) = body.categories {
-        sqlx::query("UPDATE company_skills SET categories=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(cats).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
-        updated.push("categories");
-    }
+    let mut updated: Vec<&str> = vec![];
+    if body.name.is_some() { updated.push("name"); }
+    if body.description.is_some() { updated.push("description"); }
+    if body.markdown.is_some() { updated.push("markdown"); }
+    if body.metadata.is_some() { updated.push("metadata"); }
+    if body.tagline.is_some() { updated.push("tagline"); }
+    if body.icon_url.is_some() { updated.push("iconUrl"); }
+    if body.color.is_some() { updated.push("color"); }
+    if body.categories.is_some() { updated.push("categories"); }
     if updated.is_empty() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
+    SkillRepo::new(&state.db)
+        .patch_skill_fields(
+            company_id,
+            skill_id,
+            body.name.as_deref(),
+            body.description.as_deref(),
+            body.markdown.as_deref(),
+            body.metadata.as_ref(),
+            body.tagline.as_deref(),
+            body.icon_url.as_deref(),
+            body.color.as_deref(),
+            body.categories.as_deref(),
+        )
+        .await?;
     state.realtime.publish(
     LiveEvent::new("skills.updated", "skill", skill_id)
         .with_company(company_id)
@@ -1062,17 +952,9 @@ async fn list_test_inputs(
     Query(q): Query<ListTestInputsQuery>,
 ) -> ApiResult<Json<Value>> {
     let include_deleted = q.include_deleted.unwrap_or(false);
-    let filter = if include_deleted { "" } else { "AND deleted_at IS NULL" };
-    let sql_str = format!(
-        "SELECT id, name, content, created_by, created_at, updated_at
-         FROM company_skill_test_inputs
-         WHERE company_id=$1 AND skill_id=$2 {filter}
-         ORDER BY name ASC"
-    );
-    let rows: Vec<(Uuid, String, String, Option<String>, pc_core::Timestamp, pc_core::Timestamp)> =
-        sqlx::query_as(&sql_str)
-        .bind(company_id).bind(skill_id)
-        .fetch_all(state.db.pool()).await?;
+    let rows = SkillRepo::new(&state.db)
+        .list_test_inputs_with_filter(company_id, skill_id, include_deleted)
+        .await?;
     let items: Vec<Value> = rows.into_iter().map(|(id, name, content, by, ts, uts)| json!({
         "id": id, "name": name, "content": content,
         "createdBy": by, "createdAt": ts, "updatedAt": uts,
@@ -1099,13 +981,15 @@ async fn create_test_input(
     if body.content.len() > 256_000 {
         return Err(ApiError::BadRequest("content too large".into()));
     }
-    let id: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO company_skill_test_inputs (id, company_id, skill_id, name, content, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6)",
-    ).bind(id).bind(company_id).bind(skill_id)
-    .bind(&body.name).bind(&body.content).bind(&body.created_by)
-    .execute(state.db.pool()).await?;
+    let id = SkillRepo::new(&state.db)
+        .create_test_input_raw(
+            company_id,
+            skill_id,
+            &body.name,
+            &body.content,
+            body.created_by.as_deref(),
+        )
+        .await?;
     Ok(Json(json!({"id": id, "name": body.name, "content": body.content})))
 }
 
@@ -1123,25 +1007,20 @@ async fn patch_test_input(
     Json(body): Json<PatchTestInputBody>,
 ) -> ApiResult<Json<Value>> {
     let mut updated: Vec<&str> = vec![];
-    if let Some(ref n) = body.name {
-        sqlx::query(
-            "UPDATE company_skill_test_inputs SET name=$1, updated_at=now()
-             WHERE company_id=$2 AND skill_id=$3 AND id=$4 AND deleted_at IS NULL",
-        ).bind(n).bind(company_id).bind(skill_id).bind(input_id)
-        .execute(state.db.pool()).await?;
-        updated.push("name");
-    }
-    if let Some(ref c) = body.content {
-        sqlx::query(
-            "UPDATE company_skill_test_inputs SET content=$1, updated_at=now()
-             WHERE company_id=$2 AND skill_id=$3 AND id=$4 AND deleted_at IS NULL",
-        ).bind(c).bind(company_id).bind(skill_id).bind(input_id)
-        .execute(state.db.pool()).await?;
-        updated.push("content");
-    }
+    if body.name.is_some() { updated.push("name"); }
+    if body.content.is_some() { updated.push("content"); }
     if updated.is_empty() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
+    SkillRepo::new(&state.db)
+        .patch_test_input_fields(
+            company_id,
+            skill_id,
+            input_id,
+            body.name.as_deref(),
+            body.content.as_deref(),
+        )
+        .await?;
     Ok(Json(json!({"updated": updated, "id": input_id})))
 }
 
@@ -1149,11 +1028,10 @@ async fn delete_test_input(
     State(state): State<AppState>,
     Path((company_id, skill_id, input_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query(
-        "UPDATE company_skill_test_inputs SET deleted_at=now()
-         WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND deleted_at IS NULL",
-    ).bind(company_id).bind(skill_id).bind(input_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .soft_delete_test_input(company_id, skill_id, input_id)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("test input {input_id}")));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1173,19 +1051,9 @@ async fn list_test_runs(
     Query(q): Query<ListTestRunsQuery>,
 ) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let status_filter = match q.status.as_deref() {
-        Some(s) if !s.is_empty() => format!("AND status='{}'", s.replace('\'', "")),
-        _ => String::new(),
-    };
-    let sql_str = format!(
-        "SELECT id, status, input_id, agent_id, issue_id, created_at, updated_at
-         FROM company_skill_test_runs WHERE company_id=$1 AND skill_id=$2 {status_filter}
-         ORDER BY created_at DESC LIMIT $3"
-    );
-    let rows: Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, pc_core::Timestamp, pc_core::Timestamp)> =
-        sqlx::query_as(&sql_str)
-        .bind(company_id).bind(skill_id).bind(limit)
-        .fetch_all(state.db.pool()).await?;
+    let rows = SkillRepo::new(&state.db)
+        .list_test_runs_with_filter(company_id, skill_id, q.status.as_deref(), limit)
+        .await?;
     let items: Vec<Value> = rows.into_iter().map(|(id, st, inp, agent, iss, ts, uts)| json!({
         "id": id, "status": st, "inputId": inp, "agentId": agent,
         "issueId": iss, "createdAt": ts, "updatedAt": uts,
@@ -1215,29 +1083,22 @@ async fn create_test_run(
     let agent_id = body.agent_id.ok_or_else(||
         ApiError::BadRequest("agent_id required".into()))?;
     let snapshot: String = if let Some(iid) = body.input_id {
-        sqlx::query_scalar(
-            "SELECT content FROM company_skill_test_inputs
-             WHERE company_id=$1 AND skill_id=$2 AND id=$3",
-        )
-        .bind(company_id).bind(skill_id).bind(iid)
-        .fetch_optional(state.db.pool()).await?
-        .unwrap_or_default()
+        SkillRepo::new(&state.db)
+            .get_test_input_content(company_id, skill_id, iid)
+            .await?
+            .unwrap_or_default()
     } else { String::new() };
     let issue_id: Uuid = Uuid::new_v4();
-    let now = chrono::Utc::now();
-    sqlx::query(
-        "INSERT INTO issues (id, company_id, title, status, created_at, updated_at)
-         VALUES ($1, $2, 'Skill test run', 'todo', $3, $3)",
-    ).bind(issue_id).bind(company_id).bind(now).execute(state.db.pool()).await?;
+    pc_repos::issue::IssueRepo::new(&state.db)
+        .create_harness_issue(company_id, issue_id)
+        .await?;
     let run_id: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO company_skill_test_runs (id, company_id, skill_id, input_id, input_snapshot,
-          skill_version_id, agent_id, agent_config_snapshot, issue_id, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'{}'::jsonb,$8,'queued')",
-    )
-    .bind(run_id).bind(company_id).bind(skill_id).bind(body.input_id)
-    .bind(&snapshot).bind(version_id).bind(agent_id).bind(issue_id)
-    .execute(state.db.pool()).await?;
+    SkillRepo::new(&state.db)
+        .create_test_run(
+            run_id, company_id, skill_id, body.input_id,
+            &snapshot, version_id, agent_id, issue_id,
+        )
+        .await?;
     Ok(Json(json!({
         "runId": run_id, "issueId": issue_id, "status": "queued",
         "companyId": company_id, "skillId": skill_id,
@@ -1248,13 +1109,9 @@ async fn get_test_run(
     State(state): State<AppState>,
     Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Option<String>, String, String, Option<String>, pc_core::Timestamp, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, status, input_id, agent_id, issue_id, template_id, input_snapshot,
-         output_snapshot, error, created_at, updated_at
-         FROM company_skill_test_runs
-         WHERE company_id=$1 AND skill_id=$2 AND id=$3",
-    ).bind(company_id).bind(skill_id).bind(run_id)
-    .fetch_optional(state.db.pool()).await?;
+    let row = SkillRepo::new(&state.db)
+        .get_test_run(company_id, skill_id, run_id)
+        .await?;
     let (id, st, inp, agent, iss, tmpl, inp_snap, out_snap, err, ts, uts) = row
         .ok_or_else(|| ApiError::NotFound(format!("test run {run_id}")))?;
     Ok(Json(json!({
@@ -1270,11 +1127,10 @@ async fn cancel_test_run(
     State(state): State<AppState>,
     Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let r = sqlx::query(
-        "UPDATE company_skill_test_runs SET status='cancelled', updated_at=now()
-         WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND status IN ('queued','running')",
-    ).bind(company_id).bind(skill_id).bind(run_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .cancel_test_run(company_id, skill_id, run_id)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("test run {run_id} not cancellable")));
     }
     Ok(Json(json!({"cancelled": true, "runId": run_id})))
@@ -1284,10 +1140,10 @@ async fn list_skill_files(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Value,)> = sqlx::query_as(
-        "SELECT file_inventory FROM company_skills WHERE company_id=$1 AND id=$2",
-    ).bind(company_id).bind(skill_id).fetch_optional(state.db.pool()).await?;
-    let inv = row.map(|(v,)| v).unwrap_or_else(|| json!([]));
+    let inv = SkillRepo::new(&state.db)
+        .get_file_inventory(company_id, skill_id)
+        .await?
+        .unwrap_or_else(|| json!([]));
     Ok(Json(json!({
         "items": inv, "companyId": company_id, "skillId": skill_id,
     })))
@@ -1308,17 +1164,18 @@ async fn upload_skill_file(
         return Err(ApiError::BadRequest("path required".into()));
     }
     let new_entry = json!({"path": body.path, "content": body.content, "uploadedAt": chrono::Utc::now()});
-    let row: Option<(Value,)> = sqlx::query_as(
-        "SELECT file_inventory FROM company_skills WHERE company_id=$1 AND id=$2",
-    ).bind(company_id).bind(skill_id).fetch_optional(state.db.pool()).await?;
-    let mut inv: Vec<Value> = match row {
-        Some((Value::Array(a),)) => a,
+    let current = SkillRepo::new(&state.db)
+        .get_file_inventory(company_id, skill_id)
+        .await?
+        .unwrap_or_else(|| json!([]));
+    let mut inv: Vec<Value> = match current {
+        Value::Array(a) => a,
         _ => Vec::new(),
     };
     inv.push(new_entry);
-    sqlx::query(
-        "UPDATE company_skills SET file_inventory=$1, updated_at=now() WHERE company_id=$2 AND id=$3",
-    ).bind(&inv).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
+    SkillRepo::new(&state.db)
+        .set_file_inventory(company_id, skill_id, &Value::Array(inv.clone()))
+        .await?;
     Ok(Json(json!({"uploaded": true, "path": body.path, "totalFiles": inv.len()})))
 }
 
@@ -1326,11 +1183,12 @@ async fn delete_skill_file(
     State(state): State<AppState>,
     Path((company_id, skill_id, file_id)): Path<(Uuid, Uuid, String)>,
 ) -> ApiResult<StatusCode> {
-    let row: Option<(Value,)> = sqlx::query_as(
-        "SELECT file_inventory FROM company_skills WHERE company_id=$1 AND id=$2",
-    ).bind(company_id).bind(skill_id).fetch_optional(state.db.pool()).await?;
-    let mut inv: Vec<Value> = match row {
-        Some((Value::Array(a),)) => a,
+    let current = SkillRepo::new(&state.db)
+        .get_file_inventory(company_id, skill_id)
+        .await?
+        .unwrap_or_else(|| json!([]));
+    let mut inv: Vec<Value> = match current {
+        Value::Array(a) => a,
         _ => Vec::new(),
     };
     let orig_len = inv.len();
@@ -1338,9 +1196,9 @@ async fn delete_skill_file(
     if inv.len() == orig_len {
         return Err(ApiError::NotFound(format!("skill file {file_id}")));
     }
-    sqlx::query(
-        "UPDATE company_skills SET file_inventory=$1, updated_at=now() WHERE company_id=$2 AND id=$3",
-    ).bind(&inv).bind(company_id).bind(skill_id).execute(state.db.pool()).await?;
+    SkillRepo::new(&state.db)
+        .set_file_inventory(company_id, skill_id, &Value::Array(inv))
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1348,14 +1206,14 @@ async fn list_test_run_templates(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, Option<String>, String, Option<Uuid>, Option<String>, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, name, description, body, created_by_agent_id, created_by_user_id, created_at
-         FROM company_skill_test_run_templates WHERE company_id=$1 AND deleted_at IS NULL
-         ORDER BY name",
-    ).bind(company_id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, name, desc, body, ag, us, ts)| json!({
-        "id": id, "name": name, "description": desc, "body": body,
-        "createdByAgentId": ag, "createdByUserId": us, "createdAt": ts,
+    let rows = SkillRepo::new(&state.db)
+        .list_test_run_templates(company_id)
+        .await?;
+    let items: Vec<Value> = rows.into_iter().map(|r| json!({
+        "id": r.id, "name": r.name, "description": r.description, "body": r.body,
+        "createdByAgentId": r.created_by_agent_id,
+        "createdByUserId": r.created_by_user_id,
+        "createdAt": r.created_at,
     })).collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
@@ -1383,14 +1241,18 @@ async fn create_test_run_template(
     if body.body.is_empty() {
         return Err(ApiError::BadRequest("body required".into()));
     }
-    let id: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO company_skill_test_run_templates (id, company_id, name, description, body, created_by_agent_id, created_by_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    ).bind(id).bind(company_id).bind(&body.name).bind(&body.description)
-    .bind(&body.body).bind(body.created_by_agent_id).bind(&body.created_by_user_id)
-    .execute(state.db.pool()).await?;
-    Ok(Json(json!({"id": id, "name": body.name})))
+    let t = pc_repos::skill::NewCompanySkillTestRunTemplate {
+        company_id,
+        name: body.name.clone(),
+        description: body.description.clone(),
+        body: body.body.clone(),
+        created_by_agent_id: body.created_by_agent_id,
+        created_by_user_id: body.created_by_user_id.clone(),
+    };
+    let row = SkillRepo::new(&state.db)
+        .create_test_run_template(&t)
+        .await?;
+    Ok(Json(json!({"id": row.id, "name": row.name})))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1409,30 +1271,21 @@ async fn patch_test_run_template(
     Json(body): Json<PatchTestRunTemplateBody>,
 ) -> ApiResult<Json<Value>> {
     let mut updated: Vec<&str> = vec![];
-    if let Some(ref n) = body.name {
-        sqlx::query(
-            "UPDATE company_skill_test_run_templates SET name=$1, updated_at=now()
-             WHERE company_id=$2 AND id=$3 AND deleted_at IS NULL",
-        ).bind(n).bind(company_id).bind(template_id).execute(state.db.pool()).await?;
-        updated.push("name");
-    }
-    if let Some(ref d) = body.description {
-        sqlx::query(
-            "UPDATE company_skill_test_run_templates SET description=$1, updated_at=now()
-             WHERE company_id=$2 AND id=$3 AND deleted_at IS NULL",
-        ).bind(d).bind(company_id).bind(template_id).execute(state.db.pool()).await?;
-        updated.push("description");
-    }
-    if let Some(ref b) = body.body {
-        sqlx::query(
-            "UPDATE company_skill_test_run_templates SET body=$1, updated_at=now()
-             WHERE company_id=$2 AND id=$3 AND deleted_at IS NULL",
-        ).bind(b).bind(company_id).bind(template_id).execute(state.db.pool()).await?;
-        updated.push("body");
-    }
+    if body.name.is_some() { updated.push("name"); }
+    if body.description.is_some() { updated.push("description"); }
+    if body.body.is_some() { updated.push("body"); }
     if updated.is_empty() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
+    SkillRepo::new(&state.db)
+        .patch_test_run_template_fields(
+            company_id,
+            template_id,
+            body.name.as_deref(),
+            body.description.as_deref(),
+            body.body.as_deref(),
+        )
+        .await?;
     Ok(Json(json!({"updated": updated, "id": template_id})))
 }
 
@@ -1440,11 +1293,10 @@ async fn delete_test_run_template(
     State(state): State<AppState>,
     Path((company_id, template_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query(
-        "UPDATE company_skill_test_run_templates SET deleted_at=now()
-         WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
-    ).bind(company_id).bind(template_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .soft_delete_test_run_template(company_id, template_id)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("template {template_id}")));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1476,12 +1328,12 @@ async fn import_skills(
         let name = item.get("name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
         let md = item.get("markdown").and_then(|v| v.as_str()).unwrap_or("").to_string();
         if key.is_empty() { continue; }
-        sqlx::query(
-            "INSERT INTO company_skills (id, company_id, key, slug, name, markdown, source_type, trust_level, compatibility, file_inventory)
-             VALUES (gen_random_uuid(), $1, $2, $2, $3, $4, 'imported', 'company', '{}', '[]'::jsonb)
-             ON CONFLICT (company_id, key) DO NOTHING",
-        ).bind(company_id).bind(&key).bind(&name).bind(&md).execute(state.db.pool()).await?;
-        count += 1;
+        let inserted = SkillRepo::new(&state.db)
+            .insert_imported_skill(company_id, &key, &name, &md)
+            .await?;
+        if inserted {
+            count += 1;
+        }
     }
     Ok(Json(json!({"imported": count, "companyId": company_id})))
 }
@@ -1520,13 +1372,9 @@ async fn get_skill_comment(
     State(state): State<AppState>,
     Path((company_id, skill_id, comment_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, Uuid, Option<Uuid>, Option<String>, Option<String>, String, Option<pc_core::Timestamp>, pc_core::Timestamp, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, company_id, company_skill_id, parent_comment_id, author_agent_id, author_user_id,
-                body, deleted_at, created_at, updated_at
-         FROM company_skill_comments
-         WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
-    ).bind(company_id).bind(skill_id).bind(comment_id)
-    .fetch_optional(state.db.pool()).await?;
+    let row = SkillRepo::new(&state.db)
+        .get_comment_by_id(company_id, skill_id, comment_id)
+        .await?;
     let (id, cid, sid, parent, author_agent, author_user, body, deleted_at, created_at, updated_at) = row
         .ok_or_else(|| ApiError::NotFound(format!("skill comment {comment_id}")))?;
     if deleted_at.is_some() {
@@ -1544,12 +1392,10 @@ async fn delete_test_run(
     State(state): State<AppState>,
     Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query(
-        "DELETE FROM company_skill_test_runs
-         WHERE company_id=$1 AND skill_id=$2 AND id=$3",
-    ).bind(company_id).bind(skill_id).bind(run_id)
-    .execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = SkillRepo::new(&state.db)
+        .delete_test_run(company_id, skill_id, run_id)
+        .await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("test run {run_id}")));
     }
     Ok(StatusCode::NO_CONTENT)
