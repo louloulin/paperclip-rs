@@ -2,7 +2,6 @@
 use crate::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde_json::json;
-use std::time::Instant;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -13,26 +12,27 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn handler(State(state): State<AppState>) -> impl IntoResponse {
-    let start = Instant::now();
-    let db_result = sqlx::query("SELECT 1").execute(state.db.pool()).await;
+    // Round 189: use pc_db::health::HealthCheck which encapsulates SELECT 1 ping.
+    let db_result = pc_db::health::HealthCheck::check(&state.db).await;
     #[allow(clippy::cast_possible_truncation)]
-    let latency_ms = start.elapsed().as_millis() as u64;
-    match db_result {
-        Ok(_) => (
+    let latency_ms = db_result.latency_ms as u64;
+    if db_result.ok {
+        (
             StatusCode::OK,
             Json(json!({
                 "status": "ok",
                 "version": env!("CARGO_PKG_VERSION"),
                 "db": { "ok": true, "latency_ms": latency_ms, "error": null }
             })),
-        ),
-        Err(e) => (
+        )
+    } else {
+        (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
                 "status": "degraded",
                 "version": env!("CARGO_PKG_VERSION"),
-                "db": { "ok": false, "latency_ms": latency_ms, "error": e.to_string() }
+                "db": { "ok": false, "latency_ms": latency_ms, "error": db_result.error }
             })),
-        ),
+        )
     }
 }
