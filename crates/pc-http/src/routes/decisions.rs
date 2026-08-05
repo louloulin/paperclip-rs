@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::decision::{verify_decision_signature, DecisionRepo};
+use pc_repos::decision_bundle::{
+    DecisionBundleFilter, DecisionBundleRepo, DecisionBundleRow, NewDecisionBundle,
+};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -302,35 +305,34 @@ async fn create_decision_bundle(
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateDecisionBundleBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if body.title.trim().is_empty() {
-        return Err(ApiError::BadRequest("title required".into()));
-    }
-    let summary = body.summary.clone().unwrap_or_else(|| body.title.clone());
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO decision_bundles (company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id) \
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&body.title)
-    .bind(&summary)
-    .bind(body.origin_agent_id)
-    .bind(body.origin_issue_id)
-    .bind(body.origin_run_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = DecisionBundleRepo::new(&state.db)
+        .create(
+            company_id,
+            NewDecisionBundle {
+                title: body.title.clone(),
+                summary: body.summary.clone(),
+                origin_agent_id: body.origin_agent_id,
+                origin_issue_id: body.origin_issue_id,
+                origin_run_id: body.origin_run_id,
+            },
+        )
+        .await
+        .map_err(map_decision_bundle_error)?;
     state.realtime.publish(
-        LiveEvent::new("decision_bundle.created", "decision_bundle", id).with_company(company_id),
+        LiveEvent::new("decision_bundle.created", "decision_bundle", row.id)
+            .with_company(company_id),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": id,
-            "companyId": company_id,
-            "title": body.title,
-            "summary": summary,
-            "originAgentId": body.origin_agent_id,
-            "originIssueId": body.origin_issue_id,
-            "originRunId": body.origin_run_id,
+            "id": row.id,
+            "companyId": row.company_id,
+            "title": row.title,
+            "summary": row.summary,
+            "originAgentId": row.origin_agent_id,
+            "originIssueId": row.origin_issue_id,
+            "originRunId": row.origin_run_id,
+            "createdAt": row.created_at,
         })),
     ))
 }
@@ -355,61 +357,16 @@ async fn list_decision_bundles(
     Path(company_id): Path<Uuid>,
     Query(q): Query<ListDecisionBundlesQuery>,
 ) -> ApiResult<Json<Value>> {
-    let mut sql = String::from(
-        "SELECT id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at          FROM decision_bundles WHERE company_id = $1",
-    );
-    let mut idx = 2;
-    if q.agent_id.is_some() {
-        sql.push_str(&format!(" AND origin_agent_id = ${idx}"));
-        idx += 1;
-    }
-    if q.issue_id.is_some() {
-        sql.push_str(&format!(" AND origin_issue_id = ${idx}"));
-        idx += 1;
-    }
-    if q.run_id.is_some() {
-        sql.push_str(&format!(" AND origin_run_id = ${idx}"));
-        idx += 1;
-    }
-    sql.push_str(&format!(
-        " ORDER BY created_at DESC LIMIT {}",
-        q.limit.unwrap_or(100).clamp(1, 500)
-    ));
-    let mut query = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Uuid,
-            String,
-            String,
-            Uuid,
-            Uuid,
-            Uuid,
-            pc_core::Timestamp,
-        ),
-    >(&sql)
-    .bind(company_id);
-    if let Some(a) = q.agent_id {
-        query = query.bind(a);
-    }
-    if let Some(i) = q.issue_id {
-        query = query.bind(i);
-    }
-    if let Some(r) = q.run_id {
-        query = query.bind(r);
-    }
-    let rows = query.fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, cid, title, summary, agent, issue, run, ts)| {
-            json!({
-                "id": id, "companyId": cid,
-                "title": title, "summary": summary,
-                "originAgentId": agent, "originIssueId": issue, "originRunId": run,
-                "createdAt": ts,
-            })
-        })
-        .collect();
+    let filter = DecisionBundleFilter {
+        agent_id: q.agent_id,
+        issue_id: q.issue_id,
+        run_id: q.run_id,
+        limit: q.limit,
+    };
+    let rows = DecisionBundleRepo::new(&state.db)
+        .list_by_company(company_id, &filter)
+        .await?;
+    let items: Vec<Value> = rows.into_iter().map(decision_bundle_to_json).collect();
     Ok(Json(
         json!({"items": items, "companyId": company_id, "count": items.len()}),
     ))
@@ -419,32 +376,49 @@ async fn get_decision_bundle(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, String, String, Uuid, Uuid, Uuid, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at          FROM decision_bundles WHERE id = $1",
-    ).bind(id).fetch_optional(state.db.pool()).await?;
-    let (id, cid, title, summary, agent, issue, run, ts) =
-        row.ok_or_else(|| ApiError::NotFound(format!("decision bundle {id}")))?;
-    // 同时返回挂载的 decisions
-    let decisions: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, title, status FROM decisions WHERE bundle_id = $1 ORDER BY created_at ASC",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await?;
-    let decisions_json: Vec<Value> = decisions
+    let detail = DecisionBundleRepo::new(&state.db)
+        .get_with_decisions(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("decision bundle {id}")))?;
+    let decisions_json: Vec<Value> = detail
+        .decisions
         .into_iter()
-        .map(|(did, t, s)| {
+        .map(|d| {
             json!({
-                "id": did, "title": t, "status": s,
+                "id": d.id, "title": d.title, "status": d.status,
             })
         })
         .collect();
+    let b = detail.bundle;
     Ok(Json(json!({
-        "id": id, "companyId": cid,
-        "title": title, "summary": summary,
-        "originAgentId": agent, "originIssueId": issue, "originRunId": run,
-        "createdAt": ts,
+        "id": b.id, "companyId": b.company_id,
+        "title": b.title, "summary": b.summary,
+        "originAgentId": b.origin_agent_id, "originIssueId": b.origin_issue_id,
+        "originRunId": b.origin_run_id,
+        "createdAt": b.created_at,
         "decisions": decisions_json,
         "decisionCount": decisions_json.len(),
     })))
+}
+
+/// 把 `DecisionBundleRow` 转成与原 Node 端一致的 JSON 形状。
+fn decision_bundle_to_json(row: DecisionBundleRow) -> Value {
+    json!({
+        "id": row.id, "companyId": row.company_id,
+        "title": row.title, "summary": row.summary,
+        "originAgentId": row.origin_agent_id, "originIssueId": row.origin_issue_id,
+        "originRunId": row.origin_run_id,
+        "createdAt": row.created_at,
+    })
+}
+
+/// 把仓储层错误转换成 HTTP 层错误；保留与原路由一致的状态码语义。
+fn map_decision_bundle_error(
+    error: pc_repos::decision_bundle::DecisionBundleError,
+) -> ApiError {
+    use pc_repos::decision_bundle::DecisionBundleError as E;
+    match error {
+        E::EmptyTitle => ApiError::BadRequest("title required".into()),
+        other => ApiError::Internal(format!("decision bundle repo error: {other}")),
+    }
 }

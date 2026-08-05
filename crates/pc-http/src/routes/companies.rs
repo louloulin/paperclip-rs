@@ -1281,68 +1281,75 @@ async fn patch_member_permissions(
     Path((company_id, member_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchMemberPermissionsBody>,
 ) -> ApiResult<Json<Value>> {
-    let mut tx = state.db.pool().begin().await?;
-    let mut changed = false;
-    if let Some(r) = body.role.as_deref() {
-        sqlx::query(
-            "UPDATE company_members SET role = $1, updated_at = now() WHERE company_id = $2 AND id = $3",
-        )
-        .bind(r)
-        .bind(company_id)
-        .bind(member_id)
-        .execute(&mut *tx)
-        .await?;
-        changed = true;
+    // 解析 archived→status 映射；company_memberships 没有 archived_at 列（Round 89 已修）。
+    let archived_status = if body.archived.unwrap_or(false) {
+        Some(pc_repos::company_member::MemberStatus::Archived)
+    } else {
+        None
+    };
+    let patch = pc_repos::company_member::MemberPatch {
+        membership_role: body.role.clone(),
+        status: archived_status,
+    };
+    let row = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .patch(company_id, member_id, patch)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = row.ok_or_else(|| ApiError::NotFound(format!("member {member_id}")))?;
+    // permissions 字段：保持向后兼容，如果给的是数组，写入 principal_permission_grants。
+    if let Some(json) = body.permissions.as_ref() {
+        if let Some(arr) = json.as_array() {
+            let mut grants: Vec<pc_repos::principal_permission_grant::PermissionGrantInput> = Vec::new();
+            for entry in arr {
+                let key = entry
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        entry.get("key").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    });
+                if let Some(k) = key {
+                    grants.push(pc_repos::principal_permission_grant::PermissionGrantInput {
+                        permission_key: k,
+                        scope: entry.get("scope").cloned(),
+                        granted_by_user_id: None,
+                    });
+                }
+            }
+            let mut tx = state.db.pool().begin().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+            pc_repos::principal_permission_grant::PrincipalPermissionGrantRepo::new(&state.db)
+                .replace_all_for_principal(
+                    &mut tx,
+                    company_id,
+                    "user",
+                    &row.principal_id,
+                    grants.iter(),
+                )
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            tx.commit().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+        }
     }
-    if let Some(perms) = body.permissions.as_ref() {
-        sqlx::query(
-            "UPDATE company_members SET permissions = $1::jsonb, updated_at = now() WHERE company_id = $2 AND id = $3",
-        )
-        .bind(perms)
-        .bind(company_id)
-        .bind(member_id)
-        .execute(&mut *tx)
-        .await?;
-        changed = true;
-    }
-    if let Some(true) = body.archived {
-        sqlx::query(
-            "UPDATE company_members SET archived_at = now() WHERE company_id = $1 AND id = $2 AND archived_at IS NULL",
-        )
-        .bind(company_id)
-        .bind(member_id)
-        .execute(&mut *tx)
-        .await?;
-        changed = true;
-    }
-    if !changed {
-        return Err(ApiError::BadRequest("no fields to update".into()));
-    }
-    let row: Option<(String, Uuid, String)> = sqlx::query_as(
-        "SELECT user_id, company_id, role FROM company_members WHERE company_id = $1 AND id = $2",
-    )
-    .bind(company_id)
-    .bind(member_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    tx.commit().await?;
-    let (user_id, _, role) = row.ok_or_else(|| ApiError::NotFound(format!("member {member_id}")))?;
-    state.realtime.publish(
-        LiveEvent::new("company_member.permissions_updated", "company_member", member_id)
+    state
+        .realtime
+        .publish(
+            LiveEvent::new(
+                "company_member.permissions_updated",
+                "company_member",
+                member_id,
+            )
             .with_company(company_id)
             .with_data(json!({
-                "userId": user_id,
+                "userId": row.principal_id,
                 "role": body.role,
                 "permissions": body.permissions,
             })),
-    );
+        );
     Ok(Json(json!({
-        "id": member_id,
-        "companyId": company_id,
-        "userId": user_id,
-        "role": role,
+        "id": row.id,
+        "companyId": row.company_id,
+        "userId": row.principal_id,
+        "role": row.membership_role,
+        "status": row.status,
         "updated": true,
     })))
 }
@@ -1365,54 +1372,71 @@ async fn patch_member_role_and_grants(
     if body.role.trim().is_empty() {
         return Err(ApiError::BadRequest("role is required".into()));
     }
-    // Persist role + grants (jsonb array) + optional metadata into a jsonb column if present,
-    // else store grants in permissions column.
     let metadata = body.metadata.clone().unwrap_or_else(|| json!({}));
-    let mut tx = state.db.pool().begin().await?;
-    // Try storing grants in `permissions` jsonb (typical) along with role.
-    let new_perms = json!({
-        "role": body.role,
-        "grants": body.grants,
-        "metadata": metadata,
-    });
-    let affected = sqlx::query(
-        "UPDATE company_members SET role = $1, permissions = $2::jsonb, updated_at = now()          WHERE company_id = $3 AND id = $4",
-    )
-    .bind(&body.role)
-    .bind(&new_perms)
-    .bind(company_id)
-    .bind(member_id)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    if affected == 0 {
-        return Err(ApiError::NotFound(format!("member {member_id}")));
-    }
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT user_id FROM company_members WHERE company_id = $1 AND id = $2",
-    )
-    .bind(company_id)
-    .bind(member_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    tx.commit().await?;
-    let (user_id,) = row.unwrap_or_default();
-    state.realtime.publish(
-        LiveEvent::new("company_member.role_and_grants_updated", "company_member", member_id)
+    // 解析 member → principal_id
+    let member = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .find_by_id(company_id, member_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("member {member_id}")))?;
+    // 单事务：role UPDATE + grants 全量替换
+    let mut tx = state.db.pool().begin().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let updated_member = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .patch(
+            company_id,
+            member_id,
+            pc_repos::company_member::MemberPatch {
+                membership_role: Some(body.role.clone()),
+                status: None,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let updated_member = match updated_member {
+        Some(m) => m,
+        None => return Err(ApiError::NotFound(format!("member {member_id}"))),
+    };
+    // body.grants 是 Vec<String>；每条 → grant row（全公司范围 scope）
+    let grant_inputs: Vec<pc_repos::principal_permission_grant::PermissionGrantInput> = body
+        .grants
+        .iter()
+        .map(|k| pc_repos::principal_permission_grant::PermissionGrantInput {
+            permission_key: k.clone(),
+            scope: None,
+            granted_by_user_id: None,
+        })
+        .collect();
+    pc_repos::principal_permission_grant::PrincipalPermissionGrantRepo::new(&state.db)
+        .replace_all_for_principal(
+            &mut tx,
+            company_id,
+            "user",
+            &updated_member.principal_id,
+            grant_inputs.iter(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    tx.commit().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+    state
+        .realtime
+        .publish(
+            LiveEvent::new(
+                "company_member.role_and_grants_updated",
+                "company_member",
+                member_id,
+            )
             .with_company(company_id)
             .with_data(json!({
-                "userId": user_id,
+                "userId": updated_member.principal_id,
                 "role": body.role,
                 "grants": body.grants,
             })),
-    );
+        );
     Ok(Json(json!({
-        "id": member_id,
-        "companyId": company_id,
-        "userId": user_id,
-        "role": body.role,
+        "id": updated_member.id,
+        "companyId": updated_member.company_id,
+        "userId": updated_member.principal_id,
+        "role": updated_member.membership_role,
         "grants": body.grants,
         "metadata": metadata,
         "updated": true,
