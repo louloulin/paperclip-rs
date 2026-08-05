@@ -20,6 +20,7 @@ use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::case::CaseRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
+use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -3028,17 +3029,11 @@ async fn diagnostics_blockers(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 30: blocker = subtree child issues with status='blocked' or parent hidden
-    let rows: Vec<(Uuid, String, Option<String>, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, title, status, created_at FROM issues
-         WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)
-           AND (parent_id = $1 OR id = $1)
-           AND (status = 'blocked' OR hidden_at IS NOT NULL)
-           AND hidden_at IS NULL
-         ORDER BY created_at DESC LIMIT 100",
-    ).bind(id).fetch_all(state.db.pool()).await?;
-    let blockers: Vec<Value> = rows.into_iter().map(|(bid, title, st, ts)| json!({
-        "id": bid, "title": title, "status": st, "createdAt": ts,
+    let rows = IssueDiagnosticsRepo::new(&state.db)
+        .list_blockers(id, 100)
+        .await?;
+    let blockers: Vec<Value> = rows.into_iter().map(|r| json!({
+        "id": r.id, "title": r.title, "status": r.status, "createdAt": r.created_at,
     })).collect();
     let readiness = if blockers.is_empty() { "ready" } else { "blocked" };
     Ok(Json(json!({
@@ -3054,23 +3049,15 @@ async fn diagnostics_wakes(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // Round 30: wakes = 该 issue 的 assignee_agent 收到的 wakeup_requests
-    let agent_row: Option<(Option<Uuid>,)> = sqlx::query_as(
-        "SELECT assignee_agent_id FROM issues WHERE id = $1",
-    ).bind(id).fetch_optional(state.db.pool()).await?;
-    let agent_id = match agent_row.and_then(|(a,)| a) {
+    let repo = IssueDiagnosticsRepo::new(&state.db);
+    let agent_id = match repo.assignee_agent_id(id).await? {
         Some(a) => a,
         None => return Ok(Json(json!({"issueId": id, "wakeRequests": [], "activityRecords": [], "wakeRequestCount": 0, "activityRecordCount": 0}))),
     };
-    let wakes: Vec<(Uuid, String, Option<String>, String, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, source, reason, status, requested_at, claimed_at
-         FROM agent_wakeup_requests
-         WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)
-           AND agent_id = $2
-         ORDER BY requested_at DESC LIMIT 100",
-    ).bind(id).bind(agent_id).fetch_all(state.db.pool()).await?;
-    let wake_requests: Vec<Value> = wakes.into_iter().map(|(wid, src, reason, st, req_at, claimed)| json!({
-        "id": wid, "source": src, "reason": reason, "status": st,
-        "requestedAt": req_at, "claimedAt": claimed,
+    let wakes = repo.list_wake_requests_for_agent(id, agent_id, 100).await?;
+    let wake_requests: Vec<Value> = wakes.into_iter().map(|r| json!({
+        "id": r.id, "source": r.source, "reason": r.reason, "status": r.status,
+        "requestedAt": r.requested_at, "claimedAt": r.claimed_at,
     })).collect();
     Ok(Json(json!({
         "issueId": id,
@@ -3084,27 +3071,20 @@ async fn diagnostics_subtree(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 30: subtree = 递归查所有 parent_id 链上的 issues
-    let rows: Vec<(Uuid, Option<Uuid>, String, String, pc_core::Timestamp)> = sqlx::query_as(
-        "WITH RECURSIVE subtree AS (
-            SELECT id, parent_id, title, status, created_at, 0 AS depth
-            FROM issues WHERE id = $1
-            UNION ALL
-            SELECT i.id, i.parent_id, i.title, i.status, i.created_at, s.depth + 1
-            FROM issues i
-            INNER JOIN subtree s ON i.parent_id = s.id
-            WHERE s.depth < 8 AND i.hidden_at IS NULL
-         )
-         SELECT id, parent_id, title, status, created_at FROM subtree ORDER BY depth, created_at",
-    ).bind(id).fetch_all(state.db.pool()).await?;
+    // Round 30: subtree = 递归查所有 parent_id 链上的 issues（max_depth = 8）
+    let rows = IssueDiagnosticsRepo::new(&state.db)
+        .list_subtree(id, 8)
+        .await?;
     let mut nodes: Vec<Value> = Vec::with_capacity(rows.len());
     let mut edges: Vec<Value> = Vec::new();
     let mut readiness: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    for (nid, parent, title, status, ts) in rows {
-        nodes.push(json!({"id": nid, "title": title, "status": status, "createdAt": ts}));
-        readiness.insert(nid.to_string(), status.clone());
-        if let Some(p) = parent {
-            edges.push(json!({"from": p, "to": nid}));
+    for r in rows {
+        nodes.push(json!({"id": r.id, "title": r.title, "status": r.status, "createdAt": r.created_at}));
+        if let Some(st) = r.status.clone() {
+            readiness.insert(r.id.to_string(), st);
+        }
+        if let Some(p) = r.parent_id {
+            edges.push(json!({"from": p, "to": r.id}));
         }
     }
     Ok(Json(json!({

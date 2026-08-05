@@ -256,3 +256,168 @@
 | `PROJECT-PLAN.md`（根） | 迁移到 `docs/internal/planning/project-plan.md`，README 引用 |
 | `openspec/changes/paperclip-rs-rewrite/*` | 迁移到 `docs/internal/openspec/`，关键决策抽取进 ADR |
 
+
+---
+
+## 7. 第 2 轮盘点：之前未列入但同样重要的项
+
+第 1–8 批覆盖了"核心必备 + 标准开发者文档"。下面这些项在顶级项目中常被
+忽视，但对 paperclip-rs 的差异化定位（多语言、Rust 重写、与上游协议兼容）
+特别有价值：
+
+### 7.1 多语言与本地化 [P2]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 51 | `docs/i18n.md` | 3 h | 现有文档以中文为主（见 `docs/`、根目录注释），需明确：哪些文档提供英文版本、术语对照表、贡献翻译流程（基于 `transifex` 或 `crowdin`） |
+| 52 | `docs/GLOSSARY.md` | 2 h | 中英术语对照（agent / 心跳 / 看板 / 适配器 / 插件 / 决策 / 例程 / 流水线 / 评估 等），供翻译与新人使用 |
+| 53 | `.github/ISSUE_TEMPLATE/translation.md` | 1 h | 翻译贡献专用模板 |
+
+### 7.2 与上游/竞品兼容矩阵 [P1]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 54 | `docs/COMPATIBILITY.md` | 4 h | `paperclip-rs` 兼容的 `paperclip-ui` 版本范围、`@paperclipai/shared` 版本、Node 上游版本（用于数据迁移）；测试矩阵表格 |
+| 55 | `docs/PLUGIN-COMPAT.md` | 3 h | 已测试的第三方 npm 插件（`@paperclipai/plugin-*`）清单；JSON-RPC 方法的最低支持版本 |
+| 56 | `docs/ADAPTER-COMPAT.md` | 3 h | 已测试的内置适配器版本（Claude/Codex/Cursor/Gemini/Grok/Hermes/OpenClaw/OpenCode/Pi） |
+
+### 7.3 性能与基准 [P1]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 57 | `docs/BENCHMARKS.md` | 6 h | criterion 基准结果、与 Node 上游的对比（HTTP 路由延迟、内存、冷启动、并发 WS）；criterion-compare 趋势图托管 |
+| 58 | `docs/PROFILING.md` | 4 h | pprof / cargo-flamegraph / Linux perf / async-profiler 使用方法、常见瓶颈定位（连接池、actor 队列、sqlx 编译缓存） |
+| 59 | `bench/` 目录 | 1 d | criterion 基准代码（HTTP、WS、heartbeat、actor fan-out、plugin IPC），与 `docs/BENCHMARKS.md` 联动 |
+
+### 7.4 遥测与隐私 [P1]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 60 | `docs/TELEMETRY.md` | 4 h | 匿名遥测事件清单、关闭方式（`PAPERCLIP_TELEMETRY_DISABLED=1` / `DO_NOT_TRACK=1` / `CI=true` / `telemetry.enabled: false`），与上游 `paperclip/doc/observability.md` 兼容 |
+| 61 | `docs/PRIVACY.md` | 3 h | 收集数据范围、哈希处理、安装 ID salt、不收集项（提示词、文件路径、密钥） |
+
+### 7.5 安全细化 [P1]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 62 | `docs/THREAT-MODEL.md` | 6 h | STRIDE 分析：恶意插件、CSRF、SSRF（私有 hostname 防护）、密钥泄露、日志脱敏、SQL 注入、依赖供应链 |
+| 63 | `docs/SUPPLY-CHAIN.md` | 4 h | `cargo audit` 集成、SBOM 生成（`cargo-cyclonedx`）、cosign 签名、SLSA provenance |
+| 64 | `docs/HARDENING.md` | 3 h | 默认配置加固、TLS 强制、cookie secure flag、CORS 白名单、rate limit |
+
+### 7.6 故障与韧性 [P1]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 65 | `docs/RUNBOOK.md` | 4 h | on-call 手册：常见告警（连接池耗尽、actor capacity、心跳延迟、迁移失败）的诊断与恢复步骤 |
+| 66 | `docs/CHAOS.md` | 4 h | 混沌测试场景（kill Postgres、kill plugin worker、网络分区、磁盘满），与 `pc-heartbeat` 的 recovery 测试联动 |
+| 67 | `docs/CAPACITY.md` | 3 h | 容量规划（连接数、actor 数、WS 连接数、并发心跳、磁盘 IOPS），配套基准数据 |
+
+### 7.7 视频与可视化资产 [P2]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 68 | `docs/SCREENSHOTS.md` 或顶层 `screenshots/` | 2 h | 看板 / 公司 / 收件箱 / 设置 / 适配器配置截图（上游已有 `paperclip/screenshots/`，复刻或更新） |
+| 69 | README 横幅图 | 1 h | `doc/assets/banner.jpg`（参考上游）或 README 顶部信息图 |
+| 70 | `docs/DEMO.md` | 2 h | 5–10 分钟 Quickstart screencast / GIF 嵌入 README |
+
+### 7.8 上游与第三方 [P2]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 71 | `docs/UPSTREAM-DELTA.md` | 4 h | 与 Node 上游 paperclip 的行为差异清单（已知 parity gap + 已知故意偏离） |
+| 72 | `docs/ATTRIBUTION.md` | 1 h | 上游致谢、第三方许可证（cargo about、cargo-license）、MIT 兼容性 |
+| 73 | `docs/CONTRIBUTORS.md` | 1 h | 自动生成（`git shortlog -sn`）或手写 |
+
+### 7.9 发布工程 [P1]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 74 | `docs/crates-io.md` | 2 h | crates.io 发布策略：单 crate vs workspace 整体、yank 政策、版本号规则 |
+| 75 | `docs/SIGNING.md` | 2 h | Git tag 签名（cosign / gpg）、容器镜像签名、checksum |
+| 76 | `.github/workflows/release.yml` | 4 h | 自动发版：tag 触发 → 构建多平台 → 生成 SBOM → 签名 → 上传 GitHub Release + crates.io |
+
+### 7.10 内部/历史归档 [P2]
+
+| # | 文档 | Effort | 内容要点 |
+| --- | --- | --- | --- |
+| 77 | `docs/internal/` 目录结构 | 2 h | 子目录：`historical/`（一次性根因）、`planning/`（17 周 7 阶段）、`audit/`（445 KB 进度审计）、`migration/`（gap matrix）、`openspec/`（现有 proposal/tasks） |
+| 78 | `docs/internal/README.md` | 1 h | 索引，说明这是面向 contributor 的非用户可见文档 |
+
+---
+
+## 8. 总规模与时间预算
+
+| 类别 | 项数 | Effort 累计 |
+| --- | --- | --- |
+| 第 1 批 合规 | 11 | ~0.5–1 天 |
+| 第 2 批 用户文档 | 5 | ~3 天 |
+| 第 3 批 协议/生态 | 3 | ~2 天 |
+| 第 4 批 开发者 | 8 | ~5 天 |
+| 第 5 批 运维 | 4 | ~3 天 |
+| 第 6 批 API/产物 | 5 | ~3 天 |
+| 第 7 批 决策/社区 | 8 | ~2 天 |
+| 第 8 批 基础设施 | 6 | ~2 天 |
+| 第 7 节 扩展 | 28 | ~12 天 |
+| **合计** | **78** | **~32–35 天** |
+
+单人全职约 7 周；2 人协作约 3.5 周；3 人约 2.5 周。
+
+---
+
+## 9. 顶级项目最终达成判据（升级版）
+
+完成 78 项后，下列证据可验证项目达到顶级项目基线：
+
+**视觉与元数据**
+- [ ] GitHub 仓库首页 6 项徽章（License / CI / docs.rs / crates.io / Discord / Star History）
+- [ ] README 包含 Quickstart、截图横幅、4 段说明、引用、Star History、Logo
+- [ ] LICENSE 文件 25+ 行 MIT 全文
+- [ ] NOTICE 含上游商标归属
+- [ ] CONTRIBUTING.md / CODE_OF_CONDUCT.md / SECURITY.md / SUPPORT.md / AGENTS.md 齐全
+- [ ] CHANGELOG.md、ROADMAP.md 维护中
+
+**自动化**
+- [ ] GitHub Actions ≥5 工作流（fmt、clippy、test、audit、doc）
+- [ ] Dependabot 配置（Cargo + npm + Actions）
+- [ ] CodeQL 启用
+- [ ] 覆盖率门槛 ≥ 70%（`cargo llvm-cov`）
+
+**文档站点**
+- [ ] docs.rs 至少发布 5 个核心 crate（pc-core / pc-http / pc-server / pc-cli / pc-plugin-protocol）
+- [ ] mdBook 站点托管，`docs/` 全章节可访问
+- [ ] OpenAPI `/openapi.json` 可获取，结构兼容上游
+- [ ] 至少 5 个 `examples/` 可 `cargo run`
+- [ ] 38 个 crate 都有 `crates/*/README.md`
+
+**生态**
+- [ ] 5+ ADR 已沉淀
+- [ ] PLUGIN-COMPAT.md 列出 3+ 已测试的第三方插件
+- [ ] ADAPTER-COMPAT.md 列出 11 个内置适配器版本
+- [ ] UPSTREAM-DELTA.md 维护已知差异
+- [ ] COMPATIBILITY.md 维护版本矩阵
+
+**运维**
+- [ ] Docker 镜像 < 150 MB
+- [ ] BENCHMARKS.md 有与 Node 上游的对比数据
+- [ ] RUNBOOK.md 涵盖 5+ 常见告警
+- [ ] THREAT-MODEL.md 完整 STRIDE 分析
+- [ ] SUPPLY-CHAIN.md 有 SBOM + 签名流程
+
+**社区**
+- [ ] GitHub Discussions 已开（Announcements / Q&A / Show and tell）
+- [ ] GitHub Releases 至少 1 个正式版本
+- [ ] CONTRIBUTORS.md 维护中
+- [ ] GLOSSARY.md 中英对照完整
+
+---
+
+## 10. 关键提醒
+
+1. **不要把所有内容塞进 README**：README 是入口，详细文档放 `docs/`，
+   crate API 放 rustdoc，决策放 ADR，根因/历史放 `internal/`。
+2. **文档也是代码**：所有文档变更走 PR、CI 校验 markdown 链接、拼写与格式。
+3. **协议优先于内部**：第 3 批 PROTOCOL.md 是 paperclip-rs 的护城河，先于其它。
+4. **不要伪造成熟度**：本路线图假设项目仍在重写期，文档应反映当前真实状态。
+5. **复用上游**：上游 `paperclip/` 有大量现成内容（`doc/` 44 个文件），
+   可对照迁移而非重写。
+

@@ -1972,11 +1972,75 @@ issues.rs 27 → 23 SQL（-4）。仓储化 tree_holds 子模块 4 个路由：
 - issues.rs SQL 数 27 → 23（-4，tree_holds 子模块 4 端点合并到 IssueTreeHoldRepo）
 - 累计 Round 95-138 修复 **152+4=156 个路由从 500 → 200**
 
-### 下一轮方向（Round 139+）
-issues.rs 还剩 23 SQL，主要在：
+## 62. 第一百三十九轮增量（Round 139 — issues.rs diagnostics 子模块仓储化)
+
+### 目标
+issues.rs 23 → 19 SQL（-4）。仓储化 diagnostics 子模块 3 个路由：
+- `diagnostics_blockers` → `IssueDiagnosticsRepo::list_blockers`
+- `diagnostics_wakes` → `IssueDiagnosticsRepo::assignee_agent_id` + `list_wake_requests_for_agent`
+- `diagnostics_subtree` → `IssueDiagnosticsRepo::list_subtree`
+
+### 新建 `pc_repos::issue_diagnostics::IssueDiagnosticsRepo`
+- `list_blockers(issue_id, limit) -> Vec<IssueSummaryRow>`
+  - 子树扫描（WHERE parent_id=$1 OR id=$1）+ status='blocked' / hidden_at 过滤
+  - 按 created_at DESC + LIMIT
+- `assignee_agent_id(issue_id) -> Option<Uuid>` — 单字段查询
+- `list_wake_requests_for_agent(issue_id, agent_id, limit) -> Vec<WakeRequestRow>`
+  - JOIN issues 取 company_id；按 requested_at DESC + LIMIT
+- `list_subtree(issue_id, max_depth) -> Vec<SubtreeNodeRow>`
+  - 递归 CTE：root → children → grand-children（max_depth 限制）
+  - 含 parent_id 与 depth 字段供路由构建 edges / readiness map
+
+### 新增 DTO
+- `IssueSummaryRow { id, title, status, created_at }`
+- `SubtreeNodeRow { id, parent_id, title, status, created_at, depth }`
+- `WakeRequestRow { id, source, reason, status, requested_at, claimed_at }`
+
+### 重构 `issues.rs` 3 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/issues/:id/diagnostics/blockers` | 1 SELECT issues 子树 | IssueDiagnosticsRepo::list_blockers |
+| `GET /api/issues/:id/diagnostics/wakes` | 1 SELECT assignee + 1 SELECT wake_requests | IssueDiagnosticsRepo::assignee_agent_id + list_wake_requests_for_agent |
+| `GET /api/issues/:id/diagnostics/subtree` | 1 SELECT 递归 CTE | IssueDiagnosticsRepo::list_subtree |
+
+### 设计要点
+- **状态 'blocked' / 'hidden' 过滤下沉到仓储**：route 仅关心展示，判定逻辑在 SQL WHERE 子句。
+- **递归 CTE 复用 max_depth 参数**：原 SQL 写死 `< 8`；改为参数化 `$2`，便于未来按 issue 复杂度自适应。
+- **list_blockers 复合 OR 条件**：`(parent_id = $1 OR id = $1)` 一条 SQL 同时取根与子 issues，避免两次查询。
+- **readiness map 不再用 status 而用 Option<String>**：原 SQL 列类型 `status text` 可能为 NULL，DTO 字段 `Option<String>` 保留可空语义。
+
+### 新增集成测试 11 个 (`crates/pc-repos/tests/round139_issue_diagnostics_repo.rs`)
+**list_blockers (4 个)**
+1. `list_blockers_empty` — 无 blocker 返回空
+2. `list_blockers_includes_self` — 自身 blocked 计入
+3. `list_blockers_includes_children` — 子 blocked 计入
+4. `list_blockers_filters_status` — status='todo' 排除
+
+**assignee_agent_id (2 个)**
+5. `assignee_agent_id_some` — 存在 assignee
+6. `assignee_agent_id_none` — 无 assignee 返回 None
+
+**list_wake_requests_for_agent (2 个)**
+7. `list_wake_requests_filters_by_agent` — 按 agent 过滤
+8. `list_wake_requests_respects_limit` — LIMIT 生效
+
+**list_subtree (3 个)**
+9. `list_subtree_root_only` — 根节点 depth=0
+10. `list_subtree_recursive` — 递归展开多层
+11. `list_subtree_respects_max_depth` — max_depth 参数限制
+
+### 进度影响
+- 综合进度从 **≈ 98.8% → ≈ 98.9%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round139_*` 0 errors
+- 39 个 pc-repos 集成测试文件累计 273+11=284 test 函数
+- issues.rs SQL 数 23 → 19（-4，diagnostics 子模块 3 端点合并到 IssueDiagnosticsRepo）
+- 累计 Round 95-139 修复 **156+3=159 个路由从 500 → 200**
+
+### 下一轮方向（Round 140+）
+issues.rs 还剩 19 SQL，主要在：
 - preview_tree_control 复合（3 SQL：company_id + heartbeat_runs count + active hold lookup，line 3029+）
-- diagnostics 子模块（~10 SQL：blockers/wakes/subtree，line 3086+）
 - 复合事务（start_issue_run 仍 1 SQL 查 issue.assignee_agent_id + heartbeat_runs）
+- 其他遗留：attachment_content_stub（attachment JOIN assets，1 SQL）、interaction accept/cancel/reject/respond/verdict/withdraw（~6 SQL，每个端点独立更新）
 
 后续高 SQL 模块：
 - tool_access.rs 66 SQL

@@ -175,6 +175,9 @@ npm 包复用，base URL 切换后即可对接 Rust 服务器。
 对照表，是贡献者上手最快的入口。OpenSpec 提案、19 个契约 spec 与
 275 项 checkbox 任务清单在 `openspec/changes/paperclip-rs-rewrite/`。
 
+> 还在写什么文档？见 [`docs/DOCUMENTATION-ROADMAP.md`](docs/DOCUMENTATION-ROADMAP.md)
+> （78 项缺口清单、优先级矩阵与完成判据）。
+
 ## 协议与许可
 
 本仓库源码采用 **MIT License**（与上游 paperclip 一致），见 workspace
