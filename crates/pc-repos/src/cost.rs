@@ -246,6 +246,26 @@ fn default_billing_type() -> String {
     "unknown".to_owned()
 }
 
+/// Round 212: cost_events 表行（与 drizzle schema 1:1）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostEventRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub agent_id: Uuid,
+    pub issue_id: Option<Uuid>,
+    pub project_id: Option<Uuid>,
+    pub goal_id: Option<Uuid>,
+    pub billing_code: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub cost_cents: i32,
+    pub occurred_at: Timestamp,
+    pub created_at: Timestamp,
+}
+
 
 #[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct IssueCostSummaryRow {
@@ -446,6 +466,26 @@ impl<'a> CostRepo<'a> {
         .fetch_all(self.db.pool())
         .await
     }
+    /// Round 212: 列出 company 的 cost_events（按 occurred_at DESC）。
+    pub async fn list_cost_events(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<CostEventRow>> {
+        let rows = sqlx::query_as::<_, CostEventRow>(
+            "SELECT id, company_id, agent_id, issue_id, project_id, goal_id, billing_code, \
+                    provider, model, input_tokens, output_tokens, cost_cents, occurred_at, created_at \
+             FROM cost_events WHERE company_id = $1 \
+             ORDER BY occurred_at DESC LIMIT $2",
+        )
+        .bind(company_id)
+        .bind(limit.clamp(1, 500))
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+
     /// Round 176: 统计单个 issue 的成本/输入/输出/运行数/运行时间（聚合 issues+cost_events+heartbeat_runs）。
     pub async fn issue_summary(&self, issue_id: Uuid) -> sqlx::Result<Option<IssueCostSummaryRow>> {
         sqlx::query_as::<_, IssueCostSummaryRow>(

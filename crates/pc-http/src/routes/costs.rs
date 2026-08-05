@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use pc_repos::budget::{BudgetRepo, IncidentRow, PolicyRow, ResolveIncidentInput, UpsertPolicyInput};
-use pc_repos::cost::{CostRange, CostRepo, CreateCostEvent};
+use pc_repos::cost::{CostEventRow, CostRange, CostRepo, CreateCostEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -24,7 +24,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route(
             "/api/companies/:company_id/cost-events",
-            post(create_cost_event),
+            post(create_cost_event).get(list_cost_events),
         )
         .route("/api/companies/:company_id/costs/summary", get(summary))
         .route("/api/companies/:company_id/costs/by-agent", get(by_agent))
@@ -134,6 +134,59 @@ async fn create_cost_event(
         .await?;
     Ok((StatusCode::CREATED, Json(result)))
 }
+// ============================================================================
+// Round 212: GET /api/companies/:company_id/cost-events (list)
+// ============================================================================
+
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+struct ListCostEventsQuery {
+    #[serde(default = "default_list_limit")]
+    limit: i64,
+}
+
+fn default_list_limit() -> i64 {
+    100
+}
+
+fn cost_event_json(row: &CostEventRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "agentId": row.agent_id,
+        "issueId": row.issue_id,
+        "projectId": row.project_id,
+        "goalId": row.goal_id,
+        "billingCode": row.billing_code,
+        "provider": row.provider,
+        "model": row.model,
+        "inputTokens": row.input_tokens,
+        "outputTokens": row.output_tokens,
+        "costCents": row.cost_cents,
+        "occurredAt": row.occurred_at,
+        "createdAt": row.created_at,
+    })
+}
+
+async fn list_cost_events(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Query(q): Query<ListCostEventsQuery>,
+) -> ApiResult<Json<Value>> {
+    let rows = CostRepo::new(&state.db)
+        .list_cost_events(company_id, q.limit)
+        .await?;
+    let items: Vec<Value> = rows.iter().map(cost_event_json).collect();
+    let total_cost: i64 = rows.iter().map(|r| r.cost_cents as i64).sum();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "total": items.len(),
+        "totalCostCents": total_cost,
+        "limit": q.limit,
+        "items": items,
+    })))
+}
+
 
 async fn summary(
     State(state): State<AppState>,
