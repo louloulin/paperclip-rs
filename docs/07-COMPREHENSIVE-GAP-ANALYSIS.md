@@ -3507,3 +3507,24 @@ Audit + Actions:
 - `pc-repos` 新增 `round158_summary_document_repo.rs` (15 测试用例)
 - 剩余 SQL 总数: 240 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17 / execution_workspaces.rs 13)
 - 综合进度 ≈ 99.99%
+
+## 27. 第一百五十九轮增量（Round 159 — execution_workspaces.rs 仓储化）
+
+### 仓储化覆盖 (`ExecutionRepo` 8 新方法)
+- **observability**: `overview_stats(company_id)` 三子查询合并
+- **CRUD 补全**: `get_by_id(id)` 无 company 上下文查询、`company_id_for_id(id)`
+- **状态转换**: `update_name / set_status_to_reconciling`
+- **worktree lifecycle**: `set_branch_provider_ref / clear_provider_ref / touch_last_used` (复用)
+- **heartbeat relation**: `latest_heartbeat_for_workspace(workspace_id)`
+
+### 路由重构 execution_workspaces.rs
+- 13 SQL → 0
+- workspace_overview / get_workspace / patch_workspace / close_readiness
+- workspace_operations / runtime_service_action / acquire_lease_route
+- validate_workspace_route / create_worktree_route / cleanup_worktree_route
+
+### 进度影响
+- `execution_workspaces.rs` 累计 SQL: 13 → 0
+- 累计 routes 0 SQL 文件: 8 个（共 140 SQL 移除）
+- `pc-repos` 新增 `round159_execution_workspace_repo.rs` (10 测试用例)
+- 剩余 SQL 总数: 227 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17 / summary_slots.rs 0 / execution_workspaces.rs 0)

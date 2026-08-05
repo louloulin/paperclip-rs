@@ -354,6 +354,124 @@ impl<'a> DecisionTrainingService<'a> {
         .await?;
         Ok(row.map(|(id,)| id))
     }
+
+    // =========================================================================
+    // Round 160: decision_training.rs route 仓储化新增方法
+    // =========================================================================
+
+    /// Round 160: 简化版 list（不带 issues JOIN）。
+    pub async fn list_filtered_simple(
+        &self,
+        company_id: Uuid,
+        kind: Option<&str>,
+        author: Option<&str>,
+        q_pattern: Option<&str>,
+    ) -> sqlx::Result<Vec<DecisionTrainingExampleRow>> {
+        let mut sql = String::from(
+            "SELECT id, company_id, source_kind, source_id, issue_id, cutoff_at, notes, notes_history, \
+             decision_outcome, snapshot, retention_policy, created_by_user_id, created_at, updated_at \
+             FROM decision_training_examples WHERE company_id = $1",
+        );
+        let mut idx = 2;
+        if kind.is_some() { sql.push_str(&format!(" AND source_kind = ${idx}")); idx += 1; }
+        if author.is_some() { sql.push_str(&format!(" AND created_by_user_id = ${idx}")); idx += 1; }
+        if q_pattern.is_some() { sql.push_str(&format!(" AND notes ILIKE ${idx}")); idx += 1; }
+        sql.push_str(" ORDER BY created_at DESC LIMIT 500");
+        let mut query = sqlx::query_as::<_, DecisionTrainingExampleRow>(&sql).bind(company_id);
+        if let Some(k) = kind { query = query.bind(k); }
+        if let Some(a) = author { query = query.bind(a); }
+        if let Some(p) = q_pattern { query = query.bind(format!("%{p}%")); }
+        Ok(query.fetch_all(self.db.pool()).await?)
+    }
+
+    /// Round 160: preview_decision — 查 decisions (status, decision_outcome, options)。
+    pub async fn preview_decision(
+        &self,
+        company_id: Uuid,
+        source_id: Uuid,
+    ) -> sqlx::Result<Option<(String, Option<String>, serde_json::Value)>> {
+        let row: Option<(String, Option<String>, serde_json::Value)> = sqlx::query_as(
+            "SELECT status, decision_outcome, options FROM decisions \
+             WHERE company_id = $1 AND id = $2",
+        )
+        .bind(company_id)
+        .bind(source_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 160: preview_approval — 查 approvals (status)。
+    pub async fn preview_approval(
+        &self,
+        company_id: Uuid,
+        source_id: Uuid,
+    ) -> sqlx::Result<Option<(String,)>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT status FROM approvals WHERE company_id = $1 AND id = $2",
+        )
+        .bind(company_id)
+        .bind(source_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 160: export_resolved_decisions — 给 export_jsonl route 用。
+    pub async fn export_resolved_decisions(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<(Uuid, String, serde_json::Value, Option<String>)>> {
+        let rows: Vec<(Uuid, String, serde_json::Value, Option<String>)> = sqlx::query_as(
+            "SELECT id, title, payload, decision_outcome FROM decisions \
+             WHERE company_id = $1 AND status = 'resolved' \
+             ORDER BY created_at DESC LIMIT 1000",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 160: 取 example 的 created_by_user_id (用于 patch/delete owner 校验)。
+    pub async fn owner_for_id(
+        &self,
+        id: Uuid,
+    ) -> sqlx::Result<Option<String>> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT created_by_user_id FROM decision_training_examples WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.and_then(|(o,)| o))
+    }
+
+    /// Round 160: UPDATE notes + decision_outcome + 推 notes_history (COALESCE pattern) + RETURNING。
+    pub async fn patch_with_history(
+        &self,
+        id: Uuid,
+        notes: Option<String>,
+        decision_outcome: Option<String>,
+    ) -> sqlx::Result<Option<DecisionTrainingExampleRow>> {
+        let row: Option<DecisionTrainingExampleRow> = sqlx::query_as(
+            "UPDATE decision_training_examples SET \
+                notes = COALESCE($2, notes), \
+                decision_outcome = COALESCE($3, decision_outcome), \
+                notes_history = COALESCE(notes_history, '[]'::jsonb) \
+                                 || jsonb_build_array(jsonb_build_object('at', now(), 'notes', $2)), \
+                updated_at = now() \
+             WHERE id = $1 \
+             RETURNING id, company_id, source_kind, source_id, issue_id, cutoff_at, notes, notes_history, \
+                       decision_outcome, snapshot, retention_policy, created_by_user_id, created_at, updated_at",
+        )
+        .bind(id)
+        .bind(notes)
+        .bind(decision_outcome)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
 
 // ============================================================================

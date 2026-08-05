@@ -247,36 +247,31 @@ async fn create_project_workspace(
     if body.cwd.trim().is_empty() {
         return Err(ApiError::BadRequest("cwd is required".into()));
     }
-    let company_id: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM projects WHERE id = $1")
-        .bind(project_id)
-        .fetch_optional(state.db.pool())
+    let company_id = ProjectRepo::new(&state.db)
+        .company_id_for_project(project_id)
         .await
-        .ok()
-        .flatten();
-    let (company_id,) = company_id.ok_or_else(|| ApiError::NotFound(format!("project {project_id}")))?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("project {project_id}")))?;
     // If is_primary, unset other primary
     if body.is_primary.unwrap_or(false) {
-        sqlx::query(
-            "UPDATE project_workspaces SET is_primary = false WHERE project_id = $1",
-        )
-        .bind(project_id)
-        .execute(state.db.pool())
-        .await?;
+        ProjectRepo::new(&state.db)
+            .unset_all_primary_workspaces(project_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO project_workspaces (company_id, project_id, name, cwd, repo_url, repo_ref, metadata, is_primary) \
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '{}'::jsonb), COALESCE($8, false)) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(project_id)
-    .bind(&body.name)
-    .bind(&body.cwd)
-    .bind(body.repo_url.as_deref())
-    .bind(body.repo_ref.as_deref())
-    .bind(body.metadata.clone().unwrap_or_else(|| json!({})))
-    .bind(body.is_primary.unwrap_or(false))
-    .fetch_one(state.db.pool())
-    .await?;
+    let id = ProjectRepo::new(&state.db)
+        .insert_workspace_simple(
+            company_id,
+            project_id,
+            &body.name,
+            &body.cwd,
+            body.repo_url.as_deref(),
+            body.repo_ref.as_deref(),
+            body.metadata.clone().or(Some(json!({}))),
+            body.is_primary,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
         LiveEvent::new("project_workspace.created", "project_workspace", id)
             .with_company(company_id)
@@ -316,44 +311,32 @@ async fn patch_project_workspace(
 ) -> ApiResult<Json<Value>> {
     // If is_primary=true, unset others first
     if body.is_primary.unwrap_or(false) {
-        sqlx::query("UPDATE project_workspaces SET is_primary = false WHERE project_id = $1 AND id <> $2")
-            .bind(project_id)
-            .bind(workspace_id)
-            .execute(state.db.pool())
-            .await?;
+        ProjectRepo::new(&state.db)
+            .unset_other_primary_workspaces(project_id, workspace_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
-    let affected = sqlx::query(
-        "UPDATE project_workspaces SET \
-            name = COALESCE($1, name), \
-            cwd = COALESCE($2, cwd), \
-            repo_url = COALESCE($3, repo_url), \
-            repo_ref = COALESCE($4, repo_ref), \
-            metadata = COALESCE($5, metadata), \
-            is_primary = COALESCE($6, is_primary), \
-            updated_at = now() \
-         WHERE id = $7 AND project_id = $8",
-    )
-    .bind(body.name.as_deref())
-    .bind(body.cwd.as_deref())
-    .bind(body.repo_url.as_deref())
-    .bind(body.repo_ref.as_deref())
-    .bind(body.metadata.clone())
-    .bind(body.is_primary)
-    .bind(workspace_id)
-    .bind(project_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
+    let affected = ProjectRepo::new(&state.db)
+        .patch_workspace_partial(
+            workspace_id,
+            project_id,
+            body.name.as_deref(),
+            body.cwd.as_deref(),
+            body.repo_url.as_deref(),
+            body.repo_ref.as_deref(),
+            body.metadata.clone(),
+            body.is_primary,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
         return Err(ApiError::NotFound(format!("project workspace {workspace_id}")));
     }
-    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM project_workspaces WHERE id = $1")
-        .bind(workspace_id)
-        .fetch_optional(state.db.pool())
+    let cid = ProjectRepo::new(&state.db)
+        .company_id_for_workspace_any(workspace_id)
         .await
-        .ok()
-        .flatten();
-    if let Some((cid,)) = row {
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if let Some(cid) = cid {
         state.realtime.publish(
             LiveEvent::new("project_workspace.updated", "project_workspace", workspace_id)
                 .with_company(cid),
@@ -370,22 +353,15 @@ async fn delete_project_workspace(
     State(state): State<AppState>,
     Path((project_id, workspace_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM project_workspaces WHERE id = $1 AND project_id = $2",
-    )
-    .bind(workspace_id)
-    .bind(project_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("project workspace {workspace_id}")))?;
-    let affected = sqlx::query("DELETE FROM project_workspaces WHERE id = $1 AND project_id = $2")
-        .bind(workspace_id)
-        .bind(project_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
+    let company_id = ProjectRepo::new(&state.db)
+        .company_id_for_workspace(workspace_id, project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("project workspace {workspace_id}")))?;
+    let affected = ProjectRepo::new(&state.db)
+        .delete_workspace_in_project(workspace_id, project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
         return Err(ApiError::NotFound(format!("project workspace {workspace_id}")));
     }
@@ -409,24 +385,16 @@ async fn workspace_runtime_action(
     if !allowed.contains(&action.as_str()) {
         return Err(ApiError::BadRequest(format!("invalid action '{action}', must be one of {allowed:?}")));
     }
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM project_workspaces WHERE id = $1 AND project_id = $2",
-    )
-    .bind(workspace_id)
-    .bind(project_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("project workspace {workspace_id}")))?;
+    let company_id = ProjectRepo::new(&state.db)
+        .company_id_for_workspace(workspace_id, project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("project workspace {workspace_id}")))?;
     // Append a runtime action to the workspace's metadata for audit
-    let _ = sqlx::query(
-        "UPDATE project_workspaces SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('lastRuntimeAction', to_jsonb($1::text), 'lastRuntimeActionAt', to_jsonb(now())), updated_at = now() WHERE id = $2",
-    )
-    .bind(&action)
-    .bind(workspace_id)
-    .execute(state.db.pool())
-    .await;
+    let _ = ProjectRepo::new(&state.db)
+        .append_runtime_action(workspace_id, &action)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()));
     state.realtime.publish(
         LiveEvent::new(format!("project_workspace.runtime_{action}"), "project_workspace", workspace_id)
             .with_company(company_id)

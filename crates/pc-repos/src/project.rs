@@ -629,6 +629,187 @@ impl<'a> ProjectRepo<'a> {
             .rows_affected();
         Ok(n > 0)
     }
+
+    // =========================================================================
+    // Round 160: projects.rs route 仓储化新增方法
+    // =========================================================================
+
+    /// Round 160: 取 project 的 company_id。
+    pub async fn company_id_for_project(&self, id: Uuid) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM projects WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 160: 取 project_workspace 的 company_id。
+    pub async fn company_id_for_workspace(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM project_workspaces WHERE id = $1 AND project_id = $2",
+        )
+        .bind(workspace_id)
+        .bind(project_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 160: 取 project_workspace 的 company_id（不限 project_id）。
+    pub async fn company_id_for_workspace_any(
+        &self,
+        workspace_id: Uuid,
+    ) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM project_workspaces WHERE id = $1",
+        )
+        .bind(workspace_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 160: 把 project 下的所有 workspaces 的 is_primary 设为 false。
+    pub async fn unset_all_primary_workspaces(
+        &self,
+        project_id: Uuid,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE project_workspaces SET is_primary = false WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 160: 把指定 project 下除自身外的 workspaces 都设为非 primary。
+    pub async fn unset_other_primary_workspaces(
+        &self,
+        project_id: Uuid,
+        except_id: Uuid,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE project_workspaces SET is_primary = false WHERE project_id = $1 AND id <> $2",
+        )
+        .bind(project_id)
+        .bind(except_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 160: 简单 INSERT project_workspace (不带 source_type 等拓展字段) + RETURNING id。
+    pub async fn insert_workspace_simple(
+        &self,
+        company_id: Uuid,
+        project_id: Uuid,
+        name: &str,
+        cwd: &str,
+        repo_url: Option<&str>,
+        repo_ref: Option<&str>,
+        metadata: Option<serde_json::Value>,
+        is_primary: Option<bool>,
+    ) -> RepoResult<Uuid> {
+        let v: (Uuid,) = sqlx::query_as(
+            "INSERT INTO project_workspaces              (company_id, project_id, name, cwd, repo_url, repo_ref, metadata, is_primary)              VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '{}'::jsonb), COALESCE($8, false))              RETURNING id",
+        )
+        .bind(company_id)
+        .bind(project_id)
+        .bind(name)
+        .bind(cwd)
+        .bind(repo_url)
+        .bind(repo_ref)
+        .bind(metadata)
+        .bind(is_primary)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v.0)
+    }
+
+    /// Round 160: 用 COALESCE 模式 UPDATE project_workspaces，返回 affected rows。
+    pub async fn patch_workspace_partial(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        name: Option<&str>,
+        cwd: Option<&str>,
+        repo_url: Option<&str>,
+        repo_ref: Option<&str>,
+        metadata: Option<serde_json::Value>,
+        is_primary: Option<bool>,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE project_workspaces SET \
+                name = COALESCE($1, name), \
+                cwd = COALESCE($2, cwd), \
+                repo_url = COALESCE($3, repo_url), \
+                repo_ref = COALESCE($4, repo_ref), \
+                metadata = COALESCE($5, metadata), \
+                is_primary = COALESCE($6, is_primary), \
+                updated_at = now() \
+             WHERE id = $7 AND project_id = $8",
+        )
+        .bind(name)
+        .bind(cwd)
+        .bind(repo_url)
+        .bind(repo_ref)
+        .bind(metadata)
+        .bind(is_primary)
+        .bind(workspace_id)
+        .bind(project_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 160: DELETE project_workspace (限定 project_id)。
+    pub async fn delete_workspace_in_project(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "DELETE FROM project_workspaces WHERE id = $1 AND project_id = $2",
+        )
+        .bind(workspace_id)
+        .bind(project_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 160: 在 metadata 里追加 lastRuntimeAction + lastRuntimeActionAt。
+    pub async fn append_runtime_action(
+        &self,
+        workspace_id: Uuid,
+        action: &str,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE project_workspaces SET \
+             metadata = COALESCE(metadata, '{}'::jsonb) \
+                     || jsonb_build_object('lastRuntimeAction', to_jsonb($1::text), \
+                                          'lastRuntimeActionAt', to_jsonb(now())), \
+             updated_at = now() \
+             WHERE id = $2",
+        )
+        .bind(action)
+        .bind(workspace_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
 }
 
 #[cfg(test)]
