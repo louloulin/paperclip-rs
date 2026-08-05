@@ -442,6 +442,101 @@ impl<'a> EnvironmentRepo<'a> {
         .await?
         .rows_affected())
     }
+
+    // ---- Round 167: environments route 仓储化新增方法 ----
+
+    /// Round 167: 列某 environment 的 lease（按 acquired_at DESC, LIMIT 100）。
+    pub async fn list_leases_for_environment(
+        &self,
+        environment_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, Uuid, Uuid, Option<Timestamp>, Option<Timestamp>, String)>> {
+        let rows: Vec<(Uuid, Uuid, Uuid, Option<Timestamp>, Option<Timestamp>, String)> =
+            sqlx::query_as(
+                "SELECT id, environment_id, run_id, acquired_at, expires_at, status::text \
+                 FROM environment_leases WHERE environment_id = $1 \
+                 ORDER BY acquired_at DESC LIMIT 100",
+            )
+            .bind(environment_id)
+            .fetch_all(self.db.pool())
+            .await?;
+        Ok(rows)
+    }
+
+    /// Round 167: 按 id 取单条 lease。
+    pub async fn get_environment_lease(
+        &self,
+        lease_id: Uuid,
+    ) -> RepoResult<Option<(Uuid, Uuid, Uuid, Option<Timestamp>, Option<Timestamp>, String)>> {
+        let row: Option<(Uuid, Uuid, Uuid, Option<Timestamp>, Option<Timestamp>, String)> =
+            sqlx::query_as(
+                "SELECT id, environment_id, run_id, acquired_at, expires_at, status::text \
+                 FROM environment_leases WHERE id = $1",
+            )
+            .bind(lease_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    /// Round 167: 触摸 environment（更新 updated_at = now）。
+    pub async fn touch_environment(&self, id: Uuid) -> RepoResult<()> {
+        sqlx::query("UPDATE environments SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Round 167: 按 environment_id 取 custom image template。
+    pub async fn get_custom_image_template(
+        &self,
+        environment_id: Uuid,
+    ) -> RepoResult<Option<(Uuid, Option<String>, Option<String>, Value)>> {
+        let row: Option<(Uuid, Option<String>, Option<String>, Value)> = sqlx::query_as(
+            "SELECT environment_id, dockerfile, image_ref, build_args \
+             FROM environment_custom_image_templates WHERE environment_id = $1 LIMIT 1",
+        )
+        .bind(environment_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 167: 删 environment 的 custom image template，返回受影响行数。
+    pub async fn delete_custom_image_template(&self, environment_id: Uuid) -> RepoResult<u64> {
+        let n = sqlx::query("DELETE FROM environment_custom_image_templates WHERE environment_id = $1")
+            .bind(environment_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 167: 触摸 environment_custom_image_templates（更新 updated_at）。
+    pub async fn touch_custom_image_template(&self, environment_id: Uuid) -> RepoResult<()> {
+        sqlx::query(
+            "UPDATE environment_custom_image_templates SET updated_at = now() WHERE environment_id = $1",
+        )
+        .bind(environment_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Round 167: 按 id 取 environment_custom_image_setup_session。
+    pub async fn get_custom_image_setup_session(
+        &self,
+        session_id: Uuid,
+    ) -> RepoResult<Option<(Uuid, String, Option<Timestamp>)>> {
+        let row: Option<(Uuid, String, Option<Timestamp>)> = sqlx::query_as(
+            "SELECT id, status::text, created_at FROM environment_custom_image_setup_sessions \
+             WHERE id = $1",
+        )
+        .bind(session_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
 
 #[cfg(test)]

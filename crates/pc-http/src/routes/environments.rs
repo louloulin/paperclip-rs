@@ -215,13 +215,10 @@ async fn list_environment_leases(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, Uuid, Option<Timestamp>, Option<Timestamp>, String)> = sqlx::query_as(
-        "SELECT id, environment_id, run_id, acquired_at, expires_at, status::text          FROM environment_leases WHERE environment_id = $1 ORDER BY acquired_at DESC LIMIT 100",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = EnvironmentRepo::new(&state.db)
+        .list_leases_for_environment(id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(lease_id, env_id, run_id, acquired_at, expires_at, status)| {
@@ -293,11 +290,7 @@ async fn probe_environment(
         .ok_or_else(|| ApiError::NotFound(format!("environment {id}")))?;
     // Mirrors Node `/environments/:id/probe`. Records a probe attempt and
     // publishes an event for downstream observability.
-    sqlx::query("UPDATE environments SET updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(state.db.pool())
-        .await
-        .ok();
+    let _ = EnvironmentRepo::new(&state.db).touch_environment(id).await;
     state.realtime.publish(
         LiveEvent::new("environment.probed", "environment", id)
             .with_data(json!({"driver": row.driver})),
@@ -314,12 +307,9 @@ async fn get_custom_image_template(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Option<String>, Option<String>, Value)> = sqlx::query_as(
-        "SELECT environment_id, dockerfile, image_ref, build_args FROM environment_custom_image_templates          WHERE environment_id = $1 LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = EnvironmentRepo::new(&state.db)
+        .get_custom_image_template(id)
+        .await?;
     match row {
         Some((env_id, dockerfile, image_ref, build_args)) => Ok(Json(json!({
             "environmentId": env_id,
@@ -346,11 +336,9 @@ async fn delete_custom_image_template(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM environment_custom_image_templates WHERE environment_id = $1")
-        .bind(id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
+    let affected = EnvironmentRepo::new(&state.db)
+        .delete_custom_image_template(id)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("environment.custom_image.deleted", "environment", id),
     );
@@ -366,11 +354,9 @@ async fn rollback_custom_image_template(
         .get("targetVersion")
         .and_then(Value::as_str)
         .unwrap_or("previous");
-    sqlx::query("UPDATE environment_custom_image_templates SET updated_at = now() WHERE environment_id = $1")
-        .bind(environment_id)
-        .execute(state.db.pool())
-        .await
-        .ok();
+    let _ = EnvironmentRepo::new(&state.db)
+        .touch_custom_image_template(environment_id)
+        .await;
     state.realtime.publish(
         LiveEvent::new("environment.custom_image.rollback", "environment", environment_id)
             .with_data(json!({"targetVersion": target_version})),
@@ -386,12 +372,9 @@ async fn get_custom_image_setup_session(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, status::text, created_at FROM environment_custom_image_setup_sessions WHERE id = $1",
-    )
-    .bind(session_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = EnvironmentRepo::new(&state.db)
+        .get_custom_image_setup_session(session_id)
+        .await?;
     let (id, status, created_at) = row.ok_or_else(|| ApiError::NotFound(format!("setup session {session_id}")))?;
     Ok(Json(json!({
         "id": id,
@@ -404,12 +387,9 @@ async fn get_environment_lease(
     State(state): State<AppState>,
     Path(lease_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, Uuid, Option<Timestamp>, Option<Timestamp>, String)> = sqlx::query_as(
-        "SELECT id, environment_id, run_id, acquired_at, expires_at, status::text          FROM environment_leases WHERE id = $1",
-    )
-    .bind(lease_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = EnvironmentRepo::new(&state.db)
+        .get_environment_lease(lease_id)
+        .await?;
     let (id, env_id, run_id, acquired_at, expires_at, status) = row.ok_or_else(|| ApiError::NotFound(format!("lease {lease_id}")))?;
     Ok(Json(json!({
         "id": id,
