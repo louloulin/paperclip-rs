@@ -77,6 +77,7 @@ pub mod settings;
 pub mod sidebar;
 pub mod sidebar_badges;
 pub mod source_trust;
+pub mod status_card;
 pub mod successful_run_handoff_state;
 pub mod task_watchdog_scope;
 pub mod skill;

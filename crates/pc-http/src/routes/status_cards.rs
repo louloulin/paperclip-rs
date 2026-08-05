@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+use pc_repos::status_card::{StatusCardRepo, StatusCardRow, StatusCardUpdateRow, SummaryRevisionRow};
+
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -38,57 +40,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/status-cards/:id/summary", put(card_summary))
 }
 
-#[derive(Debug, FromRow)]
-struct CardRow {
-    id: Uuid,
-    company_id: Uuid,
-    title: Option<String>,
-    interest_prompt: String,
-    state: String,
-    queries: Value,
-    refresh_policy: Value,
-    last_generated_at: Option<pc_core::Timestamp>,
-    next_eval_at: Option<pc_core::Timestamp>,
-    archived_at: Option<pc_core::Timestamp>,
-    document_id: Option<Uuid>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
+// Local type aliases — 一一对应 pc_repos::status_card DTOs
+use StatusCardUpdateRow as UpdateRow;
 
-#[derive(Debug, FromRow, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateRow {
-    id: Uuid,
-    card_id: Uuid,
-    kind: String,
-    trigger: String,
-    generation_issue_id: Option<Uuid>,
-    run_id: Option<Uuid>,
-    changes: Value,
-    input_tokens: i32,
-    output_tokens: i32,
-    cost_cents: i32,
-    model: Option<String>,
-    query_version: Option<i32>,
-    change_summary: Option<String>,
-    started_at: pc_core::Timestamp,
-    finished_at: Option<pc_core::Timestamp>,
-    status: String,
-    error: Option<String>,
-}
-
-#[derive(Debug, FromRow, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SummaryRevisionRow {
-    id: Uuid,
-    revision_number: i32,
-    title: Option<String>,
-    body: String,
-    change_summary: Option<String>,
-    created_at: pc_core::Timestamp,
-}
-
-fn row_json(row: &CardRow) -> Value {
+fn row_json(row: &StatusCardRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -142,14 +97,9 @@ async fn list_status_cards(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<CardRow> = sqlx::query_as(
-        "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, \
-                last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at \
-         FROM status_cards WHERE company_id = $1 AND archived_at IS NULL ORDER BY created_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = StatusCardRepo::new(&state.db)
+        .list_active(company_id)
+        .await?;
     let items: Vec<Value> = rows.iter().map(row_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -158,14 +108,9 @@ async fn get_status_card(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<CardRow> = sqlx::query_as(
-        "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, \
-                last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at \
-         FROM status_cards WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = StatusCardRepo::new(&state.db)
+        .get_by_id(id)
+        .await?;
     match row {
         Some(row) => Ok(Json(row_json(&row))),
         None => Err(ApiError::NotFound(format!("status card {id}"))),
@@ -181,19 +126,16 @@ async fn create_status_card(
     let title = body.title.clone();
     let refresh_policy = body.refresh_policy.clone().unwrap_or(json!({}));
     let queries = body.queries.clone().unwrap_or(json!([]));
-    let row: CardRow = sqlx::query_as(
-        "INSERT INTO status_cards (company_id, title, interest_prompt, queries, refresh_policy, state) \
-         VALUES ($1, $2, $3, $4, $5, 'compiling') \
-         RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \
-                   last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(title)
-    .bind(prompt)
-    .bind(queries)
-    .bind(refresh_policy)
-    .fetch_one(state.db.pool())
-    .await?;
+    let repo = StatusCardRepo::new(&state.db);
+    let row = repo
+        .create(
+            company_id,
+            title.as_deref(),
+            &prompt,
+            &queries,
+            &refresh_policy,
+        )
+        .await?;
     Ok((StatusCode::CREATED, Json(row_json(&row))))
 }
 
@@ -206,24 +148,16 @@ async fn patch_status_card(
     let prompt = body.interest_prompt.clone();
     let refresh_policy = body.refresh_policy.clone();
     let archived = body.archived;
-    let row: CardRow = sqlx::query_as(
-        "UPDATE status_cards SET \
-            title = COALESCE($2, title), \
-            interest_prompt = COALESCE($3, interest_prompt), \
-            refresh_policy = COALESCE($4, refresh_policy), \
-            archived_at = CASE WHEN $5 IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END, \
-            updated_at = now() \
-         WHERE id = $1 \
-         RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \
-                   last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at",
-    )
-    .bind(id)
-    .bind(title)
-    .bind(prompt)
-    .bind(refresh_policy)
-    .bind(archived)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = StatusCardRepo::new(&state.db)
+        .patch(
+            id,
+            title.as_deref(),
+            prompt.as_deref(),
+            refresh_policy.as_ref(),
+            archived,
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("status card {id}")))?;
     Ok(Json(row_json(&row)))
 }
 
@@ -231,10 +165,7 @@ async fn delete_status_card(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query("DELETE FROM status_cards WHERE id = $1")
-        .bind(id)
-        .execute(state.db.pool())
-        .await?;
+    StatusCardRepo::new(&state.db).delete(id).await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({}))))
 }
 
@@ -242,15 +173,9 @@ async fn card_updates(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Vec<UpdateRow>>> {
-    let rows: Vec<UpdateRow> = sqlx::query_as(
-        "SELECT id, card_id, kind, trigger, generation_issue_id, run_id, changes, input_tokens, \
-                output_tokens, cost_cents, model, query_version, change_summary, started_at, \
-                finished_at, status, error \
-         FROM status_card_updates WHERE card_id = $1 ORDER BY started_at DESC",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = StatusCardRepo::new(&state.db)
+        .list_updates(id)
+        .await?;
     Ok(Json(rows))
 }
 
@@ -258,24 +183,28 @@ async fn card_summary_revisions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Vec<SummaryRevisionRow>>> {
-    let row: Option<(Uuid, Option<Uuid>)> =
-        sqlx::query_as("SELECT company_id, document_id FROM status_cards WHERE id = $1")
-            .bind(id)
-            .fetch_optional(state.db.pool())
-            .await?;
-    let Some((company_id, Some(document_id))) = row else {
+    let link = StatusCardRepo::new(&state.db).get_doc_link(id).await?;
+    let Some((company_id, Some(document_id))) = link else {
         return Ok(Json(Vec::new()));
     };
-    let rows: Vec<SummaryRevisionRow> = sqlx::query_as(
-        "SELECT id, revision_number, title, body, change_summary, created_at \
-         FROM document_revisions WHERE document_id = $1 AND company_id = $2 \
-         ORDER BY revision_number DESC",
-    )
-    .bind(document_id)
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
-    Ok(Json(rows))
+    // Use DocumentRepo for revisions (1:1 复用)
+    let rows = pc_repos::document::DocumentRepo::new(&state.db)
+        .list_revisions_in_company(company_id, document_id, 100)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    // Adapt DocRevision → SummaryRevision shape
+    let summary_rows: Vec<SummaryRevisionRow> = rows
+        .into_iter()
+        .map(|r| SummaryRevisionRow {
+            id: r.id,
+            revision_number: r.revision_number,
+            title: r.title,
+            body: r.body,
+            change_summary: r.change_summary,
+            created_at: r.created_at,
+        })
+        .collect();
+    Ok(Json(summary_rows))
 }
 
 async fn card_recompile(
@@ -284,12 +213,9 @@ async fn card_recompile(
 ) -> ApiResult<impl IntoResponse> {
     // Mark card as "compiling" and bump query_version; the watcher will pick
     // it up and produce a fresh compiled query.
-    let row: Option<CardRow> = sqlx::query_as(
-        "UPDATE status_cards SET state = 'compiling', query_compiled_at = NULL,                 query_version = query_version + 1, updated_at = now()          WHERE id = $1          RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy,                    last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = StatusCardRepo::new(&state.db)
+        .recompile(id)
+        .await?;
     let Some(row) = row else {
         return Err(ApiError::NotFound(format!("status card {id}")));
     };
@@ -308,20 +234,14 @@ async fn card_refresh(
     Path(id): Path<Uuid>,
     Json(_body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM status_cards WHERE id = $1")
-        .bind(id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let Some((company_id,)) = row else {
-        return Err(ApiError::NotFound(format!("status card {id}")));
-    };
+    let repo = StatusCardRepo::new(&state.db);
+    let row = repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("status card {id}")))?;
+    let company_id = row.company_id;
     // Schedule a refresh by bumping next_eval_at to now; the watcher polls this.
-    sqlx::query(
-        "UPDATE status_cards SET next_eval_at = now(), state = 'pending_refresh', updated_at = now()          WHERE id = $1",
-    )
-    .bind(id)
-    .execute(state.db.pool())
-    .await?;
+    repo.refresh(id).await?;
     state.realtime.publish(
         pc_realtime::LiveEvent::new("status_card.refresh.requested", "status_card", id)
             .with_company(company_id)
@@ -341,13 +261,9 @@ pub async fn claim_due_status_card_updates(
     state: &AppState,
     limit: i64,
 ) -> ApiResult<usize> {
-    let claimed = sqlx::query(
-        "UPDATE status_cards          SET state = 'pending_refresh', updated_at = now()          WHERE id IN (              SELECT id FROM status_cards              WHERE next_eval_at IS NOT NULL AND next_eval_at <= now()                AND state IN ('idle', 'pending_refresh', 'compiling')                AND archived_at IS NULL                AND generating_issue_id IS NULL              ORDER BY next_eval_at ASC LIMIT $1              FOR UPDATE SKIP LOCKED          )",
-    )
-    .bind(limit.clamp(1, 200))
-    .execute(state.db.pool())
-    .await?;
-    let count = claimed.rows_affected();
+    let count = StatusCardRepo::new(&state.db)
+        .claim_due(limit)
+        .await?;
     if count > 0 {
         state.realtime.publish(
             pc_realtime::LiveEvent::new(
@@ -365,12 +281,9 @@ async fn card_dry_run(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(i32, Value, Value)> = sqlx::query_as(
-        "SELECT query_version, queries, mentioned_issue_ids FROM status_cards WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = StatusCardRepo::new(&state.db)
+        .dry_run_meta(id)
+        .await?;
     let Some((query_version, queries, mentioned_issues)) = row else {
         return Err(ApiError::NotFound(format!("status card {id}")));
     };
@@ -387,17 +300,9 @@ async fn card_query(
     Path(id): Path<Uuid>,
     Json(body): Json<QueryBody>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<CardRow> = sqlx::query_as(
-        "UPDATE status_cards SET queries = $2, query_version = query_version + 1, \
-                query_compiled_at = now(), updated_at = now() \
-         WHERE id = $1 \
-         RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \
-                   last_generated_at, next_eval_at, archived_at, document_id, created_at, updated_at",
-    )
-    .bind(id)
-    .bind(&body.queries)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = StatusCardRepo::new(&state.db)
+        .update_queries(id, &body.queries)
+        .await?;
     let Some(row) = row else {
         return Err(ApiError::NotFound(format!("status card {id}")));
     };
@@ -410,30 +315,23 @@ async fn card_summary(
     Json(body): Json<SummaryBody>,
 ) -> ApiResult<Json<Value>> {
     // 校验 card 存在并取 company_id
-    let card: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM status_cards WHERE id = $1")
-        .bind(id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let Some((company_id,)) = card else {
-        return Err(ApiError::NotFound(format!("status card {id}")));
-    };
+    let repo = StatusCardRepo::new(&state.db);
+    let card_row = repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("status card {id}")))?;
+    let company_id = card_row.company_id;
     let body_len = body.body.chars().count();
-    let summary_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO status_card_updates             (card_id, kind, trigger, changes, model, status, finished_at, change_summary)          VALUES ($1, 'summary', 'manual', $2::jsonb, $3, 'completed', now(), $4)          RETURNING id",
-    )
-    .bind(id)
-    .bind(json!([{ "field": "summary", "op": "set", "value": body.body }]))
-    .bind(body.model.as_deref())
-    .bind(format!("manual summary ({body_len} chars)"))
-    .fetch_one(state.db.pool())
-    .await?;
+    let summary_id = repo
+        .insert_summary_update(
+            id,
+            &json!([{ "field": "summary", "op": "set", "value": body.body }]),
+            body.model.as_deref(),
+            &format!("manual summary ({body_len} chars)"),
+        )
+        .await?;
     // 更新 status_cards.last_generated_at
-    sqlx::query(
-        "UPDATE status_cards SET last_generated_at = now(), updated_at = now() WHERE id = $1",
-    )
-    .bind(id)
-    .execute(state.db.pool())
-    .await?;
+    repo.touch_last_generated(id).await?;
     // 发布 live event
     state.realtime.publish(
         pc_realtime::LiveEvent::new("status_card.summary.created", "status_card", id)
