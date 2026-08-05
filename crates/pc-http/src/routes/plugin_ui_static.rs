@@ -16,6 +16,7 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use crate::AppState;
+use pc_repos::plugin::PluginRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/_plugins/:plugin_id/ui/*path", get(plugin_ui_static))
@@ -28,14 +29,12 @@ async fn plugin_ui_static(
     // Resolve plugin metadata to discover its UI bucket + prefix.
     let plugin_uuid = Uuid::parse_str(&plugin_id).ok();
     let ui_block: Option<serde_json::Value> = if let Some(pid) = plugin_uuid {
-        sqlx::query_scalar(
-            "SELECT COALESCE(manifest->'ui', '{}'::jsonb) FROM plugins WHERE id = $1",
-        )
-        .bind(pid)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+        PluginRepo::new(&state.db)
+            .get_by_id(pid)
+            .await
+            .ok()
+            .flatten()
+            .map(|row| row.manifest_json.get("ui").cloned().unwrap_or(serde_json::json!({})))
     } else {
         None
     };
