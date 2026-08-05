@@ -4461,3 +4461,47 @@ Audit + Actions:
    - issue_activity / annotation_comment_route（可能跨模块）
 2. **tool_gateway / tool_access 的 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
 3. **继续扫描其他文件的 deprecated 模式**
+
+## 59. 第二百二十轮增量（Round 220 — issue_activity 真实实现）
+
+### 端口覆盖
+- 替换 1 个 R96 deprecated stub：
+  - `GET /api/issues/:id/activity`
+
+### 设计
+- 复用既有 `ActivityRepo::list_for_entity(company_id, "issue", &id, limit)`
+- entity_type='issue', entity_id=issue_id
+- 按 created_at DESC 排序
+- 支持 `?limit=` 查询参数，默认 100，clamp 到 [1, 500]
+- 响应 `{ items, issueId, total, limit }`
+
+### 新增 Helper
+- `activity_log_row_json`（issues.rs 本地简化版，与 activity.rs 同名函数保持一致）
+- `ActivityLimitQuery { limit: Option<i64> }`
+
+### Node 语义对齐
+- `activityService.forIssue(issueId)` 返回 activity_log WHERE `entityType='issue'` AND `entityId=issueId`
+- 完全一致
+
+### 测试
+- 12 个内联单元测试（1 个新增）：
+  - `activity_log_row_json_uses_camel_case_keys` 验证关键字段存在
+
+### 累计进展（R219+R220）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R219 | issues.rs | 修复3 | interaction list/create/delete 真实实现 |
+| R220 | issues.rs | 修复1 | issue_activity 通过 activity_log 实现 |
+
+### 综合状态（截至 R220）
+- 工作空间编译：`cargo check --workspace --lib` 0 errors
+- 1 个新单元测试（R220 单轮）
+- **R96 deprecated stub 已清理 11/12 个**
+- 累计端点覆盖率：~7 个真正剩余
+
+### 下一步高 ROI 工作
+1. **R96 最后一个 stub**：
+   - annotation_comment_route — 需要新增 issue_annotation_comments 或使用 document_annotation_comments
+2. **list/create_accepted_plan_decompositions** — 需要新增 issue_plan_decompositions repo
+3. **tool_gateway 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
