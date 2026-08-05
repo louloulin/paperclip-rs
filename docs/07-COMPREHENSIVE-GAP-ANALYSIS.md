@@ -1904,9 +1904,77 @@ issues.rs 32 → 27 SQL（-5）。仓储化 relations 子模块 4 个 run 生命
 - issues.rs SQL 数 32 → 27（-5，4 个 run lifecycle 端点合并到 HeartbeatRepo）
 - 累计 Round 95-137 修复 **148+4=152 个路由从 500 → 200**
 
-### 下一轮方向（Round 138+）
-issues.rs 还剩 27 SQL，主要在：
-- tree_holds 子模块（~15 SQL：list/create/get/preview/release，line 2885+）
+## 61. 第一百三十八轮增量（Round 138 — issues.rs tree_holds 子模块仓储化)
+
+### 目标
+issues.rs 27 → 23 SQL（-4）。仓储化 tree_holds 子模块 4 个路由：
+- `list_tree_holds` → `IssueTreeHoldRepo::list_by_root`
+- `get_tree_hold` → `IssueTreeHoldRepo::get_by_id`
+- `create_tree_hold` → `IssueTreeHoldRepo::create`
+- `release_tree_hold` → `IssueTreeHoldRepo::release`
+
+### 新建 `pc_repos::issue_tree_hold::IssueTreeHoldRepo`
+- `list_by_root(root_issue_id, status, limit) -> Vec<IssueTreeHoldRow>`
+  - WHERE root_issue_id + status，ORDER BY created_at DESC + LIMIT
+- `get_by_id(id, root_issue_id) -> Option<IssueTreeHoldDetailRow>`
+  - 双条件校验（id + root_issue_id），含 released_at
+- `create(NewIssueTreeHold) -> Uuid` — RETURNING id
+- `release(issue_id, hold_id) -> bool` — 幂等 UPDATE released_at = now()
+- `find_active_for_root(root_issue_id) -> Option<(Uuid, String)>` — 最新 active hold
+- `count_active(root_issue_id) -> i64`
+
+### 新增 DTO
+- `IssueTreeHoldRow { id, root_issue_id, mode, status, reason, release_policy, created_at, updated_at }`
+- `IssueTreeHoldDetailRow { id, root_issue_id, mode, status, reason, release_policy, released_at, created_at }`
+- `NewIssueTreeHold { company_id, root_issue_id, mode, reason, release_policy, created_by_user_id }`
+
+### 重构 `issues.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/issues/:id/tree-holds` | 1 SELECT company_id + 1 SELECT holds | 1 SELECT company_id + IssueTreeHoldRepo::list_by_root |
+| `GET /api/issues/:id/tree-holds/:hold_id` | 1 SELECT holds | IssueTreeHoldRepo::get_by_id |
+| `POST /api/issues/:id/tree-holds` | 1 SELECT company_id + 1 INSERT | 1 SELECT company_id + IssueTreeHoldRepo::create |
+| `POST /api/issues/:id/tree-holds/:hold_id/release` | 1 UPDATE | IssueTreeHoldRepo::release |
+
+### 设计要点
+- **`LIST_COLS` / `FULL_COLS` 双投影**：list 路径不需要 released_at（路由不展示），get 路径需要；分离常量避免 list 端点无谓读取。
+- **`create` 路由层校验 mode 枚举**：mode 取值 `pause / stop / throttle / isolate` 在路由层 `matches!` 校验；仓储层只接受非空字符串（业务规则下沉到路由，与 feedback_votes 一致）。
+- **`release` 双条件幂等**：`issue_id=$1 AND id=$2 AND released_at IS NULL`，重复 release 返回 false 而非 Err。
+- **`find_active_for_root` 复用**：preview_tree_control 端点需要查 active hold，原本 inline SELECT 现可委托仓储。
+
+### 新增集成测试 12 个 (`crates/pc-repos/tests/round138_issue_tree_holds_repo.rs`)
+**list_by_root (3 个)**
+1. `list_by_root_empty` — 空 issue 返回空
+2. `list_by_root_filters_by_status` — status 过滤
+3. `list_by_root_orders_by_created_desc` — 按 created_at DESC
+
+**get_by_id (2 个)**
+4. `get_by_id_returns_full` — 完整 hold 含 released_at
+5. `get_by_id_unknown_returns_none` — 不存在返回 None
+
+**create (2 个)**
+6. `create_inserts_active_hold` — status='active'
+7. `create_default_release_policy` — 默认 release_policy 空 jsonb
+
+**release (2 个)**
+8. `release_active_hold` — 释放 + released_at 更新
+9. `release_idempotent` — 重复 release 返回 false
+
+**find_active_for_root / count_active (3 个)**
+10. `find_active_for_root_returns_latest` — 返回最新 active hold
+11. `find_active_for_root_empty` — 无 hold 返回 None
+12. `count_active_tracks_holds` — 计数
+
+### 进度影响
+- 综合进度从 **≈ 98.6% → ≈ 98.8%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round138_*` 0 errors
+- 38 个 pc-repos 集成测试文件累计 261+12=273 test 函数
+- issues.rs SQL 数 27 → 23（-4，tree_holds 子模块 4 端点合并到 IssueTreeHoldRepo）
+- 累计 Round 95-138 修复 **152+4=156 个路由从 500 → 200**
+
+### 下一轮方向（Round 139+）
+issues.rs 还剩 23 SQL，主要在：
+- preview_tree_control 复合（3 SQL：company_id + heartbeat_runs count + active hold lookup，line 3029+）
 - diagnostics 子模块（~10 SQL：blockers/wakes/subtree，line 3086+）
 - 复合事务（start_issue_run 仍 1 SQL 查 issue.assignee_agent_id + heartbeat_runs）
 

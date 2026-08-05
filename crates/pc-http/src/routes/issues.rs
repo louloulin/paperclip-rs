@@ -19,6 +19,7 @@ use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::case::CaseRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -2673,10 +2674,7 @@ async fn release_tree_hold(
     State(state): State<AppState>,
     Path((id, hold_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE issue_tree_holds SET released_at=now()
-         WHERE issue_id=$1 AND id=$2 AND released_at IS NULL",
-    ).bind(id).bind(hold_id).execute(state.db.pool()).await?;
+    IssueTreeHoldRepo::new(&state.db).release(id, hold_id).await?;
     Ok(Json(json!({"released": true, "issueId": id, "holdId": hold_id})))
 }
 
@@ -2854,28 +2852,20 @@ async fn list_tree_holds(
         .flatten()
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     let status = q.status.as_deref().unwrap_or("active");
-    let rows: Vec<(Uuid, Uuid, String, String, Option<String>, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, root_issue_id, mode, status, reason, release_policy, created_at \
-         FROM issue_tree_holds WHERE root_issue_id = $1 AND status = $2 \
-         ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(issue_id)
-    .bind(status)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let repo = IssueTreeHoldRepo::new(&state.db);
+    let rows = repo.list_by_root(issue_id, status, 100).await.unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, root_issue_id, mode, status, reason, release_policy, created_at)| {
+        .map(|r| {
             json!({
-                "id": id,
+                "id": r.id,
                 "companyId": company_id,
-                "rootIssueId": root_issue_id,
-                "mode": mode,
-                "status": status,
-                "reason": reason,
-                "releasePolicy": release_policy,
-                "createdAt": created_at,
+                "rootIssueId": r.root_issue_id,
+                "mode": r.mode,
+                "status": r.status,
+                "reason": r.reason,
+                "releasePolicy": r.release_policy,
+                "createdAt": r.created_at,
             })
         })
         .collect();
@@ -2915,18 +2905,16 @@ async fn create_tree_hold(
         .flatten()
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     let user_id = crate::state::require_user_id(&state, &headers).await?;
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO issue_tree_holds (company_id, root_issue_id, mode, status, reason, release_policy, created_by_actor_type, created_by_user_id) \
-         VALUES ($1, $2, $3, 'active', $4, COALESCE($5, '{}'::jsonb), 'user', $6) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(issue_id)
-    .bind(&body.mode)
-    .bind(body.reason.as_deref())
-    .bind(body.release_policy.clone().unwrap_or_else(|| json!({})))
-    .bind(&user_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let id = IssueTreeHoldRepo::new(&state.db)
+        .create(&NewIssueTreeHold {
+            company_id,
+            root_issue_id: issue_id,
+            mode: &body.mode,
+            reason: body.reason.as_deref(),
+            release_policy: body.release_policy.clone().unwrap_or_else(|| json!({})),
+            created_by_user_id: &user_id,
+        })
+        .await?;
     state.realtime.publish(
         LiveEvent::new("issue_tree_hold.created", "issue_tree_hold", id)
             .with_company(company_id)
@@ -2950,21 +2938,14 @@ async fn get_tree_hold(
     State(state): State<AppState>,
     Path((issue_id, hold_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(
-        Uuid, Uuid, String, String, Option<String>, Value, Option<chrono::DateTime<chrono::Utc>>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    )> = sqlx::query_as(
-        "SELECT id, root_issue_id, mode, status, reason, release_policy, released_at, created_at \
-         FROM issue_tree_holds WHERE id = $1 AND root_issue_id = $2",
-    )
-    .bind(hold_id)
-    .bind(issue_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (id, root_issue_id, mode, status, reason, release_policy, released_at, created_at) = row
+    let row = IssueTreeHoldRepo::new(&state.db)
+        .get_by_id(hold_id, issue_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("tree hold {hold_id}")))?;
+    let (id, root_issue_id, mode, status, reason, release_policy, released_at, created_at) = (
+        row.id, row.root_issue_id, row.mode, row.status, row.reason, row.release_policy,
+        row.released_at, row.created_at,
+    );
     Ok(Json(json!({
         "id": id,
         "rootIssueId": root_issue_id,
