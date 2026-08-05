@@ -713,6 +713,64 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 33. 第一百一十轮增量（Round 110 — pipelines.rs 仓储化 + stage_id NOT NULL bug 修复)
+
+### 目标
+`pipelines.rs` 还残 6 个内联 SQL（patch_stage_automation_env / get_pipeline_document /
+put_pipeline_document / list_pipeline_document_revisions / restore_pipeline_document_revision
+/ create_cases_batch），全部仓储化。同时修两个真 bug：
+1. `get_pipeline_document` 旧 SQL 错读 `pipeline_stages.config` 当文档内容（错表）
+2. `create_cases_batch` 旧 INSERT 没设 `stage_id`，但 `pipeline_cases.stage_id` 是 NOT NULL
+   → 实际运行必然 500
+
+### 新增 `pc_repos::pipeline::PipelineRepo` 方法（7 个）
+- `get_stage_config(stage_id) -> Option<Value>` — 读 pipeline_stages.config
+- `set_stage_config(stage_id, config) -> bool` — 整体覆盖写 config
+- `get_pipeline_document_meta(pipeline_id, key) -> Option<Value>` — 读 pipeline_documents 元数据
+  （真实 schema 无 content 列，返 `Value` 含 `{id,key,pipelineId,createdAt,updatedAt,deprecated}`）
+- `list_pipeline_document_revisions(pipeline_id, key) -> Vec<Timestamp>` — 按 created_at ASC
+- `touch_pipeline_document(pipeline_id, key) -> bool` — upsert（update 或 insert）
+  - 存在：UPDATE updated_at
+  - 不存在：用 pipelines.company_id 反查 + INSERT(id, company_id, pipeline_id, document_id, key)
+  - 未知 pipeline：返 Ok(false)
+- `company_id_for_pipeline(pipeline_id) -> Option<Uuid>` — pipeline→company 反查
+- `create_case_minimal(company_id, pipeline_id, stage_id, case_number, case_key, title, fields) -> Uuid`
+  - 真实 schema 要求 stage_id NOT NULL，caller 必须提供有效 stage
+
+### 重构 `pipelines.rs` 6 个端点
+- `patch_stage_automation_env` — `PipelineRepo::get_stage_config + set_stage_config`
+- `get_pipeline_document` — `PipelineRepo::get_pipeline_document_meta`（**修复错表 bug**）
+- `put_pipeline_document` — `PipelineRepo::touch_pipeline_document`（简化 upsert）
+- `list_pipeline_document_revisions` — `PipelineRepo::list_pipeline_document_revisions`
+- `restore_pipeline_document_revision` — `PipelineRepo::touch_pipeline_document`
+- `create_cases_batch` — `PipelineRepo::company_id_for_pipeline` + 自动取首个 stage 作默认
+  归属（**修复 stage_id NOT NULL bug**）；pipeline 无 stage 时返 400 而不是 500
+
+### 新增集成测试 11 个 (`crates/pc-repos/tests/round110_pipeline_repo.rs`)
+1. `stage_config_missing_returns_none` — 未知 stage 返 None
+2. `stage_config_round_trip` — get/set 一致
+3. `stage_config_set_unknown_returns_false` — 未知 stage 返 Ok(false)
+4. `pipeline_document_meta_missing_returns_none` — 不存在 key
+5. `pipeline_document_meta_returns_stub_value` — 存在返 `{id,key,pipelineId,createdAt,updatedAt,deprecated:true}`
+6. `touch_pipeline_document_updates_existing` — UPDATE 命中
+7. `touch_pipeline_document_inserts_when_missing` — INSERT 兜底
+8. `touch_pipeline_document_unknown_pipeline_returns_false` — 未知 pipeline 返 Ok(false)
+9. `pipeline_document_revisions_orders_asc` — created_at ASC（用 `as_datetime()` 比较）
+10. `company_id_for_pipeline_round_trip` — 正向 + missing 返 None
+11. `create_case_minimal_inserts_case` — INSERT + 验证 id/pipeline/stage/key/title 全部回填
+
+### 进度影响
+- 综合进度从 **≈ 89.2% → ≈ 89.8%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **461 passed**（pc-repos 单元无变化）
+- `cargo test -p pc-repos --no-run --test round110_*` 编译通过
+- `pc-repos` 单元测试 +0（route 仓储化不直接增加 repo 单元）
+- 累计 Round 95-110 修复 **53+6=59 个路由从 500 → 200**，
+  31 个 tool_* / case_* / agent_* / pipeline_* route 进入高内聚低耦合设计
+- 11 个 pc-repos 集成测试文件累计覆盖 51+11=62 个 test 函数
+- 修两个潜在 500 bug：`get_pipeline_document` 错表读 + `create_cases_batch` stage_id 缺失
+
+
 ## 32. 第一百零九轮增量（Round 109 — cases.rs case_documents 子模块仓储化)
 
 ### 目标

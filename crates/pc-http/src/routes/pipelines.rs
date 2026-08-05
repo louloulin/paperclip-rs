@@ -611,27 +611,24 @@ struct StageAutomationEnvBody {
     automation_env: Option<serde_json::Value>,
 }
 
+// Round 110: 仓储化。PipelineRepo::get_stage_config + set_stage_config。
 async fn patch_stage_automation_env(
     State(state): State<AppState>,
     Path((_id, stage_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<StageAutomationEnvBody>,
 ) -> ApiResult<Json<Value>> {
     let env = body.automation_env.unwrap_or_else(|| serde_json::json!({}));
-    // Read existing config, merge automation_env in
-    let row: Option<(serde_json::Value,)> = sqlx::query_as(
-        "SELECT config FROM pipeline_stages WHERE id=$1",
-    ).bind(stage_id).fetch_optional(state.db.pool()).await?;
-    let existing = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
+    let repo = PipelineRepo::new(&state.db);
+    let existing = repo.get_stage_config(stage_id).await?
+        .unwrap_or_else(|| serde_json::json!({}));
     let mut new_cfg = existing.clone();
     if let Some(obj) = new_cfg.as_object_mut() {
         obj.insert("automation_env".into(), env.clone());
     } else {
         new_cfg = serde_json::json!({"automation_env": env});
     }
-    let r = sqlx::query(
-        "UPDATE pipeline_stages SET config=$1, updated_at=now() WHERE id=$2",
-    ).bind(&new_cfg).bind(stage_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = repo.set_stage_config(stage_id, &new_cfg).await?;
+    if !ok {
         return Err(ApiError::NotFound(format!("stage {stage_id}")));
     }
     state.realtime.publish(
@@ -655,29 +652,42 @@ struct BatchCaseBody {
     cases: Vec<BatchCaseItem>,
 }
 
+// Round 110: 仓储化。PipelineRepo::company_id_for_pipeline() 反查 + per-item INSERT 用 Repo.create_case。
 async fn create_cases_batch(
     State(state): State<AppState>,
     Path(pipeline_id): Path<Uuid>,
     Json(body): Json<BatchCaseBody>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM pipelines WHERE id=$1",
-    ).bind(pipeline_id).fetch_optional(state.db.pool()).await?;
-    let company_id = row.map(|(c,)| c).ok_or_else(|| ApiError::NotFound(format!("pipeline {pipeline_id}")))?;
+    let repo = PipelineRepo::new(&state.db);
+    let company_id = repo
+        .company_id_for_pipeline(pipeline_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("pipeline {pipeline_id}")))?;
     let items = body.cases;
     let mut created: Vec<Value> = Vec::with_capacity(items.len());
+    // Round 110 警告：pipeline_cases.stage_id 是 NOT NULL 但这里批量创建没有 stage；
+    // 我们用 PipelineRepo::list_stages 拿第一个 stage 作为默认归属，
+    // 如果 pipeline 没有任何 stage 则跳过（避免 NOT NULL 违规）。
+    let default_stage = repo
+        .list_stages(pipeline_id)
+        .await?
+        .first()
+        .map(|s| s.id);
     let mut i: i32 = 0;
     for item in items {
         i += 1;
-        let id: Uuid = Uuid::new_v4();
         let key = item.key.unwrap_or_else(|| format!("case_{i}"));
         let title = item.title.unwrap_or_else(|| key.clone());
         let fields = item.fields.unwrap_or_else(|| serde_json::json!({}));
-        sqlx::query(
-            "INSERT INTO pipeline_cases (id, company_id, pipeline_id, case_number, case_key, title, fields, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft')",
-        ).bind(id).bind(company_id).bind(pipeline_id).bind(i).bind(&key).bind(&title).bind(&fields)
-        .execute(state.db.pool()).await?;
+        let id = if let Some(stage_id) = default_stage {
+            repo.create_case_minimal(company_id, pipeline_id, stage_id, i, &key, &title, &fields)
+                .await?
+        } else {
+            return Err(ApiError::BadRequest(format!(
+                "pipeline {} has no stages; cannot auto-assign stage_id (NOT NULL)",
+                pipeline_id
+            )));
+        };
         created.push(serde_json::json!({"id": id, "key": key, "title": title}));
     }
     state.realtime.publish(
@@ -687,16 +697,17 @@ async fn create_cases_batch(
     Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "created": created, "count": created.len()})))
 }
 
+// Round 110: 仓储化。PipelineRepo::get_pipeline_document_meta。
+// 修复原 SQL 错表 bug（旧版用 `pipeline_stages.config` 当文档内容）。
 async fn get_pipeline_document(
     State(state): State<AppState>,
     Path((pipeline_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(serde_json::Value,)> = sqlx::query_as(
-        "SELECT config FROM pipeline_stages
-         WHERE pipeline_id=$1 AND key=$2",
-    ).bind(pipeline_id).bind(&key)
-    .fetch_optional(state.db.pool()).await?;
-    let doc = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
+    let repo = PipelineRepo::new(&state.db);
+    let doc = repo
+        .get_pipeline_document_meta(pipeline_id, &key)
+        .await?
+        .unwrap_or_else(|| serde_json::json!({}));
     Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "key": key, "document": doc})))
 }
 
@@ -706,25 +717,18 @@ struct PutPipelineDocumentBody {
     content: Option<serde_json::Value>,
 }
 
+// Round 110: 仓储化。PipelineRepo::touch_pipeline_document。
+// 真实 schema 无 content 列，key upsert 仅更新 updated_at 或 insert。
 async fn put_pipeline_document(
     State(state): State<AppState>,
     Path((pipeline_id, key)): Path<(Uuid, String)>,
     Json(body): Json<PutPipelineDocumentBody>,
 ) -> ApiResult<Json<Value>> {
     let content = body.content.unwrap_or_else(|| serde_json::json!({}));
-    // upsert in pipeline_stages.config (per-key)
-    let exists: Option<(bool,)> = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM pipeline_documents WHERE pipeline_id=$1 AND key=$2)",
-    ).bind(pipeline_id).bind(&key).fetch_optional(state.db.pool()).await?;
-    if exists.map(|(b,)| b).unwrap_or(false) {
-        sqlx::query(
-            "UPDATE pipeline_documents SET updated_at=now() WHERE pipeline_id=$1 AND key=$2",
-        ).bind(pipeline_id).bind(&key).execute(state.db.pool()).await?;
-    } else {
-        sqlx::query(
-            "INSERT INTO pipeline_documents (id, company_id, pipeline_id, document_id, key)
-             SELECT gen_random_uuid(), company_id, $1, gen_random_uuid(), $2 FROM pipelines WHERE id=$1",
-        ).bind(pipeline_id).bind(&key).execute(state.db.pool()).await?;
+    let repo = PipelineRepo::new(&state.db);
+    let ok = repo.touch_pipeline_document(pipeline_id, &key).await?;
+    if !ok {
+        return Err(ApiError::NotFound(format!("pipeline {pipeline_id}")));
     }
     state.realtime.publish(
         LiveEvent::new("pipeline.document_upserted", "pipeline", pipeline_id)
@@ -733,26 +737,31 @@ async fn put_pipeline_document(
     Ok(Json(serde_json::json!({"saved": true, "pipelineId": pipeline_id, "key": key, "content": content})))
 }
 
+// Round 110: 仓储化。PipelineRepo::list_pipeline_document_revisions。
 async fn list_pipeline_document_revisions(
     State(state): State<AppState>,
     Path((pipeline_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    // Document revisions are stored in document_revisions table when document_id is known.
-    // For pipeline_documents we just list the audit log by key.
-    let rows: Vec<(chrono::DateTime<chrono::Utc>,)> = sqlx::query_as(
-        "SELECT created_at FROM pipeline_documents WHERE pipeline_id=$1 AND key=$2 ORDER BY created_at",
-    ).bind(pipeline_id).bind(&key).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(ts,)| serde_json::json!({"createdAt": ts})).collect();
+    let repo = PipelineRepo::new(&state.db);
+    let timestamps = repo.list_pipeline_document_revisions(pipeline_id, &key).await?;
+    let items: Vec<Value> = timestamps
+        .into_iter()
+        .map(|ts| serde_json::json!({"createdAt": ts}))
+        .collect();
     Ok(Json(serde_json::json!({"items": items, "pipelineId": pipeline_id, "key": key})))
 }
 
+// Round 110: 仓储化。PipelineRepo::touch_pipeline_document（仅触发 updated_at 刷新）。
+// 真实 schema 没有 content 列；revision_restore 是 stub 行为。
 async fn restore_pipeline_document_revision(
     State(state): State<AppState>,
     Path((pipeline_id, key, _revision_id)): Path<(Uuid, String, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE pipeline_documents SET updated_at=now() WHERE pipeline_id=$1 AND key=$2",
-    ).bind(pipeline_id).bind(&key).execute(state.db.pool()).await.ok();
+    let repo = PipelineRepo::new(&state.db);
+    let ok = repo.touch_pipeline_document(pipeline_id, &key).await?;
+    if !ok {
+        return Err(ApiError::NotFound(format!("pipeline_document {}/{}", pipeline_id, key)));
+    }
     state.realtime.publish(
         LiveEvent::new("pipeline.document_revision_restored", "pipeline", pipeline_id)
             .with_data(serde_json::json!({"key": key})),

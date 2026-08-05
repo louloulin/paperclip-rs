@@ -1,6 +1,7 @@
 //! `pipeline` 域。
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -612,4 +613,153 @@ impl<'a> PipelineRepo<'a> {
         .fetch_optional(self.db.pool())
         .await
     }
+
+/// Round 110: 最小化 INSERT pipeline_cases 用于批量创建。
+    /// 真实 schema 要求 stage_id NOT NULL，所以 caller 必须提供。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_case_minimal(
+        &self,
+        company_id: Uuid,
+        pipeline_id: Uuid,
+        stage_id: Uuid,
+        case_number: i32,
+        case_key: &str,
+        title: &str,
+        fields: &Value,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO pipeline_cases                 (company_id, pipeline_id, stage_id, case_number, case_key, title, fields, status)              VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft') RETURNING id",
+        )
+        .bind(company_id)
+        .bind(pipeline_id)
+        .bind(stage_id)
+        .bind(case_number)
+        .bind(case_key)
+        .bind(title)
+        .bind(fields)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    // ---- Round 110 仓储化补丁 ----
+
+    /// Round 110: 读 pipeline_stage.config (jsonb) 用于合并更新 automation_env。
+    pub async fn get_stage_config(
+        &self,
+        stage_id: Uuid,
+    ) -> sqlx::Result<Option<Value>> {
+        let row: Option<(Value,)> = sqlx::query_as(
+            "SELECT config FROM pipeline_stages WHERE id=$1",
+        )
+        .bind(stage_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// Round 110: 写 pipeline_stage.config (整体覆盖)。
+    /// 返回受影响行数（0 = 找不到 stage）。
+    pub async fn set_stage_config(
+        &self,
+        stage_id: Uuid,
+        config: &Value,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE pipeline_stages SET config=$1, updated_at=now() WHERE id=$2",
+        )
+        .bind(config)
+        .bind(stage_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 110: 读 pipeline_documents 单行元数据（get_pipeline_document 用）。
+    /// 真实 schema 没有 content 列，响应里 `deprecated` 段说明这是 stub。
+    pub async fn get_pipeline_document_meta(
+        &self,
+        pipeline_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<Option<Value>> {
+        let row: Option<(Uuid, String, Timestamp, Timestamp)> = sqlx::query_as(
+            "SELECT id, key, created_at, updated_at              FROM pipeline_documents              WHERE pipeline_id=$1 AND key=$2",
+        )
+        .bind(pipeline_id)
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id, k, c, u)| {
+            serde_json::json!({
+                "id": id,
+                "key": k,
+                "pipelineId": pipeline_id,
+                "createdAt": c,
+                "updatedAt": u,
+                "deprecated": true,
+            })
+        }))
+    }
+
+    /// Round 110: 列出 pipeline_documents 行的 created_at 历史（list_pipeline_document_revisions 用）。
+    pub async fn list_pipeline_document_revisions(
+        &self,
+        pipeline_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<Vec<Timestamp>> {
+        let rows: Vec<(Timestamp,)> = sqlx::query_as(
+            "SELECT created_at FROM pipeline_documents              WHERE pipeline_id=$1 AND key=$2 ORDER BY created_at",
+        )
+        .bind(pipeline_id)
+        .bind(key)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().map(|(t,)| t).collect())
+    }
+
+    /// Round 110: 写一个 pipeline_documents (key upsert)，不存在时插入。
+    /// 真实 schema 缺 content 列，所以这只是为了更新 updated_at + 满足 FK。
+    pub async fn touch_pipeline_document(
+        &self,
+        pipeline_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE pipeline_documents SET updated_at=now() WHERE pipeline_id=$1 AND key=$2",
+        )
+        .bind(pipeline_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            return Ok(true);
+        }
+        // 不存在：用 pipelines.company_id 反查 INSERT
+        let inserted = sqlx::query(
+            "INSERT INTO pipeline_documents (id, company_id, pipeline_id, document_id, key)              SELECT gen_random_uuid(), company_id, $1, gen_random_uuid(), $2 FROM pipelines WHERE id=$1",
+        )
+        .bind(pipeline_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(inserted > 0)
+    }
+
+    /// Round 110: pipeline 反查 company_id（generate_cases_batch 用）。
+    pub async fn company_id_for_pipeline(
+        &self,
+        pipeline_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM pipelines WHERE id=$1",
+        )
+        .bind(pipeline_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
 }
