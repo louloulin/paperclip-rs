@@ -4231,3 +4231,68 @@ Audit + Actions:
 1. **继续扫描剩余 Node 路由**（如 Node 端特有的某些子路径）
 2. **issues 子路径聚合**（如 issues/search 增强）
 3. **inbox 子路径聚合**（companies/:id/inbox/stream 之类）
+
+## 55. 第二百一十六轮增量（Round 216 — interaction cancel/withdraw 真实实现）
+
+### 端口覆盖
+- 修复 2 个端口（替换 R96 deprecated stub）：
+  - `POST /api/issues/:id/interactions/:interaction_id/cancel`
+  - `POST /api/issues/:id/interactions/:interaction_id/withdraw`
+
+### 设计
+- 共享解析器 `resolve_interaction_status(state, issue_id, interaction_id, new_status, reason, activity_kind)`：
+  1. 加载 issue 验证存在
+  2. 加载 interaction 验证 issue_id 一致（防跨 issue 引用）
+  3. 调用 `IssueRepo::resolve_interaction` 写入终态
+  4. 通过 `state.activity` 记录活动事件（best-effort）
+  5. 返回精简 JSON
+- 共享 `InteractionResolveBody { reason: Option<String> }`
+- `parse_activity_kind(s) -> ActivityKind`：统一映射为 `Other`
+  （枚举未含 thread_interaction 变体，具体 kind 通过 payload 保留）
+
+### 仓储复用
+- `IssueRepo::resolve_interaction(id, new_status, result, resolved_by_user_id)`
+- 已支持 status 集合：accepted / rejected / cancelled / withdrawn / responded
+- 不引入新仓储方法，最小改动
+
+### Node 语义对齐
+- **cancel**：系统侧取消整个 thread / request
+- **withdraw**：agent 侧撤回之前发出的请求
+- 两者仓储层面都通过 status 字段写入，区别在调用方语义
+- Node `f6ab82d4` 同时引入 `withdraw`（之前只有 `cancel`）
+- 本次同时实现两者，避免出现不对称缺口
+
+### 响应结构
+```json
+{
+  "id": "...",
+  "issueId": "...",
+  "kind": "approval | ask_user_questions | ...",
+  "status": "cancelled | withdrawn",
+  "result": { "reason": "..." } | null,
+  "resolvedAt": "...",
+  "updatedAt": "..."
+}
+```
+
+### 测试
+- 内联单元测试 `round216_tests`（4 个 case）：
+  - parse_activity_kind 映射 → ActivityKind::Other
+  - InteractionResolveBody 接受空对象 / reason 字符串 / null
+
+### 累计进展（R216）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R216 | issues.rs | 修复2 | 真实实现 cancel/withdraw，替换 R96 deprecated stub |
+
+### 综合状态（截至 R216）
+- 工作空间编译：`cargo check --workspace --lib` 0 errors
+- 4 个新单元测试 case（R216 单轮）
+- 累计端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~7 个** 真正剩余
+- 修复 2 个隐藏缺口（自 R96 起一直返回 stub 的处理器）
+
+### 下一步高 ROI 工作
+1. **继续实现 accept/reject/respond/verdict interaction**（同样的 R96 stub pattern）
+2. **寻找新的真实缺口**（检查每个路由文件的 stub 模式）
+3. **继续扫描 Node 端未同步的特性**（commit log diff）

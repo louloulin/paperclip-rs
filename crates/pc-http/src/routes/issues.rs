@@ -9,7 +9,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -2810,6 +2810,64 @@ struct InteractionResolveBody {
     reason: Option<String>,
 }
 
+/// Round 217: accept 专用 body（含向后兼容字段）。
+///
+/// Node `acceptIssueThreadInteractionSchema`：
+/// - selectedClientKeys?: string[]
+/// - selectedOptionIds?: string[]
+///
+/// `reason` 保留为可选 — 旧 stub (R96) 用的是 InteractionDecisionBody，
+/// 保留 reason 字段避免破坏可能存在的客户端调用。
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct AcceptInteractionBody {
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    selected_client_keys: Option<Vec<String>>,
+    #[serde(default)]
+    selected_option_ids: Option<Vec<String>>,
+}
+
+/// Round 217: respond body。
+///
+/// Node `respondIssueThreadInteractionSchema`：
+/// - answers: array (1..20)
+/// - summaryMarkdown?: string | null
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct RespondInteractionBody {
+    #[serde(default)]
+    answers: Vec<serde_json::Value>,
+    #[serde(default)]
+    summary_markdown: Option<String>,
+}
+
+/// Round 217: verdicts body。
+///
+/// Node `submitIssueThreadInteractionVerdictsSchema`：
+/// - verdicts: array of { id, verdict, reason? }
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+struct VerdictInteractionBody {
+    #[serde(default)]
+    verdicts: Vec<VerdictEntry>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct VerdictEntry {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    verdict: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct InteractionDecisionBody {
     #[serde(default)]
@@ -2890,6 +2948,79 @@ async fn resolve_interaction_status(
     })))
 }
 
+/// Round 217: resolve_interaction_status 的扩展版本，支持传入自定义 result JSON。
+///
+/// 适用场景：accept / respond / verdicts 需要把请求字段
+/// (selectedClientKeys, answers, verdicts) 写入 result 列。
+async fn resolve_interaction_status_with_payload(
+    state: &AppState,
+    issue_id: Uuid,
+    interaction_id: Uuid,
+    new_status: &str,
+    reason: Option<&str>,
+    mut result_payload: serde_json::Value,
+    activity_kind: &str,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(issue_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+
+    let interaction = IssueRepo::new(&state.db)
+        .get_interaction(interaction_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("interaction {interaction_id}")))?;
+    if interaction.issue_id != issue_id {
+        return Err(ApiError::BadRequest(
+            "interaction does not belong to issue".into(),
+        ));
+    }
+
+    // Merge reason into payload if provided
+    if let Some(r) = reason {
+        if let serde_json::Value::Object(ref mut map) = result_payload {
+            map.insert("reason".to_string(), serde_json::Value::String(r.to_string()));
+        }
+    }
+
+    let updated = IssueRepo::new(&state.db)
+        .resolve_interaction(
+            interaction_id,
+            new_status,
+            Some(&result_payload),
+            None,
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("interaction {interaction_id}")))?;
+
+    let event = ActivityEvent::new(
+        parse_activity_kind(activity_kind),
+        ActivityActor::System {
+            component: "paperclip-api".into(),
+        },
+        "issue_thread_interaction",
+        interaction_id,
+    )
+    .with_company(issue.company_id)
+    .with_payload(serde_json::json!({
+        "issueId": issue_id,
+        "interactionKind": interaction.kind,
+        "newStatus": new_status,
+        "reason": reason,
+    }));
+    let _ = state.activity.emit(event).await;
+
+    Ok(Json(serde_json::json!({
+        "id": updated.id,
+        "issueId": updated.issue_id,
+        "kind": updated.kind,
+        "status": updated.status,
+        "result": updated.result,
+        "resolvedAt": updated.resolved_at,
+        "updatedAt": updated.updated_at,
+    })))
+}
+
 /// Round 216: 将字符串映射为活动 kind。
 /// 当前 ActivityKind 枚举没有 thread_interaction 相关变体，统一映射为 Other。
 /// payload 中保留具体 kind 字符串，便于上层过滤。
@@ -2897,16 +3028,32 @@ fn parse_activity_kind(_s: &str) -> ActivityKind {
     ActivityKind::Other
 }
 
+/// Round 217: POST /api/issues/:id/interactions/:interaction_id/accept
+///
+/// 与 Node `acceptIssueThreadInteraction` 对齐。
+/// Body: `{ selectedClientKeys?, selectedOptionIds? }` (Node schema 完全 1:1)
+///
+/// 仓储层面通过 `resolve_interaction(status="accepted")` 完成
+/// payload (selectedClientKeys/selectedOptionIds) 写入 result JSON。
 async fn accept_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
-    Json(body): Json<InteractionDecisionBody>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"status": "accepted", "deprecated": true})))
-}}
+    Json(body): Json<AcceptInteractionBody>,
+) -> ApiResult<Json<Value>> {
+    resolve_interaction_status_with_payload(
+        &state,
+        id,
+        iid,
+        "accepted",
+        body.reason.as_deref(),
+        serde_json::json!({
+            "selectedClientKeys": body.selected_client_keys,
+            "selectedOptionIds": body.selected_option_ids,
+        }),
+        "issue.thread_interaction_accepted",
+    )
+    .await
+}
 
 /// Round 216: POST /api/issues/:id/interactions/:interaction_id/cancel
 ///
@@ -2928,43 +3075,76 @@ async fn cancel_interaction(
     .await
 }
 
+/// Round 217: POST /api/issues/:id/interactions/:interaction_id/reject
+///
+/// 与 Node `rejectIssueThreadInteraction` 对齐。
+/// Body: `{ reason?: string }`
 async fn reject_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
-    Json(body): Json<InteractionDecisionBody>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"status": "rejected", "deprecated": true})))
-}}
-
-#[derive(Debug, Deserialize, Default)]
-struct RespondInteractionBody {
-    body: String,
+    Json(body): Json<InteractionResolveBody>,
+) -> ApiResult<Json<Value>> {
+    resolve_interaction_status(
+        &state,
+        id,
+        iid,
+        "rejected",
+        body.reason.as_deref(),
+        "issue.thread_interaction_rejected",
+    )
+    .await
 }
 
+/// Round 217: POST /api/issues/:id/interactions/:interaction_id/respond
+///
+/// 与 Node `respondIssueThreadInteraction` 对齐。
+/// Body: `{ answers: [...], summaryMarkdown?: string }`
+///
+/// answers 通过 payload 写入 result JSON。
 async fn respond_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
     Json(body): Json<RespondInteractionBody>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
-}}
+) -> ApiResult<Json<Value>> {
+    let result_json = serde_json::json!({
+        "answers": body.answers,
+        "summaryMarkdown": body.summary_markdown,
+    });
+    resolve_interaction_status_with_payload(
+        &state,
+        id,
+        iid,
+        "responded",
+        None,
+        result_json,
+        "issue.thread_interaction_responded",
+    )
+    .await
+}
 
+/// Round 217: POST /api/issues/:id/interactions/:interaction_id/verdicts
+///
+/// 与 Node `submitIssueThreadInteractionVerdicts` 对齐。
+/// Body: `{ verdicts: [{ id, verdict, reason? }] }`
+///
+/// verdicts 通过 payload 写入 result JSON。
 async fn verdict_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
-    Json(body): Json<InteractionDecisionBody>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
-}}
+    Json(body): Json<VerdictInteractionBody>,
+) -> ApiResult<Json<Value>> {
+    let result_json = serde_json::json!({ "verdicts": body.verdicts });
+    resolve_interaction_status_with_payload(
+        &state,
+        id,
+        iid,
+        "responded",
+        None,
+        result_json,
+        "issue.thread_interaction_verdicts",
+    )
+    .await
+}
 
 /// Round 216: POST /api/issues/:id/interactions/:interaction_id/withdraw
 ///
@@ -3306,7 +3486,10 @@ mod round216_tests {
     //!
     //! `parse_activity_kind` 是纯函数 — 容易单测。
     //! `InteractionResolveBody` 是 serde 结构 — 验证字段解析。
-    use super::{parse_activity_kind, InteractionResolveBody};
+    use super::{
+        parse_activity_kind, AcceptInteractionBody, InteractionResolveBody,
+        RespondInteractionBody, VerdictEntry, VerdictInteractionBody,
+    };
     use pc_activity::kinds::ActivityKind;
 
     #[test]
@@ -3342,5 +3525,70 @@ mod round216_tests {
         let body: InteractionResolveBody = serde_json::from_str(r#"{"reason": null}"#)
             .expect("parse null");
         assert!(body.reason.is_none());
+    }
+
+    // ── R217 新 body 类型测试 ──
+
+    #[test]
+    fn accept_body_parses_selected_keys_and_options() {
+        let body: AcceptInteractionBody = serde_json::from_str(
+            r#"{"selectedClientKeys":["k1","k2"],"selectedOptionIds":["o1"]}"#,
+        )
+        .expect("parse");
+        assert_eq!(
+            body.selected_client_keys.as_deref(),
+            Some(&["k1".to_string(), "k2".to_string()][..])
+        );
+        assert_eq!(
+            body.selected_option_ids.as_deref(),
+            Some(&["o1".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn accept_body_empty_object() {
+        let body: AcceptInteractionBody = serde_json::from_str("{}").expect("parse");
+        assert!(body.selected_client_keys.is_none());
+        assert!(body.selected_option_ids.is_none());
+        assert!(body.reason.is_none());
+    }
+
+    #[test]
+    fn respond_body_parses_answers_and_summary() {
+        let body: RespondInteractionBody = serde_json::from_str(
+            r#"{"answers":[{"id":"q1","value":"a"}],"summaryMarkdown":"thanks"}"#,
+        )
+        .expect("parse");
+        assert_eq!(body.answers.len(), 1);
+        assert_eq!(body.summary_markdown.as_deref(), Some("thanks"));
+    }
+
+    #[test]
+    fn respond_body_summary_markdown_optional() {
+        let body: RespondInteractionBody =
+            serde_json::from_str(r#"{"answers":[]}"#).expect("parse");
+        assert_eq!(body.answers.len(), 0);
+        assert!(body.summary_markdown.is_none());
+    }
+
+    #[test]
+    fn verdict_body_parses_entries() {
+        let body: VerdictInteractionBody = serde_json::from_str(
+            r#"{"verdicts":[{"id":"v1","verdict":"approve","reason":"ok"}]}"#,
+        )
+        .expect("parse");
+        assert_eq!(body.verdicts.len(), 1);
+        assert_eq!(body.verdicts[0].id, "v1");
+        assert_eq!(body.verdicts[0].verdict, "approve");
+        assert_eq!(body.verdicts[0].reason.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn verdict_body_reason_optional() {
+        let body: VerdictInteractionBody = serde_json::from_str(
+            r#"{"verdicts":[{"id":"v1","verdict":"reject"}]}"#,
+        )
+        .expect("parse");
+        assert!(body.verdicts[0].reason.is_none());
     }
 }
