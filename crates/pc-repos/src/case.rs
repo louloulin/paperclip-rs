@@ -885,6 +885,17 @@ impl<'a> CaseRepo<'a> {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Round 174: 实例统计用 —— 统计某公司的 case 数。
+    pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM cases WHERE company_id=$1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(n)
+    }
+
     pub async fn list_issue_links(
         &self,
         company_id: Uuid,

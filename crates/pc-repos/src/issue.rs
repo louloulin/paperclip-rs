@@ -521,6 +521,17 @@ impl<'a> IssueRepo<'a> {
         Ok(count)
     }
 
+    /// Round 174: 实例统计用 —— 统计某公司"未隐藏"的 issue 数（hidden_at IS NULL）。
+    pub async fn count_visible_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM issues WHERE company_id=$1 AND hidden_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(count)
+    }
+
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");
         sqlx::query_as::<_, IssueRow>(&sql)

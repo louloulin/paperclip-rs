@@ -429,6 +429,15 @@ impl<'a> CompanyRepo<'a> {
         .await?;
         Ok(row.map(|(b,)| b))
     }
+    /// Round 174: 实例统计用 —— 列出所有 company_id（按 created_at 升序，与 /api/stats 行为一致）。
+    pub async fn list_ids(&self) -> sqlx::Result<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM companies ORDER BY created_at")
+                .fetch_all(self.db.pool())
+                .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
 }
 
 #[cfg(test)]

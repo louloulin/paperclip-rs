@@ -6,6 +6,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use pc_repos::agent::AgentRepo;
+use pc_repos::case::CaseRepo;
+use pc_repos::company::CompanyRepo;
+use pc_repos::company_member::CompanyMemberRepo;
+use pc_repos::issue::IssueRepo;
 use pc_repos::settings::{InstanceSetting, SettingsRepo};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -120,30 +125,30 @@ async fn get_instance_stats(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let companies: Vec<(Uuid,)> = sqlx::query_as("SELECT id FROM companies ORDER BY created_at")
-        .fetch_all(state.db.pool())
+    let company_ids = CompanyRepo::new(&state.db)
+        .list_ids()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let agents_repo = AgentRepo::new(&state.db);
+    let issues_repo = IssueRepo::new(&state.db);
+    let cases_repo = CaseRepo::new(&state.db);
+    let members_repo = CompanyMemberRepo::new(&state.db);
     let mut out = serde_json::Map::new();
-    for (company_id,) in companies {
-        let agents: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM agents WHERE company_id=$1")
-            .bind(company_id)
-            .fetch_one(state.db.pool())
+    for company_id in company_ids {
+        let agents = agents_repo
+            .count_for_company(company_id)
             .await
             .unwrap_or(0);
-        let issues: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM issues WHERE company_id=$1 AND hidden_at IS NULL")
-            .bind(company_id)
-            .fetch_one(state.db.pool())
+        let issues = issues_repo
+            .count_visible_for_company(company_id)
             .await
             .unwrap_or(0);
-        let cases: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM cases WHERE company_id=$1")
-            .bind(company_id)
-            .fetch_one(state.db.pool())
+        let cases = cases_repo
+            .count_for_company(company_id)
             .await
             .unwrap_or(0);
-        let users: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM company_memberships WHERE company_id=$1")
-            .bind(company_id)
-            .fetch_one(state.db.pool())
+        let users = members_repo
+            .count_for_company(company_id)
             .await
             .unwrap_or(0);
         out.insert(company_id.to_string(), json!({

@@ -1142,6 +1142,18 @@ impl<'a> AgentRepo<'a> {
             .await
     }
 
+
+    /// Round 174: 实例统计用 —— 统计某公司的 agent 数。
+    pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM agents WHERE company_id=$1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(n)
+    }
+
     pub async fn list_wakeup_requests(
         &self,
         company_id: Uuid,

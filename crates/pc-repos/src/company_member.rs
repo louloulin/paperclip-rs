@@ -282,6 +282,17 @@ impl<'a> CompanyMemberRepo<'a> {
         Ok(n)
     }
 
+    /// Round 174: 实例统计用 —— 统计某公司的 membership 总数（与 Node /api/stats 的语义一致：不带 status 过滤）。
+    pub async fn count_for_company(&self, company_id: Uuid) -> RepoResult<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM company_memberships WHERE company_id=$1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(n)
+    }
+
     /// Round 140: 列出某用户所有所属公司 id（含 archived/active）。供 profile 端点用。
     pub async fn list_company_ids_for_user(&self, user_id: &str) -> RepoResult<Vec<Uuid>> {
         let rows: Vec<(Uuid,)> = sqlx::query_as(
