@@ -3990,3 +3990,116 @@ Audit + Actions:
 1. **companies/:id/skill-policy/audit** — 策略变更历史
 2. **companies/:id/diagnostics** 聚合 — 跨 issue/run/agent 健康度
 3. **continue Round R211+**：寻找新的有意义 endpoint 添加
+
+## 50. 第二百一十一轮增量（Round 211 — companies/:id/diagnostics 聚合端口）
+
+### 端口覆盖
+- 新增 1 个端口：
+  - `GET /api/companies/:company_id/diagnostics`
+
+### 设计
+- 跨三个领域聚合状态细分（既有仓储方法组合）：
+  - `IssueRepo::status_breakdown_visible` -> `{blocked, in_progress, needs_review}`
+  - `AgentRepo::status_breakdown` -> `{error, running, paused}`
+  - `HeartbeatRepo::status_breakdown` -> `{failed_recent_24h, active}`
+- 计算 `health_score` (0-100) 纯函数：
+  - 无 active heartbeat 直接 100
+  - 起始 100；扣分项 `failed_recent×5 + agent_error×2 + issue_blocked×1`
+  - `saturating_sub` + clamp `[0, 100]`
+- 抽出 `compute_health_score` 纯函数，便于路由 + 单元测试
+
+### 响应结构
+```json
+{
+  "companyId": "...",
+  "issues": {"blocked": N, "inProgress": N, "needsReview": N},
+  "agents": {"error": N, "running": N, "paused": N},
+  "heartbeat": {"failedRecent24h": N, "active": N},
+  "healthScore": 0-100
+}
+```
+
+### 测试
+- 内联单元测试（`companies.rs`）：`compute_health_score_*` 共 3 个 case
+
+## 51. 第二百一十二轮增量（Round 212 — cost-events list 端口化）
+
+### 端口覆盖
+- 新增 1 个端口：
+  - `GET /api/companies/:company_id/cost-events`（与 POST 同一 path）
+
+### 仓储层新增
+- `CostEventRow` 结构体（14 字段，drizzle schema 1:1）：
+  `id, company_id, agent_id, issue_id, project_id, goal_id, billing_code, provider, model, input_tokens, output_tokens, cost_cents, occurred_at, created_at`
+- `CostRepo::list_cost_events(company_id, limit) -> Vec<CostEventRow>`
+  - `ORDER BY occurred_at DESC`
+  - limit clamp 到 `[1, 500]`
+
+### 设计
+- 复用 `CreateCostEvent` DTO（POST 与 GET 同 path）
+- 路由层累加 `total_cost_cents`（仓储返回 raw rows）
+- 限流（默认 100，max 500）
+
+### 响应结构
+```json
+{
+  "companyId": "...",
+  "total": N,
+  "totalCostCents": N,
+  "limit": N,
+  "items": [CostEventRow JSON]
+}
+```
+
+### 测试
+- `round212_cost_events_list_repo.rs`（4 case）：empty / desc_order / limit_clamp / company_isolation
+
+## 52. 第二百一十三轮增量（Round 213 — companies/:id/tree-holds 聚合端口）
+
+### 端口覆盖
+- 新增 1 个端口：
+  - `GET /api/companies/:company_id/tree-holds`
+
+### 仓储层新增
+- `IssueTreeHoldRepo::list_by_company(company_id, include_released) -> Vec<(Uuid, Uuid, String, String, Option<String>, Option<Ts>, Ts)>`
+  - 默认 `status='active' AND released_at IS NULL`
+  - `include_released=true` 时包含历史
+  - 行内限 200 行（路由层再 take limit，默认 100）
+
+### 设计
+- 查询参数：`?include_released=&limit=`（默认 false/100）
+- 路由层做最终 `take(limit)`，仓储层提前限 200 防止全表扫
+- 返回 `camelCase` JSON：id/rootIssueId/mode/status/reason/releasedAt/createdAt
+
+### 响应结构
+```json
+{
+  "companyId": "...",
+  "includeReleased": bool,
+  "limit": N,
+  "total": N,
+  "items": [{...}]
+}
+```
+
+### 测试
+- `round213_tree_holds_by_company_repo.rs`（3 case）：default_active_only / include_released / company_isolation
+
+### 累计进展（R211-R213）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R211 | companies.rs | +1 | diagnostics 聚合 + health_score 纯函数 |
+| R212 | costs.rs | +1 | list_cost_events + CostEventRow (14 字段) |
+| R213 | issue_tree_control.rs | +1 | list_by_company + include_released/limit 双参数 |
+
+### 综合状态（截至 R213）
+- 工作空间编译：`cargo check --workspace` 0 errors
+- 新增 3 个集成测试文件 + 1 个内联单元测试模块，共 **7** 个新测试 case（R211-R213 累计）
+- 累计端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~9 个** 真正剩余
+
+### 下一步高 ROI 工作
+1. **companies/:id/skill-policy/audit** — 策略变更历史（追加 R211 候选，仍未实施）
+2. **继续扫描 paperclip 仓库未实现的能力**（特别是 aggregate 路由与 SSE 流）
+3. **检查 BudgetRepo 是否有未暴露给路由的方法**（如 list_policies / list_incidents）
+4. **继续 issues / companies / inbox 子路径聚合**（如 issues 列别名、inbox 高级聚合）
