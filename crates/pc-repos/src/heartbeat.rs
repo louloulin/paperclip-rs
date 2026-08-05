@@ -1124,6 +1124,26 @@ impl<'a> HeartbeatRepo<'a> {
         .await?;
         Ok(v.map(|(c,)| c).unwrap_or(0))
     }
+
+    /// Round 168: heartbeat_runs 按 (date, status, error_code) 分组统计。
+    pub async fn group_runs_by_date_status_error(
+        &self,
+        company_id: Uuid,
+        since: pc_core::Timestamp,
+    ) -> sqlx::Result<Vec<(String, String, Option<String>, i64)>> {
+        let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date, \
+                    status, error_code, COUNT(*)::bigint AS count \
+             FROM heartbeat_runs \
+             WHERE company_id = $1 AND created_at >= $2 \
+             GROUP BY date, status, error_code",
+        )
+        .bind(company_id)
+        .bind(since)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]

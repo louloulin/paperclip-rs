@@ -1304,6 +1304,17 @@ impl<'a> AgentRepo<'a> {
             .await?;
         Ok(r.rows_affected() > 0)
     }
+
+    /// Round 168: 按 company_id 统计 agents 的 status 分布。
+    pub async fn count_by_status(&self, company_id: Uuid) -> sqlx::Result<Vec<(String, i64)>> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT status, COUNT(*)::bigint FROM agents WHERE company_id = $1 GROUP BY status",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]

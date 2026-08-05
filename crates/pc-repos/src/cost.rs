@@ -744,6 +744,23 @@ impl<'a> CostRepo<'a> {
         .await?;
         Ok(row.0.unwrap_or(0))
     }
+
+    /// Round 168: 统计 company 从某个时间点之后的 cost_cents 总和。
+    pub async fn sum_cost_cents_since(
+        &self,
+        company_id: Uuid,
+        since: pc_core::Timestamp,
+    ) -> sqlx::Result<i64> {
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(cost_cents),0)::bigint FROM cost_events \
+             WHERE company_id = $1 AND occurred_at >= $2",
+        )
+        .bind(company_id)
+        .bind(since)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0.unwrap_or(0))
+    }
 }
 
 /// Errors for `CostRepo::create_finance_event`.

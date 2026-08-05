@@ -810,6 +810,17 @@ impl<'a> ProjectRepo<'a> {
         .rows_affected();
         Ok(n)
     }
+
+    /// Round 168: 统计 company 的 paused projects。
+    pub async fn count_paused(&self, company_id: Uuid) -> RepoResult<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1 AND status = 'paused'",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
 }
 
 #[cfg(test)]

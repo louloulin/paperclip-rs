@@ -418,6 +418,17 @@ impl<'a> CompanyRepo<'a> {
             .await?;
         Ok(r.rows_affected() > 0)
     }
+
+    /// Round 168: 取 company 的 budget_monthly_cents。
+    pub async fn get_budget(&self, company_id: Uuid) -> sqlx::Result<Option<i32>> {
+        let row: Option<(i32,)> = sqlx::query_as(
+            "SELECT budget_monthly_cents FROM companies WHERE id = $1",
+        )
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(b,)| b))
+    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,14 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_realtime::LiveEvent;
+use pc_repos::agent::AgentRepo;
+use pc_repos::approval::ApprovalRepo;
+use pc_repos::company::CompanyRepo;
+use pc_repos::cost::CostRepo;
+use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::issue::IssueRepo;
+use pc_repos::project::ProjectRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -169,48 +177,36 @@ fn utilization_percent(spend: i64, budget: i64) -> f64 {
 }
 
 async fn load_company(state: &AppState, company_id: Uuid) -> ApiResult<CompanyBudget> {
-    sqlx::query_as::<_, CompanyBudget>(
-        "SELECT id, budget_monthly_cents FROM companies WHERE id = $1",
-    )
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("company {company_id}")))
+    let budget = CompanyRepo::new(&state.db)
+        .get_budget(company_id)
+        .await?;
+    budget
+        .map(|b| CompanyBudget { id: company_id, budget_monthly_cents: b })
+        .ok_or_else(|| ApiError::NotFound(format!("company {company_id}")))
 }
 
 async fn load_agent_status_counts(
     state: &AppState,
     company_id: Uuid,
 ) -> ApiResult<Vec<StatusCount>> {
-    Ok(sqlx::query_as::<_, StatusCount>(
-        "SELECT status, COUNT(*)::bigint AS count FROM agents WHERE company_id = $1 GROUP BY status",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?)
+    let rows = AgentRepo::new(&state.db)
+        .count_by_status(company_id)
+        .await?;
+    Ok(rows.into_iter().map(|(status, count)| StatusCount { status, count }).collect())
 }
 
 async fn load_task_status_counts(
     state: &AppState,
     company_id: Uuid,
 ) -> ApiResult<Vec<StatusCount>> {
-    Ok(sqlx::query_as::<_, StatusCount>(
-        "SELECT status, COUNT(*)::bigint AS count FROM issues \
-         WHERE company_id = $1 AND hidden_at IS NULL AND harness_kind IS NULL GROUP BY status",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?)
+    let rows = IssueRepo::new(&state.db)
+        .count_visible_by_status(company_id)
+        .await?;
+    Ok(rows.into_iter().map(|(status, count)| StatusCount { status, count }).collect())
 }
 
 async fn load_pending_approvals(state: &AppState, company_id: Uuid) -> ApiResult<i64> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM approvals WHERE company_id = $1 AND status = 'pending'",
-    )
-    .bind(company_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    Ok(row.0)
+    Ok(ApprovalRepo::new(&state.db).count_pending(company_id).await.map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn load_month_spend(
@@ -218,15 +214,8 @@ async fn load_month_spend(
     company_id: Uuid,
     month_start: chrono::DateTime<Utc>,
 ) -> ApiResult<i64> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(cost_cents),0)::bigint FROM cost_events \
-         WHERE company_id = $1 AND occurred_at >= $2",
-    )
-    .bind(company_id)
-    .bind(month_start)
-    .fetch_one(state.db.pool())
-    .await?;
-    Ok(row.0)
+    let ts = pc_core::Timestamp::from_dt(month_start);
+    Ok(CostRepo::new(&state.db).sum_cost_cents_since(company_id, ts).await.map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn load_run_activity(
@@ -234,25 +223,17 @@ async fn load_run_activity(
     company_id: Uuid,
     first_day: chrono::DateTime<Utc>,
 ) -> ApiResult<Vec<RunActivityRow>> {
-    Ok(sqlx::query_as::<_, RunActivityRow>(
-        "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date, status, error_code, \
-                COUNT(*)::bigint AS count FROM heartbeat_runs \
-         WHERE company_id = $1 AND created_at >= $2 GROUP BY date, status, error_code",
-    )
-    .bind(company_id)
-    .bind(first_day)
-    .fetch_all(state.db.pool())
-    .await?)
+    let ts = pc_core::Timestamp::from_dt(first_day);
+    let rows = HeartbeatRepo::new(&state.db)
+        .group_runs_by_date_status_error(company_id, ts)
+        .await?;
+    Ok(rows.into_iter().map(|(date, status, error_code, count)| RunActivityRow {
+        date, status, error_code, count,
+    }).collect())
 }
 
 async fn load_paused_projects(state: &AppState, company_id: Uuid) -> ApiResult<i64> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1 AND status = 'paused'",
-    )
-    .bind(company_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    Ok(row.0)
+    Ok(ProjectRepo::new(&state.db).count_paused(company_id).await.map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn summary(
