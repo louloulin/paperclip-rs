@@ -120,7 +120,7 @@ async fn claim_api_key_succeeds_with_correct_hash() {
     let invite_id = insert_invite(&db, company_id).await;
     let agent_id = insert_agent(&db, company_id, "claim-agent").await;
     let raw_secret = "my-secret-123";
-    let hash = pc_auth::hash_token(raw_secret);
+    let hash = pc_core::hash::sha256_hex(raw_secret);
     let jr_id = insert_approved_agent_join_request(
         &db,
         company_id,
@@ -146,8 +146,8 @@ async fn claim_api_key_rejects_wrong_hash() {
     let company_id = insert_company(&db, "claim_bad").await;
     let invite_id = insert_invite(&db, company_id).await;
     let agent_id = insert_agent(&db, company_id, "wrong-hash-agent").await;
-    let stored_hash = pc_auth::hash_token("correct");
-    let presented_hash = pc_auth::hash_token("wrong");
+    let stored_hash = pc_core::hash::sha256_hex("correct");
+    let presented_hash = pc_core::hash::sha256_hex("wrong");
     let jr_id = insert_approved_agent_join_request(
         &db,
         company_id,
@@ -186,7 +186,7 @@ async fn claim_api_key_second_call_fails_after_consumed() {
     let invite_id = insert_invite(&db, company_id).await;
     let agent_id = insert_agent(&db, company_id, "twice-agent").await;
     let raw_secret = "secret-twice";
-    let hash = pc_auth::hash_token(raw_secret);
+    let hash = pc_core::hash::sha256_hex(raw_secret);
     let jr_id = insert_approved_agent_join_request(
         &db,
         company_id,
@@ -229,7 +229,7 @@ async fn create_api_key_with_token_returns_valid_token() {
     assert!(token.starts_with("pcp_"));
     assert_eq!(token.len(), 52);
     // key_hash in DB must equal sha256(token)
-    let expected_hash = pc_auth::hash_token(&token);
+    let expected_hash = pc_core::hash::sha256_hex(&token);
     assert_eq!(row.key_hash, expected_hash);
 }
 
