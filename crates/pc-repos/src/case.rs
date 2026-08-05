@@ -873,6 +873,71 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
+/// Round 109: 锁定 case_document (touch updated_at) 并发 case_event。
+    /// 合并为单事务返回 OK 是否成功。
+    pub async fn lock_document(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<bool> {
+        let mut tx = self.db.pool().begin().await?;
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "UPDATE case_documents SET updated_at = now()              WHERE company_id=$1 AND case_id=$2 AND key=$3 RETURNING id",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if row.is_none() {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)              VALUES ($1, $2, 'document_locked', 'user', jsonb_build_object('key',$3::text))",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Round 109: 解锁 case_document (只发 event)。
+    pub async fn unlock_document(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<bool> {
+        let mut tx = self.db.pool().begin().await?;
+        let exists: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM case_documents WHERE company_id=$1 AND case_id=$2 AND key=$3",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if exists.is_none() {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)              VALUES ($1, $2, 'document_unlocked', 'user', jsonb_build_object('key',$3::text))",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn list_documents(
         &self,
         company_id: Uuid,

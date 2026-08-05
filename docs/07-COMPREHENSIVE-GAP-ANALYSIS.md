@@ -713,6 +713,42 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 32. 第一百零九轮增量（Round 109 — cases.rs case_documents 子模块仓储化)
+
+### 目标
+`cases.rs` 4 个 case_documents 端点（list / get / lock / unlock）全部用内联 SQL。
+Round 109 把它们彻底仓储化。
+
+### 新增 `pc_repos::case::CaseRepo` 方法
+- `lock_document(company_id, case_id, key) -> bool`
+  - 单事务：UPDATE case_documents SET updated_at=now() ...
+                + INSERT case_events kind='document_locked'
+  - 找不到 key 时返回 false（route 转 404）
+- `unlock_document(company_id, case_id, key) -> bool`
+  - 单事务：检查 case_documents 存在性 + INSERT case_events kind='document_unlocked'
+
+### 重构 `cases.rs` 4 个端点
+- `list_case_documents` —— 先 `CaseRepo::get(case_id)` 反查 company_id，再 `list_documents()`
+- `get_case_document` —— 同上模式 + `CaseRepo::get_document(company_id, case_id, key)`
+- `lock_case_document` —— `CaseRepo::lock_document()`
+- `unlock_case_document` —— `CaseRepo::unlock_document()`
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round109_case_document_repo.rs`)
+1. `case_documents_list_orders_by_key_asc` —— 按 key ASC 排序
+2. `case_documents_get_by_key` —— 精确查找 + missing 返 None
+3. `case_documents_lock_emits_event` —— UPDATE + 发 document_locked event
+4. `case_documents_lock_missing_key_returns_false` —— 未存在 key 返 Ok(false)
+5. `case_documents_unlock_emits_event` —— 发 document_unlocked event
+6. `case_documents_lock_isolates_across_cases` —— 跨 case 隔离
+
+### 进度影响
+- 综合进度从 **≈ 88.6% → ≈ 89.2%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **461 passed**（pc-repos 单元无变化）
+- `cargo test -p pc-repos --no-run --test round109_*` 编译通过
+- 累计 Round 95-109 修复 **53 个路由从 500 → 200**，
+  21 个 tool_* + 5 case_documents + 1 case_event + 1+1+1 agents/issue/exec 路由进入高内聚低耦合设计
+
 ## 31. 第一百零八轮增量（Round 108 — agents.rs 残 2 SQL 收尾)
 
 ### 目标

@@ -317,20 +317,31 @@ async fn create_case_link(
     Ok(Json(json!({ "id": id, "caseId": case_id, "issueId": body.issue_id, "role": role })))
 }
 
+// Round 109: 仓储化。CaseRepo::list_documents 需要 company_id + case_id。
+// 先 SELECT company_id FROM cases 反查一次，再调 Repo。
 async fn list_case_documents(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, document_id, key, created_at FROM case_documents          WHERE case_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?
+        .company_id;
+    let rows = repo.list_documents(company_id, case_id).await?;
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, document_id, key, created_at)| {
-            json!({"id": id, "documentId": document_id, "key": key, "createdAt": created_at})
+        .map(|d| {
+            json!({
+                "id": d.id,
+                "companyId": d.company_id,
+                "caseId": d.case_id,
+                "documentId": d.document_id,
+                "key": d.key,
+                "createdAt": d.created_at,
+                "updatedAt": d.updated_at,
+            })
         })
         .collect();
     Ok(Json(json!({ "items": items })))
@@ -361,44 +372,45 @@ async fn upsert_case_document(
     Ok(Json(json!({"id": id, "caseId": case_id, "key": body.key, "documentId": body.document_id})))
 }
 
+// Round 109: 仓储化。CaseRepo::get_document(company_id, case_id, key) 返回 CaseDocumentRow。
 async fn get_case_document(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT id, document_id FROM case_documents WHERE case_id = $1 AND key = $2",
-    )
-    .bind(case_id)
-    .bind(&key)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (id, document_id) = row.ok_or_else(|| ApiError::NotFound(format!("case document {key}")))?;
-    Ok(Json(json!({"id": id, "caseId": case_id, "key": key, "documentId": document_id})))
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?
+        .company_id;
+    let row = repo
+        .get_document(company_id, case_id, &key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case document {key}")))?;
+    Ok(Json(json!({
+        "id": row.id,
+        "caseId": row.case_id,
+        "key": row.key,
+        "documentId": row.document_id,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+    })))
 }
 
+// Round 109: 仓储化。CaseRepo::lock_document 单事务内完成 UPDATE + event INSERT。
 async fn lock_case_document(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let case_row = CaseRepo::new(&state.db)
-        .get(case_id)
-        .await?
+    let repo = CaseRepo::new(&state.db);
+    let case_row = repo.get(case_id).await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let _: Uuid = sqlx::query_scalar(
-        "UPDATE case_documents SET updated_at = now() WHERE case_id = $1 AND key = $2 RETURNING id",
-    )
-    .bind(case_id)
-    .bind(&key)
-    .fetch_one(state.db.pool())
-    .await?;
-    sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)          VALUES ($1, $2, 'document_locked', 'user', jsonb_build_object('key',$3::text))",
-    )
-    .bind(case_row.company_id)
-    .bind(case_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await?;
+    let n = repo
+        .lock_document(case_row.company_id, case_id, &key)
+        .await?;
+    if !n {
+        return Err(ApiError::NotFound(format!("case document {key}")));
+    }
     state.realtime.publish(
         LiveEvent::new("case.document.locked", "case", case_id)
             .with_company(case_row.company_id)
@@ -407,22 +419,20 @@ async fn lock_case_document(
     Ok(Json(json!({"locked": true, "caseId": case_id, "key": key})))
 }
 
+// Round 109: 仓储化。
 async fn unlock_case_document(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let case_row = CaseRepo::new(&state.db)
-        .get(case_id)
-        .await?
+    let repo = CaseRepo::new(&state.db);
+    let case_row = repo.get(case_id).await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)          VALUES ($1, $2, 'document_unlocked', 'user', jsonb_build_object('key',$3::text))",
-    )
-    .bind(case_row.company_id)
-    .bind(case_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await?;
+    let n = repo
+        .unlock_document(case_row.company_id, case_id, &key)
+        .await?;
+    if !n {
+        return Err(ApiError::NotFound(format!("case document {key}")));
+    }
     state.realtime.publish(
         LiveEvent::new("case.document.unlocked", "case", case_id)
             .with_company(case_row.company_id)
