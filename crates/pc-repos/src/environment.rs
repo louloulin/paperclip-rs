@@ -201,6 +201,20 @@ impl<'a> EnvironmentRepo<'a> {
             .await?)
     }
 
+    /// Round 202: 按公司维度列出 environments（schema 显式有 company_id）。
+    pub async fn list_for_company(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<EnvironmentRow>> {
+        let sql = format!(
+            "SELECT {ENV_COLS} FROM environments WHERE company_id = $1              ORDER BY status='active' DESC, name"
+        );
+        Ok(sqlx::query_as::<_, EnvironmentRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
     pub async fn get(&self, id: Uuid) -> RepoResult<Option<EnvironmentRow>> {
         let sql = format!("SELECT {ENV_COLS} FROM environments WHERE id=$1");
         Ok(sqlx::query_as::<_, EnvironmentRow>(&sql)

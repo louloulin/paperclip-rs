@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::environment::EnvironmentRepo;
+use pc_repos::environment::{EnvironmentRepo, EnvironmentRow};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -43,6 +43,11 @@ pub fn router() -> Router<AppState> {
             get(environment_delete_blast_radius),
         )
         .route("/api/environments/:id/probe", post(probe_environment))
+        // ── Round 202: bulk config probe ──
+        .route(
+            "/api/companies/:company_id/environments/probe-config",
+            post(probe_company_environments_config),
+        )
         .route(
             "/api/environments/:id/custom-image-template",
             get(get_custom_image_template).delete(delete_custom_image_template),
@@ -398,5 +403,118 @@ async fn get_environment_lease(
         "acquiredAt": acquired_at,
         "expiresAt": expires_at,
         "status": status,
+    })))
+}
+
+// ============================================================================
+// Round 202: environments/probe-config
+//
+// 语义：批量探测一个公司下 environments 的配置健康度。
+// 设计：
+// - 请求体 `{ environmentIds?: [Uuid] }`，缺省 = 全公司
+// - 每条记录返回 config keys / env_vars / secret_refs 数量 + 基础合法性校验结果
+// - 整体探测完后发一次 environment.probe_config 事件（含 validCount/warningCount）
+// ============================================================================
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ProbeConfigBody {
+    #[serde(default)]
+    environment_ids: Option<Vec<Uuid>>,
+}
+
+fn secret_ref_keys(config: &Value) -> Vec<String> {
+    config
+        .as_object()
+        .map(|obj| {
+            obj.keys()
+                .filter(|k| k.starts_with("secret_") || k.starts_with("encrypted_"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn probe_company_environments_config(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<ProbeConfigBody>,
+) -> ApiResult<Json<Value>> {
+    let env_repo = EnvironmentRepo::new(&state.db);
+    // 1) 取该公司所有环境
+    let all = env_repo.list_for_company(company_id).await?;
+
+    // 2) 若指定 environmentIds，进一步过滤（保证属于该公司）
+    let filtered: Vec<EnvironmentRow> = match body.environment_ids.as_ref() {
+        Some(ids) if !ids.is_empty() => all
+            .into_iter()
+            .filter(|e| ids.contains(&e.id))
+            .collect(),
+        _ => all,
+    };
+
+    // 3) 探测每一条
+    let mut results: Vec<Value> = Vec::with_capacity(filtered.len());
+    let mut valid_count = 0usize;
+    let mut warning_count = 0usize;
+    for e in &filtered {
+        let mut warnings: Vec<String> = Vec::new();
+        if e.status != "active" {
+            warnings.push(format!("status={}", e.status));
+        }
+        if !e.config.is_object() {
+            warnings.push("config is not a JSON object".to_owned());
+        }
+        if !e.env_vars.is_object() {
+            warnings.push("env_vars is not a JSON object".to_owned());
+        }
+        let secret_refs = secret_ref_keys(&e.config);
+        let config_keys = e
+            .config
+            .as_object()
+            .map(|o| o.len())
+            .unwrap_or(0);
+        let env_vars_count = e
+            .env_vars
+            .as_object()
+            .map(|o| o.len())
+            .unwrap_or(0);
+        let config_valid = warnings.is_empty();
+        if config_valid {
+            valid_count += 1;
+        } else {
+            warning_count += 1;
+        }
+        results.push(json!({
+            "id": e.id,
+            "name": e.name,
+            "driver": e.driver,
+            "status": e.status,
+            "configKeysCount": config_keys,
+            "envVarsCount": env_vars_count,
+            "secretRefsCount": secret_refs.len(),
+            "secretRefs": secret_refs,
+            "configValid": config_valid,
+            "warnings": warnings,
+        }));
+    }
+
+    state.realtime.publish(
+        LiveEvent::new("environment.probe_config", "environment", Uuid::nil())
+            .with_company(company_id)
+            .with_data(json!({
+                "totalProbed": filtered.len(),
+                "validCount": valid_count,
+                "warningCount": warning_count,
+            })),
+    );
+
+    Ok(Json(json!({
+        "companyId": company_id,
+        "totalProbed": filtered.len(),
+        "validCount": valid_count,
+        "warningCount": warning_count,
+        "results": results,
     })))
 }
