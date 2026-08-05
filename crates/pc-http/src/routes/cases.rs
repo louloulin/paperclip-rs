@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::case::{CaseRepo, CaseRow};
+use pc_repos::case::{CaseLinkRole, CaseRepo, CaseRow};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -281,6 +281,7 @@ async fn list_case_events(
     Ok(Json(json!({ "items": items })))
 }
 
+// Round 113: 仓储化。CaseRepo::link_issue + record_issue_linked_event。
 async fn create_case_link(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
@@ -290,31 +291,25 @@ async fn create_case_link(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let role = body.role.unwrap_or_else(|| "reference".to_string());
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO case_issue_links (company_id, case_id, issue_id, role)          VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(case_row.company_id)
-    .bind(case_id)
-    .bind(body.issue_id)
-    .bind(&role)
-    .fetch_one(state.db.pool())
-    .await?;
-    sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)          VALUES ($1, $2, 'issue_linked', 'user', jsonb_build_object('issueId',$3::text,'role',$4::text))",
-    )
-    .bind(case_row.company_id)
-    .bind(case_id)
-    .bind(body.issue_id.to_string())
-    .bind(&role)
-    .execute(state.db.pool())
-    .await?;
+    let role_str = body.role.clone().unwrap_or_else(|| "reference".to_string());
+    let role: CaseLinkRole = role_str.parse().unwrap_or(CaseLinkRole::Reference);
+    let link = CaseRepo::new(&state.db)
+        .link_issue(case_row.company_id, case_id, body.issue_id, role, None)
+        .await?;
+    CaseRepo::new(&state.db)
+        .record_issue_linked_event(case_row.company_id, case_id, body.issue_id, &role_str)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("case.issue_linked", "case", case_id)
             .with_company(case_row.company_id)
-            .with_data(json!({"issueId": body.issue_id, "role": role})),
+            .with_data(json!({"issueId": body.issue_id, "role": role_str})),
     );
-    Ok(Json(json!({ "id": id, "caseId": case_id, "issueId": body.issue_id, "role": role })))
+    Ok(Json(json!({
+        "id": link.id,
+        "caseId": case_id,
+        "issueId": body.issue_id,
+        "role": role_str,
+    })))
 }
 
 // Round 109: 仓储化。CaseRepo::list_documents 需要 company_id + case_id。
@@ -1316,8 +1311,7 @@ async fn list_case_children_tree(
     })))
 }
 
-/// List issue links with joined issue details.  Mirrors Node
-/// `/cases/:caseId/issue-links` — INNER JOIN to `issues`.
+// Round 113: 仓储化。CaseRepo::list_issue_links_with_issue。
 async fn list_case_issue_links_route(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
@@ -1326,30 +1320,21 @@ async fn list_case_issue_links_route(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let rows: Vec<(Uuid, Uuid, Uuid, String, Option<Uuid>, Timestamp, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cil.id, cil.case_id, cil.issue_id, cil.role, cil.created_by_run_id, \
-                cil.created_at, i.title, i.status \
-         FROM case_issue_links cil \
-         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
-         WHERE cil.company_id=$1 AND cil.case_id=$2 \
-         ORDER BY cil.created_at ASC",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = CaseRepo::new(&state.db)
+        .list_issue_links_with_issue(case.company_id, case_id)
+        .await?;
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(link_id, case_id, issue_id, role, created_by_run_id, created_at, title, status)| {
+        .map(|r| {
             json!({
-                "id": link_id,
-                "caseId": case_id,
-                "issueId": issue_id,
-                "role": role,
-                "createdByRunId": created_by_run_id,
-                "createdAt": created_at,
-                "issueTitle": title,
-                "issueStatus": status,
+                "id": r.id,
+                "caseId": r.case_id,
+                "issueId": r.issue_id,
+                "role": r.role,
+                "createdByRunId": r.created_by_run_id,
+                "createdAt": r.created_at,
+                "issueTitle": r.issue_title,
+                "issueStatus": r.issue_status,
             })
         })
         .collect();
@@ -1360,8 +1345,7 @@ async fn list_case_issue_links_route(
     })))
 }
 
-/// Remove a single issue link by its link id.  Mirrors Node
-/// `/cases/:caseId/issue-links/:linkId` DELETE.
+// Round 113: 仓储化。CaseRepo::delete_issue_link_by_id + record_issue_unlinked_event。
 async fn delete_case_issue_link(
     State(state): State<AppState>,
     Path((case_id, link_id)): Path<(Uuid, Uuid)>,
@@ -1370,38 +1354,13 @@ async fn delete_case_issue_link(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    // Fetch link to know which issue_id to unlink (and emit event).
-    let link: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT case_id, issue_id FROM case_issue_links WHERE id=$1 AND company_id=$2 AND case_id=$3",
-    )
-    .bind(link_id)
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let Some((_, issue_id)) = link else {
-        return Err(ApiError::NotFound(format!("issue link {link_id}")));
-    };
-    let affected = sqlx::query(
-        "DELETE FROM case_issue_links WHERE id=$1 AND company_id=$2",
-    )
-    .bind(link_id)
-    .bind(case.company_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
-    if affected == 0 {
-        return Err(ApiError::NotFound(format!("issue link {link_id}")));
-    }
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'issue_unlinked', 'user', jsonb_build_object('issueId',$3::text))",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(issue_id.to_string())
-    .execute(state.db.pool())
-    .await;
+    let issue_id = CaseRepo::new(&state.db)
+        .delete_issue_link_by_id(case.company_id, link_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue link {link_id}")))?;
+    let _ = CaseRepo::new(&state.db)
+        .record_issue_unlinked_event(case.company_id, case_id, issue_id)
+        .await;
     state.realtime.publish(
         LiveEvent::new("case.issue_unlinked", "case_issue_link", link_id)
             .with_company(case.company_id)

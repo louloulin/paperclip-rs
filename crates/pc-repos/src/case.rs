@@ -196,6 +196,20 @@ pub struct CaseIssueLinkRow {
     pub updated_at: Timestamp,
 }
 
+/// Round 113: case_issue_links + issues JOIN 投影。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseIssueLinkWithIssueRow {
+    pub id: Uuid,
+    pub case_id: Uuid,
+    pub issue_id: Uuid,
+    pub role: String,
+    pub created_by_run_id: Option<Uuid>,
+    pub created_at: Timestamp,
+    pub issue_title: Option<String>,
+    pub issue_status: Option<String>,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaseEventRow {
@@ -756,6 +770,78 @@ impl<'a> CaseRepo<'a> {
             .bind(issue_id)
             .fetch_optional(self.db.pool())
             .await
+    }
+
+    // ---- Round 113: case_issue_links 路由仓储化 ----
+
+    /// Round 113: 记录 issue_linked 事件到 case_events。
+    pub async fn record_issue_linked_event(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        issue_id: Uuid,
+        role: &str,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)                 VALUES ($1, $2, 'issue_linked', 'user', jsonb_build_object('issueId',$3::text,'role',$4::text)) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(issue_id.to_string())
+        .bind(role)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 113: 记录 issue_unlinked 事件到 case_events。
+    pub async fn record_issue_unlinked_event(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)                 VALUES ($1, $2, 'issue_unlinked', 'user', jsonb_build_object('issueId',$3::text)) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(issue_id.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 113: 列出 case 的 issue links (JOIN issues 取 title/status)。
+    pub async fn list_issue_links_with_issue(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseIssueLinkWithIssueRow>> {
+        sqlx::query_as::<_, CaseIssueLinkWithIssueRow>(
+            "SELECT cil.id, cil.case_id, cil.issue_id, cil.role, cil.created_by_run_id,                     cil.created_at, i.title AS issue_title, i.status AS issue_status                 FROM case_issue_links cil                 INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id                 WHERE cil.company_id = $1 AND cil.case_id = $2                 ORDER BY cil.created_at ASC",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 113: 按 link_id 删除 case_issue_link，返回被删的 issue_id（None = 找不到）。
+    /// 一步完成 SELECT + DELETE（用 RETURNING 避免 race）。
+    pub async fn delete_issue_link_by_id(
+        &self,
+        company_id: Uuid,
+        link_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "DELETE FROM case_issue_links WHERE id = $1 AND company_id = $2 RETURNING issue_id",
+        )
+        .bind(link_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(i,)| i))
     }
 
     pub async fn list_events(

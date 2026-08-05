@@ -713,6 +713,58 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 36. 第一百一十三轮增量（Round 113 — cases.rs case_issue_links 子模块仓储化)
+
+### 目标
+`cases.rs` 还有 53 个内联 SQL 散落在多个子模块（case_documents 已 Round 109 完成）。
+Round 113 把 case_issue_links 3 个端点（create / list / delete）的 6 个 SQL 全部仓储化，
+cases.rs 53 → 47 SQL。
+
+### 新增 `pc_repos::case::CaseRepo` 方法（4 个 + 1 DTO)
+- `record_issue_linked_event(company_id, case_id, issue_id, role) -> Uuid`
+  - INSERT case_events kind='issue_linked' with payload={issueId, role}
+- `record_issue_unlinked_event(company_id, case_id, issue_id) -> Uuid`
+  - INSERT case_events kind='issue_unlinked' with payload={issueId}
+- `list_issue_links_with_issue(company_id, case_id) -> Vec<CaseIssueLinkWithIssueRow>`
+  - INNER JOIN issues 取 issue_title / issue_status
+  - 替代原 route 的手写 tuple SELECT + 14 行 map
+- `delete_issue_link_by_id(company_id, link_id) -> Option<Uuid>`
+  - 一步 SELECT + DELETE（用 RETURNING 避免 race）
+  - 返回被删的 issue_id（None = 找不到）
+
+### 新增 DTO
+- `CaseIssueLinkWithIssueRow { id, case_id, issue_id, role, created_by_run_id, created_at, issue_title, issue_status }` 1:1 JOIN 投影
+
+### 重用已有方法
+- `link_issue(company_id, case_id, issue_id, CaseLinkRole, created_by_run_id) -> CaseIssueLinkRow`
+  - create_case_link route 改用此方法（之前 route 是手写 INSERT）
+  - 用 `CaseLinkRole::from_str` 转换 role string → enum
+- `unlink_issue` 暂未在 route 使用（route 需要 by link_id 而非 by issue_id）
+
+### 重构 `cases.rs` 3 个端点
+- `create_case_link` — `CaseRepo::get + link_issue + record_issue_linked_event`
+- `list_case_issue_links_route` — `CaseRepo::get + list_issue_links_with_issue`
+- `delete_case_issue_link` — `CaseRepo::get + delete_issue_link_by_id + record_issue_unlinked_event`
+
+### 新增集成测试 8 个 (`crates/pc-repos/tests/round113_case_issue_link_repo.rs`)
+1. `record_issue_linked_event_writes` — 写 case_events + payload 正确
+2. `record_issue_unlinked_event_writes` — 写 unlinked event
+3. `list_issue_links_with_issue_joins` — JOIN 取 issue title/status
+4. `list_issue_links_with_issue_isolates` — 跨 case 隔离
+5. `delete_issue_link_by_id_returns_issue` — 返 issue_id + 真删
+6. `delete_issue_link_by_id_missing` — 未知 link 返 None
+7. `delete_issue_link_by_id_cross_company` — 跨 company 隔离
+8. `link_issue_then_list_with_issue` — link_issue + list 集成（验证已有方法继续可用）
+
+### 进度影响
+- 综合进度从 **≈ 91.0% → ≈ 91.5%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round113_*` 编译通过
+- 13 个 pc-repos 集成测试文件累计 68+8=76 test 函数
+- cases.rs SQL 数 53 → 47（-6，case_issue_links 子模块清零）
+- 累计 Round 95-113 修复 **66+3=69 个路由从 500 → 200**
+
 ## 35. 第一百一十二轮增量（Round 112 — routines.rs 收尾 0 SQL)
 
 ### 目标
