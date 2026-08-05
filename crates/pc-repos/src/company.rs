@@ -455,6 +455,23 @@ impl<'a> CompanyRepo<'a> {
         Ok(row)
     }
 
+    /// Round 182: 设置 company 的 logo_url。
+    pub async fn set_logo_url(
+        &self,
+        company_id: Uuid,
+        logo_url: &str,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2",
+        )
+        .bind(logo_url)
+        .bind(company_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
 }
 
 #[cfg(test)]

@@ -14,6 +14,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::company::CompanyRepo;
+use pc_repos::company_asset::CompanyAssetRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -69,20 +71,17 @@ async fn upload_image(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let asset_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO company_assets \
-         (id, company_id, kind, key, content_type, size_bytes, sha256, created_at) \
-         VALUES ($1, $2, 'image', $3, $4, $5, $6, now())",
-    )
-    .bind(asset_id)
-    .bind(company_id)
-    .bind(&key)
-    .bind(content_type)
-    .bind(meta.size as i64)
-    .bind(&meta.content_sha256)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    CompanyAssetRepo::new(&state.db)
+        .insert_image(
+            asset_id,
+            company_id,
+            &key,
+            content_type,
+            meta.size as i64,
+            meta.content_sha256.as_deref().unwrap_or(""),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok((
         StatusCode::CREATED,
@@ -122,10 +121,8 @@ async fn upload_logo(
         .put_object(&target, Bytes::from(bytes), Some(content_type))
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query("UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2")
-        .bind(format!("/api/companies/{company_id}/logo/content"))
-        .bind(company_id)
-        .execute(state.db.pool())
+    CompanyRepo::new(&state.db)
+        .set_logo_url(company_id, &format!("/api/companies/{company_id}/logo/content"))
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
@@ -144,15 +141,11 @@ async fn asset_content(
     State(state): State<AppState>,
     Path(asset_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT key, content_type, COALESCE(content_type, 'application/octet-stream') \
-         FROM company_assets WHERE id = $1",
-    )
-    .bind(asset_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (key, ct, _) = row.ok_or_else(|| ApiError::NotFound(format!("asset {asset_id}")))?;
+    let (key, ct) = CompanyAssetRepo::new(&state.db)
+        .get_content_meta(asset_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("asset {asset_id}")))?;
     let provider = state
         .storage
         .resolve("company-assets")
