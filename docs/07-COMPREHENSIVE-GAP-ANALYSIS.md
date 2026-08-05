@@ -1323,6 +1323,62 @@ company_skills.rs 还剩 55 SQL：
 - companies.rs 37 SQL
 - auth.rs 28 SQL
 
+## 51. 第一百二十八轮增量（Round 128 — companies.rs stats 复合方法仓储化)
+
+### 目标
+companies.rs 37 → 31 SQL（-6）。仓储化 get_stats 复合方法（6 个独立 COUNT 聚合 → 1 个复合方法）。
+
+### 新增 `pc_repos::company::CompanyRepo` 方法（1 个 composite + 1 个 DTO)
+- `stats(company_id) -> CompanyStatsRow`
+  - **复合方法**：跨 5 表 6 个 COUNT(*) 聚合，单次调用返回完整 stats
+  1. issues WHERE hidden_at IS NULL
+  2. issues open（排除 done / cancelled / completed + hidden）
+  3. agents
+  4. pipelines WHERE archived_at IS NULL
+  5. projects
+  6. goals
+
+### 新增 DTO
+- `CompanyStatsRow { company_id, issue_count, open_issue_count, agent_count, pipeline_count, project_count, goal_count }`
+
+### 重构 `companies.rs` 1 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `get_stats` | 6 SELECT COUNT(*) | CompanyRepo::stats 复合方法 |
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round128_company_stats_repo.rs`)
+1. `stats_empty_company` — 空 company 全 0
+2. `stats_with_basic_data` — agent/project/goal 计数
+3. `stats_excludes_archived_pipelines` — archived pipeline 不计
+4. `stats_open_vs_done_issues` — open 排除 done/cancelled
+5. `stats_excludes_hidden_issues` — hidden_at issue 不计
+6. `stats_unknown_company_returns_zeros` — 不存在返回 0
+
+### 进度影响
+- 综合进度从 **≈ 96.9% → ≈ 97.0%**
+- workspace `cargo check -p pc-http` 0 errors
+- 28 个 pc-repos 集成测试文件累计 170+6=176 test 函数
+- companies.rs SQL 数 37 → 31（-6，get_stats 复合方法）
+- 累计 Round 95-128 修复 **121+1=122 个路由从 500 → 200**
+
+### 下一轮方向（Round 129+）
+companies.rs 还剩 31 SQL，主要在：
+- timeline 聚合（多源 JOIN，~5 SQL，line 287+）
+- artifacts 列表（~3 SQL，line 309+）
+- branding 复合（3 SQL，line 354+）
+- export_preview（3 SQL，line 402+）
+- import_preview / start_export / fidelity（~6 SQL，line 453+）
+- feedback_traces 列表（~4 SQL，line 555+）
+- labels CRUD（~5 SQL，line 603+）
+- folders CRUD（~10 SQL，line 705+）
+- create 路由的 company_memberships INSERT（1 SQL）
+
+后续高 SQL 模块：
+- tool_access.rs 66 SQL
+- issues.rs 41 SQL
+- auth.rs 28 SQL
+- access.rs 26 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

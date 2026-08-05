@@ -208,45 +208,15 @@ async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
 // ============================================================================
 
 async fn get_stats(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let pool = state.db.pool();
-    let issue_count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM issues WHERE company_id = $1 AND hidden_at IS NULL")
-            .bind(id)
-            .fetch_one(pool)
-            .await?;
-    let agent_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agents WHERE company_id = $1")
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-    let pipeline_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM pipelines WHERE company_id = $1 AND archived_at IS NULL",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await?;
-    let project_count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM projects WHERE company_id = $1")
-            .bind(id)
-            .fetch_one(pool)
-            .await?;
-    let goal_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM goals WHERE company_id = $1")
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-    let open_issue_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND status NOT IN ('done','cancelled','completed') AND hidden_at IS NULL",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await?;
+    let s = CompanyRepo::new(&state.db).stats(id).await?;
     Ok(Json(json!({
-        "company_id": id,
-        "issue_count": issue_count.0,
-        "open_issue_count": open_issue_count.0,
-        "agent_count": agent_count.0,
-        "pipeline_count": pipeline_count.0,
-        "project_count": project_count.0,
-        "goal_count": goal_count.0,
+        "company_id": s.company_id,
+        "issue_count": s.issue_count,
+        "open_issue_count": s.open_issue_count,
+        "agent_count": s.agent_count,
+        "pipeline_count": s.pipeline_count,
+        "project_count": s.project_count,
+        "goal_count": s.goal_count,
     })))
 }
 

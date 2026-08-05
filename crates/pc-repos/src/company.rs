@@ -26,8 +26,19 @@ fn is_issue_prefix_conflict(error: &sqlx::Error) -> bool {
     })
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct CompanyRow {
+/// Round 128: company 跨表统计投影（6 个 COUNT 聚合结果）。
+#[derive(Debug, Clone)]
+pub struct CompanyStatsRow {
+    pub company_id: Uuid,
+    pub issue_count: i64,
+    pub open_issue_count: i64,
+    pub agent_count: i64,
+    pub pipeline_count: i64,
+    pub project_count: i64,
+    pub goal_count: i64,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]pub struct CompanyRow {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
@@ -171,6 +182,54 @@ impl<'a> CompanyRepo<'a> {
         .bind(id)
         .fetch_optional(self.db.pool())
         .await
+    }
+
+    /// Round 128: 复合方法 — company 跨表统计（issues / agents / pipelines / projects / goals）。
+    /// 6 个 COUNT(*) 聚合，单调用返回完整 stats。
+    pub async fn stats(&self, company_id: Uuid) -> sqlx::Result<CompanyStatsRow> {
+        let pool = self.db.pool();
+        let issue_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND hidden_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_one(pool)
+        .await?;
+        let agent_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM agents WHERE company_id = $1")
+                .bind(company_id)
+                .fetch_one(pool)
+                .await?;
+        let pipeline_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM pipelines WHERE company_id = $1 AND archived_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_one(pool)
+        .await?;
+        let project_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM projects WHERE company_id = $1")
+                .bind(company_id)
+                .fetch_one(pool)
+                .await?;
+        let goal_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM goals WHERE company_id = $1")
+                .bind(company_id)
+                .fetch_one(pool)
+                .await?;
+        let open_issue_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND status NOT IN ('done','cancelled','completed') AND hidden_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(CompanyStatsRow {
+            company_id,
+            issue_count: issue_count.0,
+            open_issue_count: open_issue_count.0,
+            agent_count: agent_count.0,
+            pipeline_count: pipeline_count.0,
+            project_count: project_count.0,
+            goal_count: goal_count.0,
+        })
     }
 
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
