@@ -2211,6 +2211,24 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+    /// Round 219: 删除 issue_thread_interactions 记录。
+    ///
+    /// 与 Node DELETE /issues/:id/interactions/:interactionId 对齐。
+    /// 返回是否实际删除（false 表示原本就不存在）。
+    pub async fn delete_interaction(
+        &self,
+        interaction_id: Uuid,
+    ) -> sqlx::Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM issue_thread_interactions WHERE id = $1",
+        )
+        .bind(interaction_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+
     // =========================================================================
     // Feedback votes
     // =========================================================================

@@ -154,6 +154,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/issues/:id/interactions/:interaction_id/reject", post(reject_interaction))
         .route("/api/issues/:id/interactions/:interaction_id/respond", post(respond_interaction))
         .route("/api/issues/:id/interactions/:interaction_id/verdicts", post(verdict_interaction))
+        // ── Round 219: list/create/delete interactions ──
+        .route("/api/issues/:id/interactions", get(list_issue_interactions).post(create_issue_interaction))
+        .route("/api/issues/:id/interactions/:interaction_id", delete(delete_issue_interaction))
         .route("/api/issues/:id/interactions/:interaction_id/withdraw", post(withdraw_interaction))
         // recovery actions
         .route(
@@ -2410,36 +2413,90 @@ async fn get_feedback_trace_bundle(
     })))
 }
 
+/// Round 219: GET /api/issues/:id/interactions
+///
+/// 与 Node GET /issues/:id/interactions 对齐。
 async fn list_issue_interactions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"items": [], "deprecated": true, "note": "issue_interactions table missing in v3 schema"})))
-}}
+) -> ApiResult<Json<Value>> {
+    let rows = IssueRepo::new(&state.db)
+        .list_interactions(id)
+        .await?;
+    let items: Vec<Value> = rows.into_iter().map(|r| interaction_row_json(&r)).collect();
+    Ok(Json(json!({"items": items, "issueId": id})))
+}
 
+/// Round 219: POST /api/issues/:id/interactions
+///
+/// 与 Node POST /issues/:id/interactions 对齐。
 async fn create_issue_interaction(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true, "note": "issue_interactions table missing in v3 schema"})))
-}}
+    Json(body): Json<CreateInteractionBody>,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let payload = body.payload.unwrap_or(serde_json::json!({}));
+    let row = IssueRepo::new(&state.db)
+        .create_interaction(
+            issue.company_id,
+            id,
+            &body.kind,
+            &body.continuation_policy,
+            body.title.as_deref(),
+            body.summary.as_deref(),
+            &payload,
+            None,
+            body.created_by_user_id.as_deref(),
+        )
+        .await?;
+    Ok(Json(interaction_row_json(&row)))
+}
 
+/// Round 219: DELETE /api/issues/:id/interactions/:interaction_id
+///
+/// 与 Node DELETE /issues/:id/interactions/:interactionId 对齐。
 async fn delete_issue_interaction(
     State(state): State<AppState>,
-    Path((id, interaction_id)): Path<(Uuid, Uuid)>,
-) -> ApiResult<StatusCode> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(StatusCode::NO_CONTENT)
-}}
+    Path((_id, interaction_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let removed = IssueRepo::new(&state.db)
+        .delete_interaction(interaction_id)
+        .await?;
+    if removed {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("interaction {interaction_id}")))
+    }
+}
+
+/// Round 219: shared JSON converter for IssueThreadInteractionRow。
+fn interaction_row_json(r: &pc_repos::issue::IssueThreadInteractionRow) -> Value {
+    json!({
+        "id": r.id,
+        "companyId": r.company_id,
+        "issueId": r.issue_id,
+        "kind": r.kind,
+        "status": r.status,
+        "continuationPolicy": r.continuation_policy,
+        "sourceCommentId": r.source_comment_id,
+        "sourceRunId": r.source_run_id,
+        "title": r.title,
+        "summary": r.summary,
+        "createdByAgentId": r.created_by_agent_id,
+        "createdByUserId": r.created_by_user_id,
+        "resolvedByAgentId": r.resolved_by_agent_id,
+        "resolvedByUserId": r.resolved_by_user_id,
+        "payload": r.payload,
+        "result": r.result,
+        "resolvedAt": r.resolved_at,
+        "createdAt": r.created_at,
+        "updatedAt": r.updated_at,
+    })
+}
 
 async fn list_issue_feedback_votes(
     State(state): State<AppState>,
@@ -3500,8 +3557,9 @@ mod round216_tests {
     //! `parse_activity_kind` 是纯函数 — 容易单测。
     //! `InteractionResolveBody` 是 serde 结构 — 验证字段解析。
     use super::{
-        parse_activity_kind, AcceptInteractionBody, InteractionResolveBody,
-        RespondInteractionBody, VerdictEntry, VerdictInteractionBody,
+        interaction_row_json, parse_activity_kind, AcceptInteractionBody,
+        InteractionResolveBody, RespondInteractionBody, VerdictEntry,
+        VerdictInteractionBody,
     };
     use pc_activity::kinds::ActivityKind;
 
@@ -3603,5 +3661,53 @@ mod round216_tests {
         )
         .expect("parse");
         assert!(body.verdicts[0].reason.is_none());
+    }
+
+    // ── R219 interaction_row_json + CreateInteractionBody 测试 ──
+
+    #[test]
+    fn interaction_row_json_uses_camel_case_keys() {
+        // 验证序列化输出字段名都是 camelCase
+        use pc_repos::issue::IssueThreadInteractionRow;
+
+        let now = chrono::Utc::now();
+        let row = IssueThreadInteractionRow {
+            id: uuid::Uuid::nil(),
+            company_id: uuid::Uuid::nil(),
+            issue_id: uuid::Uuid::nil(),
+            kind: "suggest_tasks".to_string(),
+            status: "pending".to_string(),
+            continuation_policy: "wake_assignee".to_string(),
+            source_comment_id: None,
+            source_run_id: None,
+            title: Some("test".to_string()),
+            summary: None,
+            created_by_agent_id: None,
+            created_by_user_id: None,
+            resolved_by_agent_id: None,
+            resolved_by_user_id: None,
+            payload: serde_json::json!({"k": "v"}),
+            result: None,
+            resolved_at: None,
+            created_at: pc_core::Timestamp::from_dt(now),
+            updated_at: pc_core::Timestamp::from_dt(now),
+        };
+        let json = interaction_row_json(&row);
+        let obj = json.as_object().expect("object");
+        // 关键 camelCase 字段
+        assert!(obj.contains_key("issueId"));
+        assert!(obj.contains_key("companyId"));
+        assert!(obj.contains_key("kind"));
+        assert!(obj.contains_key("status"));
+        assert!(obj.contains_key("continuationPolicy"));
+        assert!(obj.contains_key("sourceCommentId"));
+        assert!(obj.contains_key("sourceRunId"));
+        assert!(obj.contains_key("createdByAgentId"));
+        assert!(obj.contains_key("createdByUserId"));
+        assert!(obj.contains_key("resolvedByAgentId"));
+        assert!(obj.contains_key("resolvedByUserId"));
+        assert!(obj.contains_key("resolvedAt"));
+        assert!(obj.contains_key("createdAt"));
+        assert!(obj.contains_key("updatedAt"));
     }
 }
