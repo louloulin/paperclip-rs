@@ -29,6 +29,11 @@ pub fn router() -> Router<AppState> {
             "/api/issues/:id/tree-holds",
             get(list_tree_holds).post(create_tree_hold),
         )
+        // ── Round 213: company-level tree-holds aggregate ──
+        .route(
+            "/api/companies/:company_id/tree-holds",
+            get(list_company_tree_holds),
+        )
         .route(
             "/api/issues/:id/tree-holds/:hold_id",
             get(get_tree_hold).post(release_tree_hold),
@@ -191,4 +196,56 @@ async fn release_tree_hold(
         StatusCode::OK,
         Json(json!({ "id": hold_id, "status": "released" })),
     ))
+}
+
+// ============================================================================
+// Round 213: company-level tree-holds aggregate
+// ============================================================================
+
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+struct ListCompanyTreeHoldsQuery {
+    /// 包含已释放的 hold（默认 false）
+    #[serde(default)]
+    include_released: bool,
+    /// 限制返回数（默认 100）
+    #[serde(default = "default_tree_holds_limit")]
+    limit: i64,
+}
+
+fn default_tree_holds_limit() -> i64 {
+    100
+}
+
+async fn list_company_tree_holds(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<ListCompanyTreeHoldsQuery>,
+) -> ApiResult<Json<Value>> {
+    let rows = IssueTreeHoldRepo::new(&state.db)
+        .list_by_company(company_id, q.include_released)
+        .await?;
+    // Apply limit (in route layer, repo already limits to 200)
+    let items: Vec<Value> = rows
+        .iter()
+        .take(q.limit as usize)
+        .map(|(id, root_id, mode, status, reason, released_at, created_at)| {
+            json!({
+                "id": id,
+                "rootIssueId": root_id,
+                "mode": mode,
+                "status": status,
+                "reason": reason,
+                "releasedAt": released_at,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "includeReleased": q.include_released,
+        "limit": q.limit,
+        "total": items.len(),
+        "items": items,
+    })))
 }

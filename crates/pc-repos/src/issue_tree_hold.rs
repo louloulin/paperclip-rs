@@ -185,6 +185,37 @@ impl<'a> IssueTreeHoldRepo<'a> {
         Ok(rows)
     }
 
+    /// Round 213: 列出 company 的 tree holds。
+    /// `include_released=false` 时仅返回 status='active' AND released_at IS NULL。
+    pub async fn list_by_company(
+        &self,
+        company_id: Uuid,
+        include_released: bool,
+    ) -> sqlx::Result<Vec<(Uuid, Uuid, String, String, Option<String>, Option<Timestamp>, Timestamp)>> {
+        let rows: Vec<(Uuid, Uuid, String, String, Option<String>, Option<Timestamp>, Timestamp)> = if include_released {
+            sqlx::query_as(
+                "SELECT id, root_issue_id, mode, status, reason, released_at, created_at \
+                 FROM issue_tree_holds WHERE company_id = $1 \
+                 ORDER BY created_at DESC LIMIT 200",
+            )
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?
+        } else {
+            sqlx::query_as(
+                "SELECT id, root_issue_id, mode, status, reason, released_at, created_at \
+                 FROM issue_tree_holds WHERE company_id = $1 \
+                   AND status = 'active' AND released_at IS NULL \
+                 ORDER BY created_at DESC LIMIT 200",
+            )
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?
+        };
+        Ok(rows)
+    }
+
+
     /// Round 165: 按 id 取单条 hold，返回完整列。
     pub async fn get_hold_by_id_v1(
         &self,
