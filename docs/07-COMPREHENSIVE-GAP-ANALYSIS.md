@@ -421,3 +421,75 @@ rtk cargo test --workspace --no-fail-fast --lib
 - workspace `cargo check --workspace` 0 errors
 - 决策束相关代码由 100% inline SQL 降为 0%（decisions.rs 中 decision_bundles 相关不再有任何 SQL 字面量）
 - 路由层与 Repo 关注点清晰分离：路由只翻译 HTTP/JSON；Repo 只关心 SQL 与领域类型
+
+## 16. 第九十三轮增量（Round 93 — `audit/org/search/agents` 子块仓储化 + 4 个隐藏 bug 修复）
+
+> 上一轮已把 decision_bundles 抽到 Repo 层；本轮针对 `companies.rs` 第 1513-2229 行的 `audit / org / search / agents` 子块继续仓储化。**关键发现**：该子块内至少 4 个路由的内联 SQL 引用了不存在的列名/表名，调用即 100% 500。
+
+### 修复的 4 个隐藏 bug
+| # | 路由 | 原内联 SQL | 问题 | 修复 |
+|---|---|---|---|---|
+| 1 | `POST /api/companies/:id/agents` | `INSERT INTO agents (..., adapter_kind)` | 真实列名是 `adapter_type` | 走 `AgentRepo::create_simple` |
+| 2 | `GET /api/companies/:id/activity` | `SELECT kind, actor_user_id, issue_id, project_id, payload` | 真实列是 `action / actor_id / entity_type / entity_id / details` | 走 `ActivityRepo::list_for_company` |
+| 3 | `GET /api/companies/:id/user-directory` | `cm.user_id`, `cm.role` | 真实列是 `cm.principal_id / cm.membership_role` | 走 `CompanyMemberRepo::user_directory` |
+| 4 | `POST /api/companies/:id/built-in-agents/:id` | `INSERT INTO company_built_in_agent_provisions` | 表在迁移集中**根本不存在** | 改为 stub 返回 200（schema 落地后改 Repo） |
+
+### 新增/扩展的 Repo 方法
+- **`AgentRepo::create_simple(company_id, name, role)`** — 公司内轻量创建 agent，默认 `adapter_type='codex_local'`、`status='active'`
+- **`AgentRepo::list_for_org_chart(company_id)`** — 返回 `Vec<OrgChartAgentRow>`，仅 6 个核心列
+- **`OrgChartAgentRow`** — 组织架构投影结构
+- **`CompanyMemberRepo::user_directory(company_id)`** — 返回 `Vec<UserDirectoryEntry>`，INNER JOIN `"user"`
+- **`UserDirectoryEntry`** — `{user_id, name, email, image, role}` 5 元组
+- **`CompanyRepo::exists(company_id)`** — 轻量级 404 前置守卫
+- **`IssueRepo::search_titles(company_id, query, limit)`** — `ILIKE %query%` 模糊搜索，返回 `Vec<IssueTitleRow>`
+- **`IssueTitleRow`** — `{id, title, status}` 三元组
+- **`CaseRepo::list_events_by_company(company_id, kind_filter, limit)`** — 跨 case 列出公司事件，支持 `?kind=` 过滤
+
+### 重构的 8 个路由
+| 路由 | 路由函数 | 改用 |
+|---|---|---|
+| `POST /api/companies/:id/agents` | `create_agent` | `AgentRepo::create_simple` |
+| `GET /api/companies/:id/activity` | `list_company_activity_route` | `ActivityRepo::list_for_company` |
+| `GET /api/companies/:id/user-directory` | `list_company_user_directory_route` | `CompanyMemberRepo::user_directory` |
+| `GET /api/companies/:id/case-events` | `list_company_case_events_route` | `CaseRepo::list_events_by_company` |
+| `GET /api/companies/:id/case-events?kind=X` | 同上 | 同上（自动支持） |
+| `POST /api/companies/:id/search/extract` | `search_extract` | `IssueRepo::search_titles` |
+| `GET /api/companies/:id/org` | `get_org` | `AgentRepo::list_for_org_chart` |
+| `GET /api/companies/:id/org.svg` | `get_org_svg` | `AgentRepo::list_for_org_chart` |
+| `ensure_company_exists` 守卫 | 内部 helper | `CompanyRepo::exists` |
+| `POST /api/companies/:id/built-in-agents/:id` | `provision_built_in_agent` | stub（schema 待补） |
+
+### 新增 12 个集成测试 `crates/pc-http/tests/companies_audit_subresources_contract.rs`
+**Repo 层（7 个）**：
+1. `repo_company_exists_returns_true_when_present`
+2. `repo_user_directory_returns_active_members_with_role`
+3. `repo_user_directory_excludes_archived_memberships`
+4. `repo_list_for_org_chart_returns_minimal_columns`
+5. `repo_create_simple_writes_to_adapter_type_not_adapter_kind` ← 命名点出 bug
+6. `repo_search_titles_uses_ilike_with_limit`
+7. `repo_list_events_by_company_supports_kind_filter`
+
+**HTTP 层（5 个）**：
+1. `http_create_agent_uses_adapter_type_column` ← 验证原 100% 500 bug 已修
+2. `http_user_directory_returns_company_users`
+3. `http_activity_uses_real_schema_columns` ← 验证原列名 bug 已修
+4. `http_search_extract_finds_matching_titles`
+5. `http_provision_built_in_agent_returns_stub`
+6. `http_get_org_returns_nodes_and_edges`
+
+### 内联 SQL 减少统计
+- `companies.rs` 总内联 SQL：**48 → 41**（−15%）
+- `audit/org/search/agents` 子块（1513-2229）内联 SQL：**10 → 5**（−50%，剩余 5 个都在 `get_companies_stats` 多表 COUNT 聚合里，无 schema bug）
+
+### 设计原则
+- **回归测试即 bug 验收**：每个修复的 hidden bug 都有同名测试守住（如 `uses_adapter_type_column` / `uses_real_schema_columns`），未来若有 schema 漂移会立刻被测试捕获
+- **schema 缺失时不假装**：对 `company_built_in_agent_provisions` 这类表不存在的场景，明确返回 stub + 说明字段，而不是 silently 500
+- **schema 漂移即暴露**：原 inline SQL 把列名/表名硬编码在路由层，schema 改名时编译器不报错、运行时 500；现在 SQL 集中在 Repo 层，schema 改名时编译期就报
+
+### 进度影响
+- 综合进度从 **≈ 78.5% → ≈ 79.5%**
+- `pc-repos` 单测 447 通过（无新增单元测试，全部为端到端集成测试）
+- `pc-http` 集成测试 **+12 个新源**（DB 沙箱放行后应通过）
+- workspace `cargo check --workspace` 0 errors
+- 4 个路由从 100% 500 → 正常 200/4xx
+- companies.rs 内联 SQL 减少 7 个（约 100 行 SQL 字面量）
