@@ -1165,40 +1165,54 @@ async fn list_members(
     Path(company_id): Path<Uuid>,
     Query(q): Query<ListMembersQuery>,
 ) -> ApiResult<Json<Value>> {
-    let include_archived = q.include_archived.unwrap_or(false);
-    let role_filter = q.role.clone();
-    // Round 28: LEFT JOIN "user" 暴露 email/name/avatar；支持 ?include_archived + ?role 过滤
-    let mut sql = String::from(
-        "SELECT m.id, m.user_id, m.role, m.archived_at, m.created_at, m.updated_at, u.name, u.email, u.image \
-         FROM company_members m LEFT JOIN \"user\" u ON u.id = m.user_id WHERE m.company_id = $1",
-    );
-    if !include_archived {
-        sql.push_str(" AND m.archived_at IS NULL");
+    let mut filter = if q.include_archived.unwrap_or(false) {
+        pc_repos::company_member::MemberFilter {
+            include_archived: true,
+            role: q.role.as_deref(),
+            ..pc_repos::company_member::MemberFilter::user()
+        }
+    } else {
+        pc_repos::company_member::MemberFilter {
+            role: q.role.as_deref(),
+            ..pc_repos::company_member::MemberFilter::user()
+        }
+    };
+    // 防止 include_archived 路径把 principal_type 清空
+    if filter.principal_type.is_empty() {
+        filter.principal_type = "user";
     }
-    if role_filter.is_some() {
-        sql.push_str(" AND m.role = $3");
-    }
-    sql.push_str(" ORDER BY m.role, COALESCE(u.name, m.user_id)");
-    let mut query = sqlx::query_as::<_, (Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>, Option<String>)>(&sql)
-        .bind(company_id);
-    if let Some(r) = role_filter.as_ref() {
-        query = query.bind(r);
-    }
-    let rows = query.fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, uid, role, archived, created_at, updated_at, name, email, image)| json!({
-        "id": id, "userId": uid, "role": role,
-        "name": name, "email": email, "image": image,
-        "archivedAt": archived,
-        "createdAt": created_at, "updatedAt": updated_at,
-        "companyId": company_id,
-    })).collect();
+    let rows = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .list_by_company(company_id, filter)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|m| {
+            json!({
+                "id": m.id,
+                "userId": m.principal_id,
+                "role": m.membership_role,
+                "status": m.status,
+                "name": m.name,
+                "email": m.email,
+                "image": m.image,
+                "createdAt": m.created_at,
+                "updatedAt": m.updated_at,
+                "companyId": m.company_id,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
 
+/// 与 Node `updateCompanyMemberSchema.role` 对齐；保留 `role` 字段名以兼容客户端。
 #[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct PatchMemberBody {
     #[serde(default)]
     role: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1215,25 +1229,38 @@ async fn patch_member(
     Path((company_id, member_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchMemberBody>,
 ) -> ApiResult<Json<Value>> {
-    if let Some(ref r) = body.role {
-        let q = sqlx::query(
-            "UPDATE company_members SET role=$1, updated_at=now() WHERE company_id=$2 AND id=$3",
-        ).bind(r).bind(company_id).bind(member_id).execute(state.db.pool()).await?;
-        if q.rows_affected() == 0 {
-            return Err(ApiError::NotFound(format!("member {member_id}")));
-        }
+    let patch = pc_repos::company_member::MemberPatch {
+        membership_role: body.role.clone(),
+        status: body
+            .status
+            .as_deref()
+            .and_then(pc_repos::company_member::MemberStatus::parse),
+    };
+    let row = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .patch(company_id, member_id, patch)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    match row {
+        Some(r) => Ok(Json(json!({
+            "id": r.id,
+            "userId": r.principal_id,
+            "role": r.membership_role,
+            "status": r.status,
+            "updatedAt": r.updated_at,
+        }))),
+        None => Err(ApiError::NotFound(format!("member {member_id}"))),
     }
-    Ok(Json(json!({"updated": true, "id": member_id, "role": body.role})))
 }
 
 async fn archive_member(
     State(state): State<AppState>,
     Path((company_id, member_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let r = sqlx::query(
-        "UPDATE company_members SET archived_at=now() WHERE company_id=$1 AND id=$2 AND archived_at IS NULL",
-    ).bind(company_id).bind(member_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let ok = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .archive(company_id, member_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !ok {
         return Err(ApiError::NotFound(format!("member {member_id}")));
     }
     Ok(Json(json!({"archived": true, "id": member_id})))
@@ -1408,27 +1435,17 @@ async fn get_my_inbox_agent_policy(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let user_id = crate::state::require_user_id(&state, &headers).await?;
-    let row: Option<(String, Value, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT mode, allowed_agent_ids, created_at, updated_at          FROM user_inbox_agent_policies WHERE company_id = $1 AND user_id = $2",
-    )
-    .bind(company_id)
-    .bind(&user_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (mode, allowed_agent_ids, _created_at, updated_at) = row.unwrap_or_else(|| (
-        "open".to_string(),
-        json!([]),
-        chrono::Utc::now(),
-        chrono::Utc::now(),
-    ));
+    let policy = pc_repos::inbox_agent_policy::InboxAgentPolicyRepo::new(&state.db)
+        .get(company_id, &user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
-        "companyId": company_id,
-        "userId": user_id,
-        "mode": mode,
-        "allowedAgentIds": allowed_agent_ids,
-        "updatedAt": updated_at,
+        "companyId": policy.company_id,
+        "userId": policy.user_id,
+        "mode": policy.mode.as_str(),
+        "allowedAgentIds": policy.allowed_agent_ids,
+        "updatedAt": policy.updated_at,
+        "materialized": policy.materialized,
     })))
 }
 
@@ -1439,30 +1456,33 @@ async fn put_my_inbox_agent_policy(
     Json(body): Json<PutInboxAgentPolicyBody>,
 ) -> ApiResult<Json<Value>> {
     let user_id = crate::state::require_user_id(&state, &headers).await?;
-    if !matches!(body.mode.as_str(), "open" | "allowlist" | "disabled") {
-        return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
-    }
-    let allowed = json!(body.allowed_agent_ids);
-    let updated_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
-        "INSERT INTO user_inbox_agent_policies (company_id, user_id, mode, allowed_agent_ids)          VALUES ($1, $2, $3, $4::jsonb)          ON CONFLICT (company_id, user_id) DO UPDATE            SET mode = EXCLUDED.mode, allowed_agent_ids = EXCLUDED.allowed_agent_ids, updated_at = now()          RETURNING updated_at",
-    )
-    .bind(company_id)
-    .bind(&user_id)
-    .bind(&body.mode)
-    .bind(&allowed)
-    .fetch_one(state.db.pool())
-    .await?;
-    state.realtime.publish(
-        LiveEvent::new("user_inbox_agent_policy.updated", "user_inbox_agent_policy", company_id)
+    let mode = pc_repos::inbox_agent_policy::InboxAgentPolicyMode::parse(&body.mode)
+        .ok_or_else(|| ApiError::BadRequest(format!("invalid mode '{}'", body.mode)))?;
+    let input = pc_repos::inbox_agent_policy::UpdateInboxAgentPolicyInput {
+        mode,
+        allowed_agent_ids: body.allowed_agent_ids.clone(),
+    };
+    let policy = pc_repos::inbox_agent_policy::InboxAgentPolicyRepo::new(&state.db)
+        .update(company_id, &user_id, input)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state
+        .realtime
+        .publish(
+            LiveEvent::new(
+                "user_inbox_agent_policy.updated",
+                "user_inbox_agent_policy",
+                company_id,
+            )
             .with_company(company_id)
             .with_data(json!({"userId": user_id, "mode": body.mode})),
-    );
+        );
     Ok(Json(json!({
-        "companyId": company_id,
-        "userId": user_id,
-        "mode": body.mode,
-        "allowedAgentIds": allowed,
-        "updatedAt": updated_at,
+        "companyId": policy.company_id,
+        "userId": policy.user_id,
+        "mode": policy.mode.as_str(),
+        "allowedAgentIds": policy.allowed_agent_ids,
+        "updatedAt": policy.updated_at,
     })))
 }
 

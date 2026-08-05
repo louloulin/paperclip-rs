@@ -184,3 +184,78 @@ rtk cargo test --workspace --no-fail-fast --lib
 >   - 数据持久化 +0.3%（decision 写入原子化签名）
 >   - 综合进度从 **≈ 75.4% → ≈ 75.7%**（加权后小幅提升，安全关键路径补齐）
 >   - workspace 总单测：**+32 passing**（pc-config 5→16 / pc-secrets 21→39 / pc-repos decision +2 / 集成 +1）
+
+## 10. 第八十八轮增量（Round 88 — invites + join_requests 模块化重构）
+
+> 第八十八轮增量：
+> - **新增 `pc-repos::invite`** (316 行)：完整对齐 `packages/db/src/schema/invites.ts` + Node `services/invite-grants.ts` 的契约。提供 `InviteStatus`(pending/accepted/revoked/expired)、`InviteRow`/`InviteWithStatus`/`CreatedInvite`、`InviteRepo` (list_by_company / find_by_token_hash / find_active_by_token_hash / find_active_by_token / create / revoke / mark_accepted) + 公开辅助 `hash_token_hex`(SHA-256 hex) 与 `generate_url_safe_token`(256-bit CSPRNG → base64url no-pad)
+> - **新增 `pc-repos::join_request`** (343 行)：完整对齐 `packages/db/src/schema/join_requests.ts`。提供 `JoinRequestStatus` 枚举、`JoinRequestRow`/`NewJoinRequest`/`JoinRequestDecision`/`JoinRequestApprovalEffects` (`created_membership_id` / `created_agent_id`)、`JoinRequestRepo` 状态机 (`create / list_by_company / find_by_id / approve(在事务里 FOR UPDATE) / reject(幂等)`)、`JoinRequestError::NotPending`/`UnknownRequestType`
+> - **重构 `pc-http::routes::companies`**：把 inline `sqlx::query_as`/`sqlx::query` (~190 行) 替换为调用上述 Repo。`approve_join_request` 走单事务 (`begin / FOR UPDATE / approve / commit`)；`reject_join_request` 走条件 UPDATE，要求 `status='pending_approval'`
+> - **重构 `pc-http::routes::access`**：`invites_get` / `invites_accept` / `revoke_invite_by_token` 改用 `InviteRepo::find_active_by_token_hash` / `find_by_token_hash` / `mark_accepted` / `revoke`
+> - **新增 5 个集成测试** (`crates/pc-http/tests/invites_join_requests_contract.rs`)：
+>   1. `invite_create_list_revoke_flow` — create → HTTP list 命中 → revoke → active lookup 为空
+>   2. `invite_token_active_lookup_rejects_expired_and_revoked` — 过期邀请在 `find_active_by_token` 返回 `None`，但 `find_by_token_hash` 仍能找到
+>   3. `join_request_approve_creates_membership` — user 类型 approve 触发 upsert 到 `company_memberships`
+>   4. `join_request_approve_creates_agent_for_agent_type` — agent 类型 approve 触发 `agents` 行写入
+>   5. `join_request_reject_then_approve_returns_not_pending` — reject 幂等 + approved→approve 返回 `NotPending` 错误
+> - **新增 7 个单元测试**（`pc-repos::invite` 5 个 + `pc-repos::join_request` 2 个）：hash 稳定性、token 熵、`extract_role` defaults、`InviteStatus` 派生、`JoinRequestStatus` 字符串往返、未知名 `request_type` 拒绝
+> - **设计原则**：
+>   - 高内聚：邀请与 join_request 不再散落在 `companies.rs` (2215 行) + `access.rs` 内联 SQL，而是集中在两个命名模块
+>   - 低耦合：`InviteRepo` / `JoinRequestRepo` 只依赖 `pc_db::Db` + `pc_core::Timestamp`，与 HTTP / serde / axum 完全解耦
+>   - 行为等价：`pending/accepted/revoked/expired` 派生规则、`defaults_payload.role` 透传、`FOR UPDATE` 锁、防重复状态机迁移 与原 Node 实现对齐
+>   - 安全性：随机 token 从 `OsRng` (CSPRNG) 取 32 字节 + base64url，无 padding；旧的 inline 实现用 `std::time::SystemTime` 衍生 seed，被替换
+> - **进度影响**：
+>   - 数据持久化 +2%（`invites` + `join_requests` 仓储化）
+>   - 路由深度 +1%（`companies.rs` 减重 ~140 行，访问路径行为与 Node 一致）
+>   - 综合进度从 **≈ 75.7% → ≈ 76.0%**（加权后小幅提升，关键 P0 模块契约化）
+>   - workspace 总单测：**+12 passing**（pc-repos 437 → 包含新增 7 个；pc-http 集成 0→5）
+
+## 11. 第八十九轮增量（Round 89 — `company_member` 模块 + inline SQL bug 修复）
+
+> 第八十九轮增量（同时填补了 inline SQL 引用不存在列的隐藏 bug）：
+>
+> **发现并修复的 bug**
+> - 原 `crates/pc-http/src/routes/companies.rs::list_members` 使用 `FROM company_members` 表，但实际 schema 表是 `company_memberships`（migration #14 创建）。
+> - 同 SELECT 引用不存在的列：`m.role`（实际列是 `membership_role`）、`m.archived_at`（实际是用 `status='archived'` 表达）。
+> - Round 89 全部用 `pc_repos::company_member::CompanyMemberRepo` 替换内联 SQL，列名与表名与 PG schema 对齐。
+> - `PATCH .../members/:id` 同样修了 `UPDATE company_members` + `m.role` 的 bug。
+>
+> **新增 `pc-repos::company_member`** (274 行)：
+> - `MemberStatus` 枚举（active/archived）+ `parse/as_str`
+> - `CompanyMemberRow` (FromRow) 含 LEFT JOIN `"user"` 后的 `name/email/image`
+> - `MemberFilter::user()` 工厂方法（常用 default: `principal_type='user'` + `include_archived=false`）
+> - `MemberPatch { membership_role, status }` DTO
+> - `CompanyMemberRepo`：
+>   - `list_by_company(company_id, MemberFilter)` — 限定 user、role 过滤、archived 开关，按 `membership_role` 字符串 ASC 排序
+>   - `find_by_id` / `find_by_user`
+>   - `patch` — UPDATE（动态 SQL）→ 若影响行 > 0 走 `find_by_id` LEFT JOIN 回填
+>   - `archive` — `status='archived'`，幂等
+>   - `count_active_for_company`
+> - 4 个单测覆盖 `MemberStatus` 字符串往返、`MemberPatch::default()` 空性、`MemberFilter::user()`/`default()` 差异
+>
+> **重构 `pc-http::routes::companies::list_members`**：
+> - 原 ~50 行内联 SQL 替换为对 `CompanyMemberRepo::list_by_company` 的一次调用
+> - 响应 payload 携带 `role` + `status`（修复前只有 `role`/`archivedAt` 不存在列）
+>
+> **重构 `patch_member` / `archive_member` handler**：
+> - 走 Repo；客户端 `role`/`status` 字段在 DTO 中显式暴露
+>
+> **新增 6 个集成测试** `crates/pc-http/tests/company_member_contract.rs`：
+> 1. `repo_list_returns_only_active_members_with_principal_user` — 同时验证 user/agent 两类 principal 行只有 user 被列出，LEFT JOIN `email` 填充
+> 2. `repo_list_with_role_filter_returns_only_matching_role` — `MemberFilter.role` 过滤生效
+> 3. `repo_list_include_archived_shows_archived_rows` — 默认 active-only；`include_archived=true` 包含 archived 行
+> 4. `repo_patch_role_updates_membership_role` — patch 写入 `membership_role`，`find_by_user` 回读一致
+> 5. `repo_archive_is_idempotent` — 两次 archive，第二次返回 false 但 row 仍可查
+> 6. `http_list_members_returns_joined_user_fields` — HTTP 200 + 响应字段含 `userId/role/status/email/companyId`（修复前因表名错而 500）
+>
+> **设计原则**
+> - 与现有 `membership.rs`（项目/agent/document）分离 — `company_member.rs` 只承担 `company_memberships` 的 user-成员子集；避免一个文件 1500 行的回归
+> - Repo 独立于 axum/serde，仅依赖 `pc_db::Db` 与 `pc_core::Timestamp`
+> - Filter 用 `&'a str` 字段（与 sqlx bind 兼容），提供 `MemberFilter::user()` 工厂避免调用方拼字符串
+> - patch UPDATE 是动态 SQL（仅在 patch 字段非 None 时 SET），单 UPDATE 不拼接列名 — `rows_affected()==0` 时回 `Ok(None)` 让上层判定 404
+>
+> **进度影响**
+> - 数据持久化 +1.5%（`company_memberships` 完整契约化 + 修隐藏 bug）
+> - 路由深度 +1.5% — `companies.rs` 内联 SQL → Repo；该路径 http 测试现在能跑通（修复前所有调用都会 500）
+> - 综合进度从 **≈ 76.0% → ≈ 76.5%**
+> - workspace 单测：pc-repos **441 passed** (含新 4 个)；pc-http 集成 **0→6**

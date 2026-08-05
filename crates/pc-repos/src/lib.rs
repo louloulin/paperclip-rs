@@ -25,6 +25,7 @@ pub mod board_chat;
 pub mod case;
 pub mod change_consent_gate;
 pub mod company;
+pub mod company_member;
 pub mod cost;
 pub mod decision;
 pub mod decision_training;
