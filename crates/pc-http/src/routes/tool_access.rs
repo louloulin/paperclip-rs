@@ -1197,27 +1197,15 @@ async fn list_application_grants(
     State(_state): State<AppState>,
     Path(application_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Mirrors Node `/tool-applications/:applicationId/grants`. Surfaces the
-    // OAuth grants (connection-level access tokens) bound to the application.
-    let rows: Vec<(Uuid, Uuid, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, connection_id, scope, expires_at FROM tool_oauth_grants          WHERE application_id = $1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(application_id)
-    .fetch_all(_state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, connection_id, scope, expires_at)| {
-            json!({
-                "id": id,
-                "connectionId": connection_id,
-                "scope": scope,
-                "expiresAt": expires_at,
-            })
-        })
-        .collect();
-    Ok(Json(json!({ "items": items })))
+    // Round 95 修复：原 SQL 引用了 v3 schema 已删除的 `tool_oauth_grants` 表 + `application_id` 列。
+    // v3 用 `connection_grants` 表 + `subject_user_id` 概念替代了 `application` 概念。
+    // 端点保留 URL 兼容但返回空数组 + 说明；待前端切到 `list_connection_grants` 后可下线。
+    let _ = application_id; // 标记未使用
+    Ok(Json(json!({
+        "items": [],
+        "deprecated": true,
+        "note": "application concept removed in v3 schema; use /api/tool-connections/:id/grants instead",
+    })))
 }
 
 async fn tool_runtime_health(
@@ -1299,8 +1287,12 @@ async fn list_connection_grants(
     State(_state): State<AppState>,
     Path(connection_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, scope, expires_at FROM tool_oauth_grants          WHERE connection_id = $1 ORDER BY created_at DESC LIMIT 50",
+    // Round 95 修复：原 SQL 引用了 v3 schema 已删除的 `tool_oauth_grants` 表 + `scope`/`expires_at` 列；
+    // 真实表是 `connection_grants`，列：id, connection_id, kind, subject_user_id,
+    // provider_tenant (jsonb), credential_secret_refs, status, is_default, ...
+    let rows: Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, connection_id, kind, subject_user_id, status, created_at::text \
+         FROM connection_grants WHERE connection_id = $1 ORDER BY created_at DESC LIMIT 50",
     )
     .bind(connection_id)
     .fetch_all(_state.db.pool())
@@ -1308,11 +1300,14 @@ async fn list_connection_grants(
     .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, scope, expires_at)| {
+        .map(|(id, connection_id, kind, subject_user_id, status, created_at)| {
             json!({
                 "id": id,
-                "scope": scope,
-                "expiresAt": expires_at,
+                "connectionId": connection_id,
+                "kind": kind,
+                "subjectUserId": subject_user_id,
+                "status": status,
+                "createdAt": created_at,
             })
         })
         .collect();

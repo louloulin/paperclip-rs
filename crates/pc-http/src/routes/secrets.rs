@@ -856,9 +856,11 @@ async fn patch_provider_config(
     if body.status.is_none() && body.label.is_none() && body.provider_config.is_none() && body.default_for_kind.is_none() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
+    // Round 95 修复：原 inline SQL 引用不存在的 `secret_provider_configs` 表 + `label` 列；
+    // 真实表是 `company_secret_provider_configs`，列名是 `display_name`（不是 `label`）。
     sqlx::query(
-        "UPDATE secret_provider_configs SET \
-            label = COALESCE($1, label), \
+        "UPDATE company_secret_provider_configs SET \
+            display_name = COALESCE($1, display_name), \
             status = COALESCE($2, status), \
             config = COALESCE($3, config), \
             is_default = COALESCE($4, is_default), \
@@ -873,7 +875,8 @@ async fn patch_provider_config(
     .execute(&mut *tx)
     .await?;
     let row: Option<(Uuid, Uuid, String, String, Value, bool, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, label, status, config, is_default, updated_at FROM secret_provider_configs WHERE id = $1",
+        "SELECT id, company_id, display_name, status, config, is_default, updated_at \
+         FROM company_secret_provider_configs WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -882,7 +885,7 @@ async fn patch_provider_config(
     .flatten();
     tx.commit().await?;
     let (id, company_id, label, status, config, is_default, updated_at) = row
-        .ok_or_else(|| ApiError::NotFound(format!("secret_provider_config {id}")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("company_secret_provider_config {id}")))?;
     state.realtime.publish(
         LiveEvent::new("secret_provider_config.updated", "secret_provider_config", id)
             .with_company(company_id)
