@@ -232,11 +232,14 @@ pub struct CatalogEntryRow {
     pub updated_at: Timestamp,
 }
 
-const ACTION_REQ_COLS: &str = "id, company_id, application_id, connection_id, requester_type,      requester_user_id, requester_agent_id, action_name, payload, status,      submitted_at, approved_by_user_id, decided_at, executed_at,      result_summary, error_code, error_message,      created_at, updated_at";
+/// 历史保留：tool_action_requests 老 schema 是审批流模型（已不在 v3 schema 中）。
+/// 重命名为 LegacyToolApprovalRow 以避免和 Round 105 新引入的真实 schema 行混淆。
+const LEGACY_APPROVAL_COLS: &str = "id, company_id, application_id, connection_id, requester_type,      requester_user_id, requester_agent_id, action_name, payload, status,      submitted_at, approved_by_user_id, decided_at, executed_at,      result_summary, error_code, error_message,      created_at, updated_at";
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ToolActionRequestRow {
+pub struct LegacyToolApprovalRow {
     pub id: Uuid,
     pub company_id: Uuid,
     pub application_id: Uuid,
@@ -668,12 +671,12 @@ impl<'a> ToolRepo<'a> {
 
     pub async fn create_action_request(
         &self,
-        r: &ToolActionRequestRow,
-    ) -> RepoResult<ToolActionRequestRow> {
+        r: &LegacyToolApprovalRow,
+    ) -> RepoResult<LegacyToolApprovalRow> {
         let sql = format!(
-            "INSERT INTO tool_action_requests (company_id, application_id, connection_id,                 requester_type, requester_user_id, requester_agent_id, action_name, payload,                 status, submitted_at)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)              RETURNING {ACTION_REQ_COLS}"
+            "INSERT INTO tool_action_requests (company_id, application_id, connection_id,                 requester_type, requester_user_id, requester_agent_id, action_name, payload,                 status, submitted_at)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)              RETURNING {LEGACY_APPROVAL_COLS}"
         );
-        Ok(sqlx::query_as::<_, ToolActionRequestRow>(&sql)
+        Ok(sqlx::query_as::<_, LegacyToolApprovalRow>(&sql)
             .bind(r.company_id)
             .bind(r.application_id)
             .bind(r.connection_id)
@@ -693,12 +696,12 @@ impl<'a> ToolRepo<'a> {
         id: Uuid,
         approve: bool,
         approver_user_id: &str,
-    ) -> RepoResult<Option<ToolActionRequestRow>> {
+    ) -> RepoResult<Option<LegacyToolApprovalRow>> {
         let status = if approve { "approved" } else { "rejected" };
         let sql = format!(
-            "UPDATE tool_action_requests SET status=$2, approved_by_user_id=$3, decided_at=now(),              updated_at=now() WHERE id=$1 RETURNING {ACTION_REQ_COLS}"
+            "UPDATE tool_action_requests SET status=$2, approved_by_user_id=$3, decided_at=now(),              updated_at=now() WHERE id=$1 RETURNING {LEGACY_APPROVAL_COLS}"
         );
-        Ok(sqlx::query_as::<_, ToolActionRequestRow>(&sql)
+        Ok(sqlx::query_as::<_, LegacyToolApprovalRow>(&sql)
             .bind(id)
             .bind(status)
             .bind(approver_user_id)
@@ -730,11 +733,11 @@ impl<'a> ToolRepo<'a> {
     pub async fn pending_action_requests(
         &self,
         company_id: Uuid,
-    ) -> RepoResult<Vec<ToolActionRequestRow>> {
+    ) -> RepoResult<Vec<LegacyToolApprovalRow>> {
         let sql = format!(
-            "SELECT {ACTION_REQ_COLS} FROM tool_action_requests              WHERE company_id=$1 AND status IN ('pending','submitted')              ORDER BY submitted_at ASC"
+            "SELECT {LEGACY_APPROVAL_COLS} FROM tool_action_requests              WHERE company_id=$1 AND status IN ('pending','submitted')              ORDER BY submitted_at ASC"
         );
-        Ok(sqlx::query_as::<_, ToolActionRequestRow>(&sql)
+        Ok(sqlx::query_as::<_, LegacyToolApprovalRow>(&sql)
             .bind(company_id)
             .fetch_all(self.db.pool())
             .await?)
@@ -1427,6 +1430,99 @@ impl<'a> ToolRepo<'a> {
 
 const POLICY_COLS: &str = "id, company_id, name, description, policy_type, priority, enabled, selectors, conditions, config, created_by_agent_id, created_by_user_id, created_at, updated_at";
 
+// ============================================================
+// Round 105: ToolActionRequest 仓储层
+// ============================================================
+//
+// 真实表 schema (0149_agent_access_phase2_contracts.sql)：
+//   tool_action_requests(
+//     id, company_id, invocation_id, issue_id, interaction_id, approval_id,
+//     status, canonical_arguments_hash, canonical_arguments_summary,
+//     signed_arguments, preview_markdown,
+//     requested_by_agent_id, requested_by_user_id,
+//     resolved_by_agent_id, resolved_by_user_id,
+//     decided_by_agent_id, decided_by_user_id,
+//     decided_at, expires_at, resolved_at,
+//     created_at, updated_at
+//   )
+//
+// **不存在**的列：`action_kind / requested_by / payload`
+// 之前 list_tool_action_requests 用这 3 个错列。
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolActionRequestRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub invocation_id: Uuid,
+    pub issue_id: Option<Uuid>,
+    pub interaction_id: Option<Uuid>,
+    pub approval_id: Option<Uuid>,
+    pub status: String,
+    pub canonical_arguments_hash: String,
+    pub canonical_arguments_summary: Value,
+    pub signed_arguments: Option<String>,
+    pub preview_markdown: Option<String>,
+    pub requested_by_agent_id: Option<Uuid>,
+    pub requested_by_user_id: Option<String>,
+    pub resolved_by_agent_id: Option<Uuid>,
+    pub resolved_by_user_id: Option<String>,
+    pub decided_by_agent_id: Option<Uuid>,
+    pub decided_by_user_id: Option<String>,
+    pub decided_at: Option<Timestamp>,
+    pub expires_at: Option<Timestamp>,
+    pub resolved_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+impl<'a> ToolRepo<'a> {
+    pub async fn list_action_requests_by_company(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> RepoResult<Vec<ToolActionRequestRow>> {
+        let sql = format!(
+            "SELECT {ACTION_REQ_COLS_V3} FROM tool_action_requests              WHERE company_id=$1              ORDER BY created_at DESC LIMIT $2"
+        );
+        Ok(sqlx::query_as::<_, ToolActionRequestRow>(&sql)
+            .bind(company_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn get_action_request(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> RepoResult<Option<ToolActionRequestRow>> {
+        let sql = format!(
+            "SELECT {ACTION_REQ_COLS_V3} FROM tool_action_requests              WHERE company_id=$1 AND id=$2"
+        );
+        Ok(sqlx::query_as::<_, ToolActionRequestRow>(&sql)
+            .bind(company_id)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    pub async fn list_action_requests_by_invocation(
+        &self,
+        invocation_id: Uuid,
+    ) -> RepoResult<Vec<ToolActionRequestRow>> {
+        let sql = format!(
+            "SELECT {ACTION_REQ_COLS_V3} FROM tool_action_requests              WHERE invocation_id=$1              ORDER BY created_at DESC LIMIT 100"
+        );
+        Ok(sqlx::query_as::<_, ToolActionRequestRow>(&sql)
+            .bind(invocation_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+}
+
+const ACTION_REQ_COLS_V3: &str = "id, company_id, invocation_id, issue_id, interaction_id, approval_id, status, canonical_arguments_hash, canonical_arguments_summary, signed_arguments, preview_markdown, requested_by_agent_id, requested_by_user_id, resolved_by_agent_id, resolved_by_user_id, decided_by_agent_id, decided_by_user_id, decided_at, expires_at, resolved_at, created_at, updated_at";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1641,5 +1737,55 @@ mod tests {
         assert!(POLICY_COLS.contains("selectors"));
         assert!(POLICY_COLS.contains("conditions"));
         assert!(POLICY_COLS.contains("config"));
+    }
+
+    // ---- Round 105: ToolActionRequest ----
+
+    #[test]
+    fn action_request_col_excludes_wrong_columns() {
+        // 检查每个以逗号/空格分隔的 token 是否属于错列集合。
+        let cols: Vec<&str> = ACTION_REQ_COLS_V3
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let wrong = ["action_kind", "requested_by", "payload", "application_id", "connection_id", "action_name"];
+        for c in &cols {
+            assert!(!wrong.contains(c), "schema leak: forbidden col {c}");
+        }
+        // 必须包含真实列
+        for must in ["invocation_id", "canonical_arguments_hash", "canonical_arguments_summary",
+                     "requested_by_agent_id", "requested_by_user_id", "decided_at"] {
+            assert!(cols.contains(&must), "missing col: {must}");
+        }
+    }
+
+    #[test]
+    fn action_request_row_has_minimal_required_fields() {
+        let r = ToolActionRequestRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            invocation_id: Uuid::new_v4(),
+            issue_id: None,
+            interaction_id: None,
+            approval_id: None,
+            status: "pending".into(),
+            canonical_arguments_hash: "abc123".into(),
+            canonical_arguments_summary: serde_json::json!({"first": 1}),
+            signed_arguments: None,
+            preview_markdown: None,
+            requested_by_agent_id: None,
+            requested_by_user_id: None,
+            resolved_by_agent_id: None,
+            resolved_by_user_id: None,
+            decided_by_agent_id: None,
+            decided_by_user_id: None,
+            decided_at: None,
+            expires_at: None,
+            resolved_at: None,
+            created_at: pc_core::Timestamp::now(),
+            updated_at: pc_core::Timestamp::now(),
+        };
+        assert_eq!(r.status, "pending");
+        assert_eq!(r.canonical_arguments_hash, "abc123");
     }
 }

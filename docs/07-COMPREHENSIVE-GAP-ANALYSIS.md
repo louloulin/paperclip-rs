@@ -713,6 +713,72 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 28. 第一百零五轮增量（Round 105 — ToolActionRequest 仓储化 + 老 schema 命名区分)
+
+### 目标
+`tool_access.rs::list_tool_action_requests` 用不存在的列 `action_kind / requested_by / payload`；
+真实 schema 是 `invocation_id / canonical_arguments_* / requested_by_*_id / decided_at` 等。
+同时打掉 `pc_repos::tool::ToolActionRequestRow` 的同名冲突（旧的 v2 审批流模型用
+`application_id / connection_id / requester_type / action_name / payload` 这些不存在的列）。
+
+### 真实 schema (0149_agent_access_phase2_contracts.sql)
+```sql
+tool_action_requests(
+    id, company_id, invocation_id, issue_id, interaction_id, approval_id,
+    status, canonical_arguments_hash, canonical_arguments_summary,
+    signed_arguments, preview_markdown,
+    requested_by_agent_id, requested_by_user_id,
+    resolved_by_agent_id, resolved_by_user_id,
+    decided_by_agent_id, decided_by_user_id,
+    decided_at, expires_at, resolved_at,
+    created_at, updated_at
+)
+```
+
+**不存在**：action_kind / requested_by / payload / application_id / connection_id 等
+
+### 重塑 `pc_repos::tool` 
+
+**老 `ToolActionRequestRow` → 重命名 `LegacyToolApprovalRow`**：
+原模型假设的 v2 审批流 schema 跟真实表对不上（用了 application_id/connection_id/requester_type/
+action_name/payload 等不存在的列）。整个 struct + 5 个方法改成 `Legacy*` 前缀并标
+`#[allow(dead_code)]`，避免和真实 schema 行的同名冲突。
+
+**新 `ToolActionRequestRow`**：22 字段，1:1 投影真实 schema。
+
+**ToolRepo 新增方法（真实 schema）**：
+| 方法 | 行为 |
+|---|---|
+| `list_action_requests_by_company(cid, limit)` | ORDER BY created_at DESC |
+| `get_action_request(cid, id)` | 二元查找 |
+| `list_action_requests_by_invocation(inv_id)` | 按 invocation_id 查 |
+
+### 重构 `tool_access.rs`
+- `list_tool_action_requests` → `ToolRepo::list_action_requests_by_company()` +
+  `tool_action_request_json()` helper，响应同时输出真实字段 + 老 client 别名
+  (`actionKind ← canonical_arguments_summary.action_name`,
+   `requestedBy ← requested_by_user_id`/`requested_by_agent_id.to_string()`,
+   `payload ← canonical_arguments_summary`)
+
+### 新增单元测试 2 个
+- `action_request_col_excludes_wrong_columns` —— 严格 token-based 检测，
+   forbidden 集合：`action_kind/requested_by/payload/application_id/connection_id/action_name`
+- `action_request_row_has_minimal_required_fields` —— 构造 22 字段实例
+
+### 新增集成测试 4 个 (`crates/pc-repos/tests/round105_tool_action_request_repo.rs`)
+1. `tool_action_request_repo_list_orders_by_created_at_desc` —— 排序 + 真实列投影
+2. `tool_action_request_repo_get_by_company_and_id` —— 跨 company 隔离
+3. `tool_action_request_repo_list_by_invocation` —— 按 invocation_id 过滤
+4. `tool_action_requests_table_real_column_audit` —— INFORMATION_SCHEMA 防漂移
+
+### 进度影响
+- 综合进度从 **≈ 86.8% → ≈ 87.4%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **461 passed**（pc-repos 单元 +2）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 Round 95-105 修复 **43 个路由从 500 → 200**，
+  18 个 tool_* 路由进入高内聚低耦合设计
+
 ## 27. 第一百零四轮增量（Round 104 — ToolPolicy 子模块仓储化)
 
 ### 目标

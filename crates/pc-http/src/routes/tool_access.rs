@@ -17,8 +17,9 @@ use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
     NewToolApplication, NewToolPolicy, NewToolProfile, NewToolProfileEntry,
-    NewToolStdioTemplate, PatchToolApplication, ToolApplicationRow, ToolPolicyRow,
-    ToolProfileEntryRow, ToolProfileRow, ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
+    NewToolStdioTemplate, PatchToolApplication, ToolActionRequestRow,
+    ToolApplicationRow, ToolPolicyRow, ToolProfileEntryRow, ToolProfileRow,
+    ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
 };
 
 pub fn router() -> Router<AppState> {
@@ -1089,6 +1090,43 @@ fn tool_policy_json(row: ToolPolicyRow) -> Value {
     })
 }
 
+/// Round 105: ToolActionRequestRow -> Node 兼容 JSON。
+/// 真实字段：invocation_id, status, canonical_arguments_hash, canonical_arguments_summary,
+///            requested_by_agent_id/user_id, decided_at, ...
+/// 兼容老 client 别名：actionKind ← canonical_arguments_summary.action_name，
+///                       requestedBy ← requested_by_user_id, payload ← canonical_arguments_summary。
+fn tool_action_request_json(row: ToolActionRequestRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "invocationId": row.invocation_id,
+        "issueId": row.issue_id,
+        "interactionId": row.interaction_id,
+        "approvalId": row.approval_id,
+        "status": row.status,
+        "canonicalArgumentsHash": row.canonical_arguments_hash,
+        "canonicalArgumentsSummary": row.canonical_arguments_summary,
+        "signedArguments": row.signed_arguments,
+        "previewMarkdown": row.preview_markdown,
+        "requestedByAgentId": row.requested_by_agent_id,
+        "requestedByUserId": row.requested_by_user_id,
+        "resolvedByAgentId": row.resolved_by_agent_id,
+        "resolvedByUserId": row.resolved_by_user_id,
+        "decidedByAgentId": row.decided_by_agent_id,
+        "decidedByUserId": row.decided_by_user_id,
+        "decidedAt": row.decided_at,
+        "expiresAt": row.expires_at,
+        "resolvedAt": row.resolved_at,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+        // 兼容老 client 别名
+        "actionKind": row.canonical_arguments_summary.get("action_name").cloned().unwrap_or(Value::Null),
+        "requestedBy": row.requested_by_user_id.clone().or(row.requested_by_agent_id.map(|u| u.to_string())),
+        "payload": row.canonical_arguments_summary.clone(),
+    })
+}
+
+
 
 
 
@@ -1394,30 +1432,16 @@ async fn list_connection_grants(
     Ok(Json(json!({ "items": items })))
 }
 
+// Round 105: 仓储化。原 SQL 引用不存在的列 `action_kind / requested_by / payload`；
+// 真实 schema 是 invocation_id / canonical_arguments_* / requested_by_*_id / decided_at / ...
 async fn list_tool_action_requests(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, Option<String>, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, status::text, action_kind, requested_by, payload, created_at FROM tool_action_requests          WHERE company_id = $1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, status, action_kind, requested_by, payload, created_at)| {
-            json!({
-                "id": id,
-                "status": status,
-                "actionKind": action_kind,
-                "requestedBy": requested_by,
-                "payload": payload,
-                "createdAt": created_at,
-            })
-        })
-        .collect();
+    let rows = ToolRepo::new(&state.db)
+        .list_action_requests_by_company(company_id, 100)
+        .await?;
+    let items: Vec<Value> = rows.into_iter().map(tool_action_request_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
