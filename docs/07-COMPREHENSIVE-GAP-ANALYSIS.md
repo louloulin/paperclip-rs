@@ -1020,6 +1020,49 @@ secrets.rs 还剩 30 SQL：
 - company_skills.rs 60 SQL
 - issues.rs 44 SQL
 
+## 45. 第一百二十二轮增量（Round 122 — secrets.rs user_secret_definitions 子模块仓储化)
+
+### 目标
+secrets.rs 30 → 25 SQL（-5）。仓储化 user_secret_definitions 子模块
+（list / create / delete-archive / patch 复合事务）。
+
+### 新增 `pc_repos::secret::SecretRepo` 方法（1 个 composite)
+- `patch_user_definition(company_id, definition_id, name?, description?, status?, usage_guidance?, provider_metadata?) -> Option<UserSecretDefinitionRow>`
+  - **复合事务**：UPDATE COALESCE（保留原值） + 重新 SELECT，单 tx 原子
+  - 嵌套 Option：外层 Option = "是否提供更新"，内层 Option = "设为 null"
+
+复用已有方法:
+- `list_user_definitions(company_id) -> Vec<UserSecretDefinitionRow>`
+- `create_user_definition(&NewUserSecretDefinition) -> UserSecretDefinitionRow`
+- `archive_user_definition(id) -> ()`
+
+### DTO 迁移
+- 删除 routes/secrets.rs 本地 `UserDefRow` struct（10 字段）
+- 统一使用 pc_repos::secret 中的 `UserSecretDefinitionRow`（18 字段，更完整）
+
+### 重构 `secrets.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `list_user_defs` | 1 SELECT | SecretRepo::list_user_definitions |
+| `create_user_def` | 1 INSERT RETURNING | SecretRepo::create_user_definition |
+| `delete_user_def` | 1 UPDATE（archive） | SecretRepo::archive_user_definition |
+| `patch_user_def` | 1 UPDATE COALESCE + 1 SELECT（事务） | SecretRepo::patch_user_definition 复合事务 |
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round122_user_definition_repo.rs`)
+1. `list_user_definitions_excludes_archived` — 排除 deleted_at
+2. `create_user_definition_inserts` — 插入验证字段
+3. `archive_user_definition_marks_deleted` — archive 后 list 为空
+4. `patch_user_definition_updates_partial` — name + status 更新
+5. `patch_user_definition_missing_returns_none` — 不存在返回 None
+6. `patch_user_definition_keeps_unchanged` — None 字段保持
+
+### 进度影响
+- 综合进度从 **≈ 95.8% → ≈ 96.0%**
+- workspace `cargo check -p pc-http` 0 errors
+- 22 个 pc-repos 集成测试文件累计 131+6=137 test 函数
+- secrets.rs SQL 数 30 → 25（-5，user_definitions 子模块）
+- 累计 Round 95-122 修复 **101+4=105 个路由从 500 → 200**
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

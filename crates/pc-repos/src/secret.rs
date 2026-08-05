@@ -950,6 +950,49 @@ impl<'a> SecretRepo<'a> {
         Ok(())
     }
 
+    /// Round 122: patch user_secret_definition（COALESCE 部分更新 + 重新 SELECT）。
+    /// 复合事务：UPDATE 部分字段（仅非空） + 返回 SELECT 行。
+    pub async fn patch_user_definition(
+        &self,
+        company_id: Uuid,
+        definition_id: Uuid,
+        name: Option<&str>,
+        description: Option<Option<&str>>,
+        status: Option<&str>,
+        usage_guidance: Option<Option<&str>>,
+        provider_metadata: Option<Option<Value>>,
+    ) -> RepoResult<Option<UserSecretDefinitionRow>> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "UPDATE user_secret_definitions SET \
+                name = COALESCE($1, name), \
+                description = COALESCE($2, description), \
+                status = COALESCE($3, status), \
+                usage_guidance = COALESCE($4, usage_guidance), \
+                provider_metadata = COALESCE($5, provider_metadata), \
+                updated_at = now() \
+             WHERE id = $6 AND company_id = $7",
+        )
+        .bind(name)
+        .bind(description.unwrap_or(None))
+        .bind(status)
+        .bind(usage_guidance.unwrap_or(None))
+        .bind(provider_metadata.unwrap_or(None))
+        .bind(definition_id)
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await?;
+        let sql = format!(
+            "SELECT {USER_DEF_COLS} FROM user_secret_definitions WHERE id=$1"
+        );
+        let row = sqlx::query_as::<_, UserSecretDefinitionRow>(&sql)
+            .bind(definition_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
     // -------- user_secret_declarations --------
 
     pub async fn list_declarations_for_target(

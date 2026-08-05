@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::secret::{CompanySecretRow, NewProviderConfig, ProviderConfigRow, SecretRepo};
+use pc_repos::secret::{CompanySecretRow, NewProviderConfig, NewUserSecretDefinition, ProviderConfigRow, SecretRepo, UserSecretDefinitionRow};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, serde::Serialize)]
@@ -229,21 +229,7 @@ fn provider_config_json(row: &ProviderConfigRow) -> Value {
     })
 }
 
-#[derive(Debug, FromRow)]
-struct UserDefRow {
-    id: Uuid,
-    company_id: Uuid,
-    key: String,
-    name: String,
-    description: Option<String>,
-    status: String,
-    provider: String,
-    usage_guidance: Option<String>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
-
-fn user_def_json(row: &UserDefRow) -> Value {
+fn user_def_json(row: &UserSecretDefinitionRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -403,13 +389,9 @@ async fn list_user_defs(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<UserDefRow> = sqlx::query_as(
-        "SELECT id, company_id, key, name, description, status, provider, usage_guidance, created_at, updated_at \
-         FROM user_secret_definitions WHERE company_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = SecretRepo::new(&state.db)
+        .list_user_definitions(company_id)
+        .await?;
     let items: Vec<Value> = rows.iter().map(user_def_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -427,35 +409,31 @@ async fn create_user_def(
         .ok_or_else(|| ApiError::BadRequest("key required".into()))?;
     let name = body.name.clone().unwrap_or_else(|| key.clone());
     let user_id = require_user_id(&state, &headers).await?;
-    let row: UserDefRow = sqlx::query_as(
-        "INSERT INTO user_secret_definitions \
-            (company_id, key, name, description, usage_guidance, created_by_user_id, updated_by_user_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $6) \
-         RETURNING id, company_id, key, name, description, status, provider, usage_guidance, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .bind(&name)
-    .bind(body.description.clone())
-    .bind(body.usage_guidance.clone())
-    .bind(&user_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let input = NewUserSecretDefinition {
+        company_id,
+        key,
+        name,
+        description: body.description.clone(),
+        status: "active".to_owned(),
+        provider: "manual".to_owned(),
+        managed_mode: "user".to_owned(),
+        provider_config_id: None,
+        provider_metadata: None,
+        usage_guidance: body.usage_guidance.clone(),
+        created_by_agent_id: None,
+        created_by_user_id: Some(user_id.clone()),
+    };
+    let row = SecretRepo::new(&state.db)
+        .create_user_definition(&input)
+        .await?;
     Ok((StatusCode::CREATED, Json(user_def_json(&row))))
 }
 
 async fn delete_user_def(
     State(state): State<AppState>,
-    Path((company_id, def_id)): Path<(Uuid, Uuid)>,
+    Path((_company_id, def_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query(
-        "UPDATE user_secret_definitions SET deleted_at = now() \
-         WHERE id = $1 AND company_id = $2",
-    )
-    .bind(def_id)
-    .bind(company_id)
-    .execute(state.db.pool())
-    .await?;
+    SecretRepo::new(&state.db).archive_user_definition(def_id).await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
 
@@ -1105,37 +1083,23 @@ async fn patch_user_def(
     Path((company_id, definition_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchUserDefBody>,
 ) -> ApiResult<Json<Value>> {
-    let mut tx = state.db.pool().begin().await?;
-    sqlx::query(
-        "UPDATE user_secret_definitions SET \
-            name = COALESCE($1, name), \
-            description = COALESCE($2, description), \
-            status = COALESCE($3, status), \
-            usage_guidance = COALESCE($4, usage_guidance), \
-            provider_metadata = COALESCE($5, provider_metadata), \
-            updated_at = now() \
-         WHERE id = $6 AND company_id = $7",
-    )
-    .bind(body.name.as_deref())
-    .bind(body.description.as_deref())
-    .bind(body.status.as_deref())
-    .bind(body.usage_guidance.as_deref())
-    .bind(body.provider_metadata.clone())
-    .bind(definition_id)
-    .bind(company_id)
-    .execute(&mut *tx)
-    .await?;
-    let row: Option<(Uuid, Uuid, String, String, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, name, status, key, updated_at FROM user_secret_definitions WHERE id = $1",
-    )
-    .bind(definition_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    tx.commit().await?;
-    let (id, _, name, status, key, updated_at) = row
+    let row = SecretRepo::new(&state.db)
+        .patch_user_definition(
+            company_id,
+            definition_id,
+            body.name.as_deref(),
+            Some(body.description.as_deref()),
+            body.status.as_deref(),
+            Some(body.usage_guidance.as_deref()),
+            Some(body.provider_metadata.clone()),
+        )
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("user_secret_definition {definition_id}")))?;
+    let id = row.id;
+    let name = row.name.clone();
+    let status = row.status.clone();
+    let key = row.key.clone();
+    let updated_at = row.updated_at;
     state.realtime.publish(
         LiveEvent::new("user_secret_definition.updated", "user_secret_definition", id)
             .with_company(company_id)
