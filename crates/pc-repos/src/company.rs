@@ -36,6 +36,10 @@ pub struct CompanyStatsRow {
     pub pipeline_count: i64,
     pub project_count: i64,
     pub goal_count: i64,
+    /// pipeline_cases 表行数（Round 132 扩展）
+    pub case_count: i64,
+    /// company_memberships active 行数（Round 132 扩展）
+    pub user_count: i64,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]pub struct CompanyRow {
@@ -260,6 +264,17 @@ impl<'a> CompanyRepo<'a> {
         .bind(company_id)
         .fetch_one(pool)
         .await?;
+        let case_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM pipeline_cases WHERE company_id = $1")
+                .bind(company_id)
+                .fetch_one(pool)
+                .await?;
+        let user_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM company_memberships WHERE company_id = $1 AND status = 'active'",
+        )
+        .bind(company_id)
+        .fetch_one(pool)
+        .await?;
         Ok(CompanyStatsRow {
             company_id,
             issue_count: issue_count.0,
@@ -268,7 +283,102 @@ impl<'a> CompanyRepo<'a> {
             pipeline_count: pipeline_count.0,
             project_count: project_count.0,
             goal_count: goal_count.0,
+            case_count: case_count.0,
+            user_count: user_count.0,
         })
+    }
+
+    /// 列出当前 user 拥有 active membership 的所有 company（按 name 排序）。
+    ///
+    /// 用于 board-only `/companies/stats` 端点（Round 132 仓储化）：
+    /// 替代原 route 内联 SQL（INNER JOIN company_memberships）。
+    pub async fn list_accessible_for_user(
+        &self,
+        user_id: &str,
+    ) -> sqlx::Result<Vec<CompanyListRow>> {
+        sqlx::query_as::<_, CompanyListRow>(
+            "SELECT c.id, c.name FROM companies c              INNER JOIN company_memberships cm ON cm.company_id = c.id              WHERE cm.principal_id = $1 AND cm.status = 'active'              ORDER BY c.name",
+        )
+        .bind(user_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// 批量拉取多 company 的 stats（issues/agents/pipelines/projects/goals）。
+    ///
+    /// 返回 `HashMap<Uuid, CompanyStatsRow>`，缺失 company 视为全 0。
+    /// 用于 board-only `/companies/stats` 端点（Round 132 仓储化）：
+    /// 替代原 route 内 1 + N*4 = 1+4N 次 SQL 循环。
+    pub async fn stats_for_companies(
+        &self,
+        company_ids: &[Uuid],
+    ) -> sqlx::Result<std::collections::HashMap<Uuid, CompanyStatsRow>> {
+        use std::collections::HashMap;
+        let mut out: HashMap<Uuid, CompanyStatsRow> = HashMap::new();
+        if company_ids.is_empty() {
+            return Ok(out);
+        }
+        // 初始化占位（确保 list 中所有 id 都有 entry）
+        for id in company_ids {
+            out.insert(*id, CompanyStatsRow {
+                company_id: *id,
+                issue_count: 0,
+                open_issue_count: 0,
+                agent_count: 0,
+                pipeline_count: 0,
+                project_count: 0,
+                goal_count: 0,
+                case_count: 0,
+                user_count: 0,
+            });
+        }
+        // 6 个独立 aggregate query，每个一次：ANY($1::uuid[]) WHERE company_id = ANY
+        macro_rules! agg {
+            ($sql:expr, $field:ident) => {{
+                let rows: Vec<(Uuid, i64)> = sqlx::query_as($sql)
+                    .bind(company_ids)
+                    .fetch_all(self.db.pool())
+                    .await?;
+                for (cid, n) in rows {
+                    if let Some(entry) = out.get_mut(&cid) {
+                        entry.$field = n;
+                    }
+                }
+            }};
+        }
+        agg!(
+            "SELECT company_id, COUNT(*) FROM issues              WHERE company_id = ANY($1::uuid[]) AND hidden_at IS NULL              GROUP BY company_id",
+            issue_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM issues              WHERE company_id = ANY($1::uuid[]) AND hidden_at IS NULL                AND status NOT IN ('done','cancelled','completed')              GROUP BY company_id",
+            open_issue_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM agents              WHERE company_id = ANY($1::uuid[]) GROUP BY company_id",
+            agent_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM pipelines              WHERE company_id = ANY($1::uuid[]) AND archived_at IS NULL              GROUP BY company_id",
+            pipeline_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM projects              WHERE company_id = ANY($1::uuid[]) GROUP BY company_id",
+            project_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM goals              WHERE company_id = ANY($1::uuid[]) GROUP BY company_id",
+            goal_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM pipeline_cases              WHERE company_id = ANY($1::uuid[]) GROUP BY company_id",
+            case_count
+        );
+        agg!(
+            "SELECT company_id, COUNT(*) FROM company_memberships              WHERE company_id = ANY($1::uuid[]) AND status = 'active'              GROUP BY company_id",
+            user_count
+        );
+        Ok(out)
     }
 
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {

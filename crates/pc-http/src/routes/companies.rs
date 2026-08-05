@@ -27,6 +27,7 @@ use pc_repos::label::{LabelRepo, NewLabel, LabelPatch};
 use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
 use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
 use pc_repos::asset::AssetRepo;
+use pc_repos::company_export::CompanyExportRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
 
@@ -342,27 +343,10 @@ async fn export_preview(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let pool = state.db.pool();
     let company: Option<CompanyRow> = CompanyRepo::new(&state.db).get(id).await?;
     let company = company.ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     // 收集关键实体作为可移植快照
-    let issues: Vec<(Uuid, String, String, String)> = sqlx::query_as(
-        "SELECT id, title, status, priority FROM issues WHERE company_id = $1 LIMIT 1000",
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await?;
-    let agents: Vec<(Uuid, String, String)> =
-        sqlx::query_as("SELECT id, name, role FROM agents WHERE company_id = $1 LIMIT 1000")
-            .bind(id)
-            .fetch_all(pool)
-            .await?;
-    let pipelines: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, key, name FROM pipelines WHERE company_id = $1 AND archived_at IS NULL",
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await?;
+    let preview = CompanyExportRepo::new(&state.db).preview(id).await?;
     Ok(Json(json!({
         "version": "1.0",
         "company": {
@@ -372,13 +356,13 @@ async fn export_preview(
             "status": company.status,
         },
         "counts": {
-            "issues": issues.len(),
-            "agents": agents.len(),
-            "pipelines": pipelines.len(),
+            "issues": preview.issues.len(),
+            "agents": preview.agents.len(),
+            "pipelines": preview.pipelines.len(),
         },
-        "issues": issues.into_iter().map(|(i,t,s,p)| json!({"id":i,"title":t,"status":s,"priority":p})).collect::<Vec<_>>(),
-        "agents": agents.into_iter().map(|(i,n,r)| json!({"id":i,"name":n,"role":r})).collect::<Vec<_>>(),
-        "pipelines": pipelines.into_iter().map(|(i,k,n)| json!({"id":i,"key":k,"name":n})).collect::<Vec<_>>(),
+        "issues": preview.issues.into_iter().map(|i| json!({"id":i.id,"title":i.title,"status":i.status,"priority":i.priority})).collect::<Vec<_>>(),
+        "agents": preview.agents.into_iter().map(|a| json!({"id":a.id,"name":a.name,"role":a.role})).collect::<Vec<_>>(),
+        "pipelines": preview.pipelines.into_iter().map(|p| json!({"id":p.id,"key":p.key,"name":p.name})).collect::<Vec<_>>(),
     })))
 }
 
@@ -2093,55 +2077,26 @@ async fn get_companies_stats(
     use crate::state::require_user_id;
     let user_id = require_user_id(&state, &headers).await?;
 
-    // Determine accessible companies for this user.
-    let accessible: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT c.id, c.name FROM companies c          INNER JOIN company_memberships cm ON cm.company_id = c.id          WHERE cm.principal_id = $1 AND cm.status = 'active'          ORDER BY c.name",
-    )
-    .bind(&user_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let repo = CompanyRepo::new(&state.db);
+    let accessible = repo.list_accessible_for_user(&user_id).await?;
+    let ids: Vec<Uuid> = accessible.iter().map(|c| c.id).collect();
+    let stats_map = repo.stats_for_companies(&ids).await?;
 
     let mut map = serde_json::Map::new();
-    let pool = state.db.pool();
-    for (id, name) in accessible {
-        let issue_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND hidden_at IS NULL",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or((0,));
-        let agent_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM agents WHERE company_id = $1",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or((0,));
-        let case_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM pipeline_cases WHERE company_id = $1",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or((0,));
-        let user_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM company_memberships WHERE company_id = $1 AND status = 'active'",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or((0,));
+    for company in accessible {
+        let s = stats_map.get(&company.id);
+        let (issue_count, agent_count, case_count, user_count) = s
+            .map(|s| (s.issue_count, s.agent_count, s.case_count, s.user_count))
+            .unwrap_or((0, 0, 0, 0));
         map.insert(
-            id.to_string(),
+            company.id.to_string(),
             json!({
-                "companyId": id,
-                "name": name,
-                "agentCount": agent_count.0,
-                "issueCount": issue_count.0,
-                "caseCount": case_count.0,
-                "userCount": user_count.0,
+                "companyId": company.id,
+                "name": company.name,
+                "agentCount": agent_count,
+                "issueCount": issue_count,
+                "caseCount": case_count,
+                "userCount": user_count,
             }),
         );
     }

@@ -1536,13 +1536,77 @@ companies.rs 18 → 13 SQL（-5）。仓储化 3 个独立子模块：
 - companies.rs SQL 数 18 → 13（-5）
 - 累计 Round 95-131 修复 **132+3=135 个路由从 500 → 200**
 
-### 下一轮方向（Round 132+）
-companies.rs 还剩 13 SQL，主要在：
-- export_preview（3 SQL，line 402+）
-- import_preview / start_export / fidelity（~6 SQL，line 453+）
-- ensure_my_folder / create_folder legacy "personal" path（~4 SQL，line 766+）
-- create 路由的 company_memberships INSERT（1 SQL）
-- get_companies_stats 多公司聚合（5 SQL，line 2139+）
+## 55. 第一百三十二轮增量（Round 132 — companies.rs export_preview + get_companies_stats 仓储化)
+
+### 目标
+companies.rs 13 → 5 SQL（-8）。仓储化 2 个跨表聚合端点：
+- `export_preview` → 新建 `CompanyExportRepo::preview`（issues + agents + pipelines 三源聚合）
+- `get_companies_stats` → `CompanyRepo::list_accessible_for_user` + `CompanyRepo::stats_for_companies` 批量聚合
+
+### 新增 / 扩展 `pc_repos` 方法
+**新建 `pc_repos::company_export::CompanyExportRepo`**
+- `list_issue_summaries(company_id) -> Vec<IssueSummary>` — issues 4 列轻量摘要（LIMIT 1000, 排除 hidden）
+- `list_agent_summaries(company_id) -> Vec<AgentSummary>` — agents 3 列轻量摘要
+- `list_pipeline_summaries(company_id) -> Vec<PipelineSummary>` — pipelines 3 列（排除 archived）
+- `preview(company_id) -> CompanyExportPreview` — **复合方法**：3 次独立查询返回完整 snapshot
+
+**扩展 `pc_repos::company::CompanyRepo`**
+- `list_accessible_for_user(user_id) -> Vec<CompanyListRow>` — INNER JOIN company_memberships 排序
+- `stats_for_companies(&[Uuid]) -> HashMap<Uuid, CompanyStatsRow>` — **批量复合方法**：8 个 GROUP BY 聚合
+
+**扩展 `CompanyStatsRow` DTO**
+- 新增字段：`case_count: i64`（pipeline_cases 行数）、`user_count: i64`（company_memberships active 行数）
+- `stats()` 单 company 方法同步增加 2 个 COUNT 聚合
+
+### 新增 DTO
+- `IssueSummary { id, title, status, priority }` （FromRow + Serialize）
+- `AgentSummary { id, name, role }`
+- `PipelineSummary { id, key, name }`
+- `CompanyExportPreview { company_id, issues, agents, pipelines }`
+
+### 重构 `companies.rs` 2 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/companies/:id/export/preview` | 1 (CompanyRepo::get) + 3 inline SELECT | 1 (CompanyRepo::get) + CompanyExportRepo::preview 复合方法 |
+| `GET /api/companies/stats` | 1 (accessible SELECT) + 4N (loop COUNT) = 1+4N SQL | 1 (list_accessible_for_user) + 8 (stats_for_companies 批量聚合) = 9 SQL |
+
+### 设计要点
+- **批量聚合 vs 循环单查权衡**：`stats_for_companies` 用 8 个 GROUP BY `WHERE company_id = ANY($1::uuid[])` 替代 4N 次单 company 查询。复杂度从 O(N) 降到 O(1)。
+- **缺失 company 视为全 0**：初始化时为每个 id 预填占位 `CompanyStatsRow` 全 0，未匹配到任何 row 的聚合字段保持 0。
+- **case_count / user_count 字段补齐**：原 route 已有这两个字段，本次顺手补到 CompanyStatsRow，让 `stats()` 与 `stats_for_companies()` 共享同一 DTO。
+- **`CompanyExportRepo` 与 `CompanyRepo` 解耦**：export 是只读 snapshot 操作，与公司 CRUD 职责分离，独立模块便于扩展（未来增加导出格式/字段不影响 CompanyRepo）。
+- **保留 Node 字段命名**：JSON 输出 `agentCount/issueCount/caseCount/userCount` 与 Node 完全一致，UI 不需要改。
+
+### 新增集成测试 11 个 (`crates/pc-repos/tests/round132_export_preview_and_batch_stats.rs`)
+**CompanyExportRepo (3 个)**
+1. `export_preview_empty_company` — 空公司全空集合
+2. `export_preview_aggregates_three_sources` — 三源聚合
+3. `export_preview_excludes_archived_pipelines` — 排除 archived pipelines
+
+**CompanyRepo::list_accessible_for_user (3 个)**
+4. `list_accessible_orders_by_name` — 按 name 升序
+5. `list_accessible_filters_active_only` — 仅 active membership
+6. `list_accessible_unknown_user_returns_empty` — 不存在 user 空
+
+**CompanyRepo::stats_for_companies (5 个)**
+7. `stats_for_companies_empty_ids` — 空 ids 返回空 map
+8. `stats_for_companies_aggregates_all_fields` — 8 字段全聚合（含 case_count/user_count）
+9. `stats_for_companies_unknown_company_zeroed` — 缺失 company 全 0
+10. `stats_for_companies_isolates_tenants` — 多公司独立计数
+11. `stats_for_companies_open_excludes_done` — open 排除 done/cancelled
+
+### 进度影响
+- 综合进度从 **≈ 97.6% → ≈ 97.9%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round132_*` 0 errors
+- 32 个 pc-repos 集成测试文件累计 206+11=217 test 函数
+- companies.rs SQL 数 13 → 5（-8，export_preview 3 + get_companies_stats 4N→8）
+- 累计 Round 95-132 修复 **135+2=137 个路由从 500 → 200**
+
+### 下一轮方向（Round 133+）
+companies.rs 还剩 5 SQL：
+- ensure_my_folder（2 SQL，line 766+）：kind='personal' legacy 路径
+- create_folder legacy "personal" path（2 SQL）：同 kind 兜底
+- create 路由的 company_memberships INSERT（1 SQL，line 136）
 
 后续高 SQL 模块：
 - tool_access.rs 66 SQL
