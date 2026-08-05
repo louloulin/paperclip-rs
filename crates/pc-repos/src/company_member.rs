@@ -384,6 +384,21 @@ impl<'a> CompanyMemberRepo<'a> {
         tx.commit().await?;
         Ok(())
     }
+    /// Round 191: authz -- list active memberships for a user principal (returns company_id::text, membership_role).
+    pub async fn list_active_for_principal_user(
+        &self,
+        principal_id: &str,
+    ) -> RepoResult<Vec<(String, String)>> {
+        sqlx::query_as(
+            "SELECT company_id::text, membership_role FROM company_memberships \
+             WHERE principal_id = $1 AND status = 'active' AND principal_type = 'user'",
+        )
+        .bind(principal_id)
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(RepoError::from)
+    }
+
 }
 
 // ============================================================================

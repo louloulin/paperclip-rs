@@ -4,6 +4,7 @@ use axum::{extract::State, http::HeaderMap, routing::get, Json, Router};
 use serde_json::{json, Value};
 
 use crate::{state::require_user_id, AppState};
+use pc_repos::company_member::CompanyMemberRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/authz", get(authz))
@@ -14,14 +15,10 @@ async fn authz(State(state): State<AppState>, headers: HeaderMap) -> Json<Value>
     let user_id = require_user_id(&state, &headers).await.ok();
     let pool = state.db.pool();
     let memberships: Vec<(String, String)> = if let Some(uid) = user_id.as_deref() {
-        sqlx::query_as(
-            "SELECT company_id::text, membership_role FROM company_memberships \
-             WHERE principal_id = $1 AND status = 'active' AND principal_type = 'user'",
-        )
-        .bind(uid)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default()
+        CompanyMemberRepo::new(&state.db)
+            .list_active_for_principal_user(uid)
+            .await
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
