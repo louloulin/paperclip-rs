@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_core::Timestamp;
@@ -260,6 +260,49 @@ pub struct IssueCaseLinkRow {
     pub parent_case_id: Option<Uuid>,
     pub status: Option<String>,
     pub linked_at: Timestamp,
+}
+
+/// Round 120: breakdown 子 case 输入参数（用于复合方法 breakdown_case）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewBreakdownChild {
+    pub title: String,
+    pub case_type: Option<String>,
+    pub summary: Option<String>,
+    pub fields: Option<serde_json::Value>,
+}
+
+/// Round 120: case context_pack 事件投影（最近 50 条 case_events）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseContextEventRow {
+    pub kind: String,
+    pub actor_type: String,
+    pub actor_user_id: Option<String>,
+    pub actor_agent_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub payload: Option<serde_json::Value>,
+    pub created_at: Timestamp,
+}
+
+/// Round 120: case context_pack 关联 issue 投影（case_issue_links JOIN issues）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseContextIssueRow {
+    pub id: Uuid,
+    pub title: String,
+    pub status: Option<String>,
+}
+
+/// Round 120: case outputs 列表（case_issue_links JOIN issues, 含 link role + completed_at）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseOutputRow {
+    pub id: Uuid,
+    pub title: String,
+    pub status: Option<String>,
+    pub link_role: String,
+    pub completed_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -1698,6 +1741,22 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
+    /// Round 120: 统计 case 的直接子 case 数（用于 context_pack 的 childCount）。
+    pub async fn count_children(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(count)
+    }
+
     /// Round 119: 列出 company 全部 cases（用于构建 children tree，limit 5000）。
     pub async fn list_all_for_tree(
         &self,
@@ -1710,6 +1769,211 @@ impl<'a> CaseRepo<'a> {
             .bind(company_id)
             .fetch_all(self.db.pool())
             .await
+    }
+
+    // ---- Round 120: case 复合事务 + list 系列 ----
+
+    /// Round 120: breakdown 复合事务——一次调用插入 N 个 child case + 各事件，单事务原子。
+    pub async fn breakdown_case(
+        &self,
+        company_id: Uuid,
+        parent_case_id: Uuid,
+        parent_project_id: Option<Uuid>,
+        parent_case_type: &str,
+        children: Vec<NewBreakdownChild>,
+        note: Option<&str>,
+    ) -> sqlx::Result<Vec<Uuid>> {
+        if children.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.db.pool().begin().await?;
+        let max_number: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(case_number), 0) FROM cases WHERE company_id=$1",
+        )
+        .bind(company_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut next_number = max_number + 1;
+        let mut created_ids: Vec<Uuid> = Vec::with_capacity(children.len());
+        for child in &children {
+            let case_type = child
+                .case_type
+                .clone()
+                .unwrap_or_else(|| parent_case_type.to_owned());
+            let identifier = format!("CASE-{}", next_number);
+            let id: Uuid = sqlx::query_scalar(
+                "INSERT INTO cases (company_id, project_id, case_number, identifier, case_type, key, \
+                                    title, summary, status, fields, parent_case_id, created_by_user_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9, $10, $11) RETURNING id",
+            )
+            .bind(company_id)
+            .bind(parent_project_id)
+            .bind(next_number)
+            .bind(&identifier)
+            .bind(&case_type)
+            .bind::<Option<String>>(None)
+            .bind(&child.title)
+            .bind(child.summary.as_deref())
+            .bind(child.fields.clone().unwrap_or_else(|| serde_json::json!({})))
+            .bind(parent_case_id)
+            .bind::<Option<String>>(None)
+            .fetch_one(&mut *tx)
+            .await?;
+            let _ = sqlx::query(
+                "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+                 VALUES ($1, $2, 'child_linked', 'user', jsonb_build_object('childCaseId',$3::text,'note',$4::text))",
+            )
+            .bind(company_id)
+            .bind(parent_case_id)
+            .bind(id.to_string())
+            .bind(note.unwrap_or(""))
+            .execute(&mut *tx)
+            .await;
+            created_ids.push(id);
+            next_number += 1;
+        }
+        tx.commit().await?;
+        Ok(created_ids)
+    }
+
+    /// Round 120: replace blockers 复合事务——清空 + 重插 + 事件记录，单事务原子。
+    pub async fn replace_blockers(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        blocked_by_case_ids: Vec<Uuid>,
+        event_payload: serde_json::Value,
+    ) -> sqlx::Result<()> {
+        let mut tx = self.db.pool().begin().await?;
+        let _ = sqlx::query("DELETE FROM pipeline_case_blockers WHERE case_id=$1")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        for blocker_id in &blocked_by_case_ids {
+            if *blocker_id == case_id {
+                continue;
+            }
+            let _ = sqlx::query(
+                "INSERT INTO pipeline_case_blockers (company_id, case_id, blocked_by_case_id) \
+                 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            )
+            .bind(company_id)
+            .bind(case_id)
+            .bind(blocker_id)
+            .execute(&mut *tx)
+            .await;
+        }
+        tx.commit().await?;
+        let _ = sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+             VALUES ($1, $2, 'fields_changed', 'user', $3)",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(event_payload)
+        .execute(self.db.pool())
+        .await;
+        Ok(())
+    }
+
+    /// Round 120: open conversation 复合事务——创建 issue + link + event。
+    pub async fn open_conversation(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        case_title: &str,
+        existing_issue_id: Option<Uuid>,
+        initial_message: Option<&str>,
+    ) -> sqlx::Result<Uuid> {
+        let issue_id = if let Some(id) = existing_issue_id {
+            id
+        } else {
+            let title = format!("Conversation: {}", case_title);
+            sqlx::query_scalar(
+                "INSERT INTO issues (company_id, title, description, status, priority, origin_kind, origin_fingerprint) \
+                 VALUES ($1, $2, $3, 'todo', 'medium', 'case_conversation', $4) RETURNING id",
+            )
+            .bind(company_id)
+            .bind(&title)
+            .bind(initial_message.unwrap_or(""))
+            .bind(format!("case-conversation:{}", case_id))
+            .fetch_one(self.db.pool())
+            .await?
+        };
+        let _ = sqlx::query(
+            "INSERT INTO case_issue_links (company_id, case_id, issue_id, role) \
+             VALUES ($1, $2, $3, 'origin') ON CONFLICT (case_id, issue_id) DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(issue_id)
+        .execute(self.db.pool())
+        .await;
+        let _ = self
+            .record_case_event(
+                company_id,
+                case_id,
+                "issue_linked",
+                "user",
+                json!({ "issueId": issue_id.to_string(), "initialMessage": initial_message }),
+            )
+            .await;
+        Ok(issue_id)
+    }
+
+    /// Round 120: case context_pack 事件列表（最近 50 条 case_events）。
+    pub async fn list_context_events(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseContextEventRow>> {
+        sqlx::query_as::<_, CaseContextEventRow>(
+            "SELECT kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
+             FROM case_events WHERE company_id=$1 AND case_id=$2 \
+             ORDER BY created_at DESC LIMIT 50",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 120: case context_pack 关联 issue 列表。
+    pub async fn list_context_issues(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseContextIssueRow>> {
+        sqlx::query_as::<_, CaseContextIssueRow>(
+            "SELECT i.id, i.title, i.status \
+             FROM case_issue_links cil \
+             INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
+             WHERE cil.company_id=$1 AND cil.case_id=$2 \
+             ORDER BY cil.created_at ASC",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 120: case outputs 列表（关联 issue + link role + completed_at）。
+    pub async fn list_outputs(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseOutputRow>> {
+        sqlx::query_as::<_, CaseOutputRow>(
+            "SELECT i.id, i.title, i.status, cil.role AS link_role, i.completed_at \
+             FROM case_issue_links cil \
+             INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
+             WHERE cil.company_id=$1 AND cil.case_id=$2 \
+             ORDER BY cil.created_at ASC",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_all(self.db.pool())
+        .await
     }
 
     pub async fn list_labels(

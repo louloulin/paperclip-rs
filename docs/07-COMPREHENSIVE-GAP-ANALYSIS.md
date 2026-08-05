@@ -873,6 +873,88 @@ cases.rs 还剩 14 SQL，全部在复合事务端点：
 - `get_case_outputs` (1 SQL)
 - `delete_case_document` DELETE (1 SQL)
 
+## 43. 第一百二十轮增量（Round 120 — cases.rs 复合事务收尾 + 0 SQL 里程碑）
+
+### 目标
+**cases.rs 14 → 0 SQL 🎉 重大里程碑：cases.rs 完全仓储化！**
+
+本轮清理最后一批复合事务端点：
+- `breakdown_case` — next case_number + INSERT children + 事件（事务）
+- `replace_case_blockers` — DELETE + INSERT loop + 事件（事务）
+- `open_conversation` — 创建 issue + link + 事件
+- `get_case_context_pack` — 事件列表 + 关联 issue 列表 + child_count（3 个独立读）
+- `get_case_outputs` — issue 列表 + completed_at
+- `delete_case_document` DELETE — 复用 unlink_document（Round 109）
+
+### 新增 `pc_repos::case::CaseRepo` 方法（6 个 + 2 个 DTO)
+- `breakdown_case(company_id, parent_case_id, parent_project_id, parent_case_type, children, note) -> Vec<Uuid>`
+  - **复合事务**：SELECT MAX(case_number) + INSERT N children + INSERT N events，单 tx 原子
+- `replace_blockers(company_id, case_id, blocked_by_case_ids, event_payload) -> ()`
+  - **复合事务**：DELETE all + INSERT loop (skip self) + 事件
+- `open_conversation(company_id, case_id, case_title, existing_issue_id?, initial_message?) -> Uuid`
+  - **复合**：创建 issue（origin_kind=case_conversation）+ link (origin role) + 事件
+- `list_context_events(company_id, case_id) -> Vec<CaseContextEventRow>`
+- `list_context_issues(company_id, case_id) -> Vec<CaseContextIssueRow>`
+- `list_outputs(company_id, case_id) -> Vec<CaseOutputRow>`
+- `count_children(company_id, case_id) -> i64`
+
+### 新增 DTO（4 个）
+- `NewBreakdownChild { title, case_type?, summary?, fields? }`
+- `CaseContextEventRow { kind, actor_type, actor_user_id?, actor_agent_id?, run_id?, payload?, created_at }`
+- `CaseContextIssueRow { id, title, status? }`
+- `CaseOutputRow { id, title, status?, link_role, completed_at? }`
+
+### 重构 `cases.rs` 6 个端点（最后清零！）
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `breakdown_case` | 3 SQL (max + insert loop + event) | CaseRepo::breakdown_case 复合事务 |
+| `replace_case_blockers` | 3 SQL (delete + insert loop + event) | CaseRepo::replace_blockers 复合事务 |
+| `open_conversation` | 3 SQL (issue + link + event) | CaseRepo::open_conversation 复合 |
+| `get_case_context_pack` | 3 SQL (events + linked_issues + children_count) | list_context_events + list_context_issues + count_children |
+| `get_case_outputs` | 1 SQL | CaseRepo::list_outputs |
+| `delete_case_document` DELETE | 1 SQL | CaseRepo::unlink_document (Round 109 复用) |
+
+### 新增集成测试 9 个 (`crates/pc-repos/tests/round120_case_composite_repo.rs`)
+1. `breakdown_case_creates_children_and_events` — 2 children + 各自事件
+2. `breakdown_case_empty_returns_empty` — 空 children 不开 tx
+3. `replace_blockers_replaces_set` — 清空 + 重插验证
+4. `replace_blockers_skips_self` — case_id = blocker_id 跳过
+5. `open_conversation_creates_issue_and_link` — 新建 issue + link + event
+6. `open_conversation_reuses_existing_issue` — 复用 existing
+7. `count_children_returns_count` — child_count 统计
+8. `list_context_events_and_issues` — events + issues 联合返回
+9. `list_outputs_returns_outputs` — outputs + link_role
+
+### 进度影响
+- 综合进度从 **≈ 94.0% → ≈ 95.5%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --no-run --test round120_*` 编译通过
+- 20 个 pc-repos 集成测试文件累计 114+9=123 test 函数
+- **cases.rs SQL 数 14 → 0**（🎉 完全仓储化！）
+- cases.rs 行数 1853 → 1703（净减 150 行内联 SQL 与 tuple 映射）
+- case.rs 行数 1805 → 2180（净增 375 行含 DTO + 方法）
+- 累计 Round 95-120 修复 **88+6=94 个路由从 500 → 200**
+
+### 历史回望
+cases.rs 仓储化时间线：
+- Round 109: lock_document / unlock_document / 4 仓储化
+- Round 113: case_issue_links 3 端点
+- Round 114: case annotation 5 端点
+- Round 115: case_attachments 1 端点
+- Round 116: case_revisions 2 端点
+- Round 117: case_rollup 复合聚合
+- Round 118: review/suggest/resolve/acknowledge 4 端点 + ensure_case_exists
+- Round 119: CRUD/list 系列 5 端点
+- Round 120: 复合事务收尾 6 端点 ← 本轮
+
+### 下一轮方向（Round 121+）
+**cases.rs 已完成！** 转向完全未触碰的高 SQL 模块：
+- **secrets.rs** 32 SQL（最高未触碰数）
+- **company_skills.rs** 60 SQL
+- **tool_access.rs** 78 出现（多数复杂 JOIN）
+- **issues.rs** 43 SQL（Round 96 stub 化后未继续）
+- **companies.rs** 37 SQL（Round 98 stub 化）
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

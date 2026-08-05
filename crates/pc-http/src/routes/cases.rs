@@ -850,18 +850,10 @@ async fn delete_case_document(
         .get_case_company_id(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let affected = sqlx::query(
-        "DELETE FROM case_documents WHERE case_id = $1 AND key = $2 AND company_id = $3",
-    )
-    .bind(case_id)
-    .bind(&key)
-    .bind(company_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
-    if affected == 0 {
-        return Err(ApiError::NotFound(format!("case document {case_id}:{key}")));
-    }
+    let deleted = CaseRepo::new(&state.db)
+        .unlink_document(company_id, case_id, &key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))?;
     // Log event
     let _ = CaseRepo::new(&state.db)
         .record_case_event(
@@ -1346,50 +1338,26 @@ async fn breakdown_case_route(
     if body.children.is_empty() {
         return Err(ApiError::BadRequest("children must not be empty".into()));
     }
-    let max_number: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(case_number), 0) FROM cases WHERE company_id=$1",
-    )
-    .bind(parent.company_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let mut created_ids: Vec<Uuid> = Vec::with_capacity(body.children.len());
-    let mut next_number = max_number + 1;
-    let mut tx = state.db.pool().begin().await?;
-    for child in &body.children {
-        let case_type = child.case_type.clone().unwrap_or_else(|| parent.case_type.clone());
-        let identifier = format!("CASE-{}", next_number);
-        let new_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO cases (company_id, project_id, case_number, identifier, case_type, key, \
-                                title, summary, status, fields, parent_case_id, created_by_user_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9, $10, $11) RETURNING id",
+    let children: Vec<pc_repos::case::NewBreakdownChild> = body
+        .children
+        .into_iter()
+        .map(|c| pc_repos::case::NewBreakdownChild {
+            title: c.title,
+            case_type: c.case_type,
+            summary: c.summary,
+            fields: c.fields,
+        })
+        .collect();
+    let created_ids = CaseRepo::new(&state.db)
+        .breakdown_case(
+            parent.company_id,
+            case_id,
+            parent.project_id,
+            &parent.case_type,
+            children,
+            body.note.as_deref(),
         )
-        .bind(parent.company_id)
-        .bind(parent.project_id)
-        .bind(next_number)
-        .bind(&identifier)
-        .bind(&case_type)
-        .bind::<Option<String>>(None)
-        .bind(&child.title)
-        .bind(child.summary.as_deref())
-        .bind(child.fields.clone().unwrap_or_else(|| serde_json::json!({})))
-        .bind(case_id)
-        .bind::<Option<String>>(None)
-        .fetch_one(&mut *tx)
         .await?;
-        created_ids.push(new_id);
-        let _ = sqlx::query(
-            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-             VALUES ($1, $2, 'child_linked', 'user', jsonb_build_object('childCaseId',$3::text,'note',$4::text))",
-        )
-        .bind(parent.company_id)
-        .bind(case_id)
-        .bind(new_id.to_string())
-        .bind(body.note.as_deref().unwrap_or(""))
-        .execute(&mut *tx)
-        .await;
-        next_number += 1;
-    }
-    tx.commit().await?;
     state.realtime.publish(
         LiveEvent::new("case.broken_down", "case", case_id)
             .with_company(parent.company_id)
@@ -1567,39 +1535,18 @@ async fn replace_case_blockers_route(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let mut tx = state.db.pool().begin().await?;
-    let _ = sqlx::query("DELETE FROM pipeline_case_blockers WHERE case_id=$1")
-        .bind(case_id)
-        .execute(&mut *tx)
-        .await?;
-    for blocker_id in &body.blocked_by_case_ids {
-        if *blocker_id == case_id {
-            continue;
-        }
-        let _ = sqlx::query(
-            "INSERT INTO pipeline_case_blockers (company_id, case_id, blocked_by_case_id) \
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-        )
-        .bind(case.company_id)
-        .bind(case_id)
-        .bind(blocker_id)
-        .execute(&mut *tx)
-        .await;
-    }
-    tx.commit().await?;
     let payload = json!({
         "blockedByCaseIds": body.blocked_by_case_ids,
         "count": body.blocked_by_case_ids.len(),
     });
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'fields_changed', 'user', $3::jsonb)",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(&payload)
-    .execute(state.db.pool())
-    .await;
+    CaseRepo::new(&state.db)
+        .replace_blockers(
+            case.company_id,
+            case_id,
+            body.blocked_by_case_ids.clone(),
+            payload.clone(),
+        )
+        .await?;
     state.realtime.publish(
         LiveEvent::new("case.blockers_set", "case", case_id)
             .with_company(case.company_id)
@@ -1635,43 +1582,15 @@ async fn open_conversation_route(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let issue_id = if let Some(id) = body.issue_id {
-        id
-    } else {
-        let title = format!("Conversation: {}", case.title);
-        sqlx::query_scalar(
-            "INSERT INTO issues (company_id, title, description, status, priority, origin_kind, origin_fingerprint) \
-             VALUES ($1, $2, $3, 'todo', 'medium', 'case_conversation', $4) RETURNING id",
+    let issue_id = CaseRepo::new(&state.db)
+        .open_conversation(
+            case.company_id,
+            case_id,
+            &case.title,
+            body.issue_id,
+            body.initial_message.as_deref(),
         )
-        .bind(case.company_id)
-        .bind(&title)
-        .bind(body.initial_message.as_deref().unwrap_or(""))
-        .bind(format!("case-conversation:{}", case_id))
-        .fetch_one(state.db.pool())
-        .await?
-    };
-    let _ = sqlx::query(
-        "INSERT INTO case_issue_links (company_id, case_id, issue_id, role) \
-         VALUES ($1, $2, $3, 'origin') ON CONFLICT (case_id, issue_id) DO NOTHING",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(issue_id)
-    .execute(state.db.pool())
-    .await;
-    let payload = json!({
-        "issueId": issue_id,
-        "initialMessage": body.initial_message,
-    });
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'issue_linked', 'user', $3::jsonb)",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(&payload)
-    .execute(state.db.pool())
-    .await;
+        .await?;
     state.realtime.publish(
         LiveEvent::new("case.conversation_opened", "case", case_id)
             .with_company(case.company_id)
@@ -1691,60 +1610,43 @@ async fn get_case_context_pack(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let case = CaseRepo::new(&state.db)
+    let repo = CaseRepo::new(&state.db);
+    let case = repo
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let events: Vec<(String, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
-         FROM case_events WHERE company_id=$1 AND case_id=$2 \
-         ORDER BY created_at DESC LIMIT 50",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let linked_issues: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT i.id, i.title, i.status \
-         FROM case_issue_links cil \
-         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
-         WHERE cil.company_id=$1 AND cil.case_id=$2 \
-         ORDER BY cil.created_at ASC",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let children_count: i64 = sqlx::query_scalar(
-        "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let events = repo
+        .list_context_events(case.company_id, case_id)
+        .await
+        .unwrap_or_default();
+    let linked_issues = repo
+        .list_context_issues(case.company_id, case_id)
+        .await
+        .unwrap_or_default();
+    let children_count = repo
+        .count_children(case.company_id, case_id)
+        .await?;
     let event_items: Vec<Value> = events
         .into_iter()
-        .map(|(kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at)| {
+        .map(|e| {
             json!({
-                "kind": kind,
-                "actorType": actor_type,
-                "actorUserId": actor_user_id,
-                "actorAgentId": actor_agent_id,
-                "runId": run_id,
-                "payload": payload,
-                "createdAt": created_at,
+                "kind": e.kind,
+                "actorType": e.actor_type,
+                "actorUserId": e.actor_user_id,
+                "actorAgentId": e.actor_agent_id,
+                "runId": e.run_id,
+                "payload": e.payload,
+                "createdAt": e.created_at,
             })
         })
         .collect();
     let issue_items: Vec<Value> = linked_issues
         .into_iter()
-        .map(|(id, title, status)| {
+        .map(|i| {
             json!({
-                "id": id,
-                "title": title,
-                "status": status,
+                "id": i.id,
+                "title": i.title,
+                "status": i.status,
             })
         })
         .collect();
@@ -1772,31 +1674,24 @@ async fn get_case_outputs(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let case = CaseRepo::new(&state.db)
+    let repo = CaseRepo::new(&state.db);
+    let case = repo
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT i.id, i.title, i.status, cil.role, i.completed_at \
-         FROM case_issue_links cil \
-         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
-         WHERE cil.company_id=$1 AND cil.case_id=$2 \
-         ORDER BY cil.created_at ASC",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = repo
+        .list_outputs(case.company_id, case_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, title, status, role, completed_at)| {
+        .map(|r| {
             json!({
-                "id": id,
-                "title": title,
-                "status": status,
-                "linkRole": role,
-                "completedAt": completed_at,
+                "id": r.id,
+                "title": r.title,
+                "status": r.status,
+                "linkRole": r.link_role,
+                "completedAt": r.completed_at,
             })
         })
         .collect();
