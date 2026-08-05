@@ -31,10 +31,13 @@ pub struct DocumentRevisionRow {
     pub company_id: Uuid,
     pub document_id: Uuid,
     pub revision_number: i32,
+    pub title: Option<String>,
+    pub format: Option<String>,
     pub body: String,
     pub change_summary: Option<String>,
     pub created_by_agent_id: Option<Uuid>,
     pub created_by_user_id: Option<String>,
+    pub created_by_run_id: Option<Uuid>,
     pub created_at: Timestamp,
 }
 
@@ -335,11 +338,31 @@ impl<'a> DocumentRepo<'a> {
         document_id: Uuid,
     ) -> sqlx::Result<Vec<DocumentRevisionRow>> {
         sqlx::query_as::<_, DocumentRevisionRow>(
-            "SELECT id, company_id, document_id, revision_number, body, change_summary, \
-                    created_by_agent_id, created_by_user_id, created_at \
+            "SELECT id, company_id, document_id, revision_number, title, format, body, change_summary, \
+                    created_by_agent_id, created_by_user_id, created_by_run_id, created_at \
              FROM document_revisions WHERE document_id = $1 ORDER BY revision_number DESC",
         )
         .bind(document_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 158: company-scoped + limit 版的 list_revisions（summary_slots route 用）。
+    pub async fn list_revisions_in_company(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<DocumentRevisionRow>> {
+        sqlx::query_as::<_, DocumentRevisionRow>(
+            "SELECT id, company_id, document_id, revision_number, title, format, body, change_summary, \
+                    created_by_agent_id, created_by_user_id, created_by_run_id, created_at \
+             FROM document_revisions WHERE company_id = $1 AND document_id = $2 \
+             ORDER BY revision_number DESC LIMIT $3",
+        )
+        .bind(company_id)
+        .bind(document_id)
+        .bind(limit)
         .fetch_all(self.db.pool())
         .await
     }
@@ -352,8 +375,8 @@ impl<'a> DocumentRepo<'a> {
         created_by_user_id: Option<&str>,
     ) -> sqlx::Result<Option<DocumentRevisionRow>> {
         let target: Option<DocumentRevisionRow> = sqlx::query_as::<_, DocumentRevisionRow>(
-            "SELECT id, company_id, document_id, revision_number, body, change_summary, \
-                    created_by_agent_id, created_by_user_id, created_at \
+            "SELECT id, company_id, document_id, revision_number, title, format, body, change_summary, \
+                    created_by_agent_id, created_by_user_id, created_by_run_id, created_at \
              FROM document_revisions WHERE document_id = $1 AND revision_number = $2",
         )
         .bind(document_id)
@@ -374,15 +397,16 @@ impl<'a> DocumentRepo<'a> {
         let new_rev_id = Uuid::new_v4();
         let company_id = target.company_id;
         let new_rev: DocumentRevisionRow = sqlx::query_as::<_, DocumentRevisionRow>(
-            "INSERT INTO document_revisions (id, company_id, document_id, revision_number, body, change_summary, created_by_user_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             RETURNING id, company_id, document_id, revision_number, body, change_summary, \
-                    created_by_agent_id, created_by_user_id, created_at",
+            "INSERT INTO document_revisions (id, company_id, document_id, revision_number, title, format, body, change_summary, created_by_user_id) \
+             VALUES ($1, $2, $3, $4, $5, 'markdown', $6, $7, $8) \
+             RETURNING id, company_id, document_id, revision_number, title, format, body, change_summary, \
+                    created_by_agent_id, created_by_user_id, created_by_run_id, created_at",
         )
         .bind(new_rev_id)
         .bind(company_id)
         .bind(document_id)
         .bind(new_rev_number)
+        .bind(target.title.as_deref())
         .bind(&target.body)
         .bind(format!("Restored from revision {}", revision_number))
         .bind(created_by_user_id)
@@ -608,5 +632,130 @@ impl<'a> DocumentRepo<'a> {
         .bind(author_user_id)
         .fetch_one(self.db.pool())
         .await
+    }
+
+    // =========================================================================
+    // Round 158: summary_slots 仓储化新增方法
+    // =========================================================================
+
+    /// Round 158: company-scoped document 查找（summary_slots get_slot 用）。
+    pub async fn get_in_company(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+    ) -> sqlx::Result<Option<DocumentRow>> {
+        let s = format!("SELECT {COLS} FROM documents WHERE id = $1 AND company_id = $2");
+        sqlx::query_as::<_, DocumentRow>(&s)
+            .bind(document_id)
+            .bind(company_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    /// Round 158: 取文档的 latest_revision_id（check_base_revision 用）。
+    pub async fn latest_revision_id_in_company(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let v: Option<(Option<Uuid>,)> = sqlx::query_as(
+            "SELECT latest_revision_id FROM documents WHERE id = $1 AND company_id = $2",
+        )
+        .bind(document_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(v.and_then(|(id,)| id))
+    }
+
+    /// Round 158: update body (rev++) — 设置 updated_by_agent_id=NULL（手动写入语义）。
+    pub async fn write_body(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+        title: Option<&str>,
+        body: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<DocumentRow> {
+        let s = format!(
+            "UPDATE documents SET title = $2, latest_body = $3, latest_revision_number = latest_revision_number + 1, \
+             updated_by_agent_id = NULL, updated_at = $4 WHERE id = $1 AND company_id = $5 RETURNING {COLS}"
+        );
+        sqlx::query_as::<_, DocumentRow>(&s)
+            .bind(document_id)
+            .bind(title)
+            .bind(body)
+            .bind(now)
+            .bind(company_id)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Round 158: 创建新 summary document（format='markdown'）。
+    pub async fn create_markdown(
+        &self,
+        company_id: Uuid,
+        title: Option<&str>,
+        body: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<DocumentRow> {
+        let s = format!(
+            "INSERT INTO documents (company_id, title, format, latest_body, created_at, updated_at) \
+             VALUES ($1,$2,'markdown',$3,$4,$4) RETURNING {COLS}"
+        );
+        sqlx::query_as::<_, DocumentRow>(&s)
+            .bind(company_id)
+            .bind(title)
+            .bind(body)
+            .bind(now)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Round 158: 更新文档的 latest_revision_id + latest_revision_number。
+    pub async fn set_latest_revision(
+        &self,
+        document_id: Uuid,
+        revision_id: Uuid,
+        revision_number: i32,
+    ) -> sqlx::Result<DocumentRow> {
+        let s = format!(
+            "UPDATE documents SET latest_revision_id = $2, latest_revision_number = $3 WHERE id = $1 RETURNING {COLS}"
+        );
+        sqlx::query_as::<_, DocumentRow>(&s)
+            .bind(document_id)
+            .bind(revision_id)
+            .bind(revision_number)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Round 158: insert revision with title/format/body/change_summary + RETURNING。
+    pub async fn insert_revision_full(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+        revision_number: i32,
+        title: Option<&str>,
+        body: &str,
+        change_summary: Option<&str>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<DocumentRevisionRow> {
+        let s = format!(
+            "INSERT INTO document_revisions (company_id, document_id, revision_number, title, format, body, change_summary, created_at) \
+             VALUES ($1,$2,$3,$4,'markdown',$5,$6,$7) \
+             RETURNING id, company_id, document_id, revision_number, title, format, body, change_summary, \
+                    created_by_agent_id, created_by_user_id, created_by_run_id, created_at"
+        );
+        sqlx::query_as::<_, DocumentRevisionRow>(&s)
+            .bind(company_id)
+            .bind(document_id)
+            .bind(revision_number)
+            .bind(title)
+            .bind(body)
+            .bind(change_summary)
+            .bind(now)
+            .fetch_one(self.db.pool())
+            .await
     }
 }

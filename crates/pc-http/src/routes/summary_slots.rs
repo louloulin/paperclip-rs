@@ -7,11 +7,14 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
+use pc_repos::document::{DocumentRepo, DocumentRevisionRow};
 use pc_repos::issue::IssueRepo;
+use pc_repos::summary::{SummaryRepo, SummarySlotRow};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::FromRow;
 use uuid::Uuid;
+
+use pc_repos::document::DocumentRow;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -37,71 +40,7 @@ struct ScopeQuery {
     scope_id: Option<Uuid>,
 }
 
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct SlotRow {
-    id: Uuid,
-    company_id: Uuid,
-    scope_kind: String,
-    scope_id: Option<Uuid>,
-    slot_key: String,
-    document_id: Option<Uuid>,
-    status: String,
-    failure_reason: Option<String>,
-    generating_issue_id: Option<Uuid>,
-    last_generated_at: Option<pc_core::Timestamp>,
-    last_generated_by_agent_id: Option<Uuid>,
-    last_model: Option<String>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
-
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct DocumentView {
-    id: Uuid,
-    company_id: Uuid,
-    title: Option<String>,
-    format: String,
-    latest_body: String,
-    latest_revision_id: Option<Uuid>,
-    latest_revision_number: i32,
-    created_by_agent_id: Option<Uuid>,
-    created_by_user_id: Option<String>,
-    updated_by_agent_id: Option<Uuid>,
-    updated_by_user_id: Option<String>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
-
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct RevisionView {
-    id: Uuid,
-    company_id: Uuid,
-    document_id: Uuid,
-    revision_number: i32,
-    title: Option<String>,
-    format: String,
-    body: String,
-    change_summary: Option<String>,
-    created_by_agent_id: Option<Uuid>,
-    created_by_user_id: Option<String>,
-    created_by_run_id: Option<Uuid>,
-    created_at: pc_core::Timestamp,
-}
-
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct IssueView {
-    id: Uuid,
-    identifier: Option<String>,
-    title: String,
-    status: String,
-    assignee_agent_id: Option<Uuid>,
-}
-
-fn slot_json(row: &SlotRow) -> Value {
+fn slot_json(row: &SummarySlotRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -120,7 +59,7 @@ fn slot_json(row: &SlotRow) -> Value {
     })
 }
 
-fn document_json(row: &DocumentView) -> Value {
+fn document_json(row: &DocumentRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -138,7 +77,7 @@ fn document_json(row: &DocumentView) -> Value {
     })
 }
 
-fn revision_json(row: &RevisionView) -> Value {
+fn revision_json(row: &DocumentRevisionRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -161,19 +100,11 @@ async fn find_slot(
     scope_kind: &str,
     slot_key: &str,
     scope_id: Option<Uuid>,
-) -> sqlx::Result<Option<SlotRow>> {
-    sqlx::query_as::<_, SlotRow>(
-        "SELECT id, company_id, scope_kind, scope_id, slot_key, document_id, status, failure_reason, \
-                generating_issue_id, last_generated_at, last_generated_by_agent_id, last_model, created_at, updated_at \
-         FROM summary_slots WHERE company_id = $1 AND scope_kind = $2 AND slot_key = $3 \
-           AND scope_id IS NOT DISTINCT FROM $4",
-    )
-    .bind(company_id)
-    .bind(scope_kind)
-    .bind(slot_key)
-    .bind(scope_id)
-    .fetch_optional(state.db.pool())
-    .await
+) -> sqlx::Result<Option<SummarySlotRow>> {
+    SummaryRepo::new(&state.db)
+        .find_by_scope_str(company_id, scope_kind, slot_key, scope_id)
+        .await
+        .map_err(|e| sqlx::Error::Decode(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))
 }
 
 async fn get_slot(
@@ -188,29 +119,20 @@ async fn get_slot(
         ));
     };
     let document = match slot.document_id {
-        Some(document_id) => sqlx::query_as::<_, DocumentView>(
-            "SELECT id, company_id, title, format, latest_body, latest_revision_id, latest_revision_number, \
-                    created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, created_at, updated_at \
-             FROM documents WHERE id = $1 AND company_id = $2",
-        )
-        .bind(document_id)
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
-        .await?
-        .map(|row| document_json(&row)),
+        Some(document_id) => DocumentRepo::new(&state.db)
+            .get_in_company(company_id, document_id)
+            .await?
+            .map(|row| document_json(&row)),
         None => None,
     };
     let generating_issue = match slot.generating_issue_id {
-        Some(issue_id) => sqlx::query_as::<_, IssueView>(
-            "SELECT id, identifier, title, status, assignee_agent_id FROM issues WHERE id = $1 AND company_id = $2",
-        )
-        .bind(issue_id)
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
-        .await?
-        .map(|row| {
-            json!({ "id": row.id, "identifier": row.identifier, "title": row.title, "status": row.status, "assigneeAgentId": row.assignee_agent_id })
-        }),
+        Some(issue_id) => IssueRepo::new(&state.db)
+            .get(issue_id)
+            .await?
+            .filter(|row| row.company_id == company_id)
+            .map(|row| {
+                json!({ "id": row.id, "identifier": row.identifier, "title": row.title, "status": row.status, "assigneeAgentId": row.assignee_agent_id })
+            }),
         None => None,
     };
     Ok(Json(json!({
@@ -230,19 +152,12 @@ async fn list_revisions(
         return Ok(Json(json!({ "slot": null, "revisions": [] })));
     };
     let revisions = match slot.document_id {
-        Some(document_id) => sqlx::query_as::<_, RevisionView>(
-            "SELECT id, company_id, document_id, revision_number, title, format, body, change_summary, \
-                    created_by_agent_id, created_by_user_id, created_by_run_id, created_at \
-             FROM document_revisions WHERE company_id = $1 AND document_id = $2 \
-             ORDER BY revision_number DESC LIMIT 20",
-        )
-        .bind(company_id)
-        .bind(document_id)
-        .fetch_all(state.db.pool())
-        .await?
-        .iter()
-        .map(revision_json)
-        .collect::<Vec<_>>(),
+        Some(document_id) => DocumentRepo::new(&state.db)
+            .list_revisions_in_company(company_id, document_id, 20)
+            .await?
+            .iter()
+            .map(revision_json)
+            .collect::<Vec<_>>(),
         None => Vec::new(),
     };
     Ok(Json(
@@ -268,27 +183,20 @@ async fn ensure_summary_slot(
     scope_kind: &str,
     slot_key: &str,
     scope_id: Option<Uuid>,
-) -> ApiResult<SlotRow> {
+) -> ApiResult<SummarySlotRow> {
     if let Some(slot) = find_slot(state, company_id, scope_kind, slot_key, scope_id).await? {
         return Ok(slot);
     }
-    Ok(sqlx::query_as::<_, SlotRow>(
-        "INSERT INTO summary_slots (company_id, scope_kind, scope_id, slot_key, status) \
-         VALUES ($1,$2,$3,$4,'idle') RETURNING id, company_id, scope_kind, scope_id, slot_key, document_id, status, failure_reason, \
-         generating_issue_id, last_generated_at, last_generated_by_agent_id, last_model, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(scope_kind)
-    .bind(scope_id)
-    .bind(slot_key)
-    .fetch_one(state.db.pool())
-    .await?)
+    Ok(SummaryRepo::new(&state.db)
+        .insert_idle(company_id, scope_kind, scope_id, slot_key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn check_base_revision(
     state: &AppState,
     company_id: Uuid,
-    slot: &SlotRow,
+    slot: &SummarySlotRow,
     base_revision_id: Uuid,
 ) -> ApiResult<()> {
     let Some(document_id) = slot.document_id else {
@@ -297,17 +205,10 @@ async fn check_base_revision(
     if document_id == Uuid::nil() {
         return Ok(());
     }
-    let latest: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT latest_revision_id FROM documents WHERE id = $1 AND company_id = $2",
-    )
-    .bind(document_id)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    if latest
-        .map(|(id,)| id)
-        .is_some_and(|id| id != base_revision_id)
-    {
+    let latest_id = DocumentRepo::new(&state.db)
+        .latest_revision_id_in_company(company_id, document_id)
+        .await?;
+    if latest_id.is_some_and(|id| id != base_revision_id) {
         return Err(ApiError::BadRequest(
             "summary was updated by someone else".to_owned(),
         ));
@@ -318,36 +219,19 @@ async fn check_base_revision(
 async fn upsert_document(
     state: &AppState,
     company_id: Uuid,
-    slot: &SlotRow,
+    slot: &SummarySlotRow,
     body: &WriteBody,
     now: chrono::DateTime<Utc>,
-) -> ApiResult<DocumentView> {
+) -> ApiResult<DocumentRow> {
+    let doc_repo = DocumentRepo::new(&state.db);
     if let Some(document_id) = slot.document_id {
-        Ok(sqlx::query_as::<_, DocumentView>(
-            "UPDATE documents SET title = $2, latest_body = $3, latest_revision_number = latest_revision_number + 1, \
-             updated_by_agent_id = NULL, updated_at = $4 WHERE id = $1 AND company_id = $5 \
-             RETURNING id, company_id, title, format, latest_body, latest_revision_id, latest_revision_number, \
-             created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, created_at, updated_at",
-        )
-        .bind(document_id)
-        .bind(body.title.as_deref())
-        .bind(&body.markdown)
-        .bind(now)
-        .bind(company_id)
-        .fetch_one(state.db.pool())
-        .await?)
+        Ok(doc_repo
+            .write_body(company_id, document_id, body.title.as_deref(), &body.markdown, now)
+            .await?)
     } else {
-        Ok(sqlx::query_as::<_, DocumentView>(
-            "INSERT INTO documents (company_id, title, format, latest_body, created_at, updated_at) \
-             VALUES ($1,$2,'markdown',$3,$4,$4) RETURNING id, company_id, title, format, latest_body, latest_revision_id, latest_revision_number, \
-             created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, created_at, updated_at",
-        )
-        .bind(company_id)
-        .bind(body.title.as_deref())
-        .bind(&body.markdown)
-        .bind(now)
-        .fetch_one(state.db.pool())
-        .await?)
+        Ok(doc_repo
+            .create_markdown(company_id, body.title.as_deref(), &body.markdown, now)
+            .await?)
     }
 }
 
@@ -358,21 +242,18 @@ async fn insert_revision(
     revision_number: i32,
     body: &WriteBody,
     now: chrono::DateTime<Utc>,
-) -> ApiResult<RevisionView> {
-    Ok(sqlx::query_as::<_, RevisionView>(
-        "INSERT INTO document_revisions (company_id, document_id, revision_number, title, format, body, change_summary, created_at) \
-         VALUES ($1,$2,$3,$4,'markdown',$5,$6,$7) RETURNING id, company_id, document_id, revision_number, title, format, body, change_summary, \
-         created_by_agent_id, created_by_user_id, created_by_run_id, created_at",
-    )
-    .bind(company_id)
-    .bind(document_id)
-    .bind(revision_number)
-    .bind(body.title.as_deref())
-    .bind(&body.markdown)
-    .bind(body.change_summary.as_deref())
-    .bind(now)
-    .fetch_one(state.db.pool())
-    .await?)
+) -> ApiResult<DocumentRevisionRow> {
+    Ok(DocumentRepo::new(&state.db)
+        .insert_revision_full(
+            company_id,
+            document_id,
+            revision_number,
+            body.title.as_deref(),
+            &body.markdown,
+            body.change_summary.as_deref(),
+            now,
+        )
+        .await?)
 }
 
 async fn link_revision(
@@ -380,17 +261,10 @@ async fn link_revision(
     document_id: Uuid,
     revision_id: Uuid,
     revision_number: i32,
-) -> ApiResult<DocumentView> {
-    Ok(sqlx::query_as::<_, DocumentView>(
-        "UPDATE documents SET latest_revision_id = $2, latest_revision_number = $3 WHERE id = $1 \
-         RETURNING id, company_id, title, format, latest_body, latest_revision_id, latest_revision_number, \
-         created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, created_at, updated_at",
-    )
-    .bind(document_id)
-    .bind(revision_id)
-    .bind(revision_number)
-    .fetch_one(state.db.pool())
-    .await?)
+) -> ApiResult<DocumentRow> {
+    Ok(DocumentRepo::new(&state.db)
+        .set_latest_revision(document_id, revision_id, revision_number)
+        .await?)
 }
 
 async fn mark_slot_written(
@@ -399,18 +273,11 @@ async fn mark_slot_written(
     document_id: Uuid,
     model: Option<&str>,
     now: chrono::DateTime<Utc>,
-) -> ApiResult<SlotRow> {
-    Ok(sqlx::query_as::<_, SlotRow>(
-        "UPDATE summary_slots SET document_id=$2, status='idle', failure_reason=NULL, generating_issue_id=NULL, \
-         last_generated_at=$3, last_model=$4, updated_at=$3 WHERE id=$1 RETURNING id, company_id, scope_kind, scope_id, slot_key, document_id, status, failure_reason, \
-         generating_issue_id, last_generated_at, last_generated_by_agent_id, last_model, created_at, updated_at",
-    )
-    .bind(slot_id)
-    .bind(document_id)
-    .bind(now)
-    .bind(model)
-    .fetch_one(state.db.pool())
-    .await?)
+) -> ApiResult<SummarySlotRow> {
+    Ok(SummaryRepo::new(&state.db)
+        .mark_slot_written(slot_id, document_id, now, model)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn write_slot(
@@ -458,12 +325,10 @@ async fn generate_slot(
     let existing = find_slot(&state, company_id, &scope_kind, &slot_key, scope_id).await?;
     if let Some(slot) = existing.as_ref() {
         if slot.status == "generating" {
-            let issue = sqlx::query_as::<_, IssueView>(
-                "SELECT id, identifier, title, status, assignee_agent_id FROM issues WHERE id = $1",
-            )
-            .bind(slot.generating_issue_id)
-            .fetch_optional(state.db.pool())
-            .await?;
+            let issue = match slot.generating_issue_id {
+                Some(issue_id) => IssueRepo::new(&state.db).get(issue_id).await?,
+                None => None,
+            };
             return Ok((
                 StatusCode::OK,
                 Json(json!({
@@ -483,29 +348,15 @@ async fn generate_slot(
             None,
         )
         .await?;
+    let repo = SummaryRepo::new(&state.db);
     let slot = if let Some(slot) = existing {
-        sqlx::query_as::<_, SlotRow>(
-            "UPDATE summary_slots SET status='generating', generating_issue_id=$2, updated_at=now() WHERE id=$1 \
-             RETURNING id, company_id, scope_kind, scope_id, slot_key, document_id, status, failure_reason, generating_issue_id, \
-             last_generated_at, last_generated_by_agent_id, last_model, created_at, updated_at",
-        )
-        .bind(slot.id)
-        .bind(issue.id)
-        .fetch_one(state.db.pool())
-        .await?
+        repo.update_to_generating(slot.id, issue.id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
     } else {
-        sqlx::query_as::<_, SlotRow>(
-            "INSERT INTO summary_slots (company_id, scope_kind, scope_id, slot_key, status, generating_issue_id) \
-             VALUES ($1,$2,$3,$4,'generating',$5) RETURNING id, company_id, scope_kind, scope_id, slot_key, document_id, status, failure_reason, generating_issue_id, \
-             last_generated_at, last_generated_by_agent_id, last_model, created_at, updated_at",
-        )
-        .bind(company_id)
-        .bind(&scope_kind)
-        .bind(scope_id)
-        .bind(&slot_key)
-        .bind(issue.id)
-        .fetch_one(state.db.pool())
-        .await?
+        repo.insert_generating(company_id, &scope_kind, scope_id, &slot_key, issue.id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
     };
     Ok((
         StatusCode::ACCEPTED,

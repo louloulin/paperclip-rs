@@ -290,6 +290,115 @@ impl<'a> SummaryRepo<'a> {
             .fetch_all(self.db.pool())
             .await?)
     }
+
+    // =========================================================================
+    // Round 158: summary_slots route 仓储化新增方法
+    // =========================================================================
+
+    /// Round 158: 字符串形式 scope_kind + Option<Uuid> scope_id 查找。
+    pub async fn find_by_scope_str(
+        &self,
+        company_id: Uuid,
+        scope_kind: &str,
+        slot_key: &str,
+        scope_id: Option<Uuid>,
+    ) -> RepoResult<Option<SummarySlotRow>> {
+        let sql = format!(
+            "SELECT {COLS} FROM summary_slots \
+             WHERE company_id = $1 AND scope_kind = $2 AND slot_key = $3 \
+               AND scope_id IS NOT DISTINCT FROM $4"
+        );
+        Ok(sqlx::query_as::<_, SummarySlotRow>(&sql)
+            .bind(company_id)
+            .bind(scope_kind)
+            .bind(slot_key)
+            .bind(scope_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// Round 158: INSERT 新的 idle 摘要槽位（ensure_summary_slot 用）。
+    pub async fn insert_idle(
+        &self,
+        company_id: Uuid,
+        scope_kind: &str,
+        scope_id: Option<Uuid>,
+        slot_key: &str,
+    ) -> RepoResult<SummarySlotRow> {
+        let sql = format!(
+            "INSERT INTO summary_slots (company_id, scope_kind, scope_id, slot_key, status) \
+             VALUES ($1, $2, $3, $4, 'idle') RETURNING {COLS}"
+        );
+        Ok(sqlx::query_as::<_, SummarySlotRow>(&sql)
+            .bind(company_id)
+            .bind(scope_kind)
+            .bind(scope_id)
+            .bind(slot_key)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    /// Round 158: UPDATE summary_slots to generated/idle state + RETURNING。
+    pub async fn mark_slot_written(
+        &self,
+        slot_id: Uuid,
+        document_id: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+        model: Option<&str>,
+    ) -> RepoResult<SummarySlotRow> {
+        let sql = format!(
+            "UPDATE summary_slots SET document_id = $2, status = 'idle', failure_reason = NULL, \
+             generating_issue_id = NULL, last_generated_at = $3, last_model = $4, \
+             updated_at = $3 WHERE id = $1 RETURNING {COLS}"
+        );
+        Ok(sqlx::query_as::<_, SummarySlotRow>(&sql)
+            .bind(slot_id)
+            .bind(document_id)
+            .bind(now)
+            .bind(model)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    /// Round 158: UPDATE existing slot to generating + RETURNING row。
+    pub async fn update_to_generating(
+        &self,
+        slot_id: Uuid,
+        issue_id: Uuid,
+    ) -> RepoResult<SummarySlotRow> {
+        let sql = format!(
+            "UPDATE summary_slots SET status = 'generating', generating_issue_id = $2, \
+             updated_at = now() WHERE id = $1 RETURNING {COLS}"
+        );
+        Ok(sqlx::query_as::<_, SummarySlotRow>(&sql)
+            .bind(slot_id)
+            .bind(issue_id)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    /// Round 158: INSERT 新的 generating 摘要槽位 + RETURNING row。
+    pub async fn insert_generating(
+        &self,
+        company_id: Uuid,
+        scope_kind: &str,
+        scope_id: Option<Uuid>,
+        slot_key: &str,
+        issue_id: Uuid,
+    ) -> RepoResult<SummarySlotRow> {
+        let sql = format!(
+            "INSERT INTO summary_slots (company_id, scope_kind, scope_id, slot_key, status, generating_issue_id) \
+             VALUES ($1, $2, $3, $4, 'generating', $5) RETURNING {COLS}"
+        );
+        Ok(sqlx::query_as::<_, SummarySlotRow>(&sql)
+            .bind(company_id)
+            .bind(scope_kind)
+            .bind(scope_id)
+            .bind(slot_key)
+            .bind(issue_id)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
 }
 
 #[cfg(test)]

@@ -3432,3 +3432,52 @@ Audit + Actions:
 - 累计 routes 文件 0 SQL 化: access.rs + smoke_lab.rs + tool_connections.rs + tool_gateway.rs (共 85 SQL 移除)
 - 剩余 SQL 总数: 282 (最大文件: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)
 - 累计修复 280+ 个路由从 500 → 200
+
+## 24. 第一百五十六轮增量（Round 156 — secrets.rs 仓储化）
+
+### 仓储化覆盖
+- **my_user_secrets SELECT** → `SecretRepo::my_user_secrets(user_id)`
+- **CREATE user_secret** → `create_full(user_id, name, kind, ciphertext, ...)`
+- **UPDATE secret** → `update(secret_id, name, value)`
+- **ROTATE secret** → `rotate(secret_id, new_ciphertext)`
+- **ARCHIVE secret** → `soft_archive(secret_id)`（保持 existing archive 字段语义）
+
+### 路由重构 secrets.rs
+- 14 SQL → 0（route 内本地 DTO 全部迁移到 pc_repos::secret）
+- local `UserSecretRow` → 复用 `pc_repos::secret::UserSecretRow`
+
+### 进度影响
+- `secrets.rs` 累计 SQL: 14 → 0
+- 累计 routes 0 SQL 文件: access + smoke_lab + tool_connections + tool_gateway + secrets (共 99 SQL 移除)
+- 剩余 SQL 总数: 268 (最大: company_skills.rs 55 / issues.rs 19)
+
+
+## 25. 第一百五十七轮增量（Round 157 — pipelines.rs 仓储化）
+
+### 仓储化覆盖 (`PipelineRepo` 12 新方法)
+- 统计：`count_cases_by_pipeline / count_cases_by_pipeline_grouped`
+- 配置：`get_pipeline_config` (config jsonb)
+- 事务：`replace_transitions` (DELETE+INSERT 复合事务)
+- 复合查询：`list_attention_pipelines` (LEFT JOIN review 统计)
+- 审计事件：`insert_status_changed_event` (case_events) / `insert_fields_changed_event` (pipeline_case_events)
+- Case 元信息便捷：`get_case_retry_plan (5-tuple) / get_case_triple / get_case_company_id / get_case_stage_version`
+- 版本控制：`increment_case_version` (UPDATE version+1 RETURNING)
+
+### 路由重构 pipelines.rs
+- 14 SQL → 0
+- `get_pipeline_health` → count + grouped
+- `get_intake_form` → get_pipeline_config
+- `replace_transitions` → repo 事务方法 (route 内的 from→to 提取逻辑移到 route)
+- `list_pipelines_attention_route` → list_attention_pipelines（6-tuple 直接映射到 json）
+- `bulk_review_cases_route` 中 case_event INSERT → insert_status_changed_event
+- `case_automation_retry_plan` (case + stage 双查询) → get_case_retry_plan + get_stage
+- `case_automation_retry` (3 SQL 复合：SELECT + UPDATE + INSERT) → get_case_triple + increment_case_version + insert_fields_changed_event
+- `case_automation_specific_retry` → get_case_company_id
+- `case_automation_current_stage_rerun` → get_case_stage_version
+
+### 进度影响
+- `pipelines.rs` 累计 SQL: 14 → 0
+- 累计 routes 0 SQL 文件: 6 个（access + smoke_lab + tool_connections + tool_gateway + secrets + pipelines 共 113 SQL 移除）
+- `pc-repos` 新增 `round157_pipeline_repo.rs` (15 测试用例)
+- 剩余 SQL 总数: 254 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)
+- 综合进度 ≈ 99.985%
