@@ -13,6 +13,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use pc_activity::kinds::ActivityKind;
+use pc_activity::types::{ActivityActor, ActivityEvent};
 use pc_realtime::LiveEvent;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
 use pc_repos::feedback_vote::FeedbackVoteRepo;
@@ -2800,12 +2802,99 @@ async fn restore_doc_revision(
     Ok(Json(json!({"restored": true, "issueId": id, "key": key, "revisionId": revision_id})))
 }
 
+/// Round 216: cancel / withdraw 共用的请求体。
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+struct InteractionResolveBody {
+    #[serde(default)]
+    reason: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct InteractionDecisionBody {
     #[serde(default)]
     verdict: Option<String>,
     #[serde(default)]
     notes: Option<String>,
+}
+
+/// Round 216: cancel / withdraw 共享的解析逻辑。
+///
+/// 流程：
+/// 1. 加载 issue（必须存在）
+/// 2. 校验 interaction 属于该 issue
+/// 3. 调用 `IssueRepo::resolve_interaction` 写入终态
+/// 4. 通过 `state.activity` 记录活动事件
+/// 5. 返回更新后的 row
+async fn resolve_interaction_status(
+    state: &AppState,
+    issue_id: Uuid,
+    interaction_id: Uuid,
+    new_status: &str,
+    reason: Option<&str>,
+    activity_kind: &str,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(issue_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+
+    let interaction = IssueRepo::new(&state.db)
+        .get_interaction(interaction_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("interaction {interaction_id}")))?;
+    if interaction.issue_id != issue_id {
+        return Err(ApiError::BadRequest(
+            "interaction does not belong to issue".into(),
+        ));
+    }
+
+    let result_json = reason.map(|r| serde_json::json!({ "reason": r }));
+
+    let updated = IssueRepo::new(&state.db)
+        .resolve_interaction(
+            interaction_id,
+            new_status,
+            result_json.as_ref(),
+            None, // resolved_by_user_id 在此场景通常由 auth context 提供
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("interaction {interaction_id}")))?;
+
+    // 活动事件（best-effort，失败不影响主流程）
+    let event = ActivityEvent::new(
+        parse_activity_kind(activity_kind),
+        ActivityActor::System {
+            component: "paperclip-api".into(),
+        },
+        "issue_thread_interaction",
+        interaction_id,
+    )
+    .with_company(issue.company_id)
+    .with_payload(serde_json::json!({
+        "issueId": issue_id,
+        "interactionKind": interaction.kind,
+        "newStatus": new_status,
+        "reason": reason,
+    }));
+    let _ = state.activity.emit(event).await;
+
+    Ok(Json(serde_json::json!({
+        "id": updated.id,
+        "issueId": updated.issue_id,
+        "kind": updated.kind,
+        "status": updated.status,
+        "result": updated.result,
+        "resolvedAt": updated.resolved_at,
+        "updatedAt": updated.updated_at,
+    })))
+}
+
+/// Round 216: 将字符串映射为活动 kind。
+/// 当前 ActivityKind 枚举没有 thread_interaction 相关变体，统一映射为 Other。
+/// payload 中保留具体 kind 字符串，便于上层过滤。
+fn parse_activity_kind(_s: &str) -> ActivityKind {
+    ActivityKind::Other
 }
 
 async fn accept_interaction(
@@ -2819,15 +2908,25 @@ async fn accept_interaction(
     Ok(Json(json!({"status": "accepted", "deprecated": true})))
 }}
 
+/// Round 216: POST /api/issues/:id/interactions/:interaction_id/cancel
+///
+/// 与 Node `cancelIssueThreadInteraction` 对齐。
+/// Body: `{ reason?: string }`
 async fn cancel_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"status": "cancelled", "deprecated": true})))
-}}
+    Json(body): Json<InteractionResolveBody>,
+) -> ApiResult<Json<Value>> {
+    resolve_interaction_status(
+        &state,
+        id,
+        iid,
+        "cancelled",
+        body.reason.as_deref(),
+        "issue.thread_interaction_cancelled",
+    )
+    .await
+}
 
 async fn reject_interaction(
     State(state): State<AppState>,
@@ -2867,15 +2966,30 @@ async fn verdict_interaction(
     Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
 }}
 
+/// Round 216: POST /api/issues/:id/interactions/:interaction_id/withdraw
+///
+/// 与 Node `withdrawIssueThreadInteraction` 对齐。
+/// Body: `{ reason?: string }`
+///
+/// 区别于 cancel：
+/// - cancel 通常用于撤销整个 thread / system action
+/// - withdraw 通常是 agent 自己撤回之前发出的请求
+/// 但仓储层面都通过 `resolve_interaction(status=...)` 完成
 async fn withdraw_interaction(
-    State(_state): State<AppState>,
-    Path((_id, iid)): Path<(Uuid, Uuid)>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"withdrawn": true, "deprecated": true})))
-}}
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(Uuid, Uuid)>,
+    Json(body): Json<InteractionResolveBody>,
+) -> ApiResult<Json<Value>> {
+    resolve_interaction_status(
+        &state,
+        id,
+        iid,
+        "withdrawn",
+        body.reason.as_deref(),
+        "issue.thread_interaction_withdrawn",
+    )
+    .await
+}
 
 // ============== Round 27: issue tree-holds list/create/get + tree-control preview ==============
 
@@ -3184,4 +3298,49 @@ async fn attachment_content_stub(
         ],
         bytes,
     ))
+}
+
+#[cfg(test)]
+mod round216_tests {
+    //! Round 216: interaction cancel/withdraw 共享解析逻辑的单元测试。
+    //!
+    //! `parse_activity_kind` 是纯函数 — 容易单测。
+    //! `InteractionResolveBody` 是 serde 结构 — 验证字段解析。
+    use super::{parse_activity_kind, InteractionResolveBody};
+    use pc_activity::kinds::ActivityKind;
+
+    #[test]
+    fn parse_activity_kind_returns_other_for_known_strings() {
+        // 当前实现统一映射到 ActivityKind::Other
+        // 因为枚举没有 thread_interaction 变体。
+        assert!(matches!(
+            parse_activity_kind("issue.thread_interaction_cancelled"),
+            ActivityKind::Other
+        ));
+        assert!(matches!(
+            parse_activity_kind("issue.thread_interaction_withdrawn"),
+            ActivityKind::Other
+        ));
+        assert!(matches!(parse_activity_kind("unknown.kind"), ActivityKind::Other));
+    }
+
+    #[test]
+    fn interaction_resolve_body_accepts_empty_object() {
+        let body: InteractionResolveBody = serde_json::from_str("{}").expect("parse");
+        assert!(body.reason.is_none());
+    }
+
+    #[test]
+    fn interaction_resolve_body_accepts_reason() {
+        let body: InteractionResolveBody =
+            serde_json::from_str(r#"{"reason": "user changed mind"}"#).expect("parse");
+        assert_eq!(body.reason.as_deref(), Some("user changed mind"));
+    }
+
+    #[test]
+    fn interaction_resolve_body_accepts_null_reason() {
+        let body: InteractionResolveBody = serde_json::from_str(r#"{"reason": null}"#)
+            .expect("parse null");
+        assert!(body.reason.is_none());
+    }
 }
