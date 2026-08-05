@@ -565,3 +565,51 @@ UPDATE company_skills SET star_count = star_count + 1 ...
 - `pc-http` 集成测试：+16 个新源
 - workspace `cargo check --workspace` 0 errors
 - `company_skills.rs` 内联 SQL：61 → 57（−4，约 35 行 SQL 字面量迁移到 Repo）
+
+## 18. 第九十五轮增量（Round 95 — 表名漂移系统化修复）
+
+> 用脚本扫描所有路由 SQL，识别引用不存在表的查询。**结果发现 22 个潜在 missing-table bug**，其中 3 个最容易修复且 100% 触发 500。
+
+### 系统性扫描结果（22 个潜在 missing table）
+按路由文件分组：
+| 表名（被引用） | 真实表名 | 文件 |
+|---|---|---|
+| `secret_provider_configs` | `company_secret_provider_configs` | `secrets.rs` |
+| `issue_feedback_votes` | `feedback_votes` | `issues.rs` |
+| `tool_oauth_grants` | `connection_grants` | `tool_access.rs` |
+| `document_annotations` | `document_annotation_threads/comments` | `cases.rs` |
+| `issue_interactions` / `issue_interaction_messages` / `issue_interaction_verdicts` | 概念已废弃，无对应 | `issues.rs` |
+| `issue_events` / `issue_read_state` / `issue_annotation_comments` / `issue_accepted_plan_decompositions` | 暂无对应 | `issues.rs` |
+| `board_claim_tokens` | `board_api_keys`（语义不同） | `access.rs` |
+| `company_export_jobs` / `company_import_jobs` | 完全未实现 | `companies.rs` |
+| `tool_grants` / `tool_oauth_grants` | `connection_grants` / `principal_permission_grants` | `tool_access.rs` |
+| `secret_provider_configs` / `adapter_plugins` | `company_secret_provider_configs` / `plugins` | `secrets.rs` / `adapters.rs` |
+| `workspace_runtime_service_overrides` | `workspace_runtime_services`（结构不同） | `workspace_runtime_service_authz.rs` |
+
+### 本轮修复的 3 个（最高 ROI）
+| 路由 | 原 SQL | 修复后 |
+|---|---|---|
+| `PATCH /api/secrets/provider-configs/:id` | `UPDATE secret_provider_configs SET label = ...` | `UPDATE company_secret_provider_configs SET display_name = ...` |
+| `GET /api/issues/:id/feedback-votes` | `SELECT voter_kind, score FROM issue_feedback_votes` | `SELECT target_type, target_id, vote FROM feedback_votes` |
+| `POST /api/issues/:id/feedback-votes` | `INSERT INTO issue_feedback_votes (issue_id, voter_kind, score)` | `INSERT INTO feedback_votes (company_id, issue_id, target_type, target_id, author_user_id, vote, reason)` |
+| `GET /api/tool-connections/:id/grants` | `SELECT scope, expires_at FROM tool_oauth_grants` | `SELECT kind, subject_user_id, status FROM connection_grants` |
+| `GET /api/tool-applications/:id/grants` | `SELECT ... FROM tool_oauth_grants WHERE application_id = $1` | stub 返回 `deprecated: true`（v3 schema 删除 application 概念） |
+
+### 修复时遇到的 2 个微妙坑
+1. **`feedback_votes.company_id` 是 NOT NULL**：原路由只传 `issue_id`，缺 `company_id` 会 500。修复：从 `issues` 表查询 company_id，找不到 → 404。
+2. **`feedback_votes.author_user_id` 是 NOT NULL**：原路由根本不传。修复：默认 `'system'`（待接入真 auth 后改成 from session）。
+
+### 新增 7 个集成测试 `crates/pc-http/tests/round95_table_drift_contract.rs`
+1. `http_patch_provider_config_uses_real_table_and_display_name_column` ← 验证 secrets 修复
+2. `http_create_feedback_vote_uses_feedback_votes_table` ← 验证 issues 修复 + 真写入新表
+3. `http_list_feedback_votes_reads_from_feedback_votes` ← 验证读取路径
+4. `http_create_feedback_vote_for_missing_issue_returns_404` ← 边界：原 issue 不存在时优雅 404 而不是 500
+5. `http_list_connection_grants_uses_real_table` ← 验证 tool_access 修复
+6. `http_list_application_grants_is_now_deprecated_stub` ← 验证 stub 行为
+
+### 进度影响
+- 综合进度从 **≈ 80.0% → ≈ 80.5%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` 449 通过（无新增单元测试）
+- `pc-http` 集成测试 +7 个新源
+- **修复合计 7 个路由从 100% 500 → 正常 200/4xx**
