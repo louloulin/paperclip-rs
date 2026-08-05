@@ -14,6 +14,7 @@ use uuid::Uuid;
 use pc_activity::{ActivityActor, ActivityEvent, ActivityFilter, ActivityKind};
 
 use crate::{require_user_id, ApiError, ApiResult, AppState};
+use pc_repos::activity::{ActivityRepo, NewActivity};
 use pc_repos::company_member::CompanyMemberRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue::IssueRepo;
@@ -24,6 +25,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/activity/list", get(query_events))
         // ── Round 43: heartbeat-runs/issues 关联 ──
         .route("/api/heartbeat-runs/:run_id/issues", get(heartbeat_run_issues))
+        // ── Round 209: batch emit + run-scoped list ──
+        .route("/api/activity/emit/batch", post(emit_events_batch))
+        .route("/api/activity/runs/:run_id", get(list_run_activity))
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,4 +274,165 @@ async fn heartbeat_run_issues(
     }
 
     Ok(Json(Value::Array(items)))
+}
+
+// ============================================================================
+// Round 209: batch emit + run-scoped list
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct BatchEmitItem {
+    kind: String,
+    #[serde(default)]
+    actor_type: Option<String>,
+    #[serde(default)]
+    actor_id: Option<String>,
+    #[serde(default)]
+    actor_label: Option<String>,
+    subject_kind: String,
+    subject_id: Uuid,
+    #[serde(default)]
+    company_id: Option<Uuid>,
+    #[serde(default)]
+    payload: Option<Value>,
+    #[serde(default)]
+    agent_id: Option<Uuid>,
+    #[serde(default)]
+    run_id: Option<Uuid>,
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+}
+
+fn parse_actor_type(s: Option<&str>) -> pc_repos::activity::ActorType {
+    use pc_repos::activity::ActorType;
+    match s.unwrap_or("system") {
+        "user" => ActorType::User,
+        "agent" => ActorType::Agent,
+        "board" => ActorType::Board,
+        "api_key" => ActorType::ApiKey,
+        "plugin" => ActorType::Plugin,
+        _ => ActorType::System,
+    }
+}
+
+fn batch_item_to_new_activity(item: BatchEmitItem) -> ApiResult<NewActivity> {
+    let _kind = parse_kind(&item.kind)?;
+    Ok(NewActivity {
+        company_id: item.company_id.unwrap_or_else(Uuid::nil),
+        actor_type: parse_actor_type(item.actor_type.as_deref()),
+        actor_id: item.actor_id.unwrap_or_default(),
+        action: item.kind,
+        entity_type: item.subject_kind,
+        entity_id: item.subject_id.to_string(),
+        agent_id: item.agent_id,
+        run_id: item.run_id,
+        responsible_user_id: item.responsible_user_id,
+        details: item.payload,
+    })
+}
+
+/// `POST /api/activity/emit/batch` — 批量写入 activity events。
+/// 使用 `record_batch` 一次性 INSERT，减少 round-trip。
+async fn emit_events_batch(
+    State(state): State<AppState>,
+    Json(items): Json<Vec<BatchEmitItem>>,
+) -> ApiResult<Json<Value>> {
+    if items.len() > 500 {
+        return Err(ApiError::BadRequest(
+            "batch size must be <= 500".into(),
+        ));
+    }
+    let new_items: Vec<NewActivity> = items
+        .into_iter()
+        .map(batch_item_to_new_activity)
+        .collect::<ApiResult<Vec<_>>>()?;
+    let n = ActivityRepo::new(&state.db)
+        .record_batch(&new_items)
+        .await?;
+    Ok(Json(json!({
+        "inserted": n,
+        "requested": new_items.len(),
+    })))
+}
+
+fn activity_row_json(row: &pc_repos::activity::ActivityRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "actorType": row.actor_type,
+        "actorId": row.actor_id,
+        "action": row.action,
+        "entityType": row.entity_type,
+        "entityId": row.entity_id,
+        "agentId": row.agent_id,
+        "runId": row.run_id,
+        "responsibleUserId": row.responsible_user_id,
+        "details": row.details,
+        "createdAt": row.created_at,
+    })
+}
+
+/// `GET /api/activity/runs/:run_id` — 列出指定 run_id 的所有 activity。
+async fn list_run_activity(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = ActivityRepo::new(&state.db)
+        .list_for_run(run_id)
+        .await?;
+    let items: Vec<Value> = rows.iter().map(activity_row_json).collect();
+    Ok(Json(json!({
+        "runId": run_id,
+        "total": items.len(),
+        "items": items,
+    })))
+}
+
+#[cfg(test)]
+mod round209_tests {
+    use super::*;
+
+    #[test]
+    fn parse_actor_type_known_values() {
+        use pc_repos::activity::ActorType;
+        assert_eq!(parse_actor_type(Some("user")), ActorType::User);
+        assert_eq!(parse_actor_type(Some("agent")), ActorType::Agent);
+        assert_eq!(parse_actor_type(Some("board")), ActorType::Board);
+        assert_eq!(parse_actor_type(Some("api_key")), ActorType::ApiKey);
+        assert_eq!(parse_actor_type(Some("plugin")), ActorType::Plugin);
+    }
+
+    #[test]
+    fn parse_actor_type_defaults_to_system() {
+        use pc_repos::activity::ActorType;
+        assert_eq!(parse_actor_type(None), ActorType::System);
+        assert_eq!(parse_actor_type(Some("unknown")), ActorType::System);
+        assert_eq!(parse_actor_type(Some("")), ActorType::System);
+    }
+
+    #[test]
+    fn activity_row_json_uses_camel_case_keys() {
+        use pc_repos::activity::{ActivityRow, ActorType};
+        let row = ActivityRow {
+            id: Uuid::nil(),
+            company_id: Uuid::nil(),
+            actor_type: "agent".to_owned(),
+            actor_id: "agent-1".to_owned(),
+            action: "issue.assigned".to_owned(),
+            entity_type: "issue".to_owned(),
+            entity_id: "i-1".to_owned(),
+            agent_id: Some(Uuid::nil()),
+            run_id: None,
+            responsible_user_id: None,
+            details: None,
+            created_at: pc_core::Timestamp::from_dt(Utc::now()),
+        };
+        let v = activity_row_json(&row);
+        assert_eq!(v["actorType"], "agent");
+        assert_eq!(v["entityId"], "i-1");
+        assert_eq!(v["action"], "issue.assigned");
+        // ActorType enum is constructed for compilation, not used in test
+        let _ = ActorType::Agent;
+    }
 }
