@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::case::{CaseLinkRole, CaseRepo, CaseRow};
+use pc_repos::case::{CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseLinkRole, CaseRepo, CaseRow, NewCaseAnnotationComment, NewCaseAnnotationThread};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -512,34 +512,6 @@ async fn ensure_case_exists(state: &AppState, case_id: Uuid) -> ApiResult<Uuid> 
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))
 }
 
-#[derive(sqlx::FromRow)]
-struct AnnotationThreadRow {
-    id: Uuid,
-    document_key: String,
-    status: String,
-    anchor_state: String,
-    original_revision_id: Option<Uuid>,
-    original_revision_number: i32,
-    current_revision_id: Option<Uuid>,
-    current_revision_number: i32,
-    selected_text: String,
-    prefix_text: String,
-    suffix_text: String,
-    normalized_start: i32,
-    normalized_end: i32,
-    markdown_start: i32,
-    markdown_end: i32,
-    anchor_confidence: String,
-    anchor_selector: Value,
-    resolved_at: Option<chrono::DateTime<chrono::Utc>>,
-    resolved_by_user_id: Option<String>,
-    resolved_by_agent_id: Option<Uuid>,
-    created_by_user_id: Option<String>,
-    created_by_agent_id: Option<Uuid>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
 // ── Case annotation threads ──────────────────────────────────
 
 #[derive(Debug, Default, Deserialize)]
@@ -549,36 +521,25 @@ struct ListAnnotationThreadsQuery {
     include_comments: Option<bool>,
 }
 
+// Round 114: 仓储化。CaseRepo::get_case_company_id + list_case_annotation_threads +
+//             list_case_thread_comments_bulk。
 async fn list_case_annotation_threads(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
     axum::extract::Query(q): axum::extract::Query<ListAnnotationThreadsQuery>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    let (status_filter, include_comments) = (q.status, q.include_comments.unwrap_or(false));
-    let mut sql = String::from(
-        "SELECT id, company_id, case_id, document_id, document_key, status, anchor_state, \
-                original_revision_id, original_revision_number, current_revision_id, current_revision_number, \
-                selected_text, prefix_text, suffix_text, normalized_start, normalized_end, \
-                markdown_start, markdown_end, anchor_confidence, anchor_selector, \
-                resolved_at, resolved_by_user_id, resolved_by_agent_id, \
-                created_by_user_id, created_by_agent_id, created_at, updated_at \
-         FROM document_annotation_threads WHERE case_id = $1 AND document_key = $2",
-    );
-    if let Some(s) = status_filter.as_deref() {
-        if s == "open" || s == "resolved" {
-            sql.push_str(&format!(" AND status = '{}'", s));
-        } else if s != "all" {
-            // ignore unknown filter
-        }
-    }
-    sql.push_str(" ORDER BY created_at DESC LIMIT 200");
-    let rows: Vec<AnnotationThreadRow> = sqlx::query_as(&sql)
-        .bind(case_id)
-        .bind(&key)
-        .fetch_all(state.db.pool())
-        .await
-        .unwrap_or_default();
+    let _company_id = CaseRepo::new(&state.db)
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let status_filter = q
+        .status
+        .as_deref()
+        .and_then(|s| if s == "open" || s == "resolved" { Some(s) } else { None });
+    let include_comments = q.include_comments.unwrap_or(false);
+    let rows = CaseRepo::new(&state.db)
+        .list_case_annotation_threads(case_id, &key, status_filter, 200)
+        .await?;
     let mut items: Vec<Value> = rows
         .into_iter()
         .map(|r| {
@@ -610,40 +571,31 @@ async fn list_case_annotation_threads(
             })
         })
         .collect();
-
     if include_comments {
-        // Load comments for each thread and inline
         let thread_ids: Vec<Uuid> = items
             .iter()
-            .map(|v| v.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()))
-            .flatten()
+            .filter_map(|v| v.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()))
             .collect();
         if !thread_ids.is_empty() {
-            let comments: Vec<(Uuid, Uuid, String, String, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-                "SELECT id, thread_id, body, author_type, author_agent_id, author_user_id, created_at \
-                 FROM document_annotation_comments \
-                 WHERE company_id = $1 AND case_id = $2 AND thread_id = ANY($3::uuid[]) \
-                 ORDER BY created_at ASC",
-            )
-            .bind(company_id)
-            .bind(case_id)
-            .bind(&thread_ids)
-            .fetch_all(state.db.pool())
-            .await
-            .unwrap_or_default();
+            let comments = CaseRepo::new(&state.db)
+                .list_case_thread_comments_bulk(&thread_ids)
+                .await?;
             for t in items.iter_mut() {
-                let tid = t.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok());
+                let tid = t
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok());
                 let cs: Vec<Value> = comments
                     .iter()
-                    .filter(|c| Some(c.1) == tid)
-                    .map(|(id, _tid, body, author_type, author_agent_id, author_user_id, created_at)| {
+                    .filter(|c| Some(c.thread_id) == tid)
+                    .map(|c| {
                         json!({
-                            "id": id,
-                            "body": body,
-                            "authorType": author_type,
-                            "authorAgentId": author_agent_id,
-                            "authorUserId": author_user_id,
-                            "createdAt": created_at,
+                            "id": c.id,
+                            "body": c.body,
+                            "authorType": c.author_type,
+                            "authorAgentId": c.author_agent_id,
+                            "authorUserId": c.author_user_id,
+                            "createdAt": c.created_at,
                         })
                     })
                     .collect();
@@ -677,6 +629,8 @@ struct CreateCaseAnnotationThreadBody {
     status: Option<String>,
 }
 
+// Round 114: 仓储化。CaseRepo::get_case_company_id + resolve_case_document_id +
+//             create_case_annotation_thread + create_case_thread_comment。
 async fn create_case_annotation_thread(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
@@ -685,8 +639,15 @@ async fn create_case_annotation_thread(
     if body.selected_text.is_empty() {
         return Err(ApiError::BadRequest("selectedText is required".into()));
     }
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    let (doc_company_id, document_id) = resolve_case_document_id(&state, case_id, &key).await?;
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let (doc_company_id, document_id) = repo
+        .resolve_case_document_id(case_id, &key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))?;
     if doc_company_id != company_id {
         return Err(ApiError::BadRequest("case/document company mismatch".into()));
     }
@@ -694,47 +655,43 @@ async fn create_case_annotation_thread(
     let norm_end = body.normalized_end.unwrap_or(body.selected_text.len() as i32);
     let md_start = body.markdown_start.unwrap_or(0);
     let md_end = body.markdown_end.unwrap_or(body.selected_text.len() as i32);
-    let confidence = body.anchor_confidence.unwrap_or_else(|| "exact".to_owned());
+    let confidence = body.anchor_confidence.clone().unwrap_or_else(|| "exact".to_owned());
     let selector = body.anchor_selector.clone().unwrap_or_else(|| json!({}));
     let revision_number = body.revision_number.unwrap_or(1);
-    let thread_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO document_annotation_threads (company_id, case_id, document_id, document_key, status, anchor_state, original_revision_number, current_revision_number, selected_text, prefix_text, suffix_text, normalized_start, normalized_end, markdown_start, markdown_end, anchor_confidence, anchor_selector) \
-         VALUES ($1, $2, $3, $4, COALESCE($5, 'open'), 'active', $6, $6, $7, COALESCE($8, ''), COALESCE($9, ''), $10, $11, $12, $13, $14, $15) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(document_id)
-    .bind(&key)
-    .bind(body.status.as_deref())
-    .bind(revision_number)
-    .bind(&body.selected_text)
-    .bind(body.prefix_text.as_deref().unwrap_or(""))
-    .bind(body.suffix_text.as_deref().unwrap_or(""))
-    .bind(norm_start)
-    .bind(norm_end)
-    .bind(md_start)
-    .bind(md_end)
-    .bind(&confidence)
-    .bind(&selector)
-    .fetch_one(state.db.pool())
-    .await?;
-
+    let input = NewCaseAnnotationThread {
+        company_id,
+        case_id,
+        document_id,
+        document_key: key.clone(),
+        status: body.status.clone(),
+        original_revision_id: None,
+        revision_number,
+        selected_text: body.selected_text.clone(),
+        prefix_text: body.prefix_text.clone(),
+        suffix_text: body.suffix_text.clone(),
+        normalized_start: norm_start,
+        normalized_end: norm_end,
+        markdown_start: md_start,
+        markdown_end: md_end,
+        anchor_confidence: Some(confidence.clone()),
+        anchor_selector: Some(selector.clone()),
+    };
+    let thread_id = repo.create_case_annotation_thread(&input).await?;
     if let Some(initial_body) = body.body.as_deref() {
         if !initial_body.is_empty() {
-            sqlx::query(
-                "INSERT INTO document_annotation_comments (company_id, case_id, thread_id, document_id, body, author_type) \
-                 VALUES ($1, $2, $3, $4, $5, 'user')",
-            )
-            .bind(company_id)
-            .bind(case_id)
-            .bind(thread_id)
-            .bind(document_id)
-            .bind(initial_body)
-            .execute(state.db.pool())
-            .await?;
+            let comment = NewCaseAnnotationComment {
+                company_id,
+                case_id,
+                thread_id,
+                document_id,
+                body: initial_body.to_owned(),
+                author_type: "user".to_owned(),
+                author_user_id: None,
+                author_agent_id: None,
+            };
+            repo.create_case_thread_comment(&comment).await?;
         }
     }
-
     state.realtime.publish(
         LiveEvent::new("case.annotation.created", "case_annotation", thread_id)
             .with_company(company_id)
@@ -755,72 +712,51 @@ async fn create_case_annotation_thread(
     ))
 }
 
+// Round 114: 仓储化。CaseRepo::get_case_company_id + get_case_annotation_thread +
+//             list_case_thread_comments。
 async fn get_case_annotation_thread(
     State(state): State<AppState>,
     Path((case_id, key, thread_id)): Path<(Uuid, String, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    let row: Option<(
-        Uuid, Uuid, String, String, String, i32, i32,
-        String, Value,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<Uuid>, Option<String>,
-        chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(
-        "SELECT id, document_id, document_key, status, anchor_confidence, normalized_start, normalized_end, selected_text, anchor_selector, resolved_at, resolved_by_agent_id, resolved_by_user_id, created_at \
-         FROM document_annotation_threads WHERE id = $1 AND case_id = $2 AND document_key = $3",
-    )
-    .bind(thread_id)
-    .bind(case_id)
-    .bind(&key)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (id, document_id, document_key, status, anchor_confidence, normalized_start, normalized_end, selected_text, anchor_selector, resolved_at, resolved_by_agent_id, resolved_by_user_id, created_at) = row
+    let repo = CaseRepo::new(&state.db);
+    let _company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let row = repo
+        .get_case_annotation_thread(case_id, thread_id, &key)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
-
-    let comments: Vec<(Uuid, String, String, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, body, author_type, author_agent_id, author_user_id, created_at \
-         FROM document_annotation_comments \
-         WHERE company_id = $1 AND case_id = $2 AND thread_id = $3 \
-         ORDER BY created_at ASC",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(thread_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let comments = repo.list_case_thread_comments(thread_id).await?;
     let comment_items: Vec<Value> = comments
         .into_iter()
-        .map(|(id, body, author_type, author_agent_id, author_user_id, created_at)| {
+        .map(|c| {
             json!({
-                "id": id,
-                "body": body,
-                "authorType": author_type,
-                "authorAgentId": author_agent_id,
-                "authorUserId": author_user_id,
-                "createdAt": created_at,
+                "id": c.id,
+                "body": c.body,
+                "authorType": c.author_type,
+                "authorAgentId": c.author_agent_id,
+                "authorUserId": c.author_user_id,
+                "createdAt": c.created_at,
             })
         })
         .collect();
 
     Ok(Json(json!({
-        "id": id,
+        "id": row.id,
         "caseId": case_id,
-        "documentId": document_id,
-        "documentKey": document_key,
-        "status": status,
-        "anchorConfidence": anchor_confidence,
-        "normalizedStart": normalized_start,
-        "normalizedEnd": normalized_end,
-        "selectedText": selected_text,
-        "anchorSelector": anchor_selector,
-        "resolvedAt": resolved_at,
-        "resolvedByAgentId": resolved_by_agent_id,
-        "resolvedByUserId": resolved_by_user_id,
-        "createdAt": created_at,
+        "documentId": row.document_id,
+        "documentKey": row.document_key,
+        "status": row.status,
+        "anchorConfidence": row.anchor_confidence,
+        "normalizedStart": row.normalized_start,
+        "normalizedEnd": row.normalized_end,
+        "selectedText": row.selected_text,
+        "anchorSelector": row.anchor_selector,
+        "resolvedAt": row.resolved_at,
+        "resolvedByAgentId": row.resolved_by_agent_id,
+        "resolvedByUserId": row.resolved_by_user_id,
+        "createdAt": row.created_at,
         "comments": comment_items,
     })))
 }
@@ -835,40 +771,32 @@ struct PatchCaseAnnotationThreadBody {
     current_revision_number: Option<i32>,
 }
 
+// Round 114: 仓储化。CaseRepo::get_case_company_id + update_case_annotation_thread。
 async fn patch_case_annotation_thread(
     State(state): State<AppState>,
     Path((case_id, key, thread_id)): Path<(Uuid, String, Uuid)>,
     Json(body): Json<PatchCaseAnnotationThreadBody>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    // Validate status if provided
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     if let Some(s) = body.status.as_deref() {
         if !matches!(s, "open" | "resolved" | "outdated") {
             return Err(ApiError::BadRequest(format!("invalid status '{s}'")));
         }
     }
-    let affected = sqlx::query(
-        "UPDATE document_annotation_threads SET \
-            status = COALESCE($1, status), \
-            anchor_selector = COALESCE($2, anchor_selector), \
-            anchor_state = COALESCE($3, anchor_state), \
-            current_revision_id = COALESCE($4, current_revision_id), \
-            current_revision_number = COALESCE($5, current_revision_number), \
-            resolved_at = CASE WHEN $1 = 'resolved' THEN now() WHEN $1 IN ('open', 'outdated') THEN NULL ELSE resolved_at END, \
-            updated_at = now() \
-         WHERE id = $6 AND case_id = $7 AND document_key = $8",
-    )
-    .bind(body.status.as_deref())
-    .bind(body.anchor_selector.clone())
-    .bind(body.anchor_state.as_deref())
-    .bind(body.current_revision_id)
-    .bind(body.current_revision_number)
-    .bind(thread_id)
-    .bind(case_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
+    let patch = CaseAnnotationPatch {
+        status: body.status.clone(),
+        anchor_selector: body.anchor_selector.clone(),
+        anchor_state: body.anchor_state.clone(),
+        current_revision_id: body.current_revision_id,
+        current_revision_number: body.current_revision_number,
+    };
+    let affected = repo
+        .update_case_annotation_thread(case_id, thread_id, &key, &patch)
+        .await?;
     if affected == 0 {
         return Err(ApiError::NotFound(format!("annotation thread {thread_id}")));
     }
@@ -894,6 +822,8 @@ struct AddCaseAnnotationCommentBody {
     author_agent_id: Option<Uuid>,
 }
 
+// Round 114: 仓储化。CaseRepo::get_case_company_id + get_case_thread_document_id +
+//             create_case_thread_comment。
 async fn add_case_annotation_comment(
     State(state): State<AppState>,
     Path((case_id, key, thread_id)): Path<(Uuid, String, Uuid)>,
@@ -902,36 +832,27 @@ async fn add_case_annotation_comment(
     if body.body.trim().is_empty() {
         return Err(ApiError::BadRequest("body is required".into()));
     }
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    // Verify thread exists for case+key
-    let thread_exists: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT id, document_id FROM document_annotation_threads WHERE id = $1 AND case_id = $2 AND document_key = $3",
-    )
-    .bind(thread_id)
-    .bind(case_id)
-    .bind(&key)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (_id, document_id) = thread_exists
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let document_id = repo
+        .get_case_thread_document_id(case_id, thread_id, &key)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
-
-    let author_type = body.author_type.unwrap_or_else(|| "user".to_owned());
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO document_annotation_comments (company_id, case_id, thread_id, document_id, body, author_type, author_user_id, author_agent_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(thread_id)
-    .bind(document_id)
-    .bind(&body.body)
-    .bind(&author_type)
-    .bind(body.author_user_id.as_deref())
-    .bind(body.author_agent_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let author_type = body.author_type.clone().unwrap_or_else(|| "user".to_owned());
+    let input = NewCaseAnnotationComment {
+        company_id,
+        case_id,
+        thread_id,
+        document_id,
+        body: body.body.clone(),
+        author_type: author_type.clone(),
+        author_user_id: body.author_user_id.clone(),
+        author_agent_id: body.author_agent_id,
+    };
+    let id = repo.create_case_thread_comment(&input).await?;
     state.realtime.publish(
         LiveEvent::new("case.annotation.comment_added", "case_annotation_comment", id)
             .with_company(company_id)

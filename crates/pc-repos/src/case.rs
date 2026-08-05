@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use serde_json::Value;
 use uuid::Uuid;
 
 use pc_core::Timestamp;
@@ -258,6 +259,104 @@ pub struct CaseAttachmentRow {
     pub asset_id: Uuid,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Round 114: case annotation 子模块类型
+// ─────────────────────────────────────────────────────────────────────
+
+/// `document_annotation_threads` 当 `case_id` 不为空时（case 文档批注）。
+/// 1:1 schema 投影（除了 routine 版多 `original_revision_id` 字段）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseAnnotationThreadRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub case_id: Uuid,
+    pub document_id: Uuid,
+    pub document_key: String,
+    pub status: String,
+    pub anchor_state: String,
+    pub original_revision_id: Option<Uuid>,
+    pub original_revision_number: i32,
+    pub current_revision_id: Option<Uuid>,
+    pub current_revision_number: i32,
+    pub selected_text: String,
+    pub prefix_text: String,
+    pub suffix_text: String,
+    pub normalized_start: i32,
+    pub normalized_end: i32,
+    pub markdown_start: i32,
+    pub markdown_end: i32,
+    pub anchor_confidence: String,
+    pub anchor_selector: Value,
+    pub resolved_at: Option<Timestamp>,
+    pub resolved_by_user_id: Option<String>,
+    pub resolved_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// `document_annotation_comments` 1:1 schema 投影（case 路径）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseAnnotationCommentRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub case_id: Uuid,
+    pub thread_id: Uuid,
+    pub document_id: Uuid,
+    pub body: String,
+    pub author_type: String,
+    pub author_user_id: Option<String>,
+    pub author_agent_id: Option<Uuid>,
+    pub created_at: Timestamp,
+}
+
+/// Round 114: 创建 case annotation thread 输入。
+#[derive(Debug, Clone)]
+pub struct NewCaseAnnotationThread {
+    pub company_id: Uuid,
+    pub case_id: Uuid,
+    pub document_id: Uuid,
+    pub document_key: String,
+    pub status: Option<String>,
+    pub original_revision_id: Option<Uuid>,
+    pub revision_number: i32,
+    pub selected_text: String,
+    pub prefix_text: Option<String>,
+    pub suffix_text: Option<String>,
+    pub normalized_start: i32,
+    pub normalized_end: i32,
+    pub markdown_start: i32,
+    pub markdown_end: i32,
+    pub anchor_confidence: Option<String>,
+    pub anchor_selector: Option<Value>,
+}
+
+/// Round 114: 创建 case annotation comment 输入。
+#[derive(Debug, Clone)]
+pub struct NewCaseAnnotationComment {
+    pub company_id: Uuid,
+    pub case_id: Uuid,
+    pub thread_id: Uuid,
+    pub document_id: Uuid,
+    pub body: String,
+    pub author_type: String,
+    pub author_user_id: Option<String>,
+    pub author_agent_id: Option<Uuid>,
+}
+
+/// Round 114: case annotation thread patch 输入。
+#[derive(Debug, Clone, Default)]
+pub struct CaseAnnotationPatch {
+    pub status: Option<String>,
+    pub anchor_selector: Option<Value>,
+    pub anchor_state: Option<String>,
+    pub current_revision_id: Option<Uuid>,
+    pub current_revision_number: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -842,6 +941,193 @@ impl<'a> CaseRepo<'a> {
         .fetch_optional(self.db.pool())
         .await?;
         Ok(row.map(|(i,)| i))
+    }
+
+    // ---- Round 114: case annotation 子模块 ----
+
+    /// Round 114: 查 case 的 company_id（auth 辅助）。
+    pub async fn get_case_company_id(&self, case_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM cases WHERE id = $1")
+                .bind(case_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 114: 查 (case_id, key) 对应的 (company_id, document_id)。
+    /// None = (case, key) 不存在。
+    pub async fn resolve_case_document_id(
+        &self,
+        case_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<Option<(Uuid, Uuid)>> {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT company_id, document_id FROM case_documents WHERE case_id = $1 AND key = $2",
+        )
+        .bind(case_id)
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 114: 列出 case annotation threads (按 case_id + document_key 过滤)。
+    pub async fn list_case_annotation_threads(
+        &self,
+        case_id: Uuid,
+        document_key: &str,
+        status_filter: Option<&str>,
+        limit: i64,
+    ) -> sqlx::Result<Vec<CaseAnnotationThreadRow>> {
+        let mut sql = String::from(
+            "SELECT id, company_id, case_id, document_id, document_key, status,                     anchor_state, original_revision_id, original_revision_number,                     current_revision_id, current_revision_number,                     selected_text, prefix_text, suffix_text, normalized_start,                     normalized_end, markdown_start, markdown_end, anchor_confidence,                     anchor_selector, resolved_at, resolved_by_user_id, resolved_by_agent_id,                     created_by_user_id, created_by_agent_id, created_at, updated_at                 FROM document_annotation_threads                 WHERE case_id = $1 AND document_key = $2",
+        );
+        if let Some(s) = status_filter {
+            sql.push_str(&format!(" AND status = '{}'", s));
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT $3");
+        sqlx::query_as::<_, CaseAnnotationThreadRow>(&sql)
+            .bind(case_id)
+            .bind(document_key)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// Round 114: 取单个 case annotation thread。
+    pub async fn get_case_annotation_thread(
+        &self,
+        case_id: Uuid,
+        thread_id: Uuid,
+        document_key: &str,
+    ) -> sqlx::Result<Option<CaseAnnotationThreadRow>> {
+        sqlx::query_as::<_, CaseAnnotationThreadRow>(
+            "SELECT id, company_id, case_id, document_id, document_key, status,                     anchor_state, original_revision_id, original_revision_number,                     current_revision_id, current_revision_number,                     selected_text, prefix_text, suffix_text, normalized_start,                     normalized_end, markdown_start, markdown_end, anchor_confidence,                     anchor_selector, resolved_at, resolved_by_user_id, resolved_by_agent_id,                     created_by_user_id, created_by_agent_id, created_at, updated_at                 FROM document_annotation_threads                 WHERE id = $1 AND case_id = $2 AND document_key = $3",
+        )
+        .bind(thread_id)
+        .bind(case_id)
+        .bind(document_key)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// Round 114: 列 thread comments。
+    pub async fn list_case_thread_comments(
+        &self,
+        thread_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseAnnotationCommentRow>> {
+        sqlx::query_as::<_, CaseAnnotationCommentRow>(
+            "SELECT id, company_id, case_id, thread_id, document_id, body, author_type,                     author_user_id, author_agent_id, created_at                 FROM document_annotation_comments                 WHERE thread_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(thread_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 114: 批量取多个 case thread 的 comments。
+    pub async fn list_case_thread_comments_bulk(
+        &self,
+        thread_ids: &[Uuid],
+    ) -> sqlx::Result<Vec<CaseAnnotationCommentRow>> {
+        sqlx::query_as::<_, CaseAnnotationCommentRow>(
+            "SELECT id, company_id, case_id, thread_id, document_id, body, author_type,                     author_user_id, author_agent_id, created_at                 FROM document_annotation_comments                 WHERE thread_id = ANY($1::uuid[]) ORDER BY created_at ASC",
+        )
+        .bind(thread_ids)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 114: 创建 case annotation thread。
+    pub async fn create_case_annotation_thread(
+        &self,
+        input: &NewCaseAnnotationThread,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO document_annotation_threads (                company_id, case_id, document_id, document_key, status, anchor_state,                original_revision_id, original_revision_number, current_revision_number,                selected_text, prefix_text, suffix_text, normalized_start,                normalized_end, markdown_start, markdown_end, anchor_confidence, anchor_selector)             VALUES ($1, $2, $3, $4, COALESCE($5, 'open'), 'active', $6, $7, $7, $8,                     COALESCE($9, ''), COALESCE($10, ''), $11, $12, $13, $14, $15, $16)             RETURNING id",
+        )
+        .bind(input.company_id)
+        .bind(input.case_id)
+        .bind(input.document_id)
+        .bind(&input.document_key)
+        .bind(input.status.as_deref())
+        .bind(input.original_revision_id)
+        .bind(input.revision_number)
+        .bind(&input.selected_text)
+        .bind(input.prefix_text.as_deref())
+        .bind(input.suffix_text.as_deref())
+        .bind(input.normalized_start)
+        .bind(input.normalized_end)
+        .bind(input.markdown_start)
+        .bind(input.markdown_end)
+        .bind(input.anchor_confidence.as_deref().unwrap_or("exact"))
+        .bind(input.anchor_selector.clone().unwrap_or_else(|| Value::Object(Default::default())))
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 114: 创建 case annotation comment。
+    pub async fn create_case_thread_comment(
+        &self,
+        input: &NewCaseAnnotationComment,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO document_annotation_comments (                company_id, case_id, thread_id, document_id, body, author_type,                author_user_id, author_agent_id)             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+        )
+        .bind(input.company_id)
+        .bind(input.case_id)
+        .bind(input.thread_id)
+        .bind(input.document_id)
+        .bind(&input.body)
+        .bind(&input.author_type)
+        .bind(input.author_user_id.as_deref())
+        .bind(input.author_agent_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 114: 更新 case annotation thread（COALESCE + status 触发 resolved_at）。
+    pub async fn update_case_annotation_thread(
+        &self,
+        case_id: Uuid,
+        thread_id: Uuid,
+        document_key: &str,
+        patch: &CaseAnnotationPatch,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE document_annotation_threads SET                status = COALESCE($1, status),                anchor_selector = COALESCE($2, anchor_selector),                anchor_state = COALESCE($3, anchor_state),                current_revision_id = COALESCE($4, current_revision_id),                current_revision_number = COALESCE($5, current_revision_number),                resolved_at = CASE WHEN $1 = 'resolved' THEN now()                                   WHEN $1 IN ('open', 'outdated') THEN NULL                                   ELSE resolved_at END,                updated_at = now()             WHERE id = $6 AND case_id = $7 AND document_key = $8",
+        )
+        .bind(patch.status.as_deref())
+        .bind(patch.anchor_selector.clone())
+        .bind(patch.anchor_state.as_deref())
+        .bind(patch.current_revision_id)
+        .bind(patch.current_revision_number)
+        .bind(thread_id)
+        .bind(case_id)
+        .bind(document_key)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Round 114: 取 thread 的 document_id（comment insert 需要）。
+    pub async fn get_case_thread_document_id(
+        &self,
+        case_id: Uuid,
+        thread_id: Uuid,
+        document_key: &str,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT document_id FROM document_annotation_threads             WHERE id = $1 AND case_id = $2 AND document_key = $3",
+        )
+        .bind(thread_id)
+        .bind(case_id)
+        .bind(document_key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(d,)| d))
     }
 
     pub async fn list_events(

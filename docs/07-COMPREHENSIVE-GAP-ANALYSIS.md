@@ -713,6 +713,64 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 37. 第一百一十四轮增量（Round 114 — cases.rs case annotation 子模块仓储化)
+
+### 目标
+`cases.rs` 还有 47 个内联 SQL 散落在多个子模块。Round 113 完成了 case_issue_links。
+Round 114 仓储化 5 个 case annotation 端点（list / create / get / patch / add_comment），
+cases.rs 47 → 38 SQL（-9，case annotation 子模块清零）。
+
+### 新增 `pc_repos::case::CaseRepo` 方法（9 个）
+- `get_case_company_id(case_id) -> Option<Uuid>` — auth 辅助
+- `resolve_case_document_id(case_id, key) -> Option<(Uuid, Uuid)>` — 替代 `resolve_case_document_id` 辅助
+- `list_case_annotation_threads(case_id, document_key, status_filter, limit) -> Vec<CaseAnnotationThreadRow>`
+- `get_case_annotation_thread(case_id, thread_id, document_key) -> Option<CaseAnnotationThreadRow>`
+- `list_case_thread_comments(thread_id) -> Vec<CaseAnnotationCommentRow>`
+- `list_case_thread_comments_bulk(thread_ids) -> Vec<CaseAnnotationCommentRow>` — list 优化
+- `create_case_annotation_thread(&NewCaseAnnotationThread) -> Uuid`
+- `create_case_thread_comment(&NewCaseAnnotationComment) -> Uuid`
+- `update_case_annotation_thread(case_id, thread_id, document_key, &CaseAnnotationPatch) -> u64`
+  - COALESCE 部分更新 + status 切换触发 resolved_at 写入/清空
+- `get_case_thread_document_id(case_id, thread_id, document_key) -> Option<Uuid>` — comment insert 需要
+
+### 新增 DTO（4 个）
+- `CaseAnnotationThreadRow` (1:1 schema 投影，包含 case_id + original_revision_id)
+- `CaseAnnotationCommentRow` (1:1 schema 投影，包含 case_id)
+- `NewCaseAnnotationThread` / `NewCaseAnnotationComment` (write input)
+- `CaseAnnotationPatch` (partial update)
+
+### 移动本地 struct
+- `AnnotationThreadRow`（22 字段，手写 tuple SELECT）已从 cases.rs 删除
+  类型现统一为 `CaseAnnotationThreadRow`（27 字段，1:1 schema 投影）
+
+### 重构 `cases.rs` 5 个端点
+- `list_case_annotation_threads` — `get_case_company_id + list_case_annotation_threads + list_case_thread_comments_bulk`
+- `create_case_annotation_thread` — `get_case_company_id + resolve_case_document_id + create_case_annotation_thread + create_case_thread_comment`
+- `get_case_annotation_thread` — `get_case_company_id + get_case_annotation_thread + list_case_thread_comments`
+- `patch_case_annotation_thread` — `get_case_company_id + update_case_annotation_thread`
+- `add_case_annotation_comment` — `get_case_company_id + get_case_thread_document_id + create_case_thread_comment`
+
+### 新增集成测试 10 个 (`crates/pc-repos/tests/round114_case_annotation_repo.rs`)
+1. `case_get_company_id_round_trip` — 找到 / 找不到
+2. `case_resolve_document_id_round_trip` — (case_id, key) → (company_id, document_id)
+3. `case_annotation_threads_list_filters_by_status` — 跨 document_key 隔离
+4. `case_annotation_thread_get` — 找 + 错 key 返 None
+5. `case_thread_comments_list_and_bulk` — list 单 thread + bulk 多 thread
+6. `case_annotation_thread_create_get` — create + get 全字段回填
+7. `case_thread_comment_create` — comment insert
+8. `case_annotation_thread_update_resolved` — status='resolved' 触发 resolved_at
+9. `case_annotation_thread_update_open_clears` — status='open' 清除 resolved_at
+10. `case_thread_document_id_round_trip` — get_case_thread_document_id 双向
+
+### 进度影响
+- 综合进度从 **≈ 91.5% → ≈ 92.0%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round114_*` 编译通过
+- 14 个 pc-repos 集成测试文件累计 76+10=86 test 函数
+- cases.rs SQL 数 47 → 38（-9，case annotation 子模块清零）
+- 累计 Round 95-114 修复 **69+5=74 个路由从 500 → 200**
+
 ## 36. 第一百一十三轮增量（Round 113 — cases.rs case_issue_links 子模块仓储化)
 
 ### 目标
