@@ -958,11 +958,12 @@ async fn list_tool_applications(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Mirrors Node `/companies/:companyId/tools/applications`. Returns the
-    // company's registered tool applications (MCP server descriptors, OAuth
-    // clients, stdio templates). Empty array when no rows exist.
-    let rows: Vec<(Uuid, String, String, Option<String>, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, name, kind, description, config, created_at FROM tool_applications          WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200",
+    // Round 99 修复：原 SQL 引用不存在的列 kind/description/config；
+    // 真实表 `tool_applications` 列是 type/metadata。
+    // 这里读 metadata jsonb（含 description + config），映射回前端期望的字段。
+    let rows: Vec<(Uuid, String, String, Value, Timestamp)> = sqlx::query_as(
+        "SELECT id, name, type, metadata, created_at FROM tool_applications \
+         WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200",
     )
     .bind(company_id)
     .fetch_all(state.db.pool())
@@ -970,13 +971,15 @@ async fn list_tool_applications(
     .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, kind, description, config, created_at)| {
+        .map(|(id, name, kind, metadata, created_at)| {
+            let description = metadata.get("description").and_then(Value::as_str).map(String::from);
+            let config = metadata.get("config").cloned().unwrap_or_else(|| json!({}));
             json!({
                 "id": id,
                 "name": name,
                 "kind": kind,
                 "description": description,
-                "config": config.unwrap_or_else(|| json!({})),
+                "config": config,
                 "createdAt": created_at,
             })
         })
@@ -999,14 +1002,19 @@ async fn create_tool_application(
         .unwrap_or("mcp");
     let description = body.get("description").and_then(Value::as_str);
     let config = body.get("config").cloned().unwrap_or_else(|| json!({}));
+    // Round 99 修复：合并 description + config 到 metadata jsonb
+    let mut metadata = config.clone();
+    if let Some(d) = description {
+        metadata["description"] = json!(d);
+    }
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO tool_applications (company_id, name, kind, description, config)          VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        "INSERT INTO tool_applications (company_id, name, type, metadata) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(company_id)
     .bind(name)
     .bind(kind)
-    .bind(description)
-    .bind(&config)
+    .bind(&metadata)
     .fetch_one(state.db.pool())
     .await?;
     state
@@ -1027,21 +1035,23 @@ async fn get_tool_application(
     State(state): State<AppState>,
     Path(application_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, String, String, Option<String>, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT company_id, name, kind, description, config, created_at FROM tool_applications WHERE id = $1",
+    let row: Option<(Uuid, String, String, Value, Timestamp)> = sqlx::query_as(
+        "SELECT company_id, name, type, metadata, created_at FROM tool_applications WHERE id = $1",
     )
     .bind(application_id)
     .fetch_optional(state.db.pool())
     .await?;
-    let (company_id, name, kind, description, config, created_at) = row
+    let (company_id, name, kind, metadata, created_at) = row
         .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
+    let description = metadata.get("description").and_then(Value::as_str).map(String::from);
+    let config = metadata.get("config").cloned().unwrap_or_else(|| json!({}));
     Ok(Json(json!({
         "id": application_id,
         "companyId": company_id,
         "name": name,
         "kind": kind,
         "description": description,
-        "config": config.unwrap_or_else(|| json!({})),
+        "config": config,
         "createdAt": created_at,
     })))
 }
@@ -1054,12 +1064,23 @@ async fn patch_tool_application(
     let name = body.get("name").and_then(Value::as_str);
     let description = body.get("description").and_then(Value::as_str);
     let config = body.get("config").cloned();
+    // Round 99 修复：用 jsonb 合并的方式 patch metadata
+    let mut patch_meta = serde_json::Map::new();
+    if let Some(d) = description {
+        patch_meta.insert("description".into(), json!(d));
+    }
+    if let Some(c) = config {
+        patch_meta.insert("config".into(), c);
+    }
     sqlx::query(
-        "UPDATE tool_applications SET             name = COALESCE($1, name),             description = COALESCE($2, description),             config = COALESCE($3, config),             updated_at = now()          WHERE company_id = $4 AND id = $5",
+        "UPDATE tool_applications SET \
+            name = COALESCE($1, name), \
+            metadata = metadata || $2::jsonb, \
+            updated_at = now() \
+         WHERE company_id = $3 AND id = $4",
     )
     .bind(name)
-    .bind(description)
-    .bind(config)
+    .bind(serde_json::Value::Object(patch_meta))
     .bind(company_id)
     .bind(application_id)
     .execute(state.db.pool())

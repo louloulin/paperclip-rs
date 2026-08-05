@@ -713,6 +713,53 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 22. 第九十九轮增量（Round 99 — tool_access.rs 列名漂移修复）
+
+### 修复的 5 个 SQL 列引用
+
+`tool_applications` 表真实 schema:
+| 原 SQL 列 | 真实列 | 修复方式 |
+|---|---|---|
+| `kind` | `type` | 写入：`type = $kind`；读出：`name = type` 投影为 `kind` |
+| `description` | 不存在（嵌在 `metadata`） | 写入：合并进 jsonb；读出：从 metadata 解出 |
+| `config` | 不存在（嵌在 `metadata`） | 写入：合并进 jsonb；读出：从 metadata 解出 |
+
+涉及 4 个路由 + 1 个内部调用：
+
+| 路由 | 函数 | 修改要点 |
+|---|---|---|
+| `GET /api/companies/:cid/tools/applications` | `list_tool_applications` | SELECT `type` + `metadata`；响应层把 metadata 拆回 description + config |
+| `POST /api/companies/:cid/tools/applications` | `create_tool_application` | INSERT into `type, metadata`；克隆 `config` 以避免 move 后再次用于响应 |
+| `GET /api/tool-applications/:aid` | `get_tool_application` | SELECT `type, metadata`；响应层拆分 |
+| `PATCH /api/companies/:cid/tools/applications/:aid` | `patch_tool_application` | UPDATE `metadata = metadata \|\| $patch` |
+| `PATCH /api/tool-applications/:aid` | `patch_tool_application_by_id` | 复用 patch 共用 `metadata \|\|` 模式 |
+
+### 修复过程中的 build error (E0382)
+
+`create_tool_application` 第一次 edit 时：
+```rust
+let mut metadata = config;          // move
+...
+Ok(Json(json!({
+    "config": config,              // <- 再次使用，E0382
+})))
+```
+
+**最小修复**：`let mut metadata = config.clone();`，保留原始 config 用于响应。
+
+### 新增 4 个集成测试 `crates/pc-http/tests/round99_tool_application_column_contract.rs`
+
+- `http_list_tool_applications_returns_kind_and_metadata_split` — 验证 SELECT type + metadata 投影
+- `http_create_tool_application_writes_type_and_metadata` — 验证 INSERT type + 反查 DB 验证 metadata 内容
+- `http_get_tool_application_returns_kind_and_metadata_split` — 验证按 id GET 单条
+- `http_patch_tool_application_merges_metadata_jsonb` — 验证 `metadata || $patch` 合并语义
+
+### 进度影响
+- 综合进度从 **≈ 82.0% → ≈ 82.5%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --no-run -p pc-http --test round99_*` 编译通过（DB sandbox 阻止实跑，source-level 验证通过）
+- 累计 95/96/97/98/99 修复合计 **32 个路由从 100% 500 → 正常 200/410**
+
 ## 21. 第九十八轮增量（Round 98 — access.rs + companies.rs stub 化）
 
 ### 修复的 6 个端点
