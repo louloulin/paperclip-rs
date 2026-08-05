@@ -260,6 +260,15 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/issues/count",
             get(count_company_issues),
         )
+        // ── Round 210: aggregate endpoints ──
+        .route(
+            "/api/companies/:company_id/issues/by-status",
+            get(issues_by_status),
+        )
+        .route(
+            "/api/companies/:company_id/issues/by-priority",
+            get(issues_by_priority),
+        )
         .route("/api/companies/:company_id/search", get(search_issues))
 }
 
@@ -2065,6 +2074,55 @@ async fn count_company_issues(
     Ok(Json(
         json!({ "company_id": company_id, "count": count, "status": q.status }),
     ))
+}
+
+
+// ============================================================================
+// Round 210: company-scoped issue aggregate endpoints
+// ============================================================================
+
+async fn issues_by_status(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(String, i64)> = IssueRepo::new(&state.db)
+        .count_visible_by_status(company_id)
+        .await?;
+    let mut total = 0i64;
+    let groups: Vec<Value> = rows
+        .iter()
+        .map(|(status, count)| {
+            total += count;
+            json!({ "status": status, "count": count })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "total": total,
+        "groups": groups,
+    })))
+}
+
+async fn issues_by_priority(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows: Vec<(String, i64)> = IssueRepo::new(&state.db)
+        .count_visible_by_priority(company_id)
+        .await?;
+    let mut total = 0i64;
+    let groups: Vec<Value> = rows
+        .iter()
+        .map(|(priority, count)| {
+            total += count;
+            json!({ "priority": priority, "count": count })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "total": total,
+        "groups": groups,
+    })))
 }
 
 #[derive(Debug, Deserialize)]

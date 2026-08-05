@@ -2761,6 +2761,20 @@ impl<'a> IssueRepo<'a> {
         Ok(row)
     }
 
+    /// Round 210: 统计 company 的 visible issues 按 priority 分组。
+    pub async fn count_visible_by_priority(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<(String, i64)>> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT priority, COUNT(*)::bigint FROM issues              WHERE company_id = $1 AND hidden_at IS NULL              GROUP BY priority",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
     /// Round 168: 统计 company 的 visible issues（hidden_at IS NULL AND harness_kind IS NULL）按 status 分组。
     pub async fn count_visible_by_status(&self, company_id: Uuid) -> sqlx::Result<Vec<(String, i64)>> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
