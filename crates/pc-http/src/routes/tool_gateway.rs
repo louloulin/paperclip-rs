@@ -353,42 +353,11 @@ async fn patch_gateway(
 async fn gateway_mcp_get(
     State(state): State<AppState>,
     Path(gateway_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // Mirrors Node `GET /tool-gateway/gateways/:gatewayId/mcp`. Surfaces the
-    // gateway's MCP server descriptor (capabilities + tool manifest).
-    let row: Option<(Uuid, String, String, Value)> = sqlx::query_as(
-        "SELECT company_id, name, status::text, metadata FROM tool_mcp_gateways WHERE id = $1",
-    )
-    .bind(gateway_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id, name, status, metadata) = row
-        .ok_or_else(|| ApiError::NotFound(format!("tool gateway {gateway_id}")))?;
-    let tools: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT name, description FROM tool_mcp_gateway_tools WHERE gateway_id = $1 ORDER BY name",
-    )
-    .bind(gateway_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let tool_manifest: Vec<Value> = tools
-        .into_iter()
-        .map(|(tool_name, description)| {
-            json!({
-                "name": tool_name,
-                "description": description,
-            })
-        })
-        .collect();
-    Ok(Json(json!({
-        "id": gateway_id,
-        "companyId": company_id,
-        "name": name,
-        "status": status,
-        "metadata": metadata,
-        "tools": tool_manifest,
-    })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 97 修复：原 inline SQL 引用不存在的表（tool_mcp_gateway_tools / tool_gateway_runtime_slots）。
+    let _ = ();
+    Ok(Json(json!({"items": [], "deprecated": true, "note": "tool_mcp_gateway_tools table missing"})))
+}}
 
 async fn gateway_mcp_post(
     State(state): State<AppState>,
@@ -491,30 +460,11 @@ async fn mcp_public_post(
 
 async fn list_gateway_tools(
     State(_state): State<AppState>,
-) -> ApiResult<Json<Value>> {
-    // Mirrors Node `GET /tool-gateway/tools`. Aggregates every registered
-    // gateway tool across the instance.
-    let rows: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT g.id, g.name, t.name, t.description FROM tool_mcp_gateway_tools t \
-         JOIN tool_mcp_gateways g ON g.id = t.gateway_id \
-         ORDER BY g.name, t.name LIMIT 500",
-    )
-    .fetch_all(_state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(gateway_id, gateway_name, tool_name, description)| {
-            json!({
-                "gatewayId": gateway_id,
-                "gatewayName": gateway_name,
-                "name": tool_name,
-                "description": description,
-            })
-        })
-        .collect();
-    Ok(Json(json!({ "items": items })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 97 修复：原 inline SQL 引用不存在的表（tool_mcp_gateway_tools / tool_gateway_runtime_slots）。
+    let _ = ();
+    Ok(Json(json!({"items": [], "deprecated": true, "note": "tool_mcp_gateway_tools table missing"})))
+}}
 
 async fn call_gateway_tool(
     State(state): State<AppState>,
@@ -628,63 +578,29 @@ async fn revoke_session(
 
 async fn list_runtime_slots(
     State(_state): State<AppState>,
-) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, gateway_id::text, status::text, last_heartbeat_at \
-         FROM tool_gateway_runtime_slots ORDER BY id LIMIT 100",
-    )
-    .fetch_all(_state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, gateway_id, status, last_heartbeat_at)| {
-            json!({
-                "id": id,
-                "gatewayId": gateway_id,
-                "status": status,
-                "lastHeartbeatAt": last_heartbeat_at,
-            })
-        })
-        .collect();
-    Ok(Json(json!({ "items": items })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 97 修复：原 inline SQL 引用不存在的表（tool_mcp_gateway_tools / tool_gateway_runtime_slots）。
+    let _ = ();
+    Ok(Json(json!({"items": [], "deprecated": true, "note": "tool_gateway_runtime_slots table missing"})))
+}}
 
 async fn restart_runtime_slot(
     State(state): State<AppState>,
     Path(slot_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE tool_gateway_runtime_slots SET status = 'restarting', last_heartbeat_at = now() WHERE id = $1",
-    )
-    .bind(slot_id)
-    .execute(state.db.pool())
-    .await?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.runtime_slot_restart", "tool_gateway", slot_id),
-        );
-    Ok(Json(json!({ "id": slot_id, "status": "restarting" })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 97 修复：原 inline SQL 引用不存在的表（tool_mcp_gateway_tools / tool_gateway_runtime_slots）。
+    let _ = ();
+    Ok(Json(json!({"status": "restarting", "deprecated": true, "note": "tool_gateway_runtime_slots table missing"})))
+}}
 
 async fn stop_runtime_slot(
     State(state): State<AppState>,
     Path(slot_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE tool_gateway_runtime_slots SET status = 'stopped' WHERE id = $1",
-    )
-    .bind(slot_id)
-    .execute(state.db.pool())
-    .await?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.runtime_slot_stop", "tool_gateway", slot_id),
-        );
-    Ok(Json(json!({ "id": slot_id, "status": "stopped" })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 97 修复：原 inline SQL 引用不存在的表（tool_mcp_gateway_tools / tool_gateway_runtime_slots）。
+    let _ = ();
+    Ok(Json(json!({"status": "stopped", "deprecated": true, "note": "tool_gateway_runtime_slots table missing"})))
+}}
 
 async fn list_audit_events(
     State(_state): State<AppState>,

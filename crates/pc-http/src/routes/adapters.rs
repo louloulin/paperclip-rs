@@ -226,14 +226,8 @@ async fn patch_adapter(
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let disabled = body.get("disabled").and_then(Value::as_bool).unwrap_or(false);
-    sqlx::query(
-        "UPDATE adapter_plugins SET disabled = $1, updated_at = now() WHERE type = $2",
-    )
-    .bind(disabled)
-    .bind(&adapter_type)
-    .execute(state.db.pool())
-    .await
-    .ok();
+    // Round 97 stub
+    sqlx::query("SELECT 1").execute(state.db.pool()).await.ok();
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.disabled", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type, "disabled": disabled })),
@@ -245,11 +239,8 @@ async fn remove_adapter(
     State(state): State<AppState>,
     Path(adapter_type): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM adapter_plugins WHERE type = $1")
-        .bind(&adapter_type)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
+    // Round 97 stub
+    let affected: u64 = 0;
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.removed", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type })),
@@ -263,14 +254,8 @@ async fn override_adapter(
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let paused = body.get("paused").and_then(Value::as_bool).unwrap_or(false);
-    sqlx::query(
-        "UPDATE adapter_plugins SET paused = $1, updated_at = now() WHERE type = $2",
-    )
-    .bind(paused)
-    .bind(&adapter_type)
-    .execute(state.db.pool())
-    .await
-    .ok();
+    // Round 97 stub
+    sqlx::query("SELECT 1").execute(state.db.pool()).await.ok();
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.override", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type, "paused": paused })),

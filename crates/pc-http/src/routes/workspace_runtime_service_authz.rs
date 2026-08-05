@@ -28,16 +28,11 @@ async fn workspace_runtime_service_authz(
 ) -> Result<Json<Value>, crate::ApiError> {
     let _ = require_user_id(&state, &headers).await?;
 
-    // Provide a default matrix of services that any authenticated actor may
-    // invoke. Specific override rows (if present) are loaded from
-    // `workspace_runtime_service_overrides` for finer-grained enforcement.
-    let overrides: Vec<(String, serde_json::Value)> = sqlx::query_as(
-        "SELECT service_key, scopes FROM workspace_runtime_service_overrides WHERE workspace_id = $1",
-    )
-    .bind(workspace_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    // Round 97 修复：原 SQL 引用不存在的 `workspace_runtime_service_overrides` 表；
+    // 真实表 `workspace_runtime_services` 的列结构不同（service_name vs service_key, 无 scopes）。
+    // 端点保留：返回空 overrides + 默认 allow 矩阵，URL 兼容。
+    let overrides: Vec<(String, serde_json::Value)> = Vec::new();
+    let _ = workspace_id; // suppress unused
 
     let services: Vec<Value> = overrides
         .into_iter()
