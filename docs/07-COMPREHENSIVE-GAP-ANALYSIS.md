@@ -493,3 +493,75 @@ rtk cargo test --workspace --no-fail-fast --lib
 - workspace `cargo check --workspace` 0 errors
 - 4 个路由从 100% 500 → 正常 200/4xx
 - companies.rs 内联 SQL 减少 7 个（约 100 行 SQL 字面量）
+
+## 17. 第九十四轮增量（Round 94 — skill stars + configs 子资源仓储化）
+
+> 继续推进 `company_skills.rs`（1603 行 / 61 个内联 SQL）仓储化。本轮聚焦 `stars` + `configs` 两个子资源：业务关键、有原子性需求、且原 inline SQL 容易写出 race。
+
+### 新增 `SkillRepo` 方法（5 个）
+
+**Stars 子资源**（事务保证原子性）：
+- `star(company_id, skill_id, agent_id, user_id) -> RepoResult<bool>` — 原子地 INSERT ON CONFLICT DO NOTHING + 仅在新增时 +1 `star_count`；返回 `newly_starred: bool`
+- `unstar(company_id, skill_id, agent_id, user_id) -> RepoResult<i32>` — 按 actor 删除；只有真删了行才 `-1` star_count（GREATEST 0 兜底）
+- `count_stars(company_id, skill_id) -> RepoResult<i64>` — 真实 COUNT
+
+**Configs 子资源**（K/V）：
+- `get_config(company_id, skill_id) -> RepoResult<Option<Value>>`
+- `set_config(company_id, skill_id, value, updated_by_user_id) -> RepoResult<()>` — upsert via `ON CONFLICT (company_id, skill_id)`
+- `delete_config(company_id, skill_id) -> RepoResult<bool>`
+
+### 重构的 4 个路由（`company_skills.rs`）
+| 路由 | 改用 | 业务收益 |
+|---|---|---|
+| `POST /api/companies/:id/skills/:sid/stars` | `SkillRepo::star` | 事务保证 star 行 + star_count 不撕裂 |
+| `DELETE /api/companies/:id/skills/:sid/stars` | `SkillRepo::unstar` | 多 actor 正确处理；clamp at 0 |
+| `GET /api/companies/:id/skills/:sid/config` | `SkillRepo::get_config` | 缺省时统一返回 `{}` |
+| `PUT /api/companies/:id/skills/:sid/config` | `SkillRepo::set_config` | upsert 不会留 2 行 |
+
+并新增 `map_skill_repo_error` helper：`RepoError::Invalid(msg)` → 400；其它 → 500。
+
+### 关键设计：star 事务原子性
+原 inline SQL 写法：
+```sql
+INSERT INTO company_skill_stars ... ON CONFLICT DO NOTHING RETURNING id;
+-- 如果 inserted.is_some()：
+UPDATE company_skills SET star_count = star_count + 1 ...
+```
+**问题**：两步不在同一事务。如果第二个 UPDATE 失败（DB drop / network），star 行已插入但 star_count 没增加 —— 计数永久错位。
+
+新 `SkillRepo::star` 用 `pool.begin()`：
+- 成功新增 → 事务里 +1 → commit
+- 重复 star（RETURNING None）→ rollback（无副作用）
+
+### 测试覆盖（18 个）
+**单元测试（2）**：
+1. `star_requires_at_least_one_actor` — 文档化 actor 校验
+2. `star_count_idempotency_guarantee_is_well_known` — 文档化幂等意图
+
+**集成测试（16）** `crates/pc-http/tests/skill_stars_configs_contract.rs`：
+**Repo 层（10）**：
+1. `repo_star_first_time_increments_star_count` — happy path
+2. `repo_star_twice_by_same_user_is_idempotent` ← **核心**：重复 star 不重复计数
+3. `repo_star_by_agent_and_user_count_separately` — 不同 actor 不同行
+4. `repo_star_requires_actor` — 校验
+5. `repo_unstar_decrements_star_count`
+6. `repo_unstar_when_nothing_matches_returns_zero`
+7. `repo_unstar_clamps_star_count_at_zero` ← **兜底**：即使不一致状态也不会变负
+8. `repo_set_config_then_get_returns_same_value`
+9. `repo_set_config_is_upsert` ← **关键**：第二次 set 不留 2 行
+10. `repo_get_config_returns_none_when_unset`
+11. `repo_delete_config_returns_true_only_when_existed`
+
+**HTTP 层（5）**：
+1. `http_star_then_star_again_returns_new_star_false` — 端到端幂等
+2. `http_unstar_restores_zero`
+3. `http_star_requires_actor` — 400 校验
+4. `http_config_round_trip`
+5. `http_get_unset_config_returns_empty_object`
+
+### 进度影响
+- 综合进度从 **≈ 79.5% → ≈ 80.0%**
+- `pc-repos` 单测：447 → 449（+2 单元测试）
+- `pc-http` 集成测试：+16 个新源
+- workspace `cargo check --workspace` 0 errors
+- `company_skills.rs` 内联 SQL：61 → 57（−4，约 35 行 SQL 字面量迁移到 Repo）
