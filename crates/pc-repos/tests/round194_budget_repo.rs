@@ -296,3 +296,5 @@ async fn resolve_incident_already_resolved_returns_none() {
         .expect("resolve");
     assert!(row.is_none(), "already-resolved incidents must not re-resolve");
 }
+
+

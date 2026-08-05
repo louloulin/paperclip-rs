@@ -33,6 +33,7 @@ pub mod health;
 pub mod inbox_agent_policy;
 pub mod inbox_dismissals;
 pub mod instance_database_backups;
+pub mod invite_globals;
 pub mod instance_settings;
 pub mod issue_tree_control;
 pub mod issues;
@@ -96,6 +97,7 @@ pub fn router() -> Router<AppState> {
         .merge(inbox_agent_policy::router())
         .merge(instance_settings::router())
         .merge(instance_database_backups::router())
+        .merge(invite_globals::router())
         .merge(smoke_lab::router())
         .merge(status_cards::router())
         .merge(summary_slots::router())
