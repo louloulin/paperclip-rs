@@ -16,9 +16,9 @@ use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
-    NewToolApplication, NewToolProfile, NewToolProfileEntry, NewToolStdioTemplate,
-    PatchToolApplication, ToolApplicationRow, ToolProfileEntryRow, ToolProfileRow,
-    ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
+    NewToolApplication, NewToolPolicy, NewToolProfile, NewToolProfileEntry,
+    NewToolStdioTemplate, PatchToolApplication, ToolApplicationRow, ToolPolicyRow,
+    ToolProfileEntryRow, ToolProfileRow, ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
 };
 
 pub fn router() -> Router<AppState> {
@@ -1066,6 +1066,30 @@ fn tool_stdio_template_json(row: ToolStdioTemplateRow) -> Value {
     })
 }
 
+/// Round 104: ToolPolicyRow -> Node 兼容 JSON。
+/// 真实字段：policy_type, priority, enabled, selectors, conditions, config
+/// 兼容老 client：保留 decision/scope 别名（用真实列派生）
+fn tool_policy_json(row: ToolPolicyRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "name": row.name,
+        "description": row.description,
+        "policyType": row.policy_type,
+        "priority": row.priority,
+        "enabled": row.enabled,
+        "selectors": row.selectors,
+        "conditions": row.conditions,
+        "config": row.config,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+        // 兼容老 client 别名
+        "decision": row.policy_type,
+        "scope": row.selectors,
+    })
+}
+
+
 
 
 
@@ -1269,28 +1293,15 @@ async fn delete_tool_profile(
     }
 }
 
+// Round 104: 仓储化。原 SQL 引用不存在的列 `decision / scope`；
+// 真实 schema 是 policy_type / priority / enabled / selectors / conditions / config。
 async fn list_tool_policies(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, Option<Value>)> = sqlx::query_as(
-        "SELECT id, name, decision, scope FROM tool_policies          WHERE company_id = $1 ORDER BY name ASC LIMIT 200",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, name, decision, scope)| {
-            json!({
-                "id": id,
-                "name": name,
-                "decision": decision,
-                "scope": scope,
-            })
-        })
-        .collect();
+    let repo = ToolRepo::new(&state.db);
+    let rows = repo.list_policies_by_company(company_id).await?;
+    let items: Vec<Value> = rows.into_iter().map(tool_policy_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
@@ -1427,64 +1438,38 @@ struct CreateToolPolicyBody {
     config: Option<Value>,
 }
 
+// Round 104: 仓储化。冲突检测、INSERT、字段默认（priority/enabled/selectors）都走 Repo。
 async fn create_tool_policy_v2(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateToolPolicyBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if body.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("name is required".into()));
-    }
-    if body.policy_type.trim().is_empty() {
-        return Err(ApiError::BadRequest("policyType is required".into()));
-    }
-    // Surface duplicate names as Conflict
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2",
-    )
-    .bind(company_id)
-    .bind(&body.name)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_some() {
+    let repo = ToolRepo::new(&state.db);
+    if repo
+        .find_policy_id_by_name(company_id, &body.name)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::Conflict(format!("tool policy {} already exists", body.name)));
     }
-    let row: (Uuid, i32) = sqlx::query_as(
-        "INSERT INTO tool_policies (company_id, name, description, policy_type, priority, enabled, selectors, conditions, config) \
-         VALUES ($1, $2, $3, $4, COALESCE($5, 100), COALESCE($6, true), COALESCE($7, '{}'::jsonb), $8, $9) \
-         RETURNING id, priority",
-    )
-    .bind(company_id)
-    .bind(&body.name)
-    .bind(body.description.as_deref())
-    .bind(&body.policy_type)
-    .bind(body.priority)
-    .bind(body.enabled)
-    .bind(body.selectors.clone().unwrap_or_else(|| json!({})))
-    .bind(body.conditions.clone().unwrap_or_else(|| json!({})))
-    .bind(body.config.clone().unwrap_or_else(|| json!({})))
-    .fetch_one(state.db.pool())
-    .await?;
+    let input = NewToolPolicy {
+        company_id,
+        name: body.name.clone(),
+        description: body.description.clone(),
+        policy_type: body.policy_type.clone(),
+        priority: body.priority.unwrap_or(100),
+        enabled: body.enabled.unwrap_or(true),
+        selectors: body.selectors.clone().unwrap_or_else(|| json!({})),
+        conditions: body.conditions.clone().unwrap_or_else(|| json!({})),
+        config: body.config.clone().unwrap_or_else(|| json!({})),
+        created_by_agent_id: None,
+        created_by_user_id: None,
+    };
+    let row = repo.create_policy(&input).await?;
     state.realtime.publish(
-        LiveEvent::new("tool.policy.created", "tool_policy", row.0).with_company(company_id),
+        LiveEvent::new("tool.policy.created", "tool_policy", row.id).with_company(company_id),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
-            "id": row.0,
-            "companyId": company_id,
-            "name": body.name,
-            "description": body.description,
-            "policyType": body.policy_type,
-            "priority": row.1,
-            "enabled": body.enabled.unwrap_or(true),
-            "selectors": body.selectors.unwrap_or_else(|| json!({})),
-            "conditions": body.conditions,
-            "config": body.config,
-        })),
-    ))
+    Ok((StatusCode::CREATED, Json(tool_policy_json(row))))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1493,6 +1478,7 @@ struct ReorderToolPoliciesBody {
     policy_ids: Vec<Uuid>,
 }
 
+// Round 104: 仓储化。事务原子性保留在 Repo 层（reorder_policies）。
 async fn reorder_tool_policies_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -1501,21 +1487,10 @@ async fn reorder_tool_policies_route(
     if body.policy_ids.is_empty() {
         return Err(ApiError::BadRequest("policyIds is required".into()));
     }
-    let mut tx = state.db.pool().begin().await?;
     let step: i32 = 100;
-    for (i, policy_id) in body.policy_ids.iter().enumerate() {
-        let p = (i as i32) * step;
-        sqlx::query(
-            "UPDATE tool_policies SET priority = $1, updated_at = now() \
-             WHERE company_id = $2 AND id = $3",
-        )
-        .bind(p)
-        .bind(company_id)
-        .bind(policy_id)
-        .execute(&mut *tx)
+    let _affected = ToolRepo::new(&state.db)
+        .reorder_policies(company_id, &body.policy_ids, step)
         .await?;
-    }
-    tx.commit().await?;
     state.realtime.publish(
         LiveEvent::new("tool.policy.reordered", "tool_policy", company_id)
             .with_company(company_id)
@@ -1676,21 +1651,20 @@ async fn patch_tool_policy_route(
     })))
 }
 
+// Round 104: 仓储化。
 async fn delete_tool_policy_route(
     State(state): State<AppState>,
     Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    let affected = sqlx::query("DELETE FROM tool_policies WHERE company_id = $1 AND id = $2")
-        .bind(company_id)
-        .bind(policy_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
-    if affected == 0 {
+    let n = ToolRepo::new(&state.db)
+        .delete_policy(company_id, policy_id)
+        .await?;
+    if !n {
         return Err(ApiError::NotFound(format!("tool policy {policy_id}")));
     }
     state.realtime.publish(
-        LiveEvent::new("tool.policy.deleted", "tool_policy", policy_id).with_company(company_id),
+        LiveEvent::new("tool.policy.deleted", "tool_policy", policy_id)
+            .with_company(company_id),
     );
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }

@@ -713,6 +713,71 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 27. 第一百零四轮增量（Round 104 — ToolPolicy 子模块仓储化)
+
+### 目标
+`tool_access.rs::list_tool_policies` 用不存在的列 `decision / scope`；`create_tool_policy_v2`
+基本合规但散落在 handler；`reorder_tool_policies_route` 事务散写；`delete_tool_policy_route`
+也是内联 SQL。一致地将 4 个 route 仓储化。
+
+### 真实 schema (0149_agent_access_phase2_contracts.sql)
+```sql
+tool_policies(
+    id, company_id, name, description, policy_type, priority, enabled,
+    selectors, conditions, config,
+    created_by_agent_id, created_by_user_id,
+    created_at, updated_at
+)
+```
+**不存在**：decision / scope
+
+### 新增 `pc_repos::tool` 结构与方法
+
+```rust
+pub struct ToolPolicyRow { /* 14 字段，1:1 投影 */ }
+pub struct NewToolPolicy { /* 11 字段入参 */ }
+```
+
+**ToolRepo 新增 6 个方法**：
+| 方法 | 行为 |
+|---|---|
+| `list_policies_by_company(cid)` | ORDER BY name ASC LIMIT 200 |
+| `list_enabled_policies_by_company(cid)` | WHERE enabled=true ORDER BY priority ASC |
+| `get_policy(cid, id)` | 精确 (company_id, id) 查找 |
+| `find_policy_id_by_name(cid, name)` | 冲突检测 |
+| `create_policy(&NewToolPolicy)` | INSERT 11 列 |
+| `delete_policy(cid, id)` | DELETE |
+| `reorder_policies(cid, &policy_ids, step)` | 单事务，priority = i * step |
+
+### 重构 `tool_access.rs`
+- `list_tool_policies` → `ToolRepo::list_policies_by_company()` + `tool_policy_json()`
+- `create_tool_policy_v2` → `ToolRepo::find_policy_id_by_name` 冲突检测 + `ToolRepo::create_policy()`
+- `reorder_tool_policies_route` → `ToolRepo::reorder_policies()`（事务原子性下沉）
+- `delete_tool_policy_route` → `ToolRepo::delete_policy()`
+
+**`tool_policy_json` helper**：保留 `decision/scope` 老 client 别名（用真实列派生）。
+
+### 新增单元测试 2 个
+- `new_tool_policy_defaults` —— priority=100, enabled=true, selectors={}
+- `policy_col_excludes_decision_scope` —— POLICY_COLS 字符串验证不含 decision/scope
+
+### 新增集成测试 7 个 (`crates/pc-repos/tests/round104_tool_policy_repo.rs`)
+1. `tool_policy_repo_list_orders_by_name_asc` —— list 排序 + 真实列投影
+2. `tool_policy_repo_list_enabled_only` —— enabled 过滤 + priority 排序
+3. `tool_policy_repo_create_uses_defaults` —— 默认值落库验证
+4. `tool_policy_repo_find_by_name_for_conflict` —— 名字冲突检测
+5. `tool_policy_repo_delete` —— 物理删除 + get 之后返回 None
+6. `tool_policy_repo_reorder_assigns_stepped_priorities` —— 单事务原子重排
+7. `tool_policies_table_real_column_audit` —— INFORMATION_SCHEMA 防漂移
+
+### 进度影响
+- 综合进度从 **≈ 86.0% → ≈ 86.8%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **459 passed**（pc-repos 单元 +2）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 Round 95-104 修复 **42 个路由从 500 → 200**，
+  5+3+2+3+4 = 17 个 tool_* 路由进入高内聚低耦合设计
+
 ## 26. 第一百零三轮增量（Round 103 — ToolStdioTemplate 子模块仓储化)
 
 ### 目标

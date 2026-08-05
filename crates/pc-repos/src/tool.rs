@@ -1230,6 +1230,203 @@ impl<'a> ToolRepo<'a> {
 
 const STDIO_TEMPLATE_COLS: &str = "id, company_id, template_key, name, description, status, command, args, env_keys, tools, created_by_agent_id, created_by_user_id, disabled_at, created_at, updated_at";
 
+// ============================================================
+// Round 104: ToolPolicy 仓储层
+// ============================================================
+//
+// 真实表 schema (0149_agent_access_phase2_contracts.sql)：
+//   tool_policies(
+//     id, company_id, name, description, policy_type,
+//     priority, enabled,
+//     selectors, conditions, config,
+//     created_by_agent_id, created_by_user_id,
+//     created_at, updated_at
+//   )
+//
+// **不存在**的列：`decision / scope`（list_tool_policies 之前用这俩）。
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPolicyRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub policy_type: String,
+    pub priority: i32,
+    pub enabled: bool,
+    pub selectors: Value,
+    pub conditions: Option<Value>,
+    pub config: Option<Value>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewToolPolicy {
+    pub company_id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub policy_type: String,
+    #[serde(default = "default_policy_priority")]
+    pub priority: i32,
+    #[serde(default = "default_policy_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_policy_selectors")]
+    pub selectors: Value,
+    #[serde(default = "default_metadata")]
+    pub conditions: Value,
+    #[serde(default = "default_metadata")]
+    pub config: Value,
+    #[serde(default)]
+    pub created_by_agent_id: Option<Uuid>,
+    #[serde(default)]
+    pub created_by_user_id: Option<String>,
+}
+
+fn default_policy_priority() -> i32 { 100 }
+fn default_policy_enabled() -> bool { true }
+fn default_policy_selectors() -> Value { serde_json::json!({}) }
+
+impl<'a> ToolRepo<'a> {
+    pub async fn list_policies_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolPolicyRow>> {
+        let sql = format!(
+            "SELECT {POLICY_COLS} FROM tool_policies              WHERE company_id=$1              ORDER BY name ASC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, ToolPolicyRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn list_enabled_policies_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolPolicyRow>> {
+        let sql = format!(
+            "SELECT {POLICY_COLS} FROM tool_policies              WHERE company_id=$1 AND enabled=true              ORDER BY priority ASC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, ToolPolicyRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn get_policy(
+        &self,
+        company_id: Uuid,
+        policy_id: Uuid,
+    ) -> RepoResult<Option<ToolPolicyRow>> {
+        let sql = format!(
+            "SELECT {POLICY_COLS} FROM tool_policies              WHERE company_id=$1 AND id=$2"
+        );
+        Ok(sqlx::query_as::<_, ToolPolicyRow>(&sql)
+            .bind(company_id)
+            .bind(policy_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    pub async fn find_policy_id_by_name(
+        &self,
+        company_id: Uuid,
+        name: &str,
+    ) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_policies WHERE company_id=$1 AND name=$2",
+        )
+        .bind(company_id)
+        .bind(name)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    pub async fn create_policy(
+        &self,
+        p: &NewToolPolicy,
+    ) -> RepoResult<ToolPolicyRow> {
+        if p.name.trim().is_empty() {
+            return Err(RepoError::Invalid("policy name must not be empty".into()));
+        }
+        if p.policy_type.trim().is_empty() {
+            return Err(RepoError::Invalid("policy_type must not be empty".into()));
+        }
+        let sql = format!(
+            "INSERT INTO tool_policies                 (company_id, name, description, policy_type, priority, enabled,                  selectors, conditions, config, created_by_agent_id, created_by_user_id)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)              RETURNING {POLICY_COLS}",
+        );
+        Ok(sqlx::query_as::<_, ToolPolicyRow>(&sql)
+            .bind(p.company_id)
+            .bind(&p.name)
+            .bind(p.description.as_deref())
+            .bind(&p.policy_type)
+            .bind(p.priority)
+            .bind(p.enabled)
+            .bind(&p.selectors)
+            .bind(&p.conditions)
+            .bind(&p.config)
+            .bind(p.created_by_agent_id)
+            .bind(p.created_by_user_id.as_deref())
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    pub async fn delete_policy(
+        &self,
+        company_id: Uuid,
+        policy_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "DELETE FROM tool_policies WHERE company_id=$1 AND id=$2",
+        )
+        .bind(company_id)
+        .bind(policy_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 104: 重排策略优先级，按 policy_ids 顺序分配 priority = i * step。
+    /// 全部写入必须在同一事务中。
+    pub async fn reorder_policies(
+        &self,
+        company_id: Uuid,
+        policy_ids: &[Uuid],
+        step: i32,
+    ) -> RepoResult<u64> {
+        if policy_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.db.pool().begin().await?;
+        let mut total: u64 = 0;
+        for (i, pid) in policy_ids.iter().enumerate() {
+            let new_priority = (i as i32) * step;
+            let n = sqlx::query(
+                "UPDATE tool_policies SET priority=$1, updated_at=now()                  WHERE company_id=$2 AND id=$3",
+            )
+            .bind(new_priority)
+            .bind(company_id)
+            .bind(pid)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            total += n;
+        }
+        tx.commit().await?;
+        Ok(total)
+    }
+}
+
+const POLICY_COLS: &str = "id, company_id, name, description, policy_type, priority, enabled, selectors, conditions, config, created_by_agent_id, created_by_user_id, created_at, updated_at";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1408,5 +1605,41 @@ mod tests {
         assert!(STDIO_TEMPLATE_COLS.contains("env_keys"));
         assert!(STDIO_TEMPLATE_COLS.contains("tools"));
         assert!(STDIO_TEMPLATE_COLS.contains("status"));
+    }
+
+    // ---- Round 104: ToolPolicy ----
+
+    #[test]
+    fn new_tool_policy_defaults() {
+        let p = NewToolPolicy {
+            company_id: Uuid::new_v4(),
+            name: "n".into(),
+            description: None,
+            policy_type: "scoped".into(),
+            priority: default_policy_priority(),
+            enabled: default_policy_enabled(),
+            selectors: default_policy_selectors(),
+            conditions: default_metadata(),
+            config: default_metadata(),
+            created_by_agent_id: None,
+            created_by_user_id: None,
+        };
+        assert_eq!(p.priority, 100);
+        assert!(p.enabled);
+        assert_eq!(p.selectors, serde_json::json!({}));
+    }
+
+    #[test]
+    fn policy_col_excludes_decision_scope() {
+        // 真实 schema 没有 decision / scope
+        assert!(!POLICY_COLS.contains("decision"));
+        assert!(!POLICY_COLS.contains("scope"));
+        // 必须包含真实列
+        assert!(POLICY_COLS.contains("policy_type"));
+        assert!(POLICY_COLS.contains("priority"));
+        assert!(POLICY_COLS.contains("enabled"));
+        assert!(POLICY_COLS.contains("selectors"));
+        assert!(POLICY_COLS.contains("conditions"));
+        assert!(POLICY_COLS.contains("config"));
     }
 }
