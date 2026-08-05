@@ -37,6 +37,7 @@ pub mod environment;
 pub mod export_fidelity;
 pub mod execution;
 pub mod feedback_redaction;
+pub mod feedback_trace;
 pub mod folder;
 pub mod goal;
 pub mod heartbeat;

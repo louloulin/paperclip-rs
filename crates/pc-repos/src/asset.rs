@@ -137,6 +137,24 @@ impl<'a> AssetRepo<'a> {
             .fetch_optional(self.db.pool())
             .await
     }
+
+    /// 按 company 列出最近 N 个 asset（按 created_at DESC）。
+    ///
+    /// 对齐 `companies.list_artifacts` 端点（Round 131 仓储化）。
+    pub async fn list_by_company(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<AssetRow>> {
+        let sql = format!(
+            "SELECT {ASSET_COLUMNS} FROM assets WHERE company_id = $1              ORDER BY created_at DESC LIMIT $2"
+        );
+        sqlx::query_as::<_, AssetRow>(&sql)
+            .bind(company_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
 }
 
 #[cfg(test)]

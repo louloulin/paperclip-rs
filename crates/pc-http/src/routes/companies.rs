@@ -26,6 +26,8 @@ use pc_repos::pipeline::PipelineRepo;
 use pc_repos::label::{LabelRepo, NewLabel, LabelPatch};
 use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
 use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
+use pc_repos::asset::AssetRepo;
+use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -283,28 +285,21 @@ async fn list_artifacts(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, i32, String, Timestamp)> = sqlx::query_as(
-        "SELECT id, provider, object_key, byte_size, content_type, created_at \
-         FROM assets WHERE company_id = $1 \
-         ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = AssetRepo::new(&state.db).list_by_company(id, 100).await?;
     let assets: Vec<Value> = rows
         .into_iter()
-        .map(
-            |(id, provider, object_key, byte_size, content_type, created_at)| {
-                json!({
-                    "id": id,
-                    "provider": provider,
-                    "object_key": object_key,
-                    "byte_size": byte_size,
-                    "content_type": content_type,
-                    "created_at": created_at,
-                })
-            },
-        )
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "provider": r.provider,
+                "object_key": r.object_key,
+                "byte_size": r.byte_size,
+                "content_type": r.content_type,
+                "sha256": r.sha256,
+                "original_filename": r.original_filename,
+                "created_at": r.created_at,
+            })
+        })
         .collect();
     Ok(Json(json!({ "company_id": id, "assets": assets })))
 }
@@ -329,37 +324,8 @@ async fn update_branding(
     Path(id): Path<Uuid>,
     Json(body): Json<BrandingBody>,
 ) -> ApiResult<Json<Value>> {
-    // 由于 companies 表无 branding 字段，将 logo_url 追加到 description 后
-    let pool = state.db.pool();
-    if let Some(logo) = &body.logo_url {
-        // 把 logo URL 嵌入 description：仅当非空时
-        let current: Option<(Option<String>,)> =
-            sqlx::query_as("SELECT description FROM companies WHERE id = $1")
-                .bind(id)
-                .fetch_optional(pool)
-                .await?;
-        let current_desc = current.and_then(|(d,)| d).unwrap_or_default();
-        let new_desc = format!(
-            "{}
-<!-- logo:{} -->",
-            current_desc, logo
-        );
-        sqlx::query("UPDATE companies SET description = $2, updated_at = now() WHERE id = $1")
-            .bind(id)
-            .bind(new_desc)
-            .execute(pool)
-            .await?;
-    }
-    // 同时允许更新 name
-    if let Some(name) = &body.name {
-        sqlx::query("UPDATE companies SET name = $2, updated_at = now() WHERE id = $1")
-            .bind(id)
-            .bind(name)
-            .execute(pool)
-            .await?;
-    }
     let row = CompanyRepo::new(&state.db)
-        .get(id)
+        .update_branding(id, body.name.as_deref(), body.logo_url.as_deref())
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     state.realtime.publish(
@@ -531,24 +497,16 @@ async fn list_company_feedback_traces(
 ) -> ApiResult<Json<serde_json::Value>> {
     // Mirrors Node `GET /companies/:id/feedback-traces`. Aggregates feedback
     // traces scoped to the company across all issues.
-    let rows: Vec<(uuid::Uuid, String, Option<serde_json::Value>, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT t.id, t.kind, t.payload, t.created_at FROM issue_feedback_traces t \
-         JOIN issues i ON i.id = t.issue_id \
-         WHERE i.company_id = $1 \
-         ORDER BY t.created_at DESC LIMIT 200",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let repo = FeedbackTraceRepo::new(&state.db);
+    let rows = repo.list_for_company(id, 200).await.unwrap_or_default();
     let items: Vec<serde_json::Value> = rows
         .into_iter()
-        .map(|(trace_id, kind, payload, created_at)| {
+        .map(|r| {
             serde_json::json!({
-                "id": trace_id,
-                "kind": kind,
-                "payload": payload.unwrap_or(serde_json::json!({})),
-                "createdAt": created_at,
+                "id": r.id,
+                "kind": r.kind,
+                "payload": r.payload.unwrap_or(serde_json::json!({})),
+                "createdAt": r.created_at,
             })
         })
         .collect();

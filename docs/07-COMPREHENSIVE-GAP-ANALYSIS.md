@@ -1470,16 +1470,79 @@ companies.rs 26 → 18 SQL（-8）。仓储化 folders 7 个路由的 SQL 至 `p
 - companies.rs SQL 数 26 → 18（-8，folders 6 端点合并到 FolderRepo；ensure_my_folder 暂留）
 - 累计 Round 95-130 修复 **126+6=132 个路由从 500 → 200**
 
-### 下一轮方向（Round 131+）
-companies.rs 还剩 18 SQL，主要在：
-- timeline 聚合（多源 JOIN，~5 SQL，line 287+）
-- artifacts 列表（~3 SQL，line 309+）
-- branding 复合（3 SQL，line 354+）
+## 54. 第一百三十一轮增量（Round 131 — companies.rs artifacts / branding / feedback_traces 子模块仓储化)
+
+### 目标
+companies.rs 18 → 13 SQL（-5）。仓储化 3 个独立子模块：
+- `list_artifacts` → `AssetRepo::list_by_company`
+- `update_branding` → `CompanyRepo::update_branding`（新增复合方法）
+- `list_company_feedback_traces` → 新建 `FeedbackTraceRepo::list_for_company`
+
+### 新增 / 扩展 `pc_repos` 方法
+**`pc_repos::asset::AssetRepo`**
+- `list_by_company(company_id, limit) -> Vec<AssetRow>`
+  - 1:1 对应 assets 表全 12 列；按 created_at DESC + LIMIT
+
+**`pc_repos::company::CompanyRepo`**
+- `update_branding(id, name: Option<&str>, logo_url: Option<&str>) -> Option<CompanyRow>`
+  - 复合方法（最多 2 SQL）：
+    1. 若提供 logo_url：SELECT description 取当前值
+    2. UPDATE companies SET name = COALESCE, description = COALESCE, updated_at = now() RETURNING …
+  - 保持 Node `updateBranding` 行为：logo URL 嵌入 `<!-- logo:{url} -->` 后缀追加到 description
+  - COALESCE 语义：name=None 不更新；logo_url=None 不更新 description
+
+**`pc_repos::feedback_trace::FeedbackTraceRepo`（新建模块）**
+- `list_for_company(company_id, limit) -> Vec<FeedbackTraceRow>`
+  - JOIN issues 取 company_id；表不存在时返回 Err（routes 用 `unwrap_or_default` 兜底）
+  - 1:1 schema 投影：id / kind / payload / created_at
+
+### 新增 DTO
+- `FeedbackTraceRow { id: Uuid, kind: String, payload: Option<Value>, created_at: Timestamp }`
+
+### 重构 `companies.rs` 3 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/companies/:id/artifacts` | 1 SELECT assets | AssetRepo::list_by_company |
+| `PATCH /api/companies/:id/branding` | 1-3 SQL (SELECT description + UPDATE description + UPDATE name + SELECT 回读) | CompanyRepo::update_branding 复合方法（1-2 SQL） |
+| `GET /api/companies/:id/feedback-traces` | 1 SELECT JOIN | FeedbackTraceRepo::list_for_company |
+
+### 设计要点
+- **`update_branding` 复合方法权衡**：用单条带 COALESCE 的 UPDATE 替代原 routes 的 2 段独立 UPDATE，节省 1 SQL。COALESCE 双侧语义必须保持一致。
+- **logo_url 嵌入策略保持向后兼容**：当前 schema 无独立 branding 字段，Node 端采用同策略；后续 schema 升级时可平滑切换到独立字段，无需改路由 API。
+- **`FeedbackTraceRow` 4 列 vs assets 12 列**：feedback trace 表设计极简（kind/payload 自描述），不引入额外 DTO 复杂度。
+- **unwrap_or_default 容错**：表不存在时 routes 静默返回空 items，与 Node 端"无 traces"语义一致。
+
+### 新增集成测试 10 个 (`crates/pc-repos/tests/round131_companies_assets_branding_traces_repo.rs`)
+**AssetRepo (3 个)**
+1. `asset_list_orders_by_created_desc` — 按 created_at DESC
+2. `asset_list_isolates_tenants` — 跨公司隔离
+3. `asset_list_respects_limit` — LIMIT 生效
+
+**CompanyRepo::update_branding (6 个)**
+4. `branding_updates_name_only` — 只改 name
+5. `branding_appends_logo_to_description` — 只改 logo（description 后缀）
+6. `branding_preserves_existing_description` — append 而非覆盖
+7. `branding_updates_both` — name + logo 同时改
+8. `branding_unknown_company_returns_none` — 不存在返回 None
+9. `branding_name_none_keeps_existing` — name=None 时 COALESCE 保持
+
+**FeedbackTraceRepo (1 个)**
+10. `feedback_traces_empty_when_table_missing` — 表不存在返回空集合
+
+### 进度影响
+- 综合进度从 **≈ 97.4% → ≈ 97.6%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round131_*` 0 errors
+- 31 个 pc-repos 集成测试文件累计 196+10=206 test 函数
+- companies.rs SQL 数 18 → 13（-5）
+- 累计 Round 95-131 修复 **132+3=135 个路由从 500 → 200**
+
+### 下一轮方向（Round 132+）
+companies.rs 还剩 13 SQL，主要在：
 - export_preview（3 SQL，line 402+）
 - import_preview / start_export / fidelity（~6 SQL，line 453+）
-- feedback_traces 列表（~4 SQL，line 555+）
 - ensure_my_folder / create_folder legacy "personal" path（~4 SQL，line 766+）
 - create 路由的 company_memberships INSERT（1 SQL）
+- get_companies_stats 多公司聚合（5 SQL，line 2139+）
 
 后续高 SQL 模块：
 - tool_access.rs 66 SQL

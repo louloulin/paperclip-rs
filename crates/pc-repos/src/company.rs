@@ -169,6 +169,45 @@ impl<'a> CompanyRepo<'a> {
         .await
     }
 
+    /// 更新 branding 字段。
+    ///
+    /// 行为对齐 Node `updateBranding`：
+    /// - `name` 提供时 UPDATE
+    /// - `logo_url` 提供时嵌入 description 后缀（`<!-- logo:{url} -->`），实际项目
+    ///   应使用独立 branding 表，但当前 schema 仅 companies.description 可写
+    ///
+    /// 复合方法：返回 Option<CompanyRow> 表示更新后的整行；None 表示 company 不存在。
+    pub async fn update_branding(
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+        logo_url: Option<&str>,
+    ) -> sqlx::Result<Option<CompanyRow>> {
+        let mut current_desc: Option<String> = None;
+        if logo_url.is_some() {
+            let row: Option<(Option<String>,)> =
+                sqlx::query_as("SELECT description FROM companies WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(self.db.pool())
+                    .await?;
+            current_desc = row.and_then(|(d,)| d);
+        }
+        let new_desc = if let Some(logo) = logo_url {
+            let prev = current_desc.unwrap_or_default();
+            Some(format!("{}\n<!-- logo:{} -->", prev, logo))
+        } else {
+            None
+        };
+        sqlx::query_as::<_, CompanyRow>(
+            "UPDATE companies SET                 name = COALESCE($2, name),                 description = COALESCE($3, description),                 updated_at = now()              WHERE id = $1              RETURNING id, name, description, status, pause_reason, paused_at,                        issue_prefix, issue_counter, budget_monthly_cents, spent_monthly_cents,                        attachment_max_bytes, default_responsible_user_id,                        require_board_approval_for_new_agents, feedback_data_sharing_enabled,                        feedback_data_sharing_consent_at, feedback_data_sharing_consent_by_user_id,                        feedback_data_sharing_terms_version, brand_color, created_at, updated_at",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(new_desc.as_deref())
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
     pub async fn archive(&self, id: Uuid) -> sqlx::Result<Option<CompanyRow>> {
         sqlx::query_as::<_, CompanyRow>(
             "UPDATE companies SET status = 'archived', updated_at = now() WHERE id = $1 \
