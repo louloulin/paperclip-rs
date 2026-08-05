@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use pc_repos::company_skill_policy::{CompanySkillPolicyRepo, PolicyRow};
@@ -15,12 +15,18 @@ use uuid::Uuid;
 use crate::{ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/api/companies/:company_id/skill-policy",
-        get(get_skill_policy)
-            .put(put_skill_policy)
-            .delete(delete_skill_policy),
-    )
+    Router::new()
+        .route(
+            "/api/companies/:company_id/skill-policy",
+            get(get_skill_policy)
+                .put(put_skill_policy)
+                .delete(delete_skill_policy),
+        )
+        // ── Round 214: 端口化 evaluate 端点 ──
+        .route(
+            "/api/companies/:company_id/skill-policy/evaluate",
+            post(evaluate_skill_policy),
+        )
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -287,3 +293,99 @@ fn resource_matches(rule: &Value, resource: &Value) -> bool {
     true
 }
 
+#[cfg(test)]
+mod round214_tests {
+    //! Round 214: 为 evaluate 端点使用的纯函数提供单元测试。
+    //!
+    //! 这些函数（rule_action_matches、subject_matches、resource_matches）
+    //! 不依赖 db / auth，是纯 JSON 逻辑，最适合用单元测试覆盖。
+    use super::*;
+    use serde_json::json;
+
+    fn rule_with_actions(actions: &[&str]) -> Value {
+        json!({ "actions": actions, "id": "r1" })
+    }
+
+    #[test]
+    fn rule_action_matches_when_in_list() {
+        let r = rule_with_actions(&["skill:install", "skill:run"]);
+        assert!(rule_action_matches(&r, "skill:install"));
+        assert!(rule_action_matches(&r, "skill:run"));
+        assert!(!rule_action_matches(&r, "skill:delete"));
+    }
+
+    #[test]
+    fn rule_action_matches_returns_false_when_no_actions() {
+        // 防御性: 缺少 actions 字段 → 不匹配任何 action
+        let r = json!({ "id": "r1" });
+        assert!(!rule_action_matches(&r, "skill:install"));
+    }
+
+    #[test]
+    fn subject_matches_all_passes_any_principal() {
+        let r = json!({ "subject": { "kind": "all" } });
+        let p = json!({ "kind": "agent", "agentId": "x" });
+        assert!(subject_matches(&r, &p));
+    }
+
+    #[test]
+    fn subject_matches_agent_id_specific() {
+        let r = json!({ "subject": { "kind": "agent", "agentId": "abc" } });
+        assert!(subject_matches(&r, &json!({ "kind": "agent", "agentId": "abc" })));
+        assert!(!subject_matches(&r, &json!({ "kind": "agent", "agentId": "xyz" })));
+        assert!(!subject_matches(&r, &json!({ "kind": "role", "role": "agent" })));
+    }
+
+    #[test]
+    fn subject_matches_role_specific() {
+        let r = json!({ "subject": { "kind": "role", "role": "admin" } });
+        assert!(subject_matches(&r, &json!({ "kind": "role", "role": "admin" })));
+        assert!(!subject_matches(&r, &json!({ "kind": "role", "role": "member" })));
+    }
+
+    #[test]
+    fn subject_matches_no_subject_field_means_match_all() {
+        // 规则没有 subject → 匹配任何 principal
+        let r = json!({ "actions": ["x"] });
+        assert!(subject_matches(&r, &json!({ "kind": "agent", "agentId": "any" })));
+    }
+
+    #[test]
+    fn resource_matches_no_selector_means_match_all() {
+        let r = json!({ "actions": ["x"] });
+        let res = json!({ "skillId": "s1" });
+        assert!(resource_matches(&r, &res));
+    }
+
+    #[test]
+    fn resource_matches_null_selector_means_match_all() {
+        let r = json!({ "resources": null });
+        let res = json!({ "skillId": "s1", "skillKey": "k1" });
+        assert!(resource_matches(&r, &res));
+    }
+
+    #[test]
+    fn resource_matches_skill_id_specific() {
+        let r = json!({ "resources": { "skillId": "s1" } });
+        assert!(resource_matches(&r, &json!({ "skillId": "s1" })));
+        assert!(!resource_matches(&r, &json!({ "skillId": "s2" })));
+    }
+
+    #[test]
+    fn resource_matches_multiple_selectors_and_logic() {
+        let r = json!({ "resources": { "skillKey": "k1", "sourceType": "bundled" } });
+        assert!(resource_matches(&r, &json!({ "skillKey": "k1", "sourceType": "bundled" })));
+        assert!(!resource_matches(&r, &json!({ "skillKey": "k1", "sourceType": "external" })));
+        assert!(!resource_matches(&r, &json!({ "skillKey": "k2", "sourceType": "bundled" })));
+    }
+
+    #[test]
+    fn resource_matches_passes_when_only_some_fields_present() {
+        // selector 只指定 skillId, resource 额外有 sourceType → 通过
+        let r = json!({ "resources": { "skillId": "s1" } });
+        assert!(resource_matches(
+            &r,
+            &json!({ "skillId": "s1", "sourceType": "bundled" })
+        ));
+    }
+}
