@@ -1,4 +1,15 @@
-//! `/api/goals*` 路由。
+//! `/api/goals*` 路由：
+//!
+//! | Method | Path | Node 等价 | 备注 |
+//! |---|---|---|---|
+//! | GET    | `/api/goals` | ✅ | list (支持 ?company_id=) |
+//! | POST   | `/api/goals` | ✅ | create |
+//! | GET    | `/api/companies/:company_id/goals` | ✅ | list by company |
+//! | POST   | `/api/companies/:company_id/goals` | ✅ | create for company |
+//! | GET    | `/api/goals/:id` | ✅ | get |
+//! | PATCH  | `/api/goals/:id` | ✅ | update |
+//! | DELETE | `/api/goals/:id` | ✅ | delete |
+
 
 #[allow(unused_imports)]
 use axum::{
@@ -20,6 +31,10 @@ use crate::{ApiError, ApiResult, AppState};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/goals", get(list).post(create))
+        .route(
+            "/api/companies/:company_id/goals",
+            get(list_company_goals).post(create_company_goal),
+        )
         .route("/api/goals/:id", get(get_one).patch(update).delete(remove))
 }
 
@@ -87,6 +102,63 @@ struct UpdateBody {
     #[serde(default)]
     status: Option<String>,
 }
+async fn list_company_goals(
+    State(s): State<AppState>,
+    axum::extract::Path(company_id): axum::extract::Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = GoalRepo::new(&s.db)
+        .list_by_company(company_id)
+        .await?;
+    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CompanyGoalCreateBody {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    owner_agent_id: Option<Uuid>,
+    #[serde(default)]
+    level: Option<String>,
+    #[serde(default)]
+    parent_id: Option<Uuid>,
+}
+
+async fn create_company_goal(
+    State(s): State<AppState>,
+    axum::extract::Path(company_id): axum::extract::Path<Uuid>,
+    Json(b): Json<CompanyGoalCreateBody>,
+) -> ApiResult<impl IntoResponse> {
+    if b.title.trim().is_empty() {
+        return Err(ApiError::BadRequest("title required".into()));
+    }
+    let level = b
+        .level
+        .as_deref()
+        .and_then(pc_repos::goal::GoalLevel::parse)
+        .unwrap_or(pc_repos::goal::GoalLevel::Company);
+    let new_goal = pc_repos::goal::NewGoal {
+        company_id,
+        title: b.title.clone(),
+        description: b.description.clone(),
+        level,
+        status: pc_repos::goal::GoalStatus::Planned,
+        parent_id: b.parent_id,
+        owner_agent_id: b.owner_agent_id,
+    };
+    let r = GoalRepo::new(&s.db)
+        .create(&new_goal)
+        .await?;
+    s.realtime
+        .publish(LiveEvent::new("goal.created", "goal", r.id).with_company(r.company_id));
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(r).unwrap_or_default()),
+    ))
+}
+
 async fn update(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
