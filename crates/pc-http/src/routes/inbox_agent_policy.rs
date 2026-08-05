@@ -7,9 +7,11 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use pc_repos::inbox_agent_policy::{
+    InboxAgentPolicy, InboxAgentPolicyMode, InboxAgentPolicyRepo, UpdateInboxAgentPolicyInput,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{require_user_id, ApiResult, AppState};
@@ -26,15 +28,6 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[derive(Debug, FromRow)]
-struct PolicyRow {
-    company_id: Uuid,
-    user_id: String,
-    mode: String,
-    allowed_agent_ids: Value,
-    updated_at: pc_core::Timestamp,
-}
-
 #[derive(Debug, Deserialize, Default)]
 #[allow(dead_code)]
 struct PolicyBody {
@@ -42,46 +35,22 @@ struct PolicyBody {
     allowed_agent_ids: Option<Vec<String>>,
 }
 
-fn policy_json(row: &PolicyRow) -> Value {
+fn policy_json(p: &InboxAgentPolicy) -> Value {
     json!({
-        "companyId": row.company_id,
-        "userId": row.user_id,
-        "mode": row.mode,
-        "allowedAgentIds": row.allowed_agent_ids,
-        "updatedAt": row.updated_at,
-    })
-}
-
-async fn fetch_policy(
-    state: &AppState,
-    company_id: Uuid,
-    user_id: &str,
-) -> ApiResult<Option<PolicyRow>> {
-    Ok(sqlx::query_as::<_, PolicyRow>(
-        "SELECT company_id, user_id, mode, allowed_agent_ids, updated_at \
-         FROM user_inbox_agent_policies WHERE company_id = $1 AND user_id = $2",
-    )
-    .bind(company_id)
-    .bind(user_id)
-    .fetch_optional(state.db.pool())
-    .await?)
-}
-
-fn default_policy(company_id: Uuid, user_id: &str) -> Value {
-    json!({
-        "companyId": company_id,
-        "userId": user_id,
-        "mode": "open",
-        "allowedAgentIds": [],
-        "updatedAt": null
+        "companyId": p.company_id,
+        "userId": p.user_id,
+        "mode": p.mode.as_str(),
+        "allowedAgentIds": p.allowed_agent_ids,
+        "materialized": p.materialized,
+        "updatedAt": p.updated_at,
     })
 }
 
 async fn read_policy(state: &AppState, company_id: Uuid, user_id: &str) -> ApiResult<Value> {
-    match fetch_policy(state, company_id, user_id).await? {
-        Some(row) => Ok(policy_json(&row)),
-        None => Ok(default_policy(company_id, user_id)),
-    }
+    let p = InboxAgentPolicyRepo::new(&state.db)
+        .get(company_id, user_id)
+        .await?;
+    Ok(policy_json(&p))
 }
 
 async fn write_policy(
@@ -90,25 +59,27 @@ async fn write_policy(
     user_id: &str,
     body: &PolicyBody,
 ) -> ApiResult<Value> {
-    let mode = body.mode.clone().unwrap_or_else(|| "open".to_owned());
-    let allowed = body.allowed_agent_ids.clone().unwrap_or_default();
-    let allowed_json = serde_json::to_value(allowed).unwrap_or_else(|_| json!([]));
-    sqlx::query(
-        "INSERT INTO user_inbox_agent_policies \
-            (company_id, user_id, mode, allowed_agent_ids, updated_at) \
-         VALUES ($1, $2, $3, $4, now()) \
-         ON CONFLICT (company_id, user_id) DO UPDATE SET \
-            mode = EXCLUDED.mode, \
-            allowed_agent_ids = EXCLUDED.allowed_agent_ids, \
-            updated_at = now()",
-    )
-    .bind(company_id)
-    .bind(user_id)
-    .bind(&mode)
-    .bind(&allowed_json)
-    .execute(state.db.pool())
-    .await?;
-    read_policy(state, company_id, user_id).await
+    let mode = InboxAgentPolicyMode::parse(body.mode.as_deref().unwrap_or("open"))
+        .unwrap_or(InboxAgentPolicyMode::Open);
+    let allowed: Vec<Uuid> = body
+        .allowed_agent_ids
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| Uuid::parse_str(&s).ok())
+        .collect();
+    let p = InboxAgentPolicyRepo::new(&state.db)
+        .update(
+            company_id,
+            user_id,
+            UpdateInboxAgentPolicyInput {
+                mode,
+                allowed_agent_ids: allowed,
+            },
+        )
+        .await
+        .map_err(|e| crate::ApiError::Internal(e.to_string()))?;
+    Ok(policy_json(&p))
 }
 
 async fn get_my_policy(
