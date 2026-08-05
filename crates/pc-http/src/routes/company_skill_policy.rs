@@ -7,9 +7,9 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use pc_repos::company_skill_policy::{CompanySkillPolicyRepo, PolicyRow};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiResult, AppState};
@@ -21,16 +21,6 @@ pub fn router() -> Router<AppState> {
             .put(put_skill_policy)
             .delete(delete_skill_policy),
     )
-}
-
-#[derive(Debug, FromRow)]
-struct PolicyRow {
-    company_id: Uuid,
-    schema_version: i32,
-    revision: i32,
-    default_effect: String,
-    rules: Value,
-    updated_at: pc_core::Timestamp,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -55,16 +45,6 @@ fn policy_json(row: &PolicyRow) -> Value {
     })
 }
 
-async fn fetch(state: &AppState, company_id: Uuid) -> ApiResult<Option<PolicyRow>> {
-    Ok(sqlx::query_as::<_, PolicyRow>(
-        "SELECT company_id, schema_version, revision, default_effect, rules, updated_at \
-         FROM company_skill_policies WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?)
-}
-
 fn default_policy(company_id: Uuid) -> Value {
     json!({
         "companyId": company_id,
@@ -77,7 +57,7 @@ fn default_policy(company_id: Uuid) -> Value {
 }
 
 async fn read(state: &AppState, company_id: Uuid) -> ApiResult<Value> {
-    match fetch(state, company_id).await? {
+    match CompanySkillPolicyRepo::new(&state.db).fetch(company_id).await? {
         Some(row) => Ok(policy_json(&row)),
         None => Ok(default_policy(company_id)),
     }
@@ -90,22 +70,9 @@ async fn write(state: &AppState, company_id: Uuid, body: &PolicyBody) -> ApiResu
         .unwrap_or_else(|| "allow".to_owned());
     let rules = body.rules.clone().unwrap_or_else(|| json!([]));
     let new_revision = body.revision.unwrap_or(0) + 1;
-    sqlx::query(
-        "INSERT INTO company_skill_policies \
-            (company_id, schema_version, revision, default_effect, rules, updated_at) \
-         VALUES ($1, 1, $2, $3, $4, now()) \
-         ON CONFLICT (company_id) DO UPDATE SET \
-            revision = company_skill_policies.revision + 1, \
-            default_effect = EXCLUDED.default_effect, \
-            rules = EXCLUDED.rules, \
-            updated_at = now()",
-    )
-    .bind(company_id)
-    .bind(new_revision)
-    .bind(&default_effect)
-    .bind(&rules)
-    .execute(state.db.pool())
-    .await?;
+    CompanySkillPolicyRepo::new(&state.db)
+        .upsert(company_id, new_revision, &default_effect, &rules)
+        .await?;
     read(state, company_id).await
 }
 
@@ -131,10 +98,7 @@ async fn delete_skill_policy(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query("DELETE FROM company_skill_policies WHERE company_id = $1")
-        .bind(company_id)
-        .execute(state.db.pool())
-        .await?;
+    CompanySkillPolicyRepo::new(&state.db).delete(company_id).await?;
     Ok((
         StatusCode::OK,
         Json(json!({ "deleted": true, "companyId": company_id })),

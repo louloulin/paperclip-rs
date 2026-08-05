@@ -29,6 +29,7 @@ pub mod change_consent_gate;
 pub mod company;
 pub mod company_export;
 pub mod company_member;
+pub mod company_skill_policy;
 pub mod cost;
 pub mod decision;
 pub mod decision_bundle;
