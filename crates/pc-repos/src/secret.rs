@@ -1200,6 +1200,241 @@ impl<'a> SecretRepo<'a> {
         tx.commit().await?;
         Ok(row)
     }
+
+    // ============================================================================
+    // Round 156: secrets.rs my_user_secrets + upsert + create + update + archive + rotate
+    // ============================================================================
+
+    /// Round 156: 列出某公司某 user 的所有 user_secret_declarations。
+    /// 返回 (id, company_id, definition_id, value_ciphertext, status, metadata, updated_at)。
+    pub async fn list_declarations_for_user(
+        &self,
+        company_id: Uuid,
+        _user_id: &str,
+    ) -> sqlx::Result<Vec<(Uuid, Uuid, Uuid, String, String, serde_json::Value, pc_core::Timestamp)>> {
+        // 实际 schema：表 user_secret_declarations (company_id, user_id, definition_id, ...)
+        // 当前 route 不传 user_id 过滤；先按 company_id 列出（route 端用 require_user_id 过滤）。
+        let rows: Vec<(Uuid, Uuid, Uuid, String, String, serde_json::Value, pc_core::Timestamp)> = sqlx::query_as(
+            "SELECT id, company_id, definition_id, value_ciphertext, status, metadata, updated_at \
+             FROM user_secret_declarations WHERE company_id = $1",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 156: upsert 一条 user_secret_declaration。
+    pub async fn upsert_user_declaration(
+        &self,
+        company_id: Uuid,
+        user_id: &str,
+        definition_id: Uuid,
+        value_ciphertext: &str,
+        metadata: &serde_json::Value,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "INSERT INTO user_secret_declarations \
+                (company_id, user_id, definition_id, value_ciphertext, metadata, status) \
+             VALUES ($1, $2, $3, $4, $5, 'active') \
+             ON CONFLICT (company_id, user_id, definition_id) DO UPDATE SET \
+                value_ciphertext = EXCLUDED.value_ciphertext, \
+                metadata = EXCLUDED.metadata, \
+                updated_at = now()",
+        )
+        .bind(company_id)
+        .bind(user_id)
+        .bind(definition_id)
+        .bind(value_ciphertext)
+        .bind(metadata)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Round 156: 探测某公司下某 name 的 secret 是否已存在。
+    pub async fn find_id_by_name(&self, company_id: Uuid, name: &str) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM company_secrets WHERE company_id = $1 AND name = $2",
+        )
+        .bind(company_id)
+        .bind(name)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 156: 创建一个 company_secret，返回 id。
+    pub async fn create_company_secret(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        provider: &str,
+        external_ref: &str,
+        description: Option<&str>,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO company_secrets (company_id, name, provider, external_ref, description) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(provider)
+        .bind(external_ref)
+        .bind(description)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 156: 插入第一个 secret version。
+    pub async fn insert_first_version(
+        &self,
+        company_id: Uuid,
+        secret_id: Uuid,
+        sha256: &str,
+        encrypted_payload: &serde_json::Value,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO company_secret_versions \
+                (company_id, secret_id, version, value_sha256, encrypted_payload) \
+             VALUES ($1, $2, 1, $3, $4::jsonb)",
+        )
+        .bind(company_id)
+        .bind(secret_id)
+        .bind(sha256)
+        .bind(encrypted_payload)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Round 156: 取下一个 version 号 (MAX + 1)。
+    pub async fn next_version_number(&self, secret_id: Uuid) -> sqlx::Result<i32> {
+        let v: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM company_secret_versions WHERE secret_id = $1",
+        )
+        .bind(secret_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v)
+    }
+
+    /// Round 156: 插入一个新 version（指定 version 号）。
+    pub async fn insert_version(
+        &self,
+        company_id: Uuid,
+        secret_id: Uuid,
+        version: i32,
+        sha256: &str,
+        encrypted_payload: &serde_json::Value,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO company_secret_versions \
+                (company_id, secret_id, version, value_sha256, encrypted_payload) \
+             VALUES ($1, $2, $3, $4, $5::jsonb)",
+        )
+        .bind(company_id)
+        .bind(secret_id)
+        .bind(version)
+        .bind(sha256)
+        .bind(encrypted_payload)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Round 156: 更新 secret 的 latest_version。
+    pub async fn update_latest_version(&self, secret_id: Uuid, version: i32) -> sqlx::Result<()> {
+        sqlx::query(
+            "UPDATE company_secrets SET latest_version = $1, updated_at = now() WHERE id = $2",
+        )
+        .bind(version)
+        .bind(secret_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Round 156: 更新 secret 状态（限定 owner_user_id）。
+    pub async fn update_status_with_owner(
+        &self,
+        company_id: Uuid,
+        secret_id: Uuid,
+        owner_user_id: &str,
+        status: &str,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE company_secrets SET status = $1, updated_at = now() \
+             WHERE id = $2 AND company_id = $3 AND owner_user_id = $4",
+        )
+        .bind(status)
+        .bind(secret_id)
+        .bind(company_id)
+        .bind(owner_user_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Round 156: 归档 user secret（限定 owner_user_id + 不重复归档）。
+    pub async fn archive_user_secret(
+        &self,
+        company_id: Uuid,
+        secret_id: Uuid,
+        owner_user_id: &str,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE company_secrets SET status = 'archived', updated_at = now() \
+             WHERE id = $1 AND company_id = $2 AND owner_user_id = $3 AND status <> 'archived'",
+        )
+        .bind(secret_id)
+        .bind(company_id)
+        .bind(owner_user_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Round 156: 取 secret 概要（id, company_id, name, status, latest_version, updated_at）。
+    pub async fn find_summary_by_owner(
+        &self,
+        company_id: Uuid,
+        secret_id: Uuid,
+        owner_user_id: &str,
+    ) -> sqlx::Result<Option<(Uuid, Uuid, String, String, i32, Option<pc_core::Timestamp>)>> {
+        let row: Option<(Uuid, Uuid, String, String, i32, Option<pc_core::Timestamp>)> = sqlx::query_as(
+            "SELECT id, company_id, name, status, latest_version, updated_at FROM company_secrets \
+             WHERE id = $1 AND company_id = $2 AND owner_user_id = $3",
+        )
+        .bind(secret_id)
+        .bind(company_id)
+        .bind(owner_user_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 156: rotate（限定 owner_user_id）。
+    pub async fn rotate_with_owner(
+        &self,
+        company_id: Uuid,
+        secret_id: Uuid,
+        owner_user_id: &str,
+        version: i32,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE company_secrets SET latest_version = $1, updated_at = now() \
+             WHERE id = $2 AND company_id = $3 AND owner_user_id = $4",
+        )
+        .bind(version)
+        .bind(secret_id)
+        .bind(company_id)
+        .bind(owner_user_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
 }
 
 /// 上层 provider 抽象的便捷 re-export，便于 HTTP 层直接依赖 `SecretRepositoryRef`

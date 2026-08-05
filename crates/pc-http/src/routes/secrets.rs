@@ -455,15 +455,11 @@ async fn my_user_secrets(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     use crate::require_user_id;
-    let _ = require_user_id(&state, &headers).await?;
+    let user_id = require_user_id(&state, &headers).await?;
     // List user_secret_declarations for current user
-    let rows: Vec<(Uuid, Uuid, Uuid, String, String, Value, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, company_id, definition_id, value_ciphertext, status, metadata, updated_at \
-         FROM user_secret_declarations WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = SecretRepo::new(&state.db)
+        .list_declarations_for_user(company_id, &user_id)
+        .await?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, cid, def_id, val, status, meta, updated_at)| {
@@ -501,22 +497,9 @@ async fn upsert_my_user_secret(
         .ok_or_else(|| ApiError::BadRequest("definition_id required".into()))?;
     let value_ciphertext = body.value_ciphertext.clone().unwrap_or_default();
     let metadata = body.metadata.clone().unwrap_or(json!({}));
-    sqlx::query(
-        "INSERT INTO user_secret_declarations \
-            (company_id, user_id, definition_id, value_ciphertext, metadata, status) \
-         VALUES ($1, $2, $3, $4, $5, 'active') \
-         ON CONFLICT (company_id, user_id, definition_id) DO UPDATE SET \
-            value_ciphertext = EXCLUDED.value_ciphertext, \
-            metadata = EXCLUDED.metadata, \
-            updated_at = now()",
-    )
-    .bind(company_id)
-    .bind(&user_id)
-    .bind(definition_id)
-    .bind(&value_ciphertext)
-    .bind(&metadata)
-    .execute(state.db.pool())
-    .await?;
+    SecretRepo::new(&state.db)
+        .upsert_user_declaration(company_id, &user_id, definition_id, &value_ciphertext, &metadata)
+        .await?;
     Ok((StatusCode::OK, Json(json!({ "stored": true }))))
 }
 
@@ -739,16 +722,9 @@ async fn create_company_secret(
         return Err(ApiError::BadRequest("name is required".into()));
     }
     let provider = body.provider.clone().unwrap_or_else(|| "local_encrypted".to_owned());
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM company_secrets WHERE company_id = $1 AND name = $2",
-    )
-    .bind(company_id)
-    .bind(&body.name)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_some() {
+    let secret_repo = SecretRepo::new(&state.db);
+    let existing = secret_repo.find_id_by_name(company_id, &body.name).await?;
+    if existing.is_some() {
         return Err(ApiError::Conflict(format!("secret {} already exists", body.name)));
     }
     let external_ref = if let Some(v) = body.value.as_deref() {
@@ -757,33 +733,16 @@ async fn create_company_secret(
     } else {
         format!("local:{}", Uuid::new_v4().simple())
     };
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO company_secrets (company_id, name, provider, external_ref, description) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&body.name)
-    .bind(&provider)
-    .bind(&external_ref)
-    .bind(body.description.as_deref())
-    .fetch_one(state.db.pool())
-    .await?;
+    let id = secret_repo
+        .create_company_secret(company_id, &body.name, &provider, &external_ref, body.description.as_deref())
+        .await?;
     // If value provided, create v1
     if let Some(v) = body.value.as_deref() {
-        let sha = {
-            use sha2::{Digest, Sha256};
-            format!("{:x}", Sha256::digest(v.as_bytes()))
-        };
-        sqlx::query(
-            "INSERT INTO company_secret_versions (company_id, secret_id, version, value_sha256, encrypted_payload) \
-             VALUES ($1, $2, 1, $3, $4::jsonb)",
-        )
-        .bind(company_id)
-        .bind(id)
-        .bind(&sha)
-        .bind(json!({ "value": v }))
-        .execute(state.db.pool())
-        .await?;
+        use sha2::{Digest, Sha256};
+        let sha = format!("{:x}", Sha256::digest(v.as_bytes()));
+        secret_repo
+            .insert_first_version(company_id, id, &sha, &json!({ "value": v }))
+            .await?;
     }
     state.realtime.publish(
         LiveEvent::new("company_secret.created", "company_secret", id).with_company(company_id),
@@ -818,61 +777,24 @@ async fn patch_my_user_secret(
 ) -> ApiResult<Json<Value>> {
     let user_id = crate::state::require_user_id(&state, &headers).await?;
     // Update only if the secret is owned by this user (owner_user_id)
-    let mut tx = state.db.pool().begin().await?;
-    if body.status.is_some() {
-        sqlx::query(
-            "UPDATE company_secrets SET status = COALESCE($1, status), updated_at = now() \
-             WHERE id = $2 AND company_id = $3 AND owner_user_id = $4",
-        )
-        .bind(body.status.as_deref())
-        .bind(secret_id)
-        .bind(company_id)
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await?;
+    let secret_repo = SecretRepo::new(&state.db);
+    if let Some(ref st) = body.status {
+        secret_repo
+            .update_status_with_owner(company_id, secret_id, &user_id, st)
+            .await?;
     }
     if let Some(v) = body.value.as_deref() {
-        let next_version: i32 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(version), 0) + 1 FROM company_secret_versions WHERE secret_id = $1",
-        )
-        .bind(secret_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        let sha = {
-            use sha2::{Digest, Sha256};
-            format!("{:x}", Sha256::digest(v.as_bytes()))
-        };
-        sqlx::query(
-            "INSERT INTO company_secret_versions (company_id, secret_id, version, value_sha256, encrypted_payload) \
-             VALUES ($1, $2, $3, $4, $5::jsonb)",
-        )
-        .bind(company_id)
-        .bind(secret_id)
-        .bind(next_version)
-        .bind(&sha)
-        .bind(json!({ "value": v }))
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "UPDATE company_secrets SET latest_version = $1, updated_at = now() \
-             WHERE id = $2",
-        )
-        .bind(next_version)
-        .bind(secret_id)
-        .execute(&mut *tx)
-        .await?;
+        let next_version = secret_repo.next_version_number(secret_id).await?;
+        use sha2::{Digest, Sha256};
+        let sha = format!("{:x}", Sha256::digest(v.as_bytes()));
+        secret_repo
+            .insert_version(company_id, secret_id, next_version, &sha, &json!({ "value": v }))
+            .await?;
+        secret_repo.update_latest_version(secret_id, next_version).await?;
     }
-    let row: Option<(Uuid, Uuid, String, String, i32, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, name, status, latest_version, updated_at FROM company_secrets WHERE id = $1 AND company_id = $2 AND owner_user_id = $3",
-    )
-    .bind(secret_id)
-    .bind(company_id)
-    .bind(&user_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    tx.commit().await?;
+    let row = secret_repo
+        .find_summary_by_owner(company_id, secret_id, &user_id)
+        .await?;
     let (id, _, name, status, latest_version, updated_at) = row
         .ok_or_else(|| ApiError::NotFound(format!("user secret {secret_id}")))?;
     state.realtime.publish(
@@ -896,16 +818,9 @@ async fn delete_my_user_secret(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let user_id = crate::state::require_user_id(&state, &headers).await?;
-    let affected = sqlx::query(
-        "UPDATE company_secrets SET status = 'archived', updated_at = now() \
-         WHERE id = $1 AND company_id = $2 AND owner_user_id = $3 AND status <> 'archived'",
-    )
-    .bind(secret_id)
-    .bind(company_id)
-    .bind(&user_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
+    let affected = SecretRepo::new(&state.db)
+        .archive_user_secret(company_id, secret_id, &user_id)
+        .await?;
     if affected == 0 {
         return Err(ApiError::NotFound(format!("user secret {secret_id}")));
     }
@@ -938,37 +853,16 @@ async fn rotate_my_user_secret(
         .value
         .clone()
         .unwrap_or_else(|| format!("sk_{}", Uuid::new_v4().simple()));
-    let next_version: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(version), 0) + 1 FROM company_secret_versions WHERE secret_id = $1",
-    )
-    .bind(secret_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let sha = {
-        use sha2::{Digest, Sha256};
-        format!("{:x}", Sha256::digest(new_value.as_bytes()))
-    };
-    sqlx::query(
-        "INSERT INTO company_secret_versions (company_id, secret_id, version, value_sha256, encrypted_payload) \
-         VALUES ($1, $2, $3, $4, $5::jsonb)",
-    )
-    .bind(company_id)
-    .bind(secret_id)
-    .bind(next_version)
-    .bind(&sha)
-    .bind(json!({ "value": new_value }))
-    .execute(state.db.pool())
-    .await?;
-    sqlx::query(
-        "UPDATE company_secrets SET latest_version = $1, updated_at = now() \
-         WHERE id = $2 AND company_id = $3 AND owner_user_id = $4",
-    )
-    .bind(next_version)
-    .bind(secret_id)
-    .bind(company_id)
-    .bind(&user_id)
-    .execute(state.db.pool())
-    .await?;
+    let secret_repo = SecretRepo::new(&state.db);
+    let next_version = secret_repo.next_version_number(secret_id).await?;
+    use sha2::{Digest, Sha256};
+    let sha = format!("{:x}", Sha256::digest(new_value.as_bytes()));
+    secret_repo
+        .insert_version(company_id, secret_id, next_version, &sha, &json!({ "value": new_value }))
+        .await?;
+    secret_repo
+        .rotate_with_owner(company_id, secret_id, &user_id, next_version)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("user_secret.rotated", "company_secret", secret_id)
             .with_company(company_id)
