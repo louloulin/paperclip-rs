@@ -1130,6 +1130,45 @@ impl<'a> CaseRepo<'a> {
         Ok(row.map(|(d,)| d))
     }
 
+    // ---- Round 115: case_attachments 仓储化 ----
+
+    /// Round 115: upsert case_attachments (case_id + asset_id)。
+    /// ON CONFLICT (case_id, asset_id) DO UPDATE 触发 updated_at 刷新。
+    pub async fn upsert_case_attachment(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        asset_id: Uuid,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO case_attachments (company_id, case_id, asset_id)             VALUES ($1, $2, $3)             ON CONFLICT (case_id, asset_id) DO UPDATE SET updated_at = now()             RETURNING id",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(asset_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
+    /// Round 115: 记录 attachment_added 事件到 case_events。
+    pub async fn record_attachment_added_event(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        asset_id: Uuid,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)             VALUES ($1, $2, 'attachment_added', 'user', jsonb_build_object('assetId', $3::text)) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(asset_id.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
     pub async fn list_events(
         &self,
         company_id: Uuid,

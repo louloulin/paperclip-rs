@@ -713,6 +713,38 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 38. 第一百一十五轮增量（Round 115 — cases.rs case_attachments 子模块仓储化)
+
+### 目标
+`cases.rs` 38 个内联 SQL，Round 115 把 case_attachments 1 个端点的 2 SQL 仓储化。
+cases.rs 38 → 36 SQL。
+
+### 新增 `pc_repos::case::CaseRepo` 方法（2 个）
+- `upsert_case_attachment(company_id, case_id, asset_id) -> Uuid`
+  - INSERT INTO case_attachments ... ON CONFLICT (case_id, asset_id) DO UPDATE
+  - 整体覆盖 ON CONFLICT，重复调用返相同 id
+- `record_attachment_added_event(company_id, case_id, asset_id) -> Uuid`
+  - INSERT case_events kind='attachment_added' with payload={assetId}
+
+### 重构 `cases.rs` 1 个端点
+- `create_case_attachment` — `get_case_company_id + upsert_case_attachment + record_attachment_added_event`
+
+### 新增集成测试 5 个 (`crates/pc-repos/tests/round115_case_attachment_repo.rs`)
+1. `upsert_case_attachment_inserts_new` — 首次插入回填 company/case/asset
+2. `upsert_case_attachment_idempotent` — 重复 upsert 返相同 id
+3. `upsert_case_attachment_cross_case` — 跨 case 隔离（不同 case_id 创不同 row）
+4. `record_attachment_added_event_writes` — case_events kind + payload 验证
+5. `upsert_then_record_event_end_to_end` — upsert + event 端到端流程
+
+### 进度影响
+- 综合进度从 **≈ 92.0% → ≈ 92.3%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round115_*` 编译通过
+- 15 个 pc-repos 集成测试文件累计 86+5=91 test 函数
+- cases.rs SQL 数 38 → 36（-2，case_attachments 子模块清零）
+- 累计 Round 95-115 修复 **74+1=75 个路由从 500 → 200**
+
 ## 37. 第一百一十四轮增量（Round 114 — cases.rs case annotation 子模块仓储化)
 
 ### 目标

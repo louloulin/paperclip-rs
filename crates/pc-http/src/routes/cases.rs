@@ -1050,40 +1050,33 @@ struct CreateCaseAttachmentBody {
     asset_id: Uuid,
 }
 
+// Round 115: 仓储化。CaseRepo::get_case_company_id + upsert_case_attachment +
+//             record_attachment_added_event。
 async fn create_case_attachment(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
     Json(body): Json<CreateCaseAttachmentBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO case_attachments (company_id, case_id, asset_id) VALUES ($1, $2, $3) \
-         ON CONFLICT (case_id, asset_id) DO UPDATE SET updated_at = now() \
-         RETURNING id",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(body.asset_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'attachment_added', 'user', jsonb_build_object('assetId', $3::text))",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(body.asset_id)
-    .execute(state.db.pool())
-    .await;
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let id = repo
+        .upsert_case_attachment(company_id, case_id, body.asset_id)
+        .await?;
+    let _ = repo
+        .record_attachment_added_event(company_id, case_id, body.asset_id)
+        .await;
     state.realtime.publish(
-        LiveEvent::new("case.attachment.added", "case_attachment", row.0)
+        LiveEvent::new("case.attachment.added", "case_attachment", id)
             .with_company(company_id)
             .with_data(json!({"caseId": case_id, "assetId": body.asset_id})),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": row.0,
+            "id": id,
             "caseId": case_id,
             "assetId": body.asset_id,
         })),
