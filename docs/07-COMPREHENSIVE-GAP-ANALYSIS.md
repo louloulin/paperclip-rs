@@ -4103,3 +4103,69 @@ Audit + Actions:
 2. **继续扫描 paperclip 仓库未实现的能力**（特别是 aggregate 路由与 SSE 流）
 3. **检查 BudgetRepo 是否有未暴露给路由的方法**（如 list_policies / list_incidents）
 4. **继续 issues / companies / inbox 子路径聚合**（如 issues 列别名、inbox 高级聚合）
+
+## 53. 第二百一十四轮增量（Round 214 — companies/:id/skill-policy/evaluate 端口化）
+
+### 端口覆盖
+- 新增 1 个端口：
+  - `POST /api/companies/:company_id/skill-policy/evaluate`
+
+### 设计
+- 复用 R197 已有的 `evaluate_skill_policy` handler
+  - 该函数此前因未挂载处于 dead_code，本次接入路由
+  - 路径对齐 Node `server/src/routes/company-skill-policy.ts`
+- 请求体 `EvaluateBody`：`{ action, resource?, principal? }`
+  - `principal.agent_id` 提供时构造 `{kind: agent, agentId}`
+  - 缺省构造匿名 principal `{kind: anonymous}`
+- 三种决策原因：
+  - `no_policy_default` — 公司无策略记录
+  - `explicit_rule` — 命中某条规则（按 priority + id 排序后首个匹配）
+  - `policy_default` — 无规则命中，按策略 default_effect
+
+### 响应结构（SkillPolicyDecision）
+```json
+{
+  "allowed": true,
+  "action": "skill:install",
+  "reason": "explicit_rule",
+  "policyRevision": 3,
+  "matchedRuleId": "rule-abc",
+  "remediation": null
+}
+```
+
+### 辅助纯函数（可独立测试）
+- `rule_action_matches(rule, action) -> bool`
+  - 检查 rule.actions 数组是否包含目标 action
+  - 缺 actions 字段 → false（防御性默认拒绝）
+- `subject_matches(rule, principal) -> bool`
+  - `kind: all` → 任意 principal
+  - `kind: agent + agentId` → 精确匹配
+  - `kind: role + role` → 精确匹配
+  - 缺 subject 字段 → 视为 all
+- `resource_matches(rule, resource) -> bool`
+  - 缺 resources 或 null → 视为 all
+  - `skillId` / `skillKey` / `sourceType` 任一字段不匹配 → false
+  - 多字段 → AND 语义
+
+### 测试
+- 内联单元测试 `round214_tests`（11 个 case）
+  - rule_action_matches: 列表匹配 / 缺字段
+  - subject_matches: all / agent_id / role / 缺字段
+  - resource_matches: 无 selector / null / skillId / 多字段 AND / 额外字段透传
+
+### 累计进展（R214）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R214 | company_skill_policy.rs | +1 | 复用 R197 evaluate handler + 路由挂载 + 11 单元测试 |
+
+### 综合状态（截至 R214）
+- 工作空间编译：`cargo check --workspace` 0 errors
+- 11 个新单元测试 case（R214 单轮）
+- 累计端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~8 个** 真正剩余
+
+### 下一步高 ROI 工作
+1. **access.ts 缺口：join-requests/:id/claim-api-key** — 需要新增 JoinRequestRepo::claim_api_key 方法（hash 比较 + secret_consumed_at 标记 + agent_api_keys 生成）
+2. **继续扫描剩余 Node 路由**（如 companies/import/preview 之类已存在的别名路由）
+3. **继续 issues / companies / inbox 子路径聚合**
