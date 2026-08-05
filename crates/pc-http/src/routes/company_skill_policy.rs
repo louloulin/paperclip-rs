@@ -104,3 +104,186 @@ async fn delete_skill_policy(
         Json(json!({ "deleted": true, "companyId": company_id })),
     ))
 }
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct EvaluateBody {
+    action: String,
+    #[serde(default)]
+    resource: Value,
+    #[serde(default)]
+    principal: Option<EvaluatePrincipal>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct EvaluatePrincipal {
+    agent_id: Uuid,
+}
+
+/// Round 197: 评估 skill policy。
+///
+/// 简化版规则匹配：
+/// 1. 若无策略（materialized=false），默认 allow
+/// 2. 按规则优先级 + id 排序后逐条匹配
+///    - action 必须匹配 rule.actions
+///    - subject 匹配（agent_id / agent_role / all）
+///    - resource 匹配（skill_id / skill_key / source_type / all）
+/// 3. 匹配中 → 按 rule.effect 决定 allow/deny
+/// 4. 未匹配中 → 按 default_effect
+async fn evaluate_skill_policy(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<EvaluateBody>,
+) -> ApiResult<Json<Value>> {
+    let repo = CompanySkillPolicyRepo::new(&state.db);
+    let policy = match repo.fetch(company_id).await? {
+        Some(p) => p,
+        None => {
+            return Ok(Json(json!({
+                "allowed": true,
+                "action": body.action,
+                "reason": "no_policy_default",
+                "policyRevision": 0,
+                "matchedRuleId": serde_json::Value::Null,
+                "remediation": serde_json::Value::Null,
+            })));
+        }
+    };
+
+    // Parse rules array
+    let rules = policy.rules.as_array().cloned().unwrap_or_default();
+    let mut sorted: Vec<Value> = rules;
+    sorted.sort_by(|a, b| {
+        let ap = a.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bp = b.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
+        ap.cmp(&bp).then_with(|| {
+            let ai = a.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let bi = b.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            ai.cmp(bi)
+        })
+    });
+
+    // Resolve principal
+    let principal = if let Some(p) = body.principal.as_ref() {
+        json!({"kind": "agent", "agentId": p.agent_id})
+    } else {
+        // Default principal from auth context
+        json!({"kind": "anonymous"})
+    };
+
+    let resource = body.resource.clone();
+
+    // Try each rule in order
+    for rule in sorted.iter() {
+        if !rule_action_matches(rule, &body.action) {
+            continue;
+        }
+        if !subject_matches(rule, &principal) {
+            continue;
+        }
+        if !resource_matches(rule, &resource) {
+            continue;
+        }
+        let effect = rule.get("effect").and_then(|v| v.as_str()).unwrap_or("allow");
+        let rule_id = rule.get("id").and_then(|v| v.as_str()).map(String::from);
+        return Ok(Json(json!({
+            "allowed": effect == "allow",
+            "action": body.action,
+            "reason": "explicit_rule",
+            "policyRevision": policy.revision,
+            "matchedRuleId": rule_id,
+            "remediation": serde_json::Value::Null,
+        })));
+    }
+
+    // Default effect
+    let allowed = policy.default_effect == "allow";
+    Ok(Json(json!({
+        "allowed": allowed,
+        "action": body.action,
+        "reason": "policy_default",
+        "policyRevision": policy.revision,
+        "matchedRuleId": serde_json::Value::Null,
+        "remediation": if allowed { serde_json::Value::Null } else { serde_json::Value::String("Adjust policy rules to allow this action".into()) },
+    })))
+}
+
+fn rule_action_matches(rule: &Value, action: &str) -> bool {
+    rule.get("actions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .any(|a| a.as_str().map(|s| s == action).unwrap_or(false))
+        })
+        .unwrap_or(false)
+}
+
+fn subject_matches(rule: &Value, principal: &Value) -> bool {
+    let subject = match rule.get("subject") {
+        Some(s) => s,
+        None => return true,
+    };
+    // Match "all" → any principal
+    if subject.get("kind").and_then(|v| v.as_str()) == Some("all") {
+        return true;
+    }
+    // Match agent_id
+    if let (Some(target_id), Some(agent_id)) = (
+        subject.get("agentId").and_then(|v| v.as_str()),
+        principal.get("agentId").and_then(|v| v.as_str()),
+    ) {
+        if target_id == agent_id {
+            return true;
+        }
+    }
+    // Match role
+    if let (Some(role), Some(actual_role)) = (
+        subject.get("role").and_then(|v| v.as_str()),
+        principal.get("role").and_then(|v| v.as_str()),
+    ) {
+        if role == actual_role {
+            return true;
+        }
+    }
+    false
+}
+
+fn resource_matches(rule: &Value, resource: &Value) -> bool {
+    let selector = match rule.get("resources") {
+        Some(r) => r,
+        None => return true,
+    };
+    if selector.is_null() {
+        return true;
+    }
+    // skill_id
+    if let (Some(target_sid), Some(actual_sid)) = (
+        selector.get("skillId").and_then(|v| v.as_str()),
+        resource.get("skillId").and_then(|v| v.as_str()),
+    ) {
+        if target_sid != actual_sid {
+            return false;
+        }
+    }
+    // skill_key
+    if let (Some(target_sk), Some(actual_sk)) = (
+        selector.get("skillKey").and_then(|v| v.as_str()),
+        resource.get("skillKey").and_then(|v| v.as_str()),
+    ) {
+        if target_sk != actual_sk {
+            return false;
+        }
+    }
+    // source_type
+    if let (Some(target_st), Some(actual_st)) = (
+        selector.get("sourceType").and_then(|v| v.as_str()),
+        resource.get("sourceType").and_then(|v| v.as_str()),
+    ) {
+        if target_st != actual_st {
+            return false;
+        }
+    }
+    true
+}
+
