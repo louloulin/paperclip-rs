@@ -3013,12 +3013,113 @@ async fn get_one_comment(
     })))
 }
 
+/// Round 228: release tree hold 完整 body
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseTreeHoldBody {
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    release_policy: Option<serde_json::Value>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+}
+
 async fn release_tree_hold(
     State(state): State<AppState>,
     Path((id, hold_id)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ReleaseTreeHoldBody>,
 ) -> ApiResult<Json<Value>> {
-    IssueTreeHoldRepo::new(&state.db).release(id, hold_id).await?;
-    Ok(Json(json!({"released": true, "issueId": id, "holdId": hold_id})))
+    // Round 228 真实实现：完整 release semantics（与 Node releaseHold 对齐）
+    //
+    // 1. 查找 root issue 获取 company_id
+    // 2. 提取 actor 信息（user_id from headers）
+    // 3. 调用 IssueTreeHoldRepo::release_hold_v2（事务原子操作）
+    // 4. 错误映射：
+    //    - NotFound → 404
+    //    - WrongRoot → 422 (Unprocessable Entity)
+    //    - AlreadyReleased → 409 (Conflict)
+    // 5. 发布 realtime event 'issue_tree_hold.released'
+    let company_id = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .map(|r| r.company_id)
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let input = pc_repos::issue_tree_hold::ReleaseHoldInput {
+        company_id,
+        root_issue_id: id,
+        hold_id,
+        reason: body.reason.as_deref(),
+        release_policy: body.release_policy.as_ref(),
+        metadata: body.metadata.as_ref(),
+        actor_type: "user",
+        actor_id: &user_id,
+        agent_id: None,
+        user_id: Some(&user_id),
+        run_id: None,
+    };
+    let released = IssueTreeHoldRepo::new(&state.db)
+        .release_hold_v2(&input)
+        .await
+        .map_err(|e| match e {
+            pc_repos::issue_tree_hold::ReleaseHoldError::NotFound => {
+                ApiError::NotFound(format!("tree hold {hold_id}"))
+            }
+            pc_repos::issue_tree_hold::ReleaseHoldError::WrongRoot => {
+                ApiError::BadRequest(format!(
+                    "hold {hold_id} does not belong to root issue {id}"
+                ))
+            }
+            pc_repos::issue_tree_hold::ReleaseHoldError::AlreadyReleased => {
+                ApiError::Conflict(format!("hold {hold_id} is already released"))
+            }
+            pc_repos::issue_tree_hold::ReleaseHoldError::Db(e) => {
+                ApiError::Internal(e.to_string())
+            }
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("issue_tree_hold.released", "issue_tree_hold", hold_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "rootIssueId": id,
+                "holdId": hold_id,
+                "reason": body.reason,
+            })),
+    );
+    Ok(Json(json!({
+        "released": true,
+        "hold": tree_hold_full_row_to_json(&released),
+    })))
+}
+
+/// Round 228: IssueTreeHoldFullRow 序列化为 camelCase JSON
+fn tree_hold_full_row_to_json(
+    r: &pc_repos::issue_tree_hold::IssueTreeHoldFullRow,
+) -> Value {
+    json!({
+        "id": r.id,
+        "companyId": r.company_id,
+        "rootIssueId": r.root_issue_id,
+        "mode": r.mode,
+        "status": r.status,
+        "reason": r.reason,
+        "releasePolicy": r.release_policy,
+        "createdByActorType": r.created_by_actor_type,
+        "createdByAgentId": r.created_by_agent_id,
+        "createdByUserId": r.created_by_user_id,
+        "createdByRunId": r.created_by_run_id,
+        "releasedAt": r.released_at,
+        "releasedByActorType": r.released_by_actor_type,
+        "releasedByAgentId": r.released_by_agent_id,
+        "releasedByUserId": r.released_by_user_id,
+        "releasedByRunId": r.released_by_run_id,
+        "releaseReason": r.release_reason,
+        "releaseMetadata": r.release_metadata,
+        "createdAt": r.created_at,
+        "updatedAt": r.updated_at,
+    })
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -4251,5 +4352,116 @@ mod round216_tests {
         assert!(obj.contains_key("assigneeAgentId"));
         assert!(obj.contains_key("projectId"));
         assert!(obj.contains_key("goalId"));
+    }
+
+    // ── R228: tree_hold_full_row 序列化 + ReleaseTreeHoldBody 解析 ──
+
+    use super::tree_hold_full_row_to_json;
+
+    #[test]
+    fn tree_hold_full_row_json_uses_camel_case_keys() {
+        use pc_repos::issue_tree_hold::IssueTreeHoldFullRow;
+        let now = pc_core::Timestamp::from_dt(chrono::Utc::now());
+        let row = IssueTreeHoldFullRow {
+            id: uuid::Uuid::nil(),
+            company_id: uuid::Uuid::nil(),
+            root_issue_id: uuid::Uuid::nil(),
+            mode: "pause".to_string(),
+            status: "active".to_string(),
+            reason: Some("test reason".to_string()),
+            release_policy: serde_json::json!({}),
+            created_by_actor_type: "user".to_string(),
+            created_by_agent_id: None,
+            created_by_user_id: Some("u-test".to_string()),
+            created_by_run_id: None,
+            released_at: None,
+            released_by_actor_type: None,
+            released_by_agent_id: None,
+            released_by_user_id: None,
+            released_by_run_id: None,
+            release_reason: None,
+            release_metadata: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let v = tree_hold_full_row_to_json(&row);
+        let obj = v.as_object().expect("object");
+        // 关键 camelCase 字段（与 Node issueTreeHolds 序列化对齐）
+        assert!(obj.contains_key("companyId"));
+        assert!(obj.contains_key("rootIssueId"));
+        assert!(obj.contains_key("releasePolicy"));
+        assert!(obj.contains_key("createdByActorType"));
+        assert!(obj.contains_key("createdByAgentId"));
+        assert!(obj.contains_key("createdByUserId"));
+        assert!(obj.contains_key("createdByRunId"));
+        assert!(obj.contains_key("releasedAt"));
+        assert!(obj.contains_key("releasedByActorType"));
+        assert!(obj.contains_key("releasedByAgentId"));
+        assert!(obj.contains_key("releasedByUserId"));
+        assert!(obj.contains_key("releasedByRunId"));
+        assert!(obj.contains_key("releaseReason"));
+        assert!(obj.contains_key("releaseMetadata"));
+        assert_eq!(obj["mode"], serde_json::json!("pause"));
+        assert_eq!(obj["status"], serde_json::json!("active"));
+    }
+
+    #[test]
+    fn tree_hold_full_row_json_released_fields() {
+        use pc_repos::issue_tree_hold::IssueTreeHoldFullRow;
+        let now = pc_core::Timestamp::from_dt(chrono::Utc::now());
+        let row = IssueTreeHoldFullRow {
+            id: uuid::Uuid::nil(),
+            company_id: uuid::Uuid::nil(),
+            root_issue_id: uuid::Uuid::nil(),
+            mode: "stop".to_string(),
+            status: "released".to_string(),
+            reason: None,
+            release_policy: serde_json::json!({"auto_resume": true}),
+            created_by_actor_type: "user".to_string(),
+            created_by_agent_id: None,
+            created_by_user_id: Some("u-creator".to_string()),
+            created_by_run_id: None,
+            released_at: Some(now),
+            released_by_actor_type: Some("user".to_string()),
+            released_by_agent_id: None,
+            released_by_user_id: Some("u-releaser".to_string()),
+            released_by_run_id: None,
+            release_reason: Some("manual release".to_string()),
+            release_metadata: Some(serde_json::json!({"ticketId": "T-123"})),
+            created_at: now,
+            updated_at: now,
+        };
+        let v = tree_hold_full_row_to_json(&row);
+        let obj = v.as_object().expect("object");
+        assert_eq!(obj["status"], serde_json::json!("released"));
+        assert_eq!(obj["releasedByActorType"], serde_json::json!("user"));
+        assert_eq!(obj["releasedByUserId"], serde_json::json!("u-releaser"));
+        assert_eq!(obj["releaseReason"], serde_json::json!("manual release"));
+        assert_eq!(obj["releaseMetadata"], serde_json::json!({"ticketId": "T-123"}));
+    }
+
+    #[test]
+    fn release_tree_hold_body_parses_minimal() {
+        use super::ReleaseTreeHoldBody;
+        let body: ReleaseTreeHoldBody = serde_json::from_value(serde_json::json!({})).expect("parse");
+        assert!(body.reason.is_none());
+        assert!(body.release_policy.is_none());
+        assert!(body.metadata.is_none());
+    }
+
+    #[test]
+    fn release_tree_hold_body_parses_full() {
+        use super::ReleaseTreeHoldBody;
+        let body: ReleaseTreeHoldBody = serde_json::from_value(serde_json::json!({
+            "reason": "manual release for testing",
+            "releasePolicy": {"auto_resume": true, "resume_after": "1h"},
+            "metadata": {"ticketId": "T-456", "operator": "u-op-001"},
+        }))
+        .expect("parse");
+        assert_eq!(body.reason.as_deref(), Some("manual release for testing"));
+        let policy = body.release_policy.as_ref().expect("policy");
+        assert_eq!(policy["auto_resume"], serde_json::json!(true));
+        let meta = body.metadata.as_ref().expect("metadata");
+        assert_eq!(meta["ticketId"], serde_json::json!("T-456"));
     }
 }

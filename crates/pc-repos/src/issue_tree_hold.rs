@@ -35,6 +35,86 @@ pub struct IssueTreeHoldRow {
     pub updated_at: Timestamp,
 }
 
+/// Round 228: 完整 issue tree hold 投影（含 release 元数据 + actor 信息）。
+///
+/// 对应 Node `issueTreeHolds.$inferSelect`：
+/// - 包含所有 release 字段（released_at, released_by_*, release_reason, release_metadata）
+/// - 包含所有 created_by 字段
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTreeHoldFullRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub root_issue_id: Uuid,
+    pub mode: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub release_policy: serde_json::Value,
+    pub created_by_actor_type: String,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_by_run_id: Option<Uuid>,
+    pub released_at: Option<Timestamp>,
+    pub released_by_actor_type: Option<String>,
+    pub released_by_agent_id: Option<Uuid>,
+    pub released_by_user_id: Option<String>,
+    pub released_by_run_id: Option<Uuid>,
+    pub release_reason: Option<String>,
+    pub release_metadata: Option<serde_json::Value>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// Round 228: release hold 输入参数。
+#[derive(Debug, Clone)]
+pub struct ReleaseHoldInput<'a> {
+    pub company_id: Uuid,
+    pub root_issue_id: Uuid,
+    pub hold_id: Uuid,
+    /// 释放原因
+    pub reason: Option<&'a str>,
+    /// 更新 release policy（可选，None 表示保留原值）
+    pub release_policy: Option<&'a serde_json::Value>,
+    /// release metadata（任意 JSON 对象）
+    pub metadata: Option<&'a serde_json::Value>,
+    /// Actor 信息
+    pub actor_type: &'a str,
+    pub actor_id: &'a str,
+    pub agent_id: Option<Uuid>,
+    pub user_id: Option<&'a str>,
+    pub run_id: Option<Uuid>,
+}
+
+/// Round 228: release hold 错误。
+#[derive(Debug)]
+pub enum ReleaseHoldError {
+    /// hold 不存在
+    NotFound,
+    /// hold 属于另一个 root
+    WrongRoot,
+    /// hold 已经 released（不可重复 release）
+    AlreadyReleased,
+    /// 数据库错误
+    Db(sqlx::Error),
+}
+
+impl std::fmt::Display for ReleaseHoldError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "issue tree hold not found"),
+            Self::WrongRoot => write!(f, "issue tree hold does not belong to the requested root issue"),
+            Self::AlreadyReleased => write!(f, "issue tree hold is already released"),
+            Self::Db(e) => write!(f, "db error: {e}"),
+        }
+    }
+}
+
+impl From<sqlx::Error> for ReleaseHoldError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Db(e)
+    }
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueTreeHoldDetailRow {
@@ -138,6 +218,73 @@ impl<'a> IssueTreeHoldRepo<'a> {
         .await?
         .rows_affected();
         Ok(n > 0)
+    }
+
+    /// Round 228: 完整 release hold 操作（与 Node `releaseHold` 对齐）。
+    ///
+    /// 业务流程：
+    /// 1. 查找现有 hold（如果不存在 → NotFound）
+    /// 2. 校验 hold.root_issue_id == input.root_issue_id（如果不匹配 → WrongRoot）
+    /// 3. 校验 hold.status != 'released'（如果已 release → AlreadyReleased）
+    /// 4. UPDATE 设置所有 release 字段 + 返回 updated row
+    ///
+    /// 释放策略可选择性更新（None 时保留原 release_policy）。
+    /// 任意 actor 信息（agent / user / run）由调用方提供。
+    pub async fn release_hold_v2(
+        &self,
+        input: &ReleaseHoldInput<'_>,
+    ) -> Result<IssueTreeHoldFullRow, ReleaseHoldError> {
+        // 1. 查找现有 hold
+        let existing: Option<IssueTreeHoldFullRow> = sqlx::query_as(
+            "SELECT id, company_id, root_issue_id, mode, status, reason, release_policy, \
+                    created_by_actor_type, created_by_agent_id, created_by_user_id, \
+                    created_by_run_id, released_at, released_by_actor_type, \
+                    released_by_agent_id, released_by_user_id, released_by_run_id, \
+                    release_reason, release_metadata, created_at, updated_at \
+             FROM issue_tree_holds \
+             WHERE id = $1 AND company_id = $2",
+        )
+        .bind(input.hold_id)
+        .bind(input.company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        let existing = existing.ok_or(ReleaseHoldError::NotFound)?;
+        // 2. 校验 root_issue_id
+        if existing.root_issue_id != input.root_issue_id {
+            return Err(ReleaseHoldError::WrongRoot);
+        }
+        // 3. 校验 status
+        if existing.status == "released" {
+            return Err(ReleaseHoldError::AlreadyReleased);
+        }
+        // 4. UPDATE 设置所有 release 字段
+        let new_release_policy = input.release_policy.unwrap_or(&existing.release_policy);
+        let updated: IssueTreeHoldFullRow = sqlx::query_as(
+            "UPDATE issue_tree_holds SET \
+                status = 'released', released_at = now(), \
+                released_by_actor_type = $2, \
+                released_by_agent_id = $3, released_by_user_id = $4, released_by_run_id = $5, \
+                release_reason = $6, release_policy = $7, release_metadata = $8, \
+                updated_at = now() \
+             WHERE id = $1 AND company_id = $9 \
+             RETURNING id, company_id, root_issue_id, mode, status, reason, release_policy, \
+                    created_by_actor_type, created_by_agent_id, created_by_user_id, \
+                    created_by_run_id, released_at, released_by_actor_type, \
+                    released_by_agent_id, released_by_user_id, released_by_run_id, \
+                    release_reason, release_metadata, created_at, updated_at",
+        )
+        .bind(input.hold_id)
+        .bind(input.actor_type)
+        .bind(input.agent_id)
+        .bind(input.user_id)
+        .bind(input.run_id)
+        .bind(input.reason)
+        .bind(new_release_policy)
+        .bind(input.metadata)
+        .bind(input.company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(updated)
     }
 
     /// 按 issue 列出 active holds（路由层 `active_hold` 预览用）。
