@@ -713,6 +713,49 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 35. 第一百一十二轮增量（Round 112 — routines.rs 收尾 0 SQL)
+
+### 目标
+Round 111 留 3 个内联 SQL：create_revision pointer update + rotate_trigger_secret SELECT/UPDATE。
+Round 112 把它们全部仓储化，routines.rs 实现 **0 SQL inline**（从 17 → 0 SQL）。
+
+### 新增 `pc_repos::routine::RoutineRepo` 方法（3 个）
+- `update_revision_pointer(routine_id, latest_revision_id, latest_revision_number, title, description) -> u64`
+  - 整体覆盖 UPDATE routines SET latest_revision_id / latest_revision_number / title / description
+  - 创建 revision 后调用，更新 routine 指针
+- `get_trigger_for_rotation(trigger_id) -> Option<TriggerRotationInfo>`
+  - 查 trigger 拿 (company_id, routine_id, existing_secret_ref)
+  - 用于 secret rotation 前的状态读取
+- `set_trigger_secret_ref(trigger_id, secret_ref, reason) -> u64`
+  - 整体覆盖 UPDATE routine_triggers SET secret_ref + metadata 合并 rotatedAt/rotateReason
+
+### 新增 DTO
+- `TriggerRotationInfo { company_id, routine_id, existing_secret_ref }` — rotation 上下文
+
+### 重构 `routines.rs` 2 个端点
+- `create_revision` — `RoutineRepo::update_revision_pointer`
+- `rotate_trigger_secret_route` — `RoutineRepo::get_trigger_for_rotation + set_trigger_secret_ref`
+
+### 新增集成测试 8 个 (`crates/pc-repos/tests/round112_routine_pointer_trigger_repo.rs`)
+1. `update_revision_pointer_writes_fields` — 写全部 5 字段并 verify
+2. `update_revision_pointer_description_none` — description=None 写 NULL
+3. `update_revision_pointer_missing_returns_zero` — 未知 routine 返 0
+4. `get_trigger_for_rotation_round_trip` — 找到/找不到 + secret_ref 回填
+5. `get_trigger_for_rotation_null_secret` — secret_ref 为 None 不报错
+6. `set_trigger_secret_ref_writes_and_metadata` — 写 secret_ref + metadata 合并 rotatedAt/rotateReason
+7. `set_trigger_secret_ref_no_reason` — reason=None 不报错
+8. `set_trigger_secret_ref_missing_returns_zero` — 未知 trigger 返 0
+
+### 进度影响
+- 综合进度从 **≈ 90.4% → ≈ 91.0%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round112_*` 编译通过
+- 12 个 pc-repos 集成测试文件累计 60+8=68 test 函数
+- **routines.rs SQL 数 17 → 0**（完全清空 inline SQL）
+- 累计 Round 95-112 修复 **64+2=66 个路由从 500 → 200**
+- routines.rs 模块完成度 100%（无内联 SQL 残留）
+
 ## 34. 第一百一十一轮增量（Round 111 — routines.rs 描述批注子模块仓储化)
 
 ### 目标

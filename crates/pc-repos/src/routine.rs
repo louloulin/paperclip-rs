@@ -2582,6 +2582,76 @@ impl<'a> RoutineRepo<'a> {
         .await?;
         Ok(row.map(|(d,)| d))
     }
+
+    // ---- Round 112: routines.rs 收尾 ----
+
+    /// Round 112: 创建 revision 后更新 routine 指针 + 同步 title/description。
+    /// 返回受影响行数 (0 = 找不到 routine)。
+    pub async fn update_revision_pointer(
+        &self,
+        routine_id: Uuid,
+        latest_revision_id: Uuid,
+        latest_revision_number: i32,
+        title: &str,
+        description: Option<&str>,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE routines SET latest_revision_id = $1, latest_revision_number = $2,                 title = $3, description = $4, updated_at = now() WHERE id = $5",
+        )
+        .bind(latest_revision_id)
+        .bind(latest_revision_number)
+        .bind(title)
+        .bind(description)
+        .bind(routine_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Round 112: 查 trigger 用于 secret rotation（取 company_id/routine_id/secret_ref）。
+    pub async fn get_trigger_for_rotation(
+        &self,
+        trigger_id: Uuid,
+    ) -> sqlx::Result<Option<TriggerRotationInfo>> {
+        let row: Option<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
+            "SELECT company_id, routine_id, secret_ref FROM routine_triggers WHERE id = $1",
+        )
+        .bind(trigger_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c, r, s)| TriggerRotationInfo {
+            company_id: c,
+            routine_id: r,
+            existing_secret_ref: s,
+        }))
+    }
+
+    /// Round 112: 更新 trigger secret_ref + 写 metadata 记录 rotation。
+    /// 返回受影响行数 (0 = 找不到 trigger)。
+    pub async fn set_trigger_secret_ref(
+        &self,
+        trigger_id: Uuid,
+        secret_ref: &str,
+        reason: Option<&str>,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE routine_triggers SET secret_ref = $1,                 metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('rotatedAt', to_jsonb(now()), 'rotateReason', to_jsonb($2::text)),                 updated_at = now() WHERE id = $3",
+        )
+        .bind(secret_ref)
+        .bind(reason.unwrap_or(""))
+        .bind(trigger_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+}
+
+/// Round 112: trigger secret rotation 信息。
+#[derive(Debug, Clone)]
+pub struct TriggerRotationInfo {
+    pub company_id: Uuid,
+    pub routine_id: Uuid,
+    pub existing_secret_ref: Option<String>,
 }
 
 fn hex_digest(bytes: &[u8]) -> String {

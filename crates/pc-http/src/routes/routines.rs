@@ -457,6 +457,7 @@ struct CreateRevisionBody {
     created_by_user_id: Option<String>,
 }
 
+// Round 112: 仓储化。RoutineRepo::update_revision_pointer。
 async fn create_revision(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -479,19 +480,18 @@ async fn create_revision(
             body.created_by_user_id.as_deref(),
         )
         .await?;
-    // 更新 routine 指针
-    let s = format!(
-        "UPDATE routines SET latest_revision_id = $1, latest_revision_number = $2, \
-            title = $3, description = $4, updated_at = now() WHERE id = $5"
-    );
-    sqlx::query(&s)
-        .bind(row.id)
-        .bind(row.revision_number)
-        .bind(&row.title)
-        .bind(row.description.as_deref())
-        .bind(id)
-        .execute(state.db.pool())
+    let n = RoutineRepo::new(&state.db)
+        .update_revision_pointer(
+            id,
+            row.id,
+            row.revision_number,
+            &row.title,
+            row.description.as_deref(),
+        )
         .await?;
+    if n == 0 {
+        return Err(ApiError::NotFound(format!("routine {id}")));
+    }
     state.realtime.publish(LiveEvent::new(
         "routine.revision.created",
         "routine_revision",
@@ -1377,17 +1377,14 @@ async fn rotate_trigger_secret_route(
     Path(trigger_id): Path<Uuid>,
     Json(body): Json<RotateTriggerSecretBody>,
 ) -> ApiResult<Json<Value>> {
-    // Get current trigger to read existing secret_ref
-    let row: Option<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
-        "SELECT company_id, routine_id, secret_ref FROM routine_triggers WHERE id = $1",
-    )
-    .bind(trigger_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (company_id, _routine_id, _existing_ref) = row
+    // Round 112: 仓储化。RoutineRepo::get_trigger_for_rotation。
+    let repo = RoutineRepo::new(&state.db);
+    let info = repo
+        .get_trigger_for_rotation(trigger_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("routine trigger {trigger_id}")))?;
+    let company_id = info.company_id;
+    let _routine_id = info.routine_id;
     // Generate a new secret via the secrets provider if available; otherwise use a local UUID
     let provider = LocalEncryptedProvider::load()
         .map_err(|error| ApiError::Internal(format!("load secrets provider: {error}")))?;
@@ -1402,17 +1399,13 @@ async fn rotate_trigger_secret_route(
         Ok(prepared) => prepared.external_ref.unwrap_or_else(|| format!("local://rotated/{}", Uuid::new_v4().simple())),
         Err(_) => format!("local://rotated/{}", Uuid::new_v4().simple()),
     };
-    sqlx::query(
-        "UPDATE routine_triggers SET secret_ref = $1, \
-            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('rotatedAt', to_jsonb(now()), 'rotateReason', to_jsonb($2::text)), \
-            updated_at = now() \
-         WHERE id = $3",
-    )
-    .bind(&secret_ref)
-    .bind(body.reason.clone().unwrap_or_default())
-    .bind(trigger_id)
-    .execute(state.db.pool())
-    .await?;
+    // Round 112: 仓储化。RoutineRepo::set_trigger_secret_ref。
+    let n = repo
+        .set_trigger_secret_ref(trigger_id, &secret_ref, body.reason.as_deref())
+        .await?;
+    if n == 0 {
+        return Err(ApiError::NotFound(format!("routine trigger {trigger_id}")));
+    }
     state.realtime.publish(
         LiveEvent::new("routine_trigger.secret_rotated", "routine_trigger", trigger_id)
             .with_company(company_id)
