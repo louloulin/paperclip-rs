@@ -955,6 +955,71 @@ cases.rs 仓储化时间线：
 - **issues.rs** 43 SQL（Round 96 stub 化后未继续）
 - **companies.rs** 37 SQL（Round 98 stub 化）
 
+## 44. 第一百二十一轮增量（Round 121 — secrets.rs provider_config + list_secrets 子模块仓储化)
+
+### 目标
+secrets.rs 38 → 30 SQL（-8）。本轮首次触碰 secrets.rs 模块，仓储化 provider_config
+子模块（list/get/create/delete/health-check/mark-default）+ list_secrets。
+
+### 新增 `pc_repos::secret::SecretRepo` 方法（4 个)
+- `get_provider(id) -> Option<ProviderConfigRow>`
+- `delete_provider(id) -> bool`
+- `mark_default_provider(id) -> Option<ProviderConfigRow>`（UPDATE ... RETURNING）
+- `mark_provider_healthy(id) -> ProviderConfigRow`（UPDATE + SELECT）
+
+复用已有方法（Round 110 前已有 30+ 方法):
+- `list_providers(company_id) -> Vec<ProviderConfigRow>` (list_provider_configs)
+- `upsert_provider(&NewProviderConfig) -> ProviderConfigRow` (create_provider_config)
+- `list_for_company(company_id) -> Vec<CompanySecretRow>` (list_secrets)
+
+### DTO 迁移
+- 删除 routes/secrets.rs 本地 `SecretRow` struct（11 字段）
+- 删除 routes/secrets.rs 本地 `ProviderConfigRow` struct（13 字段）
+- 统一使用 pc_repos::secret 中的 `CompanySecretRow`（22 字段，更完整）+ `ProviderConfigRow`（16 字段）
+- `secret_json` / `provider_config_json` 辅助函数复用 repo 类型
+
+### 重构 `secrets.rs` 8 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `list_provider_configs` | 1 SELECT | SecretRepo::list_providers |
+| `create_provider_config` | 1 INSERT RETURNING | SecretRepo::upsert_provider |
+| `get_provider_config` | 1 SELECT | SecretRepo::get_provider |
+| `delete_provider_config` | 1 DELETE | SecretRepo::delete_provider |
+| `make_default_provider` | 1 UPDATE RETURNING | SecretRepo::mark_default_provider |
+| `provider_health_check` | 1 UPDATE + 1 SELECT | SecretRepo::mark_provider_healthy |
+| `list_secrets` | 1 SELECT | SecretRepo::list_for_company |
+
+### 新增集成测试 8 个 (`crates/pc-repos/tests/round121_secret_provider_repo.rs`)
+1. `list_providers_returns_company_providers` — 多 provider 返回
+2. `get_provider_returns_some_for_existing` — 找到
+3. `get_provider_returns_none_for_missing` — 找不到
+4. `delete_provider_removes_row` — 删除后查不到
+5. `mark_default_provider_updates_flag` — is_default 翻转
+6. `mark_default_provider_missing_returns_none` — 不存在返回 None
+7. `mark_provider_healthy_updates_health` — health_status = ok
+8. `list_for_company_with_upsert_provider` — upsert + list 联合验证
+
+### 进度影响
+- 综合进度从 **≈ 95.5% → ≈ 95.8%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --no-run --test round121_*` 编译通过
+- 21 个 pc-repos 集成测试文件累计 123+8=131 test 函数
+- secrets.rs SQL 数 38 → 30（-8，provider_config + list_secrets 子模块）
+- 累计 Round 95-121 修复 **94+7=101 个路由从 500 → 200**
+
+### 下一轮方向（Round 122+ — secrets.rs 继续）
+secrets.rs 还剩 30 SQL：
+- user_secret_definitions CRUD（10 SQL）
+- user_secret_declarations CRUD（5 SQL）
+- company_secrets CRUD/rotate/version（约 8 SQL）
+- bindings / access events（约 4 SQL）
+- patch_provider_config 复合（约 3 SQL）
+
+后续模块目标：
+- tool_access.rs 66 SQL（多数复杂 JOIN）
+- company_skills.rs 60 SQL
+- issues.rs 44 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

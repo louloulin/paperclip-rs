@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-
+use pc_repos::secret::{CompanySecretRow, NewProviderConfig, ProviderConfigRow, SecretRepo};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, serde::Serialize)]
@@ -195,22 +195,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/secrets/:id/access-events", get(secret_access_events))
 }
 
-#[derive(Debug, FromRow)]
-struct SecretRow {
-    id: Uuid,
-    company_id: Uuid,
-    name: String,
-    key: String,
-    provider: String,
-    status: String,
-    scope: String,
-    description: Option<String>,
-    latest_version: i32,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
-
-fn secret_json(row: &SecretRow) -> Value {
+fn secret_json(row: &CompanySecretRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -224,23 +209,6 @@ fn secret_json(row: &SecretRow) -> Value {
         "createdAt": row.created_at,
         "updatedAt": row.updated_at,
     })
-}
-
-#[derive(Debug, FromRow)]
-struct ProviderConfigRow {
-    id: Uuid,
-    company_id: Uuid,
-    provider: String,
-    display_name: String,
-    status: String,
-    is_default: bool,
-    config: Value,
-    health_status: Option<String>,
-    health_checked_at: Option<pc_core::Timestamp>,
-    health_message: Option<String>,
-    disabled_at: Option<pc_core::Timestamp>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
 }
 
 fn provider_config_json(row: &ProviderConfigRow) -> Value {
@@ -318,14 +286,9 @@ async fn list_provider_configs(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<ProviderConfigRow> = sqlx::query_as(
-        "SELECT id, company_id, provider, display_name, status, is_default, config, \
-                health_status, health_checked_at, health_message, disabled_at, created_at, updated_at \
-         FROM company_secret_provider_configs WHERE company_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = SecretRepo::new(&state.db)
+        .list_providers(company_id)
+        .await?;
     let items: Vec<Value> = rows.iter().map(provider_config_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -355,20 +318,17 @@ async fn create_provider_config(
         .unwrap_or_else(|| provider.clone());
     let config = body.config.clone().unwrap_or(json!({}));
     let user_id = require_user_id(&state, &headers).await?;
-    let row: ProviderConfigRow = sqlx::query_as(
-        "INSERT INTO company_secret_provider_configs \
-            (company_id, provider, display_name, config, created_by_user_id) \
-         VALUES ($1, $2, $3, $4, $5) \
-         RETURNING id, company_id, provider, display_name, status, is_default, config, \
-                   health_status, health_checked_at, health_message, disabled_at, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(&provider)
-    .bind(&display_name)
-    .bind(&config)
-    .bind(&user_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let input = NewProviderConfig {
+        company_id,
+        provider,
+        display_name,
+        status: "active".to_owned(),
+        is_default: false,
+        config,
+        created_by_agent_id: None,
+        created_by_user_id: Some(user_id.clone()),
+    };
+    let row = SecretRepo::new(&state.db).upsert_provider(&input).await?;
     Ok((StatusCode::CREATED, Json(provider_config_json(&row))))
 }
 
@@ -384,28 +344,18 @@ async fn get_provider_config(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<ProviderConfigRow> = sqlx::query_as(
-        "SELECT id, company_id, provider, display_name, status, is_default, config, \
-                health_status, health_checked_at, health_message, disabled_at, created_at, updated_at \
-         FROM company_secret_provider_configs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok(Json(provider_config_json(&row))),
-        None => Err(ApiError::NotFound(format!("provider config {id}"))),
-    }
+    let row = SecretRepo::new(&state.db)
+        .get_provider(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("provider config {id}")))?;
+    Ok(Json(provider_config_json(&row)))
 }
 
 async fn delete_provider_config(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query("DELETE FROM company_secret_provider_configs WHERE id = $1")
-        .bind(id)
-        .execute(state.db.pool())
-        .await?;
+    SecretRepo::new(&state.db).delete_provider(id).await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
 
@@ -414,40 +364,18 @@ async fn make_default_provider(
     Path(id): Path<Uuid>,
     Json(_body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let row: Option<ProviderConfigRow> = sqlx::query_as(
-        "UPDATE company_secret_provider_configs SET is_default = true, updated_at = now() \
-         WHERE id = $1 \
-         RETURNING id, company_id, provider, display_name, status, is_default, config, \
-                   health_status, health_checked_at, health_message, disabled_at, created_at, updated_at",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok((StatusCode::OK, Json(provider_config_json(&row)))),
-        None => Err(ApiError::NotFound(format!("provider config {id}"))),
-    }
+    let row = SecretRepo::new(&state.db)
+        .mark_default_provider(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("provider config {id}")))?;
+    Ok((StatusCode::OK, Json(provider_config_json(&row))))
 }
 
 async fn provider_health_check(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query(
-        "UPDATE company_secret_provider_configs SET health_status = 'ok', health_checked_at = now(), \
-                health_message = NULL, updated_at = now() WHERE id = $1",
-    )
-    .bind(id)
-    .execute(state.db.pool())
-    .await?;
-    let row: ProviderConfigRow = sqlx::query_as(
-        "SELECT id, company_id, provider, display_name, status, is_default, config, \
-                health_status, health_checked_at, health_message, disabled_at, created_at, updated_at \
-         FROM company_secret_provider_configs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = SecretRepo::new(&state.db).mark_provider_healthy(id).await?;
     Ok((StatusCode::OK, Json(provider_config_json(&row))))
 }
 
@@ -455,14 +383,9 @@ async fn list_secrets(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<SecretRow> = sqlx::query_as(
-        "SELECT id, company_id, name, key, provider, status, scope, description, latest_version, \
-                created_at, updated_at \
-         FROM company_secrets WHERE company_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 200",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = SecretRepo::new(&state.db)
+        .list_for_company(company_id)
+        .await?;
     let items: Vec<Value> = rows.iter().map(secret_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -695,7 +618,7 @@ async fn update_secret(
         .await?;
     }
     // Re-fetch
-    let row: Option<SecretRow> = sqlx::query_as(
+    let row: Option<CompanySecretRow> = sqlx::query_as(
         "SELECT id, company_id, name, key, provider, status, scope, description, latest_version,          created_at, updated_at FROM company_secrets WHERE id = $1",
     )
     .bind(secret_id)
@@ -759,7 +682,7 @@ async fn rotate_secret(
         .await?;
 
     // Re-fetch
-    let row: Option<SecretRow> = sqlx::query_as(
+    let row: Option<CompanySecretRow> = sqlx::query_as(
         "SELECT id, company_id, name, key, provider, status, scope, description, latest_version,          created_at, updated_at FROM company_secrets WHERE id = $1",
     )
     .bind(secret_id)

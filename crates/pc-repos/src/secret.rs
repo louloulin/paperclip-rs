@@ -826,6 +826,63 @@ impl<'a> SecretRepo<'a> {
         Ok(())
     }
 
+    /// Round 121: 按 id 查 provider 配置。
+    pub async fn get_provider(&self, id: Uuid) -> RepoResult<Option<ProviderConfigRow>> {
+        let sql = format!(
+            "SELECT {PROVIDER_COLS} FROM company_secret_provider_configs WHERE id=$1"
+        );
+        Ok(sqlx::query_as::<_, ProviderConfigRow>(&sql)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// Round 121: 硬删除 provider 配置（按 id）。
+    pub async fn delete_provider(&self, id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM company_secret_provider_configs WHERE id=$1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 121: 标记 provider 为 default（UPDATE ... RETURNING）。
+    pub async fn mark_default_provider(
+        &self,
+        id: Uuid,
+    ) -> RepoResult<Option<ProviderConfigRow>> {
+        let sql = format!(
+            "UPDATE company_secret_provider_configs SET is_default=true, updated_at=now() \
+             WHERE id=$1 RETURNING {PROVIDER_COLS}"
+        );
+        Ok(sqlx::query_as::<_, ProviderConfigRow>(&sql)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// Round 121: 标记 provider 健康检查 ok（UPDATE + 重新 SELECT）。
+    pub async fn mark_provider_healthy(
+        &self,
+        id: Uuid,
+    ) -> RepoResult<ProviderConfigRow> {
+        sqlx::query(
+            "UPDATE company_secret_provider_configs SET health_status='ok', health_checked_at=now(), \
+                    health_message=NULL, updated_at=now() WHERE id=$1",
+        )
+        .bind(id)
+        .execute(self.db.pool())
+        .await?;
+        let sql = format!(
+            "SELECT {PROVIDER_COLS} FROM company_secret_provider_configs WHERE id=$1"
+        );
+        Ok(sqlx::query_as::<_, ProviderConfigRow>(&sql)
+            .bind(id)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
     pub async fn disable_provider(&self, id: Uuid) -> RepoResult<()> {
         sqlx::query(
             "UPDATE company_secret_provider_configs \
