@@ -773,17 +773,18 @@ async fn get_pipeline_health(
     State(state): State<AppState>,
     Path(pipeline_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let total: Option<i64> = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pipeline_cases WHERE pipeline_id=$1",
-    ).bind(pipeline_id).fetch_optional(state.db.pool()).await?
-        .and_then(|v: Option<i64>| v);
-    let by_status: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, COUNT(*) FROM pipeline_cases WHERE pipeline_id=$1 GROUP BY status",
-    ).bind(pipeline_id).fetch_all(state.db.pool()).await
-    .unwrap_or_default();
+    let repo = PipelineRepo::new(&state.db);
+    let total = repo
+        .count_cases_by_pipeline(pipeline_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let by_status = repo
+        .count_cases_by_pipeline_grouped(pipeline_id)
+        .await
+        .unwrap_or_default();
     Ok(Json(serde_json::json!({
         "pipelineId": pipeline_id,
-        "totalCases": total.unwrap_or(0),
+        "totalCases": total,
         "byStatus": by_status.into_iter().map(|(s, n)| serde_json::json!({"status": s, "count": n})).collect::<Vec<_>>(),
         "healthy": true,
     })))
@@ -793,10 +794,11 @@ async fn get_intake_form(
     State(state): State<AppState>,
     Path(pipeline_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(serde_json::Value,)> = sqlx::query_as(
-        "SELECT config FROM pipelines WHERE id=$1",
-    ).bind(pipeline_id).fetch_optional(state.db.pool()).await?;
-    let config = row.map(|(v,)| v).unwrap_or_else(|| serde_json::json!({}));
+    let config = PipelineRepo::new(&state.db)
+        .get_pipeline_config(pipeline_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .unwrap_or_else(|| serde_json::json!({}));
     let form = config.get("intakeForm").cloned().unwrap_or_else(|| serde_json::json!({}));
     Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "form": form})))
 }
@@ -812,17 +814,23 @@ async fn replace_transitions(
     Json(body): Json<ReplaceTransitionsBody>,
 ) -> ApiResult<Json<Value>> {
     let count = body.transitions.len();
-    sqlx::query("DELETE FROM pipeline_transitions WHERE pipeline_id=$1")
-        .bind(pipeline_id).execute(state.db.pool()).await?;
-    for tr in body.transitions {
-        let from = tr.get("fromStageKey").and_then(|v| v.as_str()).unwrap_or("");
-        let to = tr.get("toStageKey").and_then(|v| v.as_str()).unwrap_or("");
-        if from.is_empty() || to.is_empty() { continue; }
-        sqlx::query(
-            "INSERT INTO pipeline_transitions (id, company_id, pipeline_id, from_stage_key, to_stage_key)
-             SELECT gen_random_uuid(), company_id, $1, $2, $3 FROM pipelines WHERE id=$1",
-        ).bind(pipeline_id).bind(from).bind(to).execute(state.db.pool()).await.ok();
-    }
+    let transitions: Vec<(String, String)> = body
+        .transitions
+        .iter()
+        .filter_map(|tr| {
+            let from = tr.get("fromStageKey").and_then(|v| v.as_str()).unwrap_or("");
+            let to = tr.get("toStageKey").and_then(|v| v.as_str()).unwrap_or("");
+            if from.is_empty() || to.is_empty() {
+                None
+            } else {
+                Some((from.to_string(), to.to_string()))
+            }
+        })
+        .collect();
+    let count = PipelineRepo::new(&state.db)
+        .replace_transitions(pipeline_id, &transitions)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
         LiveEvent::new("pipeline.transitions_replaced", "pipeline", pipeline_id)
             .with_data(serde_json::json!({"count": count})),
@@ -855,27 +863,10 @@ async fn list_pipelines_attention_route(
 ) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
     // Pipelines that have at least one case needing review (status = in_review).
-    let rows: Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT p.id, p.name, p.description, \
-                count(case_review.id) FILTER (WHERE case_review.status='in_review') AS review_count, \
-                count(case_all.id) AS total_count, \
-                p.updated_at \
-         FROM pipelines p \
-         LEFT JOIN pipeline_cases pc ON pc.pipeline_id=p.id \
-         LEFT JOIN cases case_all ON case_all.id=pc.case_id \
-         LEFT JOIN cases case_review ON case_review.id=pc.case_id AND case_review.status='in_review' \
-         WHERE p.company_id=$1 \
-         GROUP BY p.id, p.name, p.description, p.updated_at \
-         HAVING count(case_review.id) > 0 OR count(case_all.id) = 0 \
-         ORDER BY review_count DESC, p.updated_at DESC \
-         LIMIT $2",
-    )
-    .bind(company_id)
-    .bind(limit)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
+    let rows = PipelineRepo::new(&state.db)
+        .list_attention_pipelines(company_id, limit)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;    let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, name, description, review_count, total_count, updated_at)| {
             json!({
@@ -949,17 +940,14 @@ async fn bulk_review_cases_route(
             .await;
         match updated {
             Ok(Some(row)) => {
-                let _ = sqlx::query(
-                    "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-                     VALUES ($1, $2, 'status_changed', 'user', jsonb_build_object('decision',$3::text,'note',$4::text,'source','bulk'))",
-                )
-                .bind(company_id)
-                .bind(item.case_id)
-                .bind(&item.decision)
-                .bind(item.note.as_deref().unwrap_or(""))
-                .execute(state.db.pool())
-                .await;
-                results.push(json!({
+                let _ = PipelineRepo::new(&state.db)
+                    .insert_status_changed_event(
+                        company_id,
+                        item.case_id,
+                        &item.decision,
+                        item.note.as_deref().unwrap_or(""),
+                    )
+                    .await;                results.push(json!({
                     "caseId": item.case_id,
                     "ok": true,
                     "newStatus": new_status,
@@ -1026,13 +1014,10 @@ async fn case_automation_retry_plan(
     let user_id = crate::require_user_id(&state, &axum::http::HeaderMap::new()).await
         .unwrap_or_else(|_| "anonymous".to_string());
 
-    let row: Option<(Uuid, Uuid, Uuid, i32, Option<Value>)> = sqlx::query_as(
-        "SELECT c.company_id, c.pipeline_id, c.stage_id, c.version, c.pending_suggestion          FROM pipeline_cases c WHERE c.id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = PipelineRepo::new(&state.db)
+        .get_case_retry_plan(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let (company_id, pipeline_id, stage_id, version, pending_suggestion) =
         row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
@@ -1040,17 +1025,14 @@ async fn case_automation_retry_plan(
     let _ = user_id;
     let _ = company_id;
 
-    let stage_row: Option<(Uuid, String, String, String, Value)> = sqlx::query_as(
-        "SELECT s.id, s.key, s.name, s.kind, s.config          FROM pipeline_stages s WHERE s.id = $1",
-    )
-    .bind(stage_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let stage_row = PipelineRepo::new(&state.db)
+        .get_stage(stage_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let stage_meta = match stage_row {
-        Some((id, key, name, kind, config)) => json!({
-            "id": id, "key": key, "name": name, "kind": kind, "config": config,
+        Some(s) => json!({
+            "id": s.id, "key": s.key, "name": s.name, "kind": s.kind, "config": s.config,
         }),
         None => Value::Null,
     };
@@ -1090,39 +1072,33 @@ async fn case_automation_retry(
     Path(case_id): Path<Uuid>,
     Json(_body): Json<AutomationRetryBody>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
-        "SELECT company_id, pipeline_id, version FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let repo = PipelineRepo::new(&state.db);
+    let row = repo
+        .get_case_triple(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let (company_id, pipeline_id, version) =
         row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
 
     // Increment version so optimistic concurrency tokens advance.
-    let new_version: i32 = sqlx::query_scalar(
-        "UPDATE pipeline_cases SET version = version + 1, updated_at = now()          WHERE id = $1 RETURNING version",
-    )
-    .bind(case_id)
-    .fetch_one(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let new_version = repo
+        .increment_case_version(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let _ = sqlx::query(
-        "INSERT INTO pipeline_case_events (company_id, case_id, kind, actor_type, payload)          VALUES ($1, $2, 'fields_changed', 'system', $3::jsonb)",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(json!({
-        "action": "automation_retry_requested",
-        "fromVersion": version,
-        "toVersion": new_version,
-    }))
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = repo
+        .insert_fields_changed_event(
+            company_id,
+            case_id,
+            &json!({
+                "action": "automation_retry_requested",
+                "fromVersion": version,
+                "toVersion": new_version,
+            }),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     state.realtime.publish(
         pc_realtime::LiveEvent::new("case.automation.retry_requested", "case", case_id)
@@ -1149,15 +1125,11 @@ async fn case_automation_specific_retry(
     State(state): State<AppState>,
     Path((case_id, automation_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let company_id = PipelineRepo::new(&state.db)
+        .get_case_company_id(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
 
     state.realtime.publish(
         pc_realtime::LiveEvent::new("case.automation.specific_retry", "case", case_id)
@@ -1182,13 +1154,10 @@ async fn case_automation_current_stage_rerun(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
-        "SELECT company_id, stage_id, version FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = PipelineRepo::new(&state.db)
+        .get_case_stage_version(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let (company_id, stage_id, version) =
         row.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;

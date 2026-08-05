@@ -762,4 +762,217 @@ impl<'a> PipelineRepo<'a> {
         Ok(row.map(|(c,)| c))
     }
 
+    // ============================================================================
+    // Round 157: pipelines.rs 健康检查 + intake_form + replace_transitions + attention + automation
+    // ============================================================================
+
+    /// Round 157: 统计某 pipeline 的 case 总数。
+    pub async fn count_cases_by_pipeline(
+        &self,
+        pipeline_id: Uuid,
+    ) -> sqlx::Result<i64> {
+        let v: Option<i64> = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pipeline_cases WHERE pipeline_id = $1",
+        )
+        .bind(pipeline_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(v.unwrap_or(0))
+    }
+
+    /// Round 157: 按状态统计某 pipeline 的 case 数量。
+    pub async fn count_cases_by_pipeline_grouped(
+        &self,
+        pipeline_id: Uuid,
+    ) -> sqlx::Result<Vec<(String, i64)>> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT status, COUNT(*) FROM pipeline_cases WHERE pipeline_id = $1 GROUP BY status",
+        )
+        .bind(pipeline_id)
+        .fetch_all(self.db.pool())
+        .await
+        .unwrap_or_default();
+        Ok(rows)
+    }
+
+    /// Round 157: 取 pipeline 的 config jsonb（intake_form 用）。
+    pub async fn get_pipeline_config(
+        &self,
+        pipeline_id: Uuid,
+    ) -> sqlx::Result<Option<serde_json::Value>> {
+        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+            "SELECT config FROM pipelines WHERE id = $1",
+        )
+        .bind(pipeline_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// Round 157: 事务化替换 pipeline transitions（DELETE all + INSERT new）。
+    pub async fn replace_transitions(
+        &self,
+        pipeline_id: Uuid,
+        transitions: &[(String, String)],
+    ) -> sqlx::Result<u64> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("DELETE FROM pipeline_transitions WHERE pipeline_id = $1")
+            .bind(pipeline_id)
+            .execute(&mut *tx)
+            .await?;
+        for (from, to) in transitions {
+            sqlx::query(
+                "INSERT INTO pipeline_transitions (id, company_id, pipeline_id, from_stage_key, to_stage_key)
+                 SELECT gen_random_uuid(), company_id, $1, $2, $3 FROM pipelines WHERE id = $1",
+            )
+            .bind(pipeline_id)
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(transitions.len() as u64)
+    }
+
+    /// Round 157: 列出某公司需要关注的 pipelines（LEFT JOIN 统计 review 数）。
+    pub async fn list_attention_pipelines(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)>> {
+        let rows: Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT p.id, p.name, p.description, \
+                    count(case_review.id) FILTER (WHERE case_review.status = 'in_review') AS review_count, \
+                    count(case_all.id) AS total_count, \
+                    p.updated_at \
+             FROM pipelines p \
+             LEFT JOIN pipeline_cases pc ON pc.pipeline_id = p.id \
+             LEFT JOIN cases case_all ON case_all.id = pc.case_id \
+             LEFT JOIN cases case_review ON case_review.id = pc.case_id AND case_review.status = 'in_review' \
+             WHERE p.company_id = $1 \
+             GROUP BY p.id, p.name, p.description, p.updated_at \
+             HAVING count(case_review.id) > 0 OR count(case_all.id) = 0 \
+             ORDER BY review_count DESC, p.updated_at DESC \
+             LIMIT $2",
+        )
+        .bind(company_id)
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 157: 插入一条 case_event（bulk_review 用，status_changed）。
+    pub async fn insert_status_changed_event(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        decision: &str,
+        note: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
+             VALUES ($1, $2, 'status_changed', 'user', \
+                     jsonb_build_object('decision', $3::text, 'note', $4::text, 'source', 'bulk'))",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(decision)
+        .bind(note)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Round 157: 取 case 的 (company_id, pipeline_id, stage_id, version, pending_suggestion)。
+    pub async fn get_case_retry_plan(
+        &self,
+        case_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Uuid, Uuid, i32, Option<serde_json::Value>)>> {
+        let row: Option<(Uuid, Uuid, Uuid, i32, Option<serde_json::Value>)> = sqlx::query_as(
+            "SELECT c.company_id, c.pipeline_id, c.stage_id, c.version, c.pending_suggestion \
+             FROM pipeline_cases c WHERE c.id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 157: 取 case 的 (company_id, pipeline_id, version)。
+    pub async fn get_case_triple(
+        &self,
+        case_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Uuid, i32)>> {
+        let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
+            "SELECT company_id, pipeline_id, version FROM pipeline_cases WHERE id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 157: 自增 case version 并返回新值。
+    pub async fn increment_case_version(
+        &self,
+        case_id: Uuid,
+    ) -> sqlx::Result<i32> {
+        let v: i32 = sqlx::query_scalar(
+            "UPDATE pipeline_cases SET version = version + 1, updated_at = now() \
+             WHERE id = $1 RETURNING version",
+        )
+        .bind(case_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v)
+    }
+
+    /// Round 157: 插入 case_event (fields_changed, system)。
+    pub async fn insert_fields_changed_event(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        payload: &serde_json::Value,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO pipeline_case_events (company_id, case_id, kind, actor_type, payload) \
+             VALUES ($1, $2, 'fields_changed', 'system', $3::jsonb)",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(payload)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Round 157: 取 case 的 company_id。
+    pub async fn get_case_company_id(
+        &self,
+        case_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM pipeline_cases WHERE id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 157: 取 case 的 (company_id, stage_id, version)。
+    pub async fn get_case_stage_version(
+        &self,
+        case_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Uuid, i32)>> {
+        let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
+            "SELECT company_id, stage_id, version FROM pipeline_cases WHERE id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
