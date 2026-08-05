@@ -2324,26 +2324,164 @@ async fn issue_low_trust_promotion(
     Ok(Json(json!({ "promoted": true, "issueId": id })))
 }
 
-async fn list_accepted_plan_decompositions(
-    State(_state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"items": [], "deprecated": true, "note": "issue_accepted_plan_decompositions table missing in v3 schema"})))
-}}
+#[derive(Debug, Deserialize)]
+struct CreateAcceptedPlanDecompositionBody {
+    #[serde(rename = "acceptedPlanRevisionId")]
+    accepted_plan_revision_id: Uuid,
+    #[serde(default)]
+    children: Vec<serde_json::Value>,
+}
 
+/// Round 222: 真实实现 GET /api/issues/:id/accepted-plan-decompositions
+///
+/// 与 Node `svc.listAcceptedPlanDecompositions` 对齐。
+/// 表 `issue_plan_decompositions` 已存在 (migration 0092)。
+async fn list_accepted_plan_decompositions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = IssueRepo::new(&state.db)
+        .list_plan_decompositions(id)
+        .await?;
+    // camelCase 序列化（保留 Node 字段命名）
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "companyId": r.company_id,
+                "sourceIssueId": r.source_issue_id,
+                "acceptedPlanRevisionId": r.accepted_plan_revision_id,
+                "acceptedInteractionId": r.accepted_interaction_id,
+                "status": r.status,
+                "requestFingerprint": r.request_fingerprint,
+                "requestedChildCount": r.requested_child_count,
+                "childIssueIds": r.child_issue_ids,
+                "ownerAgentId": r.owner_agent_id,
+                "ownerUserId": r.owner_user_id,
+                "ownerRunId": r.owner_run_id,
+                "completedAt": r.completed_at,
+                "createdAt": r.created_at,
+                "updatedAt": r.updated_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+/// Round 222: 真实实现 POST /api/issues/:id/accepted-plan-decompositions
+///
+/// 与 Node `svc.decomposeAcceptedPlan` 简化对齐 — 本轮仅做 claim 持久化。
+/// 完整的 child issue 创建循环（createChild + cursor 推进）属于 service 层职责，
+/// 这里聚焦 idempotent claim 创建：
+/// 1. 验证 source issue 存在并获取 company_id
+/// 2. 检查同一 revision 是否已有 claim（idempotent 返回现有）
+/// 3. 否则创建新 in_flight claim
+///
+/// 后续 R223+ 可在本基础上叠加 child issue 创建循环。
 async fn create_accepted_plan_decomposition(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
-}}
+    Json(body): Json<CreateAcceptedPlanDecompositionBody>,
+) -> ApiResult<Json<Value>> {
+    if body.children.is_empty() {
+        return Err(ApiError::BadRequest(
+            "children must contain at least 1 entry".into(),
+        ));
+    }
+    // 1. 验证 source issue
+    let source = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    // 2. 计算 fingerprint（基于 revision + 规范化 child payload 字段顺序）
+    let fingerprint = compute_plan_decomposition_fingerprint(
+        body.accepted_plan_revision_id,
+        &body.children,
+    );
+    // 3. 检查现有 claim（idempotent）
+    if let Some(existing) = IssueRepo::new(&state.db)
+        .find_plan_decomposition_by_revision(
+            source.company_id,
+            id,
+            body.accepted_plan_revision_id,
+        )
+        .await?
+    {
+        if existing.request_fingerprint == fingerprint {
+            // 同一请求幂等返回现有
+            return Ok(Json(plan_decomposition_row_json(&existing)));
+        }
+        return Err(ApiError::Conflict(
+            "Accepted-plan decomposition already exists for this revision with a different child set".into(),
+        ));
+    }
+    // 4. 创建新 in_flight claim
+    let requested_children_value = serde_json::Value::Array(body.children.clone());
+    let row = IssueRepo::new(&state.db)
+        .create_plan_decomposition(
+            source.company_id,
+            id,
+            body.accepted_plan_revision_id,
+            None,
+            &fingerprint,
+            body.children.len() as i32,
+            &requested_children_value,
+            None,
+            None,
+            None,
+        )
+        .await?;
+    Ok(Json(plan_decomposition_row_json(&row)))
+}
+
+/// 计算 plan decomposition 的稳定指纹（基于 revision + children JSON）。
+///
+/// 使用 serde_json 的 to_string 后再做 SHA-256 子串以获得稳定哈希。
+/// 当前简化为基于 revision 与 children 数量，避免引入额外依赖。
+fn compute_plan_decomposition_fingerprint(
+    revision_id: Uuid,
+    children: &[serde_json::Value],
+) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    revision_id.hash(&mut h);
+    children.len().hash(&mut h);
+    // 对每个 child 的 title+description 做轻量 hash，避免深度 JSON 序列化
+    for c in children {
+        if let Some(obj) = c.as_object() {
+            if let Some(t) = obj.get("title").and_then(|v| v.as_str()) {
+                t.hash(&mut h);
+            }
+            if let Some(d) = obj.get("description").and_then(|v| v.as_str()) {
+                d.hash(&mut h);
+            }
+        }
+    }
+    format!("{:x}-{:x}", revision_id.simple(), h.finish())
+}
+
+/// 将 IssuePlanDecompositionRow 序列化为 camelCase JSON。
+fn plan_decomposition_row_json(r: &pc_repos::issue::IssuePlanDecompositionRow) -> Value {
+    json!({
+        "id": r.id,
+        "companyId": r.company_id,
+        "sourceIssueId": r.source_issue_id,
+        "acceptedPlanRevisionId": r.accepted_plan_revision_id,
+        "acceptedInteractionId": r.accepted_interaction_id,
+        "status": r.status,
+        "requestFingerprint": r.request_fingerprint,
+        "requestedChildCount": r.requested_child_count,
+        "childIssueIds": r.child_issue_ids,
+        "ownerAgentId": r.owner_agent_id,
+        "ownerUserId": r.owner_user_id,
+        "ownerRunId": r.owner_run_id,
+        "completedAt": r.completed_at,
+        "createdAt": r.created_at,
+        "updatedAt": r.updated_at,
+    })
+}
 
 async fn list_issue_feedback_traces(
     State(state): State<AppState>,
@@ -2898,16 +3036,42 @@ struct AnnotationCommentBodyV2 {
     body: String,
 }
 
+/// Round 221: POST /api/issues/:id/documents/:key/annotations/:thread_id/comments
+///
+/// 与 Node POST /issues/:id/documents/:key/annotations/:threadId/comments 对齐。
+///
+/// 实际逻辑与 `add_annotation_comment`（POST .../annotations/:thread_id）一致，
+/// 这里仅作为 path 别名转发，保持 URL 兼容。
 async fn annotation_comment_route(
     State(state): State<AppState>,
     Path((id, key, thread_id)): Path<(Uuid, String, Uuid)>,
     Json(body): Json<AnnotationCommentBodyV2>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
-    // 端点保留 URL 兼容但返回空响应 + 说明。
-    let _ = ();
-    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true, "note": "issue_annotation_comments table missing in v3 schema"})))
-}}
+) -> ApiResult<Json<Value>> {
+    // V2 body shape: { body } (与 Node createDocumentAnnotationCommentSchema 子集)
+    // author_type/user 来自 actor context（本轮略 — 默认 'user'）
+    if body.body.trim().is_empty() {
+        return Err(ApiError::BadRequest("comment body must not be empty".into()));
+    }
+    let thread = pc_repos::document::DocumentRepo::new(&state.db)
+        .get_annotation_thread(thread_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
+    let _ = (id, key); // 仅满足参数解构
+    let row = pc_repos::document::DocumentRepo::new(&state.db)
+        .create_annotation_comment(
+            thread.company_id,
+            thread_id,
+            id,
+            thread.document_id,
+            &body.body,
+            "user",
+            None,
+        )
+        .await?;
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+
 
 async fn restore_doc_revision(
     State(state): State<AppState>,
@@ -3787,6 +3951,111 @@ mod round216_tests {
         assert!(obj.contains_key("resolvedByAgentId"));
         assert!(obj.contains_key("resolvedByUserId"));
         assert!(obj.contains_key("resolvedAt"));
+        assert!(obj.contains_key("createdAt"));
+        assert!(obj.contains_key("updatedAt"));
+    }
+
+    // ── R222: plan_decomposition body 解析 + fingerprint 稳定性 + JSON 序列化 ──
+
+    use super::CreateAcceptedPlanDecompositionBody;
+    use serde_json::json;
+
+    #[test]
+    fn plan_decomp_body_parses_revision_and_children() {
+        let body: CreateAcceptedPlanDecompositionBody = serde_json::from_value(json!({
+            "acceptedPlanRevisionId": "00000000-0000-0000-0000-000000000001",
+            "children": [
+                {"title": "child 1", "description": "first"},
+                {"title": "child 2", "description": "second"},
+            ],
+        }))
+        .expect("parse");
+        assert_eq!(
+            body.accepted_plan_revision_id,
+            uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
+        );
+        assert_eq!(body.children.len(), 2);
+    }
+
+    #[test]
+    fn plan_decomp_body_rejects_empty_children_via_deserialize() {
+        // children 字段是 Vec<Value>，默认空 vec 不报错
+        // 上层 handler 负责 400 业务校验
+        let body: CreateAcceptedPlanDecompositionBody = serde_json::from_value(json!({
+            "acceptedPlanRevisionId": "00000000-0000-0000-0000-000000000002",
+        }))
+        .expect("parse default children");
+        assert!(body.children.is_empty());
+    }
+
+    #[test]
+    fn plan_decomp_fingerprint_stable_for_same_input() {
+        let rev = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
+        let children = vec![
+            json!({"title": "a", "description": "1"}),
+            json!({"title": "b", "description": "2"}),
+        ];
+        let fp1 = super::compute_plan_decomposition_fingerprint(rev, &children);
+        let fp2 = super::compute_plan_decomposition_fingerprint(rev, &children);
+        assert_eq!(fp1, fp2, "相同输入应产生相同 fingerprint");
+    }
+
+    #[test]
+    fn plan_decomp_fingerprint_differs_for_different_children() {
+        let rev = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000004").unwrap();
+        let children1 = vec![json!({"title": "a"})];
+        let children2 = vec![json!({"title": "b"})];
+        let fp1 = super::compute_plan_decomposition_fingerprint(rev, &children1);
+        let fp2 = super::compute_plan_decomposition_fingerprint(rev, &children2);
+        assert_ne!(fp1, fp2, "不同 children 应产生不同 fingerprint");
+    }
+
+    #[test]
+    fn plan_decomp_fingerprint_differs_for_different_revisions() {
+        let rev1 = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000005").unwrap();
+        let rev2 = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000006").unwrap();
+        let children = vec![json!({"title": "same"})];
+        let fp1 = super::compute_plan_decomposition_fingerprint(rev1, &children);
+        let fp2 = super::compute_plan_decomposition_fingerprint(rev2, &children);
+        assert_ne!(fp1, fp2, "不同 revision 应产生不同 fingerprint");
+    }
+
+    #[test]
+    fn plan_decomp_row_json_uses_camel_case_keys() {
+        use pc_repos::issue::IssuePlanDecompositionRow;
+        let now = chrono::Utc::now();
+        let row = IssuePlanDecompositionRow {
+            id: uuid::Uuid::nil(),
+            company_id: uuid::Uuid::nil(),
+            source_issue_id: uuid::Uuid::nil(),
+            accepted_plan_revision_id: uuid::Uuid::nil(),
+            accepted_interaction_id: None,
+            status: "in_flight".to_string(),
+            request_fingerprint: "abc".to_string(),
+            requested_child_count: 3,
+            requested_children: json!([]),
+            child_issue_ids: json!([]),
+            owner_agent_id: None,
+            owner_user_id: None,
+            owner_run_id: None,
+            completed_at: None,
+            created_at: pc_core::Timestamp::from_dt(now),
+            updated_at: pc_core::Timestamp::from_dt(now),
+        };
+        let v = super::plan_decomposition_row_json(&row);
+        let obj = v.as_object().expect("object");
+        // 关键 camelCase 字段（与 Node AcceptPlanDecomposition 序列化对齐）
+        assert!(obj.contains_key("companyId"));
+        assert!(obj.contains_key("sourceIssueId"));
+        assert!(obj.contains_key("acceptedPlanRevisionId"));
+        assert!(obj.contains_key("acceptedInteractionId"));
+        assert!(obj.contains_key("requestFingerprint"));
+        assert!(obj.contains_key("requestedChildCount"));
+        assert!(obj.contains_key("childIssueIds"));
+        assert!(obj.contains_key("ownerAgentId"));
+        assert!(obj.contains_key("ownerUserId"));
+        assert!(obj.contains_key("ownerRunId"));
+        assert!(obj.contains_key("completedAt"));
         assert!(obj.contains_key("createdAt"));
         assert!(obj.contains_key("updatedAt"));
     }

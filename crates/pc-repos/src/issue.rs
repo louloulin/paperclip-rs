@@ -153,6 +153,27 @@ pub struct IssueThreadInteractionRow {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssuePlanDecompositionRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub source_issue_id: Uuid,
+    pub accepted_plan_revision_id: Uuid,
+    pub accepted_interaction_id: Option<Uuid>,
+    pub status: String,
+    pub request_fingerprint: String,
+    pub requested_child_count: i32,
+    pub requested_children: serde_json::Value,
+    pub child_issue_ids: serde_json::Value,
+    pub owner_agent_id: Option<Uuid>,
+    pub owner_user_id: Option<String>,
+    pub owner_run_id: Option<Uuid>,
+    pub completed_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct FeedbackVoteRow {
     pub id: Uuid,
     pub company_id: Uuid,
@@ -2226,6 +2247,139 @@ impl<'a> IssueRepo<'a> {
         .execute(self.db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // =========================================================================
+    // Round 222: issue_plan_decompositions 仓储化新增方法
+    //
+    // 与 Node `svc.listAcceptedPlanDecompositions` / `svc.decomposeAcceptedPlan`
+    // 对齐 — 表存在于 migration 0092。
+    // =========================================================================
+
+    /// 列出指定 source issue 的所有 accepted plan decomposition 记录。
+    pub async fn list_plan_decompositions(
+        &self,
+        source_issue_id: Uuid,
+    ) -> sqlx::Result<Vec<IssuePlanDecompositionRow>> {
+        sqlx::query_as::<_, IssuePlanDecompositionRow>(
+            "SELECT id, company_id, source_issue_id, accepted_plan_revision_id, \
+                    accepted_interaction_id, status, request_fingerprint, \
+                    requested_child_count, requested_children, child_issue_ids, \
+                    owner_agent_id, owner_user_id, owner_run_id, \
+                    completed_at, created_at, updated_at \
+             FROM issue_plan_decompositions \
+             WHERE source_issue_id = $1 \
+             ORDER BY created_at DESC",
+        )
+        .bind(source_issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// 通过 (company, source_issue, revision) 查找现有 decomposition claim。
+    pub async fn find_plan_decomposition_by_revision(
+        &self,
+        company_id: Uuid,
+        source_issue_id: Uuid,
+        accepted_plan_revision_id: Uuid,
+    ) -> sqlx::Result<Option<IssuePlanDecompositionRow>> {
+        sqlx::query_as::<_, IssuePlanDecompositionRow>(
+            "SELECT id, company_id, source_issue_id, accepted_plan_revision_id, \
+                    accepted_interaction_id, status, request_fingerprint, \
+                    requested_child_count, requested_children, child_issue_ids, \
+                    owner_agent_id, owner_user_id, owner_run_id, \
+                    completed_at, created_at, updated_at \
+             FROM issue_plan_decompositions \
+             WHERE company_id = $1 \
+               AND source_issue_id = $2 \
+               AND accepted_plan_revision_id = $3",
+        )
+        .bind(company_id)
+        .bind(source_issue_id)
+        .bind(accepted_plan_revision_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// 创建 issue_plan_decompositions 记录。
+    ///
+    /// `requested_children` 是 raw JSON 数组（来自 child draft payload），
+    /// `child_issue_ids` 初始为空数组。
+    pub async fn create_plan_decomposition(
+        &self,
+        company_id: Uuid,
+        source_issue_id: Uuid,
+        accepted_plan_revision_id: Uuid,
+        accepted_interaction_id: Option<Uuid>,
+        request_fingerprint: &str,
+        requested_child_count: i32,
+        requested_children: &serde_json::Value,
+        owner_agent_id: Option<Uuid>,
+        owner_user_id: Option<&str>,
+        owner_run_id: Option<Uuid>,
+    ) -> sqlx::Result<IssuePlanDecompositionRow> {
+        sqlx::query_as::<_, IssuePlanDecompositionRow>(
+            "INSERT INTO issue_plan_decompositions \
+                (company_id, source_issue_id, accepted_plan_revision_id, \
+                 accepted_interaction_id, status, request_fingerprint, \
+                 requested_child_count, requested_children, child_issue_ids, \
+                 owner_agent_id, owner_user_id, owner_run_id) \
+             VALUES ($1,$2,$3,$4,'in_flight',$5,$6,$7,'[]'::jsonb,$8,$9,$10) \
+             RETURNING id, company_id, source_issue_id, accepted_plan_revision_id, \
+                accepted_interaction_id, status, request_fingerprint, \
+                requested_child_count, requested_children, child_issue_ids, \
+                owner_agent_id, owner_user_id, owner_run_id, \
+                completed_at, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(source_issue_id)
+        .bind(accepted_plan_revision_id)
+        .bind(accepted_interaction_id)
+        .bind(request_fingerprint)
+        .bind(requested_child_count)
+        .bind(requested_children)
+        .bind(owner_agent_id)
+        .bind(owner_user_id)
+        .bind(owner_run_id)
+        .fetch_one(self.db.pool())
+        .await
+    }
+
+    /// 更新 plan decomposition 的状态与 child_issue_ids。
+    ///
+    /// 用于 Node `decomposeAcceptedPlan` 中的 cursor 推进循环：每次创建新 child
+    /// issue 后追加到 child_issue_ids，并根据进度切换 status。
+    pub async fn update_plan_decomposition_progress(
+        &self,
+        decomposition_id: Uuid,
+        status: &str,
+        child_issue_ids: &serde_json::Value,
+        completed_at: Option<Timestamp>,
+        owner_agent_id: Option<Uuid>,
+        owner_user_id: Option<&str>,
+        owner_run_id: Option<Uuid>,
+    ) -> sqlx::Result<Option<IssuePlanDecompositionRow>> {
+        sqlx::query_as::<_, IssuePlanDecompositionRow>(
+            "UPDATE issue_plan_decompositions SET \
+                status = $2, child_issue_ids = $3, completed_at = $4, \
+                owner_agent_id = $5, owner_user_id = $6, owner_run_id = $7, \
+                updated_at = now() \
+             WHERE id = $1 \
+             RETURNING id, company_id, source_issue_id, accepted_plan_revision_id, \
+                accepted_interaction_id, status, request_fingerprint, \
+                requested_child_count, requested_children, child_issue_ids, \
+                owner_agent_id, owner_user_id, owner_run_id, \
+                completed_at, created_at, updated_at",
+        )
+        .bind(decomposition_id)
+        .bind(status)
+        .bind(child_issue_ids)
+        .bind(completed_at)
+        .bind(owner_agent_id)
+        .bind(owner_user_id)
+        .bind(owner_run_id)
+        .fetch_optional(self.db.pool())
+        .await
     }
 
 
