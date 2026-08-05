@@ -431,9 +431,7 @@ async fn tool_gallery(
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let apps: Vec<ApplicationRow> = sqlx::query_as(
-        "SELECT id, company_id, name, type, status, metadata, created_at, updated_at \
-         FROM tool_applications WHERE company_id = $1 AND status = 'active' \
-         ORDER BY created_at DESC",
+        "SELECT id, company_id, name, type, status, metadata, created_at, updated_at          FROM tool_applications WHERE company_id = $1 AND status = 'active'          ORDER BY created_at DESC",
     )
     .bind(company_id)
     .fetch_all(state.db.pool())
@@ -441,7 +439,6 @@ async fn tool_gallery(
     let items: Vec<Value> = apps.iter().map(application_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
-
 async fn connect_tool_app(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -535,19 +532,13 @@ async fn oauth_callback(
     // `state` from the URL is the only handshake to the original `oauth_start`. If we know the state, mark the oauth state
     // as used (delete row) and bump connection health to "connected".
     if let Some(state_token) = q.state.as_deref() {
-        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-            "DELETE FROM tool_oauth_states WHERE state = $1 RETURNING company_id, connection_id",
-        )
-        .bind(state_token)
-        .fetch_optional(state.db.pool())
-        .await?;
-        if let Some((company_id, connection_id)) = row {
-            sqlx::query(
-                "UPDATE tool_connections SET status = 'connected', enabled = true,                   health_status = 'healthy', last_health_at = now(), updated_at = now()                  WHERE id = $1",
-            )
-            .bind(connection_id)
-            .execute(state.db.pool())
-            .await?;
+        if let Some((company_id, connection_id)) = ToolRepo::new(&state.db)
+            .delete_oauth_state_returning(state_token)
+            .await?
+        {
+            let _ = ToolRepo::new(&state.db)
+                .mark_connection_connected(connection_id)
+                .await;
             state.realtime.publish(
                 LiveEvent::new("tool.oauth.connected", "tool_connection", connection_id)
                     .with_company(company_id),
@@ -561,7 +552,6 @@ async fn oauth_callback(
     )
         .into_response())
 }
-
 #[derive(Debug, Default, Deserialize)]
 struct OAuthCallbackQuery {
     state: Option<String>,
@@ -580,35 +570,14 @@ async fn finish_oauth(
     let access_token = body.get("accessToken").and_then(Value::as_str);
     let refresh_token = body.get("refreshToken").and_then(Value::as_str);
     let scopes = body.get("scopes").cloned().unwrap_or(json!([]));
-    let mut tx = state.db.pool().begin().await?;
-    sqlx::query(
-        "UPDATE tool_connections SET status = 'connected', enabled = true,           health_status = 'healthy', last_health_at = now(), updated_at = now()          WHERE id = $1 AND company_id = $2",
-    )
-    .bind(conn)
-    .bind(company_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO connection_grants (company_id, connection_id, kind, status, credential_secret_refs)          VALUES ($1, $2, 'oauth', 'active', $3::jsonb)",
-    )
-    .bind(company_id)
-    .bind(conn)
-    .bind(json!([
+    let credential_refs = json!([
         { "field": "access_token", "value": access_token.map(str::to_string) },
         { "field": "refresh_token", "value": refresh_token.map(str::to_string) }
-    ]))
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO tool_oauth_states (state, company_id, connection_id, code_verifier, expires_at)          VALUES ($1, $2, $3, $4, now() + interval '10 minutes')          ON CONFLICT (state) DO NOTHING",
-    )
-    .bind(format!("finish-{}", Uuid::new_v4().simple()))
-    .bind(company_id)
-    .bind(conn)
-    .bind(format!("scopes:{}", scopes))
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
+    ]);
+    let new_state = format!("finish-{}", Uuid::new_v4().simple());
+    ToolRepo::new(&state.db)
+        .complete_oauth(company_id, conn, &credential_refs, &new_state)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("tool.oauth.finished", "tool_connection", conn)
             .with_company(company_id)
@@ -619,16 +588,12 @@ async fn finish_oauth(
         "status": "connected",
     })))
 }
-
 async fn list_connections(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let rows: Vec<ConnectionRow> = sqlx::query_as(
-        "SELECT id, company_id, application_id, name, transport, status, enabled, config, \
-                credential_refs, health_status, health_message, last_health_at, \
-                last_catalog_refresh_at, created_at, updated_at \
-         FROM tool_connections WHERE company_id = $1 ORDER BY created_at DESC",
+        "SELECT id, company_id, application_id, name, transport, status, enabled, config,                 credential_refs, health_status, health_message, last_health_at,                 last_catalog_refresh_at, created_at, updated_at          FROM tool_connections WHERE company_id = $1 ORDER BY created_at DESC",
     )
     .bind(company_id)
     .fetch_all(state.db.pool())
@@ -636,7 +601,6 @@ async fn list_connections(
     let items: Vec<Value> = rows.iter().map(connection_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateConnectionBody {
@@ -702,10 +666,7 @@ async fn get_connection(
     Path((company_id, connection_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
     let row: Option<ConnectionRow> = sqlx::query_as(
-        "SELECT id, company_id, application_id, name, transport, status, enabled, config, \
-                credential_refs, health_status, health_message, last_health_at, \
-                last_catalog_refresh_at, created_at, updated_at \
-         FROM tool_connections WHERE id = $1 AND company_id = $2",
+        "SELECT id, company_id, application_id, name, transport, status, enabled, config,                 credential_refs, health_status, health_message, last_health_at,                 last_catalog_refresh_at, created_at, updated_at          FROM tool_connections WHERE id = $1 AND company_id = $2",
     )
     .bind(connection_id)
     .bind(company_id)
@@ -716,21 +677,15 @@ async fn get_connection(
         None => Err(ApiError::NotFound(format!("connection {connection_id}"))),
     }
 }
-
 async fn delete_connection(
     State(state): State<AppState>,
     Path((company_id, connection_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query("DELETE FROM tool_connections WHERE id = $1 AND company_id = $2")
-        .bind(connection_id)
-        .bind(company_id)
-        .execute(state.db.pool())
+    let _ = ToolRepo::new(&state.db)
+        .delete_connection_by_company(company_id, connection_id)
         .await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
-
-// ── Catalog + categories + lookup ──────────────────────────
-
 async fn tool_categories(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,

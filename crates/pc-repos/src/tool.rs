@@ -357,6 +357,20 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
+    /// Round 142: 只列 active 状态的 application（tool_gallery 用）。
+    pub async fn list_active_applications(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolApplicationRow>> {
+        let sql = format!(
+            "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1 AND status='active'              ORDER BY created_at DESC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
 /// Round 100: 按 id 全局查（不限定 company_id）。
     /// 用于纯 id-based 端点（如 `GET /api/tool-applications/:id`），调用方可用返回的
     /// `company_id` 决定是否允许后续跨公司操作。
@@ -531,6 +545,116 @@ impl<'a> ToolRepo<'a> {
             .bind(id)
             .fetch_optional(self.db.pool())
             .await?)
+    }
+
+    /// Round 142: 仅按 company_id 列出所有 connection（不限 application）。
+    pub async fn list_connections_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolConnectionRow>> {
+        let sql = format!(
+            "SELECT {CONN_COLS} FROM tool_connections              WHERE company_id=$1              ORDER BY created_at DESC"
+        );
+        Ok(sqlx::query_as::<_, ToolConnectionRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    /// Round 142: 按 (id, company_id) 删除 connection。
+    pub async fn delete_connection_by_company(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM tool_connections WHERE id = $1 AND company_id = $2")
+            .bind(id)
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 142: 设置 connection 为 connected（status='connected', enabled=true, healthy）。
+    pub async fn mark_connection_connected(
+        &self,
+        connection_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE tool_connections SET status = 'connected', enabled = true, \
+                health_status = 'healthy', last_health_at = now(), updated_at = now() \
+             WHERE id = $1"
+        )
+        .bind(connection_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 142: 删除 oauth state（RETURNING company_id, connection_id）。
+    pub async fn delete_oauth_state_returning(
+        &self,
+        state_token: &str,
+    ) -> RepoResult<Option<(Uuid, Uuid)>> {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "DELETE FROM tool_oauth_states WHERE state = $1 RETURNING company_id, connection_id",
+        )
+        .bind(state_token)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 142: 清理过期的 oauth state。
+    pub async fn prune_expired_oauth_states(&self) -> RepoResult<u64> {
+        Ok(sqlx::query("DELETE FROM tool_oauth_states WHERE expires_at < now()")
+            .execute(self.db.pool())
+            .await?
+            .rows_affected())
+    }
+
+    /// Round 142: 完成 oauth（复合事务）：UPDATE connection status + INSERT connection_grants + INSERT oauth state。
+    pub async fn complete_oauth(
+        &self,
+        company_id: Uuid,
+        connection_id: Uuid,
+        credential_refs: &Value,
+        new_state: &str,
+    ) -> RepoResult<()> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query(
+            "UPDATE tool_connections SET status = 'connected', enabled = true, \
+                health_status = 'healthy', last_health_at = now(), updated_at = now() \
+             WHERE id = $1 AND company_id = $2",
+        )
+        .bind(connection_id)
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO connection_grants (company_id, connection_id, kind, status, credential_secret_refs) \
+             VALUES ($1, $2, 'oauth', 'active', $3::jsonb)",
+        )
+        .bind(company_id)
+        .bind(connection_id)
+        .bind(credential_refs)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO tool_oauth_states (state, company_id, connection_id, code_verifier, expires_at) \
+             VALUES ($1, $2, $3, $4, now() + interval '10 minutes') \
+             ON CONFLICT (state) DO NOTHING",
+        )
+        .bind(new_state)
+        .bind(company_id)
+        .bind(connection_id)
+        .bind(format!("scopes:{}", Uuid::new_v4()))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn create_connection(&self, c: &ToolConnectionRow) -> RepoResult<ToolConnectionRow> {
