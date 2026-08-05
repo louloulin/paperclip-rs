@@ -4296,3 +4296,62 @@ Audit + Actions:
 1. **继续实现 accept/reject/respond/verdict interaction**（同样的 R96 stub pattern）
 2. **寻找新的真实缺口**（检查每个路由文件的 stub 模式）
 3. **继续扫描 Node 端未同步的特性**（commit log diff）
+
+## 56. 第二百一十七轮增量（Round 217 — accept/reject/respond/verdict interaction 真实实现）
+
+### 端口覆盖
+- 修复 4 个端口（接续 R216 完成 R96 deprecated stub 全部清理）：
+  - `POST /api/issues/:id/interactions/:interaction_id/accept`
+  - `POST /api/issues/:id/interactions/:interaction_id/reject`
+  - `POST /api/issues/:id/interactions/:interaction_id/respond`
+  - `POST /api/issues/:id/interactions/:interaction_id/verdicts`
+
+### 设计（沿用 R216 模式 + 扩展）
+- accept：payload 写入 `selectedClientKeys/selectedOptionIds`
+- reject：与 cancel/withdraw 相同，`reason` 写入 `result.reason`
+- respond：payload 写入 `answers/summaryMarkdown`
+- verdicts：payload 写入 `verdicts` 数组
+
+### 新增 Body 类型（camelCase 对齐 Node schema）
+- `AcceptInteractionBody { reason?, selectedClientKeys?, selectedOptionIds? }`
+- `RespondInteractionBody { answers, summaryMarkdown? }`
+- `VerdictInteractionBody { verdicts: [{id, verdict, reason?}] }`
+- `VerdictEntry { id, verdict, reason? }`（含 Serialize 派生）
+
+### 新增共享 Helper
+- `resolve_interaction_status_with_payload(state, issue_id, interaction_id, status, reason, payload_json, activity_kind)`：
+  - 复用 R216 `resolve_interaction_status` 校验流程
+  - 允许传入自定义 result JSON（payload 合并 reason）
+
+### Node 语义对齐
+- **accept**：`selectedClientKeys/selectedOptionIds` 写入 `result.selectedClientKeys/selectedOptionIds`
+- **reject**：`reason` 写入 `result.reason`
+- **respond**：`answers + summaryMarkdown` 写入 `result`
+- **verdicts**：`verdicts` 数组写入 `result.verdicts`
+
+### 仓储复用
+- 完全复用 `IssueRepo::resolve_interaction`（R216 已支持）
+- 无新仓储方法，最小改动
+
+### 测试
+- 合并到 `round216_tests` 模块，共 **10 个 case**：
+  - R216 原 4 个：parse_activity_kind / InteractionResolveBody
+  - R217 新 6 个：accept 解析 / accept 空对象 / respond answers+summary / respond summary optional / verdict entries / verdict reason optional
+
+### 累计进展（R216+R217）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R216 | issues.rs | 修复2 | cancel/withdraw 真实实现 |
+| R217 | issues.rs | 修复4 | accept/reject/respond/verdicts 真实实现 |
+
+### 综合状态（截至 R217）
+- 工作空间编译：`cargo check --workspace --lib` 0 errors
+- 累计 **10 个** 单元测试 case（R216+R217 共 2 轮）
+- **完成全部 6 个 R96 deprecated interaction stub 的清理**
+- 累计端点覆盖率：仍约 **~7 个** 真正剩余（端点层已基本对齐）
+
+### 下一步高 ROI 工作
+1. **扫描全仓 `deprecated.*true` 模式** — 类似 R96 的隐藏缺口可能在其他文件存在
+2. **继续扫描 Node 端未同步的特性**（commit log diff）
+3. **修复剩余 ~7 个端点差异**（多为路径正则命名或前缀嵌套问题）
