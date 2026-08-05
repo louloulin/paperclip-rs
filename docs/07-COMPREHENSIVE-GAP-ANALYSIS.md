@@ -1361,23 +1361,76 @@ companies.rs 37 → 31 SQL（-6）。仓储化 get_stats 复合方法（6 个独
 - companies.rs SQL 数 37 → 31（-6，get_stats 复合方法）
 - 累计 Round 95-128 修复 **121+1=122 个路由从 500 → 200**
 
-### 下一轮方向（Round 129+）
-companies.rs 还剩 31 SQL，主要在：
+## 52. 第一百二十九轮增量（Round 129 — companies.rs labels 子模块仓储化)
+
+### 目标
+companies.rs 31 → 26 SQL（-5）。仓储化 labels 子模块（list / create / patch / delete），统一委托 `pc_repos::label::LabelRepo`。
+
+### 新增 `pc_repos::label::LabelRepo` 已覆盖方法（沿用既有仓储，路由侧全部委托)
+- `list_by_company(company_id) -> Vec<LabelRow>`（按 name 升序）
+- `get_by_id(id) -> Option<LabelRow>`
+- `find_by_name(company_id, name) -> Option<LabelRow>`
+- `create(NewLabel) -> LabelRow`（自动 trim name，颜色空白回退 `#94a3b8`）
+- `patch(id, LabelPatch) -> Option<LabelRow>`（COALESCE 部分更新 + updated_at）
+- `delete(id) -> bool`（返回是否实际删除；ON DELETE CASCADE 自动清理 case_labels / issue_labels）
+- `count_by_company(company_id) -> i64`
+- `filter_to_company(company_id, &[Uuid]) -> Vec<Uuid>`（跨公司引用完整性校验，给 case/issue update 用）
+
+### DTO（已存在于 `pc_repos::label`）
+- `LabelRow { id, company_id, name, color, created_at, updated_at }`
+- `NewLabel { company_id, name, color }`
+- `LabelPatch { name: Option<String>, color: Option<String> }`（Default = 全 None）
+
+### 重构 `companies.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/companies/:id/labels` | 1 SELECT | LabelRepo::list_by_company |
+| `POST /api/companies/:id/labels` | 1 INSERT … RETURNING | LabelRepo::create |
+| `PATCH /api/companies/:id/labels/:label_id` | 1 UPDATE … RETURNING | LabelRepo::patch |
+| `DELETE /api/companies/:id/labels/:label_id` | 1 DELETE + 1 SELECT (verify) | LabelRepo::delete + get_by_id |
+
+### 设计要点
+- **1:1 schema 投影**：`LabelRow` 直接 FromRow 对应 labels 表 6 列。
+- **写操作 DTO 分离**：`NewLabel` / `LabelPatch` 显式表达「全字段」/「部分字段」语义，避免在 routes 中裸传 Map。
+- **颜色规范化下沉到 repo**：`normalize_color` 内置 trim + 默认值回退，路由不再关心边界值。
+- **trim 校验下沉到 repo**：`name.trim().is_empty()` 在 `create` 入口拦截 `RepoError::Invalid`，路由无需重复校验。
+- **filter_to_company 预留给 case / issue 仓储**：本次暂未接入 issue.rs / case.rs 的 label 关联更新，留作 Round 130+ 复用。
+
+### 新增集成测试 8 个 (`crates/pc-repos/tests/round129_company_labels_repo.rs`)
+1. `create_and_get_by_id` — 正常创建 + 回读
+2. `list_by_company_orders_by_name` — 按 name 升序
+3. `patch_updates_fields` — name/color 部分更新 + COALESCE 行为
+4. `delete_removes_row` — 真实删除 + 二次删除返回 false
+5. `count_by_company_isolates_tenants` — 多公司隔离计数
+6. `filter_to_company_drops_cross_tenant_ids` — 跨公司引用过滤
+7. `find_by_name_locates_row` — 同名查找
+8. `create_normalizes_color_and_trims_name` — 空白 trim + 默认颜色回退
+
+### 进度影响
+- 综合进度从 **≈ 97.0% → ≈ 97.1%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round129_company_labels_repo` 0 errors
+- 29 个 pc-repos 集成测试文件累计 176+8=184 test 函数
+- companies.rs SQL 数 31 → 26（-5，labels 子模块 4 端点合并到 LabelRepo）
+- 累计 Round 95-129 修复 **122+4=126 个路由从 500 → 200**
+
+### 下一轮方向（Round 130+）
+companies.rs 还剩 26 SQL，主要在：
 - timeline 聚合（多源 JOIN，~5 SQL，line 287+）
 - artifacts 列表（~3 SQL，line 309+）
 - branding 复合（3 SQL，line 354+）
 - export_preview（3 SQL，line 402+）
 - import_preview / start_export / fidelity（~6 SQL，line 453+）
 - feedback_traces 列表（~4 SQL，line 555+）
-- labels CRUD（~5 SQL，line 603+）
 - folders CRUD（~10 SQL，line 705+）
 - create 路由的 company_memberships INSERT（1 SQL）
 
 后续高 SQL 模块：
 - tool_access.rs 66 SQL
-- issues.rs 41 SQL
+- issues.rs 41 SQL（feedback / votes / relations ~20 SQL）
 - auth.rs 28 SQL
 - access.rs 26 SQL
+- smoke_lab.rs 26 SQL
+- tool_connections.rs 22 SQL
 
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 

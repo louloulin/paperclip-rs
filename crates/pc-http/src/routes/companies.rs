@@ -23,6 +23,7 @@ use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
 use pc_repos::decision::DecisionRepo;
 use pc_repos::goal::GoalRepo;
 use pc_repos::pipeline::PipelineRepo;
+use pc_repos::label::{LabelRepo, NewLabel, LabelPatch};
 use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -574,14 +575,11 @@ async fn list_labels(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, company_id, name, color FROM labels WHERE company_id=$1 ORDER BY name",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, name, color)| json!({
-        "id": id, "companyId": cid, "name": name, "color": color,
+    let rows = LabelRepo::new(&state.db)
+        .list_by_company(company_id)
+        .await?;
+    let items: Vec<Value> = rows.iter().map(|r| json!({
+        "id": r.id, "companyId": r.company_id, "name": r.name, "color": r.color,
     })).collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
@@ -604,25 +602,28 @@ async fn create_label(
     if body.color.is_empty() {
         return Err(ApiError::BadRequest("color required".into()));
     }
-    let id: Uuid = Uuid::new_v4();
-    let r = sqlx::query(
-        "INSERT INTO labels (id, company_id, name, color) VALUES ($1,$2,$3,$4)",
-    )
-    .bind(id).bind(company_id).bind(name).bind(&body.color)
-    .execute(state.db.pool()).await;
-    if let Err(e) = r {
-        let msg = e.to_string();
-        if msg.contains("duplicate") {
-            return Err(ApiError::Conflict(format!("label {name} already exists")));
-        }
-        return Err(ApiError::Internal(msg));
-    }
+    let input = NewLabel {
+        company_id,
+        name: name.to_owned(),
+        color: body.color.clone(),
+    };
+    let row = LabelRepo::new(&state.db)
+        .create(&input)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("duplicate") || msg.contains("unique") {
+                ApiError::Conflict(format!("label {name} already exists"))
+            } else {
+                ApiError::Internal(msg)
+            }
+        })?;
     state.realtime.publish(
-        LiveEvent::new("label.created", "label", id)
+        LiveEvent::new("label.created", "label", row.id)
             .with_company(company_id)
             .with_data(json!({"name": name})),
     );
-    Ok(Json(json!({"id": id, "companyId": company_id, "name": name, "color": body.color})))
+    Ok(Json(json!({"id": row.id, "companyId": company_id, "name": name, "color": body.color})))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -635,36 +636,35 @@ struct PatchLabelBody {
 
 async fn patch_label(
     State(state): State<AppState>,
-    Path((company_id, label_id)): Path<(Uuid, Uuid)>,
+    Path((_company_id, label_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchLabelBody>,
 ) -> ApiResult<Json<Value>> {
-    let mut updated: Vec<&str> = vec![];
     if let Some(ref n) = body.name {
         if n.is_empty() || n.len() > 64 {
             return Err(ApiError::BadRequest("name length 1..=64".into()));
         }
-        sqlx::query("UPDATE labels SET name=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(n).bind(company_id).bind(label_id).execute(state.db.pool()).await?;
-        updated.push("name");
     }
-    if let Some(ref c) = body.color {
-        sqlx::query("UPDATE labels SET color=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(c).bind(company_id).bind(label_id).execute(state.db.pool()).await?;
-        updated.push("color");
-    }
-    if updated.is_empty() {
+    let patch = LabelPatch {
+        name: body.name.clone(),
+        color: body.color.clone(),
+    };
+    let updated = LabelRepo::new(&state.db)
+        .patch(label_id, &patch)
+        .await?;
+    if updated.is_none() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
-    Ok(Json(json!({"updated": updated, "id": label_id})))
+    Ok(Json(json!({"updated": true, "id": label_id})))
 }
 
 async fn delete_label(
     State(state): State<AppState>,
-    Path((company_id, label_id)): Path<(Uuid, Uuid)>,
+    Path((_company_id, label_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query("DELETE FROM labels WHERE company_id=$1 AND id=$2")
-        .bind(company_id).bind(label_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let deleted = LabelRepo::new(&state.db)
+        .delete(label_id)
+        .await?;
+    if !deleted {
         return Err(ApiError::NotFound(format!("label {label_id}")));
     }
     Ok(StatusCode::NO_CONTENT)
