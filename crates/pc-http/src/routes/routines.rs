@@ -42,7 +42,7 @@ pub fn router() -> Router<AppState> {
             get(list_revisions).post(create_revision),
         )
         .route(
-            "/api/routines/:id/revisions/:revision_number/restore",
+            "/api/routines/:id/revisions/:revision_id/restore",
             post(restore_revision),
         )
         // runs
