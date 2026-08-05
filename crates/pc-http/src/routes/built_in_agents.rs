@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::agent::AgentRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -72,16 +73,11 @@ async fn list_built_in(
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // Look up installed agents per built-in key
-    let pool = state.db.pool();
-    let installed: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT metadata->>'builtInKey' FROM agents \
-         WHERE company_id = $1 AND metadata->>'builtInKey' IS NOT NULL",
-    )
-    .bind(company_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let installed_keys: Vec<&str> = installed.iter().map(|(k,)| k.as_str()).collect();
+    let installed = AgentRepo::new(&state.db)
+        .list_built_in_keys(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let installed_keys: Vec<&str> = installed.iter().map(|k| k.as_str()).collect();
     let items: Vec<Value> = BUILT_INS
         .iter()
         .map(|(key, name, desc)| {
@@ -104,17 +100,12 @@ async fn get_built_in_status(
     State(state): State<AppState>,
     Path((company_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM agents WHERE company_id = $1 \
-         AND metadata->>'builtInKey' = $2 LIMIT 1",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = AgentRepo::new(&state.db)
+        .find_built_in_agent_id(company_id, &key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let (status, agent_id) = match row {
-        Some((id,)) => ("installed", Some(id)),
+        Some(id) => ("installed", Some(id)),
         None => ("available", None),
     };
     Ok(Json(json!({
@@ -130,14 +121,10 @@ async fn reconcile_built_in(
     Path((company_id, key)): Path<(Uuid, String)>,
     Json(_body): Json<EmptyBody>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query(
-        "UPDATE agents SET updated_at = now()          WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    AgentRepo::new(&state.db)
+        .touch_built_in(company_id, &key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -164,26 +151,17 @@ async fn install_built_in(
     };
     // Idempotent insert keyed by (company_id, metadata.builtInKey)
     let metadata = json!({ "builtInKey": key, "source": "built-in" });
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "INSERT INTO agents (company_id, name, role, status, adapter_type, metadata) \
-         VALUES ($1, $2, $3, 'idle', 'codex_local', $4) \
-         ON CONFLICT DO NOTHING \
-         RETURNING id",
-    )
-    .bind(company_id)
-    .bind(def.1)
-    .bind(role)
-    .bind(&metadata)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = AgentRepo::new(&state.db)
+        .install_built_in(company_id, def.1, role, &metadata)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
             "companyId": company_id,
             "key": key,
             "status": if row.is_some() { "installed" } else { "already-installed" },
-            "agentId": row.map(|(id,)| id),
+            "agentId": row,
         })),
     ))
 }
@@ -193,15 +171,10 @@ async fn reset_built_in(
     Path((company_id, key)): Path<(Uuid, String)>,
     Json(_body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let _ = sqlx::query(
-        "UPDATE agents SET status = 'idle', pause_reason = NULL, paused_at = NULL, updated_at = now() \
-         WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = AgentRepo::new(&state.db)
+        .reset_built_in(company_id, &key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -216,15 +189,10 @@ async fn archive_built_in(
     State(state): State<AppState>,
     Path((company_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query(
-        "UPDATE agents SET status = 'archived', archived_at = now(), updated_at = now() \
-         WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    AgentRepo::new(&state.db)
+        .archive_built_in(company_id, &key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -239,15 +207,10 @@ async fn restore_built_in(
     State(state): State<AppState>,
     Path((company_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query(
-        "UPDATE agents SET status = 'idle', archived_at = NULL, updated_at = now() \
-         WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
-    )
-    .bind(company_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    AgentRepo::new(&state.db)
+        .restore_built_in(company_id, &key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({

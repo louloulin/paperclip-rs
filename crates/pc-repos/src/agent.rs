@@ -1,6 +1,7 @@
 //! `agent` 域。
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{types::Json, FromRow};
 use uuid::Uuid;
 
@@ -1314,6 +1315,131 @@ impl<'a> AgentRepo<'a> {
         .fetch_all(self.db.pool())
         .await?;
         Ok(rows)
+    }
+
+    // ---- Round 169: built_in_agents route 仓储化新增方法 ----
+
+    /// Round 169: 列出 company 全部 builtInKey（distinct）。
+    pub async fn list_built_in_keys(&self, company_id: Uuid) -> sqlx::Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT metadata->>'builtInKey' FROM agents \
+             WHERE company_id = $1 AND metadata->>'builtInKey' IS NOT NULL",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().map(|(k,)| k).collect())
+    }
+
+    /// Round 169: 找 builtInKey 对应 agent 的 id（可能没有）。
+    pub async fn find_built_in_agent_id(
+        &self,
+        company_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM agents WHERE company_id = $1 \
+             AND metadata->>'builtInKey' = $2 LIMIT 1",
+        )
+        .bind(company_id)
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 169: 触摸 built-in agent 的 updated_at。
+    pub async fn touch_built_in(
+        &self,
+        company_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE agents SET updated_at = now() \
+             WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
+        )
+        .bind(company_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 169: 安装一个 built-in agent（幂等，ON CONFLICT DO NOTHING）。
+    pub async fn install_built_in(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        role: &str,
+        metadata: &Value,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "INSERT INTO agents (company_id, name, role, status, adapter_type, metadata) \
+             VALUES ($1, $2, $3, 'idle', 'codex_local', $4) \
+             ON CONFLICT DO NOTHING RETURNING id",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(role)
+        .bind(metadata)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 169: 重置 built-in agent（status=idle, 清空 pause 字段）。
+    pub async fn reset_built_in(
+        &self,
+        company_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE agents SET status = 'idle', pause_reason = NULL, paused_at = NULL, updated_at = now() \
+             WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
+        )
+        .bind(company_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 169: 归档 built-in agent。
+    pub async fn archive_built_in(
+        &self,
+        company_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE agents SET status = 'archived', archived_at = now(), updated_at = now() \
+             WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
+        )
+        .bind(company_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 169: 恢复 built-in agent。
+    pub async fn restore_built_in(
+        &self,
+        company_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE agents SET status = 'idle', archived_at = NULL, updated_at = now() \
+             WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
+        )
+        .bind(company_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
     }
 }
 
