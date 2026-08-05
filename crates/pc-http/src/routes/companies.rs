@@ -45,7 +45,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:id/stats", get(get_stats))
         .route("/api/companies/:id/timeline", get(get_timeline))
         .route("/api/companies/:id/artifacts", get(list_artifacts))
-        .route("/api/companies/:id/branding", patch(update_branding))
+        .route("/api/companies/:id/branding", get(get_branding).patch(update_branding))
+        // ── Round 208: company-level GET aliases ──
+        .route(
+            "/api/companies/:id/finance-events",
+            get(list_company_finance_events),
+        )
         .route("/api/companies/:id/exports/preview", post(export_preview))
         .route("/api/companies/:id/imports/preview", post(import_preview))
         .route("/api/companies/import/preview", post(import_preview_root))
@@ -2106,4 +2111,102 @@ async fn get_companies_issues_malformed() -> ApiResult<Json<Value>> {
     Err(ApiError::BadRequest(
         "Missing companyId in path. Use /api/companies/{companyId}/issues.".into(),
     ))
+}
+
+// ============================================================================
+// Round 208: company-level GET helpers (branding + finance-events alias)
+// ============================================================================
+
+/// 解析 description 中的 `<!-- logo:{url} -->` 后缀，返回 logoUrl。
+fn parse_logo_from_description(desc: Option<&str>) -> Option<String> {
+    desc?
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("<!-- logo:").and_then(|s| s.strip_suffix(" -->")))
+        .map(str::to_owned)
+}
+
+/// `GET /api/companies/:id/branding` — 返回当前 branding 视图
+/// (name + brand_color + logoUrl，从 description 注释中提取)。
+async fn get_branding(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let row = CompanyRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
+    let logo_url = parse_logo_from_description(row.description.as_deref());
+    Ok(Json(json!({
+        "companyId": row.id,
+        "name": row.name,
+        "brandColor": row.brand_color,
+        "logoUrl": logo_url,
+        "updatedAt": row.updated_at,
+    })))
+}
+
+/// `GET /api/companies/:id/finance-events` — 公司级 finance events 列表（带 limit 过滤）。
+/// 复用 CostRepo::finance_events 仓储方法。
+async fn list_company_finance_events(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    use pc_repos::cost::CostRange;
+    let range = CostRange { from: None, to: None };
+    let events: Vec<FinanceEventRow> = CostRepo::new(&state.db)
+        .finance_events(id, range, 100)
+        .await?;
+    let items: Vec<Value> = events
+        .into_iter()
+        .map(|e| {
+            json!({
+                "id": e.id,
+                "companyId": e.company_id,
+                "eventKind": e.event_kind,
+                "direction": e.direction,
+                "biller": e.biller,
+                "amountCents": e.amount_cents,
+                "currency": e.currency,
+                "description": e.description,
+                "occurredAt": e.occurred_at,
+                "createdAt": e.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": id,
+        "total": items.len(),
+        "items": items,
+    })))
+}
+
+#[cfg(test)]
+mod round208_tests {
+    use super::*;
+
+    #[test]
+    fn parse_logo_extracts_from_last_comment() {
+        let desc = Some("Welcome\n<!-- logo:https://x.test/a.png -->");
+        assert_eq!(
+            parse_logo_from_description(desc).as_deref(),
+            Some("https://x.test/a.png")
+        );
+    }
+
+    #[test]
+    fn parse_logo_returns_none_for_empty() {
+        assert_eq!(parse_logo_from_description(None), None);
+        assert_eq!(parse_logo_from_description(Some("")), None);
+        assert_eq!(parse_logo_from_description(Some("no logo here")), None);
+    }
+
+    #[test]
+    fn parse_logo_picks_last_logo_if_multiple() {
+        let desc = Some("<!-- logo:old -->\nnew text\n<!-- logo:new -->");
+        assert_eq!(
+            parse_logo_from_description(desc).as_deref(),
+            Some("new")
+        );
+    }
 }
