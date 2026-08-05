@@ -2134,32 +2134,10 @@ async fn get_self_inbox_mine(
     // is provided we additionally filter by responsible_user_id to support the
     // user-curated inbox view.
     let status = q.status.unwrap_or_else(|| "todo,in_progress,blocked".to_string());
-    let user_filter = q.user_id.clone().unwrap_or_default();
-    let rows = sqlx::query_as::<_, pc_repos::issue::IssueRow>(
-        "SELECT id, company_id, project_id, project_workspace_id, goal_id, parent_id, \
-                title, description, status, work_mode, harness_kind, priority, \
-                assignee_agent_id, assignee_user_id, checkout_run_id, execution_run_id, \
-                execution_agent_name_key, execution_locked_at, created_by_agent_id, \
-                created_by_user_id, responsible_user_id, issue_number, identifier, \
-                origin_kind, origin_id, origin_run_id, origin_fingerprint, request_depth, \
-                billing_code, assignee_adapter_overrides, execution_policy, execution_state, \
-                monitor_next_check_at, monitor_wake_requested_at, monitor_last_triggered_at, \
-                monitor_attempt_count, monitor_notes, monitor_scheduled_by, \
-                monitor_check_now_requested_at, monitor_scheduled_retry_requested_at, \
-                hidden_at, archived_at, completed_at, started_at, heartbeat_at, due_at, \
-                estimate_minutes, sla_minutes, source_kind, source_ref, created_at, updated_at, \
-                payload, tags \
-         FROM issues WHERE company_id=$1 AND assignee_agent_id=$2 \
-         AND status = ANY(string_to_array($3, ',')) AND hidden_at IS NULL \
-         AND ($4 = '' OR responsible_user_id = $4) \
-         ORDER BY updated_at DESC LIMIT 200",
-    )
-    .bind(agent.company_id)
-    .bind(agent_id)
-    .bind(status)
-    .bind(user_filter)
-    .fetch_all(state.db.pool())
-    .await?;
+    let user_filter = q.user_id.as_deref();
+    let rows = IssueRepo::new(&state.db)
+        .list_assigned_filtered(agent.company_id, agent_id, &status, user_filter, 200)
+        .await?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|row| {
@@ -2265,16 +2243,16 @@ async fn read_workspace_operation_log(
     Path(operation_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<WorkspaceOperationLogQuery>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Option<Uuid>, Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as(
-            "SELECT company_id, heartbeat_run_id, stdout_excerpt, stderr_excerpt, log_ref \
-             FROM workspace_operations WHERE id=$1",
-        )
-        .bind(operation_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let (_company_id, run_id, stdout, stderr, log_ref) = row
+    // Round 108: 仓储化。用 ExecutionRepo::find_operation_log_meta 取代内联 SQL。
+    let meta = ExecutionRepo::new(&state.db)
+        .find_operation_log_meta(operation_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("workspace operation {operation_id}")))?;
+    let _company_id = meta.company_id;
+    let run_id = meta.heartbeat_run_id;
+    let stdout = meta.stdout_excerpt;
+    let stderr = meta.stderr_excerpt;
+    let log_ref = meta.log_ref;
     let limit_bytes = q.limit_bytes.unwrap_or(64 * 1024).clamp(1024, 1024 * 1024);
     let after_seq = q.offset.unwrap_or(0).max(0);
     let mut buffer = String::new();

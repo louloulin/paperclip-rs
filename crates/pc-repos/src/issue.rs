@@ -485,6 +485,30 @@ impl<'a> IssueRepo<'a> {
             .fetch_all(self.db.pool())
             .await
     }
+/// Round 108: 列某个 agent 被指派的 issues，按 status 多值 + responsible_user_id 过滤。
+    /// `statuses_csv` 例如 "todo,in_progress,blocked"，会被 `string_to_array` 拆分。
+    /// `responsible_user_id` 为 Some("") 时不过滤；为 None 时也不过滤；为 Some(other) 时按精确匹配。
+    pub async fn list_assigned_filtered(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+        statuses_csv: &str,
+        responsible_user_id: Option<&str>,
+        limit: i64,
+    ) -> sqlx::Result<Vec<IssueRow>> {
+        let sql = format!(
+            "SELECT {ISSUE_COLS} FROM issues              WHERE company_id=$1 AND assignee_agent_id=$2              AND status = ANY(string_to_array($3, ','))              AND hidden_at IS NULL              AND ($4 = '' OR responsible_user_id = $4)              ORDER BY updated_at DESC LIMIT $5"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(company_id)
+            .bind(agent_id)
+            .bind(statuses_csv)
+            .bind(responsible_user_id.unwrap_or(""))
+            .bind(limit.clamp(1, 1000))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
 
 
         pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {

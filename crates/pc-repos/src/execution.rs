@@ -229,6 +229,20 @@ impl<'a> ExecutionRepo<'a> {
             .await?)
     }
 
+    /// Round 108: 查单个 operation 元数据（company_id + heartbeat_run_id + 截断的 stdout/stderr + log_ref）
+    /// 用于 `read_workspace_operation_log` 端点的开头查询。
+    pub async fn find_operation_log_meta(
+        &self,
+        operation_id: Uuid,
+    ) -> sqlx::Result<Option<WorkspaceOperationMetaRow>> {
+        sqlx::query_as::<_, WorkspaceOperationMetaRow>(
+            "SELECT company_id, heartbeat_run_id, stdout_excerpt, stderr_excerpt, log_ref              FROM workspace_operations WHERE id = $1",
+        )
+        .bind(operation_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
     pub async fn create(&self, w: &NewWorkspace) -> RepoResult<WorkspaceRow> {
         if w.name.trim().is_empty() {
             return Err(RepoError::Invalid("workspace name must not be empty".into()));
@@ -526,6 +540,17 @@ impl ActionStatus {
 }
 
 const ACTION_COLS: &str = "id, workspace_id, kind, action, payload, status, error,     requested_by_user_id, requested_by_agent_id, started_at, completed_at, created_at, updated_at";
+
+/// Round 108: workspace_operations 单行元数据，用于 `read_workspace_operation_log` 端点。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceOperationMetaRow {
+    pub company_id: Uuid,
+    pub heartbeat_run_id: Option<Uuid>,
+    pub stdout_excerpt: Option<String>,
+    pub stderr_excerpt: Option<String>,
+    pub log_ref: Option<String>,
+}
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

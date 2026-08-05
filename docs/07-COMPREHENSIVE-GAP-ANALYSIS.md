@@ -713,6 +713,47 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 31. 第一百零八轮增量（Round 108 — agents.rs 残 2 SQL 收尾)
+
+### 目标
+Round 107 留 2 个内联 SQL 未处理，本轮全部清空：
+
+1. **`get_self_inbox_mine`** —— `status = ANY(string_to_array($3, ','))` + user_filter
+2. **`read_workspace_operation_log`** —— `SELECT company_id, heartbeat_run_id, stdout_excerpt, stderr_excerpt, log_ref FROM workspace_operations WHERE id=$1`
+
+### 新增 `pc_repos::issue::IssueRepo` 方法
+- `list_assigned_filtered(company_id, agent_id, statuses_csv, responsible_user_id, limit)`
+  - `statuses_csv` 由 `string_to_array` 拆分为多状态
+  - `responsible_user_id`: `Some("")` / `None` 都不过滤；`Some(other)` 精确匹配
+  - 专门为 `GET /api/agents/me/inbox/mine` 设计
+
+### 新增 `pc_repos::execution::ExecutionRepo` 方法 + 结构
+```rust
+pub struct WorkspaceOperationMetaRow { /* 5 列元数据 */ }
+pub async fn find_operation_log_meta(operation_id: Uuid) -> sqlx::Result<Option<WorkspaceOperationMetaRow>>
+```
+顺手给 `ActionLogRow` 添加缺失的 `FromRow` derive（之前只有 `Debug/Clone/Serialize/Deserialize`，
+sqlx 用不到而触发 `FromRow not satisfied` 编译错误，Round 108 一起修了）。
+
+### 重构 `agents.rs` 2 个端点
+- `get_self_inbox_mine` —— 50 行 SELECT 元组 → `IssueRepo::list_assigned_filtered()`
+- `read_workspace_operation_log` —— `ExecutionRepo::find_operation_log_meta()`
+
+### 新增集成测试 5 个 (`crates/pc-repos/tests/round108_agent_self_inbox_repo.rs`)
+1. `issue_repo_list_assigned_filtered_by_statuses` —— 多状态过滤 + user_id 过滤
+2. `issue_repo_list_assigned_filtered_single_status` —— CSV 单元素
+3. `execution_repo_find_operation_log_meta_returns_5_cols` —— 5 列元数据
+4. `execution_repo_find_operation_log_meta_returns_none_for_missing` —— 未知 id 返回 None
+5. `workspace_operations_table_real_columns_audit` —— INFORMATION_SCHEMA 防漂移
+
+### 进度影响
+- 综合进度从 **≈ 88.0% → ≈ 88.6%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **461 passed**（pc-repos 单元无变化）
+- **agents.rs 内的所有 5 个内联 SQL 全部清空进入高内聚低耦合仓储设计**
+- 累计 Round 95-108 修复 **49 个路由从 500 → 200**，
+  21 个 tool_* + 1 case + 5 个 agent/issue/execution 路由进入高内聚低耦合设计
+
 ## 30. 第一百零七轮增量（Round 107 — Heartbeat + Issue 端点仓储化)
 
 ### 目标
