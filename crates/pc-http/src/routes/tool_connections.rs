@@ -254,46 +254,136 @@ async fn list_grants(
     State(state): State<AppState>,
     Path(connection_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let repo = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db);
-    if repo.grants_table_exists(connection_id).await.map_err(|e| ApiError::Internal(e.to_string()))? {
-        let rows = repo.list_grants(connection_id).await.map_err(|e| ApiError::Internal(e.to_string()))?;
-        let items: Vec<Value> = rows.into_iter().map(|(id, cid, profile_id, scopes)| json!({
-            "id": id, "companyId": cid, "profileId": profile_id, "scopes": scopes,
-        })).collect();
-        return Ok(Json(json!({"items": items, "connectionId": connection_id})));
-    }
-    Ok(Json(json!({"items": [], "connectionId": connection_id})))
+    // Round 227 真实实现：使用 v3 connection_grants 表
+    let conn_row = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db)
+        .find_by_id(connection_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("connection {connection_id}")))?;
+    let grants = pc_repos::tool_connection::list_connection_grants(
+        &state.db,
+        connection_id,
+        conn_row.company_id,
+    )
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = grants
+        .iter()
+        .map(grant_row_to_json)
+        .collect();
+    Ok(Json(json!({
+        "connectionId": connection_id,
+        "items": items,
+    })))
 }
 
 async fn delete_grant(
     State(state): State<AppState>,
     Path((connection_id, grant_id)): Path<(Uuid, Uuid)>,
-) -> ApiResult<StatusCode> {
-    let repo = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db);
-    if !repo.grants_table_exists(connection_id).await.map_err(|e| ApiError::Internal(e.to_string()))? {
-        return Ok(StatusCode::NO_CONTENT);
-    }
-    let _ = connection_id; // 表存在但用 grant_id 主键删除
-    let affected = repo.delete_grant(grant_id).await.map_err(|e| ApiError::Internal(e.to_string()))?;
-    if affected == 0 {
-        return Err(ApiError::NotFound(format!("grant {grant_id}")));
-    }
-    Ok(StatusCode::NO_CONTENT)
+) -> ApiResult<Json<Value>> {
+    // Round 227 真实实现：撤销 grant (status=revoked)
+    let conn_row = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db)
+        .find_by_id(connection_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("connection {connection_id}")))?;
+    let revoked = pc_repos::tool_connection::revoke_connection_grant(
+        &state.db,
+        conn_row.company_id,
+        connection_id,
+        grant_id,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .ok_or_else(|| ApiError::NotFound(format!("grant {grant_id}")))?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new(
+            "tool_connection.grant_revoked",
+            "connection_grant",
+            grant_id,
+        )
+        .with_company(conn_row.company_id)
+        .with_data(json!({
+            "connectionId": connection_id,
+            "grantId": grant_id,
+        })),
+    );
+    Ok(Json(grant_row_to_json(&revoked)))
 }
 
+/// Round 227: 完整 `grant_installations` body
 #[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct GrantInstallationsBody {
     #[serde(default)]
-    agent_ids: Option<Vec<Uuid>>,
+    provider_tenant: Option<ProviderTenantBody>,
+    #[serde(default)]
+    credential_secret_refs: Option<Vec<String>>,
+    #[serde(default)]
+    is_default: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderTenantBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    external_id: Option<String>,
 }
 
 async fn grant_installations(
     State(state): State<AppState>,
     Path(connection_id): Path<Uuid>,
     Json(body): Json<GrantInstallationsBody>,
-) -> ApiResult<Json<Value>> {
-    let agents = body.agent_ids.unwrap_or_default();
-    Ok(Json(json!({"granted": agents.len(), "connectionId": connection_id})))
+) -> ApiResult<axum::response::Response> {
+    // Round 227 真实实现：创建 workspace kind connection grant
+    let conn_row = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db)
+        .find_by_id(connection_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("connection {connection_id}")))?;
+    let provider_tenant = body.provider_tenant.as_ref().map(|pt| {
+        json!({
+            "name": pt.name,
+            "externalId": pt.external_id,
+        })
+    });
+    let creds_refs = serde_json::Value::Array(
+        body.credential_secret_refs
+            .as_ref()
+            .map(|refs| refs.iter().map(|s| serde_json::Value::String(s.clone())).collect())
+            .unwrap_or_default(),
+    );
+    let is_default = body.is_default.unwrap_or(false);
+    let created = pc_repos::tool_connection::create_workspace_grant(
+        &state.db,
+        conn_row.company_id,
+        connection_id,
+        provider_tenant.as_ref(),
+        &creds_refs,
+        is_default,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new(
+            "tool_connection.grant_added",
+            "connection_grant",
+            created.id,
+        )
+        .with_company(conn_row.company_id)
+        .with_data(json!({
+            "connectionId": connection_id,
+            "grantId": created.id,
+            "kind": created.kind,
+        })),
+    );
+    Ok((StatusCode::CREATED, Json(grant_row_to_json(&created))).into_response())
 }
 
 async fn list_test_agents(
@@ -423,4 +513,138 @@ async fn get_connection_usage(
         "connectionId": connection_id,
         "installCount": total.unwrap_or(0),
     })))
+}
+
+// ============================================================================
+// Round 227: connection_grant 序列化 helper
+// ============================================================================
+
+/// 将 `ConnectionGrantRow` 序列化为 camelCase JSON（与 Node schema 对齐）
+fn grant_row_to_json(
+    r: &pc_repos::tool_connection::ConnectionGrantRow,
+) -> Value {
+    json!({
+        "id": r.id,
+        "companyId": r.company_id,
+        "connectionId": r.connection_id,
+        "kind": r.kind,
+        "subjectUserId": r.subject_user_id,
+        "providerTenant": r.provider_tenant,
+        "credentialSecretRefs": r.credential_secret_refs,
+        "status": r.status,
+        "isDefault": r.is_default,
+        "createdByAgentId": r.created_by_agent_id,
+        "createdByUserId": r.created_by_user_id,
+        "revokedAt": r.revoked_at,
+        "revokedByAgentId": r.revoked_by_agent_id,
+        "revokedByUserId": r.revoked_by_user_id,
+        "lastUsedAt": r.last_used_at,
+        "createdAt": r.created_at,
+        "updatedAt": r.updated_at,
+    })
+}
+
+#[cfg(test)]
+mod round227_tests {
+    //! Round 227: connection_grants 序列化 + body 解析测试
+    //!
+    //! 覆盖：
+    //! - `grant_row_to_json` camelCase 序列化（关键字段）
+    //! - `GrantInstallationsBody` 完整 body 解析
+    //! - `ProviderTenantBody` 子结构解析
+    use super::{grant_row_to_json, GrantInstallationsBody, ProviderTenantBody};
+    use pc_repos::tool_connection::ConnectionGrantRow;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn make_grant_row(id: Uuid, status: &str, is_default: bool) -> ConnectionGrantRow {
+        let now = chrono::Utc::now();
+        ConnectionGrantRow {
+            id,
+            company_id: Uuid::nil(),
+            connection_id: Uuid::nil(),
+            kind: "workspace".to_string(),
+            subject_user_id: None,
+            provider_tenant: Some(json!({"name": "tenant-1", "externalId": "ext-1"})),
+            credential_secret_refs: json!(["secret-1", "secret-2"]),
+            status: status.to_string(),
+            is_default,
+            created_by_agent_id: None,
+            created_by_user_id: Some("u-test".to_string()),
+            revoked_at: None,
+            revoked_by_agent_id: None,
+            revoked_by_user_id: None,
+            last_used_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn grant_row_json_uses_camel_case_keys() {
+        let id = Uuid::new_v4();
+        let row = make_grant_row(id, "active", true);
+        let v = grant_row_to_json(&row);
+        let obj = v.as_object().expect("object");
+        // 关键 camelCase 字段（与 Node connectionGrants 序列化对齐）
+        assert!(obj.contains_key("companyId"));
+        assert!(obj.contains_key("connectionId"));
+        assert!(obj.contains_key("subjectUserId"));
+        assert!(obj.contains_key("providerTenant"));
+        assert!(obj.contains_key("credentialSecretRefs"));
+        assert!(obj.contains_key("isDefault"));
+        assert!(obj.contains_key("createdByAgentId"));
+        assert!(obj.contains_key("createdByUserId"));
+        assert!(obj.contains_key("revokedAt"));
+        assert!(obj.contains_key("revokedByAgentId"));
+        assert!(obj.contains_key("revokedByUserId"));
+        assert!(obj.contains_key("lastUsedAt"));
+        assert!(obj.contains_key("createdAt"));
+        assert!(obj.contains_key("updatedAt"));
+        // 值校验
+        assert_eq!(obj["kind"], json!("workspace"));
+        assert_eq!(obj["status"], json!("active"));
+        assert_eq!(obj["isDefault"], json!(true));
+    }
+
+    #[test]
+    fn grant_row_json_preserves_provider_tenant() {
+        let id = Uuid::new_v4();
+        let row = make_grant_row(id, "active", false);
+        let v = grant_row_to_json(&row);
+        let tenant = v["providerTenant"].as_object().expect("tenant obj");
+        assert_eq!(tenant["name"], json!("tenant-1"));
+        assert_eq!(tenant["externalId"], json!("ext-1"));
+    }
+
+    #[test]
+    fn grant_installations_body_parses_minimal() {
+        let body: GrantInstallationsBody = serde_json::from_value(json!({})).expect("parse");
+        assert!(body.provider_tenant.is_none());
+        assert!(body.credential_secret_refs.is_none());
+        assert!(body.is_default.is_none());
+    }
+
+    #[test]
+    fn grant_installations_body_parses_full() {
+        let body: GrantInstallationsBody = serde_json::from_value(json!({
+            "providerTenant": {"name": "tenant-a", "externalId": "ext-a"},
+            "credentialSecretRefs": ["secret-1", "secret-2"],
+            "isDefault": true,
+        }))
+        .expect("parse");
+        let tenant = body.provider_tenant.expect("tenant");
+        assert_eq!(tenant.name.as_deref(), Some("tenant-a"));
+        assert_eq!(tenant.external_id.as_deref(), Some("ext-a"));
+        let refs = body.credential_secret_refs.expect("refs");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(body.is_default, Some(true));
+    }
+
+    #[test]
+    fn provider_tenant_body_handles_optional_fields() {
+        let body: ProviderTenantBody = serde_json::from_value(json!({})).expect("parse");
+        assert!(body.name.is_none());
+        assert!(body.external_id.is_none());
+    }
 }

@@ -263,6 +263,163 @@ pub async fn delete_grant(db: &Db, grant_id: Uuid) -> RepoResult<u64> {
 }
 
 // ============================================================================
+// Round 227: v3 `connection_grants` 仓储方法（OAuth 安装 + revoke 完整实现）
+// ============================================================================
+
+/// Round 227: v3 `connection_grants` 行投影。
+///
+/// 对应 Node `connectionGrants.$inferSelect`：
+/// id, company_id, connection_id, kind, subject_user_id,
+/// provider_tenant, credential_secret_refs, status, is_default,
+/// created_by_*, revoked_*, last_used_at, created_at, updated_at
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionGrantRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub connection_id: Uuid,
+    pub kind: String,
+    pub subject_user_id: Option<String>,
+    pub provider_tenant: Option<serde_json::Value>,
+    pub credential_secret_refs: serde_json::Value,
+    pub status: String,
+    pub is_default: bool,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub revoked_by_agent_id: Option<Uuid>,
+    pub revoked_by_user_id: Option<String>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Round 227: 列出指定 connection 的所有 v3 connection_grants。
+///
+/// 排序：is_default DESC, updated_at DESC（与 Node `listConnectionGrants` 对齐）
+pub async fn list_connection_grants(
+    db: &Db,
+    connection_id: Uuid,
+    company_id: Uuid,
+) -> RepoResult<Vec<ConnectionGrantRow>> {
+    let rows: Vec<ConnectionGrantRow> = sqlx::query_as(
+        "SELECT id, company_id, connection_id, kind, subject_user_id, \
+                provider_tenant, credential_secret_refs, status, is_default, \
+                created_by_agent_id, created_by_user_id, \
+                revoked_at, revoked_by_agent_id, revoked_by_user_id, \
+                last_used_at, created_at, updated_at \
+         FROM connection_grants \
+         WHERE company_id = $1 AND connection_id = $2 \
+         ORDER BY is_default DESC, updated_at DESC",
+    )
+    .bind(company_id)
+    .bind(connection_id)
+    .fetch_all(db.pool())
+    .await?;
+    Ok(rows)
+}
+
+/// Round 227: 清除指定 connection 的所有 workspace default grants。
+///
+/// 当创建新 default grant 时，需先清除旧的（unique index `connection_grants_default_uq`）。
+pub async fn clear_workspace_defaults(
+    db: &Db,
+    connection_id: Uuid,
+    company_id: Uuid,
+) -> RepoResult<u64> {
+    let r = sqlx::query(
+        "UPDATE connection_grants SET is_default = false, updated_at = now() \
+         WHERE company_id = $1 AND connection_id = $2 AND kind = 'workspace' AND is_default = true",
+    )
+    .bind(company_id)
+    .bind(connection_id)
+    .execute(db.pool())
+    .await?;
+    Ok(r.rows_affected())
+}
+
+/// Round 227: 创建一个 workspace kind connection grant（OAuth installation）。
+///
+/// 与 Node `addConnectionInstallation` 对齐：
+/// - `kind = 'workspace'`
+/// - `status = 'active'`
+/// - `subject_user_id = None`（workspace 级别的 grant）
+/// - 默认 is_default = false
+pub async fn create_workspace_grant(
+    db: &Db,
+    company_id: Uuid,
+    connection_id: Uuid,
+    provider_tenant: Option<&serde_json::Value>,
+    credential_secret_refs: &serde_json::Value,
+    is_default: bool,
+    created_by_agent_id: Option<Uuid>,
+    created_by_user_id: Option<&str>,
+) -> RepoResult<ConnectionGrantRow> {
+    // 如果 is_default=true，先清除现有 defaults（避免 unique index 冲突）
+    if is_default {
+        clear_workspace_defaults(db, connection_id, company_id).await?;
+    }
+    let row: ConnectionGrantRow = sqlx::query_as(
+        "INSERT INTO connection_grants \
+            (company_id, connection_id, kind, provider_tenant, \
+             credential_secret_refs, status, is_default, \
+             created_by_agent_id, created_by_user_id) \
+         VALUES ($1, $2, 'workspace', $3, $4, 'active', $5, $6, $7) \
+         RETURNING id, company_id, connection_id, kind, subject_user_id, \
+                provider_tenant, credential_secret_refs, status, is_default, \
+                created_by_agent_id, created_by_user_id, \
+                revoked_at, revoked_by_agent_id, revoked_by_user_id, \
+                last_used_at, created_at, updated_at",
+    )
+    .bind(company_id)
+    .bind(connection_id)
+    .bind(provider_tenant)
+    .bind(credential_secret_refs)
+    .bind(is_default)
+    .bind(created_by_agent_id)
+    .bind(created_by_user_id)
+    .fetch_one(db.pool())
+    .await?;
+    Ok(row)
+}
+
+/// Round 227: 撤销一个 connection grant（设置 status='revoked'）。
+///
+/// 与 Node `revokeConnectionGrant` 对齐：
+/// - status = 'revoked'
+/// - is_default = false
+/// - revoked_at = now()
+/// - revoked_by_* 由 actor 提供
+pub async fn revoke_connection_grant(
+    db: &Db,
+    company_id: Uuid,
+    connection_id: Uuid,
+    grant_id: Uuid,
+    revoked_by_agent_id: Option<Uuid>,
+    revoked_by_user_id: Option<&str>,
+) -> RepoResult<Option<ConnectionGrantRow>> {
+    let row: Option<ConnectionGrantRow> = sqlx::query_as(
+        "UPDATE connection_grants SET \
+            status = 'revoked', is_default = false, revoked_at = now(), \
+            revoked_by_agent_id = $4, revoked_by_user_id = $5, updated_at = now() \
+         WHERE id = $1 AND company_id = $2 AND connection_id = $3 \
+         RETURNING id, company_id, connection_id, kind, subject_user_id, \
+                provider_tenant, credential_secret_refs, status, is_default, \
+                created_by_agent_id, created_by_user_id, \
+                revoked_at, revoked_by_agent_id, revoked_by_user_id, \
+                last_used_at, created_at, updated_at",
+    )
+    .bind(grant_id)
+    .bind(company_id)
+    .bind(connection_id)
+    .bind(revoked_by_agent_id)
+    .bind(revoked_by_user_id)
+    .fetch_optional(db.pool())
+    .await?;
+    Ok(row)
+}
+
+// ============================================================================
 // test-agents / test-calls
 // ============================================================================
 
