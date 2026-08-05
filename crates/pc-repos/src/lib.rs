@@ -23,6 +23,7 @@ pub mod asset;
 pub mod auth;
 pub mod board_chat;
 pub mod board_key;
+pub mod budget;
 pub mod case;
 pub mod cli_challenge;
 pub mod change_consent_gate;

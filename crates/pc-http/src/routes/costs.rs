@@ -3,10 +3,12 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::{get, patch, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use pc_repos::budget::{BudgetRepo, IncidentRow, PolicyRow, ResolveIncidentInput, UpsertPolicyInput};
 use pc_repos::cost::{CostRange, CostRepo, CreateCostEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -70,6 +72,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/companies/:company_id/budgets",
             patch(update_company_budget),
+        )
+        .route(
+            "/api/companies/:company_id/budgets/policies",
+            get(list_budget_policies).post(upsert_budget_policy),
+        )
+        .route(
+            "/api/companies/:company_id/budget-incidents/:incident_id/resolve",
+            post(resolve_budget_incident),
+        )
+        .route(
+            "/api/companies/:company_id/finance-events",
+            post(create_finance_event),
         )
         .route("/api/agents/:agent_id/budgets", patch(update_agent_budget))
         .route(
@@ -371,3 +385,107 @@ struct IssueCostQuery {
     #[serde(default)]
     exclude_root: bool,
 }
+
+// ===== Round 194: budget policies & incidents =====
+
+async fn list_budget_policies(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Vec<PolicyRow>>> {
+    if !CompanyRepo::new(&state.db).exists(company_id).await? {
+        return Err(ApiError::NotFound(format!("company {company_id}")));
+    }
+    let rows = BudgetRepo::new(&state.db).list_policies(company_id).await?;
+    Ok(Json(rows))
+}
+
+async fn upsert_budget_policy(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(input): Json<UpsertPolicyInput>,
+) -> ApiResult<impl IntoResponse> {
+    if !CompanyRepo::new(&state.db).exists(company_id).await? {
+        return Err(ApiError::NotFound(format!("company {company_id}")));
+    }
+    if input.amount < 0 {
+        return Err(ApiError::BadRequest("amount must be non-negative".into()));
+    }
+    if input.warn_percent < 1 || input.warn_percent > 99 {
+        return Err(ApiError::BadRequest("warn_percent must be 1-99".into()));
+    }
+    let row = BudgetRepo::new(&state.db)
+        .upsert_policy(company_id, &input)
+        .await?;
+    Ok((StatusCode::OK, Json(row)))
+}
+
+async fn resolve_budget_incident(
+    State(state): State<AppState>,
+    Path((company_id, incident_id)): Path<(Uuid, Uuid)>,
+    Json(input): Json<ResolveIncidentInput>,
+) -> ApiResult<Json<IncidentRow>> {
+    if !CompanyRepo::new(&state.db).exists(company_id).await? {
+        return Err(ApiError::NotFound(format!("company {company_id}")));
+    }
+    let row = BudgetRepo::new(&state.db)
+        .resolve_incident(company_id, incident_id, &input)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("incident {incident_id}")))?;
+    Ok(Json(row))
+}
+
+// ===== Round 194: finance events =====
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct FinanceEventBody {
+    amount_cents: i64,
+    biller: String,
+    event_kind: String,
+    direction: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    occurred_at: Option<DateTime<Utc>>,
+}
+
+async fn create_finance_event(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<FinanceEventBody>,
+) -> ApiResult<impl IntoResponse> {
+    if !CompanyRepo::new(&state.db).exists(company_id).await? {
+        return Err(ApiError::NotFound(format!("company {company_id}")));
+    }
+    if body.amount_cents < 0 {
+        return Err(ApiError::BadRequest("amount_cents must be non-negative".into()));
+    }
+    let id = Uuid::new_v4();
+    let occurred = body.occurred_at.unwrap_or_else(Utc::now);
+    sqlx::query(
+        "INSERT INTO finance_events             (id, company_id, amount_cents, biller, event_kind, direction, description, occurred_at)          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(id)
+    .bind(company_id)
+    .bind(body.amount_cents)
+    .bind(&body.biller)
+    .bind(&body.event_kind)
+    .bind(&body.direction)
+    .bind(body.description.as_deref())
+    .bind(occurred)
+    .execute(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = json!({
+        "id": id,
+        "companyId": company_id,
+        "amountCents": body.amount_cents,
+        "biller": body.biller,
+        "eventKind": body.event_kind,
+        "direction": body.direction,
+        "description": body.description,
+        "occurredAt": occurred,
+    });
+    Ok((StatusCode::CREATED, Json(row)))
+}
+
