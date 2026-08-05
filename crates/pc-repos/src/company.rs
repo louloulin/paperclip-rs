@@ -109,6 +109,14 @@ impl<'a> CompanyRepo<'a> {
     }
 
     /// 轻量级存在性检查（用于路由 404 前置守卫）。
+    /// Round 148: 轻量按 id 取 name（invite_onboarding / onboarding_txt 用）。
+    pub async fn find_name_by_id(&self, id: Uuid) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar("SELECT name FROM companies WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     pub async fn exists(&self, id: Uuid) -> sqlx::Result<bool> {
         let row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM companies WHERE id = $1")
             .bind(id)

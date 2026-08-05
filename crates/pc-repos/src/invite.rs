@@ -201,6 +201,22 @@ impl<'a> InviteRepo<'a> {
     }
 
     /// 撤销邀请（原子：要求 company_id 匹配 + revoked_at IS NULL）。
+    /// Round 148: 通过 token_hash 查找 invite 核心字段（invite_onboarding / onboarding_txt 用）。
+    /// 返回 (id, company_id, role, expires_at, accepted_at, revoked_at) — expires_at 为 NOT NULL，其余可空。
+    pub async fn lookup_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> RepoResult<Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)>> {
+        let row: Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)> = sqlx::query_as(
+            "SELECT i.id, i.company_id, i.defaults_payload->>'role' as role, i.expires_at, i.accepted_at, i.revoked_at \
+             FROM invites i WHERE i.token_hash = $1 LIMIT 1",
+        )
+        .bind(token_hash)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
     pub async fn revoke(&self, company_id: Uuid, invite_id: Uuid) -> RepoResult<bool> {
         let r = sqlx::query(
             "UPDATE invites SET revoked_at = now(), updated_at = now() \

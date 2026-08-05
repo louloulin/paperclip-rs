@@ -59,22 +59,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/admin/users/:user_id/demote-instance-admin", post(demote_instance_admin))
 }
 
-#[derive(Debug, FromRow)]
-struct ChallengeRow {
-    id: Uuid,
-    secret_hash: String,
-    command: String,
-    client_name: Option<String>,
-    requested_access: String,
-    requested_company_id: Option<Uuid>,
-    pending_key_hash: String,
-    pending_key_name: String,
-    approved_by_user_id: Option<String>,
-    approved_at: Option<pc_core::Timestamp>,
-    cancelled_at: Option<pc_core::Timestamp>,
-    expires_at: pc_core::Timestamp,
-    created_at: pc_core::Timestamp,
-}
+// Round 149: `ChallengeRow` 已迁到 `pc_repos::cli_challenge::ChallengeRow`。
+use pc_repos::cli_challenge::ChallengeRow;
 
 fn challenge_json(row: &ChallengeRow, include_secret: bool) -> Value {
     let mut obj = json!({
@@ -97,17 +83,8 @@ fn challenge_json(row: &ChallengeRow, include_secret: bool) -> Value {
     obj
 }
 
-#[derive(Debug, FromRow)]
-struct BoardKeyRow {
-    id: Uuid,
-    user_id: String,
-    name: String,
-    key_hash: String,
-    last_used_at: Option<pc_core::Timestamp>,
-    revoked_at: Option<pc_core::Timestamp>,
-    expires_at: Option<pc_core::Timestamp>,
-    created_at: pc_core::Timestamp,
-}
+// Round 149: `BoardKeyRow` 已迁到 `pc_repos::board_key::BoardKeyRow`。
+use pc_repos::board_key::BoardKeyRow;
 
 fn board_key_json(row: &BoardKeyRow, include_key: bool) -> Value {
     let mut obj = json!({
@@ -228,26 +205,22 @@ async fn cli_challenge_create(
     let pending_board_token = random_cli_token("pcp_board_");
     let pending_key_hash = pc_auth::hash_token(&pending_board_token);
     let secret_hash = pc_auth::hash_token(&challenge_secret);
-    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
-    let row: ChallengeRow = sqlx::query_as(
-        "INSERT INTO cli_auth_challenges \
-            (secret_hash, command, client_name, requested_access, requested_company_id, \
-             pending_key_hash, pending_key_name, expires_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-         RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id, \
-                   pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
-                   cancelled_at, expires_at, created_at",
-    )
-    .bind(&secret_hash)
-    .bind(&command)
-    .bind(client_name)
-    .bind(&requested_access)
-    .bind(requested_company_id)
-    .bind(&pending_key_hash)
-    .bind(&pending_key_name)
-    .bind(expires_at)
-    .fetch_one(state.db.pool())
-    .await?;
+    let expires_at = pc_core::Timestamp::from_dt(
+        chrono::Utc::now() + chrono::Duration::minutes(5),
+    );
+    let row = pc_repos::cli_challenge::ChallengeRepo::new(&state.db)
+        .create(
+            &secret_hash,
+            &command,
+            client_name.as_deref(),
+            &requested_access,
+            requested_company_id,
+            &pending_key_hash,
+            &pending_key_name,
+            expires_at,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "id": row.id,
         "token": challenge_secret,
@@ -271,15 +244,10 @@ async fn cli_challenge_get(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<ChallengeRow> = sqlx::query_as(
-        "SELECT id, secret_hash, command, client_name, requested_access, requested_company_id, \
-                pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
-                cancelled_at, expires_at, created_at \
-         FROM cli_auth_challenges WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = pc_repos::cli_challenge::ChallengeRepo::new(&state.db)
+        .find_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     match row {
         Some(row) => Ok(Json(challenge_json(&row, true))),
         None => Err(ApiError::NotFound(format!("challenge {id}"))),
@@ -292,18 +260,10 @@ async fn cli_challenge_approve(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let user_id = require_user_id(&state, &headers).await?;
-    let row: ChallengeRow = sqlx::query_as(
-        "UPDATE cli_auth_challenges SET \
-            approved_by_user_id = $2, approved_at = now(), updated_at = now() \
-         WHERE id = $1 \
-         RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id, \
-                   pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
-                   cancelled_at, expires_at, created_at",
-    )
-    .bind(id)
-    .bind(&user_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = pc_repos::cli_challenge::ChallengeRepo::new(&state.db)
+        .approve(id, &user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(challenge_json(&row, true)))
 }
 
@@ -311,16 +271,10 @@ async fn cli_challenge_cancel(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: ChallengeRow = sqlx::query_as(
-        "UPDATE cli_auth_challenges SET cancelled_at = now(), updated_at = now() \
-         WHERE id = $1 \
-         RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id, \
-                   pending_key_hash, pending_key_name, approved_by_user_id, approved_at, \
-                   cancelled_at, expires_at, created_at",
-    )
-    .bind(id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = pc_repos::cli_challenge::ChallengeRepo::new(&state.db)
+        .cancel(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(challenge_json(&row, false)))
 }
 
@@ -338,13 +292,10 @@ async fn board_keys_list(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let user_id = require_user_id(&state, &headers).await?;
-    let rows: Vec<BoardKeyRow> = sqlx::query_as(
-        "SELECT id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at \
-         FROM board_api_keys WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC",
-    )
-    .bind(&user_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = pc_repos::board_key::BoardKeyRepo::new(&state.db)
+        .list_active_by_user(&user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows.iter().map(|r| board_key_json(r, false)).collect();
     Ok(Json(json!({ "items": items })))
 }
@@ -364,17 +315,10 @@ async fn board_keys_create(
     let name = body.name.clone().unwrap_or_else(|| "new-key".to_owned());
     let token = random_cli_token("pcp_board_");
     let key_hash = sha2_sha256(&token);
-    let row: BoardKeyRow = sqlx::query_as(
-        "INSERT INTO board_api_keys (user_id, name, key_hash, expires_at) \
-         VALUES ($1, $2, $3, $4) \
-         RETURNING id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at",
-    )
-    .bind(&user_id)
-    .bind(&name)
-    .bind(&key_hash)
-    .bind(body.expires_at)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = pc_repos::board_key::BoardKeyRepo::new(&state.db)
+        .create(&user_id, &name, &key_hash, body.expires_at)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let mut response = board_key_json(&row, true);
     if let Some(obj) = response.as_object_mut() {
         obj.insert("token".into(), Value::String(token.clone()));
@@ -388,14 +332,10 @@ async fn delete_board_key(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
     let user_id = require_user_id(&state, &headers).await?;
-    sqlx::query(
-        "UPDATE board_api_keys SET revoked_at = now() \
-         WHERE id = $1 AND user_id = $2",
-    )
-    .bind(key_id)
-    .bind(&user_id)
-    .execute(state.db.pool())
-    .await?;
+    let _ = pc_repos::board_key::BoardKeyRepo::new(&state.db)
+        .revoke(key_id, &user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::NO_CONTENT,
         Json(json!({ "id": key_id, "deleted": true })),
@@ -546,19 +486,16 @@ fn hex_encode(bytes: &[u8]) -> String {
 // ============================================================================
 
 /// Hash token + lookup helper used by all Round 38 invite handlers.
+/// Round 148: 委托到 `InviteRepo::lookup_by_token_hash` + `CompanyRepo::find_name_by_id`。
 async fn lookup_invite_by_token(
     state: &AppState,
     token: &str,
 ) -> ApiResult<Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)>> {
-    let token_hash = sha2_sha256(token);
-    let row: Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, defaults_payload->>'role', expires_at, accepted_at, revoked_at \
-         FROM invites WHERE token_hash = $1 LIMIT 1",
-    )
-    .bind(&token_hash)
-    .fetch_optional(state.db.pool())
-    .await?;
-    Ok(row)
+    let token_hash = pc_repos::invite::hash_token_hex(token);
+    pc_repos::invite::InviteRepo::new(&state.db)
+        .lookup_by_token_hash(&token_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 /// `GET /api/invites/:token/onboarding` — minimal onboarding manifest.
@@ -575,10 +512,10 @@ async fn invite_onboarding(
     if revoked_at.is_some() || accepted_at.is_some() {
         return Err(ApiError::NotFound("invite not found".into()));
     }
-    let company_name: Option<String> = sqlx::query_scalar("SELECT name FROM companies WHERE id=$1")
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
-        .await?;
+    let company_name = pc_repos::company::CompanyRepo::new(&state.db)
+        .find_name_by_id(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "invite": {
             "id": id,
@@ -613,9 +550,8 @@ async fn invite_onboarding_txt(
     if revoked_at.is_some() {
         return Err(ApiError::NotFound("invite not found".into()));
     }
-    let company_name: Option<String> = sqlx::query_scalar("SELECT name FROM companies WHERE id=$1")
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
+    let company_name = pc_repos::company::CompanyRepo::new(&state.db)
+        .find_name_by_id(company_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let body = format!(
