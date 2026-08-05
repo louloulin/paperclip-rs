@@ -1193,6 +1193,34 @@ impl<'a> CaseRepo<'a> {
         Ok(id)
     }
 
+    // ---- Round 118: 通用 case_events 记录（review / suggest / resolve / acknowledge / document_delete） ----
+
+    /// Round 118: 通用 case_events 记录助手。
+    ///
+    /// 用于无法套用专用 `record_*_event` 形态的端点（review、suggest-transition、
+    /// resolve-suggestion、acknowledge-drift、delete-case-document 等）。kind 与
+    /// actor_type 由调用方提供字符串字面量；payload 为完整 JSON。
+    pub async fn record_case_event(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        kind: &str,
+        actor_type: &str,
+        payload: Value,
+    ) -> sqlx::Result<Uuid> {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)             VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(kind)
+        .bind(actor_type)
+        .bind(payload)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id)
+    }
+
     // ---- Round 116: case document revisions ----
 
     /// Round 116: 列出 document_revisions (按 revision_number DESC)。

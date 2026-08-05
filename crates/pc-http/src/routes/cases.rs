@@ -501,17 +501,6 @@ async fn resolve_case_document_id(
     row.ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))
 }
 
-async fn ensure_case_exists(state: &AppState, case_id: Uuid) -> ApiResult<Uuid> {
-    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM cases WHERE id = $1")
-        .bind(case_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-    row.map(|(c,)| c)
-        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))
-}
-
 // ── Case annotation threads ──────────────────────────────────
 
 #[derive(Debug, Default, Deserialize)]
@@ -880,7 +869,10 @@ async fn delete_case_document(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
+    let company_id = CaseRepo::new(&state.db)
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let affected = sqlx::query(
         "DELETE FROM case_documents WHERE case_id = $1 AND key = $2 AND company_id = $3",
     )
@@ -894,15 +886,15 @@ async fn delete_case_document(
         return Err(ApiError::NotFound(format!("case document {case_id}:{key}")));
     }
     // Log event
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'document_revised', 'user', jsonb_build_object('key', $3::text, 'deleted', true))",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(&key)
-    .execute(state.db.pool())
-    .await;
+    let _ = CaseRepo::new(&state.db)
+        .record_case_event(
+            company_id,
+            case_id,
+            "document_revised",
+            "user",
+            json!({ "key": key, "deleted": true }),
+        )
+        .await;
     state.realtime.publish(
         LiveEvent::new("case.document.deleted", "case", case_id)
             .with_company(company_id)
@@ -1329,15 +1321,15 @@ async fn review_case_route(
         "note": body.note,
         "expectedVersion": body.expected_version,
     });
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'status_changed', 'user', $3::jsonb)",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(payload)
-    .execute(state.db.pool())
-    .await;
+    let _ = CaseRepo::new(&state.db)
+        .record_case_event(
+            case.company_id,
+            case_id,
+            "status_changed",
+            "user",
+            payload,
+        )
+        .await;
     state.realtime.publish(
         LiveEvent::new("case.reviewed", "case", case_id)
             .with_company(case.company_id)
@@ -1479,15 +1471,15 @@ async fn suggest_transition_route(
         "reason": body.reason,
         "confidence": body.confidence,
     });
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'fields_changed', 'system', $3::jsonb)",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(&payload)
-    .execute(state.db.pool())
-    .await;
+    let _ = CaseRepo::new(&state.db)
+        .record_case_event(
+            case.company_id,
+            case_id,
+            "fields_changed",
+            "system",
+            payload,
+        )
+        .await;
     let suggestion_id = Uuid::new_v4();
     state.realtime.publish(
         LiveEvent::new("case.transition_suggested", "case", case_id)
@@ -1538,15 +1530,15 @@ async fn resolve_suggestion_route(
         "decision": decision,
         "reason": body.reason,
     });
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'fields_changed', 'user', $3::jsonb)",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .bind(&payload)
-    .execute(state.db.pool())
-    .await;
+    let _ = CaseRepo::new(&state.db)
+        .record_case_event(
+            case.company_id,
+            case_id,
+            "fields_changed",
+            "user",
+            payload,
+        )
+        .await;
     state.realtime.publish(
         LiveEvent::new("case.suggestion_resolved", "case", case_id)
             .with_company(case.company_id)
@@ -1573,14 +1565,15 @@ async fn acknowledge_drift_route(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'fields_changed', 'user', jsonb_build_object('event','drift_acknowledged'))",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .execute(state.db.pool())
-    .await;
+    let _ = CaseRepo::new(&state.db)
+        .record_case_event(
+            case.company_id,
+            case_id,
+            "fields_changed",
+            "user",
+            json!({ "event": "drift_acknowledged" }),
+        )
+        .await;
     state.realtime.publish(
         LiveEvent::new("case.drift_acknowledged", "case", case_id)
             .with_company(case.company_id),

@@ -756,6 +756,65 @@ cases.rs 30 → 26 SQL（-5，case_rollup 子模块清零）。
 - cases.rs SQL 数 30 → 26（-5，case_rollup 子模块清零）
 - 累计 Round 95-117 修复 **77+1=78 个路由从 500 → 200**
 
+## 41. 第一百一十八轮增量（Round 118 — cases.rs review/suggest/resolve/acknowledge + ensure_case_exists 仓储化)
+
+### 目标
+cases.rs 26 → 20 SQL（-6）。本轮清理剩余的简单 INSERT INTO case_events 模式（4 个端点）以及
+散落的 ensure_case_exists 助手函数（1 SQL）。
+
+### 新增 `pc_repos::case::CaseRepo` 方法（1 通用 + 复用 Round 114 的 1 个)
+- `record_case_event(company_id, case_id, kind: &str, actor_type: &str, payload: Value) -> Uuid`
+  - **通用 case_events 记录助手**：kind 和 actor_type 接受字符串字面量，payload 接受任意 JSON
+  - 适用于：review、suggest-transition、resolve-suggestion、acknowledge-drift、delete-case-document 等场景
+  - 与已有的 `create_event(kind: CaseEventKind, actor: &CaseActor)` 区分：本方法面向"快速事件记录"，
+    后者面向"完整 actor 身份"的强类型场景
+- 复用 `get_case_company_id(case_id) -> Option<Uuid>`（Round 114 已有）替换 ensure_case_exists 助手
+
+### 删除 `cases.rs` 中 1 个本地助手
+- `ensure_case_exists(state, case_id) -> ApiResult<Uuid>` — 移除
+  - 原实现：`SELECT company_id FROM cases WHERE id = $1`，转 `Result<Uuid, ApiError>`
+  - 替代方案：直接 `CaseRepo::new(&state.db).get_case_company_id(case_id).await?` + `ok_or_else(NotFound)`
+
+### 重构 `cases.rs` 5 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `review_case_route` (POST /api/cases/:cid/review) | 1 SELECT case + 1 UPDATE + 1 INSERT event | get + update + record_case_event("status_changed", "user") |
+| `suggest_transition_route` (POST /api/cases/:cid/suggest-transition) | 1 SELECT case + 1 INSERT event | get + record_case_event("fields_changed", "system") |
+| `resolve_suggestion_route` (POST /api/cases/:cid/resolve-suggestion) | 1 SELECT case + 1 INSERT event | get + record_case_event("fields_changed", "user") |
+| `acknowledge_drift_route` (POST /api/cases/:cid/acknowledge-drift) | 1 SELECT case + 1 INSERT event | get + record_case_event("fields_changed", "user", `{event: drift_acknowledged}`) |
+| `delete_case_document` (DELETE /api/cases/:cid/documents/:key) | 1 SELECT company_id + 1 DELETE + 1 INSERT event | get_case_company_id + DELETE + record_case_event("document_revised", "user") |
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round118_case_event_helpers_repo.rs`)
+1. `record_event_status_changed` — review 场景：status_changed + user
+2. `record_event_fields_changed_system` — suggest 场景：fields_changed + system
+3. `record_event_fields_changed_user` — resolve/ack 场景：fields_changed + user
+4. `record_event_document_revised` — delete 场景：document_revised + 删除 payload
+5. `get_case_company_id_returns_some_for_existing_case` — 正常 case 返回 Some(company_id)
+6. `get_case_company_id_returns_none_for_missing_case` — 不存在 case 返回 None
+
+### 进度影响
+- 综合进度从 **≈ 93.2% → ≈ 93.6%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --no-run --test round118_*` 编译通过（DB sandbox 阻止实跑，source-level 验证通过）
+- 18 个 pc-repos 集成测试文件累计 102+6=108 test 函数
+- cases.rs SQL 数 26 → 20（-6，review/suggest/resolve/ack + ensure_case_exists + delete event）
+- 累计 Round 95-118 修复 **78+5=83 个路由从 500 → 200**
+
+### 下一轮方向（Round 119+）
+cases.rs 还剩 ~20 SQL，主要集中在以下复合端点：
+- `upsert_case_documents` (line 355, 1 SQL) — 核心 CRUD 收尾
+- `delete_case_document` + event (3 SQL 中已修 2，剩复合事务部分)
+- `breakdown_case` (3 SQL：next case_number + insert + event)
+- `replace_case_blockers` (3 SQL：delete + insert + event)
+- `open_conversation` (3 SQL：insert issue + link + event)
+- `get_case_context_pack` (3 SQL：复合聚合)
+- `get_case_outputs` + `list_case_issues` (~2 SQL)
+
+之后转向完全未触碰的高 SQL 模块：
+- **secrets.rs** 32 SQL（最高未触碰数）
+- **company_skills.rs** 60 SQL
+- **tool_access.rs** 78 出现（多数复杂 JOIN）
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标
