@@ -60,6 +60,16 @@ impl SmokeRunTrigger {
             Self::OAuthTest => "oauth_test",
         }
     }
+    /// Round 153: 从字符串 parse；未匹配返回 None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "manual" => Some(Self::Manual),
+            "scheduled" => Some(Self::Scheduled),
+            "webhook" => Some(Self::Webhook),
+            "oauth_test" => Some(Self::OAuthTest),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +99,21 @@ impl SmokeStepPath {
             Self::Custom => "custom",
         }
     }
+    /// Round 153: 从字符串 parse；未匹配返回 None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "oauth/authorize" => Some(Self::OauthAuthorize),
+            "oauth/token" => Some(Self::OauthToken),
+            "oauth/userinfo" => Some(Self::OauthUserinfo),
+            "oauth/revoke" => Some(Self::OauthRevoke),
+            "services/start" => Some(Self::ServiceStart),
+            "services/stop" => Some(Self::ServiceStop),
+            "fixtures/install" => Some(Self::FixtureInstall),
+            "reset" => Some(Self::Reset),
+            "custom" => Some(Self::Custom),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +131,16 @@ impl SmokeStepStatus {
             Self::Failed => "failed",
             Self::Skipped => "skipped",
             Self::Running => "running",
+        }
+    }
+    /// Round 153: 从字符串 parse；未匹配返回 None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "passed" => Some(Self::Passed),
+            "failed" => Some(Self::Failed),
+            "skipped" => Some(Self::Skipped),
+            "running" => Some(Self::Running),
+            _ => None,
         }
     }
 }
@@ -319,6 +354,307 @@ impl<'a> SmokeRepo<'a> {
             .bind(path.as_str())
             .fetch_optional(self.db.pool())
             .await?)
+    }
+
+    // ============================================================================
+    // Round 153: smoke_lab 仓储扩展（oauth + services + fixtures + reset）
+    // ============================================================================
+
+    /// 插入一条 smoke lab oauth code（authorize 路径）。
+    pub async fn insert_oauth_code(
+        &self,
+        code: &str,
+        company_id: Uuid,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO smoke_lab_oauth_codes (code, company_id, used, created_at) \
+             VALUES ($1, $2, false, now())",
+        )
+        .bind(code)
+        .bind(company_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 消费（标记 used）一个 oauth code；返回 None 表示无效或已用。
+    /// 返回 `Some(())` 即兑换成功。
+    pub async fn claim_oauth_code(
+        &self,
+        code: &str,
+        company_id: Uuid,
+    ) -> sqlx::Result<bool> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "UPDATE smoke_lab_oauth_codes SET used = true, used_at = now() \
+             WHERE code = $1 AND company_id = $2 AND used = false \
+             RETURNING code::text::uuid",
+        )
+        .bind(code)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.is_some())
+    }
+
+    /// 插入一条 smoke lab oauth token（token 路径）。
+    pub async fn insert_oauth_token(
+        &self,
+        token: &str,
+        company_id: Uuid,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO smoke_lab_oauth_tokens (token, company_id, expires_at) \
+             VALUES ($1, $2, now() + interval '1 hour')",
+        )
+        .bind(token)
+        .bind(company_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 删除 oauth token（revoke 路径）。
+    pub async fn delete_oauth_token(&self, token: &str) -> sqlx::Result<u64> {
+        let r = sqlx::query("DELETE FROM smoke_lab_oauth_tokens WHERE token = $1")
+            .bind(token)
+            .execute(self.db.pool())
+            .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// 列出某公司的 smoke lab services。
+    pub async fn list_services(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<(String, String, serde_json::Value)>> {
+        let rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+            "SELECT service_key, status, config FROM smoke_lab_services WHERE company_id = $1",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// 启动/标记 service 为 running（INSERT ON CONFLICT DO UPDATE）。
+    pub async fn upsert_service_running(
+        &self,
+        company_id: Uuid,
+        service_key: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO smoke_lab_services (company_id, service_key, status, config, updated_at) \
+             VALUES ($1, $2, 'running', '{}'::jsonb, now()) \
+             ON CONFLICT (company_id, service_key) DO UPDATE SET status='running', updated_at=now()",
+        )
+        .bind(company_id)
+        .bind(service_key)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 标记 service 为 stopped（按 company_id + service_key）。
+    pub async fn stop_service(
+        &self,
+        company_id: Uuid,
+        service_key: &str,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "UPDATE smoke_lab_services SET status = 'stopped', updated_at = now() \
+             WHERE company_id = $1 AND service_key = $2",
+        )
+        .bind(company_id)
+        .bind(service_key)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// 探测某公司是否已存在。
+    pub async fn company_exists(&self, company_id: Uuid) -> sqlx::Result<bool> {
+        let v: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM companies WHERE id = $1)",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v)
+    }
+
+    /// 探测某公司下某标题 issue 的数量。
+    pub async fn count_issues_with_title(
+        &self,
+        company_id: Uuid,
+        title: &str,
+    ) -> sqlx::Result<i64> {
+        let v: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM issues WHERE company_id = $1 AND title = $2",
+        )
+        .bind(company_id)
+        .bind(title)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v)
+    }
+
+    /// 探测某公司下某名称 agent 的数量。
+    pub async fn count_agents_with_name(
+        &self,
+        company_id: Uuid,
+        name: &str,
+    ) -> sqlx::Result<i64> {
+        let v: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM agents WHERE company_id = $1 AND name = $2",
+        )
+        .bind(company_id)
+        .bind(name)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v)
+    }
+
+    /// 探测某公司下项目数量。
+    pub async fn count_projects(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let v: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(v)
+    }
+
+    /// 插入一个 smoke project 占位。
+    pub async fn insert_smoke_project(
+        &self,
+        company_id: Uuid,
+        name: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO projects (company_id, name, status) \
+             VALUES ($1, $2, 'active')",
+        )
+        .bind(company_id)
+        .bind(name)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 插入一个 smoke agent 占位。
+    pub async fn insert_smoke_agent(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        role: &str,
+        status: &str,
+        adapter_type: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO agents (company_id, name, role, status, adapter_type) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(role)
+        .bind(status)
+        .bind(adapter_type)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 插入一个 smoke issue 占位。
+    pub async fn insert_smoke_issue(
+        &self,
+        company_id: Uuid,
+        title: &str,
+        priority: &str,
+        status: &str,
+        origin_kind: &str,
+        origin_fingerprint: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO issues (company_id, title, priority, status, origin_kind, origin_fingerprint) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(company_id)
+        .bind(title)
+        .bind(priority)
+        .bind(status)
+        .bind(origin_kind)
+        .bind(origin_fingerprint)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 插入占位 smoke service（INSERT ON CONFLICT DO NOTHING）。返回是否新插入。
+    pub async fn insert_smoke_service_if_absent(
+        &self,
+        company_id: Uuid,
+        service_key: &str,
+        status: &str,
+        config: serde_json::Value,
+    ) -> sqlx::Result<bool> {
+        let r = sqlx::query(
+            "INSERT INTO smoke_lab_services (company_id, service_key, status, config) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (company_id, service_key) DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(service_key)
+        .bind(status)
+        .bind(config)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// 插入 fixture company（若 id 已存在则忽略）。
+    pub async fn insert_fixture_company(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        issue_prefix: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(issue_prefix)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 一次性清空某公司所有 smoke lab 数据（oauth + runs + steps + services）。
+    /// 顺序：tokens → codes → steps → runs → services，避免 FK 约束失败。
+    pub async fn reset_company(&self, company_id: Uuid) -> sqlx::Result<()> {
+        sqlx::query("DELETE FROM smoke_lab_oauth_tokens WHERE company_id = $1")
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?;
+        sqlx::query("DELETE FROM smoke_lab_oauth_codes WHERE company_id = $1")
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?;
+        sqlx::query("DELETE FROM smoke_run_steps WHERE company_id = $1")
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?;
+        sqlx::query("DELETE FROM smoke_runs WHERE company_id = $1")
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?;
+        sqlx::query("DELETE FROM smoke_lab_services WHERE company_id = $1")
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?;
+        Ok(())
     }
 }
 

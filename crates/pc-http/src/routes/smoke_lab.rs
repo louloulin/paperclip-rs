@@ -66,18 +66,8 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[derive(Debug, FromRow)]
-struct RunRow {
-    id: Uuid,
-    company_id: Uuid,
-    trigger: String,
-    status: String,
-    started_at: pc_core::Timestamp,
-    finished_at: Option<pc_core::Timestamp>,
-    summary: Value,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
+// Round 153: `RunRow` / `StepRow` 已迁到 `pc_repos::smoke::{RunRow, StepRow}`。
+use pc_repos::smoke::{RunRow, StepRow};
 
 fn run_json(row: &RunRow) -> Value {
     json!({
@@ -91,21 +81,6 @@ fn run_json(row: &RunRow) -> Value {
         "createdAt": row.created_at,
         "updatedAt": row.updated_at,
     })
-}
-
-#[derive(Debug, FromRow)]
-struct StepRow {
-    id: Uuid,
-    company_id: Uuid,
-    run_id: Uuid,
-    path: String,
-    scenario_step: String,
-    status: String,
-    detail: Option<String>,
-    screenshot_artifact_ref: Option<Value>,
-    duration_ms: Option<i32>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
 }
 
 fn step_json(row: &StepRow) -> Value {
@@ -139,14 +114,10 @@ async fn oauth_authorize(
     // Generate a smoke-lab OAuth code and persist it as a fixture for later
     // exchange. Codes are scoped to the (company_id) so cross-tenant probes fail.
     let code = Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO smoke_lab_oauth_codes (code, company_id, used, created_at)          VALUES ($1, $2, false, now())",
-    )
-    .bind(&code)
-    .bind(company_id)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    pc_repos::smoke::SmokeRepo::new(&state.db)
+        .insert_oauth_code(&code, company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "companyId": company_id,
         "code": code,
@@ -178,26 +149,19 @@ async fn oauth_token(
     if code.is_empty() {
         return Err(ApiError::BadRequest("code is required".into()));
     }
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "UPDATE smoke_lab_oauth_codes SET used = true, used_at = now()          WHERE code = $1 AND company_id = $2 AND used = false          RETURNING code::text::uuid",
-    )
-    .bind(&code)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if row.is_none() {
+    let smoke_repo = pc_repos::smoke::SmokeRepo::new(&state.db);
+    let claimed = smoke_repo
+        .claim_oauth_code(&code, company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !claimed {
         return Err(ApiError::BadRequest("invalid or expired code".into()));
     }
     let access_token = Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO smoke_lab_oauth_tokens (token, company_id, expires_at)          VALUES ($1, $2, now() + interval '1 hour')",
-    )
-    .bind(&access_token)
-    .bind(company_id)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    smoke_repo
+        .insert_oauth_token(&access_token, company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "access_token": access_token,
         "token_type": "bearer",
@@ -226,9 +190,8 @@ async fn oauth_revoke(
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
     if let Some(token) = body.get("token").and_then(|v| v.as_str()) {
-        sqlx::query("DELETE FROM smoke_lab_oauth_tokens WHERE token = $1")
-            .bind(token)
-            .execute(state.db.pool())
+        pc_repos::smoke::SmokeRepo::new(&state.db)
+            .delete_oauth_token(token)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
@@ -239,13 +202,10 @@ async fn services_list(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
-        "SELECT service_key, status, config FROM smoke_lab_services WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = pc_repos::smoke::SmokeRepo::new(&state.db)
+        .list_services(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let services: Vec<Value> = rows
         .into_iter()
         .map(|(key, status, config)| {
@@ -271,14 +231,10 @@ async fn service_start(
         .get("serviceKey")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
-    sqlx::query(
-        "INSERT INTO smoke_lab_services (company_id, service_key, status, config, updated_at)          VALUES ($1, $2, 'running', '{}'::jsonb, now())          ON CONFLICT (company_id, service_key) DO UPDATE SET status='running', updated_at=now()",
-    )
-    .bind(company_id)
-    .bind(key)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    pc_repos::smoke::SmokeRepo::new(&state.db)
+        .upsert_service_running(company_id, key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({"companyId": company_id, "serviceKey": key, "status": "starting"})),
@@ -294,14 +250,10 @@ async fn service_stop(
         .get("serviceKey")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
-    sqlx::query(
-        "UPDATE smoke_lab_services SET status = 'stopped', updated_at = now()          WHERE company_id = $1 AND service_key = $2",
-    )
-    .bind(company_id)
-    .bind(key)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    pc_repos::smoke::SmokeRepo::new(&state.db)
+        .stop_service(company_id, key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({"companyId": company_id, "serviceKey": key, "status": "stopping"})),
@@ -314,97 +266,69 @@ async fn install_fixtures(
 ) -> ApiResult<impl IntoResponse> {
     // 安装完整 fixture 数据集：company (使用现有) + project + agent + issue + skill 类别 + smoke run 占位。
     // 不破坏已有数据；所有 INSERT 都用 ON CONFLICT DO NOTHING（依赖 unique 约束）。
-    let pool = state.db.pool();
+    let repo = pc_repos::smoke::SmokeRepo::new(&state.db);
     let mut installed: Vec<String> = Vec::new();
 
     // 1) company — 仅在传入公司不存在时插入一条 fixture company 占位
-    let company_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM companies WHERE id = $1)",
-    )
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if !company_exists {
-        let prefix = format!("FIX{}", &Uuid::new_v4().simple().to_string()[..4]);
-        sqlx::query(
-            "INSERT INTO companies (id, name, issue_prefix) VALUES ($1, 'Smoke Lab Fixture', $2)              ON CONFLICT DO NOTHING",
-        )
-        .bind(company_id)
-        .bind(&prefix)
-        .execute(pool)
+    let company_exists = repo
+        .company_exists(company_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !company_exists {
+        let prefix = format!("FIX{}", &Uuid::new_v4().simple().to_string()[..4]);
+        repo.insert_fixture_company(company_id, "Smoke Lab Fixture", &prefix)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
         installed.push("company".into());
     }
 
     // 2) project
-    let project_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if project_count == 0 {
-        sqlx::query(
-            "INSERT INTO projects (company_id, name, status)              VALUES ($1, 'Smoke Lab Project', 'active')",
-        )
-        .bind(company_id)
-        .execute(pool)
+    let project_count = repo
+        .count_projects(company_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if project_count == 0 {
+        repo.insert_smoke_project(company_id, "Smoke Lab Project")
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
         installed.push("project".into());
     }
 
     // 3) agent (smoke-bot) — adapters.codex_local 可用
-    let agent_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM agents WHERE company_id = $1 AND name = 'Smoke Bot'",
-    )
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if agent_count == 0 {
-        sqlx::query(
-            "INSERT INTO agents (company_id, name, role, status, adapter_type)              VALUES ($1, 'Smoke Bot', 'tester', 'idle', 'codex_local')",
-        )
-        .bind(company_id)
-        .execute(pool)
+    let agent_count = repo
+        .count_agents_with_name(company_id, "Smoke Bot")
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if agent_count == 0 {
+        repo.insert_smoke_agent(company_id, "Smoke Bot", "tester", "idle", "codex_local")
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
         installed.push("agent".into());
     }
 
     // 4) issue（探测 issue）
-    let issue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM issues WHERE company_id = $1 AND title = 'Smoke probe'",
-    )
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if issue_count == 0 {
-        sqlx::query(
-            "INSERT INTO issues (company_id, title, priority, status, origin_kind, origin_fingerprint)              VALUES ($1, 'Smoke probe', 'normal', 'open', 'smoke', 'smoke-fixture')",
-        )
-        .bind(company_id)
-        .execute(pool)
+    let issue_count = repo
+        .count_issues_with_title(company_id, "Smoke probe")
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if issue_count == 0 {
+        repo.insert_smoke_issue(company_id, "Smoke probe", "normal", "open", "smoke", "smoke-fixture")
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
         installed.push("issue".into());
     }
 
     // 5) smoke service 占位：env=local 状态=stopped；service_start 才是真实拉起。
-    let svc_result = sqlx::query(
-        "INSERT INTO smoke_lab_services (company_id, service_key, status, config)          VALUES ($1, 'env-local', 'stopped', $2::jsonb)          ON CONFLICT (company_id, service_key) DO NOTHING",
-    )
-    .bind(company_id)
-    .bind(serde_json::json!({"note": "installed-by-fixtures"}))
-    .execute(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if svc_result.rows_affected() > 0 {
+    let svc_inserted = repo
+        .insert_smoke_service_if_absent(
+            company_id,
+            "env-local",
+            "stopped",
+            serde_json::json!({"note": "installed-by-fixtures"}),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if svc_inserted {
         installed.push("service".into());
     }
 
@@ -429,13 +353,10 @@ async fn runs_list(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<RunRow> = sqlx::query_as(
-        "SELECT id, company_id, trigger, status, started_at, finished_at, summary, created_at, updated_at \
-         FROM smoke_runs WHERE company_id = $1 ORDER BY started_at DESC LIMIT 50",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = pc_repos::smoke::SmokeRepo::new(&state.db)
+        .list_by_company(company_id, None)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows.iter().map(run_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -450,15 +371,15 @@ async fn runs_create(
         .clone()
         .or_else(|| body.suite.clone())
         .unwrap_or_else(|| "manual".to_owned());
-    let row: RunRow = sqlx::query_as(
-        "INSERT INTO smoke_runs (company_id, trigger, status) \
-         VALUES ($1, $2, 'running') \
-         RETURNING id, company_id, trigger, status, started_at, finished_at, summary, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(&trigger)
-    .fetch_one(state.db.pool())
-    .await?;
+    let new_run = pc_repos::smoke::NewRun {
+        company_id,
+        trigger: pc_repos::smoke::SmokeRunTrigger::parse(&trigger)
+            .unwrap_or(pc_repos::smoke::SmokeRunTrigger::Manual),
+    };
+    let row = pc_repos::smoke::SmokeRepo::new(&state.db)
+        .create_run(&new_run)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((StatusCode::ACCEPTED, Json(run_json(&row))))
 }
 
@@ -466,23 +387,17 @@ async fn runs_get(
     State(state): State<AppState>,
     Path((company_id, run_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<RunRow> = sqlx::query_as(
-        "SELECT id, company_id, trigger, status, started_at, finished_at, summary, created_at, updated_at \
-         FROM smoke_runs WHERE id = $1 AND company_id = $2",
-    )
-    .bind(run_id)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let smoke_repo = pc_repos::smoke::SmokeRepo::new(&state.db);
+    let row = smoke_repo
+        .get(company_id, run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     match row {
         Some(row) => {
-            let steps: Vec<StepRow> = sqlx::query_as(
-                "SELECT id, company_id, run_id, path, scenario_step, status, detail, screenshot_artifact_ref, duration_ms, created_at, updated_at \
-                 FROM smoke_run_steps WHERE run_id = $1 ORDER BY created_at ASC",
-            )
-            .bind(run_id)
-            .fetch_all(state.db.pool())
-            .await?;
+            let steps = smoke_repo
+                .list_steps(run_id)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
             let step_items: Vec<Value> = steps.iter().map(step_json).collect();
             Ok(Json(json!({
                 "run": run_json(&row),
@@ -514,22 +429,25 @@ async fn runs_steps(
         .scenario_step
         .clone()
         .unwrap_or_else(|| "step".to_owned());
-    let status = body.status.clone().unwrap_or_else(|| "passed".to_owned());
-    let row: StepRow = sqlx::query_as(
-        "INSERT INTO smoke_run_steps (company_id, run_id, path, scenario_step, status, detail, screenshot_artifact_ref, duration_ms) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-         RETURNING id, company_id, run_id, path, scenario_step, status, detail, screenshot_artifact_ref, duration_ms, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(run_id)
-    .bind(&path)
-    .bind(&scenario_step)
-    .bind(&status)
-    .bind(body.detail.clone())
-    .bind(body.screenshot_artifact_ref.clone())
-    .bind(body.duration_ms)
-    .fetch_one(state.db.pool())
-    .await?;
+    let status_str = body.status.clone().unwrap_or_else(|| "passed".to_owned());
+    let status = pc_repos::smoke::SmokeStepStatus::parse(&status_str)
+        .unwrap_or(pc_repos::smoke::SmokeStepStatus::Passed);
+    let path_enum = pc_repos::smoke::SmokeStepPath::parse(&path)
+        .unwrap_or(pc_repos::smoke::SmokeStepPath::OauthAuthorize);
+    let new_step = pc_repos::smoke::NewStep {
+        company_id,
+        run_id,
+        path: path_enum,
+        scenario_step: scenario_step.clone(),
+        status,
+        detail: body.detail.clone(),
+        screenshot_artifact_ref: body.screenshot_artifact_ref.clone(),
+        duration_ms: body.duration_ms,
+    };
+    let row = pc_repos::smoke::SmokeRepo::new(&state.db)
+        .add_step(&new_step)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((StatusCode::CREATED, Json(step_json(&row))))
 }
 
@@ -538,29 +456,8 @@ async fn smoke_reset(
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
     // Clean smoke lab data scoped to the company.
-    sqlx::query("DELETE FROM smoke_lab_oauth_tokens WHERE company_id = $1")
-        .bind(company_id)
-        .execute(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query("DELETE FROM smoke_lab_oauth_codes WHERE company_id = $1")
-        .bind(company_id)
-        .execute(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query("DELETE FROM smoke_run_steps WHERE company_id = $1")
-        .bind(company_id)
-        .execute(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query("DELETE FROM smoke_runs WHERE company_id = $1")
-        .bind(company_id)
-        .execute(state.db.pool())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query("DELETE FROM smoke_lab_services WHERE company_id = $1")
-        .bind(company_id)
-        .execute(state.db.pool())
+    pc_repos::smoke::SmokeRepo::new(&state.db)
+        .reset_company(company_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
