@@ -3481,3 +3481,29 @@ Audit + Actions:
 - `pc-repos` 新增 `round157_pipeline_repo.rs` (15 测试用例)
 - 剩余 SQL 总数: 254 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)
 - 综合进度 ≈ 99.985%
+
+## 26. 第一百五十八轮增量（Round 158 — summary_slots.rs 仓储化）
+
+### 仓储化覆盖
+- **DocumentRepo** 新增 6 个方法 + 扩展 DocumentRevisionRow DTO
+- **SummaryRepo** 新增 5 个方法（flexible scope_kind 字符串接受）
+
+### 关键设计选择
+1. **DocumentRevisionRow 1:1 schema 扩展**：之前缺失 `title/format/created_by_run_id`
+   字段（schema 在 migration 0046 已添加），现在扩展 DTO 让 1:1 投影完整。
+2. **SummarySlotRow 接受字符串 scope_kind**：URL 上来的原始字符串直接传 Repo，
+   不强制 ScopeKind 枚举（向后兼容）。
+3. **IssueRow 复用**：`IssueRepo::get(id)` 返回完整 IssueRow 用于 `generating_issue_id`
+   lookup；用 `.company_id` 字段做 tenant 隔离检查（保持原 SQL 行为）。
+
+### 路由重构 summary_slots.rs
+- 14 SQL → 0
+- 删除 4 个 local DTO（SlotRow / DocumentView / RevisionView / IssueView）→ 1:1 复用 pc_repos
+- find_slot / ensure_summary_slot / mark_slot_written / generate_slot 等全部走 Repo
+
+### 进度影响
+- `summary_slots.rs` 累计 SQL: 14 → 0
+- 累计 routes 0 SQL 文件: 7 个（access + smoke_lab + tool_connections + tool_gateway + secrets + pipelines + summary_slots 共 127 SQL 移除）
+- `pc-repos` 新增 `round158_summary_document_repo.rs` (15 测试用例)
+- 剩余 SQL 总数: 240 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17 / execution_workspaces.rs 13)
+- 综合进度 ≈ 99.99%

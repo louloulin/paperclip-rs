@@ -756,6 +756,129 @@ impl<'a> ExecutionRepo<'a> {
             .fetch_optional(self.db.pool())
             .await?)
     }
+
+    // =========================================================================
+    // Round 159: execution_workspaces route 仓储化新增方法
+    // =========================================================================
+
+    /// Round 159: workspace_overview — (active_workspaces, recent_runs_24h, failed_runs_24h)。
+    pub async fn overview_stats(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<(i64, i64, i64)> {
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+                (SELECT COUNT(*)::bigint FROM execution_workspaces WHERE company_id = $1 AND status = 'active'), \
+                (SELECT COUNT(*)::bigint FROM heartbeat_runs WHERE company_id = $1 AND created_at > now() - interval '24 hours'), \
+                (SELECT COUNT(*)::bigint FROM heartbeat_runs WHERE company_id = $1 AND status = 'failed' AND created_at > now() - interval '24 hours')",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 159: 按 id 查（不需要 company_id），用于 get_workspace 等无 tenant 上下文的端点。
+    pub async fn get_by_id(&self, id: Uuid) -> RepoResult<Option<WorkspaceRow>> {
+        let sql = format!("SELECT {WS_COLS} FROM execution_workspaces WHERE id = $1");
+        Ok(sqlx::query_as::<_, WorkspaceRow>(&sql)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// Round 159: 按 id 取 company_id（acquire_lease_route 用）。
+    pub async fn company_id_for_id(&self, id: Uuid) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM execution_workspaces WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 159: UPDATE name (COALESCE) + 触 updated_at，返回 rows_affected > 0。
+    pub async fn update_name(
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE execution_workspaces SET name = COALESCE($2, name), updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(name)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 159: UPDATE status='reconciling'（runtime_service_action 用）。
+    pub async fn set_status_to_reconciling(&self, id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE execution_workspaces SET status = 'reconciling', updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 159: set branch_name + provider_ref + touch last_used_at。
+    pub async fn set_branch_provider_ref(
+        &self,
+        id: Uuid,
+        branch: &str,
+        provider_ref: &str,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE execution_workspaces \
+             SET branch_name = $1, provider_ref = $2, last_used_at = now(), updated_at = now() \
+             WHERE id = $3",
+        )
+        .bind(branch)
+        .bind(provider_ref)
+        .bind(id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 159: clear provider_ref + set cleanup_reason。
+    pub async fn clear_provider_ref(&self, id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE execution_workspaces \
+             SET provider_ref = NULL, cleanup_reason = COALESCE(cleanup_reason, 'worktree_removed'), \
+                 last_used_at = now(), updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 159: 取 workspace 最新一次 heartbeat_run (status, finished_at)。
+    /// close_readiness 用。
+    pub async fn latest_heartbeat_for_workspace(
+        &self,
+        workspace_id: Uuid,
+    ) -> RepoResult<Option<(String, Option<Timestamp>)>> {
+        let row: Option<(String, Option<Timestamp>)> = sqlx::query_as(
+            "SELECT status, finished_at FROM heartbeat_runs \
+             WHERE context_snapshot->>'executionWorkspaceId' = $1 \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(workspace_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
 
 impl WorkspaceStatus {

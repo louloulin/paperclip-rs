@@ -178,13 +178,10 @@ async fn workspace_overview(
     Path(company_id): Path<uuid::Uuid>,
 ) -> ApiResult<Json<Value>> {
     let pool = state.db.pool();
-    let (active, recent, needs_attention): (i64, i64, i64) = sqlx::query_as(
-        "SELECT             (SELECT COUNT(*)::bigint FROM execution_workspaces WHERE company_id = $1 AND status = 'active'),             (SELECT COUNT(*)::bigint FROM heartbeat_runs WHERE company_id = $1 AND created_at > now() - interval '24 hours'),             (SELECT COUNT(*)::bigint FROM heartbeat_runs WHERE company_id = $1 AND status = 'failed' AND created_at > now() - interval '24 hours')",
-    )
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let (active, recent, needs_attention) = ExecutionRepo::new(&state.db)
+        .overview_stats(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "companyId": company_id,
         "activeWorkspaces": active,
@@ -197,18 +194,10 @@ async fn get_workspace(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let direct: Option<WorkspaceRow> = sqlx::query_as::<_, WorkspaceRow>(
-        "SELECT id, company_id, project_id, project_workspace_id, source_issue_id, mode, \
-                strategy_type, name, status, cwd, repo_url, base_ref, branch_name, \
-                provider_type, provider_ref, derived_from_execution_workspace_id, \
-                last_used_at, opened_at, closed_at, cleanup_eligible_at, cleanup_reason, \
-                metadata, created_at, updated_at \
-         FROM execution_workspaces WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let direct = ExecutionRepo::new(&state.db)
+        .get_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     match direct {
         Some(row) => Ok(Json(row_json(&row))),
         None => Err(ApiError::NotFound(format!("workspace {id}"))),
@@ -227,17 +216,13 @@ async fn patch_workspace(
     Path(id): Path<uuid::Uuid>,
     Json(body): Json<PatchBody>,
 ) -> ApiResult<Json<Value>> {
-    let updated = sqlx::query(
-        "UPDATE execution_workspaces SET name = COALESCE($2, name), updated_at = now() WHERE id = $1",
-    )
-    .bind(id)
-    .bind(body.name.clone())
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let changed = ExecutionRepo::new(&state.db)
+        .update_name(id, body.name.as_deref())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "id": id,
-        "status": if updated.rows_affected() > 0 { "updated" } else { "noop" },
+        "status": if changed { "updated" } else { "noop" },
     })))
 }
 
@@ -245,13 +230,10 @@ async fn close_readiness(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let last_run: Option<(String, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT status, finished_at FROM heartbeat_runs          WHERE context_snapshot->>'executionWorkspaceId' = $1          ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(id.to_string())
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let last_run = ExecutionRepo::new(&state.db)
+        .latest_heartbeat_for_workspace(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let checks: Vec<Value> = vec![
         json!({ "name": "config_valid", "passed": true }),
         json!({ "name": "secrets_resolved", "passed": true }),
@@ -274,14 +256,14 @@ async fn workspace_operations(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT status, mode FROM execution_workspaces WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (status, mode) = row.unwrap_or(("active".into(), "execution".into()));
+    let ws = ExecutionRepo::new(&state.db)
+        .get_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let (status, mode) = match ws {
+        Some(w) => (w.status, w.mode),
+        None => ("active".to_string(), "execution".to_string()),
+    };
     let mut operations = vec![
         json!({ "key": "rebuild", "label": "Rebuild", "enabled": status != "closed" }),
         json!({ "key": "reset", "label": "Reset", "enabled": status == "active" }),
@@ -375,13 +357,10 @@ async fn reconcile_branch(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     // 同时切到 reconciling 状态；事务失败会被 rollback
-    let _ = sqlx::query(
-        "UPDATE execution_workspaces SET status = 'reconciling', updated_at = now() WHERE id = $1",
-    )
-    .bind(id)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = ExecutionRepo::new(&state.db)
+        .set_status_to_reconciling(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -533,13 +512,11 @@ async fn acquire_lease_route(
     Json(body): Json<AcquireLeaseBody>,
 ) -> ApiResult<Json<Value>> {
     let repo = ExecutionRepo::new(&state.db);
-    let company_id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT company_id FROM execution_workspaces WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let company_id = repo
+        .company_id_for_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
     let row = repo
         .acquire_lease(&NewLease {
             company_id,
@@ -683,11 +660,14 @@ async fn validate_workspace_route(
     Path(id): Path<Uuid>,
     Json(body): Json<ValidateWorkspaceBody>,
 ) -> ApiResult<Json<WorkspaceValidationReport>> {
-    let ws: Option<(Uuid, Uuid, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT company_id, project_id, provider_ref, cwd FROM execution_workspaces WHERE id = $1",
-    ).bind(id).fetch_optional(state.db.pool()).await?;
-    let (company_id, _project_id, provider_ref, cwd) = ws
+    let ws = ExecutionRepo::new(&state.db)
+        .get_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    let company_id = ws.company_id;
+    let provider_ref = ws.provider_ref.clone();
+    let cwd = ws.cwd.clone();
     let worktree_path = provider_ref.or(cwd);
     let mut report = WorkspaceValidationReport {
         workspace_id: id,
@@ -737,8 +717,10 @@ async fn validate_workspace_route(
         let _ = run_git(path, &["fetch", "--all", "--prune"]).await;
     }
     // touch last_used_at
-    sqlx::query("UPDATE execution_workspaces SET last_used_at = now(), updated_at = now() WHERE id = $1")
-        .bind(id).execute(state.db.pool()).await?;
+    ExecutionRepo::new(&state.db)
+        .touch_last_used(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(report))
 }
 
@@ -763,11 +745,14 @@ async fn create_worktree_route(
     if body.branch.trim().is_empty() {
         return Err(ApiError::BadRequest("branch required".into()));
     }
-    let ws: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT company_id, cwd, provider_ref FROM execution_workspaces WHERE id = $1",
-    ).bind(id).fetch_optional(state.db.pool()).await?;
-    let (company_id, cwd, provider_ref) = ws
+    let ws = ExecutionRepo::new(&state.db)
+        .get_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    let company_id = ws.company_id;
+    let cwd = ws.cwd.clone();
+    let provider_ref = ws.provider_ref.clone();
     let main_repo = cwd.ok_or_else(||
         ApiError::BadRequest("workspace has no cwd (main repo path); cannot create worktree".into())
     )?;
@@ -794,12 +779,10 @@ async fn create_worktree_route(
         ApiError::Conflict(format!("git worktree add failed: {e}"))
     )?;
     // Persist new branch + provider_ref on the workspace
-    sqlx::query(
-        "UPDATE execution_workspaces
-         SET branch_name = $1, provider_ref = $2, last_used_at = now(), updated_at = now()
-         WHERE id = $3",
-    ).bind(&body.branch).bind(&worktree_path).bind(id)
-    .execute(state.db.pool()).await?;
+    ExecutionRepo::new(&state.db)
+        .set_branch_provider_ref(id, &body.branch, &worktree_path)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "created": true,
         "workspaceId": id,
@@ -824,11 +807,14 @@ async fn cleanup_worktree_route(
     Path(id): Path<Uuid>,
     Json(body): Json<CleanupWorktreeBody>,
 ) -> ApiResult<Json<Value>> {
-    let ws: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT company_id, cwd, provider_ref FROM execution_workspaces WHERE id = $1",
-    ).bind(id).fetch_optional(state.db.pool()).await?;
-    let (company_id, cwd, provider_ref) = ws
+    let ws = ExecutionRepo::new(&state.db)
+        .get_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    let company_id = ws.company_id;
+    let cwd = ws.cwd.clone();
+    let provider_ref = ws.provider_ref.clone();
     let worktree_path = provider_ref.clone().ok_or_else(||
         ApiError::BadRequest("workspace has no provider_ref; nothing to clean up".into())
     )?;
@@ -840,12 +826,10 @@ async fn cleanup_worktree_route(
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let removed = run_git(&main_repo, &arg_refs).await.is_ok();
     if removed {
-        sqlx::query(
-            "UPDATE execution_workspaces
-             SET provider_ref = NULL, cleanup_reason = COALESCE(cleanup_reason, 'worktree_removed'),
-                 last_used_at = now(), updated_at = now()
-             WHERE id = $1",
-        ).bind(id).execute(state.db.pool()).await?;
+        ExecutionRepo::new(&state.db)
+            .clear_provider_ref(id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
     Ok(Json(json!({
         "removed": removed,
