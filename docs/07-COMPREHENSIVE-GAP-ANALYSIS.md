@@ -713,6 +713,49 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 40. 第一百一十七轮增量（Round 117 — cases.rs case_rollup 子模块仓储化)
+
+### 目标
+`cases.rs` 30 个内联 SQL，Round 117 把 case_rollup 1 个端点的 5 SQL 仓储化
+（5 个独立聚合查询：child_count + descendant_count CTE + issue_link_count +
+open_issue_count + status_breakdown）。
+cases.rs 30 → 26 SQL（-5，case_rollup 子模块清零）。
+
+### 新增 `pc_repos::case::CaseRepo` 方法（1 composite + 1 DTO)
+- `get_case_rollup(company_id, case_id) -> CaseRollupRow`
+  - **复合聚合方法**：一次调用并行执行 5 个聚合查询
+  1. `SELECT count(*) FROM cases WHERE company_id=$1 AND parent_case_id=$2` → child_count
+  2. `WITH RECURSIVE descendants ...` (CTE 递归) → descendant_count
+  3. `SELECT count(*) FROM case_issue_links WHERE company_id=$1 AND case_id=$2` → issue_link_count
+  4. `SELECT count(*) FROM case_issue_links cil INNER JOIN issues i ... WHERE i.status NOT IN ('done','cancelled','closed')` → open_issue_count
+  5. `SELECT status, count(*) FROM cases WHERE company_id=$1 AND (id=$2 OR parent_case_id=$2) GROUP BY status` → status_breakdown
+  - 替代原 route 的 5 段内联 SQL
+  - 复合方法 vs 5 个独立方法的权衡：rollup 是单一端点专用聚合，复合方法减少跨方法调用的协调成本
+
+### 新增 DTO
+- `CaseRollupRow { child_count, descendant_count, issue_link_count, open_issue_count, status_breakdown: Vec<(String, i64)> }`
+
+### 重构 `cases.rs` 1 个端点
+- `get_case_rollup` — `CaseRepo::get(case_id) + get_case_rollup`
+  - 从 75 行（含 5 段 SQL）压到 25 行
+  - status_breakdown 在 route 端转成 `serde_json::Map<String, Value>`
+
+### 新增集成测试 5 个 (`crates/pc-repos/tests/round117_case_rollup_repo.rs`)
+1. `rollup_empty_case` — 空 case 全 0
+2. `rollup_child_and_descendant_counts` — child=2, descendant=3 (root→c1→c1_1)
+3. `rollup_status_breakdown` — self + 直接子的 status 分组（active=2, draft=1, done=1）
+4. `rollup_issue_link_count` — 3 link, 2 open (排除 done)
+5. `rollup_open_issue_excludes_terminal` — 5 link, 2 open (只算 open + in_progress)
+
+### 进度影响
+- 综合进度从 **≈ 92.8% → ≈ 93.2%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round117_*` 编译通过
+- 17 个 pc-repos 集成测试文件累计 97+5=102 test 函数
+- cases.rs SQL 数 30 → 26（-5，case_rollup 子模块清零）
+- 累计 Round 95-117 修复 **77+1=78 个路由从 500 → 200**
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

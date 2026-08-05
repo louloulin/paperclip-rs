@@ -349,6 +349,16 @@ pub struct NewCaseAnnotationComment {
     pub author_agent_id: Option<Uuid>,
 }
 
+/// Round 117: case rollup 复合聚合结果。
+#[derive(Debug, Clone)]
+pub struct CaseRollupRow {
+    pub child_count: i64,
+    pub descendant_count: i64,
+    pub issue_link_count: i64,
+    pub open_issue_count: i64,
+    pub status_breakdown: Vec<(String, i64)>,
+}
+
 /// Round 116: document_revisions 1:1 schema 投影 (without body/format 留给 routes 决定)。
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1278,6 +1288,64 @@ impl<'a> CaseRepo<'a> {
         .await;
         tx.commit().await?;
         Ok((new_rev_id, next_no))
+    }
+
+    // ---- Round 117: case rollup (composite aggregate) ----
+
+    /// Round 117: 复合聚合 — get_case_rollup。
+    /// 一次调用返回 5 个聚合统计:
+    /// 1. child_count (直接子 case 数)
+    /// 2. descendant_count (递归所有后代 case 数，CTE)
+    /// 3. issue_link_count (case 关联的所有 issue 数)
+    /// 4. open_issue_count (关联的 status NOT IN done/cancelled/closed 的 issue 数)
+    /// 5. status_breakdown (case + 直接子 case 的 status 分组统计)
+    pub async fn get_case_rollup(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<CaseRollupRow> {
+        let child_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        let descendant_count: i64 = sqlx::query_scalar(
+            "WITH RECURSIVE descendants AS (                SELECT id, parent_case_id FROM cases WHERE company_id=$1 AND parent_case_id=$2                UNION ALL                SELECT c.id, c.parent_case_id FROM cases c                  INNER JOIN descendants d ON c.parent_case_id = d.id                  WHERE c.company_id=$1              ) SELECT count(*)::bigint FROM descendants",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        let issue_link_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM case_issue_links WHERE company_id=$1 AND case_id=$2",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        let open_issue_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM case_issue_links cil              INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id              WHERE cil.company_id=$1 AND cil.case_id=$2              AND i.status NOT IN ('done','cancelled','closed')",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        let status_breakdown: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT status, count(*)::bigint FROM cases              WHERE company_id=$1 AND (id=$2 OR parent_case_id=$2)              GROUP BY status",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(CaseRollupRow {
+            child_count,
+            descendant_count,
+            issue_link_count,
+            open_issue_count,
+            status_breakdown,
+        })
     }
 
     pub async fn list_events(

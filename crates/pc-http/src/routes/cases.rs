@@ -1260,73 +1260,29 @@ async fn delete_case_issue_link(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Rollup aggregate — counts children + status breakdown.  Mirrors Node
-/// `/cases/:caseId/rollup`.
+// Round 117: 仓储化。CaseRepo::get_case_company_id + get_case_rollup (复合聚合)。
 async fn get_case_rollup(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let case = CaseRepo::new(&state.db)
+    let repo = CaseRepo::new(&state.db);
+    let case = repo
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let child_count: i64 = sqlx::query_scalar(
-        "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let descendant_count: i64 = sqlx::query_scalar(
-        "WITH RECURSIVE descendants AS ( \
-            SELECT id, parent_case_id FROM cases WHERE company_id=$1 AND parent_case_id=$2 \
-            UNION ALL \
-            SELECT c.id, c.parent_case_id FROM cases c \
-              INNER JOIN descendants d ON c.parent_case_id = d.id \
-              WHERE c.company_id=$1 \
-          ) SELECT count(*)::bigint FROM descendants",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let status_breakdown: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, count(*)::bigint FROM cases \
-         WHERE company_id=$1 AND (id=$2 OR parent_case_id=$2) \
-         GROUP BY status",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await?;
-    let issue_link_count: i64 = sqlx::query_scalar(
-        "SELECT count(*)::bigint FROM case_issue_links WHERE company_id=$1 AND case_id=$2",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let open_issue_count: i64 = sqlx::query_scalar(
-        "SELECT count(*)::bigint FROM case_issue_links cil \
-         INNER JOIN issues i ON i.id = cil.issue_id AND i.company_id = cil.company_id \
-         WHERE cil.company_id=$1 AND cil.case_id=$2 \
-         AND i.status NOT IN ('done','cancelled','closed')",
-    )
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_one(state.db.pool())
-    .await?;
-    let by_status: serde_json::Map<String, serde_json::Value> = status_breakdown
+    let rollup = repo.get_case_rollup(case.company_id, case_id).await?;
+    let by_status: serde_json::Map<String, serde_json::Value> = rollup
+        .status_breakdown
         .into_iter()
         .map(|(k, v)| (k, serde_json::json!(v)))
         .collect();
     Ok(Json(json!({
         "caseId": case_id,
         "companyId": case.company_id,
-        "childCount": child_count,
-        "descendantCount": descendant_count,
-        "issueLinkCount": issue_link_count,
-        "openIssueCount": open_issue_count,
+        "childCount": rollup.child_count,
+        "descendantCount": rollup.descendant_count,
+        "issueLinkCount": rollup.issue_link_count,
+        "openIssueCount": rollup.open_issue_count,
         "statusBreakdown": by_status,
         "status": case.status,
     })))
