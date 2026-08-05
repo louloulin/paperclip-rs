@@ -351,20 +351,14 @@ async fn upsert_case_document(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO case_documents (company_id, case_id, document_id, key)          VALUES ($1, $2, $3, $4)          ON CONFLICT (case_id, key) DO UPDATE SET document_id = EXCLUDED.document_id, updated_at = now()          RETURNING id",
-    )
-    .bind(case_row.company_id)
-    .bind(case_id)
-    .bind(body.document_id)
-    .bind(&body.key)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = CaseRepo::new(&state.db)
+        .link_document(case_row.company_id, case_id, body.document_id, &body.key)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("case.document.upserted", "case", case_id)
             .with_company(case_row.company_id),
     );
-    Ok(Json(json!({"id": id, "caseId": case_id, "key": body.key, "documentId": body.document_id})))
+    Ok(Json(json!({"id": row.id, "caseId": case_id, "key": body.key, "documentId": body.document_id})))
 }
 
 // Round 109: 仓储化。CaseRepo::get_document(company_id, case_id, key) 返回 CaseDocumentRow。
@@ -443,18 +437,19 @@ async fn list_case_annotations(
     // Mirrors Node `/cases/:id/documents/:key/annotations`. Annotations live
     // in the `document_annotations` table; we filter by case-bound document
     // and key. Empty array when no rows exist (UI tolerates this).
-    let rows: Vec<(Uuid, String, Option<String>, Value)> = sqlx::query_as(
-        "SELECT id, kind, thread_id, payload FROM document_annotations          WHERE document_id IN (SELECT document_id FROM case_documents WHERE case_id = $1 AND key = $2)          ORDER BY created_at DESC LIMIT 200",
-    )
-    .bind(case_id)
-    .bind(&key)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = CaseRepo::new(&state.db)
+        .list_case_document_annotations(case_id, &key)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, kind, thread_id, payload)| {
-            json!({"id": id, "kind": kind, "threadId": thread_id, "payload": payload})
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "kind": row.kind,
+                "threadId": row.thread_id,
+                "payload": row.payload,
+            })
         })
         .collect();
     Ok(Json(json!({ "items": items })))
@@ -482,24 +477,6 @@ struct UpsertCaseDocumentBody {
 // ============== Round 22: case annotations / revisions / attachments / issue case-links ==============
 
 // ── Helpers ──────────────────────────────────────────────────
-
-async fn resolve_case_document_id(
-    state: &AppState,
-    case_id: Uuid,
-    key: &str,
-) -> ApiResult<(Uuid, Uuid)> {
-    // Returns (company_id, document_id) for the (case, key) pair.
-    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT company_id, document_id FROM case_documents WHERE case_id = $1 AND key = $2",
-    )
-    .bind(case_id)
-    .bind(key)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    row.ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))
-}
 
 // ── Case annotation threads ──────────────────────────────────
 
@@ -1056,26 +1033,21 @@ async fn list_issue_cases(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, Option<Uuid>, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT cil.id, cil.case_id, cil.role, c.project_id, c.parent_case_id, c.status, cil.created_at \
-         FROM case_issue_links cil JOIN cases c ON c.id = cil.case_id \
-         WHERE cil.issue_id = $1 ORDER BY cil.created_at DESC LIMIT 200",
-    )
-    .bind(issue_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = CaseRepo::new(&state.db)
+        .list_issue_cases(issue_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(link_id, case_id, role, project_id, parent_case_id, status, created_at)| {
+        .map(|row| {
             json!({
-                "linkId": link_id,
-                "caseId": case_id,
-                "role": role,
-                "projectId": project_id,
-                "parentCaseId": parent_case_id,
-                "status": status,
-                "linkedAt": created_at,
+                "linkId": row.link_id,
+                "caseId": row.case_id,
+                "role": row.role,
+                "projectId": row.project_id,
+                "parentCaseId": row.parent_case_id,
+                "status": row.status,
+                "linkedAt": row.linked_at,
             })
         })
         .collect();
@@ -1101,15 +1073,9 @@ async fn list_case_children(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    #[allow(unused)] let rows: Vec<CaseRow> = sqlx::query_as("SELECT id, company_id, project_id, case_number, identifier, case_type, key, \
-                title, summary, status, fields, parent_case_id, created_by_agent_id, \
-                created_by_user_id, completed_at, created_at, updated_at \
-         FROM cases WHERE company_id=$1 AND parent_case_id=$2 \
-         ORDER BY created_at ASC LIMIT 200")
-    .bind(case.company_id)
-    .bind(case_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = CaseRepo::new(&state.db)
+        .list_children(case.company_id, case_id)
+        .await?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|row| {
@@ -1146,13 +1112,9 @@ async fn list_case_children_tree(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let all: Vec<CaseRow> = sqlx::query_as("SELECT id, company_id, project_id, case_number, identifier, case_type, key, \
-                title, summary, status, fields, parent_case_id, created_by_agent_id, \
-                created_by_user_id, completed_at, created_at, updated_at \
-         FROM cases WHERE company_id=$1 ORDER BY parent_case_id NULLS FIRST, created_at ASC LIMIT 5000")
-    .bind(root.company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let all: Vec<CaseRow> = CaseRepo::new(&state.db)
+        .list_all_for_tree(root.company_id)
+        .await?;
 
     use std::collections::HashMap;
     let mut children_by_parent: HashMap<Option<Uuid>, Vec<CaseRow>> = HashMap::new();

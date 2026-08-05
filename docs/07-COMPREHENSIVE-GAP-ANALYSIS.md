@@ -815,6 +815,64 @@ cases.rs 还剩 ~20 SQL，主要集中在以下复合端点：
 - **company_skills.rs** 60 SQL
 - **tool_access.rs** 78 出现（多数复杂 JOIN）
 
+## 42. 第一百一十九轮增量（Round 119 — cases.rs CRUD / list 系列仓储化)
+
+### 目标
+cases.rs 20 → 14 SQL（-6）。本轮清理剩余 CRUD / list 系列：
+- upsert_case_document（ON CONFLICT）
+- list_case_annotations（JOIN case_documents 子查询）
+- list_issue_cases（反向查询 issue → cases）
+- list_case_children（parent_case_id 过滤）
+- list_case_children_tree（公司全量查询 + 内存构建树）
+- 死代码 `resolve_case_document_id` 路由助手（已被 Round 114 的同名 repo 方法取代）
+
+### 新增 `pc_repos::case::CaseRepo` 方法（4 个 + 复用 Round 109 的 1 个)
+- `link_document(company_id, case_id, document_id, key) -> CaseDocumentRow`
+  - **复用**：Round 109 已存在的 ON CONFLICT upsert；本轮直接用于替代 upsert_case_document
+- `list_case_document_annotations(case_id, key) -> Vec<CaseDocumentAnnotationRow>`
+- `list_issue_cases(issue_id) -> Vec<IssueCaseLinkRow>`
+- `list_children(company_id, case_id) -> Vec<CaseRow>`
+- `list_all_for_tree(company_id) -> Vec<CaseRow>`
+
+### 新增 DTO（2 个）
+- `CaseDocumentAnnotationRow { id, kind, thread_id, payload }`
+- `IssueCaseLinkRow { link_id, case_id, role, project_id, parent_case_id, status, linked_at }`
+
+### 重构 `cases.rs` 5 个端点 + 删除 1 个助手
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `upsert_case_document` | INSERT INTO case_documents ON CONFLICT | CaseRepo::link_document |
+| `list_case_annotations` | SELECT FROM document_annotations + 子查询 | CaseRepo::list_case_document_annotations |
+| `list_issue_cases` | SELECT FROM case_issue_links JOIN cases | CaseRepo::list_issue_cases |
+| `list_case_children` | SELECT FROM cases WHERE parent_case_id=$2 | CaseRepo::list_children |
+| `list_case_children_tree` | SELECT FROM cases 全量 | CaseRepo::list_all_for_tree |
+| 删除 `resolve_case_document_id` 助手 | 1 SELECT | 已被 Round 114 仓储化方法取代 |
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round119_case_crud_list_repo.rs`)
+1. `list_children_returns_direct_children` — 直系子 case（不返回 grand child）
+2. `list_all_for_tree_returns_all_cases` — 全量返回（用于树构建）
+3. `list_case_document_annotations_filters_by_case_key` — 按 case+key 过滤
+4. `list_issue_cases_returns_linked_cases` — issue → cases 反向
+5. `link_document_upserts_on_conflict` — ON CONFLICT 行为（id 保持不变）
+6. `list_children_empty_when_no_children` — 空数组
+
+### 进度影响
+- 综合进度从 **≈ 93.6% → ≈ 94.0%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --no-run --test round119_*` 编译通过
+- 19 个 pc-repos 集成测试文件累计 108+6=114 test 函数
+- cases.rs SQL 数 20 → 14（-6，CRUD/list 清扫）
+- 累计 Round 95-119 修复 **83+5=88 个路由从 500 → 200**
+
+### 下一轮方向（Round 120 — cases.rs 复合事务收尾）
+cases.rs 还剩 14 SQL，全部在复合事务端点：
+- `breakdown_case` (3 SQL：next case_number + insert + event)
+- `replace_case_blockers` (3 SQL：delete + insert + event)
+- `open_conversation` (3 SQL：insert issue + link + event)
+- `get_case_context_pack` (3 SQL：复合聚合)
+- `get_case_outputs` (1 SQL)
+- `delete_case_document` DELETE (1 SQL)
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

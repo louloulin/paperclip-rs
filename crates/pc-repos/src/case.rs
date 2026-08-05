@@ -239,6 +239,29 @@ pub struct CaseDocumentRow {
     pub updated_at: Timestamp,
 }
 
+/// Round 119: case 文档批注列表投影（document_annotations JOIN case_documents）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseDocumentAnnotationRow {
+    pub id: Uuid,
+    pub kind: String,
+    pub thread_id: Option<String>,
+    pub payload: serde_json::Value,
+}
+
+/// Round 119: issue → cases 反向查询（case_issue_links JOIN cases）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCaseLinkRow {
+    pub link_id: Uuid,
+    pub case_id: Uuid,
+    pub role: String,
+    pub project_id: Option<Uuid>,
+    pub parent_case_id: Option<Uuid>,
+    pub status: Option<String>,
+    pub linked_at: Timestamp,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaseLabelRow {
@@ -1626,6 +1649,66 @@ impl<'a> CaseRepo<'a> {
             .bind(case_id)
             .bind(key)
             .fetch_optional(self.db.pool())
+            .await
+    }
+
+    // ---- Round 119: case CRUD / list 清扫 ----
+
+    /// Round 119: 列出 case 绑定的文档批注（document_annotations JOIN case_documents）。
+    pub async fn list_case_document_annotations(
+        &self,
+        case_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<Vec<CaseDocumentAnnotationRow>> {
+        sqlx::query_as::<_, CaseDocumentAnnotationRow>(
+            "SELECT id, kind, thread_id, payload FROM document_annotations             WHERE document_id IN (SELECT document_id FROM case_documents WHERE case_id = $1 AND key = $2)             ORDER BY created_at DESC LIMIT 200",
+        )
+        .bind(case_id)
+        .bind(key)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 119: 列出 issue 关联的所有 cases（case_issue_links JOIN cases）。
+    pub async fn list_issue_cases(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueCaseLinkRow>> {
+        sqlx::query_as::<_, IssueCaseLinkRow>(
+            "SELECT cil.id AS link_id, cil.case_id, cil.role, c.project_id, c.parent_case_id, c.status, cil.created_at AS linked_at             FROM case_issue_links cil JOIN cases c ON c.id = cil.case_id             WHERE cil.issue_id = $1 ORDER BY cil.created_at DESC LIMIT 200",
+        )
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 119: 列出 case 的直接子 case（parent_case_id = $2）。
+    pub async fn list_children(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseRow>> {
+        let sql = format!(
+            "SELECT {CASE_COLS} FROM cases WHERE company_id=$1 AND parent_case_id=$2             ORDER BY created_at ASC LIMIT 200"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(case_id)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// Round 119: 列出 company 全部 cases（用于构建 children tree，limit 5000）。
+    pub async fn list_all_for_tree(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<CaseRow>> {
+        let sql = format!(
+            "SELECT {CASE_COLS} FROM cases WHERE company_id=$1             ORDER BY parent_case_id NULLS FIRST, created_at ASC LIMIT 5000"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
             .await
     }
 
