@@ -24,6 +24,8 @@ use pc_repos::decision::DecisionRepo;
 use pc_repos::goal::GoalRepo;
 use pc_repos::pipeline::PipelineRepo;
 use pc_repos::label::{LabelRepo, NewLabel, LabelPatch};
+use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
+use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
 use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -676,17 +678,24 @@ async fn list_folders(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, String, Option<String>, i32)> = sqlx::query_as(
-        "SELECT id, company_id, kind, name, color, position
-         FROM folders WHERE company_id=$1 ORDER BY position, name",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, kind, name, color, pos)| json!({
-        "id": id, "companyId": cid, "kind": kind, "name": name,
-        "color": color, "position": pos,
-    })).collect();
+    let repo = FolderRepo::new(&state.db);
+    let rows = repo.list_by_company(company_id).await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "companyId": r.company_id,
+                "kind": r.kind,
+                "parentId": r.parent_id,
+                "name": r.name,
+                "slug": r.slug,
+                "systemKey": r.system_key,
+                "color": r.color,
+                "position": r.position,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
 
@@ -706,17 +715,46 @@ async fn create_folder(
     if body.name.trim().is_empty() || body.name.len() > 64 {
         return Err(ApiError::BadRequest("name length 1..=64".into()));
     }
-    let id: Uuid = Uuid::new_v4();
-    let next_pos: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(position),0)+1 FROM folders WHERE company_id=$1 AND kind=$2",
-    )
-    .bind(company_id).bind(&body.kind).fetch_one(state.db.pool()).await?;
-    sqlx::query(
-        "INSERT INTO folders (id, company_id, kind, name, color, position) VALUES ($1,$2,$3,$4,$5,$6)",
-    )
-    .bind(id).bind(company_id).bind(&body.kind).bind(body.name.trim()).bind(&body.color).bind(next_pos)
-    .execute(state.db.pool()).await?;
-    Ok(Json(json!({"id": id, "companyId": company_id, "kind": body.kind, "name": body.name, "color": body.color, "position": next_pos})))
+    let repo = FolderRepo::new(&state.db);
+    // 优先用 FolderKind 枚举（routine / skill），其它 kind（legacy "personal"）走兜底 SQL
+    if let Some(kind) = FolderKind::parse(&body.kind) {
+        let slug = pc_repos::folder::slug::normalize_folder_slug(&body.name);
+        let next_pos = repo
+            .next_position(company_id, kind, None)
+            .await?;
+        let input = NewFolder {
+            company_id,
+            kind,
+            parent_id: None,
+            name: body.name.trim().to_string(),
+            slug,
+            system_key: None,
+            color: body.color.clone(),
+            position: next_pos,
+        };
+        let row = repo.create(&input).await?;
+        Ok(Json(json!({
+            "id": row.id,
+            "companyId": row.company_id,
+            "kind": row.kind,
+            "name": row.name,
+            "color": row.color,
+            "position": row.position,
+        })))
+    } else {
+        // Legacy path: kind="personal" 等非标准值。保留原 2 段 SQL 行为（next_pos + INSERT）。
+        let id: Uuid = Uuid::new_v4();
+        let next_pos: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(position),0)+1 FROM folders WHERE company_id=$1 AND kind=$2",
+        )
+        .bind(company_id).bind(&body.kind).fetch_one(state.db.pool()).await?;
+        sqlx::query(
+            "INSERT INTO folders (id, company_id, kind, name, color, position) VALUES ($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(id).bind(company_id).bind(&body.kind).bind(body.name.trim()).bind(&body.color).bind(next_pos)
+        .execute(state.db.pool()).await?;
+        Ok(Json(json!({"id": id, "companyId": company_id, "kind": body.kind, "name": body.name, "color": body.color, "position": next_pos})))
+    }
 }
 
 async fn ensure_my_folder(
@@ -754,35 +792,41 @@ async fn patch_folder(
     Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchFolderBody>,
 ) -> ApiResult<Json<Value>> {
-    let mut updated: Vec<&str> = vec![];
-    if let Some(ref n) = body.name {
-        sqlx::query("UPDATE folders SET name=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(n).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
-        updated.push("name");
-    }
-    if let Some(ref c) = body.color {
-        sqlx::query("UPDATE folders SET color=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(c).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
-        updated.push("color");
-    }
-    if let Some(p) = body.position {
-        sqlx::query("UPDATE folders SET position=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-            .bind(p).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
-        updated.push("position");
-    }
-    if updated.is_empty() {
+    let patch = FolderPatch {
+        name: body.name.clone(),
+        slug: None,
+        color: body.color.clone(),
+        position: body.position,
+        parent_id: None,
+    };
+    if patch.name.is_none() && patch.color.is_none() && patch.position.is_none() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
-    Ok(Json(json!({"updated": updated, "id": folder_id})))
+    let repo = FolderRepo::new(&state.db);
+    let row = repo
+        .patch(company_id, folder_id, &patch)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("folder {folder_id}")))?;
+    let mut updated: Vec<&str> = vec![];
+    if patch.name.is_some() {
+        updated.push("name");
+    }
+    if patch.color.is_some() {
+        updated.push("color");
+    }
+    if patch.position.is_some() {
+        updated.push("position");
+    }
+    Ok(Json(json!({"updated": updated, "id": row.id})))
 }
 
 async fn delete_folder(
     State(state): State<AppState>,
     Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query("DELETE FROM folders WHERE company_id=$1 AND id=$2")
-        .bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let repo = FolderRepo::new(&state.db);
+    let deleted = repo.delete(company_id, folder_id).await?;
+    if !deleted {
         return Err(ApiError::NotFound(format!("folder {folder_id}")));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -800,8 +844,8 @@ async fn move_folder(
     Json(body): Json<MoveFolderBody>,
 ) -> ApiResult<Json<Value>> {
     let p = body.position.unwrap_or(0);
-    sqlx::query("UPDATE folders SET position=$1, updated_at=now() WHERE company_id=$2 AND id=$3")
-        .bind(p).bind(company_id).bind(folder_id).execute(state.db.pool()).await?;
+    let repo = FolderRepo::new(&state.db);
+    repo.update_position(company_id, folder_id, p).await?;
     Ok(Json(json!({"moved": true, "id": folder_id, "position": p})))
 }
 
@@ -820,24 +864,29 @@ async fn move_folder_item(
     Path(company_id): Path<Uuid>,
     Json(body): Json<MoveFolderItemBody>,
 ) -> ApiResult<Json<Value>> {
-    let (kind, id, folder_id) = match (body.item_kind, body.item_id, body.folder_id) {
-        (Some(k), Some(i), Some(f)) => (k, i, f),
-        _ => return Err(ApiError::BadRequest("item_kind, item_id, folder_id required".into())),
+    let kind_str = body
+        .item_kind
+        .ok_or_else(|| ApiError::BadRequest("item_kind required".into()))?;
+    let item_kind = MoveFolderItemKind::parse(&kind_str)
+        .ok_or_else(|| ApiError::BadRequest(format!("unsupported kind {kind_str}")))?;
+    let id_str = body
+        .item_id
+        .ok_or_else(|| ApiError::BadRequest("item_id required".into()))?;
+    let item_id: Uuid = Uuid::parse_str(&id_str)
+        .map_err(|_| ApiError::BadRequest(format!("item_id {id_str} is not a uuid")))?;
+    let repo = FolderRepo::new(&state.db);
+    let input = MoveFolderItem {
+        kind: item_kind,
+        item_id,
+        folder_id: body.folder_id,
     };
-    match kind.as_str() {
-        "skill" => {
-            sqlx::query(
-                "UPDATE company_skills SET folder_id=$1, updated_at=now() WHERE company_id=$2 AND id::text=$3",
-            ).bind(folder_id).bind(company_id).bind(&id).execute(state.db.pool()).await?;
-        }
-        "routine" => {
-            sqlx::query(
-                "UPDATE routines SET folder_id=$1, updated_at=now() WHERE company_id=$2 AND id::text=$3",
-            ).bind(folder_id).bind(company_id).bind(&id).execute(state.db.pool()).await?;
-        }
-        _ => return Err(ApiError::BadRequest(format!("unsupported kind {kind}"))),
-    }
-    Ok(Json(json!({"moved": true, "kind": kind, "itemId": id, "folderId": folder_id})))
+    let result = repo.move_item(company_id, &input).await?;
+    Ok(Json(json!({
+        "moved": true,
+        "kind": result.kind.as_str(),
+        "itemId": result.item_id.to_string(),
+        "folderId": result.folder_id,
+    })))
 }
 
 // ---------- invites ----------

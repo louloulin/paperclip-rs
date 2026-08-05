@@ -1413,15 +1413,72 @@ companies.rs 31 → 26 SQL（-5）。仓储化 labels 子模块（list / create 
 - companies.rs SQL 数 31 → 26（-5，labels 子模块 4 端点合并到 LabelRepo）
 - 累计 Round 95-129 修复 **122+4=126 个路由从 500 → 200**
 
-### 下一轮方向（Round 130+）
-companies.rs 还剩 26 SQL，主要在：
+## 53. 第一百三十轮增量（Round 130 — companies.rs folders 子模块仓储化)
+
+### 目标
+companies.rs 26 → 18 SQL（-8）。仓储化 folders 7 个路由的 SQL 至 `pc_repos::folder::FolderRepo`，
+新建 `update_position` 单字段方法。
+
+### 新增 `pc_repos::folder::FolderRepo` 方法
+- `update_position(company_id, id, position) -> bool`
+  - 单独 UPDATE position + updated_at；返回是否实际修改了一行
+  - 对应 routes 原 `move_folder` 端点
+
+### 既有方法复用（路由侧全部委托)
+- `list_by_company` → list_folders
+- `create(NewFolder) + next_position` → create_folder（kind="routine"/"skill" 路径）
+- `patch(company_id, id, FolderPatch)` → patch_folder
+- `delete(company_id, id)` → delete_folder
+- `move_item(company_id, &MoveFolderItem)` → move_folder_item
+
+### 重构 `companies.rs` 7 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/companies/:id/folders` | 1 SELECT (position, name order) | FolderRepo::list_by_company |
+| `POST /api/companies/:id/folders` | 2 SQL (next_pos + INSERT) | FolderRepo::next_position + create（仅 routine/skill）；"personal" 等 legacy kind 保留兜底 SQL |
+| `PATCH /api/companies/:id/folders/:folder_id` | 1-3 SQL (三段独立 UPDATE) | FolderRepo::patch 复合 COALESCE |
+| `DELETE /api/companies/:id/folders/:folder_id` | 1 SQL (DELETE) | FolderRepo::delete（含子文件夹校验） |
+| `POST /api/companies/:id/folders/:folder_id/move` | 1 SQL (UPDATE position) | FolderRepo::update_position |
+| `POST /api/companies/:id/folders/items/move` | 1 SQL (kind 分支 UPDATE) | FolderRepo::move_item（MoveFolderItemKind 枚举） |
+
+### 设计要点
+- **1:1 schema 投影**：`FolderRow` FromRow 对应 folders 表 11 列；`list_folders` 输出多带 parentId / slug / systemKey（向后兼容扩展）。
+- **kind 双轨制**：`create_folder` 优先尝试 `FolderKind::parse`，对 routine/skill 用仓储；其它 kind（legacy "personal"，非标准）保留兜底 SQL，避免破坏现有调用方行为。
+- **patch_folder 复合 COALESCE**：`FolderPatch` 支持 name/slug/color/position/parent_id 五字段部分更新（双 Option parent_id 用于"顶级"语义）；路由只暴露其中三个字段。
+- **move_item 校验下沉**：`bundled 文件夹只读` / `目标 folder kind 不匹配` / `Routine/Skill not found` 等都收口到 `move_item` 内的 `RepoError::Invalid`，路由不再做手写校验。
+- **move_folder_item 输入解析**：原 route 用 `id::text` 隐式 cast string → uuid；改用 `Uuid::parse_str` 严格校验，错误响应更明确。
+- **ensure_my_folder 暂未动**：kind='personal' 仍为非标准值，需要后续单独讨论（要么扩 enum，要么迁移成 system_key='my'）。
+
+### 新增集成测试 12 个 (`crates/pc-repos/tests/round130_folders_basic_repo.rs`)
+1. `list_empty_company` — 空公司列表
+2. `list_orders_by_kind_then_position` — kind 优先排序
+3. `create_and_get` — 创建回读 + slug 自动生成
+4. `get_by_system_key_finds_root` — system_key 查找
+5. `patch_updates_fields` — name/color/position 三字段 patch
+6. `delete_removes_folder` — 正常删除 + 二次删除 false
+7. `delete_rejects_folder_with_children` — 有子文件夹拒绝
+8. `update_position_changes_order` — 单独改 position
+9. `next_position_increments` — 位置序号递增
+10. `move_routine_between_folders` — routine 跨文件夹移动
+11. `move_skill_not_found_errors` — skill 不存在报错
+12. `count_by_kind_isolates_kind` — 按 kind 隔离计数
+
+### 进度影响
+- 综合进度从 **≈ 97.1% → ≈ 97.4%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round130_folders_basic_repo` 0 errors
+- 30 个 pc-repos 集成测试文件累计 184+12=196 test 函数
+- companies.rs SQL 数 26 → 18（-8，folders 6 端点合并到 FolderRepo；ensure_my_folder 暂留）
+- 累计 Round 95-130 修复 **126+6=132 个路由从 500 → 200**
+
+### 下一轮方向（Round 131+）
+companies.rs 还剩 18 SQL，主要在：
 - timeline 聚合（多源 JOIN，~5 SQL，line 287+）
 - artifacts 列表（~3 SQL，line 309+）
 - branding 复合（3 SQL，line 354+）
 - export_preview（3 SQL，line 402+）
 - import_preview / start_export / fidelity（~6 SQL，line 453+）
 - feedback_traces 列表（~4 SQL，line 555+）
-- folders CRUD（~10 SQL，line 705+）
+- ensure_my_folder / create_folder legacy "personal" path（~4 SQL，line 766+）
 - create 路由的 company_memberships INSERT（1 SQL）
 
 后续高 SQL 模块：

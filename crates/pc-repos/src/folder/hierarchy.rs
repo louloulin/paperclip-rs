@@ -195,3 +195,25 @@ impl<'a> FolderRepo<'a> {
         Ok(())
     }
 }
+
+impl<'a> FolderRepo<'a> {
+    /// 单独更新 position（move_folder 端点）。
+    /// 返回 true 表示实际修改了一行。
+    pub async fn update_position(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+        position: i32,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE folders SET position=$1, updated_at=now() WHERE company_id=$2 AND id=$3",
+        )
+        .bind(position)
+        .bind(company_id)
+        .bind(id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+}
