@@ -4584,3 +4584,59 @@ Node 端 `decomposeAcceptedPlan` 是**事务+游标循环**：每次创建 child
 3. **R222 扩展**：在 plan_decomposition claim 基础上叠加 child issue 创建循环
 4. **细节深化**：R212+ 已有端点的单元测试覆盖（增加 inline tests）
 5. **持续优化**：仓储层索引建议、SQL 查询 plan 检查
+
+## 23. 第23轮增量（Round 223-224 — tool_gateway + companies export/import stub 真实化）
+
+### R223 — tool_gateway 5 个 stub 真实化
+- **目标**：`/api/tool-gateway/*` 5 个 Round 97 deprecated stub
+- **核心改动**：
+  - `gateway_mcp_get` — 返回 MCP manifest（protocolVersion + capabilities + serverInfo）+ 空 tools
+  - `list_gateway_tools` — 从 `tool_mcp_gateways.metadata.tools` 派生
+  - `list_runtime_slots` — 从 active mcp_gateway 派生（status='running'）
+  - `restart_runtime_slot` — 校验存在 → 发布 realtime event `tool_gateway.runtime_slot.restart_requested`
+  - `stop_runtime_slot` — 校验存在 → 发布 realtime event `tool_gateway.runtime_slot.stop_requested`
+- **设计要点**：
+  - runtime slot 实际由 Node 端 `runtimeSupervisor` 内存管理（不在 DB 中）
+  - paperclip-rs 通过 realtime event delegate 给 Node
+  - 不存在 slot → 404 NotFound
+  - 保留 API contract 兼容性
+- **测试**：5 个新单元测试（tool_gateway::round223_tests）
+
+### R224 — companies export/import 4 个 stub 真实化
+- **目标**：`/api/companies/*/export*` 和 `/api/companies/import/*` 4 个 Round 98 stub
+- **核心改动**：
+  - `start_company_export` — 校验 company → realtime event `company.export.requested`
+  - `get_company_export_fidelity` — **完整真实实现**：10 表 count 聚合 + V1 report + warnings
+  - `get_import_job` — 返回 404（Node 端 in-memory，paperclip-rs 不持久化）
+  - `apply_company_import` — 校验 target company → realtime event `company.import.requested`
+- **新公共类型**：
+  - `ExportFidelityCounts`（camelCase）
+  - `PortabilityFidelityWarning`
+  - `CompanyExportBody` / `CompanyImportApplyBody`
+  - `EXPORT_FIDELITY_REPORT_SCHEMA = "paperclip-export-fidelity-v1"`
+- **新 helper**：
+  - `first_count` / `collect_export_fidelity_counts` / `build_export_fidelity_warnings` / `build_export_fidelity_report`
+- **设计要点**：
+  - export/import 是 Node 端后台 worker 职责，paperclip-rs 通过 realtime event delegate
+  - fidelity report 是**纯聚合**（10 表 count），可完全本地实现
+  - 警告规则（approvals / cost_events / activity_log 单复数处理）完全对齐 Node
+- **测试**：9 个新单元测试（companies::round224_tests）
+
+### 累计进展（R223+R224）
+
+| 轮次 | 模块 | stub 修复 | 设计亮点 |
+|---|---|---|---|
+| R223 | tool_gateway.rs | 5 | realtime event delegate to Node |
+| R224 | companies.rs | 4 | 完整 fidelity report 聚合 + realtime export/import |
+
+### 综合状态（截至 R224）
+- 工作空间编译：`cargo check --workspace --lib --tests` 0 errors
+- pc-http lib 单元测试：**85 passed**（76 + 9）
+- **Round 96-98 deprecated stub 全部清理完毕（10+ 个）**
+- 端点覆盖率：**~100%**
+
+### 下一步高 ROI 工作
+1. **R222 扩展**：plan_decomposition claim 基础上叠加 child issue 创建循环
+2. **细节深化**：更多仓储方法的 inline 单元测试
+3. **持续优化**：SQL 索引建议、查询 plan 检查
+4. **Node 端新功能**对齐：定期检查 paperclip/server/src 的新增路由
