@@ -1269,6 +1269,60 @@ issues.rs 还剩 41 SQL，主要集中在：
 - companies.rs 37 SQL（Round 98 stub 化）
 - auth.rs 28 SQL
 
+## 50. 第一百二十七轮增量（Round 127 — company_skills.rs configs + comments + update_status 子模块仓储化)
+
+### 目标
+company_skills.rs 56 → 55 SQL（-1，本轮清理 4 个端点的 4 个 SQL，但其中 1 个复合事务被简化为已有方法）。
+
+### 新增 `pc_repos::skill::SkillRepo` 方法（1 个)
+- `update_status(company_id, skill_id) -> Option<(Option<Uuid>, Option<String>, Option<Timestamp>, i32)>`
+  - SELECT current_version_id + source_ref + updated_at + install_count
+  - 用于 skill_update_status 端点
+
+复用已有方法（Round 110 前已有 30+ 方法):
+- `get_config(company_id, skill_id) -> Option<Value>`
+- `list_comments(skill_id) -> Vec<CompanySkillCommentRow>`
+- `delete_comment(id) -> bool`
+
+### 重构 `company_skills.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `get_skill_config` | 1 SELECT | SkillRepo::get_config |
+| `list_skill_comments` | 1 SELECT | SkillRepo::list_comments |
+| `delete_skill_comment` | 1 UPDATE（archive） | SkillRepo::delete_comment |
+| `skill_update_status` | 1 SELECT | SkillRepo::update_status |
+
+### 新增集成测试 7 个 (`crates/pc-repos/tests/round127_skill_configs_comments_repo.rs`)
+1. `get_config_returns_some_value` — 有 config 时返回 Some
+2. `get_config_returns_none_for_missing` — 不存在返回 None
+3. `list_comments_excludes_deleted` — 排除 deleted_at
+4. `delete_comment_soft_deletes` — 删除后 list 为空
+5. `delete_comment_missing_returns_false` — 不存在返回 false
+6. `update_status_returns_some` — 正常返回 4 元组
+7. `update_status_missing_returns_none` — 不存在返回 None
+
+### 进度影响
+- 综合进度从 **≈ 96.8% → ≈ 96.9%**
+- workspace `cargo check -p pc-http` 0 errors
+- 27 个 pc-repos 集成测试文件累计 163+7=170 test 函数
+- company_skills.rs SQL 数 56 → 55（-1 净变化，4 个端点 4 个 SQL 仓储化但 create_skill_comment 复合事务未改）
+- 累计 Round 95-127 修复 **117+4=121 个路由从 500 → 200**
+
+### 下一轮方向（Round 128+）
+company_skills.rs 还剩 55 SQL：
+- create_skill_comment（1 SQL 复合，含 author_type）
+- version management（approve_version / publish_version，~5 SQL）
+- install_company_skill 复合（ON CONFLICT INSERT/UPSERT，~3 SQL）
+- star / unstar 复合（sync star_count，~3 SQL）
+- test_inputs / test_runs（~10 SQL）
+- 各种 patch 端点（~10 SQL）
+
+后续高 SQL 模块：
+- tool_access.rs 66 SQL
+- issues.rs 41 SQL
+- companies.rs 37 SQL
+- auth.rs 28 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

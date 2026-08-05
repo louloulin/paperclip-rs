@@ -491,6 +491,23 @@ impl<'a> SkillRepo<'a> {
         Ok(n > 0)
     }
 
+    /// Round 127: 取 skill 的 update status（current_version_id + source_ref + install_count + updated_at）。
+    pub async fn update_status(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+    ) -> RepoResult<Option<(Option<Uuid>, Option<String>, Option<pc_core::Timestamp>, i32)>> {
+        let row: Option<(Option<Uuid>, Option<String>, Option<pc_core::Timestamp>, i32)> = sqlx::query_as(
+            "SELECT current_version_id, source_ref, updated_at, install_count \
+             FROM company_skills WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
     pub async fn soft_delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
         let n = sqlx::query(
             "UPDATE company_skills SET deleted_at=now(), updated_at=now() \

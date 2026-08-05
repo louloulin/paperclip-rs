@@ -851,13 +851,10 @@ async fn skill_update_status(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Option<Uuid>, Option<String>, Option<pc_core::Timestamp>, i32)> = sqlx::query_as(
-        "SELECT current_version_id, source_ref, updated_at, install_count
-         FROM company_skills WHERE company_id=$1 AND id=$2",
-    )
-    .bind(company_id).bind(skill_id)
-    .fetch_optional(state.db.pool()).await?;
-    let (current, source, ts, cnt) = row
+    let (current, source, ts, cnt) = SkillRepo::new(&state.db)
+        .update_status(company_id, skill_id)
+        .await
+        .map_err(map_skill_repo_error)?
         .ok_or_else(|| ApiError::NotFound(format!("skill {skill_id}")))?;
     Ok(Json(json!({
         "skillId": skill_id,
