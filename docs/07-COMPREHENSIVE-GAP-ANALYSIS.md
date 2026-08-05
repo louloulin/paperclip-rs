@@ -4505,3 +4505,82 @@ Audit + Actions:
    - annotation_comment_route — 需要新增 issue_annotation_comments 或使用 document_annotation_comments
 2. **list/create_accepted_plan_decompositions** — 需要新增 issue_plan_decompositions repo
 3. **tool_gateway 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
+
+## 22. 第21-22轮增量（Round 221-222 — annotation_comment stub 修复 + plan_decompositions 真实实现）
+
+### R221 — annotation_comment_route stub 修复
+- **目标**：`POST /api/issues/:id/documents/:key/annotations/:thread_id/comments` 真实实现
+- **做法**：
+  - 复用现有 `DocumentRepo::get_annotation_thread` + `create_annotation_comment`
+  - 移除 R96 deprecated stub 假实现
+  - 移除残留的重复 `AnnotationCommentBodyV2` 定义（只保留一个）
+  - body trim 空校验 → 400
+  - thread 不存在 → 404
+- **设计要点**：
+  - 与现有 `add_annotation_comment`（`POST .../annotations/:thread_id`）保持 1:1 行为一致
+  - 本路由仅作 path 别名（兼容 URL）
+  - author_type 默认 `'user'`，author_user_id 留 None（本轮略 actor context）
+
+### R222 — issue_plan_decompositions 完整实现
+- **背景**：R96 留下 1/12 最后一个 stub：`list/create_accepted_plan_decompositions`
+- **核心改动**：
+  - **结构体**：`IssuePlanDecompositionRow`（camelCase 序列化，所有 DB 字段）
+  - **仓储方法**：
+    - `list_plan_decompositions(source_issue_id)` — 按 source_issue_id 倒序
+    - `find_plan_decomposition_by_revision(company, source, revision)` — 精确查找（幂等性）
+    - `create_plan_decomposition(...)` — 初始 status='in_flight'，child_issue_ids='[]'
+    - `update_plan_decomposition_progress(...)` — 状态切换 + child 追加
+  - **路由实现**：
+    - `list_accepted_plan_decompositions` 真实实现（替换 deprecated stub）
+    - `create_accepted_plan_decomposition` 真实实现（idempotent claim）：
+      - 验证 source issue 存在 → 404
+      - 空 children → 400
+      - 计算 `request_fingerprint`（基于 revision + children title/description）
+      - 同 fingerprint + 同 revision → 幂等返回现有
+      - 不同 fingerprint + 同 revision → 409 Conflict
+      - 创建新 in_flight claim
+  - **Helper**：
+    - `compute_plan_decomposition_fingerprint` — 稳定指纹（Hash-based）
+    - `plan_decomposition_row_json` — camelCase 序列化
+
+### 与 Node `decomposeAcceptedPlan` 的差异说明
+Node 端 `decomposeAcceptedPlan` 是**事务+游标循环**：每次创建 child issue 后追加到 child_issue_ids。本轮聚焦 **claim 持久化**（核心 CRUD），完整 child issue 创建循环（涉及 `issueService.createChild` 集成、executionPolicy 规范化、watchdog 序列化等）属于 service 层职责，留待后续 R223+ 叠加。
+
+### 附带修复
+- `round215_claim_api_key_repo.rs`：遗留的 `pc_auth::hash_token` 引用 → `pc_core::hash::sha256_hex`（5 处）
+
+### 测试
+- 6 个新单元测试（追加到 `round216_tests`）：
+  - `plan_decomp_body_parses_revision_and_children` — body 解析
+  - `plan_decomp_body_rejects_empty_children_via_deserialize` — 默认空 vec
+  - `plan_decomp_fingerprint_stable_for_same_input` — 同输入稳定
+  - `plan_decomp_fingerprint_differs_for_different_children` — 不同 children 区分
+  - `plan_decomp_fingerprint_differs_for_different_revisions` — 不同 revision 区分
+  - `plan_decomp_row_json_uses_camel_case_keys` — camelCase 序列化
+- 1 个新集成测试文件 `round222_plan_decompositions_repo.rs`（5 个测试，DB blocked）：
+  - `create_plan_decomposition_initializes_in_flight`
+  - `list_plan_decompositions_filters_by_source_issue`
+  - `find_plan_decomposition_by_revision_returns_existing`
+  - `find_plan_decomposition_by_revision_returns_none_for_missing`
+  - `update_plan_decomposition_progress_appends_child_id_and_marks_completed`
+
+### 累计进展（R221+R222）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R221 | issues.rs | 修复1 | annotation_comment_route 真实实现 |
+| R222 | issues.rs + issue.rs | 修复1+新增4 | list/create plan_decompositions + 4 个仓储方法 |
+
+### 综合状态（截至 R222）
+- 工作空间编译：`cargo check --workspace --lib --tests` 0 errors
+- 6 个新单元测试 + 5 个新集成测试
+- **R96 deprecated stub 全部清理完毕（12/12）**
+- **pc-repos tests 编译通过**（R215 遗留 bug 修复）
+- 累计端点覆盖率：**~100%**（所有已知路由均有真实实现或文档化占位）
+
+### 下一步高 ROI 工作
+1. **tool_gateway 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
+2. **companies.ts export/import 4 个 stub**（synthetic export / company_export_jobs / export_fidelity / company_import_jobs）
+3. **R222 扩展**：在 plan_decomposition claim 基础上叠加 child issue 创建循环
+4. **细节深化**：R212+ 已有端点的单元测试覆盖（增加 inline tests）
+5. **持续优化**：仓储层索引建议、SQL 查询 plan 检查
