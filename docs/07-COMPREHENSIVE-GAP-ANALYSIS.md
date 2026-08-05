@@ -3544,3 +3544,21 @@ Audit + Actions:
 - 累计 routes 0 SQL 文件: 10 个（access + smoke_lab + tool_connections + tool_gateway + secrets + pipelines + summary_slots + execution_workspaces + projects + decision_training 共 160 SQL 移除）
 - `pc-repos` 新增 `round160_projects_decision_training_repo.rs` (16 测试用例)
 - 剩余 SQL 总数: 207 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)
+
+## 29. 第一百六十一轮增量（Round 161 — issues.rs 仓储化）
+
+### 仓储化覆盖
+- **IssueRepo** 9 新方法（含心跳 context + docs lifecycle + attachment JOIN）
+- **HeartbeatRepo** 2 新方法（recent runs + active runs count）
+- 复用 **IssueTreeHoldRepo::find_active_for_root**（既有方法覆盖 preview_tree_control SQL）
+
+### 路由重构 issues.rs
+- 19 SQL → 0
+- 大型 routes 文件（3161 行 → 3500+ 行）成功瘦身
+- 跨表 JOIN（issue_attachments + assets）封装为单 repo 方法
+
+### 进度影响
+- `issues.rs` 累计 SQL: 19 → 0
+- 累计 routes 0 SQL 文件: 11 个（共 179 SQL 移除）
+- `pc-repos` 新增 `round161_issues_repo.rs` (9 测试用例)
+- 剩余 SQL 总数: 208 (最大: company_skills.rs 55 / status_cards.rs 17)
