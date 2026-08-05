@@ -40,6 +40,7 @@ pub mod issues;
 pub mod issues_checkout_wakeup;
 pub mod llms;
 pub mod openapi;
+pub mod openclaw;
 pub mod org_chart_svg;
 pub mod pipelines;
 pub mod plugin_ui_static;
@@ -130,6 +131,7 @@ pub fn router() -> Router<AppState> {
         .merge(llms::router())
         .merge(openapi::router())
         .merge(org_chart_svg::router())
+        .merge(openclaw::router())
         .merge(plugin_ui_static::router())
         .merge(secrets::router())
         .merge(storage::router())
