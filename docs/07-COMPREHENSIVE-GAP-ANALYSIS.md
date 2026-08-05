@@ -4408,3 +4408,56 @@ Audit + Actions:
    - annotation_comment_route（需新增 issue_annotation_comments repo 或 document_annotation_comments）
 2. **继续扫描其他文件的 deprecated 模式**
 3. **tool_gateway / tool_access 的 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
+
+## 58. 第二百一十九轮增量（Round 219 — interaction list/create/delete 真实实现）
+
+### 端口覆盖
+- 替换 3 个 R96 deprecated stub：
+  - `GET /api/issues/:id/interactions` (list_issue_interactions)
+  - `POST /api/issues/:id/interactions` (create_issue_interaction)
+  - `DELETE /api/issues/:id/interactions/:interaction_id` (delete_issue_interaction)
+
+### 仓储层新增
+- `IssueRepo::delete_interaction(interaction_id) -> sqlx::Result<bool>`
+  - 删除 issue_thread_interactions 记录
+  - 返回是否实际删除
+
+### 路由层
+- 复用既有 `IssueRepo::list_interactions / create_interaction / delete_interaction`
+- 复用既有 `CreateInteractionBody`（kind + continuation_policy + title + summary + payload + created_by_user_id）
+- 新增 `interaction_row_json` 统一序列化函数
+  - 所有字段 camelCase 对齐 Node 端
+
+### 设计要点
+- create 阶段未解析 actor context（created_by_agent_id/user_id）
+  - 后续可加 actor context 解析
+- delete 返回 204 No Content（与 Node 一致）
+- 不存在时返回 404（与 Node 一致）
+
+### 测试
+- 11 个内联单元测试（round216_tests）：
+  - interaction_row_json_uses_camel_case_keys 验证所有关键字段存在
+- 集成测试 round219_issue_thread_interactions_repo.rs（3 个 case，DB blocked）：
+  - create_and_list_interaction_round_trip
+  - delete_interaction_removes_record
+  - delete_interaction_returns_false_when_missing
+
+### 累计进展（R218+R219）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R218 | issues.rs | 修复1 | unmark_read_route 真实实现 + delete_read_state |
+| R219 | issues.rs | 修复3 | interaction list/create/delete 真实实现 + delete_interaction |
+
+### 综合状态（截至 R219）
+- 工作空间编译：`cargo check --workspace --lib --tests` 0 errors
+- 1 个新单元测试 + 1 个新集成测试文件 + 3 个 case（R219 单轮）
+- **R96 deprecated stub 已清理 10/12 个**（R216: 2, R217: 4, R218: 1, R219: 3）
+- 累计端点覆盖率：~7 个真正剩余
+
+### 下一步高 ROI 工作
+1. **R96 剩余 2 个 deprecated stub**：
+   - list/create_accepted_plan_decompositions（需新增 issue_plan_decompositions repo）
+   - issue_activity / annotation_comment_route（可能跨模块）
+2. **tool_gateway / tool_access 的 5 个 stub**（tool_mcp_gateway_tools / tool_gateway_runtime_slots 表）
+3. **继续扫描其他文件的 deprecated 模式**
