@@ -14,6 +14,7 @@ pub mod execution_allowlist;
 pub mod execution_policy_bootstrap;
 pub mod execution_workspace_policy;
 pub mod feature_catalog;
+pub mod hash;
 pub mod id;
 pub mod managed_config;
 pub mod mcp_http;

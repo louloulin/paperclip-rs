@@ -179,6 +179,29 @@ pub struct CreateAgentApiKeyRecord {
     pub scope_config: Option<serde_json::Value>,
 }
 
+/// Round 215: 用于 create_api_key_with_token 的精简输入。
+///
+/// key_hash 在内部由 token 计算得出 — 调用方只需提供业务字段。
+#[derive(Debug, Clone)]
+pub struct CreateAgentApiKeyWithTokenInput {
+    pub agent_id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub responsible_user_id: Option<String>,
+    pub scope_config: Option<serde_json::Value>,
+}
+
+/// Round 215: 生成 agent API key 明文 token。
+///
+/// 格式与 Node 一致：`pcp_` + 48 hex chars (24 random bytes)。
+/// 一次性调用 — 路由层拿到后直接返回给调用方，DB 只存 hash。
+pub fn generate_agent_api_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!("pcp_{}", hex::encode(bytes))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeartbeatInvocationSource {
@@ -1066,6 +1089,34 @@ impl<'a> AgentRepo<'a> {
             .bind(input.scope_config)
             .fetch_one(self.db.pool())
             .await
+    }
+
+    /// Round 215: 创建 API key 并返回明文 token。
+    ///
+    /// 与 Node `agents.createApiKey` 对齐：
+    /// - token = `pcp_` + 48 hex chars（24 random bytes）
+    /// - key_hash = SHA256(token) hex
+    /// - 插入后返回 (row, token)
+    pub async fn create_api_key_with_token(
+        &self,
+        input: CreateAgentApiKeyWithTokenInput,
+    ) -> sqlx::Result<(AgentApiKeyRow, String)> {
+        // 1. 生成 token：pcp_ + 48 hex chars
+        let token = generate_agent_api_token();
+        // 2. hash
+        let key_hash = pc_core::hash::sha256_hex(&token);
+        // 3. 复用现成的 create_api_key
+        let row = self
+            .create_api_key(CreateAgentApiKeyRecord {
+                agent_id: input.agent_id,
+                company_id: input.company_id,
+                name: input.name,
+                key_hash,
+                responsible_user_id: input.responsible_user_id,
+                scope_config: input.scope_config,
+            })
+            .await?;
+        Ok((row, token))
     }
 
     pub async fn list_api_keys(&self, agent_id: Uuid) -> sqlx::Result<Vec<AgentApiKeyRow>> {

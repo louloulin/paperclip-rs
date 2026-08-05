@@ -27,7 +27,8 @@ use crate::{Db, RepoError, RepoResult};
 
 const COLS: &str = "id, invite_id, company_id, request_type, status, request_ip, \
     requesting_user_id, request_email_snapshot, agent_name, adapter_type, capabilities, \
-    agent_defaults_payload, created_agent_id, approved_by_user_id, approved_at, \
+    agent_defaults_payload, claim_secret_hash, claim_secret_expires_at, claim_secret_consumed_at, \
+    created_agent_id, approved_by_user_id, approved_at, \
     rejected_by_user_id, rejected_at, created_at, updated_at";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +70,12 @@ pub struct JoinRequestRow {
     pub capabilities: Option<String>,
     #[serde(default)]
     pub agent_defaults_payload: Option<JsonValue>,
+    #[serde(default)]
+    pub claim_secret_hash: Option<String>,
+    #[serde(default)]
+    pub claim_secret_expires_at: Option<Timestamp>,
+    #[serde(default)]
+    pub claim_secret_consumed_at: Option<Timestamp>,
     #[serde(default)]
     pub created_agent_id: Option<Uuid>,
     #[serde(default)]
@@ -315,6 +322,92 @@ impl<'a> JoinRequestRepo<'a> {
         .await?;
         Ok(r.rows_affected() > 0)
     }
+
+    /// Round 215: 认领 join_request 的 API key。
+    ///
+    /// 流程（与 Node `access.ts` claim-api-key 路由对齐）：
+    /// 1. SELECT FOR UPDATE 行
+    /// 2. 校验：存在 / request_type=agent / status=approved /
+    ///    claim_secret_hash 已设置 / hash 匹配 / 未过期 / 未消费
+    /// 3. 原子标记 `claim_secret_consumed_at = now()`（仅当仍为 NULL）
+    /// 4. 返回最新行（携带已设置的 `created_agent_id`）
+    pub async fn claim_api_key(
+        &self,
+        request_id: Uuid,
+        presented_hash: &str,
+    ) -> RepoResult<JoinRequestRow> {
+        let mut tx = self.db.pool().begin().await?;
+
+        let row: Option<JoinRequestRow> = sqlx::query_as(&format!(
+            "SELECT {COLS} FROM join_requests WHERE id=$1 FOR UPDATE"
+        ))
+        .bind(request_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let row = row.ok_or_else(|| RepoError::NotFound {
+            entity: "join_request",
+            id: request_id.to_string(),
+        })?;
+
+        if row.request_type != "agent" {
+            return Err(RepoError::Invalid(
+                "Only agent join requests can claim API keys".into(),
+            ));
+        }
+        if row.status != JoinRequestStatus::Approved.as_str() {
+            return Err(RepoError::Invalid(
+                "Join request must be approved before key claim".into(),
+            ));
+        }
+        if row.created_agent_id.is_none() {
+            return Err(RepoError::Invalid(
+                "Join request has no created agent".into(),
+            ));
+        }
+        let stored_hash = row.claim_secret_hash.as_deref().ok_or_else(|| {
+            RepoError::Invalid("Join request is missing claim secret metadata".into())
+        })?;
+        if !pc_core::hash::constant_time_eq(stored_hash.as_bytes(), presented_hash.as_bytes()) {
+            return Err(RepoError::Invalid("Invalid claim secret".into()));
+        }
+        if let Some(expires_at) = row.claim_secret_expires_at {
+            if expires_at.as_datetime() <= chrono::Utc::now() {
+                return Err(RepoError::Invalid("Claim secret expired".into()));
+            }
+        }
+        if row.claim_secret_consumed_at.is_some() {
+            return Err(RepoError::Invalid("Claim secret already used".into()));
+        }
+
+        // Atomic mark consumed (only if still NULL)
+        let updated: Option<JoinRequestRow> = sqlx::query_as(&format!(
+            "UPDATE join_requests SET claim_secret_consumed_at=now(), updated_at=now() \
+             WHERE id=$1 AND claim_secret_consumed_at IS NULL RETURNING {COLS}"
+        ))
+        .bind(request_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let updated = updated.ok_or_else(|| {
+            RepoError::Invalid("Claim secret already used".into())
+        })?;
+
+        tx.commit().await?;
+        Ok(updated)
+    }
+}
+
+/// Round 215: 常数时间字节比较，防御 hash 比较时的侧信道泄漏。
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -337,5 +430,23 @@ mod tests {
         // 真实路径测在 pc-http/tests/ 集成测试里。
         let unknown = "robot";
         assert!(!matches!(unknown, "human" | "agent" | "company_join" | "user"));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_equal_strings() {
+        assert!(constant_time_eq(b"hello", b"hello"));
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_different_lengths() {
+        assert!(!constant_time_eq(b"hello", b"hellos"));
+        assert!(!constant_time_eq(b"a", b""));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_different_content() {
+        assert!(!constant_time_eq(b"hello", b"world"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
     }
 }

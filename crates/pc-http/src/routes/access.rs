@@ -57,6 +57,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/admin/users/:user_id/company-access", get(get_user_company_access).put(put_user_company_access))
         .route("/api/admin/users/:user_id/promote-instance-admin", post(promote_instance_admin))
         .route("/api/admin/users/:user_id/demote-instance-admin", post(demote_instance_admin))
+        // ── Round 215: join-requests claim API key ──
+        .route(
+            "/api/join-requests/:request_id/claim-api-key",
+            post(claim_join_request_api_key),
+        )
 }
 
 // Round 149: `ChallengeRow` 已迁到 `pc_repos::cli_challenge::ChallengeRow`。
@@ -917,4 +922,72 @@ async fn demote_instance_admin(
         "userId": user_id,
         "demoted": true,
     })))
+}
+
+/// `POST /api/join-requests/:request_id/claim-api-key` —
+/// join request 认领 API key 端口（与 Node `access.ts` 对齐）。
+///
+/// 流程：
+/// 1. 校验 join request 类型/状态/claim_secret_hash 等
+/// 2. hash 比对（常数时间）
+/// 3. 原子标记 claim_secret_consumed_at
+/// 4. 生成新的 agent_api_key（带明文 token）
+/// 5. 返回 { keyId, token, agentId, createdAt }
+async fn claim_join_request_api_key(
+    State(state): State<AppState>,
+    Path(request_id): Path<Uuid>,
+    Json(body): Json<ClaimJoinRequestApiKeyBody>,
+) -> ApiResult<impl IntoResponse> {
+    use pc_repos::agent::{AgentRepo, CreateAgentApiKeyWithTokenInput};
+    use pc_repos::join_request::JoinRequestRepo;
+
+    // 1. hash presented claim secret + atomic mark consumed
+    let presented_hash = pc_auth::hash_token(&body.claim_secret);
+    let claimed = JoinRequestRepo::new(&state.db)
+        .claim_api_key(request_id, &presented_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let agent_id = claimed.created_agent_id.ok_or_else(|| {
+        ApiError::Internal("join request has no created agent after claim".to_string())
+    })?;
+    let responsible_user_id = claimed
+        .approved_by_user_id
+        .or_else(|| claimed.requesting_user_id);
+
+    // 2. Generate + persist API key (token returned, only hash stored)
+    let (row, returned_token) = AgentRepo::new(&state.db)
+        .create_api_key_with_token(CreateAgentApiKeyWithTokenInput {
+            agent_id,
+            company_id: claimed.company_id,
+            name: "initial-join-key".to_string(),
+            responsible_user_id,
+            scope_config: Some(json!({"kind": "standard"})),
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // 3. Publish realtime event for activity stream
+    state.realtime.publish(
+        LiveEvent::new("agent_api_key.claimed", "agent_api_key", row.id).with_data(json!({
+            "agentId": agent_id,
+            "joinRequestId": request_id,
+            "companyId": claimed.company_id,
+        })),
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "keyId": row.id,
+            "token": returned_token,
+            "agentId": agent_id,
+            "createdAt": row.created_at,
+        })),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaimJoinRequestApiKeyBody {
+    claim_secret: String,
 }
