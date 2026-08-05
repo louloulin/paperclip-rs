@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::secret::{CompanySecretRow, NewProviderConfig, NewUserSecretDefinition, ProviderConfigRow, SecretRepo, UserSecretDefinitionRow};
+use pc_repos::secret::{CompanySecretRow, NewProviderConfig, NewUserSecretDefinition, ProviderConfigRow, RemoteImportItem, SecretRepo, UserSecretDefinitionRow};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, serde::Serialize)]
@@ -193,6 +193,15 @@ pub fn router() -> Router<AppState> {
         .route("/api/secrets/:id", patch(update_secret))
         .route("/api/secrets/:id/usage", get(secret_usage))
         .route("/api/secrets/:id/access-events", get(secret_access_events))
+        // ── Round 201: remote import (Node-style alias) ──
+        .route(
+            "/api/companies/:company_id/secrets/remote-import/preview",
+            post(remote_import_preview),
+        )
+        .route(
+            "/api/companies/:company_id/secrets/remote-import",
+            post(remote_import),
+        )
 }
 
 fn secret_json(row: &CompanySecretRow) -> Value {
@@ -923,4 +932,183 @@ async fn patch_user_def(
         "status": status,
         "updatedAt": updated_at,
     })))
+}
+
+// ============================================================================
+// Round 201: secrets/remote-import + preview
+//
+// 语义：批量从外部源（env / file / remote KMS）导入 secrets 到当前 company。
+// 设计：
+// - 请求体 `{ source, items: [{ name, value?, provider?, description? }] }`
+// - preview 仅做校验 + 冲突检测，不写库。
+// - import 在单个事务内创建 company_secrets (+ 可选首批 version)。
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteImportItemDto {
+    name: String,
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteImportBody {
+    #[serde(default = "default_remote_source")]
+    source: String,
+    #[serde(default)]
+    items: Vec<RemoteImportItemDto>,
+}
+
+fn default_remote_source() -> String {
+    "manual".to_owned()
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteImportPreviewEntry {
+    name: String,
+    provider: String,
+    has_value: bool,
+    would_create: bool,
+    conflict: bool,
+    reason: Option<String>,
+}
+
+fn validate_import_item(it: &RemoteImportItemDto) -> Result<(String, Option<String>), String> {
+    let name = it.name.trim();
+    if name.is_empty() {
+        return Err("name is required".into());
+    }
+    let provider = it
+        .provider
+        .clone()
+        .unwrap_or_else(|| "local_encrypted".to_owned());
+    Ok((name.to_owned(), Some(provider)))
+}
+
+async fn remote_import_preview(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<RemoteImportBody>,
+) -> ApiResult<Json<Value>> {
+    let names: Vec<String> = body
+        .items
+        .iter()
+        .filter_map(|i| {
+            let n = i.name.trim().to_owned();
+            if n.is_empty() { None } else { Some(n) }
+        })
+        .collect();
+    let secret_repo = SecretRepo::new(&state.db);
+    let existing = secret_repo
+        .find_existing_names(company_id, &names)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut preview = Vec::with_capacity(body.items.len());
+    let mut conflicts = 0usize;
+    let mut would_create = 0usize;
+    for it in &body.items {
+        match validate_import_item(it) {
+            Err(e) => preview.push(RemoteImportPreviewEntry {
+                name: it.name.clone(),
+                provider: String::new(),
+                has_value: it.value.is_some(),
+                would_create: false,
+                conflict: false,
+                reason: Some(e),
+            }),
+            Ok((name, provider)) => {
+                let is_conflict = existing.contains(&name);
+                let will = !is_conflict;
+                if is_conflict { conflicts += 1; } else { would_create += 1; }
+                preview.push(RemoteImportPreviewEntry {
+                    name,
+                    provider: provider.unwrap_or_else(|| "local_encrypted".to_owned()),
+                    has_value: it.value.is_some(),
+                    would_create: will,
+                    conflict: is_conflict,
+                    reason: None,
+                });
+            }
+        }
+    }
+    Ok(Json(json!({
+        "companyId": company_id,
+        "source": body.source,
+        "totalItems": body.items.len(),
+        "wouldCreate": would_create,
+        "conflicts": conflicts,
+        "preview": preview,
+    })))
+}
+
+async fn remote_import(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<RemoteImportBody>,
+) -> ApiResult<impl IntoResponse> {
+    let secret_repo = SecretRepo::new(&state.db);
+
+    // 过滤 + 校验
+    let mut items: Vec<RemoteImportItem> = Vec::with_capacity(body.items.len());
+    let mut skipped: Vec<Value> = Vec::new();
+    for it in &body.items {
+        match validate_import_item(it) {
+            Err(e) => skipped.push(json!({ "name": it.name, "reason": e })),
+            Ok((name, provider)) => items.push(RemoteImportItem {
+                name,
+                provider: provider.unwrap_or_else(|| "local_encrypted".to_owned()),
+                description: it.description.clone(),
+                value: it.value.clone(),
+            }),
+        }
+    }
+
+    // 冲突检测：已存在的跳过
+    let names: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+    let existing = secret_repo
+        .find_existing_names(company_id, &names)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let (to_create, skipped_existing): (Vec<RemoteImportItem>, Vec<RemoteImportItem>) = items
+        .into_iter()
+        .partition(|i| !existing.contains(&i.name));
+    let mut skipped = skipped;
+    for it in &skipped_existing {
+        skipped.push(json!({ "name": it.name, "reason": "already exists" }));
+    }
+
+    let created = secret_repo
+        .bulk_create_secrets_atomic(company_id, &to_create)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let created_json: Vec<Value> = created
+        .iter()
+        .map(|(id, name)| json!({ "id": id, "name": name }))
+        .collect();
+    for (id, _name) in &created {
+        state.realtime.publish(
+            LiveEvent::new("company_secret.imported", "company_secret", *id)
+                .with_company(company_id),
+        );
+    }
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "companyId": company_id,
+            "source": body.source,
+            "totalCreated": created.len(),
+            "totalSkipped": skipped.len(),
+            "created": created_json,
+            "skipped": skipped,
+        })),
+    ))
 }

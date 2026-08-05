@@ -24,6 +24,16 @@ use pc_secrets::provider::SecretProvider;
 
 use crate::{Db, RepoError, RepoResult};
 
+/// Round 201: 单条 remote-import 条目（路由层 → 仓储层 DTO）。
+#[derive(Debug, Clone)]
+pub struct RemoteImportItem {
+    pub name: String,
+    pub provider: String,
+    pub description: Option<String>,
+    /// 可选：明文 value（仅本地加密 provider 使用）。若 Some，则同步写入 v1。
+    pub value: Option<String>,
+}
+
 // =================================================================
 // 1) company_secrets
 // =================================================================
@@ -1262,6 +1272,66 @@ impl<'a> SecretRepo<'a> {
         .fetch_optional(self.db.pool())
         .await?;
         Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 201: 一次性查一批 name，返回已存在的 name 集合（用于 remote-import preview 冲突检测）。
+    pub async fn find_existing_names(
+        &self,
+        company_id: Uuid,
+        names: &[String],
+    ) -> sqlx::Result<std::collections::HashSet<String>> {
+        if names.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM company_secrets WHERE company_id = $1 AND name = ANY($2)",
+        )
+        .bind(company_id)
+        .bind(names)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
+    /// Round 201: 事务性 bulk create — 一次性插入 N 个 company_secrets + 首批 versions，
+    /// 任一行失败则整体回滚。返回 (id, name) 元组列表。
+    pub async fn bulk_create_secrets_atomic(
+        &self,
+        company_id: Uuid,
+        items: &[RemoteImportItem],
+    ) -> sqlx::Result<Vec<(Uuid, String)>> {
+        let mut tx = self.db.pool().begin().await?;
+        let mut out = Vec::with_capacity(items.len());
+        for it in items {
+            let external_ref = format!("local:{}", Uuid::new_v4().simple());
+            let id: Uuid = sqlx::query_scalar(
+                "INSERT INTO company_secrets (company_id, name, provider, external_ref, description)                  VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            )
+            .bind(company_id)
+            .bind(&it.name)
+            .bind(&it.provider)
+            .bind(&external_ref)
+            .bind(it.description.as_deref())
+            .fetch_one(&mut *tx)
+            .await?;
+            // 若携带 value，则同步插入首批 version
+            if let Some(v) = it.value.as_deref() {
+                use sha2::{Digest, Sha256};
+                let sha = format!("{:x}", Sha256::digest(v.as_bytes()));
+                sqlx::query(
+                    "INSERT INTO company_secret_versions                         (company_id, secret_id, version, value_sha256, encrypted_payload)                      VALUES ($1, $2, 1, $3, $4::jsonb)",
+                )
+                .bind(company_id)
+                .bind(id)
+                .bind(&sha)
+                .bind(serde_json::json!({ "value": v }))
+                .execute(&mut *tx)
+                .await?;
+            }
+            out.push((id, it.name.clone()));
+        }
+        tx.commit().await?;
+        Ok(out)
     }
 
     /// Round 156: 创建一个 company_secret，返回 id。
