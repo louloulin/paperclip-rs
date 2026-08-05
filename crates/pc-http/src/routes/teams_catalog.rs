@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::team_install::TeamInstallRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -94,27 +95,18 @@ async fn installed_teams(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(
-        String,
-        Option<String>,
-        serde_json::Value,
-        chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(
-        "SELECT catalog_id, status, snapshot, installed_at FROM team_installs \
-             WHERE company_id = $1 ORDER BY installed_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = TeamInstallRepo::new(&state.db)
+        .list_for_company(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, status, snap, ts)| {
+        .map(|row| {
             json!({
-                "catalogId": id,
-                "status": status,
-                "snapshot": snap,
-                "installedAt": ts,
+                "catalogId": row.catalog_id,
+                "status": row.status,
+                "snapshot": row.snapshot,
+                "installedAt": row.installed_at,
             })
         })
         .collect();
@@ -149,17 +141,10 @@ async fn install_team(
     let team = find_team(&catalog, &catalog_id)
         .ok_or_else(|| ApiError::NotFound(format!("catalog {catalog_id}")))?
         .clone();
-    let _ = sqlx::query(
-        "INSERT INTO team_installs (company_id, catalog_id, status, snapshot, installed_at) \
-         VALUES ($1, $2, 'queued', $3, now()) \
-         ON CONFLICT (company_id, catalog_id) DO UPDATE SET status='queued', snapshot=EXCLUDED.snapshot, updated_at=now()",
-    )
-    .bind(company_id)
-    .bind(&catalog_id)
-    .bind(&team)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = TeamInstallRepo::new(&state.db)
+        .upsert_queued(company_id, &catalog_id, &team)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -174,10 +159,8 @@ async fn uninstall_team(
     State(state): State<AppState>,
     Path((company_id, catalog_id)): Path<(Uuid, String)>,
 ) -> ApiResult<impl IntoResponse> {
-    let _ = sqlx::query("DELETE FROM team_installs WHERE company_id = $1 AND catalog_id = $2")
-        .bind(company_id)
-        .bind(&catalog_id)
-        .execute(state.db.pool())
+    let _ = TeamInstallRepo::new(&state.db)
+        .delete(company_id, &catalog_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
