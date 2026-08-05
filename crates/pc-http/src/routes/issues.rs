@@ -3,7 +3,7 @@
 //! 覆盖：CRUD / children / comments / labels / read state / inbox archive。
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
@@ -16,6 +16,7 @@ use uuid::Uuid;
 use pc_activity::kinds::ActivityKind;
 use pc_activity::types::{ActivityActor, ActivityEvent};
 use pc_realtime::LiveEvent;
+use pc_repos::activity::ActivityRepo;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
 use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
@@ -2612,14 +2613,61 @@ async fn unmark_read_route(
     })))
 }
 
+/// Round 220: GET /api/issues/:id/activity — 列出关联该 issue 的活动事件。
+///
+/// 与 Node GET /issues/:id/activity 对齐：
+/// - 通过 activity_log WHERE entity_type='issue' AND entity_id=issue_id 过滤
+/// - 按 created_at DESC 排序
+/// - 默认 limit=100，最大 500
 async fn issue_activity(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表。
-    let _ = ();
-    Ok(Json(json!({"items": [], "issueId": uuid::Uuid::nil(), "deprecated": true, "note": "issue_events table missing in v3 schema"})))
-}}
+    Query(q): Query<ActivityLimitQuery>,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let rows = ActivityRepo::new(&state.db)
+        .list_for_entity(issue.company_id, "issue", &id.to_string(), limit)
+        .await?;
+    let items: Vec<Value> = rows.iter().map(activity_log_row_json).collect();
+    Ok(Json(json!({
+        "items": items,
+        "issueId": id,
+        "total": items.len(),
+        "limit": limit,
+    })))
+}
+
+/// Round 220: 共享查询参数。
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+struct ActivityLimitQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+/// Round 220: 活动行 JSON 转换器（issues.rs 本地简化版）。
+///
+/// 与 activity.rs 的同名函数保持一致 — 字段 camelCase 对齐 Node 端返回。
+fn activity_log_row_json(row: &pc_repos::activity::ActivityRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "actorType": row.actor_type,
+        "actorId": row.actor_id,
+        "action": row.action,
+        "entityType": row.entity_type,
+        "entityId": row.entity_id,
+        "agentId": row.agent_id,
+        "runId": row.run_id,
+        "responsibleUserId": row.responsible_user_id,
+        "details": row.details,
+        "createdAt": row.created_at,
+    })
+}
 
 async fn list_issue_cases(
     State(state): State<AppState>,
@@ -3557,9 +3605,9 @@ mod round216_tests {
     //! `parse_activity_kind` 是纯函数 — 容易单测。
     //! `InteractionResolveBody` 是 serde 结构 — 验证字段解析。
     use super::{
-        interaction_row_json, parse_activity_kind, AcceptInteractionBody,
-        InteractionResolveBody, RespondInteractionBody, VerdictEntry,
-        VerdictInteractionBody,
+        activity_log_row_json, interaction_row_json, parse_activity_kind,
+        AcceptInteractionBody, InteractionResolveBody, RespondInteractionBody,
+        VerdictEntry, VerdictInteractionBody,
     };
     use pc_activity::kinds::ActivityKind;
 
@@ -3664,6 +3712,38 @@ mod round216_tests {
     }
 
     // ── R219 interaction_row_json + CreateInteractionBody 测试 ──
+
+    #[test]
+    fn activity_log_row_json_uses_camel_case_keys() {
+        // 验证序列化输出字段名都是 camelCase
+        use pc_repos::activity::ActivityRow;
+        let now = chrono::Utc::now();
+        let row = ActivityRow {
+            id: uuid::Uuid::nil(),
+            company_id: uuid::Uuid::nil(),
+            actor_type: "user".to_string(),
+            actor_id: "user-1".to_string(),
+            action: "issue.updated".to_string(),
+            entity_type: "issue".to_string(),
+            entity_id: uuid::Uuid::nil().to_string(),
+            agent_id: None,
+            run_id: None,
+            responsible_user_id: None,
+            details: Some(serde_json::json!({"key": "value"})),
+            created_at: pc_core::Timestamp::from_dt(now),
+        };
+        let json = activity_log_row_json(&row);
+        let obj = json.as_object().expect("object");
+        assert!(obj.contains_key("companyId"));
+        assert!(obj.contains_key("actorType"));
+        assert!(obj.contains_key("actorId"));
+        assert!(obj.contains_key("entityType"));
+        assert!(obj.contains_key("entityId"));
+        assert!(obj.contains_key("agentId"));
+        assert!(obj.contains_key("runId"));
+        assert!(obj.contains_key("responsibleUserId"));
+        assert!(obj.contains_key("createdAt"));
+    }
 
     #[test]
     fn interaction_row_json_uses_camel_case_keys() {
