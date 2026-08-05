@@ -155,15 +155,10 @@ async fn bootstrap_claim(
         .unwrap_or("u_bootstrap");
     let session_token = Uuid::new_v4().to_string();
     let token_hash = sha2_sha256(&session_token);
-    sqlx::query(
-        "INSERT INTO sessions (id, user_id, token_hash, expires_at)          VALUES ($1, $2, $3, now() + interval '30 days')          ON CONFLICT (token_hash) DO NOTHING",
-    )
-    .bind(Uuid::new_v4())
-    .bind(user_id)
-    .bind(&token_hash)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    pc_repos::auth::AuthRepo::new(&state.db)
+        .insert_bootstrap_session(Uuid::new_v4(), user_id, &token_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -592,13 +587,10 @@ async fn invite_logo(
         return Err(ApiError::NotFound("Invite not found".into()));
     }
 
-    let row: Option<(String, String, String, i32, Option<String>)> = sqlx::query_as(
-        "SELECT a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename          FROM company_logos cl          INNER JOIN assets a ON a.id = cl.asset_id          WHERE cl.company_id = $1 LIMIT 1",
-    )
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = pc_repos::asset::AssetRepo::new(&state.db)
+        .find_logo_meta_by_company(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let (provider_name, object_key, content_type, byte_size, original_filename) = row
         .ok_or_else(|| ApiError::NotFound("Invite logo not found".into()))?;
@@ -676,12 +668,10 @@ async fn invite_skill_get(
     if skill_name != "paperclip" {
         return Err(ApiError::NotFound(format!("skill {skill_name}")));
     }
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT content_md, manifest FROM skills WHERE skill_key=$1 LIMIT 1",
-    )
-    .bind(&skill_name)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = pc_repos::skill::SkillRepo::new(&state.db)
+        .find_content_by_key(&skill_name)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((content, manifest)) = row else {
         return Err(ApiError::NotFound(format!("skill {skill_name}")));
     };
@@ -701,13 +691,10 @@ async fn invite_test_resolution(
     Path(token): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let token_hash = sha2_sha256(&token);
-    let row: Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, defaults_payload->>'role', expires_at, accepted_at, revoked_at \
-         FROM invites WHERE token_hash = $1 LIMIT 1",
-    )
-    .bind(&token_hash)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = pc_repos::invite::InviteRepo::new(&state.db)
+        .lookup_by_token_hash(&token_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((id, company_id, role, expires_at, accepted_at, revoked_at)) = row else {
         return Ok(Json(json!({
             "token": token,
@@ -744,12 +731,10 @@ async fn revoke_invite_by_token(
 ) -> ApiResult<Json<Value>> {
     let user_id = crate::state::require_user_id(&state, &headers).await?;
     let token_hash = sha2_sha256(&token);
-    let row: Option<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
-        "SELECT id, company_id, invited_by_user_id FROM invites WHERE token_hash=$1 LIMIT 1",
-    )
-    .bind(&token_hash)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = pc_repos::invite::InviteRepo::new(&state.db)
+        .lookup_revoke_info_by_token_hash(&token_hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((id, _company_id, invited_by_user_id)) = row else {
         return Err(ApiError::NotFound("invite not found".into()));
     };
@@ -758,14 +743,10 @@ async fn revoke_invite_by_token(
             "only the inviter can revoke this invite".into(),
         ));
     }
-    let updated = sqlx::query(
-        "UPDATE invites SET revoked_at = now(), updated_at = now() \
-         WHERE id=$1 AND revoked_at IS NULL",
-    )
-    .bind(id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
+    let updated = pc_repos::invite::InviteRepo::new(&state.db)
+        .revoke_by_id(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     if updated == 0 {
         return Err(ApiError::Conflict("invite already revoked".into()));
     }
@@ -788,12 +769,10 @@ async fn list_admin_users(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, name, email, image, updated_at FROM \"user\" \
-         ORDER BY updated_at DESC LIMIT 50",
-    )
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = pc_repos::user_profile::UserProfileRepo::new(&state.db)
+        .list_recent(50)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, name, email, image, updated_at)| {
@@ -807,14 +786,11 @@ async fn list_admin_users(
         })
         .collect();
     let user_ids: Vec<String> = items.iter().filter_map(|i| i.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())).collect();
-    let admin_rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT user_id FROM instance_user_roles WHERE user_id = ANY($1::text[])",
-    )
-    .bind(&user_ids)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let admin_set: std::collections::HashSet<String> = admin_rows.into_iter().map(|(u,)| u).collect();
+    let admin_rows = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
+        .list_user_ids_with_any_role(&user_ids)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let admin_set: std::collections::HashSet<String> = admin_rows.into_iter().collect();
     let decorated: Vec<Value> = items
         .into_iter()
         .map(|mut v| {
@@ -841,17 +817,10 @@ async fn get_user_company_access(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let memberships: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT c.id, c.name, cm.role, cm.status \
-         FROM company_memberships cm \
-         INNER JOIN companies c ON c.id = cm.company_id \
-         WHERE cm.user_id=$1 \
-         ORDER BY c.name",
-    )
-    .bind(&user_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let memberships = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .list_for_user_with_company(&user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = memberships
         .into_iter()
         .map(|(id, name, role, status)| {
@@ -886,22 +855,10 @@ async fn put_user_company_access(
     Json(body): Json<PutUserCompanyAccessBody>,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let mut tx = state.db.pool().begin().await?;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE user_id=$1")
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await?;
-    for company_id in &body.company_ids {
-        let _ = sqlx::query(
-            "INSERT INTO company_memberships (user_id, company_id, role, status) \
-             VALUES ($1, $2, 'member', 'active') ON CONFLICT DO NOTHING",
-        )
-        .bind(&user_id)
-        .bind(company_id)
-        .execute(&mut *tx)
-        .await;
-    }
-    tx.commit().await?;
+    pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .replace_user_companies(&user_id, &body.company_ids)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
         LiveEvent::new("user.company_access_updated", "user", Uuid::nil())
             .with_data(json!({"userId": user_id, "companyCount": body.company_ids.len()})),
@@ -921,21 +878,17 @@ async fn promote_instance_admin(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin') \
-         ON CONFLICT (user_id) DO UPDATE SET updated_at=now() \
-         RETURNING id",
-    )
-    .bind(&user_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row_id = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
+        .promote(&user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
         LiveEvent::new("user.promoted_instance_admin", "user", Uuid::nil())
             .with_data(json!({"userId": user_id})),
     );
     Ok(Json(json!({
         "userId": user_id,
-        "roleAssignmentId": row.0,
+        "roleAssignmentId": row_id,
         "role": "instance_admin",
         "promoted": true,
     })))
@@ -949,11 +902,10 @@ async fn demote_instance_admin(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let affected = sqlx::query("DELETE FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin'")
-        .bind(&user_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
+    let affected = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
+        .demote(&user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
         return Err(ApiError::NotFound(format!("instance admin role for {user_id}")));
     }

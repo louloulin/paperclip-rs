@@ -411,6 +411,21 @@ impl<'a> SkillRepo<'a> {
         Ok(row)
     }
 
+    /// Round 150: 通过 skill_key 取 content_md + manifest（invite_skill_get 用）。
+    /// 返回 (content_md, manifest_json)。
+    pub async fn find_content_by_key(
+        &self,
+        skill_key: &str,
+    ) -> RepoResult<Option<(String, Option<String>)>> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT content_md, manifest FROM skills WHERE skill_key = $1 LIMIT 1",
+        )
+        .bind(skill_key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
     // ---- company_skills CRUD ----
 
     pub async fn list_for_company(

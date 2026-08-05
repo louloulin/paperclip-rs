@@ -49,6 +49,7 @@ pub mod inbox;
 pub mod invite;
 pub mod join_request;
 pub mod inbox_agent_policy;
+pub mod instance_user_role;
 pub mod issue;
 pub mod issue_diagnostics;
 pub mod issue_tree_hold;

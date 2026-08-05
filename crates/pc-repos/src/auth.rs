@@ -508,6 +508,28 @@ impl<'a> AuthRepo<'a> {
             .rows_affected();
         Ok(n > 0)
     }
+
+    /// Round 152: 插入一条 bootstrap session（v3 schema 下 `sessions` 表不存在，
+    /// 仅用于遗留 `/api/auth/bootstrap-claim` 路由 stub — 调用方需先检查 schema）。
+    /// 真实 auth 走 `board_api_keys` / `cli_auth_challenges`。
+    pub async fn insert_bootstrap_session(
+        &self,
+        session_id: Uuid,
+        user_id: &str,
+        token_hash: &str,
+    ) -> sqlx::Result<u64> {
+        let r = sqlx::query(
+            "INSERT INTO sessions (id, user_id, token_hash, expires_at) \
+             VALUES ($1, $2, $3, now() + interval '30 days') \
+             ON CONFLICT (token_hash) DO NOTHING",
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .bind(token_hash)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
 }
 
 #[cfg(test)]

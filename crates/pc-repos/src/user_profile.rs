@@ -423,6 +423,21 @@ impl<'a> UserProfileRepo<'a> {
         Ok(points.into_values().collect())
     }
 
+    /// Round 151: 最近活跃用户列表（admin 用户管理路径）。
+    /// 返回 (id, name, email, image, updated_at)。
+    pub async fn list_recent(
+        &self,
+        limit: i64,
+    ) -> sqlx::Result<Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)>> {
+        let rows: Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            r#"SELECT id, name, email, image, updated_at FROM "user" ORDER BY updated_at DESC LIMIT $1"#,
+        )
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn load(
         &self,
         company_id: Uuid,

@@ -155,6 +155,25 @@ impl<'a> AssetRepo<'a> {
             .fetch_all(self.db.pool())
             .await
     }
+
+    /// Round 152: 查找公司 logo 的存储元数据（provider / object_key / content_type /
+    /// byte_size / original_filename）。`company_logos` 是 junction 表，
+    /// 通过 `cl.company_id = $1` 关联到 `assets`。返回第一条匹配（每公司通常 1 条）。
+    pub async fn find_logo_meta_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Option<(String, String, String, i32, Option<String>)>> {
+        let row: Option<(String, String, String, i32, Option<String>)> = sqlx::query_as(
+            "SELECT a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename \
+             FROM company_logos cl \
+             INNER JOIN assets a ON a.id = cl.asset_id \
+             WHERE cl.company_id = $1 LIMIT 1",
+        )
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
 
 #[cfg(test)]

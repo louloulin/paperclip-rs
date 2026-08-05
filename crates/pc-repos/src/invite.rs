@@ -229,6 +229,34 @@ impl<'a> InviteRepo<'a> {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Round 150: 通过 token_hash 查找 invite 核心字段 + invited_by_user_id（revoke 路径用）。
+    /// 返回 (id, company_id, invited_by_user_id)。
+    pub async fn lookup_revoke_info_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> RepoResult<Option<(Uuid, Uuid, Option<String>)>> {
+        let row: Option<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
+            "SELECT id, company_id, invited_by_user_id FROM invites WHERE token_hash = $1 LIMIT 1",
+        )
+        .bind(token_hash)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 150: 通过 id 撤销 invite（不限定 company_id；调用方需先验证 invited_by_user_id）。
+    /// 返回受影响行数。
+    pub async fn revoke_by_id(&self, invite_id: Uuid) -> RepoResult<u64> {
+        let r = sqlx::query(
+            "UPDATE invites SET revoked_at = now(), updated_at = now() \
+             WHERE id = $1 AND revoked_at IS NULL",
+        )
+        .bind(invite_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected())
+    }
+
     /// 标记邀请已接受（accept 路径使用）。
     pub async fn mark_accepted(&self, invite_id: Uuid) -> RepoResult<()> {
         sqlx::query(

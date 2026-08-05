@@ -292,6 +292,53 @@ impl<'a> CompanyMemberRepo<'a> {
         .await?;
         Ok(rows.into_iter().map(|(c,)| c).collect())
     }
+
+    /// Round 151: 列出某用户所有 membership（含 company 名称 + role + status）。
+    /// admin 端 `get_user_company_access` 用。
+    /// 返回 (company_id, company_name, role, status)。
+    pub async fn list_for_user_with_company(
+        &self,
+        user_id: &str,
+    ) -> RepoResult<Vec<(Uuid, String, Option<String>, Option<String>)>> {
+        let rows: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT c.id, c.name, cm.role, cm.status \
+             FROM company_memberships cm \
+             INNER JOIN companies c ON c.id = cm.company_id \
+             WHERE cm.user_id = $1 \
+             ORDER BY c.name",
+        )
+        .bind(user_id)
+        .fetch_all(self.db.pool())
+        .await
+        .unwrap_or_default();
+        Ok(rows)
+    }
+
+    /// Round 151: 事务化替换某用户的全 company 访问集（DELETE 全 + INSERT active 成员）。
+    /// 整段在单一 tx 内原子化（commit 失败时回滚）。
+    pub async fn replace_user_companies(
+        &self,
+        user_id: &str,
+        company_ids: &[Uuid],
+    ) -> RepoResult<()> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("DELETE FROM company_memberships WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        for cid in company_ids {
+            sqlx::query(
+                "INSERT INTO company_memberships (user_id, company_id, role, status) \
+                 VALUES ($1, $2, 'member', 'active') ON CONFLICT DO NOTHING",
+            )
+            .bind(user_id)
+            .bind(cid)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
 }
 
 // ============================================================================
