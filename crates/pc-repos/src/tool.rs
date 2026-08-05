@@ -974,6 +974,104 @@ const PROFILE_COLS: &str = "id, company_id, profile_key, name, description, stat
 const PROFILE_ENTRY_COLS: &str = "id, company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions, created_at, updated_at";
 
 
+// ============================================================
+// Round 102: ToolRuntimeSlot 仓储层
+// ============================================================
+//
+// 真实表 schema (0148_tool_access_mcp_connections.sql)：
+//   tool_runtime_slots(
+//     id, company_id, connection_id, slot_key,
+//     status, provider_ref, health_status, health_message,
+//     last_started_at, last_used_at, idle_deadline_at,
+//     metadata,
+//     created_at, updated_at
+//   )
+//
+// **没有任何** `slot_kind / acquired_at / last_heartbeat_at` 列。
+// 之前路由层 list_tool_runtime_slots 用这三个错列；同时 tool_runtime_health 用
+// `last_heartbeat_at` 也会失败。下面用真实 schema 列投影。
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRuntimeSlotRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub connection_id: Uuid,
+    pub slot_key: String,
+    pub status: String,
+    pub provider_ref: Option<String>,
+    pub health_status: String,
+    pub health_message: Option<String>,
+    pub last_started_at: Option<Timestamp>,
+    pub last_used_at: Option<Timestamp>,
+    pub idle_deadline_at: Option<Timestamp>,
+    pub metadata: Value,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// Round 102: tool_runtime_slots 活跃度 + 最近心跳聚合
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRuntimeHealth {
+    pub company_id: Uuid,
+    pub active_slots: i64,
+    /// 真实 schema 中没有 `last_heartbeat_at`；这里降级为 `last_used_at`（最近活跃）。
+    pub last_used_at: Option<Timestamp>,
+}
+
+impl<'a> ToolRepo<'a> {
+    /// List runtime slots for a company, ordered by `last_started_at DESC` (proxy for activity).
+    pub async fn list_runtime_slots_by_company(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> RepoResult<Vec<ToolRuntimeSlotRow>> {
+        let sql = format!(
+            "SELECT {RUNTIME_SLOT_COLS} FROM tool_runtime_slots              WHERE company_id=$1              ORDER BY COALESCE(last_started_at, updated_at) DESC              LIMIT $2"
+        );
+        Ok(sqlx::query_as::<_, ToolRuntimeSlotRow>(&sql)
+            .bind(company_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn get_runtime_slot(
+        &self,
+        company_id: Uuid,
+        slot_id: Uuid,
+    ) -> RepoResult<Option<ToolRuntimeSlotRow>> {
+        let sql = format!(
+            "SELECT {RUNTIME_SLOT_COLS} FROM tool_runtime_slots              WHERE company_id=$1 AND id=$2"
+        );
+        Ok(sqlx::query_as::<_, ToolRuntimeSlotRow>(&sql)
+            .bind(company_id)
+            .bind(slot_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    pub async fn runtime_health(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<ToolRuntimeHealth> {
+        let row: (i64, Option<Timestamp>) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint, MAX(last_used_at)               FROM tool_runtime_slots              WHERE company_id=$1 AND status='active'",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(ToolRuntimeHealth {
+            company_id,
+            active_slots: row.0,
+            last_used_at: row.1,
+        })
+    }
+}
+
+const RUNTIME_SLOT_COLS: &str = "id, company_id, connection_id, slot_key, status, provider_ref, health_status, health_message, last_started_at, last_used_at, idle_deadline_at, metadata, created_at, updated_at";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1088,5 +1186,34 @@ mod tests {
             conditions: None,
         };
         assert_eq!(e.effect, "include");
+    }
+
+    // ---- Round 102: ToolRuntimeHealth + 列投影基本字段 ----
+
+    #[test]
+    fn runtime_health_payload_fields() {
+        // 验证结构能被序列化（camelCase 路径）
+        let h = ToolRuntimeHealth {
+            company_id: Uuid::new_v4(),
+            active_slots: 5,
+            last_used_at: None,
+        };
+        let json = serde_json::to_value(&h).unwrap();
+        assert_eq!(json["activeSlots"], 5);
+        assert!(json["lastUsedAt"].is_null());
+        assert!(json["companyId"].is_string());
+    }
+
+    #[test]
+    fn runtime_slot_col_includes_real_columns_only() {
+        // 真实 schema 没有 slot_kind/acquired_at/last_heartbeat_at
+        assert!(!RUNTIME_SLOT_COLS.contains("slot_kind"));
+        assert!(!RUNTIME_SLOT_COLS.contains("acquired_at"));
+        assert!(!RUNTIME_SLOT_COLS.contains("last_heartbeat_at"));
+        // 必须包含真实列
+        assert!(RUNTIME_SLOT_COLS.contains("slot_key"));
+        assert!(RUNTIME_SLOT_COLS.contains("last_started_at"));
+        assert!(RUNTIME_SLOT_COLS.contains("last_used_at"));
+        assert!(RUNTIME_SLOT_COLS.contains("health_status"));
     }
 }

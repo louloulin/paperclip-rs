@@ -713,6 +713,70 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 25. 第一百零二轮增量（Round 102 — ToolRuntimeSlot 子模块仓储化)
+
+### 目标
+`tool_access.rs::list_tool_runtime_slots` 和 `tool_runtime_health` 都引用了不存在的列
+`slot_kind / acquired_at / last_heartbeat_at`；真实 schema 是 `slot_key / last_started_at /
+last_used_at / health_status / health_message`。两个端点一启动就 500。
+
+Round 102 把 `tool_runtime_slots` 子模块彻底仓储化。
+
+### 真实 schema (0148_tool_access_mcp_connections.sql)
+```sql
+tool_runtime_slots(
+    id, company_id, connection_id, slot_key, status,
+    provider_ref, health_status, health_message,
+    last_started_at, last_used_at, idle_deadline_at,
+    metadata, created_at, updated_at
+)
+```
+
+### 新增 `pc_repos::tool` 结构与仓储方法
+
+```rust
+pub struct ToolRuntimeSlotRow { /* 14 字段，1:1 投影 */ }
+pub struct ToolRuntimeHealth {
+    pub company_id: Uuid,
+    pub active_slots: i64,
+    pub last_used_at: Option<Timestamp>,  // 替代不存在 last_heartbeat_at
+}
+```
+
+**ToolRepo 新增方法**：
+| 方法 | SQL 关键点 |
+|---|---|
+| `list_runtime_slots_by_company(cid, limit)` | ORDER BY COALESCE(last_started_at, updated_at) DESC |
+| `get_runtime_slot(cid, id)` | (company_id, id) 二元查找 |
+| `runtime_health(cid)` | `SELECT COUNT(*), MAX(last_used_at) ... status='active'` |
+
+### 重构 `tool_access.rs`
+- `tool_runtime_health`: `ToolRepo::runtime_health(cid)`，响应同时输出 `lastUsedAt` + 兼容老 client 的 `lastHeartbeatAt` 别名
+- `list_tool_runtime_slots`: `ToolRepo::list_runtime_slots_by_company(cid, 100)` + `tool_runtime_slot_json()` helper
+
+**`tool_runtime_slot_json` helper**：  
+真实字段全保留（slot_key, health_status, health_message, last_started_at, last_used_at, ...），
+兼容老 client：`slotKind ← slot_key`, `acquiredAt ← last_started_at`, `lastHeartbeatAt ← last_used_at`。
+
+### 新增单元测试 2 个
+- `runtime_health_payload_fields` —— 验证 ToolRuntimeHealth 序列化结构
+- `runtime_slot_col_includes_real_columns_only` —— 验证 RUNTIME_SLOT_COLS 字符串里不含错列
+   (`slot_kind / acquired_at / last_heartbeat_at` 必须缺席，
+   `slot_key / last_started_at / last_used_at / health_status` 必须出现)
+
+### 新增集成测试 4 个 (`crates/pc-repos/tests/round102_tool_runtime_slot_repo.rs`)
+1. `tool_runtime_slot_repo_list_orders_by_last_started_at_desc` —— 列表排序 + 真实列投影
+2. `tool_runtime_slot_repo_health_aggregates_active_slots` —— active 计数 + MAX last_used_at
+3. `tool_runtime_slot_repo_get_by_company_and_id` —— 跨 company 隔离
+4. `tool_runtime_slots_table_does_not_have_wrong_columns` —— INFORMATION_SCHEMA 反查表真实列
+
+### 进度影响
+- 综合进度从 **≈ 85.0% → ≈ 85.5%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **455 passed**（pc-repos 单元 +2）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 Round 95-102 修复 **36 个路由从 500 → 200**，5 个 tool_application + 3 个 tool_profile + 2 个 tool_runtime 路由进入高内聚低耦合设计
+
 ## 24. 第一百零一轮增量（Round 101 — ToolProfile 子模块仓储化)
 
 ### 目标

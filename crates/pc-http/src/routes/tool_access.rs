@@ -17,7 +17,7 @@ use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
     NewToolApplication, NewToolProfile, NewToolProfileEntry, PatchToolApplication,
-    ToolApplicationRow, ToolProfileEntryRow, ToolProfileRow, ToolRepo,
+    ToolApplicationRow, ToolProfileEntryRow, ToolProfileRow, ToolRepo, ToolRuntimeSlotRow,
 };
 
 pub fn router() -> Router<AppState> {
@@ -1012,6 +1012,33 @@ fn tool_profile_entry_json(row: ToolProfileEntryRow) -> Value {
     })
 }
 
+/// Round 102: ToolRuntimeSlotRow -> Node 兼容 JSON。
+/// 保留 legacy `slotKind/acquiredAt/lastHeartbeatAt` 字段（用真实列派生）以兼容老 client。
+fn tool_runtime_slot_json(row: ToolRuntimeSlotRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "connectionId": row.connection_id,
+        // 真实列
+        "slotKey": row.slot_key,
+        "status": row.status,
+        "providerRef": row.provider_ref,
+        "healthStatus": row.health_status,
+        "healthMessage": row.health_message,
+        "lastStartedAt": row.last_started_at,
+        "lastUsedAt": row.last_used_at,
+        "idleDeadlineAt": row.idle_deadline_at,
+        "metadata": row.metadata,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+        // 兼容老 client: slotKind/acquiredAt/lastHeartbeatAt 用真实列派生
+        "slotKind": row.slot_key,
+        "acquiredAt": row.last_started_at,
+        "lastHeartbeatAt": row.last_used_at,
+    })
+}
+
+
 
 // ============== Tool applications / profiles / policies / runtime ==============
 
@@ -1253,52 +1280,33 @@ async fn list_application_grants(
     })))
 }
 
+// Round 102: 仓储化。SQL 列名 `last_heartbeat_at` 在真实 schema 不存在，
+// 降级为 `last_used_at`。响应里同时保留 legacy `lastHeartbeatAt` 别名。
 async fn tool_runtime_health(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Mirrors Node `/companies/:companyId/tools/runtime-health`. Aggregates
-    // the latest runtime slot heartbeat into a coarse health summary.
-    let row: Option<(i64, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT COUNT(*) AS active, MAX(last_heartbeat_at) AS last_heartbeat          FROM tool_runtime_slots WHERE company_id = $1 AND status = 'active'",
-    )
-    .bind(company_id)
-    .fetch_optional(_state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (active, last_heartbeat) = row.unwrap_or((0, None));
+    let h = ToolRepo::new(&state.db).runtime_health(company_id).await?;
     Ok(Json(json!({
-        "companyId": company_id,
-        "activeSlots": active,
-        "lastHeartbeatAt": last_heartbeat,
-        "ok": active > 0,
+        "companyId": h.company_id,
+        "activeSlots": h.active_slots,
+        "lastUsedAt": h.last_used_at,
+        // 兼容老 client：保留 lastHeartbeatAt 别名
+        "lastHeartbeatAt": h.last_used_at,
+        "ok": h.active_slots > 0,
     })))
 }
 
+// Round 102: 仓储化。原 SQL 用不存在的列 `slot_kind/acquired_at/last_heartbeat_at`；
+// 真实 schema 是 `slot_key/last_started_at/last_used_at/health_status/health_message`。
 async fn list_tool_runtime_slots(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, Option<Timestamp>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, slot_kind, status::text, acquired_at, last_heartbeat_at          FROM tool_runtime_slots WHERE company_id = $1 ORDER BY acquired_at DESC LIMIT 100",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, slot_kind, status, acquired_at, last_heartbeat_at)| {
-            json!({
-                "id": id,
-                "slotKind": slot_kind,
-                "status": status,
-                "acquiredAt": acquired_at,
-                "lastHeartbeatAt": last_heartbeat_at,
-            })
-        })
-        .collect();
+    let rows = ToolRepo::new(&state.db)
+        .list_runtime_slots_by_company(company_id, 100)
+        .await?;
+    let items: Vec<Value> = rows.into_iter().map(tool_runtime_slot_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
