@@ -11,6 +11,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{state::require_user_id, AppState};
+use pc_repos::agent::AgentRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new().route(
@@ -33,14 +34,10 @@ async fn org_chart_svg(
     let _ = require_user_id(&state, &headers).await;
     let style = q.style.unwrap_or_else(|| "warmth".into());
     let pool = state.db.pool();
-    let rows: Vec<(Uuid, String, String, String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT id, name, role, status, reports_to FROM agents \
-         WHERE company_id = $1 ORDER BY created_at ASC",
-    )
-    .bind(company_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let rows = AgentRepo::new(&state.db)
+        .list_org_chart_simple(company_id)
+        .await
+        .unwrap_or_default();
 
     let svg = if rows.is_empty() {
         placeholder_svg(&style)

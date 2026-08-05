@@ -1542,6 +1542,20 @@ impl<'a> AgentRepo<'a> {
         .unwrap_or(0);
         Ok(n)
     }
+    /// Round 188: org_chart_svg -- minimal agent projection for SVG render.
+    pub async fn list_org_chart_simple(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<(Uuid, String, String, String, Option<Uuid>)>> {
+        sqlx::query_as(
+            "SELECT id, name, role, status, reports_to FROM agents \
+             WHERE company_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
 }
 
 #[cfg(test)]
