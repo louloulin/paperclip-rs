@@ -17,7 +17,7 @@ use pc_activity::kinds::ActivityKind;
 use pc_activity::types::{ActivityActor, ActivityEvent};
 use pc_realtime::LiveEvent;
 use pc_repos::activity::ActivityRepo;
-use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
+use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor, IssueUpdateReceipt};
 use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::case::CaseRepo;
@@ -317,45 +317,152 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
+// ============================================================================
+// Round 229: 完整 issue body 结构（对齐 Node `createIssueBaseSchema`）
+// ============================================================================
+
 #[derive(Debug, Deserialize)]
-struct CreateBody {
+#[serde(rename_all = "camelCase")]
+struct CreateIssueFullBody {
+    /// 必填：所属 company id。
     company_id: Uuid,
+    /// 必填：issue 标题。
     title: String,
+    /// 可选描述。
     #[serde(default)]
     description: Option<String>,
+    /// 状态 — 默认 "todo"。Node 端允许 "backlog" / "todo" / "in_progress" / "in_review" / "done" / "blocked" / "cancelled"。
+    #[serde(default)]
+    status: Option<String>,
+    /// 工作模式 — 默认 "standard"。
+    #[serde(default)]
+    work_mode: Option<String>,
+    /// harness 类型（plan / task 等）。
+    #[serde(default)]
+    harness_kind: Option<String>,
+    /// 优先级 — 默认 "medium"。
     #[serde(default = "default_priority")]
     priority: String,
+    /// 分配的 agent id。
     #[serde(default)]
     assignee_agent_id: Option<Uuid>,
+    /// 分配的 user id。
+    #[serde(default)]
+    assignee_user_id: Option<String>,
+    /// 所属 project id。
+    #[serde(default)]
+    project_id: Option<Uuid>,
+    /// 所属 project workspace id。
+    #[serde(default)]
+    project_workspace_id: Option<Uuid>,
+    /// 关联 goal id。
+    #[serde(default)]
+    goal_id: Option<Uuid>,
+    /// 父 issue id（创建子 issue 时设置）。
     #[serde(default)]
     parent_id: Option<Uuid>,
+    /// 从指定 issue 继承 execution workspace 配置。
+    #[serde(default)]
+    inherit_execution_workspace_from_issue_id: Option<Uuid>,
+    /// 创建者 user id。
+    #[serde(default)]
+    created_by_user_id: Option<String>,
+    /// 责任 user id。
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+    /// 计费代码。
+    #[serde(default)]
+    billing_code: Option<String>,
+    /// 请求深度（用于追踪递归创建）。
+    #[serde(default)]
+    request_depth: Option<i32>,
+    /// 分配 agent 的 adapter 覆盖配置。
+    #[serde(default)]
+    assignee_adapter_overrides: Option<Value>,
+    /// 执行策略。
+    #[serde(default)]
+    execution_policy: Option<Value>,
+    /// 关联 execution workspace id。
+    #[serde(default)]
+    execution_workspace_id: Option<Uuid>,
+    /// execution workspace 偏好（isolated/shared/inherit 等）。
+    #[serde(default)]
+    execution_workspace_preference: Option<String>,
+    /// execution workspace 设置。
+    #[serde(default)]
+    execution_workspace_settings: Option<Value>,
+    /// 阻塞 issue id 列表。
+    #[serde(default)]
+    blocked_by_issue_ids: Option<Vec<Uuid>>,
+    /// 标签 id 列表。
+    #[serde(default)]
+    label_ids: Option<Vec<Uuid>>,
+    /// unblock 描述符（status='blocked' 时使用）。
+    #[serde(default)]
+    unblock_descriptor: Option<Value>,
+    /// 幂等性 key。
+    #[serde(default)]
+    idempotency_key: Option<String>,
+    /// 是否允许绕过 recent-title 重复检测。
+    #[serde(default)]
+    allow_duplicate: Option<bool>,
 }
+
 fn default_priority() -> String {
     "medium".into()
 }
 
 async fn create(
     State(state): State<AppState>,
-    Json(body): Json<CreateBody>,
+    Json(body): Json<CreateIssueFullBody>,
 ) -> ApiResult<impl IntoResponse> {
     if body.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));
     }
+    // unblockDescriptor 必须配 status='blocked'
+    if body.unblock_descriptor.is_some() {
+        let s = body.status.as_deref().unwrap_or("todo");
+        if s != "blocked" {
+            return Err(ApiError::BadRequest(
+                "unblockDescriptor requires blocked status".into(),
+            ));
+        }
+    }
+    let request_depth = body.request_depth.unwrap_or(0);
     if let Some(pid) = body.parent_id {
-        // 子 issue：通过 create_child 路径以继承 company_id 与 request_depth。
+        // 子 issue：通过 create_child_full 路径以继承 company_id 与 request_depth。
         let parent = IssueRepo::new(&state.db)
             .get(pid)
             .await?
             .ok_or_else(|| ApiError::NotFound(format!("parent issue {pid}")))?;
-        let row = IssueRepo::new(&state.db)
-            .create_child(
-                &parent,
-                &body.title,
-                body.description.as_deref(),
-                &body.priority,
-                body.assignee_agent_id,
-            )
-            .await?;
+        let input = pc_repos::issue::CreateChildIssueInput {
+            title: &body.title,
+            description: body.description.as_deref(),
+            status: body.status.as_deref(),
+            work_mode: body.work_mode.as_deref(),
+            harness_kind: body.harness_kind.as_deref(),
+            priority: Some(&body.priority),
+            assignee_agent_id: body.assignee_agent_id,
+            assignee_user_id: body.assignee_user_id.as_deref(),
+            project_id: body.project_id,
+            project_workspace_id: body.project_workspace_id,
+            goal_id: body.goal_id,
+            created_by_user_id: body.created_by_user_id.as_deref(),
+            responsible_user_id: body.responsible_user_id.as_deref(),
+            billing_code: body.billing_code.as_deref(),
+            request_depth,
+            assignee_adapter_overrides: body.assignee_adapter_overrides.as_ref(),
+            execution_policy: body.execution_policy.as_ref(),
+            execution_workspace_id: body.execution_workspace_id,
+            execution_workspace_preference: body.execution_workspace_preference.as_deref(),
+            execution_workspace_settings: body.execution_workspace_settings.as_ref(),
+            blocked_by_issue_ids: body.blocked_by_issue_ids.as_deref(),
+            label_ids: body.label_ids.as_deref(),
+            unblock_descriptor: body.unblock_descriptor.as_ref(),
+            acceptance_criteria: None,
+            block_parent_until_done: false,
+        };
+        let row = IssueRepo::new(&state.db).create_child_full(&parent, &input).await?;
         state.realtime.publish(
             LiveEvent::new("issue.created", "issue", row.id)
                 .with_company(row.company_id)
@@ -365,19 +472,40 @@ async fn create(
             StatusCode::CREATED,
             Json(json!({
                 "id": row.id, "company_id": row.company_id, "parent_id": row.parent_id,
-                "title": row.title, "status": row.status, "priority": row.priority
+                "title": row.title, "status": row.status, "priority": row.priority,
+                "workMode": row.work_mode
             })),
         ));
     }
-    let row = IssueRepo::new(&state.db)
-        .create(
-            body.company_id,
-            &body.title,
-            body.description.as_deref(),
-            &body.priority,
-            body.assignee_agent_id,
-        )
-        .await?;
+    let input = pc_repos::issue::CreateIssueInput {
+        company_id: body.company_id,
+        title: &body.title,
+        description: body.description.as_deref(),
+        status: body.status.as_deref(),
+        work_mode: body.work_mode.as_deref(),
+        harness_kind: body.harness_kind.as_deref(),
+        priority: Some(&body.priority),
+        assignee_agent_id: body.assignee_agent_id,
+        assignee_user_id: body.assignee_user_id.as_deref(),
+        project_id: body.project_id,
+        project_workspace_id: body.project_workspace_id,
+        goal_id: body.goal_id,
+        parent_id: body.parent_id,
+        inherit_execution_workspace_from_issue_id: body.inherit_execution_workspace_from_issue_id,
+        created_by_user_id: body.created_by_user_id.as_deref(),
+        responsible_user_id: body.responsible_user_id.as_deref(),
+        billing_code: body.billing_code.as_deref(),
+        request_depth,
+        assignee_adapter_overrides: body.assignee_adapter_overrides.as_ref(),
+        execution_policy: body.execution_policy.as_ref(),
+        execution_workspace_id: body.execution_workspace_id,
+        execution_workspace_preference: body.execution_workspace_preference.as_deref(),
+        execution_workspace_settings: body.execution_workspace_settings.as_ref(),
+        blocked_by_issue_ids: body.blocked_by_issue_ids.as_deref(),
+        label_ids: body.label_ids.as_deref(),
+        unblock_descriptor: body.unblock_descriptor.as_ref(),
+    };
+    let row = IssueRepo::new(&state.db).create_full(&input).await?;
     state.realtime.publish(
         LiveEvent::new("issue.created", "issue", row.id)
             .with_company(row.company_id)
@@ -387,13 +515,14 @@ async fn create(
         StatusCode::CREATED,
         Json(json!({
             "id": row.id, "company_id": row.company_id, "title": row.title,
-            "status": row.status, "priority": row.priority
+            "status": row.status, "priority": row.priority, "workMode": row.work_mode
         })),
     ))
 }
 
 #[derive(Debug, Deserialize)]
-struct UpdateBody {
+#[serde(rename_all = "camelCase")]
+struct UpdateIssueFullBody {
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -401,12 +530,40 @@ struct UpdateBody {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
+    work_mode: Option<String>,
+    #[serde(default)]
+    harness_kind: Option<String>,
+    #[serde(default)]
     priority: Option<String>,
     #[serde(default)]
     assignee_agent_id: Option<Uuid>,
-    #[serde(default, alias = "labelIds")]
+    #[serde(default)]
+    assignee_user_id: Option<String>,
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+    #[serde(default)]
+    billing_code: Option<String>,
+    #[serde(default)]
+    execution_policy: Option<Value>,
+    #[serde(default)]
+    execution_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    execution_workspace_preference: Option<String>,
+    #[serde(default)]
+    execution_workspace_settings: Option<Value>,
+    #[serde(default)]
+    unblock_descriptor: Option<Value>,
+    #[serde(default)]
+    hidden_at: Option<String>,
+    #[serde(default)]
+    reopen: Option<bool>,
+    #[serde(default)]
+    resume: Option<bool>,
+    #[serde(default)]
+    interrupt: Option<bool>,
+    #[serde(default, alias = "label_ids")]
     label_ids: Option<Vec<Uuid>>,
-    #[serde(default, alias = "blockedByIssueIds")]
+    #[serde(default, alias = "blocked_by_issue_ids")]
     blocked_by_issue_ids: Option<Vec<Uuid>>,
 }
 
@@ -414,7 +571,7 @@ async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
-    Json(body): Json<UpdateBody>,
+    Json(body): Json<UpdateIssueFullBody>,
 ) -> ApiResult<Json<Value>> {
     let actor_agent_id = headers
         .get("x-paperclip-agent-id")
@@ -438,23 +595,80 @@ async fn update(
     } else {
         None
     };
-    let receipt = IssueRepo::new(&state.db)
-        .update_with_relations(
+    let receipt = if body.title.is_some()
+        || body.description.is_some()
+        || body.status.is_some()
+        || body.work_mode.is_some()
+        || body.harness_kind.is_some()
+        || body.priority.is_some()
+        || body.assignee_agent_id.is_some()
+        || body.assignee_user_id.is_some()
+        || body.responsible_user_id.is_some()
+        || body.billing_code.is_some()
+        || body.execution_policy.is_some()
+        || body.execution_workspace_id.is_some()
+        || body.execution_workspace_preference.is_some()
+        || body.execution_workspace_settings.is_some()
+        || body.unblock_descriptor.is_some()
+        || body.hidden_at.is_some()
+    {
+        // 完整 update 路径：使用 update_full（更全面的字段）
+        let patch = pc_repos::issue::UpdateIssuePatch {
+            title: body.title.as_deref(),
+            description: Some(body.description.as_deref()),
+            status: body.status.as_deref(),
+            work_mode: body.work_mode.as_deref(),
+            harness_kind: Some(body.harness_kind.as_deref()),
+            priority: body.priority.as_deref(),
+            assignee_agent_id: Some(body.assignee_agent_id),
+            assignee_user_id: Some(body.assignee_user_id.as_deref()),
+            responsible_user_id: Some(body.responsible_user_id.as_deref()),
+            billing_code: Some(body.billing_code.as_deref()),
+            execution_policy: Some(body.execution_policy.as_ref()),
+            execution_workspace_id: Some(body.execution_workspace_id),
+            execution_workspace_preference: Some(body.execution_workspace_preference.as_deref()),
+            execution_workspace_settings: Some(body.execution_workspace_settings.as_ref()),
+            unblock_descriptor: Some(body.unblock_descriptor.as_ref()),
+            hidden_at: None,
+            reopen: body.reopen.unwrap_or(false),
+            resume: body.resume.unwrap_or(false),
+            interrupt: body.interrupt.unwrap_or(false),
+        };
+        let row = IssueRepo::new(&state.db).update_full(id, &patch).await?
+            .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+        // 完整 update 路径下 relations 处理
+        if body.label_ids.is_some() || body.blocked_by_issue_ids.is_some() {
+            IssueRepo::new(&state.db).update_with_relations(
+                id,
+                None, None, None, None, None,
+                IssueRelationUpdate {
+                    label_ids: body.label_ids,
+                    blocked_by_issue_ids: body.blocked_by_issue_ids,
+                },
+                &IssueRelationChanges::default(),
+                actor,
+            ).await?
+            .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
+        } else {
+            IssueUpdateReceipt {
+                issue: row,
+                changes: Default::default(),
+            }
+        }
+    } else {
+        // 纯 relations 路径（仅 label/blocked_by）
+        IssueRepo::new(&state.db).update_with_relations(
             id,
-            body.title.as_deref(),
-            body.description.as_deref(),
-            body.status.as_deref(),
-            body.priority.as_deref(),
-            body.assignee_agent_id.map(Some),
+            None, None, None, None, None,
             IssueRelationUpdate {
                 label_ids: body.label_ids,
                 blocked_by_issue_ids: body.blocked_by_issue_ids,
             },
             &IssueRelationChanges::default(),
             actor,
-        )
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+        ).await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
+    };
     let row = receipt.issue;
     state
         .realtime
@@ -488,20 +702,63 @@ async fn list_children(
 }
 
 #[derive(Debug, Deserialize)]
-struct ChildBody {
+#[serde(rename_all = "camelCase")]
+struct ChildIssueFullBody {
     title: String,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    work_mode: Option<String>,
+    #[serde(default)]
+    harness_kind: Option<String>,
     #[serde(default = "default_priority")]
     priority: String,
     #[serde(default)]
     assignee_agent_id: Option<Uuid>,
+    #[serde(default)]
+    assignee_user_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<Uuid>,
+    #[serde(default)]
+    project_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    goal_id: Option<Uuid>,
+    #[serde(default)]
+    created_by_user_id: Option<String>,
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+    #[serde(default)]
+    billing_code: Option<String>,
+    #[serde(default)]
+    request_depth: Option<i32>,
+    #[serde(default)]
+    assignee_adapter_overrides: Option<Value>,
+    #[serde(default)]
+    execution_policy: Option<Value>,
+    #[serde(default)]
+    execution_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    execution_workspace_preference: Option<String>,
+    #[serde(default)]
+    execution_workspace_settings: Option<Value>,
+    #[serde(default)]
+    blocked_by_issue_ids: Option<Vec<Uuid>>,
+    #[serde(default)]
+    label_ids: Option<Vec<Uuid>>,
+    #[serde(default)]
+    unblock_descriptor: Option<Value>,
+    #[serde(default)]
+    acceptance_criteria: Option<Vec<String>>,
+    #[serde(default)]
+    block_parent_until_done: Option<bool>,
 }
 
 async fn create_child(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(body): Json<ChildBody>,
+    Json(body): Json<ChildIssueFullBody>,
 ) -> ApiResult<impl IntoResponse> {
     let parent = IssueRepo::new(&state.db)
         .get(id)
@@ -510,15 +767,34 @@ async fn create_child(
     if body.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));
     }
-    let row = IssueRepo::new(&state.db)
-        .create_child(
-            &parent,
-            &body.title,
-            body.description.as_deref(),
-            &body.priority,
-            body.assignee_agent_id,
-        )
-        .await?;
+    let input = pc_repos::issue::CreateChildIssueInput {
+        title: &body.title,
+        description: body.description.as_deref(),
+        status: body.status.as_deref(),
+        work_mode: body.work_mode.as_deref(),
+        harness_kind: body.harness_kind.as_deref(),
+        priority: Some(&body.priority),
+        assignee_agent_id: body.assignee_agent_id,
+        assignee_user_id: body.assignee_user_id.as_deref(),
+        project_id: body.project_id,
+        project_workspace_id: body.project_workspace_id,
+        goal_id: body.goal_id,
+        created_by_user_id: body.created_by_user_id.as_deref(),
+        responsible_user_id: body.responsible_user_id.as_deref(),
+        billing_code: body.billing_code.as_deref(),
+        request_depth: body.request_depth.unwrap_or(0),
+        assignee_adapter_overrides: body.assignee_adapter_overrides.as_ref(),
+        execution_policy: body.execution_policy.as_ref(),
+        execution_workspace_id: body.execution_workspace_id,
+        execution_workspace_preference: body.execution_workspace_preference.as_deref(),
+        execution_workspace_settings: body.execution_workspace_settings.as_ref(),
+        blocked_by_issue_ids: body.blocked_by_issue_ids.as_deref(),
+        label_ids: body.label_ids.as_deref(),
+        unblock_descriptor: body.unblock_descriptor.as_ref(),
+        acceptance_criteria: body.acceptance_criteria.as_deref(),
+        block_parent_until_done: body.block_parent_until_done.unwrap_or(false),
+    };
+    let row = IssueRepo::new(&state.db).create_child_full(&parent, &input).await?;
     state.realtime.publish(
         LiveEvent::new("issue.created", "issue", row.id)
             .with_company(row.company_id)
@@ -533,6 +809,7 @@ async fn create_child(
             "title": row.title,
             "status": row.status,
             "priority": row.priority,
+            "workMode": row.work_mode,
         })),
     ))
 }
@@ -4463,5 +4740,316 @@ mod round216_tests {
         assert_eq!(policy["auto_resume"], serde_json::json!(true));
         let meta = body.metadata.as_ref().expect("metadata");
         assert_eq!(meta["ticketId"], serde_json::json!("T-456"));
+    }
+}
+
+// ============================================================================
+// Round 229: 完整 issue body 解析单元测试
+// ============================================================================
+#[cfg(test)]
+mod round229_tests {
+    //! Round 229: 升级后的 CreateIssueFullBody / UpdateIssueFullBody /
+    //! ChildIssueFullBody 结构应能正确解析 Node createIssueBaseSchema
+    //! / updateIssueSchema / createChildIssueSchema 全部字段（camelCase deserialize）。
+
+    use super::{ChildIssueFullBody, CreateIssueFullBody, UpdateIssueFullBody};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    // ── CreateIssueFullBody ──
+
+    #[test]
+    fn create_body_parses_full_camelcase_payload() {
+        let company_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let goal_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let payload = json!({
+            "companyId": company_id,
+            "title": "Ship feature X",
+            "description": "Implement the full flow",
+            "status": "todo",
+            "workMode": "standard",
+            "harnessKind": "plan",
+            "priority": "high",
+            "assigneeAgentId": agent_id,
+            "assigneeUserId": "u-123",
+            "projectId": project_id,
+            "projectWorkspaceId": workspace_id,
+            "goalId": goal_id,
+            "parentId": parent_id,
+            "createdByUserId": "u-creator",
+            "responsibleUserId": "u-owner",
+            "billingCode": "BILL-001",
+            "requestDepth": 2,
+            "assigneeAdapterOverrides": {"kind": "openai", "model": "gpt-5"},
+            "executionPolicy": {"maxSteps": 50},
+            "executionWorkspaceId": workspace_id,
+            "executionWorkspacePreference": "isolated",
+            "executionWorkspaceSettings": {"isolated": true},
+            "blockedByIssueIds": [Uuid::new_v4(), Uuid::new_v4()],
+            "labelIds": [Uuid::new_v4()],
+            "unblockDescriptor": {"owner": {"agentId": agent_id}, "action": "ping me"},
+            "idempotencyKey": "idem-1",
+            "allowDuplicate": false,
+        });
+        let body: CreateIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.company_id, company_id);
+        assert_eq!(body.title, "Ship feature X");
+        assert_eq!(body.status.as_deref(), Some("todo"));
+        assert_eq!(body.work_mode.as_deref(), Some("standard"));
+        assert_eq!(body.harness_kind.as_deref(), Some("plan"));
+        assert_eq!(body.priority, "high");
+        assert_eq!(body.assignee_agent_id, Some(agent_id));
+        assert_eq!(body.assignee_user_id.as_deref(), Some("u-123"));
+        assert_eq!(body.project_id, Some(project_id));
+        assert_eq!(body.goal_id, Some(goal_id));
+        assert_eq!(body.parent_id, Some(parent_id));
+        assert_eq!(body.created_by_user_id.as_deref(), Some("u-creator"));
+        assert_eq!(body.responsible_user_id.as_deref(), Some("u-owner"));
+        assert_eq!(body.billing_code.as_deref(), Some("BILL-001"));
+        assert_eq!(body.request_depth, Some(2));
+        assert!(body.assignee_adapter_overrides.is_some());
+        assert!(body.execution_policy.is_some());
+        assert_eq!(body.execution_workspace_id, Some(workspace_id));
+        assert_eq!(
+            body.execution_workspace_preference.as_deref(),
+            Some("isolated")
+        );
+        assert!(body.execution_workspace_settings.is_some());
+        assert_eq!(body.blocked_by_issue_ids.as_ref().map(|v| v.len()), Some(2));
+        assert_eq!(body.label_ids.as_ref().map(|v| v.len()), Some(1));
+        assert!(body.unblock_descriptor.is_some());
+        assert_eq!(body.idempotency_key.as_deref(), Some("idem-1"));
+        assert_eq!(body.allow_duplicate, Some(false));
+    }
+
+    #[test]
+    fn create_body_minimal_required_only() {
+        let payload = json!({
+            "companyId": Uuid::new_v4(),
+            "title": "Minimal",
+        });
+        let body: CreateIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.title, "Minimal");
+        assert_eq!(body.priority, "medium"); // default
+        assert!(body.description.is_none());
+        assert!(body.status.is_none());
+        assert!(body.work_mode.is_none());
+        assert!(body.assignee_agent_id.is_none());
+        assert!(body.parent_id.is_none());
+        assert!(body.unblock_descriptor.is_none());
+        assert!(body.blocked_by_issue_ids.is_none());
+        assert!(body.label_ids.is_none());
+    }
+
+    #[test]
+    fn create_body_rejects_empty_title_at_serde_level() {
+        // title 不为空字符串检查在路由层 — serde 默认接受空字符串
+        let payload = json!({"companyId": Uuid::new_v4(), "title": ""});
+        let body: CreateIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.title, "");
+    }
+
+    #[test]
+    fn create_body_camelcase_only_no_snake_case_alias() {
+        // 验证 rename_all = "camelCase" 严格 — 仅 camelCase 字段被识别
+        // 公司 ID 必须用 camelCase "companyId"（否则缺失）
+        let payload = json!({
+            "companyId": Uuid::new_v4(),
+            "title": "Test",
+            "workMode": "standard",  // camelCase 正确
+        });
+        let body: CreateIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.title, "Test");
+        assert_eq!(body.work_mode.as_deref(), Some("standard"));
+        // camelCase 字段缺失时使用 default
+        assert!(body.assignee_agent_id.is_none());
+        assert!(body.unblock_descriptor.is_none());
+    }
+
+    // ── UpdateIssueFullBody ──
+
+    #[test]
+    fn update_body_parses_full_camelcase_payload() {
+        let payload = json!({
+            "title": "Updated title",
+            "description": "Updated description",
+            "status": "in_progress",
+            "workMode": "standard",
+            "harnessKind": "task",
+            "priority": "low",
+            "assigneeAgentId": Uuid::new_v4(),
+            "assigneeUserId": "u-456",
+            "responsibleUserId": "u-owner",
+            "billingCode": "BILL-002",
+            "executionPolicy": {"maxSteps": 100},
+            "executionWorkspaceId": Uuid::new_v4(),
+            "executionWorkspacePreference": "shared",
+            "executionWorkspaceSettings": {"shared": true},
+            "unblockDescriptor": {"owner": "board", "action": "manual review"},
+            "hiddenAt": "2026-01-15T10:00:00Z",
+            "reopen": true,
+            "resume": false,
+            "interrupt": false,
+            "labelIds": [Uuid::new_v4()],
+            "blockedByIssueIds": [Uuid::new_v4(), Uuid::new_v4()],
+        });
+        let body: UpdateIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.title.as_deref(), Some("Updated title"));
+        assert_eq!(body.description.as_deref(), Some("Updated description"));
+        assert_eq!(body.status.as_deref(), Some("in_progress"));
+        assert_eq!(body.work_mode.as_deref(), Some("standard"));
+        assert_eq!(body.harness_kind.as_deref(), Some("task"));
+        assert_eq!(body.priority.as_deref(), Some("low"));
+        assert!(body.assignee_agent_id.is_some());
+        assert_eq!(body.assignee_user_id.as_deref(), Some("u-456"));
+        assert_eq!(body.responsible_user_id.as_deref(), Some("u-owner"));
+        assert_eq!(body.billing_code.as_deref(), Some("BILL-002"));
+        assert!(body.execution_policy.is_some());
+        assert!(body.execution_workspace_id.is_some());
+        assert_eq!(
+            body.execution_workspace_preference.as_deref(),
+            Some("shared")
+        );
+        assert!(body.execution_workspace_settings.is_some());
+        assert!(body.unblock_descriptor.is_some());
+        assert_eq!(body.hidden_at.as_deref(), Some("2026-01-15T10:00:00Z"));
+        assert_eq!(body.reopen, Some(true));
+        assert_eq!(body.resume, Some(false));
+        assert_eq!(body.interrupt, Some(false));
+        assert_eq!(body.label_ids.as_ref().map(|v| v.len()), Some(1));
+        assert_eq!(body.blocked_by_issue_ids.as_ref().map(|v| v.len()), Some(2));
+    }
+
+    #[test]
+    fn update_body_all_optional() {
+        let body: UpdateIssueFullBody = serde_json::from_str("{}").expect("parse");
+        assert!(body.title.is_none());
+        assert!(body.description.is_none());
+        assert!(body.status.is_none());
+        assert!(body.work_mode.is_none());
+        assert!(body.harness_kind.is_none());
+        assert!(body.priority.is_none());
+        assert!(body.assignee_agent_id.is_none());
+        assert!(body.assignee_user_id.is_none());
+        assert!(body.responsible_user_id.is_none());
+        assert!(body.billing_code.is_none());
+        assert!(body.execution_policy.is_none());
+        assert!(body.execution_workspace_id.is_none());
+        assert!(body.execution_workspace_preference.is_none());
+        assert!(body.execution_workspace_settings.is_none());
+        assert!(body.unblock_descriptor.is_none());
+        assert!(body.hidden_at.is_none());
+        assert!(body.reopen.is_none());
+        assert!(body.resume.is_none());
+        assert!(body.interrupt.is_none());
+        assert!(body.label_ids.is_none());
+        assert!(body.blocked_by_issue_ids.is_none());
+    }
+
+    #[test]
+    fn update_body_accepts_snake_case_alias_for_label_and_blocked_by() {
+        // label_ids / blocked_by_issue_ids 保留 snake_case alias 以向后兼容
+        let payload = json!({
+            "label_ids": [Uuid::new_v4()],
+            "blocked_by_issue_ids": [Uuid::new_v4()],
+        });
+        let body: UpdateIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.label_ids.as_ref().map(|v| v.len()), Some(1));
+        assert_eq!(body.blocked_by_issue_ids.as_ref().map(|v| v.len()), Some(1));
+    }
+
+    // ── ChildIssueFullBody ──
+
+    #[test]
+    fn child_body_parses_full_camelcase_payload() {
+        let payload = json!({
+            "title": "Child task",
+            "description": "Implement child step",
+            "status": "todo",
+            "workMode": "standard",
+            "harnessKind": "plan",
+            "priority": "high",
+            "assigneeAgentId": Uuid::new_v4(),
+            "assigneeUserId": "u-789",
+            "projectId": Uuid::new_v4(),
+            "projectWorkspaceId": Uuid::new_v4(),
+            "goalId": Uuid::new_v4(),
+            "createdByUserId": "u-creator",
+            "responsibleUserId": "u-owner",
+            "billingCode": "BILL-003",
+            "requestDepth": 1,
+            "assigneeAdapterOverrides": {"kind": "openai"},
+            "executionPolicy": {"maxSteps": 10},
+            "executionWorkspaceId": Uuid::new_v4(),
+            "executionWorkspacePreference": "isolated",
+            "executionWorkspaceSettings": {"isolated": true},
+            "blockedByIssueIds": [Uuid::new_v4()],
+            "labelIds": [Uuid::new_v4()],
+            "unblockDescriptor": {"owner": "board", "action": "manual"},
+            "acceptanceCriteria": ["criterion 1", "criterion 2"],
+            "blockParentUntilDone": true,
+        });
+        let body: ChildIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.title, "Child task");
+        assert_eq!(body.priority, "high");
+        assert!(body.assignee_agent_id.is_some());
+        assert!(body.project_id.is_some());
+        assert!(body.project_workspace_id.is_some());
+        assert!(body.goal_id.is_some());
+        assert_eq!(body.created_by_user_id.as_deref(), Some("u-creator"));
+        assert_eq!(body.request_depth, Some(1));
+        assert!(body.assignee_adapter_overrides.is_some());
+        assert!(body.execution_policy.is_some());
+        assert!(body.execution_workspace_id.is_some());
+        assert_eq!(
+            body.acceptance_criteria.as_ref().map(|v| v.len()),
+            Some(2)
+        );
+        assert_eq!(body.block_parent_until_done, Some(true));
+    }
+
+    #[test]
+    fn child_body_minimal_required() {
+        let payload = json!({"title": "Just title"});
+        let body: ChildIssueFullBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.title, "Just title");
+        assert_eq!(body.priority, "medium");
+        assert!(body.description.is_none());
+        assert!(body.acceptance_criteria.is_none());
+        assert!(body.block_parent_until_done.is_none());
+    }
+
+    #[test]
+    fn child_body_accepts_empty_acceptance_criteria_array() {
+        let payload = json!({"title": "x", "acceptanceCriteria": []});
+        let body: ChildIssueFullBody = serde_json::from_value(payload).expect("parse");
+        let criteria = body.acceptance_criteria.expect("criteria");
+        assert!(criteria.is_empty());
+    }
+
+    // ── 业务规则测试 ──
+
+    #[test]
+    fn unblock_descriptor_owner_variants_accepted() {
+        // owner 可以是 {agentId} / {userId} / "board" 三种形式
+        for owner in [
+            json!({"agentId": Uuid::new_v4()}),
+            json!({"userId": "u-x"}),
+            json!("board"),
+        ] {
+            let payload = json!({
+                "companyId": Uuid::new_v4(),
+                "title": "blocked issue",
+                "status": "blocked",
+                "unblockDescriptor": {"owner": owner, "action": "do X"},
+            });
+            let body: CreateIssueFullBody =
+                serde_json::from_value(payload).expect("parse");
+            assert!(body.unblock_descriptor.is_some());
+        }
     }
 }

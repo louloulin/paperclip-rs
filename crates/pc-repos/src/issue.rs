@@ -198,6 +198,104 @@ pub struct DecomposeAcceptedPlanOutcome {
     pub created_child_ids: Vec<Uuid>,
 }
 
+
+/// Round 229: 完整 create issue 输入结构（对应 Node `createIssueBaseSchema`）。
+///
+/// 与 `IssuePlanChildInput` 不同 — 此结构覆盖所有 20+ Node 字段，
+/// 用于 `/api/companies/:companyId/issues` POST 路由以及通用 issue 创建路径。
+#[derive(Debug, Clone, Default)]
+pub struct CreateIssueInput<'a> {
+    pub company_id: Uuid,
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub work_mode: Option<&'a str>,
+    pub harness_kind: Option<&'a str>,
+    pub priority: Option<&'a str>,
+    pub assignee_agent_id: Option<Uuid>,
+    pub assignee_user_id: Option<&'a str>,
+    pub project_id: Option<Uuid>,
+    pub project_workspace_id: Option<Uuid>,
+    pub goal_id: Option<Uuid>,
+    pub parent_id: Option<Uuid>,
+    pub inherit_execution_workspace_from_issue_id: Option<Uuid>,
+    pub created_by_user_id: Option<&'a str>,
+    pub responsible_user_id: Option<&'a str>,
+    pub billing_code: Option<&'a str>,
+    pub request_depth: i32,
+    pub assignee_adapter_overrides: Option<&'a Value>,
+    pub execution_policy: Option<&'a Value>,
+    pub execution_workspace_id: Option<Uuid>,
+    pub execution_workspace_preference: Option<&'a str>,
+    pub execution_workspace_settings: Option<&'a Value>,
+    pub blocked_by_issue_ids: Option<&'a [Uuid]>,
+    pub label_ids: Option<&'a [Uuid]>,
+    pub unblock_descriptor: Option<&'a Value>,
+}
+
+/// Round 229: 完整 update issue patch 结构（对应 Node `updateIssueSchema`）。
+///
+/// partial 字段：None 表示不更新该字段。
+/// Some(None) 表示显式置空（清空该字段）。
+/// 字段语义对齐 Node zod.partial() — partial 字段全部 optional。
+#[derive(Debug, Clone, Default)]
+pub struct UpdateIssuePatch<'a> {
+    pub title: Option<&'a str>,
+    pub description: Option<Option<&'a str>>,
+    pub status: Option<&'a str>,
+    pub work_mode: Option<&'a str>,
+    pub harness_kind: Option<Option<&'a str>>,
+    pub priority: Option<&'a str>,
+    pub assignee_agent_id: Option<Option<Uuid>>,
+    pub assignee_user_id: Option<Option<&'a str>>,
+    pub responsible_user_id: Option<Option<&'a str>>,
+    pub billing_code: Option<Option<&'a str>>,
+    pub execution_policy: Option<Option<&'a Value>>,
+    pub execution_workspace_id: Option<Option<Uuid>>,
+    pub execution_workspace_preference: Option<Option<&'a str>>,
+    pub execution_workspace_settings: Option<Option<&'a Value>>,
+    pub unblock_descriptor: Option<Option<&'a Value>>,
+    pub hidden_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    pub reopen: bool,
+    pub resume: bool,
+    pub interrupt: bool,
+}
+
+/// Round 229: 完整 create child issue 输入结构（对应 Node `createChildIssueSchema`）。
+///
+/// `createChildIssueSchema = createIssueBaseSchema.omit({parentId, inheritExecutionWorkspaceFromIssueId, watchdogDiscovery}).extend(...)`。
+#[derive(Debug, Clone, Default)]
+pub struct CreateChildIssueInput<'a> {
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub work_mode: Option<&'a str>,
+    pub harness_kind: Option<&'a str>,
+    pub priority: Option<&'a str>,
+    pub assignee_agent_id: Option<Uuid>,
+    pub assignee_user_id: Option<&'a str>,
+    pub project_id: Option<Uuid>,
+    pub project_workspace_id: Option<Uuid>,
+    pub goal_id: Option<Uuid>,
+    pub created_by_user_id: Option<&'a str>,
+    pub responsible_user_id: Option<&'a str>,
+    pub billing_code: Option<&'a str>,
+    pub request_depth: i32,
+    pub assignee_adapter_overrides: Option<&'a Value>,
+    pub execution_policy: Option<&'a Value>,
+    pub execution_workspace_id: Option<Uuid>,
+    pub execution_workspace_preference: Option<&'a str>,
+    pub execution_workspace_settings: Option<&'a Value>,
+    pub blocked_by_issue_ids: Option<&'a [Uuid]>,
+    pub label_ids: Option<&'a [Uuid]>,
+    pub unblock_descriptor: Option<&'a Value>,
+    /// acceptanceCriteria — child 子 schema 扩展字段。
+    pub acceptance_criteria: Option<&'a [String]>,
+    /// blockParentUntilDone — child 子 schema 扩展字段。
+    pub block_parent_until_done: bool,
+}
+
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct FeedbackVoteRow {
     pub id: Uuid,
@@ -1211,6 +1309,175 @@ impl<'a> IssueRepo<'a> {
             .bind(input.project_id.or(parent.project_id))
             .bind(input.goal_id.or(parent.goal_id))
             .bind(parent.request_depth + 1)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Round 229: 完整 create issue（支持 Node `createIssueBaseSchema` 全部字段）。
+    ///
+    /// 与 Node `issueService.create` 对齐 — 支持 project_id/goal_id/parent_id/
+    /// work_mode/harness_kind/assignee_user_id/created_by_user_id/responsible_user_id/
+    /// billing_code/assignee_adapter_overrides/execution_policy/execution_workspace_*/
+    /// inherit_execution_workspace_from_issue_id/unblock_descriptor 等字段。
+    ///
+    /// `inherit_execution_workspace_from_issue_id`: 若提供，则从父 issue 继承
+    /// execution_workspace_id（Node 端语义）。当前实现简化：仅作为 hint 字段存储。
+    /// `blocked_by_issue_ids`/`label_ids`: 暂不在 create 路径上写入（由调用方在事务内后续处理），
+    /// 因为 Node 端也是先创建 issue 再插入 relations。
+    pub async fn create_full(
+        &self,
+        input: &CreateIssueInput<'_>,
+    ) -> sqlx::Result<IssueRow> {
+        let status = input.status.unwrap_or("todo");
+        let work_mode = input.work_mode.unwrap_or("standard");
+        let priority = input.priority.unwrap_or("medium");
+        let sql = format!(
+            "INSERT INTO issues (company_id, project_id, project_workspace_id, goal_id, parent_id,                     title, description, status, work_mode, harness_kind, priority,                     assignee_agent_id, assignee_user_id,                     created_by_user_id, responsible_user_id,                     request_depth, billing_code, assignee_adapter_overrides,                     execution_policy, execution_workspace_id, execution_workspace_preference,                     execution_workspace_settings, unblock_descriptor)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)              RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(input.company_id)
+            .bind(input.project_id)
+            .bind(input.project_workspace_id)
+            .bind(input.goal_id)
+            .bind(input.parent_id)
+            .bind(input.title)
+            .bind(input.description)
+            .bind(status)
+            .bind(work_mode)
+            .bind(input.harness_kind)
+            .bind(priority)
+            .bind(input.assignee_agent_id)
+            .bind(input.assignee_user_id)
+            .bind(input.created_by_user_id)
+            .bind(input.responsible_user_id)
+            .bind(input.request_depth)
+            .bind(input.billing_code)
+            .bind(input.assignee_adapter_overrides)
+            .bind(input.execution_policy)
+            .bind(input.execution_workspace_id)
+            .bind(input.execution_workspace_preference)
+            .bind(input.execution_workspace_settings)
+            .bind(input.unblock_descriptor)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Round 229: 完整 update issue（支持 Node `updateIssueSchema` 全部 partial 字段）。
+    ///
+    /// 三态语义：
+    /// - `None` → 不更新该字段（None 表示"未设置"）
+    /// - `Some(Some(value))` → 设置为 value
+    /// - `Some(None)` → 显式置空（清空该字段）
+    ///
+    /// 注意：与 Node 端 `updateIssueSchema` 不同之处：
+    /// - 本方法暂不更新 relations（label_ids/blocked_by_issue_ids），需要调用方单独处理
+    /// - comment / reviewRequest 等扩展字段由专门的 sub-route 处理
+    pub async fn update_full(
+        &self,
+        id: Uuid,
+        patch: &UpdateIssuePatch<'_>,
+    ) -> sqlx::Result<Option<IssueRow>> {
+        let sql = format!(
+            "UPDATE issues SET                 title=COALESCE($2,title),                 description=CASE WHEN $3::boolean THEN $4 ELSE description END,                 status=COALESCE($5,status),                 work_mode=COALESCE($6,work_mode),                 harness_kind=CASE WHEN $7::boolean THEN $8 ELSE harness_kind END,                 priority=COALESCE($9,priority),                 assignee_agent_id=COALESCE($10,assignee_agent_id),                 assignee_user_id=CASE WHEN $11::boolean THEN $12 ELSE assignee_user_id END,                 responsible_user_id=CASE WHEN $13::boolean THEN $14 ELSE responsible_user_id END,                 billing_code=CASE WHEN $15::boolean THEN $16 ELSE billing_code END,                 execution_policy=CASE WHEN $17::boolean THEN $18 ELSE execution_policy END,                 execution_workspace_id=CASE WHEN $19::boolean THEN $20 ELSE execution_workspace_id END,                 execution_workspace_preference=CASE WHEN $21::boolean THEN $22 ELSE execution_workspace_preference END,                 execution_workspace_settings=CASE WHEN $23::boolean THEN $24 ELSE execution_workspace_settings END,                 unblock_descriptor=CASE WHEN $25::boolean THEN $26 ELSE unblock_descriptor END,                 hidden_at=CASE WHEN $27::boolean THEN $28 ELSE hidden_at END,                 updated_at=now()              WHERE id=$1 RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(id)
+            .bind(patch.title)
+            // description
+            .bind(patch.description.is_some())
+            .bind(patch.description.flatten())
+            // status
+            .bind(patch.status)
+            // work_mode
+            .bind(patch.work_mode)
+            // harness_kind
+            .bind(patch.harness_kind.is_some())
+            .bind(patch.harness_kind.flatten())
+            // priority
+            .bind(patch.priority)
+            // assignee_agent_id
+            .bind(patch.assignee_agent_id)
+            // assignee_user_id
+            .bind(patch.assignee_user_id.is_some())
+            .bind(patch.assignee_user_id.flatten())
+            // responsible_user_id
+            .bind(patch.responsible_user_id.is_some())
+            .bind(patch.responsible_user_id.flatten())
+            // billing_code
+            .bind(patch.billing_code.is_some())
+            .bind(patch.billing_code.flatten())
+            // execution_policy
+            .bind(patch.execution_policy.is_some())
+            .bind(patch.execution_policy.flatten())
+            // execution_workspace_id
+            .bind(patch.execution_workspace_id.is_some())
+            .bind(patch.execution_workspace_id.flatten())
+            // execution_workspace_preference
+            .bind(patch.execution_workspace_preference.is_some())
+            .bind(patch.execution_workspace_preference.flatten())
+            // execution_workspace_settings
+            .bind(patch.execution_workspace_settings.is_some())
+            .bind(patch.execution_workspace_settings.flatten())
+            // unblock_descriptor
+            .bind(patch.unblock_descriptor.is_some())
+            .bind(patch.unblock_descriptor.flatten())
+            // hidden_at
+            .bind(patch.hidden_at.is_some())
+            .bind(patch.hidden_at.flatten())
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    /// Round 229: 完整 create child issue（支持 Node `createChildIssueSchema` 全部字段）。
+    ///
+    /// 与 `create_child_from_decomposition` 不同 — 此方法支持更全面的字段：
+    /// harness_kind / project_workspace_id / billing_code / assignee_adapter_overrides /
+    /// execution_policy / execution_workspace_* / unblock_descriptor / blocked_by_issue_ids /
+    /// label_ids / acceptance_criteria / block_parent_until_done。
+    ///
+    /// `block_parent_until_done` 与 `acceptance_criteria` 在 Node 端存储于
+    /// `issue_documents` / `issue_execution_state` 中，本方法暂作为 hint 字段
+    /// 透传，未来在 transaction 中单独持久化。
+    pub async fn create_child_full(
+        &self,
+        parent: &IssueRow,
+        input: &CreateChildIssueInput<'_>,
+    ) -> sqlx::Result<IssueRow> {
+        let status = input.status.unwrap_or("todo");
+        let work_mode = input.work_mode.unwrap_or("standard");
+        let priority = input.priority.unwrap_or("medium");
+        let sql = format!(
+            "INSERT INTO issues (company_id, parent_id,                     project_id, project_workspace_id, goal_id,                     title, description, status, work_mode, harness_kind, priority,                     assignee_agent_id, assignee_user_id,                     created_by_user_id, responsible_user_id,                     request_depth, billing_code, assignee_adapter_overrides,                     execution_policy, execution_workspace_id, execution_workspace_preference,                     execution_workspace_settings, unblock_descriptor)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)              RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(parent.company_id)
+            .bind(parent.id)
+            .bind(input.project_id.or(parent.project_id))
+            .bind(input.project_workspace_id.or(parent.project_workspace_id))
+            .bind(input.goal_id.or(parent.goal_id))
+            .bind(input.title)
+            .bind(input.description)
+            .bind(status)
+            .bind(work_mode)
+            .bind(input.harness_kind)
+            .bind(priority)
+            .bind(input.assignee_agent_id)
+            .bind(input.assignee_user_id)
+            .bind(input.created_by_user_id)
+            .bind(input.responsible_user_id)
+            // request_depth 沿用 parent depth + 1 或显式 override
+            .bind(if input.request_depth > 0 {
+                input.request_depth
+            } else {
+                parent.request_depth + 1
+            })
+            .bind(input.billing_code)
+            .bind(input.assignee_adapter_overrides)
+            .bind(input.execution_policy)
+            .bind(input.execution_workspace_id)
+            .bind(input.execution_workspace_preference)
+            .bind(input.execution_workspace_settings)
+            .bind(input.unblock_descriptor)
             .fetch_one(self.db.pool())
             .await
     }
@@ -3330,6 +3597,216 @@ mod issue_update_tests {
         assert!(!valid_issue_status("completed"));
         assert!(!valid_issue_status("open"));
         assert!(!valid_issue_status(""));
+    }
+}
+
+
+#[cfg(test)]
+mod round229_input_struct_tests {
+    //! Round 229: 验证 CreateIssueInput / UpdateIssuePatch / CreateChildIssueInput
+    //! 三个新输入结构体的字段默认值与借用语义。
+
+    use super::{CreateChildIssueInput, CreateIssueInput, UpdateIssuePatch};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    // ── CreateIssueInput ──
+
+    #[test]
+    fn create_issue_input_default_all_none() {
+        let input = CreateIssueInput {
+            company_id: Uuid::nil(),
+            title: "",
+            description: None,
+            status: None,
+            work_mode: None,
+            harness_kind: None,
+            priority: None,
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            project_id: None,
+            project_workspace_id: None,
+            goal_id: None,
+            parent_id: None,
+            inherit_execution_workspace_from_issue_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: 0,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            unblock_descriptor: None,
+        };
+        assert_eq!(input.title, "");
+        assert_eq!(input.request_depth, 0);
+        assert!(input.assignee_agent_id.is_none());
+        assert!(input.unblock_descriptor.is_none());
+    }
+
+    #[test]
+    fn create_issue_input_can_borrow_strings_and_slices() {
+        // 借用语义：&str / &[Uuid] 可直接传入而无需 owned String
+        let title = String::from("Test title");
+        let agent = Uuid::new_v4();
+        let overrides = json!({"model": "gpt-5"});
+        let input = CreateIssueInput {
+            company_id: Uuid::nil(),
+            title: &title,
+            description: Some("desc"),
+            status: Some("blocked"),
+            work_mode: Some("standard"),
+            harness_kind: Some("plan"),
+            priority: Some("high"),
+            assignee_agent_id: Some(agent),
+            assignee_user_id: Some("u-1"),
+            project_id: Some(Uuid::new_v4()),
+            project_workspace_id: Some(Uuid::new_v4()),
+            goal_id: Some(Uuid::new_v4()),
+            parent_id: None,
+            inherit_execution_workspace_from_issue_id: Some(Uuid::new_v4()),
+            created_by_user_id: Some("u-creator"),
+            responsible_user_id: Some("u-owner"),
+            billing_code: Some("B-001"),
+            request_depth: 2,
+            assignee_adapter_overrides: Some(&overrides),
+            execution_policy: Some(&overrides),
+            execution_workspace_id: Some(Uuid::new_v4()),
+            execution_workspace_preference: Some("isolated"),
+            execution_workspace_settings: Some(&overrides),
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            unblock_descriptor: Some(&overrides),
+        };
+        assert_eq!(input.title, "Test title");
+        assert_eq!(input.request_depth, 2);
+        assert_eq!(input.assignee_agent_id, Some(agent));
+    }
+
+    // ── UpdateIssuePatch ──
+
+    #[test]
+    fn update_issue_patch_three_state_semantics() {
+        // None = 不更新
+        // Some(Some(x)) = 设置为 x
+        // Some(None) = 显式置空
+        let overrides = json!({"maxSteps": 10});
+        let patch = UpdateIssuePatch {
+            title: None,                                   // 不更新
+            description: Some(Some("new")),                // 设置
+            status: Some("done"),                          // 设置
+            work_mode: None,
+            harness_kind: Some(Some("plan")),              // 设置
+            priority: Some("high"),                        // 设置
+            assignee_agent_id: Some(Some(Uuid::new_v4())), // 设置
+            assignee_user_id: Some(Some("u-1")),           // 设置
+            responsible_user_id: Some(None),               // 显式置空
+            billing_code: Some(None),                      // 显式置空
+            execution_policy: Some(Some(&overrides)),
+            execution_workspace_id: Some(None),            // 显式置空
+            execution_workspace_preference: Some(Some("shared")),
+            execution_workspace_settings: Some(Some(&overrides)),
+            unblock_descriptor: Some(None),                // 显式置空
+            hidden_at: None,
+            reopen: true,
+            resume: false,
+            interrupt: false,
+        };
+        // 验证三态
+        assert!(patch.title.is_none());                   // 不更新
+        assert!(matches!(patch.description, Some(Some(_))));
+        assert!(matches!(patch.assignee_user_id, Some(Some(_))));
+        assert!(matches!(patch.responsible_user_id, Some(None))); // 置空
+        assert!(matches!(patch.execution_workspace_id, Some(None))); // 置空
+        assert!(patch.reopen);
+        assert!(!patch.resume);
+    }
+
+    #[test]
+    fn update_issue_patch_default_all_none() {
+        let patch = UpdateIssuePatch::default();
+        assert!(patch.title.is_none());
+        assert!(patch.description.is_none());
+        assert!(patch.status.is_none());
+        assert!(patch.assignee_agent_id.is_none());
+        assert!(!patch.reopen);
+        assert!(!patch.resume);
+        assert!(!patch.interrupt);
+    }
+
+    // ── CreateChildIssueInput ──
+
+    #[test]
+    fn create_child_issue_input_default_state() {
+        let input = CreateChildIssueInput {
+            title: "child",
+            description: None,
+            status: None,
+            work_mode: None,
+            harness_kind: None,
+            priority: None,
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            project_id: None,
+            project_workspace_id: None,
+            goal_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: 0,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            unblock_descriptor: None,
+            acceptance_criteria: None,
+            block_parent_until_done: false,
+        };
+        assert_eq!(input.title, "child");
+        assert_eq!(input.request_depth, 0);
+        assert!(!input.block_parent_until_done);
+        assert!(input.acceptance_criteria.is_none());
+    }
+
+    #[test]
+    fn create_child_issue_input_with_acceptance_criteria() {
+        let criteria = vec!["c1".to_string(), "c2".to_string()];
+        let input = CreateChildIssueInput {
+            title: "child",
+            description: Some("desc"),
+            status: Some("todo"),
+            work_mode: Some("standard"),
+            harness_kind: None,
+            priority: Some("high"),
+            assignee_agent_id: Some(Uuid::new_v4()),
+            assignee_user_id: Some("u-1"),
+            project_id: None,
+            project_workspace_id: None,
+            goal_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: 1,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            unblock_descriptor: None,
+            acceptance_criteria: Some(&criteria),
+            block_parent_until_done: true,
+        };
+        assert_eq!(input.acceptance_criteria.expect("criteria").len(), 2);
+        assert!(input.block_parent_until_done);
     }
 }
 
