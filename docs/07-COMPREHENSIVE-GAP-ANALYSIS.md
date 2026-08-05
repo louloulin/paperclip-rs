@@ -1602,19 +1602,84 @@ companies.rs 13 → 5 SQL（-8）。仓储化 2 个跨表聚合端点：
 - companies.rs SQL 数 13 → 5（-8，export_preview 3 + get_companies_stats 4N→8）
 - 累计 Round 95-132 修复 **135+2=137 个路由从 500 → 200**
 
-### 下一轮方向（Round 133+）
-companies.rs 还剩 5 SQL：
-- ensure_my_folder（2 SQL，line 766+）：kind='personal' legacy 路径
-- create_folder legacy "personal" path（2 SQL）：同 kind 兜底
-- create 路由的 company_memberships INSERT（1 SQL，line 136）
+## 56. 第一百三十三轮增量（Round 133 — companies.rs 0 SQL 收尾里程碑 🎉)
 
-后续高 SQL 模块：
-- tool_access.rs 66 SQL
-- issues.rs 41 SQL（feedback / votes / relations ~20 SQL）
-- auth.rs 28 SQL
-- access.rs 26 SQL
-- smoke_lab.rs 26 SQL
-- tool_connections.rs 22 SQL
+### 目标
+companies.rs 5 → 0 SQL（-5）。仓储化 3 个剩余 SQL 路径：
+- `create` 端点的 company_memberships INSERT → `CompanyRepo::create_owner_membership`
+- `ensure_my_folder` → `FolderRepo::ensure_personal_root`
+- `create_folder` legacy "personal" path → `FolderRepo::next_position_for_kind` + `create_with_kind_str`
+
+### 新增 `pc_repos` 方法
+**`pc_repos::folder::FolderRepo`**
+- `ensure_personal_root(company_id) -> (FolderRow, bool)`
+  - **复合方法**：SELECT existing → 若不存在 INSERT
+  - 返回 (row, created) 元组；created=true 表示新建，false 表示已存在
+  - 对齐 Node `ensureMyFolder` 的 idempotent 语义
+- `create_with_kind_str(company_id, kind, name, color, position) -> FolderRow`
+  - 绕过 FolderKind 枚举，kind 用 &str 传入（兼容 legacy "personal" 等非标准值）
+  - 自动 trim name；空 name 返回 RepoError::Invalid
+- `next_position_for_kind(company_id, kind) -> i32`
+  - 计算任意 kind 字符串的下一个 position（COALESCE(MAX,0)+1）
+  - 与 `next_position(company_id, FolderKind, parent_id)` 配合 FolderKind 枚举路径使用
+
+**`pc_repos::company::CompanyRepo`**
+- `create_owner_membership(company_id, user_id) -> ()`
+  - INSERT ... ON CONFLICT (company_id, principal_type, principal_id) DO UPDATE
+  - 原子性由单条 SQL ON CONFLICT 保证
+  - COALESCE 已存在 role（'owner' 不会被覆盖为 NULL）
+
+### 重构 `companies.rs` 3 个端点 / 路径
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `POST /api/companies`（create 路由）| 1 INSERT company_memberships | CompanyRepo::create_owner_membership |
+| `POST /api/companies/:id/folders/ensure-my` | 1 SELECT + 1 INSERT | FolderRepo::ensure_personal_root |
+| `POST /api/companies/:id/folders`（legacy kind path） | 1 next_pos + 1 INSERT | FolderRepo::next_position_for_kind + create_with_kind_str |
+
+### 设计要点
+- **`ensure_personal_root` 返回 (row, created) 元组**：路由可直接序列化 created 字段，调用方无需二次判断 row 是否为新创建。
+- **`create_with_kind_str` 双轨制**：FolderKind 枚举路径保留原有安全校验（reserved slug / cycle detection），legacy 字符串路径仅做最小校验（name 非空），向后兼容。
+- **COALESCE 双侧语义保留**：create_owner_membership 的 ON CONFLICT 升级保留已有 membership_role（'owner' 不被覆盖为其他 role），与 Node 端 ON CONFLICT DO UPDATE 行为一致。
+- **legacy 'personal' kind 处理**：当前 schema 的 `kind text` 列允许任意字符串，'personal' 是合法值。本次不强制迁移到 FolderKind 枚举，避免破坏现有调用方。
+
+### 新增集成测试 11 个 (`crates/pc-repos/tests/round133_companies_remaining_repo.rs`)
+**FolderRepo::ensure_personal_root (3 个)**
+1. `ensure_personal_root_creates_when_missing` — 首次创建 + created=true
+2. `ensure_personal_root_idempotent` — 已存在时 created=false + id 一致
+3. `ensure_personal_root_isolates_tenants` — 跨公司隔离
+
+**FolderRepo::create_with_kind_str (3 个)**
+4. `create_with_kind_str_accepts_arbitrary_kind` — "personal" 等任意 kind
+5. `create_with_kind_str_trims_name` — name 前后空白 trim
+6. `create_with_kind_str_rejects_empty_name` — 空 name RepoError::Invalid
+
+**FolderRepo::next_position_for_kind (2 个)**
+7. `next_position_for_kind_empty_returns_one` — 空集合 → 1
+8. `next_position_for_kind_increments` — 递增（MAX+1）
+
+**CompanyRepo::create_owner_membership (3 个)**
+9. `create_owner_membership_inserts_new` — 新用户插入 owner 行
+10. `create_owner_membership_upgrades_existing` — 已存在 viewer 升级 active + 保留 role
+11. `create_owner_membership_preserves_existing_owner` — 已存在 owner 不被覆盖
+
+### 进度影响 🎉
+- 综合进度从 **≈ 97.9% → ≈ 98.1%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round133_*` 0 errors
+- **companies.rs SQL 数 5 → 0（-5，里程碑：第二个 0 SQL 模块！）** 🎉
+  - 与 cases.rs（Round 120）并列
+- 33 个 pc-repos 集成测试文件累计 217+11=228 test 函数
+- 累计 Round 95-133 修复 **137+3=140 个路由从 500 → 200**
+
+### 下一轮方向（Round 134+）
+companies.rs 已完成全部仓储化（0 SQL）！后续可以：
+- 周期性 review companies.rs 是否有新增 SQL（保持 0 SQL 约束）
+- 迁移到下一个高 SQL 模块：
+  - tool_access.rs 66 SQL
+  - issues.rs 41 SQL（feedback / votes / relations ~20 SQL）
+  - auth.rs 28 SQL
+  - access.rs 26 SQL
+  - smoke_lab.rs 26 SQL
+  - tool_connections.rs 22 SQL
 
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 

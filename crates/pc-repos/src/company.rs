@@ -381,6 +381,28 @@ impl<'a> CompanyRepo<'a> {
         Ok(out)
     }
 
+    /// 创建 / 升级 company owner membership。
+    ///
+    /// 对齐 Node `create` 端点 ON CONFLICT 升级逻辑：
+    /// - INSERT principal_type='user' status='active' membership_role='owner'
+    /// - 已存在时 UPDATE status='active', membership_role=COALESCE(..., 'owner')
+    ///
+    /// 原子性由 SQL ON CONFLICT 单条 SQL 保证。
+    pub async fn create_owner_membership(
+        &self,
+        company_id: Uuid,
+        user_id: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO company_memberships                 (company_id, principal_type, principal_id, status, membership_role)              VALUES ($1, 'user', $2, 'active', 'owner')              ON CONFLICT (company_id, principal_type, principal_id) DO UPDATE SET                 status = 'active',                 membership_role = COALESCE(company_memberships.membership_role, 'owner'),                 updated_at = now()",
+        )
+        .bind(company_id)
+        .bind(user_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
         let r = sqlx::query("DELETE FROM companies WHERE id = $1")
             .bind(id)

@@ -136,18 +136,9 @@ async fn create(
         Err(ApiError::Unauthorized(_)) => "local-board".to_owned(),
         Err(error) => return Err(error),
     };
-    sqlx::query(
-        "INSERT INTO company_memberships \
-            (company_id, principal_type, principal_id, status, membership_role) \
-         VALUES ($1, 'user', $2, 'active', 'owner') \
-         ON CONFLICT (company_id, principal_type, principal_id) DO UPDATE SET \
-            status = 'active', membership_role = COALESCE(company_memberships.membership_role, 'owner'), \
-            updated_at = now()",
-    )
-    .bind(row.id)
-    .bind(&owner_id)
-    .execute(state.db.pool())
-    .await?;
+    CompanyRepo::new(&state.db)
+        .create_owner_membership(row.id, &owner_id)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("company.created", "company", row.id)
             .with_company(row.id)
@@ -684,18 +675,27 @@ async fn create_folder(
             "position": row.position,
         })))
     } else {
-        // Legacy path: kind="personal" 等非标准值。保留原 2 段 SQL 行为（next_pos + INSERT）。
-        let id: Uuid = Uuid::new_v4();
-        let next_pos: i32 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(position),0)+1 FROM folders WHERE company_id=$1 AND kind=$2",
-        )
-        .bind(company_id).bind(&body.kind).fetch_one(state.db.pool()).await?;
-        sqlx::query(
-            "INSERT INTO folders (id, company_id, kind, name, color, position) VALUES ($1,$2,$3,$4,$5,$6)",
-        )
-        .bind(id).bind(company_id).bind(&body.kind).bind(body.name.trim()).bind(&body.color).bind(next_pos)
-        .execute(state.db.pool()).await?;
-        Ok(Json(json!({"id": id, "companyId": company_id, "kind": body.kind, "name": body.name, "color": body.color, "position": next_pos})))
+        // Legacy path: kind="personal" 等非标准值。委托 FolderRepo::next_position_for_kind +
+        // create_with_kind_str 复合。
+        let repo = FolderRepo::new(&state.db);
+        let next_pos = repo.next_position_for_kind(company_id, &body.kind).await?;
+        let row = repo
+            .create_with_kind_str(
+                company_id,
+                &body.kind,
+                body.name.trim(),
+                body.color.as_deref(),
+                next_pos,
+            )
+            .await?;
+        Ok(Json(json!({
+            "id": row.id,
+            "companyId": row.company_id,
+            "kind": row.kind,
+            "name": row.name,
+            "color": row.color,
+            "position": row.position,
+        })))
     }
 }
 
@@ -704,19 +704,14 @@ async fn ensure_my_folder(
     Path(company_id): Path<Uuid>,
     Json(_body): Json<serde_json::Value>,
 ) -> ApiResult<Json<Value>> {
-    // Idempotent: get-or-create a personal folder for caller
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM folders WHERE company_id=$1 AND kind='personal' LIMIT 1",
-    )
-    .bind(company_id).fetch_optional(state.db.pool()).await?;
-    if let Some((id,)) = row {
-        return Ok(Json(json!({"id": id, "companyId": company_id, "kind": "personal", "created": false})));
-    }
-    let id: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO folders (id, company_id, kind, name, position) VALUES ($1, $2, 'personal', 'Personal', 0)",
-    ).bind(id).bind(company_id).execute(state.db.pool()).await?;
-    Ok(Json(json!({"id": id, "companyId": company_id, "kind": "personal", "created": true})))
+    let repo = FolderRepo::new(&state.db);
+    let (row, created) = repo.ensure_personal_root(company_id).await?;
+    Ok(Json(json!({
+        "id": row.id,
+        "companyId": company_id,
+        "kind": row.kind,
+        "created": created,
+    })))
 }
 
 #[derive(Debug, Deserialize, Default)]

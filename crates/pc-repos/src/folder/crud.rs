@@ -195,4 +195,88 @@ impl<'a> FolderRepo<'a> {
         .await?;
         Ok(n)
     }
+
+    /// Legacy / 通用 create：kind 用 &str 传入，绕过 FolderKind 枚举限制。
+    ///
+    /// 对齐 Node `POST /companies/:id/folders` 当 kind="personal" 等非标准值时的行为：
+    /// - 不做 reserved slug 校验
+    /// - 不写 slug / system_key 字段（保留 schema 默认值）
+    /// - 仍需外部 caller 算 next_position
+    ///
+    /// 替代 routes 中 `create_folder` legacy path 的兜底 SQL。
+    pub async fn create_with_kind_str(
+        &self,
+        company_id: Uuid,
+        kind: &str,
+        name: &str,
+        color: Option<&str>,
+        position: i32,
+    ) -> RepoResult<FolderRow> {
+        if name.trim().is_empty() {
+            return Err(RepoError::Invalid("folder name must not be empty".into()));
+        }
+        let sql = format!(
+            "INSERT INTO folders (id, company_id, kind, name, color, position)              VALUES (gen_random_uuid(), $1, $2, $3, $4, $5) RETURNING {COLS}"
+        );
+        Ok(sqlx::query_as::<_, FolderRow>(&sql)
+            .bind(company_id)
+            .bind(kind)
+            .bind(name.trim())
+            .bind(color)
+            .bind(position)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    /// 计算下一个可用 position（兼容任意 kind 字符串）。
+    /// 替代 routes 中 legacy kind 的 inline `COALESCE(MAX(position),0)+1`。
+    pub async fn next_position_for_kind(
+        &self,
+        company_id: Uuid,
+        kind: &str,
+    ) -> RepoResult<i32> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(position),0)+1 FROM folders WHERE company_id=$1 AND kind=$2",
+        )
+        .bind(company_id)
+        .bind(kind)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(n as i32)
+    }
+
+    /// Get-or-create "Personal" folder（kind='personal'）— 对齐 Node `ensureMyFolder`。
+    ///
+    /// 行为：
+    /// 1. SELECT id FROM folders WHERE company_id=$1 AND kind='personal' LIMIT 1
+    /// 2. 若存在返回 Some(existing)
+    /// 3. 否则 INSERT kind='personal' name='Personal' position=0 并返回 Some(new)
+    ///
+    /// 注：与 `ensure_container` 区别在于 kind 字符串（'personal' vs 'skill'）以及
+    /// 不通过 system_key 标识。
+    pub async fn ensure_personal_root(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<(FolderRow, bool)> {
+        let existing: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM folders WHERE company_id=$1 AND kind='personal' LIMIT 1",
+        )
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        if let Some((id,)) = existing {
+            let row = self.get(company_id, id).await?.ok_or_else(|| {
+                RepoError::Invalid("ensure_personal_root: existing row vanished".into())
+            })?;
+            return Ok((row, false));
+        }
+        let sql = format!(
+            "INSERT INTO folders (id, company_id, kind, name, position)              VALUES (gen_random_uuid(), $1, 'personal', 'Personal', 0) RETURNING {COLS}"
+        );
+        let row: FolderRow = sqlx::query_as::<_, FolderRow>(&sql)
+            .bind(company_id)
+            .fetch_one(self.db.pool())
+            .await?;
+        Ok((row, true))
+    }
 }
