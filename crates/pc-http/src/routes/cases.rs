@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::case::{CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseLinkRole, CaseRepo, CaseRow, NewCaseAnnotationComment, NewCaseAnnotationThread};
+use pc_repos::case::{CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseLinkRole, CaseRepo, CaseRow, DocumentRevisionRow, NewCaseAnnotationComment, NewCaseAnnotationThread};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -915,37 +915,39 @@ async fn delete_case_document(
     })))
 }
 
+// Round 116: 仓储化。CaseRepo::get_case_company_id + resolve_case_document_id +
+//             list_document_revisions。
 async fn list_case_document_revisions(
     State(state): State<AppState>,
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    let (doc_company_id, document_id) = resolve_case_document_id(&state, case_id, &key).await?;
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let (doc_company_id, document_id) = repo
+        .resolve_case_document_id(case_id, &key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))?;
     if doc_company_id != company_id {
         return Err(ApiError::NotFound(format!("case document {case_id}:{key}")));
     }
-    let rows: Vec<(Uuid, i32, Option<String>, Option<String>, Option<String>, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, revision_number, title, format, change_summary, created_by_agent_id, created_by_user_id, created_at \
-         FROM document_revisions WHERE company_id = $1 AND document_id = $2 \
-         ORDER BY revision_number DESC LIMIT 200",
-    )
-    .bind(company_id)
-    .bind(document_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = repo
+        .list_document_revisions(company_id, document_id, 200)
+        .await?;
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, revision_number, title, format, change_summary, created_by_agent_id, created_by_user_id, created_at)| {
+        .map(|r| {
             json!({
-                "id": id,
-                "revisionNumber": revision_number,
-                "title": title,
-                "format": format,
-                "changeSummary": change_summary,
-                "createdByAgentId": created_by_agent_id,
-                "createdByUserId": created_by_user_id,
-                "createdAt": created_at,
+                "id": r.id,
+                "revisionNumber": r.revision_number,
+                "title": r.title,
+                "format": r.format,
+                "changeSummary": r.change_summary,
+                "createdByAgentId": r.created_by_agent_id,
+                "createdByUserId": r.created_by_user_id,
+                "createdAt": r.created_at,
             })
         })
         .collect();
@@ -963,71 +965,45 @@ struct RestoreCaseDocumentRevisionBody {
     change_summary: Option<String>,
 }
 
+// Round 116: 仓储化。CaseRepo::get_case_company_id + resolve_case_document_id +
+//             get_document_revision_body + restore_document_revision (复合 tx)。
 async fn restore_case_document_revision(
     State(state): State<AppState>,
     Path((case_id, key, revision_id)): Path<(Uuid, String, Uuid)>,
     Json(body): Json<RestoreCaseDocumentRevisionBody>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ensure_case_exists(&state, case_id).await?;
-    let (doc_company_id, document_id) = resolve_case_document_id(&state, case_id, &key).await?;
+    let repo = CaseRepo::new(&state.db);
+    let company_id = repo
+        .get_case_company_id(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let (doc_company_id, document_id) = repo
+        .resolve_case_document_id(case_id, &key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))?;
     if doc_company_id != company_id {
         return Err(ApiError::NotFound(format!("case document {case_id}:{key}")));
     }
-    // Fetch source revision body
-    let src: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT body, title FROM document_revisions WHERE id = $1 AND document_id = $2 AND company_id = $3",
-    )
-    .bind(revision_id)
-    .bind(document_id)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (src_body, src_title) = src.ok_or_else(|| ApiError::NotFound(format!("revision {revision_id}")))?;
-
-    let mut tx = state.db.pool().begin().await?;
-    // Determine next revision number
-    let next_no: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM document_revisions WHERE document_id = $1",
-    )
-    .bind(document_id)
-    .fetch_one(&mut *tx)
-    .await?;
-    let new_rev_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO document_revisions (company_id, document_id, revision_number, body, change_summary, title) \
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(document_id)
-    .bind(next_no)
-    .bind(&src_body)
-    .bind(body.change_summary.clone().unwrap_or_else(|| format!("Restored from revision {revision_id}")))
-    .bind(src_title.as_deref())
-    .fetch_one(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE documents SET latest_body = $1, latest_revision_id = $2, latest_revision_number = $3, updated_at = now() WHERE id = $4",
-    )
-    .bind(&src_body)
-    .bind(new_rev_id)
-    .bind(next_no)
-    .bind(document_id)
-    .execute(&mut *tx)
-    .await?;
-    // Log event
-    let _ = sqlx::query(
-        "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
-         VALUES ($1, $2, 'document_revised', 'user', jsonb_build_object('key', $3::text, 'restoredFromRevisionId', $4::text, 'newRevisionId', $5::text))",
-    )
-    .bind(company_id)
-    .bind(case_id)
-    .bind(&key)
-    .bind(revision_id)
-    .bind(new_rev_id)
-    .execute(&mut *tx)
-    .await;
-    tx.commit().await?;
+    let (src_body, src_title) = repo
+        .get_document_revision_body(company_id, document_id, revision_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("revision {revision_id}")))?;
+    let change_summary = body
+        .change_summary
+        .clone()
+        .unwrap_or_else(|| format!("Restored from revision {revision_id}"));
+    let (new_rev_id, next_no) = repo
+        .restore_document_revision(
+            company_id,
+            case_id,
+            &key,
+            document_id,
+            &src_body,
+            src_title.as_deref(),
+            &change_summary,
+            revision_id,
+        )
+        .await?;
     state.realtime.publish(
         LiveEvent::new("case.document.revision_restored", "case_document_revision", new_rev_id)
             .with_company(company_id)
@@ -1039,6 +1015,7 @@ async fn restore_case_document_revision(
         "restoredFromRevisionId": revision_id,
         "revisionId": new_rev_id,
         "revisionNumber": next_no,
+        "changeSummary": change_summary,
     })))
 }
 

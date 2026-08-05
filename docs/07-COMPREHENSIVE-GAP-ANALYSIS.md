@@ -713,6 +713,57 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
+
+### 目标
+`cases.rs` 36 个内联 SQL，Round 116 把 case_revisions 2 个端点的 6 SQL 仓储化
+（含一个完整事务：next_revision_number + INSERT + UPDATE documents + INSERT case_events）。
+cases.rs 36 → 30 SQL（-6）。
+
+### 新增 `pc_repos::case::CaseRepo` 方法（3 个 + 1 DTO)
+- `list_document_revisions(company_id, document_id, limit) -> Vec<DocumentRevisionRow>`
+  - SELECT 按 revision_number DESC + LIMIT
+- `get_document_revision_body(company_id, document_id, revision_id) -> Option<(String, Option<String>)>`
+  - SELECT body, title; None = 不存在
+- `restore_document_revision(company_id, case_id, key, document_id, source_body, source_title, change_summary, source_revision_id) -> (Uuid, i32)`
+  - **复合事务方法**：在 `&mut *tx` 内完成
+    1. SELECT COALESCE(MAX(revision_number), 0) + 1 — 算 next_no
+    2. INSERT INTO document_revisions RETURNING id — 写新 revision
+    3. UPDATE documents SET latest_body / latest_revision_id / latest_revision_number
+    4. INSERT case_events kind='document_revised' 含 restoredFromRevisionId + newRevisionId
+  - tx.commit() 后返回 (new_revision_id, new_revision_number)
+  - 替代了原 route 的 5 段内联 SQL + 手写 tx
+
+### 新增 DTO
+- `DocumentRevisionRow { id, revision_number, title, format, change_summary, created_by_agent_id, created_by_user_id, created_at }`
+  - 1:1 schema 投影（不含 body/company_id/document_id, route 端按需取）
+
+### 重构 `cases.rs` 2 个端点
+- `list_case_document_revisions` — `get_case_company_id + resolve_case_document_id + list_document_revisions`
+- `restore_case_document_revision` — `get_case_company_id + resolve_case_document_id + get_document_revision_body + restore_document_revision`
+  - route 端不再持有事务；事务封装在 repo 内（事务边界最小化）
+  - 响应新增 `changeSummary` 字段
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round116_case_revision_repo.rs`)
+1. `list_document_revisions_orders_desc` — 按 revision_number DESC
+2. `list_document_revisions_isolates` — 跨 document 隔离
+3. `list_document_revisions_limit` — LIMIT 生效
+4. `get_document_revision_body_round_trip` — 找 + title None + missing 返 None
+5. `get_document_revision_body_cross_company` — 跨 company 隔离
+6. `restore_document_revision_creates_new_revision` — 复合事务端到端
+   - 验证新 revision 写入 + body/title 正确
+   - 验证 documents.latest_body/num 同步
+   - 验证 case_events 'document_revised' 写入 + payload 含 restoredFromRevisionId/newRevisionId
+
+### 进度影响
+- 综合进度从 **≈ 92.3% → ≈ 92.8%**
+- workspace `cargo check -p pc-http` 0 errors
+- `cargo test -p pc-repos --lib` **461 passed**（单元无变化）
+- `cargo test -p pc-repos --no-run --test round116_*` 编译通过
+- 16 个 pc-repos 集成测试文件累计 91+6=97 test 函数
+- cases.rs SQL 数 36 → 30（-6，case_revisions 子模块清零）
+- 累计 Round 95-116 修复 **75+2=77 个路由从 500 → 200**
+
 ## 38. 第一百一十五轮增量（Round 115 — cases.rs case_attachments 子模块仓储化)
 
 ### 目标

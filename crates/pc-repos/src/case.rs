@@ -349,6 +349,20 @@ pub struct NewCaseAnnotationComment {
     pub author_agent_id: Option<Uuid>,
 }
 
+/// Round 116: document_revisions 1:1 schema 投影 (without body/format 留给 routes 决定)。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentRevisionRow {
+    pub id: Uuid,
+    pub revision_number: i32,
+    pub title: Option<String>,
+    pub format: Option<String>,
+    pub change_summary: Option<String>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub created_at: Timestamp,
+}
+
 /// Round 114: case annotation thread patch 输入。
 #[derive(Debug, Clone, Default)]
 pub struct CaseAnnotationPatch {
@@ -1167,6 +1181,103 @@ impl<'a> CaseRepo<'a> {
         .fetch_one(self.db.pool())
         .await?;
         Ok(id)
+    }
+
+    // ---- Round 116: case document revisions ----
+
+    /// Round 116: 列出 document_revisions (按 revision_number DESC)。
+    pub async fn list_document_revisions(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<DocumentRevisionRow>> {
+        sqlx::query_as::<_, DocumentRevisionRow>(
+            "SELECT id, revision_number, title, format, change_summary,                 created_by_agent_id, created_by_user_id, created_at                 FROM document_revisions                 WHERE company_id = $1 AND document_id = $2                 ORDER BY revision_number DESC LIMIT $3",
+        )
+        .bind(company_id)
+        .bind(document_id)
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 116: 取单个 document_revision 的 body + title。
+    /// None = revision 不存在或 company 不匹配。
+    pub async fn get_document_revision_body(
+        &self,
+        company_id: Uuid,
+        document_id: Uuid,
+        revision_id: Uuid,
+    ) -> sqlx::Result<Option<(String, Option<String>)>> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT body, title FROM document_revisions             WHERE id = $1 AND document_id = $2 AND company_id = $3",
+        )
+        .bind(revision_id)
+        .bind(document_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 116: 复合事务 — restore 一个 document revision。
+    /// 内部完成:
+    /// 1. 计算 next revision_number
+    /// 2. INSERT 新 document_revision
+    /// 3. UPDATE documents latest_body / latest_revision_id / latest_revision_number
+    /// 4. INSERT case_events kind='document_revised' 含 restoredFromRevisionId + newRevisionId
+    /// 返回 (new_revision_id, new_revision_number)
+    pub async fn restore_document_revision(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        key: &str,
+        document_id: Uuid,
+        source_body: &str,
+        source_title: Option<&str>,
+        change_summary: &str,
+        source_revision_id: Uuid,
+    ) -> sqlx::Result<(Uuid, i32)> {
+        let mut tx = self.db.pool().begin().await?;
+        let next_no: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM document_revisions WHERE document_id = $1",
+        )
+        .bind(document_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let new_rev_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO document_revisions (company_id, document_id, revision_number, body, change_summary, title)             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(document_id)
+        .bind(next_no)
+        .bind(source_body)
+        .bind(change_summary)
+        .bind(source_title)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE documents SET latest_body = $1, latest_revision_id = $2,                 latest_revision_number = $3, updated_at = now() WHERE id = $4",
+        )
+        .bind(source_body)
+        .bind(new_rev_id)
+        .bind(next_no)
+        .bind(document_id)
+        .execute(&mut *tx)
+        .await?;
+        let _ = sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)             VALUES ($1, $2, 'document_revised', 'user', jsonb_build_object('key', $3::text, 'restoredFromRevisionId', $4::text, 'newRevisionId', $5::text))",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(key)
+        .bind(source_revision_id)
+        .bind(new_rev_id)
+        .execute(&mut *tx)
+        .await;
+        tx.commit().await?;
+        Ok((new_rev_id, next_no))
     }
 
     pub async fn list_events(
