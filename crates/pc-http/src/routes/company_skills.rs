@@ -550,21 +550,27 @@ async fn put_skill_config(
         .config
         .clone()
         .unwrap_or_else(|| serde_json::json!({}));
-    sqlx::query(
-        "INSERT INTO company_skill_configs (company_id, skill_id, value)          VALUES ($1, $2, $3)          ON CONFLICT (company_id, skill_id) DO UPDATE SET value=$3, updated_at=now()",
-    )
-    .bind(company_id)
-    .bind(skill_id)
-    .bind(&value)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    // Round 94: 走 SkillRepo::set_config（upsert）
+    pc_repos::skill::SkillRepo::new(&state.db)
+        .set_config(company_id, skill_id, &value, None)
+        .await
+        .map_err(map_skill_repo_error)?;
     Ok(Json(json!({
         "companyId": company_id,
         "skillId": skill_id,
         "saved": true,
         "value": value,
     })))
+}
+
+/// 把 SkillRepo 的错误翻译为 HTTP 层错误：
+/// - `Invalid` → 400
+/// - 其它 → 500
+fn map_skill_repo_error(e: pc_repos::RepoError) -> ApiError {
+    match e {
+        pc_repos::RepoError::Invalid(msg) => ApiError::BadRequest(msg),
+        other => ApiError::Internal(other.to_string()),
+    }
 }
 
 async fn skill_preview(
