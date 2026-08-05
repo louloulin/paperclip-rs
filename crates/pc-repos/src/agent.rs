@@ -1078,6 +1078,22 @@ impl<'a> AgentRepo<'a> {
             .await
     }
 
+    /// Round 183: live_events auth -- by key_hash find agent_api_key (id, company_id).
+    /// Only returns non-revoked (revoked_at IS NULL) keys.
+    pub async fn find_api_key_id_company_by_hash(
+        &self,
+        key_hash: &str,
+    ) -> sqlx::Result<Option<(Uuid, Uuid)>> {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT id, company_id FROM agent_api_keys \
+             WHERE key_hash = $1 AND revoked_at IS NULL",
+        )
+        .bind(key_hash)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
     pub async fn revoke_api_key(
         &self,
         agent_id: Uuid,

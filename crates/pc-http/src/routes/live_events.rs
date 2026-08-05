@@ -14,6 +14,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
+use pc_repos::agent::AgentRepo;
+use pc_repos::company_member::CompanyMemberRepo;
 
 pub fn router() -> axum::Router<AppState> {
     axum::Router::new().route("/api/live-events", get(handler))
@@ -102,13 +104,10 @@ async fn authorize_ws(
             // agent context. `agent_api_keys` is the agent-scoped table (with
             // `company_id`) and is the correct analog here.
             let token_hash = pc_auth::hash_token(token);
-            let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-                "SELECT id, company_id FROM agent_api_keys                  WHERE key_hash = $1 AND revoked_at IS NULL",
-            )
-            .bind(&token_hash)
-            .fetch_optional(state.db.pool())
-            .await
-            .map_err(|err| err.to_string())?;
+            let row = AgentRepo::new(&state.db)
+                .find_api_key_id_company_by_hash(&token_hash)
+                .await
+                .map_err(|err| err.to_string())?;
             if let Some((_, key_company_id)) = row {
                 if let Some(requested) = company_id {
                     if key_company_id != requested {
@@ -124,15 +123,10 @@ async fn authorize_ws(
                         .map_err(|err| err.to_string())?
                 {
                     if let Some(requested) = company_id {
-                        let row: Option<(Uuid,)> = sqlx::query_as(
-                            "SELECT company_id FROM company_memberships                              WHERE user_id = $1 AND company_id = $2 AND status = 'active'",
-                        )
-                        .bind(&user_id)
-                        .bind(requested)
-                        .fetch_optional(state.db.pool())
-                        .await
-                        .map_err(|err| err.to_string())?;
-                        Ok(row.is_some())
+                        Ok(CompanyMemberRepo::new(&state.db)
+                            .is_active_member(&user_id, requested)
+                            .await
+                            .map_err(|err| err.to_string())?)
                     } else {
                         Ok(true)
                     }

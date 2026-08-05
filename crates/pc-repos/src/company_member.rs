@@ -309,6 +309,23 @@ impl<'a> CompanyMemberRepo<'a> {
         .await?;
         Ok(row.is_some())
     }
+    /// Round 183: live_events auth -- check if user_id is an active member of company.
+    pub async fn is_active_member(
+        &self,
+        user_id: &str,
+        company_id: Uuid,
+    ) -> RepoResult<bool> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM company_memberships \
+             WHERE user_id = $1 AND company_id = $2 AND status = 'active'",
+        )
+        .bind(user_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.is_some())
+    }
+
 
     /// Round 140: 列出某用户所有所属公司 id（含 archived/active）。供 profile 端点用。
     pub async fn list_company_ids_for_user(&self, user_id: &str) -> RepoResult<Vec<Uuid>> {
