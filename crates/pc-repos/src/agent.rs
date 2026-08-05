@@ -1674,3 +1674,36 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod round215_tests {
+    //! Round 215: 为 generate_agent_api_token 提供单元测试。
+    //!
+    //! 真实 DB 路径测试在 pc-repos/tests/round215_claim_api_key_repo.rs。
+
+    use super::generate_agent_api_token;
+
+    #[test]
+    fn token_has_pcp_prefix_and_expected_length() {
+        let token = generate_agent_api_token();
+        assert!(token.starts_with("pcp_"));
+        // prefix 4 chars + 48 hex chars = 52 chars
+        assert_eq!(token.len(), 52);
+    }
+
+    #[test]
+    fn token_hex_part_is_lowercase_hex() {
+        let token = generate_agent_api_token();
+        let hex_part = &token[4..];
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn tokens_are_unique_across_calls() {
+        // 24 random bytes = 192 bits of entropy. 100 tokens must be unique.
+        let mut tokens: Vec<String> = (0..100).map(|_| generate_agent_api_token()).collect();
+        tokens.sort();
+        tokens.dedup();
+        assert_eq!(tokens.len(), 100);
+    }
+}
