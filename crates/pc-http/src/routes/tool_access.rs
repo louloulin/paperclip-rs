@@ -16,8 +16,9 @@ use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
-    NewToolApplication, NewToolProfile, NewToolProfileEntry, PatchToolApplication,
-    ToolApplicationRow, ToolProfileEntryRow, ToolProfileRow, ToolRepo, ToolRuntimeSlotRow,
+    NewToolApplication, NewToolProfile, NewToolProfileEntry, NewToolStdioTemplate,
+    PatchToolApplication, ToolApplicationRow, ToolProfileEntryRow, ToolProfileRow,
+    ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
 };
 
 pub fn router() -> Router<AppState> {
@@ -1038,6 +1039,34 @@ fn tool_runtime_slot_json(row: ToolRuntimeSlotRow) -> Value {
     })
 }
 
+/// Round 103: ToolStdioTemplateRow -> Node 兼容 JSON。
+/// 真实字段：template_key, status, args, env_keys, tools, disabled_at
+/// 兼容老 client：保留 templateId/envSchema 别名（用真实列派生）
+fn tool_stdio_template_json(row: ToolStdioTemplateRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        // 真实列
+        "templateKey": row.template_key,
+        "name": row.name,
+        "description": row.description,
+        "status": row.status,
+        "command": row.command,
+        "args": row.args,
+        "envKeys": row.env_keys,
+        "tools": row.tools,
+        "createdByAgentId": row.created_by_agent_id,
+        "createdByUserId": row.created_by_user_id,
+        "disabledAt": row.disabled_at,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+        // 兼容老 client 别名
+        "templateId": row.template_key,
+        "envSchema": Value::Null,
+    })
+}
+
+
 
 
 // ============== Tool applications / profiles / policies / runtime ==============
@@ -1310,29 +1339,16 @@ async fn list_tool_runtime_slots(
     Ok(Json(json!({ "items": items })))
 }
 
+// Round 103: 仓储化。原 SQL 用不存在的列 `env_schema`；
+// 真实 schema 是 args/env_keys/tools 三个 jsonb 字段。
 async fn list_tool_stdio_templates(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, Option<String>, Option<Value>)> = sqlx::query_as(
-        "SELECT id, name, command, description, env_schema FROM tool_stdio_command_templates          WHERE company_id = $1 ORDER BY name ASC LIMIT 200",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, name, command, description, env_schema)| {
-            json!({
-                "id": id,
-                "name": name,
-                "command": command,
-                "description": description,
-                "envSchema": env_schema,
-            })
-        })
-        .collect();
+    let rows = ToolRepo::new(&state.db)
+        .list_stdio_templates_by_company(company_id)
+        .await?;
+    let items: Vec<Value> = rows.into_iter().map(tool_stdio_template_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
@@ -2124,6 +2140,9 @@ async fn get_effective_profiles_for_agent(
 struct CreateStdioTemplateBody {
     name: String,
     command: String,
+    /// Round 103: 老 client 仍可传 template_id，会被作为 template_key 落库。
+    #[serde(default)]
+    template_id: Option<String>,
     #[serde(default)]
     args: Vec<String>,
     description: Option<String>,
@@ -2131,67 +2150,53 @@ struct CreateStdioTemplateBody {
     env_keys: Vec<String>,
     #[serde(default)]
     tools: Vec<Value>,
+    /// Round 103: env_schema 在真实 schema 中不存在；保留字段用于向后兼容但忽略。
+    #[serde(default)]
     env_schema: Option<Value>,
 }
 
+// Round 103: 仓储化。SQL 列名 `template_id → template_key`、`env_schema` 直接去除。
 async fn create_stdio_template_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateStdioTemplateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if body.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("name is required".into()));
-    }
-    if body.command.trim().is_empty() {
-        return Err(ApiError::BadRequest("command is required".into()));
-    }
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_stdio_command_templates WHERE company_id = $1 AND name = $2",
-    )
-    .bind(company_id)
-    .bind(&body.name)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_some() {
+    let repo = ToolRepo::new(&state.db);
+    if let Some(existing) = repo
+        .find_stdio_template_id_by_name(company_id, &body.name)
+        .await?
+    {
+        // 已存在：返回 Conflict。正常创建会跳过。
+        let _ = existing;
         return Err(ApiError::Conflict(format!("stdio template {} already exists", body.name)));
     }
-    let template_id = format!("stio_{}", Uuid::now_v7().simple());
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_stdio_command_templates (company_id, template_id, name, command, args, description, env_keys, tools, env_schema) \
-         VALUES ($1, $2, $3, $4, $5::text[], $6, $7::text[], $8::jsonb[], $9) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&template_id)
-    .bind(&body.name)
-    .bind(&body.command)
-    .bind(&body.args)
-    .bind(body.description.as_deref())
-    .bind(&body.env_keys)
-    .bind(serde_json::Value::Array(body.tools.clone()))
-    .bind(body.env_schema.clone().unwrap_or_else(|| json!({})))
-    .fetch_one(state.db.pool())
-    .await?;
+    // 若 body.template_id 字段被显式提供，使用它，否则自动生成
+    let template_key = body
+        .template_id
+        .clone()
+        .unwrap_or_else(|| format!("stio_{}", Uuid::now_v7().simple()));
+    // args 字段允许 Vec<String>，转 jsonb
+    let args_json = if body.args.is_empty() { json!([]) } else { json!(body.args.clone()) };
+    let env_keys_json = if body.env_keys.is_empty() { json!([]) } else { json!(body.env_keys.clone()) };
+    let tools_json = serde_json::Value::Array(body.tools.clone());
+    let input = NewToolStdioTemplate {
+        company_id,
+        template_key,
+        name: body.name.clone(),
+        description: body.description.clone(),
+        command: body.command.clone(),
+        args: args_json,
+        env_keys: env_keys_json,
+        tools: tools_json,
+        created_by_agent_id: None,
+        created_by_user_id: None,
+    };
+    let row = repo.create_stdio_template(&input).await?;
     state.realtime.publish(
-        LiveEvent::new("tool.stdio_template.created", "tool_stdio_template", row.0)
+        LiveEvent::new("tool.stdio_template.created", "tool_stdio_template", row.id)
             .with_company(company_id),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
-            "id": row.0,
-            "companyId": company_id,
-            "templateId": template_id,
-            "name": body.name,
-            "command": body.command,
-            "args": body.args,
-            "description": body.description,
-            "envKeys": body.env_keys,
-            "tools": body.tools,
-            "envSchema": body.env_schema,
-        })),
-    ))
+    Ok((StatusCode::CREATED, Json(tool_stdio_template_json(row))))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2200,38 +2205,16 @@ struct DisableStdioTemplateBody {
     reason: Option<String>,
 }
 
+// Round 103: 仓储化。SQL 列名 `template_id → template_key`、`disabled_reason` 直接去除
+// （schema 里没有这一列，禁用原因只通过 LiveEvent.data 透传）。
 async fn disable_stdio_template_route(
     State(state): State<AppState>,
     Path((company_id, template_id)): Path<(Uuid, String)>,
     Json(body): Json<DisableStdioTemplateBody>,
 ) -> ApiResult<Json<Value>> {
-    // Try by UUID first, then by template_id string
-    let mut tx = state.db.pool().begin().await?;
-    let affected = if let Ok(uuid) = Uuid::parse_str(&template_id) {
-        sqlx::query(
-            "UPDATE tool_stdio_command_templates SET disabled_at = now(), disabled_reason = $1, updated_at = now() \
-             WHERE company_id = $2 AND id = $3 AND disabled_at IS NULL",
-        )
-        .bind(body.reason.as_deref())
-        .bind(company_id)
-        .bind(uuid)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected()
-    } else {
-        sqlx::query(
-            "UPDATE tool_stdio_command_templates SET disabled_at = now(), disabled_reason = $1, updated_at = now() \
-             WHERE company_id = $2 AND template_id = $3 AND disabled_at IS NULL",
-        )
-        .bind(body.reason.as_deref())
-        .bind(company_id)
-        .bind(&template_id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected()
-    };
-    tx.commit().await?;
-    if affected == 0 {
+    let repo = ToolRepo::new(&state.db);
+    let n = repo.disable_stdio_template(company_id, &template_id).await?;
+    if !n {
         return Err(ApiError::NotFound(format!("stdio template {template_id}")));
     }
     state.realtime.publish(

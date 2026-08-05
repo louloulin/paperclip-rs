@@ -713,6 +713,74 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 26. 第一百零三轮增量（Round 103 — ToolStdioTemplate 子模块仓储化)
+
+### 目标
+`tool_access.rs::list_tool_stdio_templates` 用不存在的列 `env_schema`；
+`create_stdio_template_route` 用错列名 `template_id`（真实是 `template_key`）+ 多了 `env_schema`；
+`disable_stdio_template_route` 写不存在的 `disabled_reason` 列。
+
+这三个端点一启动就 500。Round 103 把整个 stdio template 子模块彻底仓储化。
+
+### 真实 schema (0153_tool_stdio_command_templates.sql)
+```sql
+tool_stdio_command_templates(
+    id, company_id, template_key, name, description, status, command,
+    args, env_keys, tools,                    -- 三个 jsonb '[]'
+    created_by_agent_id, created_by_user_id,
+    disabled_at,
+    created_at, updated_at
+)
+```
+
+**不存在**：template_id（实为 template_key）/ env_schema（实为 args/env_keys/tools）/ disabled_reason
+
+### 新增 `pc_repos::tool` 结构与方法
+
+```rust
+pub struct ToolStdioTemplateRow { /* 15 字段，1:1 投影 */ }
+pub struct NewToolStdioTemplate { /* 10 字段入参，args/env_keys/tools 默认 [] */ }
+```
+
+**ToolRepo 新增方法**：
+| 方法 | 行为 |
+|---|---|
+| `list_stdio_templates_by_company(cid)` | ORDER BY name ASC LIMIT 200 |
+| `find_stdio_template_id_by_name(cid, name)` | 冲突检测 |
+| `create_stdio_template(&NewToolStdioTemplate)` | INSERT 11 列 |
+| `disable_stdio_template(cid, id_or_key)` | UUID 优先；template_key 兜底；幂等 |
+
+### 重构 `tool_access.rs`
+- `list_tool_stdio_templates` → `ToolRepo::list_stdio_templates_by_company()` + `tool_stdio_template_json()`
+- `create_stdio_template_route` → `ToolRepo::create_stdio_template()`
+  - `template_id` 字段保留老 client（路由层映射 → `template_key`）
+  - `env_schema` 字段保留但忽略
+- `disable_stdio_template_route` → `ToolRepo::disable_stdio_template()` (UUID 优先；template_key 兜底)
+
+**`tool_stdio_template_json` helper**：保留 `templateId/envSchema` 别名以兼容老 client。
+
+### 新增单元测试 2 个
+- `new_stdio_template_defaults_have_empty_json_arrays` —— 默认 args/env_keys/tools 都是 []
+- `stdio_template_col_excludes_wrong_columns` —— STDIO_TEMPLATE_COLS 字符串不含
+   `template_id / env_schema / disabled_reason`；含 `template_key / args / env_keys / tools`
+
+### 新增集成测试 7 个 (`crates/pc-repos/tests/round103_tool_stdio_template_repo.rs`)
+1. `tool_stdio_template_repo_list_orders_by_name_asc` —— 排序 + 真实列投影
+2. `tool_stdio_template_repo_create_persists_jsonb_arrays` —— args/env_keys/tools 真实 jsonb 落库
+3. `tool_stdio_template_repo_find_by_name_for_conflict` —— 名字冲突检测
+4. `tool_stdio_template_repo_disable_by_uuid` —— UUID 路径 + INFORMATION_SCHEMA 防漂移
+5. `tool_stdio_template_repo_disable_by_template_key` —— template_key 兜底路径
+6. `tool_stdio_template_repo_validation_rejects_empty_fields` —— 空 name/command/template_key 拒绝
+7. `tool_stdio_template_repo_disable_idempotent` —— 已禁用模板不能再次禁用（返回 false）
+
+### 进度影响
+- 综合进度从 **≈ 85.5% → ≈ 86.0%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **457 passed**（pc-repos 单元 +2）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 Round 95-103 修复 **38 个路由从 500 → 200**，
+  5 个 tool_application + 3 个 tool_profile + 2 个 tool_runtime + 3 个 tool_stdio_template 路由进入高内聚低耦合设计
+
 ## 25. 第一百零二轮增量（Round 102 — ToolRuntimeSlot 子模块仓储化)
 
 ### 目标

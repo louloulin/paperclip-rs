@@ -1072,6 +1072,164 @@ impl<'a> ToolRepo<'a> {
 
 const RUNTIME_SLOT_COLS: &str = "id, company_id, connection_id, slot_key, status, provider_ref, health_status, health_message, last_started_at, last_used_at, idle_deadline_at, metadata, created_at, updated_at";
 
+// ============================================================
+// Round 103: ToolStdioTemplate 仓储层
+// ============================================================
+//
+// 真实表 schema (0153_tool_stdio_command_templates.sql)：
+//   tool_stdio_command_templates(
+//     id, company_id, template_key, name, description, status, command,
+//     args, env_keys, tools,            -- 三个 jsonb DEFAULT '[]'
+//     created_by_agent_id, created_by_user_id,
+//     disabled_at,
+//     created_at, updated_at
+//   )
+//
+// **不存在**的列：`template_id`（实为 `template_key`）/ `env_schema`（实为 args/env_keys/tools 三个 jsonb）/ `disabled_reason`
+// 之前路由层的 list/create/disable 三个端点都用了错列。
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStdioTemplateRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub template_key: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub command: String,
+    pub args: Value,        // jsonb '[]'
+    pub env_keys: Value,    // jsonb '[]'
+    pub tools: Value,       // jsonb '[]'
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub disabled_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewToolStdioTemplate {
+    pub company_id: Uuid,
+    pub template_key: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub command: String,
+    #[serde(default = "default_stdio_args")]
+    pub args: Value,
+    #[serde(default = "default_stdio_env_keys")]
+    pub env_keys: Value,
+    #[serde(default = "default_stdio_tools")]
+    pub tools: Value,
+    #[serde(default)]
+    pub created_by_agent_id: Option<Uuid>,
+    #[serde(default)]
+    pub created_by_user_id: Option<String>,
+}
+
+fn default_stdio_args() -> Value { serde_json::json!([]) }
+fn default_stdio_env_keys() -> Value { serde_json::json!([]) }
+fn default_stdio_tools() -> Value { serde_json::json!([]) }
+
+impl<'a> ToolRepo<'a> {
+    pub async fn list_stdio_templates_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolStdioTemplateRow>> {
+        let sql = format!(
+            "SELECT {STDIO_TEMPLATE_COLS} FROM tool_stdio_command_templates              WHERE company_id=$1              ORDER BY name ASC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, ToolStdioTemplateRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    /// 复合冲突检测：名字重复。
+    pub async fn find_stdio_template_id_by_name(
+        &self,
+        company_id: Uuid,
+        name: &str,
+    ) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_stdio_command_templates WHERE company_id=$1 AND name=$2",
+        )
+        .bind(company_id)
+        .bind(name)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    pub async fn create_stdio_template(
+        &self,
+        t: &NewToolStdioTemplate,
+    ) -> RepoResult<ToolStdioTemplateRow> {
+        if t.name.trim().is_empty() {
+            return Err(RepoError::Invalid("name must not be empty".into()));
+        }
+        if t.command.trim().is_empty() {
+            return Err(RepoError::Invalid("command must not be empty".into()));
+        }
+        if t.template_key.trim().is_empty() {
+            return Err(RepoError::Invalid("template_key must not be empty".into()));
+        }
+        let sql = format!(
+            "INSERT INTO tool_stdio_command_templates                 (company_id, template_key, name, description, status, command, args, env_keys, tools,                  created_by_agent_id, created_by_user_id)              VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10)              RETURNING {STDIO_TEMPLATE_COLS}",
+        );
+        Ok(sqlx::query_as::<_, ToolStdioTemplateRow>(&sql)
+            .bind(t.company_id)
+            .bind(&t.template_key)
+            .bind(&t.name)
+            .bind(t.description.as_deref())
+            .bind(&t.command)
+            .bind(&t.args)
+            .bind(&t.env_keys)
+            .bind(&t.tools)
+            .bind(t.created_by_agent_id)
+            .bind(t.created_by_user_id.as_deref())
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    /// Round 103: 禁用 stdio template. 默认按 UUID 找；template_key 兜底。
+    /// `disabled_reason` 不存在，所以不写该字段。
+    pub async fn disable_stdio_template(
+        &self,
+        company_id: Uuid,
+        id_or_key: &str,
+    ) -> RepoResult<bool> {
+        // 先按 UUID 试
+        if let Ok(uuid) = Uuid::parse_str(id_or_key) {
+            let n = sqlx::query(
+                "UPDATE tool_stdio_command_templates SET                      disabled_at = now(), updated_at = now()                      WHERE company_id=$1 AND id=$2 AND disabled_at IS NULL",
+            )
+            .bind(company_id)
+            .bind(uuid)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+            if n > 0 {
+                return Ok(true);
+            }
+        }
+        // 再按 template_key 试
+        let n = sqlx::query(
+            "UPDATE tool_stdio_command_templates SET                  disabled_at = now(), updated_at = now()                  WHERE company_id=$1 AND template_key=$2 AND disabled_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(id_or_key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+}
+
+const STDIO_TEMPLATE_COLS: &str = "id, company_id, template_key, name, description, status, command, args, env_keys, tools, created_by_agent_id, created_by_user_id, disabled_at, created_at, updated_at";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,5 +1373,40 @@ mod tests {
         assert!(RUNTIME_SLOT_COLS.contains("last_started_at"));
         assert!(RUNTIME_SLOT_COLS.contains("last_used_at"));
         assert!(RUNTIME_SLOT_COLS.contains("health_status"));
+    }
+
+    // ---- Round 103: ToolStdioTemplate ----
+
+    #[test]
+    fn new_stdio_template_defaults_have_empty_json_arrays() {
+        let t = NewToolStdioTemplate {
+            company_id: Uuid::new_v4(),
+            template_key: "k".into(),
+            name: "n".into(),
+            description: None,
+            command: "echo".into(),
+            args: default_stdio_args(),
+            env_keys: default_stdio_env_keys(),
+            tools: default_stdio_tools(),
+            created_by_agent_id: None,
+            created_by_user_id: None,
+        };
+        assert_eq!(t.args, serde_json::json!([]));
+        assert_eq!(t.env_keys, serde_json::json!([]));
+        assert_eq!(t.tools, serde_json::json!([]));
+    }
+
+    #[test]
+    fn stdio_template_col_excludes_wrong_columns() {
+        // 真实 schema 没有 template_id (应是 template_key)、env_schema、disabled_reason
+        assert!(!STDIO_TEMPLATE_COLS.contains("template_id "));
+        assert!(!STDIO_TEMPLATE_COLS.contains("env_schema"));
+        assert!(!STDIO_TEMPLATE_COLS.contains("disabled_reason"));
+        // 必须包含真实列
+        assert!(STDIO_TEMPLATE_COLS.contains("template_key"));
+        assert!(STDIO_TEMPLATE_COLS.contains("args"));
+        assert!(STDIO_TEMPLATE_COLS.contains("env_keys"));
+        assert!(STDIO_TEMPLATE_COLS.contains("tools"));
+        assert!(STDIO_TEMPLATE_COLS.contains("status"));
     }
 }
