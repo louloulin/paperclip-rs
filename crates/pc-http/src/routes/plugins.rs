@@ -27,6 +27,7 @@ use pc_plugin_protocol::{
 };
 use pc_plugin_protocol::{GetDataParams, PerformActionParams};
 use pc_realtime::LiveEvent;
+use pc_repos::instance_user_role::InstanceUserRoleRepo;
 use pc_repos::plugin::{
     PluginConfigRow, PluginJobRow, PluginJobRunRow, PluginLogRow, PluginRegistration, PluginRepo,
     PluginRow, PluginWebhookDeliveryRow,
@@ -167,13 +168,9 @@ async fn require_authenticated(state: &AppState, headers: &HeaderMap) -> ApiResu
 
 async fn require_instance_admin(state: &AppState, headers: &HeaderMap) -> ApiResult<String> {
     let user_id = require_authenticated(state, headers).await?;
-    let is_admin: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM instance_user_roles \
-         WHERE user_id = $1 AND role = 'instance_admin')",
-    )
-    .bind(&user_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let is_admin = InstanceUserRoleRepo::new(&state.db)
+        .is_admin(&user_id)
+        .await?;
     if !is_admin {
         return Err(ApiError::Forbidden("instance admin access required".into()));
     }
@@ -432,13 +429,11 @@ async fn bridge_data(
         .and_then(Value::as_str)
         .and_then(|s| Uuid::parse_str(s).ok());
     let data = body.get("data").cloned().unwrap_or(json!({}));
-    let result: Result<Uuid, _> = sqlx::query_scalar(
-        "INSERT INTO plugin_entities             (plugin_id, entity_type, scope_kind, scope_id, external_id, title, data, company_id)          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)          ON CONFLICT (company_id, plugin_id, entity_type, external_id)          DO UPDATE SET data = EXCLUDED.data, title = EXCLUDED.title, updated_at = now()          RETURNING id",
-    )
-    .bind(pid).bind(entity_type).bind(scope_kind).bind(scope_id)
-    .bind(external_id).bind(title).bind(data).bind(cid)
-    .fetch_one(state.db.pool())
-    .await;
+    let result: Result<Uuid, _> = PluginRepo::new(&state.db)
+        .upsert_entity(
+            pid, entity_type, scope_kind, scope_id.as_deref(), external_id.as_deref(), title.as_deref(), &data, cid,
+        )
+        .await;
     match result {
         Ok(id) => Ok((
             StatusCode::OK,
@@ -501,12 +496,9 @@ async fn bridge_action(
         .unwrap_or("(no message)")
         .to_string();
     let meta = body.get("data").cloned().unwrap_or(json!({}));
-    let result: Result<Uuid, _> = sqlx::query_scalar(
-        "INSERT INTO plugin_logs (plugin_id, level, message, meta) VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(pid).bind(level).bind(message).bind(meta)
-    .fetch_one(state.db.pool())
-    .await;
+    let result: Result<Uuid, _> = PluginRepo::new(&state.db)
+        .create_log(pid, level, &message, &meta)
+        .await;
     match result {
         Ok(id) => {
             state.realtime.publish(
@@ -565,12 +557,9 @@ async fn plugin_data(
         .get("companyId")
         .and_then(Value::as_str)
         .and_then(|s| Uuid::parse_str(s).ok());
-    let row: Result<Option<(Uuid, Value)>, _> = sqlx::query_as(
-        "SELECT id, data FROM plugin_entities          WHERE plugin_id = $1 AND entity_type = $2 AND external_id = $3            AND ($4::uuid IS NULL OR company_id = $4)          LIMIT 1",
-    )
-    .bind(pid).bind(&key).bind(external_id).bind(cid)
-    .fetch_optional(state.db.pool())
-    .await;
+    let row: Result<Option<(Uuid, Value)>, _> = PluginRepo::new(&state.db)
+        .find_entity(pid, &key, Some(external_id), cid)
+        .await;
     match row {
         Ok(Some((id, data))) => Ok((
             StatusCode::OK,
@@ -624,12 +613,9 @@ async fn plugin_action(
         .get("schedule")
         .and_then(Value::as_str)
         .unwrap_or("on_demand");
-    let result: Result<Uuid, _> = sqlx::query_scalar(
-        "INSERT INTO plugin_jobs (plugin_id, job_key, schedule, status) VALUES ($1, $2, $3, 'active') ON CONFLICT (plugin_id, job_key) DO UPDATE SET schedule = EXCLUDED.schedule, updated_at = now() RETURNING id",
-    )
-    .bind(pid).bind(&key).bind(schedule)
-    .fetch_one(state.db.pool())
-    .await;
+    let result: Result<Uuid, _> = PluginRepo::new(&state.db)
+        .upsert_job(pid, &key, schedule)
+        .await;
     match result {
         Ok(id) => {
             state.realtime.publish(
@@ -903,14 +889,10 @@ async fn upgrade_plugin(
         .get("version")
         .and_then(|v| v.as_str())
         .unwrap_or("latest");
-    sqlx::query(
-        "UPDATE plugins SET manifest = manifest || jsonb_build_object('pendingVersion', $2::text),                 status = 'upgrade_pending', updated_at = now()          WHERE id = $1",
-    )
-    .bind(plugin.id)
-    .bind(new_version)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    PluginRepo::new(&state.db)
+        .set_pending_upgrade(plugin.id, new_version)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -1078,15 +1060,10 @@ async fn receive_plugin_webhook(
             return Err(ApiError::Unauthorized("invalid webhook secret".into()));
         }
     }
-    let delivery_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO plugin_webhook_deliveries (plugin_id, endpoint_key, payload, status, received_at)          VALUES ($1, $2, $3, 'queued', now()) RETURNING id",
-    )
-    .bind(plugin_uuid)
-    .bind(&endpoint_key)
-    .bind(&body)
-    .fetch_one(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let delivery_id = PluginRepo::new(&state.db)
+        .create_webhook_delivery(plugin_uuid, &endpoint_key, &body)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
         LiveEvent::new("plugin.webhook.received", "plugin", plugin_uuid).with_data(json!({
             "deliveryId": delivery_id,

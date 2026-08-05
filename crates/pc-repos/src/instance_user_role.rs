@@ -87,4 +87,15 @@ impl<'a> InstanceUserRoleRepo<'a> {
     pub async fn demote(&self, user_id: &str) -> RepoResult<u64> {
         demote(self.db, user_id).await
     }
+    /// 检查某 user 是否为 instance_admin。
+    pub async fn is_admin(&self, user_id: &str) -> RepoResult<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM instance_user_roles \
+             WHERE user_id = $1 AND role = 'instance_admin')",
+        )
+        .bind(user_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
 }

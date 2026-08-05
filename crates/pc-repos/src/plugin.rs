@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 
-use crate::Db;
+use crate::{Db, RepoResult};
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -496,6 +496,147 @@ impl<'a> PluginRepo<'a> {
         .bind(limit.clamp(1, 500))
         .fetch_all(self.db.pool())
         .await
+    }
+    // ---- Round 166: plugins route 仓储化新增方法 ----
+
+    /// Round 166: 写入/upsert plugin_entities（按 company_id+plugin_id+entity_type+external_id 唯一）。
+    /// 返回新行 id。
+    pub async fn upsert_entity(
+        &self,
+        plugin_id: Uuid,
+        entity_type: &str,
+        scope_kind: &str,
+        scope_id: Option<&str>,
+        external_id: Option<&str>,
+        title: Option<&str>,
+        data: &Value,
+        company_id: Option<Uuid>,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO plugin_entities \
+                (plugin_id, entity_type, scope_kind, scope_id, external_id, title, data, company_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             ON CONFLICT (company_id, plugin_id, entity_type, external_id) \
+             DO UPDATE SET data = EXCLUDED.data, title = EXCLUDED.title, updated_at = now() \
+             RETURNING id",
+        )
+        .bind(plugin_id)
+        .bind(entity_type)
+        .bind(scope_kind)
+        .bind(scope_id)
+        .bind(external_id)
+        .bind(title)
+        .bind(data)
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Round 166: 写入一条 plugin_log。返回新行 id。
+    pub async fn create_log(
+        &self,
+        plugin_id: Uuid,
+        level: &str,
+        message: &str,
+        meta: &Value,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO plugin_logs (plugin_id, level, message, meta) \
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(plugin_id)
+        .bind(level)
+        .bind(message)
+        .bind(meta)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Round 166: 取一条 plugin_entity（按 plugin_id + entity_type + external_id）。
+    pub async fn find_entity(
+        &self,
+        plugin_id: Uuid,
+        entity_type: &str,
+        external_id: Option<&str>,
+        company_id: Option<Uuid>,
+    ) -> RepoResult<Option<(Uuid, Value)>> {
+        let row: Option<(Uuid, Value)> = sqlx::query_as(
+            "SELECT id, data FROM plugin_entities \
+             WHERE plugin_id = $1 AND entity_type = $2 AND external_id = $3 \
+               AND ($4::uuid IS NULL OR company_id = $4) LIMIT 1",
+        )
+        .bind(plugin_id)
+        .bind(entity_type)
+        .bind(external_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 166: 写入/upsert plugin_jobs（按 plugin_id+job_key 唯一）。
+    /// 返回新行 id。
+    pub async fn upsert_job(
+        &self,
+        plugin_id: Uuid,
+        job_key: &str,
+        schedule: &str,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO plugin_jobs (plugin_id, job_key, schedule, status) \
+             VALUES ($1, $2, $3, 'active') \
+             ON CONFLICT (plugin_id, job_key) DO UPDATE SET \
+                schedule = EXCLUDED.schedule, updated_at = now() \
+             RETURNING id",
+        )
+        .bind(plugin_id)
+        .bind(job_key)
+        .bind(schedule)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Round 166: 设置 plugin 的 pendingVersion + status='upgrade_pending'。
+    pub async fn set_pending_upgrade(
+        &self,
+        plugin_id: Uuid,
+        new_version: &str,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE plugins SET \
+                manifest = manifest || jsonb_build_object('pendingVersion', $2::text), \
+                status = 'upgrade_pending', updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(plugin_id)
+        .bind(new_version)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 166: 写入一条 webhook delivery。返回新行 id。
+    pub async fn create_webhook_delivery(
+        &self,
+        plugin_id: Uuid,
+        endpoint_key: &str,
+        payload: &Value,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO plugin_webhook_deliveries \
+                (plugin_id, endpoint_key, payload, status, received_at) \
+             VALUES ($1, $2, $3, 'queued', now()) RETURNING id",
+        )
+        .bind(plugin_id)
+        .bind(endpoint_key)
+        .bind(payload)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
     }
 }
 
