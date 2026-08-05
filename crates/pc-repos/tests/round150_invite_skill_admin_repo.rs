@@ -27,7 +27,7 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
 
 async fn insert_user(db: &Db, tag: &str) -> String {
     let id = format!("u_r150_{}_{}", tag, Uuid::new_v4().simple());
-    sqlx::query("INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)")
+    sqlx::query(r#"INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)"#)
         .bind(&id)
         .bind(format!("r150-{tag}"))
         .bind(format!("r150_{tag}_{id}@x"))
@@ -40,8 +40,8 @@ async fn insert_user(db: &Db, tag: &str) -> String {
 async fn insert_invite(db: &Db, company_id: Uuid, token_hash: &str, invited_by: Option<&str>) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO invites (id, company_id, token_hash, defaults_payload, expires_at, invited_by_user_id) \
-         VALUES ($1, $2, $3, '{}'::jsonb, now() + interval '7 days', $4)",
+        r#"INSERT INTO invites (id, company_id, token_hash, defaults_payload, expires_at, invited_by_user_id)
+         VALUES ($1, $2, $3, '{}'::jsonb, now() + interval '7 days', $4)"#,
     )
     .bind(id)
     .bind(company_id)
@@ -208,6 +208,6 @@ async fn skill_find_content_by_key_miss() {
 #[test]
 fn instance_user_role_row_typecheck() {
     use pc_repos::instance_user_role::InstanceUserRoleRow;
-    fn assert_from_row<T: sqlx::FromRow<sqlx::postgres::PgRow>>() {}
+    fn assert_from_row<T: for<'a> sqlx::FromRow<'a, sqlx::postgres::PgRow>>() {}
     assert_from_row::<InstanceUserRoleRow>();
 }

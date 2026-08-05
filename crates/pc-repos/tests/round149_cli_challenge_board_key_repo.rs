@@ -17,7 +17,7 @@ async fn db() -> Db {
 
 async fn insert_user(db: &Db, tag: &str) -> String {
     let id = format!("u_r149_{}_{}", tag, Uuid::new_v4().simple());
-    sqlx::query("INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)")
+    sqlx::query(r#"INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)"#)
         .bind(&id).bind(format!("r149-{tag}")).bind(format!("r149_{tag}_{id}@x"))
         .execute(db.pool()).await.expect("user");
     id
@@ -200,7 +200,7 @@ async fn board_key_create_optional_expires_at() {
 #[test]
 fn challenge_row_field_types() {
     use pc_repos::cli_challenge::ChallengeRow;
-    fn assert_from_row<T: sqlx::FromRow<sqlx::postgres::PgRow>>() {}
+    fn assert_from_row<T: for<'a> sqlx::FromRow<'a, sqlx::postgres::PgRow>>() {}
     assert_from_row::<ChallengeRow>();
 }
 
@@ -208,6 +208,6 @@ fn challenge_row_field_types() {
 #[test]
 fn board_key_row_field_types() {
     use pc_repos::board_key::BoardKeyRow;
-    fn assert_from_row<T: sqlx::FromRow<sqlx::postgres::PgRow>>() {}
+    fn assert_from_row<T: for<'a> sqlx::FromRow<'a, sqlx::postgres::PgRow>>() {}
     assert_from_row::<BoardKeyRow>();
 }
