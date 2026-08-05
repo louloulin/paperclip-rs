@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
+use pc_repos::tool::{NewToolApplication, PatchToolApplication, ToolApplicationRow, ToolRepo};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -952,41 +953,37 @@ async fn upsert_oauth_state(state: &AppState, company_id: Uuid, conn: Uuid) -> A
 }
 
 
+/// Round 100: 把 ToolApplicationRow 转成 Node 兼容的 JSON 形状：
+/// - `type` 列重命名 `kind`（保持前端 key 不变）
+/// - 把 `metadata.description`/`metadata.config` 平级映射
+fn tool_application_json(row: ToolApplicationRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "name": row.name,
+        "kind": row.kind,
+        "description": row.description(),
+        "config": row.config(),
+        "status": row.status,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+    })
+}
+
 // ============== Tool applications / profiles / policies / runtime ==============
 
+// Round 100: 仓储化。直接用 ToolRepo.list_by_company()。
 async fn list_tool_applications(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 99 修复：原 SQL 引用不存在的列 kind/description/config；
-    // 真实表 `tool_applications` 列是 type/metadata。
-    // 这里读 metadata jsonb（含 description + config），映射回前端期望的字段。
-    let rows: Vec<(Uuid, String, String, Value, Timestamp)> = sqlx::query_as(
-        "SELECT id, name, type, metadata, created_at FROM tool_applications \
-         WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, name, kind, metadata, created_at)| {
-            let description = metadata.get("description").and_then(Value::as_str).map(String::from);
-            let config = metadata.get("config").cloned().unwrap_or_else(|| json!({}));
-            json!({
-                "id": id,
-                "name": name,
-                "kind": kind,
-                "description": description,
-                "config": config,
-                "createdAt": created_at,
-            })
-        })
-        .collect();
+    let repo = ToolRepo::new(&state.db);
+    let rows = repo.list_by_company(company_id).await?;
+    let items: Vec<Value> = rows.into_iter().map(tool_application_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
+// Round 100: 仓储化。用 ToolRepo.create_application()，description 自动嵌入 metadata。
 async fn create_tool_application(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -1000,146 +997,128 @@ async fn create_tool_application(
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("mcp");
-    let description = body.get("description").and_then(Value::as_str);
-    let config = body.get("config").cloned().unwrap_or_else(|| json!({}));
-    // Round 99 修复：合并 description + config 到 metadata jsonb
-    let mut metadata = config.clone();
-    if let Some(d) = description {
-        metadata["description"] = json!(d);
+    let description = body.get("description").and_then(Value::as_str).map(String::from);
+    // config 走 metadata.json['config'] 子键
+    let mut metadata = body
+        .get("config")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
     }
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO tool_applications (company_id, name, type, metadata) \
-         VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(name)
-    .bind(kind)
-    .bind(&metadata)
-    .fetch_one(state.db.pool())
-    .await?;
-    state
-        .realtime
-        .publish(LiveEvent::new("tool.application.created", "tool_application", id)
-            .with_company(company_id));
-    Ok(Json(json!({
-        "id": id,
-        "companyId": company_id,
-        "name": name,
-        "kind": kind,
-        "description": description,
-        "config": config,
-    })))
+    if let Some(obj) = metadata.as_object_mut() {
+        if let Some(d) = &description {
+            obj.insert("description".into(), json!(d));
+        }
+    }
+    // 还要带上请求中其它任意 metadata 子键
+    if let Some(extra) = body.get("metadata").and_then(Value::as_object) {
+        if let Some(obj) = metadata.as_object_mut() {
+            for (k, v) in extra {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    let input = NewToolApplication {
+        company_id,
+        name: name.to_string(),
+        kind: kind.to_string(),
+        description: description.clone(),
+        metadata: metadata.clone(),
+    };
+    let row = ToolRepo::new(&state.db).create_application(&input).await?;
+    state.realtime.publish(
+        LiveEvent::new("tool.application.created", "tool_application", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(Json(tool_application_json(row)))
 }
 
+// Round 100: 仓储化。用 ToolRepo.get_by_id() 全局按 id 查。
 async fn get_tool_application(
     State(state): State<AppState>,
     Path(application_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, String, String, Value, Timestamp)> = sqlx::query_as(
-        "SELECT company_id, name, type, metadata, created_at FROM tool_applications WHERE id = $1",
-    )
-    .bind(application_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id, name, kind, metadata, created_at) = row
+    let row = ToolRepo::new(&state.db)
+        .get_by_id(application_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
-    let description = metadata.get("description").and_then(Value::as_str).map(String::from);
-    let config = metadata.get("config").cloned().unwrap_or_else(|| json!({}));
-    Ok(Json(json!({
-        "id": application_id,
-        "companyId": company_id,
-        "name": name,
-        "kind": kind,
-        "description": description,
-        "config": config,
-        "createdAt": created_at,
-    })))
+    Ok(Json(tool_application_json(row)))
 }
 
+// Round 100: 仓储化。用 ToolRepo.patch_application()，description/config 自动走 metadata patch。
 async fn patch_tool_application(
     State(state): State<AppState>,
     Path((company_id, application_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let name = body.get("name").and_then(Value::as_str);
-    let description = body.get("description").and_then(Value::as_str);
-    let config = body.get("config").cloned();
-    // Round 99 修复：用 jsonb 合并的方式 patch metadata
-    let mut patch_meta = serde_json::Map::new();
-    if let Some(d) = description {
-        patch_meta.insert("description".into(), json!(d));
+    let patch = PatchToolApplication {
+        name: body.get("name").and_then(Value::as_str).map(String::from),
+        description: body.get("description").and_then(Value::as_str).map(String::from),
+        config: body.get("config").cloned(),
+        status: body.get("status").and_then(Value::as_str).map(String::from),
+        metadata_merge: body
+            .get("metadataMerge")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default(),
+    };
+    let n = ToolRepo::new(&state.db)
+        .patch_application(company_id, application_id, &patch)
+        .await?;
+    if !n {
+        return Err(ApiError::NotFound(format!("tool application {application_id}")));
     }
-    if let Some(c) = config {
-        patch_meta.insert("config".into(), c);
-    }
-    sqlx::query(
-        "UPDATE tool_applications SET \
-            name = COALESCE($1, name), \
-            metadata = metadata || $2::jsonb, \
-            updated_at = now() \
-         WHERE company_id = $3 AND id = $4",
-    )
-    .bind(name)
-    .bind(serde_json::Value::Object(patch_meta))
-    .bind(company_id)
-    .bind(application_id)
-    .execute(state.db.pool())
-    .await?;
-    state
-        .realtime
-        .publish(LiveEvent::new("tool.application.updated", "tool_application", application_id)
-            .with_company(company_id));
+    state.realtime.publish(
+        LiveEvent::new("tool.application.updated", "tool_application", application_id)
+            .with_company(company_id),
+    );
     Ok(Json(json!({ "id": application_id, "updated": true })))
 }
 
+// Round 100: 仓储化。先用 ToolRepo.get_by_id 拿 company_id。
 async fn patch_tool_application_by_id(
     State(state): State<AppState>,
     Path(application_id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM tool_applications WHERE id = $1",
-    )
-    .bind(application_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id,) = row
+    let company_id = ToolRepo::new(&state.db)
+        .get_by_id(application_id)
+        .await?
+        .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
     patch_tool_application(State(state), Path((company_id, application_id)), Json(body)).await
 }
 
+// Round 100: 仓储化。用 ToolRepo.delete_application()。
 async fn delete_tool_application(
     State(state): State<AppState>,
     Path((company_id, application_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let affected = sqlx::query("DELETE FROM tool_applications WHERE company_id = $1 AND id = $2")
-        .bind(company_id)
-        .bind(application_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
-    if affected > 0 {
-        state
-            .realtime
-            .publish(LiveEvent::new("tool.application.deleted", "tool_application", application_id)
-                .with_company(company_id));
+    let n = ToolRepo::new(&state.db)
+        .delete_application(company_id, application_id)
+        .await?;
+    if n {
+        state.realtime.publish(
+            LiveEvent::new("tool.application.deleted", "tool_application", application_id)
+                .with_company(company_id),
+        );
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound(format!("tool application {application_id}")))
     }
 }
 
+// Round 100: 仓储化。先 get_by_id 拿 company_id。
 async fn delete_tool_application_by_id(
     State(state): State<AppState>,
     Path(application_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM tool_applications WHERE id = $1",
-    )
-    .bind(application_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id,) = row
+    let company_id = ToolRepo::new(&state.db)
+        .get_by_id(application_id)
+        .await?
+        .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
     delete_tool_application(State(state), Path((company_id, application_id))).await
 }

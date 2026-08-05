@@ -16,6 +16,10 @@ use pc_core::Timestamp;
 
 use crate::{Db, RepoError, RepoResult};
 
+/// 历史保留：原 schema 假设的 type 枚举。当前 schema 的 `type` 列无 CHECK 约束，
+/// 仅作 str helper 使用。**保留该 enum 以让旧调用者**仍然获得 `mcp/api/cli/webhook`
+/// 这些字面量；仓储本身不再强约束。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolApplicationType {
@@ -35,6 +39,9 @@ impl ToolApplicationType {
     }
 }
 
+/// 历史保留：tool_applications.status 实际 DEFAULT 'active'，无 CHECK 约束；
+/// 这里保留 enum 仅用作 caller 端的字符串 helper。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolApplicationStatus {
@@ -113,33 +120,45 @@ impl ConnectionHealthStatus {
     }
 }
 
-const APP_COLS: &str = "id, company_id, name, slug, description, status, application_type,      version, manifest, icon_url, categories, tags,      requires_approval, max_call_rate_per_min, default_timeout_ms,      created_by_agent_id, created_by_user_id,      updated_by_agent_id, updated_by_user_id,      archived_at, created_at, updated_at";
+// Round 100: 1:1 对齐真实 tool_applications 表 schema（0148 migration）
+// 真实列：id, company_id, name, type, status, metadata, created_at, updated_at
+const APP_COLS: &str = "id, company_id, name, type, status, metadata, created_at, updated_at";
 
+/// 1:1 投影真实 `tool_applications` 表 schema（Round 100）。
+/// 详见 `pc_repos::tool::APP_COLS`。
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolApplicationRow {
     pub id: Uuid,
     pub company_id: Uuid,
     pub name: String,
-    pub slug: String,
-    pub description: Option<String>,
+    /// 投影列名：DB 是 `type`（关键字），响应里保留 `kind` 以兼容现有 API。
+    #[serde(rename = "type")]
+    pub kind: String,
     pub status: String,
-    pub application_type: String,
-    pub version: String,
-    pub manifest: Value,
-    pub icon_url: Option<String>,
-    pub categories: Vec<String>,
-    pub tags: Vec<String>,
-    pub requires_approval: bool,
-    pub max_call_rate_per_min: i32,
-    pub default_timeout_ms: i32,
-    pub created_by_agent_id: Option<Uuid>,
-    pub created_by_user_id: Option<String>,
-    pub updated_by_agent_id: Option<Uuid>,
-    pub updated_by_user_id: Option<String>,
-    pub archived_at: Option<Timestamp>,
+    /// JSONB 列：内部含 description + config 等元数据。
+    pub metadata: Value,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// 在 tool_applications.metadata jsonb 内的常用字段键。
+pub mod metadata_keys {
+    pub const DESCRIPTION: &str = "description";
+    pub const CONFIG: &str = "config";
+}
+
+impl ToolApplicationRow {
+    pub fn description(&self) -> Option<&str> {
+        self.metadata.get(metadata_keys::DESCRIPTION)
+            .and_then(Value::as_str)
+    }
+    pub fn config(&self) -> Value {
+        self.metadata
+            .get(metadata_keys::CONFIG)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}))
+    }
 }
 
 const CONN_COLS: &str = "id, company_id, application_id, name, kind, ownership, auth_kind,      auth_config, target_host, target_port, target_path, install_target_type, install_target_id,      status, last_used_at, last_health_at, expires_at, revision,      credential_owner_user_id, metadata,      deleted_at, created_by_agent_id, created_by_user_id,      updated_by_agent_id, updated_by_user_id,      created_at, updated_at";
@@ -239,24 +258,74 @@ pub struct ToolActionRequestRow {
     pub updated_at: Timestamp,
 }
 
+/// 创建 `tool_applications` 的最小写入 payload（Round 100）。
+/// 注意：description + config 在这里被合并成 jsonb `metadata`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewToolApplication {
     pub company_id: Uuid,
     pub name: String,
-    pub slug: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
     pub description: Option<String>,
-    pub application_type: ToolApplicationType,
-    pub version: String,
-    pub manifest: Value,
-    pub icon_url: Option<String>,
-    pub categories: Vec<String>,
-    pub tags: Vec<String>,
-    pub requires_approval: bool,
-    pub max_call_rate_per_min: i32,
-    pub default_timeout_ms: i32,
-    pub created_by_agent_id: Option<Uuid>,
-    pub created_by_user_id: Option<String>,
+    #[serde(default = "default_metadata")]
+    pub metadata: Value,
+}
+
+fn default_metadata() -> Value {
+    serde_json::json!({})
+}
+
+impl NewToolApplication {
+    /// 把 description 嵌入 metadata，构造最终入库的 jsonb。
+    pub fn effective_metadata(&self) -> Value {
+        let mut m = self.metadata.clone();
+        if let serde_json::Value::Object(ref mut map) = m {
+            if let Some(d) = &self.description {
+                map.insert(metadata_keys::DESCRIPTION.into(), serde_json::json!(d));
+            }
+        }
+        m
+    }
+}
+
+/// `tool_applications` 部分更新 payload（Round 100）。
+/// 任意字段为 None 表示保持原值；description/config 走 metadata jsonb 合并。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchToolApplication {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub config: Option<Value>,
+    pub status: Option<String>,
+    #[serde(default)]
+    pub metadata_merge: serde_json::Map<String, Value>,
+}
+
+impl PatchToolApplication {
+    /// 构造给 `metadata = metadata || $patch::jsonb` 的 jsonb 合并 patch。
+    /// 包含：顶层 description（新值则覆盖）、config（整个替换）、metadata_merge 自定义键。
+    pub fn metadata_patch(&self) -> Value {
+        let mut m = serde_json::Map::new();
+        if let Some(d) = &self.description {
+            m.insert(metadata_keys::DESCRIPTION.into(), serde_json::json!(d));
+        }
+        if let Some(c) = &self.config {
+            m.insert(metadata_keys::CONFIG.into(), c.clone());
+        }
+        for (k, v) in &self.metadata_merge {
+            m.insert(k.clone(), v.clone());
+        }
+        serde_json::Value::Object(m)
+    }
+    pub fn is_noop(&self) -> bool {
+        self.name.is_none()
+            && self.description.is_none()
+            && self.config.is_none()
+            && self.status.is_none()
+            && self.metadata_merge.is_empty()
+    }
 }
 
 pub struct ToolRepo<'a> {
@@ -270,16 +339,34 @@ impl<'a> ToolRepo<'a> {
 
     // ---- 1) tool_applications ----
 
+    /// Round 100: list_by_company 对齐真实 schema，去掉 archived_at IS NULL 过滤。
+    /// 返回的 row 是已 1:1 投影 DB 行的 ToolApplicationRow。
     pub async fn list_by_company(
         &self,
         company_id: Uuid,
     ) -> RepoResult<Vec<ToolApplicationRow>> {
         let sql = format!(
-            "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1 AND archived_at IS NULL              ORDER BY name"
+            "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1              ORDER BY created_at DESC LIMIT 200"
         );
         Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
             .bind(company_id)
             .fetch_all(self.db.pool())
+            .await?)
+    }
+
+/// Round 100: 按 id 全局查（不限定 company_id）。
+    /// 用于纯 id-based 端点（如 `GET /api/tool-applications/:id`），调用方可用返回的
+    /// `company_id` 决定是否允许后续跨公司操作。
+    pub async fn get_by_id(
+        &self,
+        id: Uuid,
+    ) -> RepoResult<Option<ToolApplicationRow>> {
+        let sql = format!(
+            "SELECT {APP_COLS} FROM tool_applications WHERE id=$1"
+        );
+        Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
+            .bind(id)
+            .fetch_optional(self.db.pool())
             .await?)
     }
 
@@ -298,47 +385,44 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn get_by_slug(
+    /// 兼容旧 API：`name` 当作伪 slug 查（slug 列已不存在）。
+    pub async fn get_by_name(
         &self,
         company_id: Uuid,
-        slug: &str,
+        name: &str,
     ) -> RepoResult<Option<ToolApplicationRow>> {
         let sql = format!(
-            "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1 AND slug=$2"
+            "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1 AND name=$2"
         );
         Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
             .bind(company_id)
-            .bind(slug)
+            .bind(name)
             .fetch_optional(self.db.pool())
             .await?)
     }
 
+    /// Round 100: INSERT 只写真实列 `(company_id, name, type, metadata)`；
+    /// status 用 DEFAULT 'active'，created_at/updated_at 由 DEFAULT now() 维护。
+    /// description 被嵌入 metadata jsonb。
     pub async fn create_application(
         &self,
         a: &NewToolApplication,
     ) -> RepoResult<ToolApplicationRow> {
-        if a.name.trim().is_empty() || a.slug.trim().is_empty() {
-            return Err(RepoError::Invalid("name/slug must not be empty".into()));
+        if a.name.trim().is_empty() {
+            return Err(RepoError::Invalid("name must not be empty".into()));
         }
+        if a.kind.trim().is_empty() {
+            return Err(RepoError::Invalid("kind must not be empty".into()));
+        }
+        let metadata = a.effective_metadata();
         let sql = format!(
-            "INSERT INTO tool_applications (company_id, name, slug, description, application_type,                 version, manifest, icon_url, categories, tags, requires_approval,                 max_call_rate_per_min, default_timeout_ms, created_by_agent_id, created_by_user_id)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)              RETURNING {APP_COLS}",
+            "INSERT INTO tool_applications (company_id, name, type, metadata)              VALUES ($1, $2, $3, $4)              RETURNING {APP_COLS}",
         );
         Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
             .bind(a.company_id)
             .bind(&a.name)
-            .bind(&a.slug)
-            .bind(a.description.as_deref())
-            .bind(a.application_type.as_str())
-            .bind(&a.version)
-            .bind(&a.manifest)
-            .bind(a.icon_url.as_deref())
-            .bind(&a.categories)
-            .bind(&a.tags)
-            .bind(a.requires_approval)
-            .bind(a.max_call_rate_per_min)
-            .bind(a.default_timeout_ms)
-            .bind(a.created_by_agent_id)
-            .bind(a.created_by_user_id.as_deref())
+            .bind(&a.kind)
+            .bind(&metadata)
             .fetch_one(self.db.pool())
             .await?)
     }
@@ -347,24 +431,65 @@ impl<'a> ToolRepo<'a> {
         &self,
         company_id: Uuid,
         id: Uuid,
-        status: ToolApplicationStatus,
+        status: &str,
     ) -> RepoResult<bool> {
         let n = sqlx::query(
-            "UPDATE tool_applications SET status=$3, updated_at=now()              WHERE company_id=$1 AND id=$2",
+            "UPDATE tool_applications SET status=$1, updated_at=now()              WHERE company_id=$2 AND id=$3",
         )
+        .bind(status)
         .bind(company_id)
         .bind(id)
-        .bind(status.as_str())
         .execute(self.db.pool())
         .await?
         .rows_affected();
         Ok(n > 0)
     }
 
-    pub async fn archive_application(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
+    /// Round 100: 已删除 archived_at 列。patch_application 才是真正的"删除"语义。
+    pub async fn delete_application(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> RepoResult<bool> {
         let n = sqlx::query(
-            "UPDATE tool_applications SET archived_at=now(), updated_at=now()              WHERE company_id=$1 AND id=$2 AND archived_at IS NULL",
+            "DELETE FROM tool_applications WHERE company_id=$1 AND id=$2",
         )
+        .bind(company_id)
+        .bind(id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 100: 真正的部分更新入口。
+    /// - `name`/`status`: 直接覆盖
+    /// - `description`/`config`/`metadata_merge`: 通过 `metadata = metadata || $patch::jsonb` 合并
+    pub async fn patch_application(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+        p: &PatchToolApplication,
+    ) -> RepoResult<bool> {
+        if p.is_noop() {
+            // 即使 PATCH 是空 payload，仍然更新 updated_at 保证单调递增，避免业务方反复死循环。
+            let n = sqlx::query(
+                "UPDATE tool_applications SET updated_at=now() WHERE company_id=$1 AND id=$2",
+            )
+            .bind(company_id)
+            .bind(id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+            return Ok(n > 0);
+        }
+        let meta_patch = p.metadata_patch();
+        let n = sqlx::query(
+            "UPDATE tool_applications SET                 name = COALESCE($1, name),                 status = COALESCE($2, status),                 metadata = metadata || $3::jsonb,                 updated_at = now()               WHERE company_id=$4 AND id=$5",
+        )
+        .bind(p.name.as_deref())
+        .bind(p.status.as_deref())
+        .bind(&meta_patch)
         .bind(company_id)
         .bind(id)
         .execute(self.db.pool())
@@ -648,21 +773,53 @@ mod tests {
         let a = NewToolApplication {
             company_id: Uuid::new_v4(),
             name: "Stripe".into(),
-            slug: "stripe".into(),
-            description: None,
-            application_type: ToolApplicationType::Api,
-            version: "1.0.0".into(),
-            manifest: serde_json::json!({}),
-            icon_url: None,
-            categories: vec!["payments".into()],
-            tags: vec![],
-            requires_approval: true,
-            max_call_rate_per_min: 60,
-            default_timeout_ms: 30_000,
-            created_by_agent_id: None,
-            created_by_user_id: Some("u1".into()),
+            kind: "api".into(),
+            description: Some("Stripe payment integration".into()),
+            metadata: serde_json::json!({}),
         };
         assert!(!a.name.trim().is_empty());
-        assert_eq!(a.slug, "stripe");
+        assert_eq!(a.kind, "api");
+        // description 被合并进 metadata jsonb
+        let m = a.effective_metadata();
+        assert_eq!(m["description"], "Stripe payment integration");
+    }
+
+    #[test]
+    fn patch_tool_application_patch_key_construction() {
+        let p = PatchToolApplication {
+            name: Some("NewName".into()),
+            description: Some("new desc".into()),
+            config: Some(serde_json::json!({"endpoint": "https://x"})),
+            status: Some("disabled".into()),
+            metadata_merge: serde_json::Map::new(),
+        };
+        let m = p.metadata_patch();
+        assert_eq!(m["description"], "new desc");
+        assert_eq!(m["config"]["endpoint"], "https://x");
+
+        // no-op patch
+        let empty = PatchToolApplication::default();
+        assert!(empty.is_noop());
+        let p2 = PatchToolApplication {
+            description: Some("x".into()),
+            ..PatchToolApplication::default()
+        };
+        assert!(!p2.is_noop());
+    }
+
+    #[test]
+    fn tool_application_row_metadata_helpers() {
+        let row = ToolApplicationRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            name: "x".into(),
+            kind: "mcp".into(),
+            status: "active".into(),
+            metadata: serde_json::json!({"description": "desc", "config": {"k": 1}}),
+            created_at: pc_core::Timestamp::now(),
+            updated_at: pc_core::Timestamp::now(),
+        };
+        assert_eq!(row.description(), Some("desc"));
+        assert_eq!(row.config()["k"], 1);
     }
 }

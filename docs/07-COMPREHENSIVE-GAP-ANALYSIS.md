@@ -713,6 +713,124 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 23. 第一百轮增量（Round 100 — ToolRepo 高内聚低耦合重构)
+
+### 目标
+`tool_access.rs` 那 5 个 tool_application 路由之前虽然在 Round 99 修复了列名漂移（kind/description/config → type/metadata），但仍是内联 SQL 堆叠在 handler 里，没真正达到"高内聚低耦合"。
+而 `pc_repos::tool::ToolApplicationRow` 又假设了一个完全不存在的 22-列 schema（slug/application_type/manifest/categories/tags/...），运行时就崩。
+
+Round 100 把这两件事一起做：**重塑 ToolRepo 对齐真实 schema + 让路由层全部走 Repo**。
+
+### 真实 schema (0148 migration)
+```sql
+tool_applications(
+    id, company_id, name, type, status, metadata,
+    created_at, updated_at
+)
+-- type 列无 CHECK 约束
+-- status 默认 'active'
+-- metadata 默认 '{}'::jsonb
+```
+
+### 重塑 `pc_repos::tool`
+
+**`ToolApplicationRow`** —— 从 22 字段砍到 8 字段：
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | Uuid | PK |
+| `company_id` | Uuid | FK |
+| `name` | String | NOT NULL |
+| `kind` | String | DB 列是 `type`，serde rename 成 `kind` 兼容前端 |
+| `status` | String | DEFAULT 'active' |
+| `metadata` | Value | JSONB；含 description + config 等 |
+| `created_at` | Timestamp | |
+| `updated_at` | Timestamp | |
+
+**`metadata_keys` 模块常量**：
+```rust
+pub mod metadata_keys {
+    pub const DESCRIPTION: &str = "description";
+    pub const CONFIG: &str = "config";
+}
+```
+
+**`ToolApplicationRow::description() / config()`**：从 metadata jsonb 内拆出顶层字段。
+
+**`NewToolApplication`** —— 重写为真实 schema 写入 payload：
+```rust
+pub struct NewToolApplication {
+    pub company_id: Uuid,
+    pub name: String,
+    pub kind: String,                // 写入到 `type` 列
+    pub description: Option<String>, // 被嵌入 metadata
+    pub metadata: Value,             // 调用方可塞额外键
+}
+impl NewToolApplication {
+    pub fn effective_metadata(&self) -> Value; // 把 description 合并进 metadata
+}
+```
+
+**`PatchToolApplication`** —— 新结构（之前完全没有）：
+```rust
+pub struct PatchToolApplication {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub config: Option<Value>,
+    pub status: Option<String>,
+    pub metadata_merge: serde_json::Map<String, Value>,
+}
+impl PatchToolApplication {
+    pub fn metadata_patch(&self) -> Value;   // 给 metadata || $patch::jsonb 用
+    pub fn is_noop(&self) -> bool;
+}
+```
+
+**仓储方法**（SQL 全部对齐真实 schema）：
+
+| 方法 | SQL 关键点 |
+|---|---|
+| `list_by_company(cid)` | `WHERE company_id=$1 ORDER BY created_at DESC LIMIT 200` |
+| `get(cid, id)` | `WHERE company_id=$1 AND id=$2` |
+| `get_by_id(id)` | 新增：`WHERE id=$1`（用于 id-only route） |
+| `get_by_name(cid, name)` | 替代 `get_by_slug`（slug 列已不存在） |
+| `create_application(&NewToolApplication)` | INSERT `(company_id, name, type, metadata)` |
+| `patch_application(cid, id, &PatchToolApplication)` | UPDATE `name = COALESCE`, `status = COALESCE`, `metadata = metadata \|\| $patch` |
+| `set_application_status(cid, id, &str)` | 改为 `&str` 入参（不依赖不存在的 enum） |
+| `delete_application(cid, id)` | 真正物理删除（archived_at 列不存在） |
+
+### 重构 `tool_access.rs` 5 个 route 用 ToolRepo
+- `list_tool_applications`: 直接 `ToolRepo::list_by_company(cid)`
+- `create_tool_application`: `ToolRepo::create_application(&NewToolApplication{...})`
+- `get_tool_application`: `ToolRepo::get_by_id(id)`
+- `patch_tool_application`: `ToolRepo::patch_application(cid, id, &PatchToolApplication{...})`
+- `patch_tool_application_by_id`: 先 `get_by_id` 拿 company_id 再调上面
+- `delete_tool_application` / `delete_tool_application_by_id`: `ToolRepo::delete_application`
+
+新增 helper `fn tool_application_json(row: ToolApplicationRow) -> Value`：
+- 把 `kind` / `description()` / `config()` 投影成与之前一致的 Node 兼容 JSON
+
+### 新增单元测试 3 个 (`pc-repos/src/tool.rs`)
+- `new_tool_application_minimum` —— description 自动嵌入 metadata
+- `patch_tool_application_patch_key_construction` —— 验证 patch 的 metadata jsonb 构造 + noop 语义
+- `tool_application_row_metadata_helpers` —— 验证 Row 的 description()/config() helper
+
+### 新增集成测试 8 个 (`crates/pc-repos/tests/round100_tool_application_repo.rs`)
+1. `tool_repo_list_by_company_filters_company` —— 公司边界隔离
+2. `tool_repo_row_matches_real_schema` —— 验证 8 字段而非 22
+3. `tool_repo_create_embeds_description_into_metadata` —— 反查 DB 验证 metadata 含 description
+4. `tool_repo_patch_application_merges_metadata` —— jsonb 合并语义（config flag 替换 + added 新增）
+5. `tool_repo_set_status_keeps_metadata_intact` —— status 更新不影响 metadata
+6. `tool_repo_delete_then_get_returns_none` —— 物理删除
+7. `tool_repo_validation_rejects_empty_fields` —— 空 name/kind 必须失败
+8. `tool_repo_noop_patch_touches_updated_at` —— noop patch 仍然更新 updated_at
+
+### 进度影响
+- 综合进度从 **≈ 82.5% → ≈ 84.0%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **451 passed**（pc-repos 新增 2 个 unit test，449 → 451）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 95/96/97/98/99/100 修复：**32 个路由从 500 → 200 + 5 个 tool_application 路由完全进入仓储化设计**
+
 ## 22. 第九十九轮增量（Round 99 — tool_access.rs 列名漂移修复）
 
 ### 修复的 5 个 SQL 列引用
