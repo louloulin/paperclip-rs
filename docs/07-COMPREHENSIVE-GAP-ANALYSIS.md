@@ -4169,3 +4169,65 @@ Audit + Actions:
 1. **access.ts 缺口：join-requests/:id/claim-api-key** — 需要新增 JoinRequestRepo::claim_api_key 方法（hash 比较 + secret_consumed_at 标记 + agent_api_keys 生成）
 2. **继续扫描剩余 Node 路由**（如 companies/import/preview 之类已存在的别名路由）
 3. **继续 issues / companies / inbox 子路径聚合**
+
+## 54. 第二百一十五轮增量（Round 215 — join-requests/:id/claim-api-key 端口化）
+
+### 端口覆盖
+- 新增 1 个端口：
+  - `POST /api/join-requests/:request_id/claim-api-key`
+
+### 仓储层新增
+- `JoinRequestRow` 新增 3 个字段（drizzle schema 1:1）：
+  - `claim_secret_hash: Option<String>`
+  - `claim_secret_expires_at: Option<Timestamp>`
+  - `claim_secret_consumed_at: Option<Timestamp>`
+- `JoinRequestRepo::claim_api_key(request_id, presented_hash)`：
+  - 事务内 SELECT FOR UPDATE
+  - 校验顺序：存在 / 类型=agent / 状态=approved / created_agent_id 存在 /
+    claim_secret_hash 已设置 / hash 常数时间匹配 / 未过期 / 未消费
+  - 原子标记 `claim_secret_consumed_at = now()`（仅当仍为 NULL）
+  - 返回最新行
+- `AgentRepo::create_api_key_with_token(input)` 返回 `(AgentApiKeyRow, String)`：
+  - token = `pcp_<48hex>`（24 random bytes）
+  - key_hash = SHA256(token) hex
+  - 复用 `create_api_key`
+- 新增输入结构 `CreateAgentApiKeyWithTokenInput`（避免传入未使用的 `key_hash`）
+
+### 跨模块共享
+- 新增 `pc_core::hash::sha256_hex` 与 `pc_core::hash::constant_time_eq`：
+  - 与 `pc_auth::hash_token` 行为一致
+  - pc-repos 不能依赖 pc-auth，所以提到 pc-core 共享
+  - 同时为 join_request 仓储和后续模块提供统一入口
+
+### 路由层
+- `claim_join_request_api_key` 处理器：
+  1. hash presented claim secret
+  2. 调 `JoinRequestRepo::claim_api_key` 完成原子校验 + 标记消费
+  3. 调 `AgentRepo::create_api_key_with_token` 生成新 API key
+  4. publish realtime 事件 `agent_api_key.claimed`
+  5. 返回 `{ keyId, token, agentId, createdAt }` (201)
+
+### 辅助函数
+- `generate_agent_api_token() -> String`：返回 `pcp_<48hex>`
+- 使用 `rand::RngCore` + `hex::encode`
+
+### 测试
+- 内联单元测试 `round215_tests`（3 个 case）：token 前缀/长度/唯一性
+- 集成测试 `round215_claim_api_key_repo.rs`（6 个 case，DB blocked）：
+  - success_path / wrong_hash / pending_status / second_call_fails / token_format
+
+### 累计进展（R215）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R215 | access.rs | +1 | claim-api-key 流程 + JoinRequestRow 扩展 + 共享 hash 模块 |
+
+### 综合状态（截至 R215）
+- 工作空间编译：`cargo check --workspace --tests` 0 errors
+- 集成测试文件 + 1 个内联单元测试模块，共 **6** 个测试 case（R215 单轮）
+- 累计端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~7 个** 真正剩余
+
+### 下一步高 ROI 工作
+1. **继续扫描剩余 Node 路由**（如 Node 端特有的某些子路径）
+2. **issues 子路径聚合**（如 issues/search 增强）
+3. **inbox 子路径聚合**（companies/:id/inbox/stream 之类）
