@@ -879,6 +879,19 @@ impl<'a> ExecutionRepo<'a> {
         .await?;
         Ok(row)
     }
+    /// Round 186: workspace_command_authz -- get workspace (id::text, kind) for authz summary.
+    pub async fn get_id_kind(
+        &self,
+        workspace_id: Uuid,
+    ) -> sqlx::Result<Option<(String, Option<String>)>> {
+        sqlx::query_as(
+            "SELECT id::text, kind FROM execution_workspaces WHERE id = $1",
+        )
+        .bind(workspace_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
 }
 
 impl WorkspaceStatus {

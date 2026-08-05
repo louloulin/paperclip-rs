@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{state::require_user_id, AppState};
+use pc_repos::execution::ExecutionRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new().route(
@@ -31,12 +32,10 @@ async fn workspace_command_authz(
 
     // Look up workspace metadata for context. Use execution_workspaces table
     // when present; fall back to a permissive default for unknown workspaces.
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT id::text, kind FROM execution_workspaces WHERE id = $1")
-            .bind(workspace_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .unwrap_or(None);
+    let row = ExecutionRepo::new(&state.db)
+        .get_id_kind(workspace_id)
+        .await
+        .unwrap_or(None);
 
     let kind = row
         .as_ref()
