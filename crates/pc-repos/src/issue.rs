@@ -173,6 +173,31 @@ pub struct IssuePlanDecompositionRow {
     pub updated_at: Timestamp,
 }
 
+/// Round 226: 简化的 plan decomposition child 输入结构。
+///
+/// 对应 Node `createChildIssueSchema` 的核心字段子集（不含 executionPolicy、
+/// watchdog、labelIds 等高级字段 — 那些可在后续轮次叠加）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssuePlanChildInput<'a> {
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub status: &'a str,
+    pub work_mode: &'a str,
+    pub priority: &'a str,
+    pub assignee_agent_id: Option<Uuid>,
+    pub assignee_user_id: Option<&'a str>,
+    pub project_id: Option<Uuid>,
+    pub goal_id: Option<Uuid>,
+}
+
+/// Round 226: `decompose_accepted_plan` 方法的返回结果。
+#[derive(Debug, Clone)]
+pub struct DecomposeAcceptedPlanOutcome {
+    pub decomposition: IssuePlanDecompositionRow,
+    pub created_child_ids: Vec<Uuid>,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct FeedbackVoteRow {
     pub id: Uuid,
@@ -1152,6 +1177,39 @@ impl<'a> IssueRepo<'a> {
             .bind(description)
             .bind(priority)
             .bind(assignee_agent_id)
+            .bind(parent.request_depth + 1)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Round 226: 从 plan decomposition 创建 child issue（完整字段支持）。
+    ///
+    /// 与 Node `issueService.createChild` 对齐 — 支持更多字段：
+    /// status / work_mode / assignee_user_id / project_id / goal_id 等。
+    /// 默认 status="todo"，priority 沿用传入。
+    pub async fn create_child_from_decomposition(
+        &self,
+        parent: &IssueRow,
+        input: &IssuePlanChildInput<'_>,
+    ) -> sqlx::Result<IssueRow> {
+        let sql = format!(
+            "INSERT INTO issues (company_id, parent_id, title, description, status, work_mode, \
+                    priority, assignee_agent_id, assignee_user_id, \
+                    project_id, goal_id, request_depth) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(parent.company_id)
+            .bind(parent.id)
+            .bind(input.title)
+            .bind(input.description)
+            .bind(input.status)
+            .bind(input.work_mode)
+            .bind(input.priority)
+            .bind(input.assignee_agent_id)
+            .bind(input.assignee_user_id)
+            .bind(input.project_id.or(parent.project_id))
+            .bind(input.goal_id.or(parent.goal_id))
             .bind(parent.request_depth + 1)
             .fetch_one(self.db.pool())
             .await
@@ -2343,6 +2401,120 @@ impl<'a> IssueRepo<'a> {
         .bind(owner_run_id)
         .fetch_one(self.db.pool())
         .await
+    }
+
+    /// Round 226: 完整 `decompose_accepted_plan` 业务方法。
+    ///
+    /// 与 Node `svc.decomposeAcceptedPlan` 简化对齐 — 实现核心 while 循环：
+    /// 1. 查找/创建 plan decomposition claim
+    /// 2. 每次循环：创建下一个 child issue → 追加到 child_issue_ids
+    /// 3. status 切换：全部 child 创建完成 → 'completed'，否则 'in_flight'
+    ///
+    /// 本方法**不实现**完整 Node 行为（executionPolicy 规范化、watchdog 序列化等），
+    /// 那些属于 service 层职责。本方法聚焦 **claim 持久化 + child 创建循环**。
+    ///
+    /// 返回：最终 (decomposition, created_child_ids) 元组
+    pub async fn decompose_accepted_plan(
+        &self,
+        source_issue: &IssueRow,
+        accepted_plan_revision_id: Uuid,
+        children: &[IssuePlanChildInput<'_>],
+        request_fingerprint: &str,
+    ) -> sqlx::Result<DecomposeAcceptedPlanOutcome> {
+        // 1. 查找现有 claim（同 revision）
+        let existing = self
+            .find_plan_decomposition_by_revision(
+                source_issue.company_id,
+                source_issue.id,
+                accepted_plan_revision_id,
+            )
+            .await?;
+        let claim = if let Some(existing_claim) = existing {
+            if existing_claim.request_fingerprint != request_fingerprint {
+                return Err(sqlx::Error::Decode(
+                    "Accepted-plan decomposition already exists for this revision with a different child set"
+                        .into(),
+                ));
+            }
+            existing_claim
+        } else {
+            let children_value = serde_json::Value::Array(
+                children
+                    .iter()
+                    .map(|c| serde_json::to_value(c).unwrap_or(serde_json::json!({})))
+                    .collect(),
+            );
+            self.create_plan_decomposition(
+                source_issue.company_id,
+                source_issue.id,
+                accepted_plan_revision_id,
+                None,
+                request_fingerprint,
+                children.len() as i32,
+                &children_value,
+                None,
+                None,
+                None,
+            )
+            .await?
+        };
+        // 2. 解析已存在的 child issue ids
+        let mut existing_child_ids: Vec<Uuid> = serde_json::from_value(claim.child_issue_ids.clone())
+            .unwrap_or_default();
+        let mut created_child_ids: Vec<Uuid> = Vec::new();
+        // 3. while 循环：创建剩余 child
+        while existing_child_ids.len() < children.len() {
+            let next_index = existing_child_ids.len();
+            let child_input = &children[next_index];
+            let created = self
+                .create_child_from_decomposition(source_issue, child_input)
+                .await?;
+            existing_child_ids.push(created.id);
+            created_child_ids.push(created.id);
+            // 4. 更新 claim 状态
+            let next_status = if existing_child_ids.len() >= children.len() {
+                "completed"
+            } else {
+                "in_flight"
+            };
+            let completed_at = if next_status == "completed" {
+                Some(Timestamp::from_dt(chrono::Utc::now()))
+            } else {
+                None
+            };
+            let child_ids_json = serde_json::Value::Array(
+                existing_child_ids
+                    .iter()
+                    .map(|id| serde_json::Value::String(id.to_string()))
+                    .collect(),
+            );
+            let _ = self
+                .update_plan_decomposition_progress(
+                    claim.id,
+                    next_status,
+                    &child_ids_json,
+                    completed_at,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+        }
+        // 5. 返回最终 claim
+        let final_claim = self
+            .find_plan_decomposition_by_revision(
+                source_issue.company_id,
+                source_issue.id,
+                accepted_plan_revision_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                sqlx::Error::Decode("Failed to re-read plan decomposition after loop".into())
+            })?;
+        Ok(DecomposeAcceptedPlanOutcome {
+            decomposition: final_claim,
+            created_child_ids: created_child_ids,
+        })
     }
 
     /// 更新 plan decomposition 的状态与 child_issue_ids。

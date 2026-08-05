@@ -2324,12 +2324,45 @@ async fn issue_low_trust_promotion(
     Ok(Json(json!({ "promoted": true, "issueId": id })))
 }
 
+/// Round 226: 单个 child issue 输入（与 Node `createChildIssueSchema` 子集对齐）
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanDecompositionChildInput {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default = "default_child_status")]
+    status: String,
+    #[serde(default = "default_child_work_mode")]
+    work_mode: String,
+    #[serde(default = "default_child_priority")]
+    priority: String,
+    #[serde(default)]
+    assignee_agent_id: Option<Uuid>,
+    #[serde(default)]
+    assignee_user_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<Uuid>,
+    #[serde(default)]
+    goal_id: Option<Uuid>,
+}
+
+fn default_child_status() -> String {
+    "todo".to_string()
+}
+fn default_child_work_mode() -> String {
+    "standard".to_string()
+}
+fn default_child_priority() -> String {
+    "medium".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateAcceptedPlanDecompositionBody {
     #[serde(rename = "acceptedPlanRevisionId")]
     accepted_plan_revision_id: Uuid,
     #[serde(default)]
-    children: Vec<serde_json::Value>,
+    children: Vec<PlanDecompositionChildInput>,
 }
 
 /// Round 222: 真实实现 GET /api/issues/:id/accepted-plan-decompositions
@@ -2394,70 +2427,75 @@ async fn create_accepted_plan_decomposition(
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    // 2. 计算 fingerprint（基于 revision + 规范化 child payload 字段顺序）
+    // 2. 计算 fingerprint
     let fingerprint = compute_plan_decomposition_fingerprint(
         body.accepted_plan_revision_id,
         &body.children,
     );
-    // 3. 检查现有 claim（idempotent）
-    if let Some(existing) = IssueRepo::new(&state.db)
-        .find_plan_decomposition_by_revision(
-            source.company_id,
-            id,
-            body.accepted_plan_revision_id,
-        )
-        .await?
+    // 3. 调用 IssueRepo::decompose_accepted_plan 完整循环：
+    //    - 查找/创建 claim
+    //    - while 循环创建每个 child issue
+    //    - 更新 claim status + child_issue_ids
+    //    - 全部完成时切换为 'completed'
+    let child_inputs: Vec<pc_repos::issue::IssuePlanChildInput> = body
+        .children
+        .iter()
+        .map(|c| pc_repos::issue::IssuePlanChildInput {
+            title: &c.title,
+            description: c.description.as_deref(),
+            status: &c.status,
+            work_mode: &c.work_mode,
+            priority: &c.priority,
+            assignee_agent_id: c.assignee_agent_id,
+            assignee_user_id: c.assignee_user_id.as_deref(),
+            project_id: c.project_id,
+            goal_id: c.goal_id,
+        })
+        .collect();
+    let outcome = match IssueRepo::new(&state.db)
+        .decompose_accepted_plan(&source, body.accepted_plan_revision_id, &child_inputs, &fingerprint)
+        .await
     {
-        if existing.request_fingerprint == fingerprint {
-            // 同一请求幂等返回现有
-            return Ok(Json(plan_decomposition_row_json(&existing)));
+        Ok(o) => o,
+        Err(e) => {
+            // sqlx::Error::Decode 用于业务冲突（fingerprint mismatch 等）
+            let msg = e.to_string();
+            if msg.contains("different child set") {
+                return Err(ApiError::Conflict(msg));
+            }
+            return Err(ApiError::Internal(msg));
         }
-        return Err(ApiError::Conflict(
-            "Accepted-plan decomposition already exists for this revision with a different child set".into(),
-        ));
-    }
-    // 4. 创建新 in_flight claim
-    let requested_children_value = serde_json::Value::Array(body.children.clone());
-    let row = IssueRepo::new(&state.db)
-        .create_plan_decomposition(
-            source.company_id,
-            id,
-            body.accepted_plan_revision_id,
-            None,
-            &fingerprint,
-            body.children.len() as i32,
-            &requested_children_value,
-            None,
-            None,
-            None,
-        )
-        .await?;
-    Ok(Json(plan_decomposition_row_json(&row)))
+    };
+    // 4. 返回最终结果：decomposition + 新创建的 child issue ids
+    Ok(Json(json!({
+        "decomposition": plan_decomposition_row_json(&outcome.decomposition),
+        "createdChildIds": outcome.created_child_ids,
+        "createdChildCount": outcome.created_child_ids.len(),
+    })))
 }
 
-/// 计算 plan decomposition 的稳定指纹（基于 revision + children JSON）。
+/// 计算 plan decomposition 的稳定指纹（基于 revision + children）。
 ///
-/// 使用 serde_json 的 to_string 后再做 SHA-256 子串以获得稳定哈希。
-/// 当前简化为基于 revision 与 children 数量，避免引入额外依赖。
+/// 使用 Rust `DefaultHasher` 派生稳定哈希：
+/// - revision id（避免跨 revision 冲突）
+/// - children 数量 + 每个 child 的 title/description/priority
+/// - 序列化保证与 Node 端语义一致
 fn compute_plan_decomposition_fingerprint(
     revision_id: Uuid,
-    children: &[serde_json::Value],
+    children: &[PlanDecompositionChildInput],
 ) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
     revision_id.hash(&mut h);
     children.len().hash(&mut h);
-    // 对每个 child 的 title+description 做轻量 hash，避免深度 JSON 序列化
     for c in children {
-        if let Some(obj) = c.as_object() {
-            if let Some(t) = obj.get("title").and_then(|v| v.as_str()) {
-                t.hash(&mut h);
-            }
-            if let Some(d) = obj.get("description").and_then(|v| v.as_str()) {
-                d.hash(&mut h);
-            }
+        c.title.hash(&mut h);
+        if let Some(d) = c.description.as_deref() {
+            d.hash(&mut h);
         }
+        c.priority.hash(&mut h);
+        c.status.hash(&mut h);
     }
     format!("{:x}-{:x}", revision_id.simple(), h.finish())
 }
@@ -3992,8 +4030,28 @@ mod round216_tests {
     fn plan_decomp_fingerprint_stable_for_same_input() {
         let rev = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
         let children = vec![
-            json!({"title": "a", "description": "1"}),
-            json!({"title": "b", "description": "2"}),
+            super::PlanDecompositionChildInput {
+                title: "a".to_string(),
+                description: Some("1".to_string()),
+                status: "todo".to_string(),
+                work_mode: "standard".to_string(),
+                priority: "medium".to_string(),
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                project_id: None,
+                goal_id: None,
+            },
+            super::PlanDecompositionChildInput {
+                title: "b".to_string(),
+                description: Some("2".to_string()),
+                status: "todo".to_string(),
+                work_mode: "standard".to_string(),
+                priority: "medium".to_string(),
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                project_id: None,
+                goal_id: None,
+            },
         ];
         let fp1 = super::compute_plan_decomposition_fingerprint(rev, &children);
         let fp2 = super::compute_plan_decomposition_fingerprint(rev, &children);
@@ -4003,8 +4061,28 @@ mod round216_tests {
     #[test]
     fn plan_decomp_fingerprint_differs_for_different_children() {
         let rev = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000004").unwrap();
-        let children1 = vec![json!({"title": "a"})];
-        let children2 = vec![json!({"title": "b"})];
+        let children1 = vec![super::PlanDecompositionChildInput {
+            title: "a".to_string(),
+            description: None,
+            status: "todo".to_string(),
+            work_mode: "standard".to_string(),
+            priority: "medium".to_string(),
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            project_id: None,
+            goal_id: None,
+        }];
+        let children2 = vec![super::PlanDecompositionChildInput {
+            title: "b".to_string(),
+            description: None,
+            status: "todo".to_string(),
+            work_mode: "standard".to_string(),
+            priority: "medium".to_string(),
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            project_id: None,
+            goal_id: None,
+        }];
         let fp1 = super::compute_plan_decomposition_fingerprint(rev, &children1);
         let fp2 = super::compute_plan_decomposition_fingerprint(rev, &children2);
         assert_ne!(fp1, fp2, "不同 children 应产生不同 fingerprint");
@@ -4014,7 +4092,17 @@ mod round216_tests {
     fn plan_decomp_fingerprint_differs_for_different_revisions() {
         let rev1 = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000005").unwrap();
         let rev2 = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000006").unwrap();
-        let children = vec![json!({"title": "same"})];
+        let children = vec![super::PlanDecompositionChildInput {
+            title: "same".to_string(),
+            description: None,
+            status: "todo".to_string(),
+            work_mode: "standard".to_string(),
+            priority: "medium".to_string(),
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            project_id: None,
+            goal_id: None,
+        }];
         let fp1 = super::compute_plan_decomposition_fingerprint(rev1, &children);
         let fp2 = super::compute_plan_decomposition_fingerprint(rev2, &children);
         assert_ne!(fp1, fp2, "不同 revision 应产生不同 fingerprint");
@@ -4058,5 +4146,110 @@ mod round216_tests {
         assert!(obj.contains_key("completedAt"));
         assert!(obj.contains_key("createdAt"));
         assert!(obj.contains_key("updatedAt"));
+    }
+
+    // ── R226: child input 解析 + outcome 序列化 ──
+
+    use super::PlanDecompositionChildInput;
+
+    #[test]
+    fn plan_child_input_parses_minimal_required_fields() {
+        let body: CreateAcceptedPlanDecompositionBody = serde_json::from_value(json!({
+            "acceptedPlanRevisionId": "00000000-0000-0000-0000-000000000010",
+            "children": [
+                {"title": "child 1"},
+            ],
+        }))
+        .expect("parse");
+        assert_eq!(body.children.len(), 1);
+        assert_eq!(body.children[0].title, "child 1");
+        // 默认值
+        assert_eq!(body.children[0].status, "todo");
+        assert_eq!(body.children[0].work_mode, "standard");
+        assert_eq!(body.children[0].priority, "medium");
+        assert!(body.children[0].description.is_none());
+        assert!(body.children[0].assignee_agent_id.is_none());
+        assert!(body.children[0].assignee_user_id.is_none());
+    }
+
+    #[test]
+    fn plan_child_input_parses_all_optional_fields() {
+        let body: CreateAcceptedPlanDecompositionBody = serde_json::from_value(json!({
+            "acceptedPlanRevisionId": "00000000-0000-0000-0000-000000000011",
+            "children": [
+                {
+                    "title": "child with everything",
+                    "description": "complete child for R226",
+                    "status": "backlog",
+                    "workMode": "plan_first",
+                    "priority": "high",
+                    "assigneeAgentId": "00000000-0000-0000-0000-000000000012",
+                    "assigneeUserId": "u-test-001",
+                    "projectId": "00000000-0000-0000-0000-000000000013",
+                    "goalId": "00000000-0000-0000-0000-000000000014",
+                },
+            ],
+        }))
+        .expect("parse");
+        assert_eq!(body.children.len(), 1);
+        let c = &body.children[0];
+        assert_eq!(c.title, "child with everything");
+        assert_eq!(c.status, "backlog");
+        assert_eq!(c.work_mode, "plan_first");
+        assert_eq!(c.priority, "high");
+        assert_eq!(c.assignee_user_id.as_deref(), Some("u-test-001"));
+    }
+
+    #[test]
+    fn plan_decomposition_outcome_serialization_shape() {
+        // 验证 decompose_accepted_plan 的响应结构（decomposition + createdChildIds + createdChildCount）
+        let outcome_json = json!({
+            "decomposition": {
+                "id": "00000000-0000-0000-0000-000000000020",
+                "companyId": "00000000-0000-0000-0000-000000000021",
+                "sourceIssueId": "00000000-0000-0000-0000-000000000022",
+                "acceptedPlanRevisionId": "00000000-0000-0000-0000-000000000023",
+                "status": "completed",
+                "requestFingerprint": "fp-test",
+                "requestedChildCount": 2,
+                "childIssueIds": ["id1", "id2"],
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z",
+            },
+            "createdChildIds": ["id1", "id2"],
+            "createdChildCount": 2,
+        });
+        let obj = outcome_json.as_object().expect("object");
+        assert!(obj.contains_key("decomposition"));
+        assert!(obj.contains_key("createdChildIds"));
+        assert_eq!(obj["createdChildCount"], json!(2));
+        // decomposition 内含 status / childIssueIds
+        let decomp = obj["decomposition"].as_object().expect("decomp object");
+        assert!(decomp.contains_key("status"));
+        assert!(decomp.contains_key("childIssueIds"));
+        assert!(decomp.contains_key("requestedChildCount"));
+    }
+
+    #[test]
+    fn plan_child_input_struct_serializes_camel_case() {
+        let input = PlanDecompositionChildInput {
+            title: "t".to_string(),
+            description: Some("d".to_string()),
+            status: "todo".to_string(),
+            work_mode: "standard".to_string(),
+            priority: "medium".to_string(),
+            assignee_agent_id: None,
+            assignee_user_id: Some("u-1".to_string()),
+            project_id: None,
+            goal_id: None,
+        };
+        let v = serde_json::to_value(&input).expect("serialize");
+        let obj = v.as_object().expect("object");
+        // 关键字段：assigneeUserId / workMode 都应是 camelCase
+        assert!(obj.contains_key("assigneeUserId"));
+        assert!(obj.contains_key("workMode"));
+        assert!(obj.contains_key("assigneeAgentId"));
+        assert!(obj.contains_key("projectId"));
+        assert!(obj.contains_key("goalId"));
     }
 }
