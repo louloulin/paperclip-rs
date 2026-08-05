@@ -370,6 +370,14 @@ pub struct HeartbeatRunFilter {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct FailedAttentionRow {
+    pub id: Uuid,
+    pub agent_name: String,
+    pub error: Option<String>,
+    pub updated_at: pc_core::Timestamp,
+}
+
 pub struct HeartbeatRepo<'a> {
     pub db: &'a Db,
 }
@@ -1159,6 +1167,22 @@ impl<'a> HeartbeatRepo<'a> {
         .unwrap_or((0, 0));
         Ok(row)
     }
+    /// Round 177: 注意力队列用 —— 列出某公司 failed/timed_out heartbeat_runs（含 agent_name）。
+    pub async fn list_failed_attention(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<FailedAttentionRow>> {
+        sqlx::query_as::<_, FailedAttentionRow>(
+            "SELECT hr.id, a.name AS agent_name, hr.error, hr.updated_at \
+             FROM heartbeat_runs hr INNER JOIN agents a ON a.id = hr.agent_id \
+             WHERE hr.company_id = $1 AND hr.status IN ('failed','timed_out') \
+             ORDER BY hr.updated_at DESC LIMIT 100",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
 }
 
 #[cfg(test)]

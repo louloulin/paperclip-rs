@@ -355,6 +355,15 @@ fn valid_issue_status(status: &str) -> bool {
     ISSUE_STATUSES.contains(&status)
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct BlockedAttentionRow {
+    pub id: Uuid,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub priority: String,
+    pub updated_at: pc_core::Timestamp,
+}
+
 pub struct IssueRepo<'a> {
     pub db: &'a Db,
 }
@@ -530,6 +539,22 @@ impl<'a> IssueRepo<'a> {
         .fetch_one(self.db.pool())
         .await?;
         Ok(count)
+    }
+
+    /// Round 177: 注意力队列用 —— 列出某公司的 blocked issues（非 harness、未隐藏）。
+    pub async fn list_blocked_attention(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<BlockedAttentionRow>> {
+        sqlx::query_as::<_, BlockedAttentionRow>(
+            "SELECT id, identifier, title, priority, updated_at FROM issues \
+             WHERE company_id = $1 AND status = 'blocked' AND hidden_at IS NULL \
+               AND harness_kind IS NULL \
+             ORDER BY updated_at DESC LIMIT 100",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
     }
 
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {

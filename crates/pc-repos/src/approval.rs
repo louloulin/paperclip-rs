@@ -311,6 +311,24 @@ impl<'a> ApprovalRepo<'a> {
         Ok(n)
     }
 
+    /// Round 177: 注意力队列用 —— 列出某公司的 pending approvals（id/approval_type/payload/updated_at）。
+    pub async fn list_pending_attention(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ApprovalRow>> {
+        sqlx::query_as::<_, ApprovalRow>(
+            "SELECT id, company_id, type AS approval_type, requested_by_agent_id, \
+                    requested_by_user_id, status, payload, decision_note, \
+                    decided_by_user_id, decided_at, created_at, updated_at \
+             FROM approvals WHERE company_id = $1 AND status = 'pending' \
+             ORDER BY updated_at DESC LIMIT 100",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(RepoError::from)
+    }
+
     // ---- comments ----
 
     pub async fn list_comments(

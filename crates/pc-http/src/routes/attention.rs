@@ -12,6 +12,10 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::approval::ApprovalRepo;
+use pc_repos::company::CompanyRepo;
+use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/companies/:company_id/attention", get(list))
@@ -114,36 +118,46 @@ fn item(input: ItemInput<'_>) -> Value {
 }
 
 async fn fetch_approvals(state: &AppState, company_id: Uuid) -> ApiResult<Vec<ApprovalRow>> {
-    Ok(sqlx::query_as::<_, ApprovalRow>(
-        "SELECT id, type AS approval_type, payload, updated_at FROM approvals \
-         WHERE company_id = $1 AND status = 'pending' ORDER BY updated_at DESC LIMIT 100",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?)
+    Ok(ApprovalRepo::new(&state.db)
+        .list_pending_attention(company_id)
+        .await?
+        .into_iter()
+        .map(|row| ApprovalRow {
+            id: row.id,
+            approval_type: row.approval_type,
+            payload: row.payload,
+            updated_at: row.updated_at,
+        })
+        .collect())
 }
 
 async fn fetch_blocked(state: &AppState, company_id: Uuid) -> ApiResult<Vec<BlockedIssueRow>> {
-    Ok(sqlx::query_as::<_, BlockedIssueRow>(
-        "SELECT id, identifier, title, priority, updated_at FROM issues \
-         WHERE company_id = $1 AND status = 'blocked' AND hidden_at IS NULL AND harness_kind IS NULL \
-         ORDER BY updated_at DESC LIMIT 100",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?)
+    Ok(IssueRepo::new(&state.db)
+        .list_blocked_attention(company_id)
+        .await?
+        .into_iter()
+        .map(|row| BlockedIssueRow {
+            id: row.id,
+            identifier: row.identifier,
+            title: row.title,
+            priority: row.priority,
+            updated_at: row.updated_at,
+        })
+        .collect())
 }
 
 async fn fetch_failed_runs(state: &AppState, company_id: Uuid) -> ApiResult<Vec<FailedRunRow>> {
-    Ok(sqlx::query_as::<_, FailedRunRow>(
-        "SELECT hr.id, a.name AS agent_name, hr.error, hr.updated_at \
-         FROM heartbeat_runs hr INNER JOIN agents a ON a.id = hr.agent_id \
-         WHERE hr.company_id = $1 AND hr.status IN ('failed','timed_out') \
-         ORDER BY hr.updated_at DESC LIMIT 100",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?)
+    Ok(HeartbeatRepo::new(&state.db)
+        .list_failed_attention(company_id)
+        .await?
+        .into_iter()
+        .map(|row| FailedRunRow {
+            id: row.id,
+            agent_name: row.agent_name,
+            error: row.error,
+            updated_at: row.updated_at,
+        })
+        .collect())
 }
 
 fn build_approval_items(approvals: Vec<ApprovalRow>, company_id: Uuid) -> Vec<Value> {
@@ -270,11 +284,10 @@ async fn list(
     Path(company_id): Path<Uuid>,
     Query(query): Query<AttentionQuery>,
 ) -> ApiResult<Json<Value>> {
-    let exists: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM companies WHERE id = $1")
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    if exists.is_none() {
+    if !CompanyRepo::new(&state.db)
+        .exists(company_id)
+        .await?
+    {
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }
     let _include_dismissed = query.include_dismissed.unwrap_or(false);
