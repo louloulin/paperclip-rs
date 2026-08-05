@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::agent::AgentRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -149,15 +150,8 @@ async fn install_adapter(
     if pkg.is_empty() {
         return Err(ApiError::BadRequest("packageName is required".into()));
     }
-    sqlx::query(
-        "INSERT INTO adapter_plugins (package_name, is_local_path, version, status, installed_at)          VALUES ($1, $2, $3, 'queued', now())          ON CONFLICT (package_name) DO UPDATE SET             version = COALESCE(EXCLUDED.version, adapter_plugins.version),             status = 'queued', updated_at = now()",
-    )
-    .bind(&pkg)
-    .bind(body.is_local_path.unwrap_or(false))
-    .bind(body.version.as_deref())
-    .execute(state.db.pool())
-    .await
-    .ok();
+    // Round 175: 原 INSERT INTO adapter_plugins 已移除 —— adapter_plugins 表在当前 schema 中不存在，
+    // 原代码使用 `.await.ok()` 已错误容忍；保留 install 请求的 live event 广播与响应。
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.install.queued", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "packageName": pkg, "version": body.version })),
@@ -185,13 +179,7 @@ async fn reinstall_adapter(
     State(state): State<AppState>,
     Path(adapter_type): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE adapter_plugins SET status='queued', updated_at=now() WHERE type = $1",
-    )
-    .bind(&adapter_type)
-    .execute(state.db.pool())
-    .await
-    .ok();
+    // Round 175: 原 UPDATE adapter_plugins 已移除 —— 与 install_adapter 同理，保留 live event 广播。
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.reinstall.queued", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type })),
@@ -226,8 +214,7 @@ async fn patch_adapter(
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let disabled = body.get("disabled").and_then(Value::as_bool).unwrap_or(false);
-    // Round 97 stub
-    sqlx::query("SELECT 1").execute(state.db.pool()).await.ok();
+    // Round 175: 原 SELECT 1 stub 已移除（语义保留：仅广播 live event）。
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.disabled", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type, "disabled": disabled })),
@@ -254,8 +241,7 @@ async fn override_adapter(
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let paused = body.get("paused").and_then(Value::as_bool).unwrap_or(false);
-    // Round 97 stub
-    sqlx::query("SELECT 1").execute(state.db.pool()).await.ok();
+    // Round 175: 原 SELECT 1 stub 已移除（语义保留：仅广播 live event）。
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.override", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type, "paused": paused })),
@@ -440,16 +426,10 @@ async fn detect_adapter_model(
         }
     }
     if let Some(agent_id) = body.agent_id {
-        let row: Option<(Value,)> = sqlx::query_as(
-            "SELECT adapter_config FROM agents WHERE id = $1 AND company_id = $2",
-        )
-        .bind(agent_id)
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-        if let Some((cfg,)) = row {
+        if let Ok(Some(cfg)) = AgentRepo::new(&state.db)
+            .get_adapter_config(agent_id, company_id)
+            .await
+        {
             if let Some(m) = cfg.get("model").and_then(Value::as_str) {
                 return Ok(Json(json!({
                     "companyId": company_id,

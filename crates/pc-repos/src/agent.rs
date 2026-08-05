@@ -1154,6 +1154,22 @@ impl<'a> AgentRepo<'a> {
         Ok(n)
     }
 
+    /// Round 175: 取指定 agent 的 adapter_config（按公司隔离）。
+    pub async fn get_adapter_config(
+        &self,
+        agent_id: Uuid,
+        company_id: Uuid,
+    ) -> sqlx::Result<Option<serde_json::Value>> {
+        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+            "SELECT adapter_config FROM agents WHERE id = $1 AND company_id = $2",
+        )
+        .bind(agent_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
     pub async fn list_wakeup_requests(
         &self,
         company_id: Uuid,
