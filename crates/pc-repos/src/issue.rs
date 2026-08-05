@@ -647,6 +647,21 @@ impl<'a> IssueRepo<'a> {
         .fetch_optional(self.db.pool())
         .await
     }
+    /// Round 185: extensions /api/companies/:id/issues/count -- group by status for visible issues.
+    pub async fn count_by_status_visible(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<(String, i64)>> {
+        sqlx::query_as(
+            "SELECT status, COUNT(*)::bigint AS count FROM issues \
+             WHERE company_id = $1 AND hidden_at IS NULL \
+             GROUP BY status",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
 
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");

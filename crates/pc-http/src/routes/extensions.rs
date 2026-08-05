@@ -8,10 +8,11 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiResult, AppState};
+use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -23,32 +24,15 @@ pub fn router() -> Router<AppState> {
         // 注: /api/companies/:company_id/issues/count 由 routes/issues.rs 注册
 }
 
-#[derive(Debug, FromRow)]
-struct HeartbeatRunRow {
-    id: Uuid,
-    agent_id: Uuid,
-    status: String,
-    started_at: chrono::DateTime<chrono::Utc>,
-    finished_at: Option<chrono::DateTime<chrono::Utc>>,
-    prompt: Option<String>,
-    error: Option<String>,
-}
-
 async fn issue_heartbeat_context(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // 最近 5 次 heartbeat run（按 started_at 倒序）
-    let rows: Vec<HeartbeatRunRow> = sqlx::query_as(
-        "SELECT id, agent_id, status, started_at, finished_at, prompt, error \
-         FROM heartbeat_runs \
-         WHERE issue_id = $1 \
-         ORDER BY started_at DESC LIMIT 5",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = HeartbeatRepo::new(&state.db)
+        .list_recent_for_issue(id)
+        .await
+        .unwrap_or_default();
     let runs: Vec<Value> = rows
         .iter()
         .map(|r| {
@@ -70,30 +54,19 @@ async fn issue_heartbeat_context(
     })))
 }
 
-#[derive(Debug, FromRow)]
-struct CountRow {
-    status: String,
-    count: i64,
-}
-
 async fn company_issues_count(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<CountRow> = sqlx::query_as(
-        "SELECT status, COUNT(*)::bigint AS count FROM issues \
-         WHERE company_id = $1 AND hidden_at IS NULL \
-         GROUP BY status",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = IssueRepo::new(&state.db)
+        .count_by_status_visible(company_id)
+        .await
+        .unwrap_or_default();
     let by_status: serde_json::Map<String, Value> = rows
         .iter()
-        .map(|r| (r.status.clone(), json!(r.count)))
+        .map(|(status, count)| (status.clone(), json!(count)))
         .collect();
-    let total: i64 = rows.iter().map(|r| r.count).sum();
+    let total: i64 = rows.iter().map(|(_, count)| *count).sum();
     Ok(Json(json!({
         "companyId": company_id,
         "total": total,

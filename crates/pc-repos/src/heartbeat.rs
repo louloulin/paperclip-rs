@@ -378,6 +378,17 @@ pub struct FailedAttentionRow {
     pub updated_at: pc_core::Timestamp,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct HeartbeatRunSummaryRow {
+    pub id: Uuid,
+    pub agent_id: Uuid,
+    pub status: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub prompt: Option<String>,
+    pub error: Option<String>,
+}
+
 pub struct HeartbeatRepo<'a> {
     pub db: &'a Db,
 }
@@ -1195,6 +1206,22 @@ impl<'a> HeartbeatRepo<'a> {
         .await?;
         Ok(row)
     }
+    /// Round 185: extensions /api/issues/:id/heartbeat-context -- most recent N runs for an issue.
+    pub async fn list_recent_for_issue(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<HeartbeatRunSummaryRow>> {
+        sqlx::query_as::<_, HeartbeatRunSummaryRow>(
+            "SELECT id, agent_id, status, started_at, finished_at, prompt, error \
+             FROM heartbeat_runs \
+             WHERE issue_id = $1 \
+             ORDER BY started_at DESC LIMIT 5",
+        )
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
 
 
 }
