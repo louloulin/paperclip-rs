@@ -14,6 +14,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
+use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -46,40 +47,24 @@ async fn checkout(
     let strategy = body.strategy.as_deref().unwrap_or("merge");
     let actor_type = body.actor_type.as_deref().unwrap_or("board");
 
-    let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> =
-        sqlx::query_as("SELECT id, assignee_agent_id, checkout_run_id FROM issues WHERE id = $1")
-            .bind(issue_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let Some((_, assignee_agent_id, prev_checkout_run_id)) = row else {
+    let repo = IssueRepo::new(&state.db);
+    let snapshot = repo
+        .get_checkout_snapshot(issue_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some((_, assignee_agent_id, prev_checkout_run_id)) = snapshot else {
         return Err(ApiError::NotFound(format!("issue {issue_id}")));
     };
 
-    sqlx::query(
-        "UPDATE issues SET checkout_run_id = $1, execution_locked_at = now(), updated_at = now() \
-         WHERE id = $2",
-    )
-    .bind(run_id)
-    .bind(issue_id)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = repo
+        .set_checkout_run(issue_id, run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    sqlx::query(
-        "INSERT INTO issue_checkout_locks \
-         (issue_id, run_id, actor_type, actor_id, strategy, status, created_at) \
-         VALUES ($1, $2, $3, $4, $5, 'active', now()) \
-         ON CONFLICT (issue_id, run_id) DO NOTHING",
-    )
-    .bind(issue_id)
-    .bind(run_id)
-    .bind(actor_type)
-    .bind(&actor_id)
-    .bind(strategy)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let _ = repo
+        .insert_checkout_lock(issue_id, run_id, actor_type, &actor_id, strategy)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let should_wake = should_wake_assignee(
         actor_type,
@@ -91,6 +76,7 @@ async fn checkout(
         if let Some(agent_id) = assignee_agent_id {
             enqueue_wakeup(
                 &state,
+                &repo,
                 issue_id,
                 agent_id,
                 "issue_checkout",
@@ -119,12 +105,11 @@ async fn wakeup(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
     let actor_id = require_user_id(&state, &headers).await?;
-    let row: Option<(Uuid, Option<Uuid>)> =
-        sqlx::query_as("SELECT id, assignee_agent_id FROM issues WHERE id = $1")
-            .bind(issue_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let repo = IssueRepo::new(&state.db);
+    let row = repo
+        .get_id_and_assignee(issue_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((_, assignee_agent_id)) = row else {
         return Err(ApiError::NotFound(format!("issue {issue_id}")));
     };
@@ -132,6 +117,7 @@ async fn wakeup(
     let queued = if let Some(agent_id) = assignee_agent_id {
         enqueue_wakeup(
             &state,
+            &repo,
             issue_id,
             agent_id,
             "issue_wakeup",
@@ -155,7 +141,8 @@ async fn wakeup(
 }
 
 async fn enqueue_wakeup(
-    state: &AppState,
+    _state: &AppState,
+    repo: &IssueRepo<'_>,
     issue_id: Uuid,
     agent_id: Uuid,
     source: &str,
@@ -163,31 +150,22 @@ async fn enqueue_wakeup(
     actor_type: &str,
 ) {
     // Resolve company_id for the agent
-    let company_id: Option<Uuid> =
-        sqlx::query_scalar("SELECT company_id FROM agents WHERE id = $1")
-            .bind(agent_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .ok()
-            .flatten();
-    let Some(company_id) = company_id else {
-        return;
+    let company_id = match repo.get_agent_company_id(agent_id).await {
+        Ok(Some(c)) => c,
+        _ => return,
     };
     let payload = json!({ "issueId": issue_id, "actorId": actor_id });
-    let _ = sqlx::query(
-        "INSERT INTO agent_wakeup_requests \
-         (company_id, agent_id, source, reason, payload, status, requested_by_actor_type, requested_by_actor_id) \
-         VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7)",
-    )
-    .bind(company_id)
-    .bind(agent_id)
-    .bind(source)
-    .bind(format!("{source}:{issue_id}"))
-    .bind(payload)
-    .bind(actor_type)
-    .bind(actor_id)
-    .execute(state.db.pool())
-    .await;
+    let _ = repo
+        .enqueue_agent_wakeup(
+            company_id,
+            agent_id,
+            source,
+            &format!("{source}:{issue_id}"),
+            &payload,
+            actor_type,
+            actor_id,
+        )
+        .await;
 }
 
 fn should_wake_assignee(

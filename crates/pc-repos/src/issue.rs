@@ -1,6 +1,7 @@
 //! `issue` 域：issues + comments + children + labels + read state + inbox archive.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -2636,6 +2637,108 @@ impl<'a> IssueRepo<'a> {
         .await
         .unwrap_or(0);
         Ok(n)
+    }
+
+    /// Round 172: 取 issue 的 checkout 摘要（assignee + prev run）。
+    pub async fn get_checkout_snapshot(&self, issue_id: Uuid) -> sqlx::Result<Option<(Uuid, Option<Uuid>, Option<Uuid>)>> {
+        let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT id, assignee_agent_id, checkout_run_id FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 172: 设置 issue 的 checkout_run_id + execution_locked_at。
+    pub async fn set_checkout_run(&self, issue_id: Uuid, run_id: Uuid) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE issues SET checkout_run_id = $1, execution_locked_at = now(), updated_at = now() \
+             WHERE id = $2",
+        )
+        .bind(run_id)
+        .bind(issue_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 172: 写入 issue_checkout_locks（幂等）。
+    pub async fn insert_checkout_lock(
+        &self,
+        issue_id: Uuid,
+        run_id: Uuid,
+        actor_type: &str,
+        actor_id: &str,
+        strategy: &str,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "INSERT INTO issue_checkout_locks \
+                (issue_id, run_id, actor_type, actor_id, strategy, status, created_at) \
+             VALUES ($1, $2, $3, $4, $5, 'active', now()) \
+             ON CONFLICT (issue_id, run_id) DO NOTHING",
+        )
+        .bind(issue_id)
+        .bind(run_id)
+        .bind(actor_type)
+        .bind(actor_id)
+        .bind(strategy)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 172: 取 issue 的 (id, assignee_agent_id)。
+    pub async fn get_id_and_assignee(&self, issue_id: Uuid) -> sqlx::Result<Option<(Uuid, Option<Uuid>)>> {
+        let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT id, assignee_agent_id FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 172: 写入 agent_wakeup_requests。
+    pub async fn enqueue_agent_wakeup(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+        source: &str,
+        reason: &str,
+        payload: &Value,
+        actor_type: &str,
+        actor_id: &str,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "INSERT INTO agent_wakeup_requests \
+                (company_id, agent_id, source, reason, payload, status, requested_by_actor_type, requested_by_actor_id) \
+             VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7)",
+        )
+        .bind(company_id)
+        .bind(agent_id)
+        .bind(source)
+        .bind(reason)
+        .bind(payload)
+        .bind(actor_type)
+        .bind(actor_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 172: 取 agent 的 company_id。
+    pub async fn get_agent_company_id(&self, agent_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
     }
 }
 
