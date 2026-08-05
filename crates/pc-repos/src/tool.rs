@@ -2057,6 +2057,57 @@ pub struct ToolActionRequestRow {
 }
 
 impl<'a> ToolRepo<'a> {
+    /// Round 144: 列出某 company 的 active tool categories（distinct risk_level）。
+    pub async fn list_tool_categories(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT risk_level FROM tool_catalog_entries \
+             WHERE company_id = $1 AND status = 'active' ORDER BY risk_level",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().map(|(r,)| r).collect())
+    }
+
+    /// Round 144: 设置 catalog entry 状态为 quarantined（delete_tool 用）。
+    pub async fn quarantine_catalog_entry(&self, entry_id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("UPDATE tool_catalog_entries SET status = 'quarantined' WHERE id = $1")
+            .bind(entry_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 144: 创建 oauth state（upsert_oauth_state 用）。
+    pub async fn upsert_oauth_state(
+        &self,
+        company_id: Uuid,
+        connection_id: Uuid,
+        state_token: &str,
+        code_verifier: &str,
+    ) -> RepoResult<()> {
+        // Best-effort delete of expired rows.
+        sqlx::query("DELETE FROM tool_oauth_states WHERE expires_at < now()")
+            .execute(self.db.pool())
+            .await?;
+        sqlx::query(
+            "INSERT INTO tool_oauth_states (state, company_id, connection_id, code_verifier, expires_at) \
+             VALUES ($1, $2, $3, $4, now() + interval '10 minutes') \
+             ON CONFLICT (state) DO NOTHING",
+        )
+        .bind(state_token)
+        .bind(company_id)
+        .bind(connection_id)
+        .bind(code_verifier)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     /// Round 143: 列出某 run 的 tool_call_events（get_run_decisions_route 用）。
     /// 返回 (id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at)
     pub async fn list_tool_call_events_for_run(

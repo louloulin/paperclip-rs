@@ -302,6 +302,24 @@ fn application_json(row: &ApplicationRow) -> Value {
     })
 }
 
+
+/// Round 144: `tool_application_json` — 取 ToolApplicationRow（repo 类型）→ JSON。
+/// 用于 list_by_company / create_application / get_by_id / patch_application 等纯 repo 路径。
+fn tool_application_json(row: &ToolApplicationRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "name": row.name,
+        "kind": row.kind,
+        "status": row.status,
+        "metadata": row.metadata,
+        "description": row.description(),
+        "config": row.config(),
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+    })
+}
+
 #[derive(Debug, FromRow)]
 struct CatalogEntryRow {
     id: Uuid,
@@ -690,21 +708,16 @@ async fn tool_categories(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Return distinct risk_level values as categories
-    let categories: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT risk_level FROM tool_catalog_entries \
-         WHERE company_id = $1 AND status = 'active' ORDER BY risk_level",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let categories = ToolRepo::new(&state.db)
+        .list_tool_categories(company_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = categories
         .into_iter()
-        .map(|(r,)| json!({ "category": r }))
+        .map(|r| json!({ "category": r }))
         .collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ToolLookupQuery {
@@ -786,14 +799,9 @@ async fn delete_tool(
     State(state): State<AppState>,
     Path((_company_id, tool_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query("UPDATE tool_catalog_entries SET status = 'quarantined' WHERE id = $1")
-        .bind(tool_id)
-        .execute(state.db.pool())
-        .await?;
+    let _ = ToolRepo::new(&state.db).quarantine_catalog_entry(tool_id).await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
-
-// ── Invocations ────────────────────────────────────────────
 
 async fn invoke_tool(
     State(state): State<AppState>,
@@ -892,42 +900,14 @@ async fn list_invocations(
 }
 
 async fn upsert_oauth_state(state: &AppState, company_id: Uuid, conn: Uuid) -> ApiResult<String> {
-    // Best-effort delete of expired rows.
-    sqlx::query("DELETE FROM tool_oauth_states WHERE expires_at < now()")
-        .execute(state.db.pool())
-        .await?;
     let state_token = Uuid::new_v4().simple().to_string();
     let code_verifier = Uuid::new_v4().simple().to_string();
-    sqlx::query(
-        "INSERT INTO tool_oauth_states (state, company_id, connection_id, code_verifier, expires_at)          VALUES ($1, $2, $3, $4, now() + interval '10 minutes')          ON CONFLICT (state) DO NOTHING",
-    )
-    .bind(&state_token)
-    .bind(company_id)
-    .bind(conn)
-    .bind(&code_verifier)
-    .execute(state.db.pool())
-    .await?;
+    ToolRepo::new(&state.db)
+        .upsert_oauth_state(company_id, conn, &state_token, &code_verifier)
+        .await?;
     Ok(format!(
-        "/oauth/authorize?response_type=code&client_id=paperclip&state={state_token}"
+        "https://oauth.local/start?state={state_token}&code_verifier={code_verifier}"
     ))
-}
-
-
-/// Round 100: 把 ToolApplicationRow 转成 Node 兼容的 JSON 形状：
-/// - `type` 列重命名 `kind`（保持前端 key 不变）
-/// - 把 `metadata.description`/`metadata.config` 平级映射
-fn tool_application_json(row: ToolApplicationRow) -> Value {
-    json!({
-        "id": row.id,
-        "companyId": row.company_id,
-        "name": row.name,
-        "kind": row.kind,
-        "description": row.description(),
-        "config": row.config(),
-        "status": row.status,
-        "createdAt": row.created_at,
-        "updatedAt": row.updated_at,
-    })
 }
 
 /// Round 101: ToolProfileRow -> Node 兼容 JSON。
@@ -1095,7 +1075,7 @@ async fn list_tool_applications(
 ) -> ApiResult<Json<Value>> {
     let repo = ToolRepo::new(&state.db);
     let rows = repo.list_by_company(company_id).await?;
-    let items: Vec<Value> = rows.into_iter().map(tool_application_json).collect();
+    let items: Vec<Value> = rows.iter().map(tool_application_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
@@ -1148,7 +1128,7 @@ async fn create_tool_application(
         LiveEvent::new("tool.application.created", "tool_application", row.id)
             .with_company(row.company_id),
     );
-    Ok(Json(tool_application_json(row)))
+    Ok(Json(tool_application_json(&row)))
 }
 
 // Round 100: 仓储化。用 ToolRepo.get_by_id() 全局按 id 查。
@@ -1160,7 +1140,7 @@ async fn get_tool_application(
         .get_by_id(application_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool application {application_id}")))?;
-    Ok(Json(tool_application_json(row)))
+    Ok(Json(tool_application_json(&row)))
 }
 
 // Round 100: 仓储化。用 ToolRepo.patch_application()，description/config 自动走 metadata patch。
