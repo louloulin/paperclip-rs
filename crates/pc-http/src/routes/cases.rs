@@ -71,6 +71,11 @@ pub fn router() -> Router<AppState> {
             "/api/cases/:case_id/documents/:key/annotations/threads/:thread_id/comments",
             post(add_case_annotation_comment),
         )
+        // ── Round 198: Node-style alias (no /threads segment) ──
+        .route(
+            "/api/cases/:case_id/documents/:key/annotations/:thread_id/comments",
+            post(add_case_annotation_comment),
+        )
         .route(
             "/api/cases/:case_id/documents/:key",
             delete(delete_case_document),
