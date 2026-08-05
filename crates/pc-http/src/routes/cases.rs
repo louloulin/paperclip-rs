@@ -252,31 +252,29 @@ async fn create_company_case(
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
+// Round 106: 仓储化。直接走 CaseRepo::list_events_by_case_id。
 async fn list_case_events(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<EventsQuery>,
 ) -> ApiResult<Json<Value>> {
-    let limit = query.limit.unwrap_or(100).clamp(1, 500);
-    let rows: Vec<(Uuid, String, String, Option<String>, Option<Uuid>, Option<Uuid>, Value, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at          FROM case_events WHERE case_id = $1 ORDER BY created_at DESC LIMIT $2",
-    )
-    .bind(case_id)
-    .bind(limit)
-    .fetch_all(state.db.pool())
-    .await?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 500) as i64;
+    let rows = CaseRepo::new(&state.db)
+        .list_events_by_case_id(case_id, limit)
+        .await?;
+
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at)| {
+        .map(|r| {
             json!({
-                "id": id,
-                "kind": kind,
-                "actorType": actor_type,
-                "actorUserId": actor_user_id,
-                "actorAgentId": actor_agent_id,
-                "runId": run_id,
-                "payload": payload,
-                "createdAt": created_at,
+                "id": r.id,
+                "kind": r.kind,
+                "actorType": r.actor_type,
+                "actorUserId": r.actor_user_id,
+                "actorAgentId": r.actor_agent_id,
+                "runId": r.run_id,
+                "payload": r.payload,
+                "createdAt": r.created_at,
             })
         })
         .collect();

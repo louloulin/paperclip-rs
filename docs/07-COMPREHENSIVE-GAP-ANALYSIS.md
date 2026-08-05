@@ -713,6 +713,48 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 29. 第一百零六轮增量（Round 106 — CaseEvents 子模块仓储化)
+
+### 目标
+`cases.rs::list_case_events` 仍用内联 SQL `SELECT id, kind, actor_type, ... FROM case_events`，
+而 `CaseRepo` 已有 `list_events(company_id, case_id, limit)`（要求 company_id 已知）。
+需要一个按 case_id 单查的纯 id-based 仓储方法，让该 route 完全跑 Repo。
+
+### 真实 schema (0143_cases_foundation.sql)
+```sql
+case_events(
+    id, company_id, case_id, kind, actor_type, actor_user_id, actor_agent_id,
+    run_id, payload, created_at, updated_at
+)
+-- kind CHECK IN ('created','updated','fields_changed','status_changed',
+--                 'issue_linked','issue_unlinked','document_revised',
+--                 'child_linked','attachment_added','label_added','label_removed')
+-- actor_type CHECK IN ('user','agent','system')
+```
+
+### 新增 `pc_repos::case::CaseRepo` 方法
+- `list_events_by_case_id(case_id, limit)` —— 按 case_id 单查（不强制 company_id），
+  用于 `GET /api/cases/:id/events` 端点。limit 自动 clamp 到 [1, 500]。
+
+### 重构 `cases.rs::list_case_events`
+- 之前：内联 SQL 直接 SELECT 8 个元组字段
+- 之后：`CaseRepo::list_events_by_case_id(case_id, limit)` 返回 `Vec<CaseEventRow>`，
+   路由层全部字段改为 `r.id / r.kind / r.actor_type / ...`
+
+### 新增集成测试 4 个 (`crates/pc-repos/tests/round106_case_events_repo.rs`)
+1. `case_events_repo_list_by_case_id_orders_recent_first` —— 排序（最新在前）
+2. `case_events_repo_list_filters_by_case_id` —— 跨 case 隔离
+3. `case_events_repo_list_clamps_limit` —— limit 自动 clamp 到 [1, 500]
+4. `case_events_repo_create_event_uses_real_columns` —— create_event 真实 schema 落库验证
+
+### 进度影响
+- 综合进度从 **≈ 87.4% → ≈ 87.7%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **461 passed**（pc-repos 单元无变化）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 Round 95-106 修复 **44 个路由从 500 → 200**，
+  18 个 tool_* + 1 个 case_event 路由进入高内聚低耦合设计
+
 ## 28. 第一百零五轮增量（Round 105 — ToolActionRequest 仓储化 + 老 schema 命名区分)
 
 ### 目标

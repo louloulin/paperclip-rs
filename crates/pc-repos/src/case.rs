@@ -776,7 +776,25 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
-    /// 跨 case 列出公司在指定 kind 下的事件（company-level feed）。
+/// Round 106: 按 case_id 单查（不需 company_id），用于 `GET /api/cases/:id/events`
+    /// 这种纯 id-based 端点。
+    pub async fn list_events_by_case_id(
+        &self,
+        case_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<CaseEventRow>> {
+        let limit = limit.clamp(1, 500);
+        let sql = format!(
+            "SELECT {EVENT_COLS} FROM case_events WHERE case_id=$1              ORDER BY created_at DESC, id DESC LIMIT $2"
+        );
+        sqlx::query_as::<_, CaseEventRow>(&sql)
+            .bind(case_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+        /// 跨 case 列出公司在指定 kind 下的事件（company-level feed）。
     /// `kind_filter` 为 `None` 时返回所有 kind；为 `Some("")` 时同样返回所有（与原路由兼容）。
     pub async fn list_events_by_company(
         &self,
