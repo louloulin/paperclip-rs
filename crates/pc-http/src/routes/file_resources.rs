@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
+use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -40,16 +41,10 @@ async fn list_files(
     require_user_id(&state, &headers).await?;
     // Resolve files associated with an issue: project artifacts, execution
     // workspace outputs, and any pinned attachments.
-    let project_files: Vec<(String, String, Option<i64>)> = sqlx::query_as(
-        "SELECT a.path, a.mime_type, a.size_bytes \
-         FROM project_artifacts a \
-         JOIN issues i ON i.project_id = a.project_id \
-         WHERE i.id = $1 ORDER BY a.created_at DESC LIMIT 50",
-    )
-    .bind(issue_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let project_files = IssueRepo::new(&state.db)
+        .list_project_files(issue_id)
+        .await
+        .unwrap_or_default();
 
     let files: Vec<Value> = project_files
         .into_iter()
@@ -67,14 +62,18 @@ async fn resolve_files(
     require_user_id(&state, &headers).await?;
     // For unresolved paths, return an empty result and let the UI prompt the
     // user to attach or link a file.
-    let q = sqlx::query_as::<_, (String,)>(
-        "SELECT 'unresolved-path'::text FROM issues WHERE id = $1 LIMIT 1",
-    )
-    .bind(issue_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let unresolved: Vec<&str> = q.iter().map(|(s,)| s.as_str()).collect();
+    // 原 SQL 为 "SELECT 'unresolved-path'::text FROM issues WHERE id=$1 LIMIT 1"
+    // 现改为 IssueRepo::exists_for_resolution 检查 issue 是否存在；
+    // 存在则返回 ["unresolved-path"]，否则返回空数组（保持 Node 端语义）。
+    let unresolved: Vec<&str> = if IssueRepo::new(&state.db)
+        .exists_for_resolution(issue_id)
+        .await
+        .unwrap_or(false)
+    {
+        vec!["unresolved-path"]
+    } else {
+        Vec::new()
+    };
     Ok(Json(json!({
         "resolved": [],
         "unresolved": unresolved,
@@ -91,14 +90,10 @@ async fn file_content(
         .path
         .ok_or_else(|| ApiError::BadRequest("path query is required".into()))?;
     // Try to read content from project_artifacts keyed by path + project of issue.
-    let row: Option<(String, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT a.content, a.mime_type, a.size_bytes FROM project_artifacts a          JOIN issues i ON i.project_id = a.project_id          WHERE i.id = $1 AND a.path = $2 LIMIT 1",
-    )
-    .bind(issue_id)
-    .bind(&path)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = IssueRepo::new(&state.db)
+        .get_project_file_content(issue_id, &path)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let (content, mime, size) = row
         .map(|(c, m, s)| (c, m, s))
         .unwrap_or_else(|| (String::new(), None, None));

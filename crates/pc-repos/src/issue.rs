@@ -604,6 +604,50 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+    /// Round 180: file_resources 列表 —— 通过 issue_id JOIN project_artifacts 取文件元数据。
+    pub async fn list_project_files(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<(String, String, Option<i64>)>> {
+        sqlx::query_as(
+            "SELECT a.path, a.mime_type, a.size_bytes \
+             FROM project_artifacts a \
+             JOIN issues i ON i.project_id = a.project_id \
+             WHERE i.id = $1 ORDER BY a.created_at DESC LIMIT 50",
+        )
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 180: file_resources resolve —— 仅用于检查 issue 是否存在（接口语义保留：返回 unresolved 占位）。
+    pub async fn exists_for_resolution(&self, issue_id: Uuid) -> sqlx::Result<bool> {
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM issues WHERE id = $1 LIMIT 1")
+                .bind(issue_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(row.is_some())
+    }
+
+    /// Round 180: file_resources content —— 取单个 artifact 的 content / mime / size。
+    pub async fn get_project_file_content(
+        &self,
+        issue_id: Uuid,
+        path: &str,
+    ) -> sqlx::Result<Option<(String, Option<String>, Option<i64>)>> {
+        sqlx::query_as(
+            "SELECT a.content, a.mime_type, a.size_bytes \
+             FROM project_artifacts a \
+             JOIN issues i ON i.project_id = a.project_id \
+             WHERE i.id = $1 AND a.path = $2 LIMIT 1",
+        )
+        .bind(issue_id)
+        .bind(path)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");
         sqlx::query_as::<_, IssueRow>(&sql)
