@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::tool::{NewToolApplication, PatchToolApplication, ToolApplicationRow, ToolRepo};
+use pc_repos::tool::{
+    NewToolApplication, NewToolProfile, NewToolProfileEntry, PatchToolApplication,
+    ToolApplicationRow, ToolProfileEntryRow, ToolProfileRow, ToolRepo,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -970,6 +973,46 @@ fn tool_application_json(row: ToolApplicationRow) -> Value {
     })
 }
 
+/// Round 101: ToolProfileRow -> Node 兼容 JSON。
+/// 保留 legacy 字段 `kind`/`scope` 用真实 status + default_action 派生以向前兼容。
+fn tool_profile_json(row: ToolProfileRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "profileKey": row.profile_key,
+        "name": row.name,
+        "description": row.description,
+        "status": row.status,
+        "defaultAction": row.default_action,
+        "metadata": row.metadata,
+        // 兼容老 client: `kind`/`scope` 由 status + default_action 派生
+        "kind": row.status,
+        "scope": row.default_action,
+        "updatedAt": row.updated_at,
+        "createdAt": row.created_at,
+    })
+}
+
+/// Round 101: ToolProfileEntryRow -> Node 兼容 JSON。
+fn tool_profile_entry_json(row: ToolProfileEntryRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "profileId": row.profile_id,
+        "selectorType": row.selector_type,
+        "effect": row.effect,
+        "applicationId": row.application_id,
+        "connectionId": row.connection_id,
+        "catalogEntryId": row.catalog_entry_id,
+        "toolName": row.tool_name,
+        "riskLevel": row.risk_level,
+        "conditions": row.conditions,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+    })
+}
+
+
 // ============== Tool applications / profiles / policies / runtime ==============
 
 // Round 100: 仓储化。直接用 ToolRepo.list_by_company()。
@@ -1123,45 +1166,47 @@ async fn delete_tool_application_by_id(
     delete_tool_application(State(state), Path((company_id, application_id))).await
 }
 
+// Round 101: 仓储化。原 SQL 引用不存在的列 `kind / scope / updated_at`；
+// 真实 schema 是 profile_key / name / description / status / default_action / metadata。
 async fn list_tool_profiles(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, String, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, name, kind, scope, updated_at FROM tool_profiles          WHERE company_id = $1 ORDER BY updated_at DESC LIMIT 200",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, name, kind, scope, updated_at)| {
-            json!({
-                "id": id,
-                "name": name,
-                "kind": kind,
-                "scope": scope,
-                "updatedAt": updated_at,
-            })
-        })
-        .collect();
+    let repo = ToolRepo::new(&state.db);
+    let rows = repo.list_profiles_by_company(company_id).await?;
+    let items: Vec<Value> = rows.into_iter().map(tool_profile_json).collect();
     Ok(Json(json!({ "items": items })))
 }
 
+// Round 101: 仓储化。这里 delete 不带 company_id（URL 只接 profile_id），
+// 因此先通过 list_profiles_by_company 拿一次反查 (引入 1 次 SELECT，
+// 之后可以将 (id, company_id) 二元组缓存化避免回查)。
 async fn delete_tool_profile(
     State(state): State<AppState>,
     Path(profile_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let affected = sqlx::query("DELETE FROM tool_profiles WHERE id = $1")
-        .bind(profile_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
-    if affected > 0 {
-        state
-            .realtime
-            .publish(LiveEvent::new("tool.profile.deleted", "tool_profile", profile_id));
+    // Repo 端只暴露 (company_id, id) 的 delete；这里我们用 list 反查 company_id。
+    // 因为 list_profiles_by_company 已经 ORDER BY updated_at DESC LIMIT 200，
+    // 单 id 场景会扫描少量行；生产中可以加 by-id 索引提示。
+    let repo = ToolRepo::new(&state.db);
+    let mut target_company: Option<Uuid> = None;
+    for cid_row in sqlx::query_as::<_, (Uuid,)>(
+        "SELECT DISTINCT company_id FROM tool_profiles WHERE id = $1"
+    )
+    .bind(profile_id)
+    .fetch_optional(state.db.pool())
+    .await?
+    {
+        target_company = Some(cid_row.0);
+    }
+    let company_id = target_company
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
+    let n = repo.delete_profile(company_id, profile_id).await?;
+    if n {
+        state.realtime.publish(
+            LiveEvent::new("tool.profile.deleted", "tool_profile", profile_id)
+                .with_company(company_id),
+        );
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound(format!("tool profile {profile_id}")))

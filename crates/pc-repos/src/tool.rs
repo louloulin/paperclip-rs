@@ -741,6 +741,239 @@ impl<'a> ToolRepo<'a> {
     }
 }
 
+// ============================================================
+// Round 101: ToolProfile 仓储层
+// ============================================================
+//
+// 真实表 schema (0149_agent_access_phase2_contracts.sql):
+//   tool_profiles(
+//     id, company_id, profile_key, name, description,
+//     status, default_action, metadata,
+//     created_at, updated_at
+//   )
+//   tool_profile_entries(
+//     id, company_id, profile_id, selector_type, effect,
+//     application_id, connection_id, catalog_entry_id,
+//     tool_name, risk_level, conditions,
+//     created_at, updated_at
+//   )
+//
+// 之前路由层 list_tool_profiles 用 `kind / scope / updated_at` 是错的列名；list 改用
+// 真实列，并平级映射回 Node API 期望的 JSON 形状（保留 kind/scope 兼容老客户端）。
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolProfileRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub profile_key: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub default_action: String,
+    pub metadata: Value,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolProfileEntryRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub profile_id: Uuid,
+    pub selector_type: String,
+    pub effect: String,
+    pub application_id: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
+    pub catalog_entry_id: Option<Uuid>,
+    pub tool_name: Option<String>,
+    pub risk_level: Option<String>,
+    pub conditions: Option<Value>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// `tool_profiles` 写入 payload。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewToolProfile {
+    pub company_id: Uuid,
+    pub profile_key: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_profile_status")]
+    pub status: String,
+    #[serde(default = "default_profile_action")]
+    pub default_action: String,
+    #[serde(default = "default_metadata")]
+    pub metadata: Value,
+}
+
+fn default_profile_status() -> String {
+    "active".to_string()
+}
+fn default_profile_action() -> String {
+    "deny".to_string()
+}
+
+/// `tool_profile_entries` 写入 payload。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewToolProfileEntry {
+    pub company_id: Uuid,
+    pub profile_id: Uuid,
+    pub selector_type: String,
+    #[serde(default = "default_entry_effect")]
+    pub effect: String,
+    pub application_id: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
+    pub catalog_entry_id: Option<Uuid>,
+    pub tool_name: Option<String>,
+    pub risk_level: Option<String>,
+    #[serde(default)]
+    pub conditions: Option<Value>,
+}
+
+fn default_entry_effect() -> String {
+    "include".to_string()
+}
+
+impl<'a> ToolRepo<'a> {
+    // ---- 3a) tool_profiles ----
+
+    pub async fn list_profiles_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolProfileRow>> {
+        let sql = format!(
+            "SELECT {PROFILE_COLS} FROM tool_profiles              WHERE company_id=$1              ORDER BY updated_at DESC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, ToolProfileRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn get_profile(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+    ) -> RepoResult<Option<ToolProfileRow>> {
+        let sql = format!(
+            "SELECT {PROFILE_COLS} FROM tool_profiles              WHERE company_id=$1 AND id=$2"
+        );
+        Ok(sqlx::query_as::<_, ToolProfileRow>(&sql)
+            .bind(company_id)
+            .bind(profile_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// 在 (company_id, profile_key) 上做幂等检查；存在则返回 Some(id)。
+    pub async fn find_profile_id_by_key(
+        &self,
+        company_id: Uuid,
+        profile_key: &str,
+    ) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_profiles WHERE company_id=$1 AND profile_key=$2",
+        )
+        .bind(company_id)
+        .bind(profile_key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    pub async fn create_profile(
+        &self,
+        p: &NewToolProfile,
+    ) -> RepoResult<ToolProfileRow> {
+        if p.name.trim().is_empty() {
+            return Err(RepoError::Invalid("profile name must not be empty".into()));
+        }
+        if p.profile_key.trim().is_empty() {
+            return Err(RepoError::Invalid("profile_key must not be empty".into()));
+        }
+        let sql = format!(
+            "INSERT INTO tool_profiles                 (company_id, profile_key, name, description, status, default_action, metadata)              VALUES ($1, $2, $3, $4, $5, $6, $7)              RETURNING {PROFILE_COLS}",
+        );
+        Ok(sqlx::query_as::<_, ToolProfileRow>(&sql)
+            .bind(p.company_id)
+            .bind(&p.profile_key)
+            .bind(&p.name)
+            .bind(p.description.as_deref())
+            .bind(&p.status)
+            .bind(&p.default_action)
+            .bind(&p.metadata)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+
+    pub async fn delete_profile(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "DELETE FROM tool_profiles WHERE company_id=$1 AND id=$2",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    // ---- 3b) tool_profile_entries ----
+
+    pub async fn list_profile_entries(
+        &self,
+        profile_id: Uuid,
+    ) -> RepoResult<Vec<ToolProfileEntryRow>> {
+        let sql = format!(
+            "SELECT {PROFILE_ENTRY_COLS} FROM tool_profile_entries              WHERE profile_id=$1              ORDER BY created_at ASC LIMIT 1000"
+        );
+        Ok(sqlx::query_as::<_, ToolProfileEntryRow>(&sql)
+            .bind(profile_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    pub async fn create_profile_entry(
+        &self,
+        e: &NewToolProfileEntry,
+    ) -> RepoResult<ToolProfileEntryRow> {
+        if e.selector_type.trim().is_empty() {
+            return Err(RepoError::Invalid("selector_type must not be empty".into()));
+        }
+        let conditions = e.conditions.clone().unwrap_or_else(|| serde_json::json!({}));
+        let sql = format!(
+            "INSERT INTO tool_profile_entries                 (company_id, profile_id, selector_type, effect, application_id, connection_id,                  catalog_entry_id, tool_name, risk_level, conditions)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)              RETURNING {PROFILE_ENTRY_COLS}",
+        );
+        Ok(sqlx::query_as::<_, ToolProfileEntryRow>(&sql)
+            .bind(e.company_id)
+            .bind(e.profile_id)
+            .bind(&e.selector_type)
+            .bind(&e.effect)
+            .bind(e.application_id)
+            .bind(e.connection_id)
+            .bind(e.catalog_entry_id)
+            .bind(e.tool_name.as_deref())
+            .bind(e.risk_level.as_deref())
+            .bind(&conditions)
+            .fetch_one(self.db.pool())
+            .await?)
+    }
+}
+
+const PROFILE_COLS: &str = "id, company_id, profile_key, name, description, status, default_action, metadata, created_at, updated_at";
+const PROFILE_ENTRY_COLS: &str = "id, company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions, created_at, updated_at";
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,5 +1054,39 @@ mod tests {
         };
         assert_eq!(row.description(), Some("desc"));
         assert_eq!(row.config()["k"], 1);
+    }
+
+    // ---- Round 101: ToolProfile + ToolProfileEntry ----
+
+    #[test]
+    fn new_tool_profile_defaults() {
+        let p = NewToolProfile {
+            company_id: Uuid::new_v4(),
+            profile_key: "k".into(),
+            name: "n".into(),
+            description: None,
+            status: default_profile_status(),
+            default_action: default_profile_action(),
+            metadata: serde_json::json!({}),
+        };
+        assert_eq!(p.status, "active");
+        assert_eq!(p.default_action, "deny");
+    }
+
+    #[test]
+    fn new_tool_profile_entry_defaults() {
+        let e = NewToolProfileEntry {
+            company_id: Uuid::new_v4(),
+            profile_id: Uuid::new_v4(),
+            selector_type: "tool_name".into(),
+            effect: default_entry_effect(),
+            application_id: None,
+            connection_id: None,
+            catalog_entry_id: None,
+            tool_name: Some("x".into()),
+            risk_level: None,
+            conditions: None,
+        };
+        assert_eq!(e.effect, "include");
     }
 }

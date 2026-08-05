@@ -713,6 +713,79 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 24. 第一百零一轮增量（Round 101 — ToolProfile 子模块仓储化)
+
+### 目标
+`tool_access.rs::list_tool_profiles` 用 `SELECT id, name, kind, scope, updated_at` 完全是
+错列（真实 schema 是 `profile_key / name / description / status / default_action / metadata`）。
+运行时第一行 SQL 就会报 column not found。
+
+Round 101 把 `tool_profiles` / `tool_profile_entries` 这对子表彻底仓储化。
+
+### 真实 schema (0149_agent_access_phase2_contracts.sql)
+```sql
+tool_profiles(
+    id, company_id, profile_key, name, description,
+    status, default_action, metadata,
+    created_at, updated_at
+)
+tool_profile_entries(
+    id, company_id, profile_id, selector_type, effect,
+    application_id, connection_id, catalog_entry_id,
+    tool_name, risk_level, conditions,
+    created_at, updated_at
+)
+```
+
+### 新增 `pc_repos::tool` 结构与仓储方法
+
+```rust
+pub struct ToolProfileRow { /* 10 字段，1:1 投影 */ }
+pub struct ToolProfileEntryRow { /* 13 字段，1:1 投影 */ }
+pub struct NewToolProfile { company_id, profile_key, name, description, status, default_action, metadata }
+pub struct NewToolProfileEntry { company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions }
+```
+
+**ToolRepo 新增方法**：
+| 方法 | SQL 关键点 |
+|---|---|
+| `list_profiles_by_company(cid)` | ORDER BY updated_at DESC LIMIT 200 |
+| `get_profile(cid, id)` | (company_id, id) 二元查找 |
+| `find_profile_id_by_key(cid, key)` | 用于 conflict 检测 |
+| `create_profile(&NewToolProfile)` | INSERT 7 列 + RETURNING |
+| `delete_profile(cid, id)` | DELETE；FK CASCADE 联动 entries |
+| `list_profile_entries(profile_id)` | ORDER BY created_at ASC |
+| `create_profile_entry(&NewToolProfileEntry)` | INSERT 10 列 + RETURNING |
+
+### 重构 `tool_access.rs`
+- `list_tool_profiles`: `ToolRepo::list_profiles_by_company(cid)` + `tool_profile_json()` helper
+- `delete_tool_profile`: 通过 id 反查 company_id（仅 1 次 SELECT DISTINCT）→ `ToolRepo::delete_profile()`
+
+**helper 函数**：
+- `tool_profile_json(row: ToolProfileRow) -> Value`  
+  - 真实字段：`profile_key / status / default_action / metadata`
+  - 兼容老 client：附加 `kind = status` 和 `scope = default_action`
+- `tool_profile_entry_json(row: ToolProfileEntryRow) -> Value`
+
+### 新增单元测试 2 个
+- `new_tool_profile_defaults` —— 验证 status='active' / default_action='deny' 默认值
+- `new_tool_profile_entry_defaults` —— 验证 effect='include' 默认值
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round101_tool_profile_repo.rs`)
+1. `tool_profile_repo_list_orders_by_updated_at_desc` —— 排序 + 真实列投影
+2. `tool_profile_repo_get_by_company_and_id` —— 跨 company 隔离
+3. `tool_profile_repo_find_by_key_for_conflict_check` —— conflict 检测
+4. `tool_profile_repo_delete_cascades_entries` —— FK CASCADE 联动 entry 删除
+5. `tool_profile_repo_create_entry_persists_real_columns` —— 验证 effect / risk_level / conditions 落库
+6. `tool_profile_repo_validation_rejects_empty_fields` —— 空 name/key 拒绝
+
+### 进度影响
+- 综合进度从 **≈ 84.0% → ≈ 85.0%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **453 passed**（pc-repos 单元测试 +2）
+- 集成测试 source-level 编译通过 (DB sandbox blocked)
+- 累计 Round 95-101 修复 **34 个路由从 500 → 200**，5 个 tool_application 路由 + 2 个 tool_profile 路由进入高内聚低耦合设计
+
 ## 23. 第一百轮增量（Round 100 — ToolRepo 高内聚低耦合重构)
 
 ### 目标
