@@ -28,7 +28,10 @@ use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
 use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
 use pc_repos::asset::AssetRepo;
 use pc_repos::company_export::CompanyExportRepo;
+use pc_repos::agent::AgentRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
+use pc_repos::issue::IssueRepo;
+use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -46,6 +49,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:id/timeline", get(get_timeline))
         .route("/api/companies/:id/artifacts", get(list_artifacts))
         .route("/api/companies/:id/branding", get(get_branding).patch(update_branding))
+        // ── Round 211: company-level diagnostics aggregate ──
+        .route(
+            "/api/companies/:id/diagnostics",
+            get(company_diagnostics),
+        )
         // ── Round 208: company-level GET aliases ──
         .route(
             "/api/companies/:id/finance-events",
@@ -2209,4 +2217,115 @@ mod round208_tests {
             Some("new")
         );
     }
+}
+
+#[cfg(test)]
+mod round211_tests {
+    use super::compute_health_score;
+
+    #[test]
+    fn health_score_no_active_is_100() {
+        assert_eq!(compute_health_score(0, 0, 0, 0), 100);
+    }
+
+    #[test]
+    fn health_score_perfect_active_is_100() {
+        // 有 active 且无失败 -> 100
+        assert_eq!(compute_health_score(0, 0, 0, 5), 100);
+    }
+
+    #[test]
+    fn health_score_deducts_for_failures() {
+        // failed_recent=2 -> 扣 10
+        assert_eq!(compute_health_score(2, 0, 0, 1), 90);
+    }
+
+    #[test]
+    fn health_score_clamps_to_zero() {
+        // 巨大扣分也不会变负
+        let score = compute_health_score(100, 100, 100, 1);
+        assert_eq!(score, 0);
+    }
+
+    #[test]
+    fn health_score_combines_all_factors() {
+        // failed_recent=3 (15) + agent_error=2 (4) + issue_blocked=10 (10) = 29 扣分
+        // 100 - 29 = 71
+        assert_eq!(compute_health_score(3, 2, 10, 5), 71);
+    }
+}
+
+
+// ============================================================================
+// Round 211: company-level diagnostics aggregate
+//
+// 端口：GET /api/companies/:id/diagnostics
+// 组合三类维度：issues（status_breakdown_visible）、agents（status_breakdown）、
+// heartbeat_runs（status_breakdown），输出公司级健康度快照。
+// ============================================================================
+
+/// 计算 company 健康度评分（0-100，越大越健康）。
+///
+/// 计分规则（与 `companies/:id/diagnostics` 路由一致）：
+/// - 无活跃 heartbeat：100（没有正在跑的活，可能完全是 idle 状态）
+/// - 否则：起始 100 分，每项扣分：
+///   * `failed_recent` × 5
+///   * `agent_error` × 2
+///   * `issue_blocked` × 1
+/// 最终 saturating 到 [0, 100]
+fn compute_health_score(
+    heartbeat_failed_recent: i64,
+    agent_error: i64,
+    issue_blocked: i64,
+    heartbeat_active: i64,
+) -> i64 {
+    if heartbeat_active == 0 {
+        return 100;
+    }
+    let penalty = heartbeat_failed_recent * 5 + agent_error * 2 + issue_blocked;
+    100i64.saturating_sub(penalty).max(0)
+}
+
+async fn company_diagnostics(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let (issue_blocked, issue_in_progress, issue_needs_review) =
+        IssueRepo::new(&state.db)
+            .status_breakdown_visible(id)
+            .await
+            .unwrap_or((0, 0, 0));
+    let (agent_error, agent_running, agent_paused) = AgentRepo::new(&state.db)
+        .status_breakdown(id)
+        .await
+        .unwrap_or((0, 0, 0));
+    let (heartbeat_failed_recent, heartbeat_active) = HeartbeatRepo::new(&state.db)
+        .status_breakdown(id)
+        .await
+        .unwrap_or((0, 0));
+    let health_score = compute_health_score(
+        heartbeat_failed_recent,
+        agent_error,
+        issue_blocked,
+        heartbeat_active,
+    );
+    Ok(Json(json!({
+        "companyId": id,
+        "issues": {
+            "blocked": issue_blocked,
+            "inProgress": issue_in_progress,
+            "needsReview": issue_needs_review,
+        },
+        "agents": {
+            "error": agent_error,
+            "running": agent_running,
+            "paused": agent_paused,
+        },
+        "heartbeats": {
+            "failedRecent24h": heartbeat_failed_recent,
+            "active": heartbeat_active,
+        },
+        "healthScore": health_score,
+        "generatedAt": chrono::Utc::now(),
+    })))
 }
