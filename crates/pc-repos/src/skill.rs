@@ -393,6 +393,26 @@ impl<'a> SkillRepo<'a> {
             .await?)
     }
 
+    /// Round 125: 列出 company 全部 distinct categories（unwind + collect）。
+    pub async fn list_categories(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<String>> {
+        let rows: Vec<(Vec<String>,)> = sqlx::query_as(
+            "SELECT categories FROM company_skills WHERE company_id=$1 AND deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut seen = std::collections::BTreeSet::new();
+        for (cats,) in rows {
+            for c in cats {
+                seen.insert(c);
+            }
+        }
+        Ok(seen.into_iter().collect())
+    }
+
     pub async fn get(
         &self,
         company_id: Uuid,

@@ -1159,6 +1159,66 @@ secrets.rs 还剩 14 SQL，主要是 my_user_secrets 系列（含 schema 漂移�
 - issues.rs 44 SQL
 - companies.rs 37 SQL
 
+## 48. 第一百二十五轮增量（Round 125 — company_skills.rs 基础 CRUD 子模块仓储化)
+
+### 目标
+company_skills.rs 60 → 56 SQL（-4）。首次触碰 company_skills.rs 模块，仓储化基础 CRUD：
+list / get / soft_delete + 新增 list_categories。
+
+### 新增 `pc_repos::skill::SkillRepo` 方法（1 个)
+- `list_categories(company_id) -> Vec<String>`
+  - SELECT categories FROM company_skills WHERE company_id=$1
+  - 内存 unwind + BTreeSet 去重（应用层聚合）
+
+复用已有方法（Round 110 前已有 30+ 方法):
+- `list_for_company(company_id) -> Vec<CompanySkillRow>`
+- `get(company_id, id) -> Option<CompanySkillRow>`
+- `soft_delete(company_id, id) -> bool`
+
+### DTO 迁移
+- 删除 routes/company_skills.rs 本地 `SkillRow` struct（22 字段）
+- 统一使用 pc_repos::skill 中的 `CompanySkillRow`（35 字段，更完整）
+- `skill_json` 辅助函数复用 repo 类型
+
+### 重构 `company_skills.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `list_company_skills` | 1 SELECT | SkillRepo::list_for_company |
+| `skills_categories` | 1 SELECT + 内存聚合 | SkillRepo::list_categories |
+| `get_company_skill` | 1 SELECT | SkillRepo::get |
+| `remove_company_skill` | 1 DELETE | SkillRepo::soft_delete |
+
+### 新增集成测试 7 个 (`crates/pc-repos/tests/round125_skill_basic_repo.rs`)
+1. `list_for_company_returns_active` — 排除 archived
+2. `get_returns_some_for_existing` — 找到
+3. `get_returns_none_for_missing` — 找不到
+4. `soft_delete_removes_from_list` — 软删除后 list 为空
+5. `list_categories_aggregates_distinct` — 聚合 distinct categories
+6. `list_categories_empty_when_no_skills` — 空时返回空
+7. `create_skill_inserts` — 插入验证字段
+
+### 进度影响
+- 综合进度从 **≈ 96.5% → ≈ 96.7%**
+- workspace `cargo check -p pc-http` 0 errors
+- 25 个 pc-repos 集成测试文件累计 150+7=157 test 函数
+- company_skills.rs SQL 数 60 → 56（-4，基础 CRUD）
+- 累计 Round 95-125 修复 **110+4=114 个路由从 500 → 200**
+
+### 下一轮方向（Round 126+ — company_skills.rs 继续）
+company_skills.rs 还剩 56 SQL，主要在：
+- install_company_skill 复合（ON CONFLICT INSERT/UPsert，1 SQL）
+- get_skill_config / put_skill_config（2 SQL，已有 set_config）
+- 版本管理（approve / publish_version，~5 SQL）
+- 评论管理（add_comment / delete_comment，~3 SQL）
+- star / unstar / count_stars（~3 SQL）
+- test_inputs / test_runs（~6 SQL）
+- 各种辅助函数（catalog / fork / preview，~15 SQL）
+
+后续高 SQL 模块：
+- tool_access.rs 66 SQL
+- issues.rs 44 SQL
+- companies.rs 37 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

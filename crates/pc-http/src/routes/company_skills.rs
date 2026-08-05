@@ -20,6 +20,8 @@ use pc_repos::change_consent_gate::{
     skill_slug_change_target_key, skills_scan_projects_change_target_key,
 };
 
+use pc_repos::skill::{CompanySkillRow, SkillRepo};
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/skills/catalog", get(skills_catalog))
@@ -82,33 +84,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:company_id/skills/scan-projects", post(scan_project_skills))
 }
 
-#[derive(Debug, FromRow)]
-struct SkillRow {
-    id: Uuid,
-    company_id: Uuid,
-    key: String,
-    slug: String,
-    name: String,
-    description: Option<String>,
-    markdown: String,
-    source_type: String,
-    source_locator: Option<String>,
-    source_ref: Option<String>,
-    trust_level: String,
-    compatibility: String,
-    file_inventory: Value,
-    metadata: Option<Value>,
-    icon_url: Option<String>,
-    color: Option<String>,
-    tagline: Option<String>,
-    author_name: Option<String>,
-    homepage_url: Option<String>,
-    categories: Vec<String>,
-    created_at: pc_core::Timestamp,
-    updated_at: pc_core::Timestamp,
-}
-
-fn skill_json(row: &SkillRow) -> Value {
+fn skill_json(row: &CompanySkillRow) -> Value {
     json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -385,15 +361,9 @@ async fn list_company_skills(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<SkillRow> = sqlx::query_as(
-        "SELECT id, company_id, key, slug, name, description, markdown, source_type, \
-                source_locator, source_ref, trust_level, compatibility, file_inventory, metadata, \
-                icon_url, color, tagline, author_name, homepage_url, categories, created_at, updated_at \
-         FROM company_skills WHERE company_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = SkillRepo::new(&state.db)
+        .list_for_company(company_id)
+        .await?;
     let items: Vec<Value> = rows.iter().map(skill_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -430,7 +400,7 @@ async fn install_company_skill(
         .clone()
         .unwrap_or_else(|| "markdown_only".to_owned());
     let categories = body.categories.clone().unwrap_or_default();
-    let row: SkillRow = sqlx::query_as(
+    let row: CompanySkillRow = sqlx::query_as(
         "INSERT INTO company_skills \
             (company_id, key, slug, name, description, markdown, source_type, source_locator, \
              source_ref, trust_level, categories) \
@@ -465,19 +435,10 @@ async fn skills_categories(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Aggregate distinct categories across all skills for this company.
-    let rows: Vec<(Vec<String>,)> =
-        sqlx::query_as("SELECT categories FROM company_skills WHERE company_id = $1")
-            .bind(company_id)
-            .fetch_all(state.db.pool())
-            .await?;
-    let mut seen = std::collections::BTreeSet::new();
-    for (cats,) in rows {
-        for c in cats {
-            seen.insert(c);
-        }
-    }
-    let items: Vec<Value> = seen
+    let cats = SkillRepo::new(&state.db)
+        .list_categories(company_id)
+        .await?;
+    let items: Vec<Value> = cats
         .into_iter()
         .map(|c| json!({ "key": c, "name": c }))
         .collect();
@@ -488,30 +449,19 @@ async fn get_company_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<SkillRow> = sqlx::query_as(
-        "SELECT id, company_id, key, slug, name, description, markdown, source_type, \
-                source_locator, source_ref, trust_level, compatibility, file_inventory, metadata, \
-                icon_url, color, tagline, author_name, homepage_url, categories, created_at, updated_at \
-         FROM company_skills WHERE id = $1 AND company_id = $2",
-    )
-    .bind(skill_id)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok(Json(skill_json(&row))),
-        None => Err(ApiError::NotFound(format!("skill {skill_id}"))),
-    }
+    let row = SkillRepo::new(&state.db)
+        .get(company_id, skill_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {skill_id}")))?;
+    Ok(Json(skill_json(&row)))
 }
 
 async fn remove_company_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    sqlx::query("DELETE FROM company_skills WHERE id = $1 AND company_id = $2")
-        .bind(skill_id)
-        .bind(company_id)
-        .execute(state.db.pool())
+    SkillRepo::new(&state.db)
+        .soft_delete(company_id, skill_id)
         .await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
