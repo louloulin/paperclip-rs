@@ -174,6 +174,59 @@ impl<'a> AssetRepo<'a> {
         .await?;
         Ok(row)
     }
+
+    /// Round 206: 删除一个 asset（按 id）。
+    /// 返回 true 表示实际删除了 1 行。
+    pub async fn delete_by_id(&self, id: Uuid) -> sqlx::Result<bool> {
+        let n = sqlx::query("DELETE FROM assets WHERE id = $1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 206: 列出引用此 asset 的所有 issue_attachment（用于 usage 端点）。
+    /// 返回 (attachment_id, issue_id, issue_comment_id)。
+    pub async fn list_attachments_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> sqlx::Result<Vec<(Uuid, Uuid, Option<Uuid>)>> {
+        let rows: Vec<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT id, issue_id, issue_comment_id FROM issue_attachments \
+             WHERE asset_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(asset_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 206: 按公司 + provider 过滤列 asset。
+    pub async fn list_by_company_with_provider(
+        &self,
+        company_id: Uuid,
+        provider: Option<&str>,
+        limit: i64,
+    ) -> sqlx::Result<Vec<AssetRow>> {
+        let sql = if provider.is_some() {
+            format!(
+                "SELECT {ASSET_COLUMNS} FROM assets WHERE company_id = $1 AND provider = $2 \
+                 ORDER BY created_at DESC LIMIT $3"
+            )
+        } else {
+            format!(
+                "SELECT {ASSET_COLUMNS} FROM assets WHERE company_id = $1 \
+                 ORDER BY created_at DESC LIMIT $2"
+            )
+        };
+        let q = sqlx::query_as::<_, AssetRow>(&sql).bind(company_id);
+        let q = match provider {
+            Some(p) => q.bind(p).bind(limit),
+            None => q.bind(limit),
+        };
+        q.fetch_all(self.db.pool()).await
+    }
 }
 
 #[cfg(test)]

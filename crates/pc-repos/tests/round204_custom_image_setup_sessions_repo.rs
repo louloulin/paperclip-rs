@@ -145,7 +145,7 @@ async fn terminal_token_persisted() {
     assert!(token.len() > 10);
     // expires_at 应在 now() 之后
     let now = chrono::Utc::now();
-    assert!(expires_at.as_datetime() > &now);
+    assert!(expires_at.as_datetime() > now);
 
     // 落库后能取到
     let stored = fetch_token(&db, session_id).await.unwrap().expect("present");
