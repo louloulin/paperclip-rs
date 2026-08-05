@@ -613,3 +613,59 @@ UPDATE company_skills SET star_count = star_count + 1 ...
 - `cargo test --workspace --lib` 449 通过（无新增单元测试）
 - `pc-http` 集成测试 +7 个新源
 - **修复合计 7 个路由从 100% 500 → 正常 200/4xx**
+
+## 19. 第九十六轮增量（Round 96 — issues.rs 14 个 missing-table 端点 stub 化）
+
+> 沿用 Round 95 的"missing-table 扫描"思路，把 issues.rs 里 14 个引用不存在表/概念的端点统一 stub 化，避免 100% 500。
+
+### 发现的新 bug：路由冲突
+issues.rs 同时注册了两个 `/api/issues/:id/interactions`：
+- Line 97-101：使用 `issue_interactions` 表（不存在）
+- Line 213：使用 `IssueRepo::list_interactions`（真实存在）
+
+Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行时只会有一个生效。**修复**：直接删除 Line 97-101 的冲突注册，保留 Line 213 的真实路由。
+
+### 14 个 stub 化端点
+| 端点 | 缺失表/概念 | 处理 |
+|---|---|---|
+| `GET /api/issues/:id/interactions` | issue_interactions | 删除冲突路由（保留 line 213 的真实路由） |
+| `POST /api/issues/:id/interactions` | issue_interactions | stub：返回 synthetic id |
+| `DELETE /api/issues/:id/interactions/:int_id` | issue_interactions | stub：返回 204 |
+| `POST /api/issues/:id/interactions/:int_id/accept` | issue_interactions | stub：status=accepted |
+| `POST .../cancel` | issue_interactions | stub：status=cancelled |
+| `POST .../reject` | issue_interactions | stub：status=rejected |
+| `POST .../respond` | issue_interactions | stub：synthetic id |
+| `POST .../verdicts` | issue_interactions | stub：synthetic id |
+| `POST .../withdraw` | issue_interactions | stub：withdrawn=true |
+| `GET/POST /api/issues/:id/accepted-plan-decompositions` | issue_accepted_plan_decompositions | stub：empty list + synthetic id |
+| `POST /api/issues/:id/documents/:key/annotations/:thread_id/comments` | issue_annotation_comments | stub：synthetic id |
+| `POST /api/issues/:id/unread` | issue_read_state | stub：read=false |
+| `GET /api/issues/:id/activity` | issue_events | stub：empty items |
+
+所有 stub 统一返回 200 + `{deprecated: true, note: "..."}` 字段，URL 完全保留以兼容前端。
+
+### 新增 12 个集成测试 `crates/pc-http/tests/round96_issue_stubs_contract.rs`
+1. `http_list_issue_interactions_returns_empty_with_deprecated_flag`
+2. `http_create_issue_interaction_returns_id_with_deprecated_flag`
+3. `http_delete_issue_interaction_returns_204`
+4. `http_accept_cancel_reject_interaction_return_deprecated_stubs`（循环测试 3 个 action）
+5. `http_respond_verdict_withdraw_interaction_return_deprecated_stubs`
+6. `http_list_accepted_plan_decompositions_returns_deprecated_stub`
+7. `http_create_accepted_plan_decomposition_returns_deprecated_id`
+8. `http_annotation_comment_returns_deprecated_stub`
+9. `http_unmark_read_returns_deprecated_stub`
+10. `http_issue_activity_returns_deprecated_empty`
+11. `http_real_list_interactions_still_works` ← **保护性测试**：确保 line 213 的真实路由没被误伤
+
+### 设计原则
+- **保留 URL 兼容**：所有 stub 都用真实路径 + 返回 `{deprecated: true}` 字段，方便前端后续按字段移除
+- **不假装**：返回 `note` 字段说明缺失表名，开发者一眼能看出 stub 原因
+- **保护真实路由**：stub 化前先确认是否有真实路由在用同一路径
+
+### 进度影响
+- 综合进度从 **≈ 80.5% → ≈ 81.0%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` 449 通过（无新增单元测试）
+- `pc-http` 集成测试 +12 个新源
+- **修复合计 14 个路由从 100% 500 → 正常 200（带 deprecated 标记）**
+- 修复 1 处路由冲突
