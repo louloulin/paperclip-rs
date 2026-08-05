@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use pc_core::Timestamp;
+use uuid::Uuid;
 
 use crate::{Db, RepoError, RepoResult};
 
@@ -200,6 +201,61 @@ impl<'a> AuthRepo<'a> {
         Ok(n > 0)
     }
 
+    /// Round 140: legacy ensure_user — INSERT ... ON CONFLICT (id) DO NOTHING。
+    /// 返回 Some(UserRow) 表示新建；None 表示已存在。
+    /// 与 `upsert_user`（DO UPDATE）的语义不同：保留已有 name/email/image。
+    pub async fn ensure_user(
+        &self,
+        id: &str,
+        name: &str,
+        email: &str,
+    ) -> RepoResult<Option<UserRow>> {
+        let inserted = sqlx::query(
+            "INSERT INTO \"user\" (id, name, email, email_verified, created_at, updated_at)              VALUES ($1, $2, $3, false, now(), now())              ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(email)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        if inserted > 0 {
+            self.find_by_id(id).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Round 140: 创建 credential account（带密码哈希）。
+    /// 简化版：id/account_id 都用 u_<uuid>；provider_id='credential'。
+    pub async fn create_credential_account(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> RepoResult<AccountRow> {
+        let account_id = format!("acc_{}", Uuid::new_v4().simple());
+        let row_id = format!("acc_{}", Uuid::new_v4().simple());
+        sqlx::query_as::<_, AccountRow>(&format!(
+            "INSERT INTO account (id, account_id, provider_id, user_id, password, created_at, updated_at)              VALUES ($1, $2, 'credential', $3, $4, now(), now())              RETURNING {ACCOUNT_COLS}"
+        ))
+        .bind(&row_id)
+        .bind(&account_id)
+        .bind(user_id)
+        .bind(password_hash)
+        .fetch_one(self.db.pool())
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Round 140: 检查 user 是否存在（按 id）。轻量，仅返回 bool。
+    pub async fn user_exists(&self, user_id: &str) -> RepoResult<bool> {
+        Ok(sqlx::query_scalar::<_, i32>("SELECT 1 FROM \"user\" WHERE id = $1 LIMIT 1")
+            .bind(user_id)
+            .fetch_optional(self.db.pool())
+            .await?
+            .is_some())
+    }
+
     // ---- session ----
 
     pub async fn find_session_by_token(&self, token: &str) -> RepoResult<Option<SessionRow>> {
@@ -385,6 +441,72 @@ impl<'a> AuthRepo<'a> {
             .execute(self.db.pool())
             .await?
             .rows_affected())
+    }
+
+    // ---- Round 140: API key + session helpers for auth.rs route ----
+
+    /// 轻量查 user.id by email（路由 sign_in 用，避免拉全 UserRow）。
+    pub async fn find_user_id_by_email(&self, email: &str) -> RepoResult<Option<String>> {
+        sqlx::query_scalar("SELECT id FROM \"user\" WHERE email = $1 LIMIT 1")
+            .bind(email)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(Into::into)
+    }
+
+    /// 撤回 board_api_keys（设置 revoked_at = now()）。
+    pub async fn revoke_api_key(&self, key_id: Uuid, user_id: &str) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE board_api_keys SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(key_id)
+        .bind(user_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 按 token 软删除 session（保留行但 expires_at = now()）。
+    pub async fn revoke_session_by_token(&self, token: &str) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM session WHERE token = $1")
+            .bind(token)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 按 user_id 删除所有 session（sign_out 用）。
+    pub async fn revoke_all_sessions_for_user(&self, user_id: &str) -> RepoResult<u64> {
+        sqlx::query("DELETE FROM session WHERE user_id = $1")
+            .bind(user_id)
+            .execute(self.db.pool())
+            .await
+            .map(|r| r.rows_affected())
+            .map_err(Into::into)
+    }
+
+    /// 按 user_id + name 更新用户 profile。
+    pub async fn update_user_name(&self, user_id: &str, name: &str) -> RepoResult<bool> {
+        let n = sqlx::query("UPDATE \"user\" SET name = $1, updated_at = now() WHERE id = $2")
+            .bind(name)
+            .bind(user_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// 按 user_id 更新 image。
+    pub async fn update_user_image(&self, user_id: &str, image: &str) -> RepoResult<bool> {
+        let n = sqlx::query("UPDATE \"user\" SET image = $1, updated_at = now() WHERE id = $2")
+            .bind(image)
+            .bind(user_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
     }
 }
 

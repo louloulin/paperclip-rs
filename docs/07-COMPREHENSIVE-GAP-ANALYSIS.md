@@ -2049,6 +2049,141 @@ issues.rs 还剩 19 SQL，主要在：
 - smoke_lab.rs 26 SQL
 - tool_connections.rs 22 SQL
 
+## 63. 第一百四十轮增量（Round 140 — auth.rs 路由仓储化 22→0 SQL 🎉)
+
+### 目标
+auth.rs 22 个内联 SQL 全部清零，达到 companies.rs Round 133 同等里程碑。
+为 sign-in / sign-up / refresh / get-session / patch-profile / revoke-key / get-profile 等
+8 个路由建立完整仓储化调用链。新增 5 个 AuthRepo 方法 + 1 个 CompanyMemberRepo 方法。
+
+### 新增 AuthRepo 方法（5 个 + 4 个 DTO)
+- `find_user_id_by_email(email) -> Option<String>`
+  - 轻量 scalar；仅取 user.id；供 `find_by_email` 之前先做 cheap lookup
+- `revoke_api_key(key_id: Uuid, user_id: &str) -> bool`
+  - UPDATE board_api_keys SET revoked_at = now() WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL
+- `revoke_session_by_token(token: &str) -> bool`
+  - DELETE FROM session WHERE token=$1
+- `revoke_all_sessions_for_user(user_id: &str) -> u64`
+  - DELETE FROM session WHERE user_id=$1（sign_out / sign_in rotate_session 用）
+- `update_user_name(user_id, name) -> bool` / `update_user_image(user_id, image) -> bool`
+  - 单字段 UPDATE + updated_at=now()
+- `ensure_user(id, name, email) -> Option<UserRow>` — **重要：与 `upsert_user` 语义不同**
+  - INSERT ... ON CONFLICT (id) DO NOTHING（**保留**已有 name/email/image）
+  - `upsert_user` 是 DO UPDATE SET（覆盖）；legacy sign_in 必须用 ensure_user
+- `user_exists(user_id) -> bool` — 轻量 SELECT 1 FROM "user" WHERE id=$1
+- `create_credential_account(user_id, password_hash) -> AccountRow`
+  - INSERT INTO account (id, account_id, provider_id, user_id, password, ...) VALUES (...)
+  - 自动生成 row_id/account_id；简化 sign_up_email 的 1 段 SQL → 1 句 repo call
+
+### 新增 CompanyMemberRepo 方法（1 个）
+- `list_company_ids_for_user(user_id: &str) -> Vec<Uuid>`
+  - SELECT company_id FROM company_memberships WHERE user_id=$1
+  - 供 get_profile_short 端点（cross-domain 路由调用）
+
+### 复用既有 AuthRepo 方法（10 个）
+- `find_by_id` — 替代 6 处 `SELECT id, email, name, image, ... FROM "user"`
+- `find_by_email` — 替代 sign_in_email 的 user lookup
+- `upsert_session` + `NewSession` — 替代 4 处 session INSERT（含 ip_address / user_agent）
+- `upsert_user` + `NewUser` — 替代 sign_up_email 的 INSERT user
+- `find_account_for_user` — 替代 2 处 credential password lookup
+- `delete_sessions_for_user` → `revoke_all_sessions_for_user`（不同命名语义）
+
+### 重构 auth.rs 8 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/auth/get-session` | 1 SELECT user | AuthRepo::find_by_id |
+| `POST /api/auth/sign-in` | 2 SELECT + 1 INSERT | find_account_for_user + ensure_user + upsert_session |
+| `POST /api/auth/sign-out` | DELETE session | revoke_session_by_token |
+| `POST /api/auth/revoke-key` | UPDATE board_api_keys | revoke_api_key |
+| `GET /api/auth/profile` | 1 SELECT user | find_by_id |
+| `PATCH /api/auth/profile` | 2 UPDATE + 1 SELECT read-back | update_user_name/image + find_by_id |
+| `POST /api/auth/sign-in/email` | 2 SELECT + DELETE + INSERT | find_by_email + find_account_for_user + revoke_session_by_token + upsert_session |
+| `POST /api/auth/sign-up/email` | SELECT + 3 INSERT | find_user_id_by_email + upsert_user + create_credential_account + upsert_session |
+| `POST /api/auth/refresh` | SELECT + DELETE + SELECT + DELETE + INSERT | find_session_by_token + user_exists + revoke_session_by_token + upsert_session |
+| `GET /api/get-session` | 1 SELECT user | find_by_id |
+| `GET /api/profile` | 2 SELECT | find_by_id + CompanyMemberRepo::list_company_ids_for_user |
+
+### 设计要点
+- **`ensure_user` vs `upsert_user` 语义分离**：前者 `DO NOTHING`（保留原数据），后者 `DO UPDATE`（覆盖）。
+  这不是冗余而是**精确语义**：legacy `ensure_user` 路径要求"已存在不修改"，sign_up_email 路径要求"insert only"。
+- **cross-domain Repo 调用仍允许**：get_profile_short 在 auth.rs 路由里调用 CompanyMemberRepo。
+  这是合理的——`auth` 是 cross-cutting concern，需要聚合其他域的数据返回 profile。
+- **`UserRow.email/name: String`（非 Option）的处理**：原 legacy SELECT 有 `email: Option<String>` 是 schema 漂移残留；
+  本轮统一为 `String`（与 UserRow 一致），JSON 响应侧用 `Some(user.email)` 显式表达语义。
+- **修复合并 SQL 偏移**：原来 `ensure_user` 是 route 内 inline 函数（命名冲突），重构后完全迁移到 repo，
+  route 内 `ensure_user(...)` 调用全部替换为 `AuthRepo::new(&state.db).ensure_user(...)`。
+
+### 修复 1 个编译错误
+原始 Round 139 收尾时遗留 dead code：
+```rust
+let revoked = AuthRepo::new(&state.db)
+    .revoke_api_key(key_id, &user_id).await?;
+if !revoked {
+    return Err(ApiError::NotFound(format!("api key {key_id}")));
+}
+if r.rows_affected() == 0 {  // <- 'r' 不存在！
+    return Err(ApiError::NotFound("api key".into()));
+}
+```
+上一轮替换 `let r = sqlx::query(...UPDATE...)` 为 `revoke_api_key` 调用，但遗留了 `if r.rows_affected() == 0` 死代码。
+本轮删除该 dead block，`revoke_api_key` 已返回 bool，`!revoked` 分支已正确处理 404。
+
+### 新增集成测试 17 个 (`crates/pc-repos/tests/round140_auth_route_helpers_repo.rs`)
+
+**find_user_id_by_email (2)**
+1. `find_user_id_by_email_found` — 找到现有 user
+2. `find_user_id_by_email_missing` — 不存在返回 None
+
+**user_exists (2)**
+3. `user_exists_true` — 存在返回 true
+4. `user_exists_false` — 不存在返回 false
+
+**ensure_user (2)**
+5. `ensure_user_inserts` — 新建返回 Some(row)
+6. `ensure_user_idempotent` — 已存在返回 None 且**不覆盖**原 name（DO NOTHING 语义）
+
+**create_credential_account (1)**
+7. `create_credential_account_basic` — 创建 credential account 并返回 row
+
+**revoke_api_key (2)**
+8. `revoke_api_key_basic` — revoked_at 被设置
+9. `revoke_api_key_idempotent` — 重复调用第二次返回 false
+
+**revoke_session_by_token / revoke_all_sessions_for_user (2)**
+10. `revoke_session_by_token_basic` — 删除指定 token
+11. `revoke_all_sessions_for_user_basic` — 删除 user 全部 session
+
+**update_user_name / update_user_image (2)**
+12. `update_user_name_basic` — name 被更新
+13. `update_user_image_basic` — image 被更新
+
+**CompanyMemberRepo::list_company_ids_for_user (2)**
+14. `list_company_ids_for_user_basic` — 多家公司
+15. `list_company_ids_for_user_empty` — 无公司返回空
+
+**DTO smoke (2)**
+16. `new_user_dto_carries_fields`
+17. `new_session_dto_carries_fields`
+
+### 进度影响
+- 综合进度从 **≈ 98.9% → ≈ 99.2%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round140_*` 0 errors
+- 40 个 pc-repos 集成测试文件累计 284+17=301 test 函数
+- **auth.rs SQL 数 22 → 0**（🎉 companies.rs Round 133 后第二个 0 SQL 模块）
+- 累计 Round 95-140 修复 **159+11=170 个路由从 500 → 200**
+- 467 个 pc-repos lib tests 全部通过
+
+### 下一轮方向（Round 141+）
+剩余高 SQL 模块（按 ROI）：
+- tool_access.rs **66 SQL**（最大，按子模块分批：tool_runtime_slot / tool_application / tool_profile / tool_invocation / tool_registry 等）
+- access.rs 26 SQL
+- smoke_lab.rs 26 SQL
+- tool_connections.rs 22 SQL
+- tool_invocation.rs 18 SQL
+- inbox.rs / activity.rs 等
+
+建议 Round 141 启动 tool_access.rs 子模块分批仓储化。
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

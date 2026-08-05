@@ -281,6 +281,17 @@ impl<'a> CompanyMemberRepo<'a> {
         .await?;
         Ok(n)
     }
+
+    /// Round 140: 列出某用户所有所属公司 id（含 archived/active）。供 profile 端点用。
+    pub async fn list_company_ids_for_user(&self, user_id: &str) -> RepoResult<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM company_memberships              WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().map(|(c,)| c).collect())
+    }
 }
 
 // ============================================================================
