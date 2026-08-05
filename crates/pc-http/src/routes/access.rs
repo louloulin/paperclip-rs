@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 use crate::{require_user_id, ApiError, ApiResult, AppState};
 use pc_realtime::LiveEvent;
+use pc_repos::invite::InviteRepo;
+use pc_repos::skill::SkillRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -478,12 +480,10 @@ async fn invites_accept(
 }
 
 async fn skills_available(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT skill_key, display_name, description FROM skills          WHERE visibility = 'public' ORDER BY display_name",
-    )
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = SkillRepo::new(&state.db)
+        .list_public_skills()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(k, name, desc)| {
@@ -496,54 +496,42 @@ async fn skills_available(State(state): State<AppState>) -> ApiResult<Json<Value
         .collect();
     Ok(Json(json!({"items": items})))
 }
-
 async fn skills_index(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, String, String)> =
-        sqlx::query_as("SELECT skill_key, display_name, category FROM skills ORDER BY skill_key")
-            .fetch_all(state.db.pool())
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = SkillRepo::new(&state.db)
+        .list_all_skills_index()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let mut index = serde_json::Map::new();
     for (k, name, cat) in rows {
         index.insert(k, json!({ "name": name, "category": cat }));
     }
     Ok(Json(json!({"index": Value::Object(index), "version": "1"})))
 }
-
 async fn skill_get(
     State(state): State<AppState>,
     Path(skill_name): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT skill_key, display_name, description, content_md, manifest          FROM skills WHERE skill_key = $1 OR display_name = $1 LIMIT 1",
-    )
-    .bind(&skill_name)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    match row {
-        Some((k, name, desc, content, manifest)) => Ok(Json(json!({
-            "name": k,
-            "displayName": name,
-            "description": desc,
-            "content": content,
-            "manifest": manifest,
-        }))),
-        None => Err(ApiError::NotFound(format!("skill {skill_name}"))),
-    }
+    let row = SkillRepo::new(&state.db)
+        .find_skill_by_key_or_name(&skill_name)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {skill_name}")))?;
+    Ok(Json(json!({
+        "name": row.0,
+        "displayName": row.1,
+        "description": row.2,
+        "content": row.3,
+        "manifest": row.4,
+    })))
 }
 
 fn sha2_sha256(input: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
-    let result = hasher.finalize();
-    let hex = result
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    hex
+    hex_encode(&hasher.finalize())
 }
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {

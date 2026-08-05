@@ -376,6 +376,41 @@ impl<'a> SkillRepo<'a> {
         Self { db }
     }
 
+    // ---- Round 147: global skill queries (skills_available / skills_index / skill_get) ----
+
+    pub async fn list_public_skills(&self) -> RepoResult<Vec<(String, String, String)>> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT skill_key, display_name, description FROM skills \
+             WHERE visibility = 'public' ORDER BY display_name",
+        )
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_all_skills_index(&self) -> RepoResult<Vec<(String, String, String)>> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT skill_key, display_name, category FROM skills ORDER BY skill_key",
+        )
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn find_skill_by_key_or_name(
+        &self,
+        skill_name: &str,
+    ) -> RepoResult<Option<(String, String, Option<String>, Option<String>, Option<String>)>> {
+        let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT skill_key, display_name, description, content_md, manifest \
+             FROM skills WHERE skill_key = $1 OR display_name = $1 LIMIT 1",
+        )
+        .bind(skill_name)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
     // ---- company_skills CRUD ----
 
     pub async fn list_for_company(

@@ -1869,17 +1869,10 @@ async fn get_effective_profiles_for_agent(
 ) -> ApiResult<Json<Value>> {
     // Aggregate bindings whose target matches the agent + default profile if no binding.
     let agent_uuid = Uuid::parse_str(&agent_id).ok();
-    let rows: Vec<(Uuid, String, Uuid, String, String, i32)> = sqlx::query_as(
-        "SELECT b.id, b.target_type, b.profile_id, p.profile_key, p.name, b.priority \
-         FROM tool_profile_bindings b JOIN tool_profiles p ON p.id = b.profile_id \
-         WHERE b.company_id = $1 AND (b.target_type = 'agent' AND b.target_id = $2 \
-            OR b.target_type = 'company' AND b.target_id = $1::text)",
-    )
-    .bind(company_id)
-    .bind(&agent_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = ToolRepo::new(&state.db)
+        .list_effective_profile_bindings_for_agent(company_id, &agent_id)
+        .await
+        .unwrap_or_default();
 
     let profiles: Vec<Value> = rows
         .into_iter()

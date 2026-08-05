@@ -2360,6 +2360,26 @@ impl<'a> ToolRepo<'a> {
         Ok(event_id)
     }
 
+    /// Round 147: 列出 agent 的有效 profile bindings（含 company-level 默认）。
+    /// 返回 (binding_id, target_type, profile_id, profile_key, name, priority)
+    pub async fn list_effective_profile_bindings_for_agent(
+        &self,
+        company_id: Uuid,
+        agent_id: &str,
+    ) -> RepoResult<Vec<(Uuid, String, Uuid, String, String, i32)>> {
+        let rows: Vec<(Uuid, String, Uuid, String, String, i32)> = sqlx::query_as(
+            "SELECT b.id, b.target_type, b.profile_id, p.profile_key, p.name, b.priority \
+             FROM tool_profile_bindings b JOIN tool_profiles p ON p.id = b.profile_id \
+             WHERE b.company_id = $1 AND (b.target_type = 'agent' AND b.target_id = $2 \
+                OR b.target_type = 'company' AND b.target_id = $1::text)",
+        )
+        .bind(company_id)
+        .bind(agent_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
     /// Round 146: 列出需要关注的 tool_connections（disabled 或 unhealthy）。
     pub async fn list_apps_attention(
         &self,
