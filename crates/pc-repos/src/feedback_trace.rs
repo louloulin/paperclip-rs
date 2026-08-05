@@ -55,6 +55,59 @@ impl<'a> FeedbackTraceRepo<'a> {
             .fetch_all(self.db.pool())
             .await
     }
+
+    /// 按 issue 列出 feedback traces（按 created_at DESC + LIMIT）。
+    /// Round 135 仓储化 issues.rs list_issue_feedback_traces 端点。
+    pub async fn list_by_issue(
+        &self,
+        issue_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<FeedbackTraceRow>> {
+        let sql = format!(
+            "SELECT {COLS} FROM issue_feedback_traces              WHERE issue_id = $1 ORDER BY created_at DESC LIMIT $2"
+        );
+        sqlx::query_as::<_, FeedbackTraceRow>(&sql)
+            .bind(issue_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// 按 id 查单条（返回 issue_id / kind / payload / created_at）。
+    pub async fn get_by_id_full(
+        &self,
+        id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, String, Option<serde_json::Value>, Timestamp)>> {
+        sqlx::query_as(
+            "SELECT issue_id, kind, payload, created_at FROM issue_feedback_traces WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// 按 id 查单条（返回 issue_id + payload）。
+    pub async fn get_bundle(
+        &self,
+        id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Option<serde_json::Value>)>> {
+        sqlx::query_as(
+            "SELECT issue_id, payload FROM issue_feedback_traces WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// 按 id 删除，返回 rows_affected > 0 表示实际删除。
+    pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
+        let n = sqlx::query("DELETE FROM issue_feedback_traces WHERE id = $1")
+            .bind(id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ use uuid::Uuid;
 use pc_realtime::LiveEvent;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
 use pc_repos::feedback_vote::FeedbackVoteRepo;
+use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -2294,21 +2295,18 @@ async fn list_issue_feedback_traces(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, kind, payload, created_at FROM issue_feedback_traces          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = FeedbackTraceRepo::new(&state.db)
+        .list_by_issue(id, 100)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(trace_id, kind, payload, created_at)| {
+        .map(|r| {
             json!({
-                "id": trace_id,
-                "kind": kind,
-                "payload": payload,
-                "createdAt": created_at,
+                "id": r.id,
+                "kind": r.kind,
+                "payload": r.payload,
+                "createdAt": r.created_at,
             })
         })
         .collect();
@@ -2319,14 +2317,11 @@ async fn get_feedback_trace(
     State(state): State<AppState>,
     Path(trace_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, String, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT issue_id, kind, payload, created_at FROM issue_feedback_traces WHERE id = $1",
-    )
-    .bind(trace_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (issue_id, kind, payload, created_at) = row
+    let row = FeedbackTraceRepo::new(&state.db)
+        .get_by_id_full(trace_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("feedback trace {trace_id}")))?;
+    let (issue_id, kind, payload, created_at) = row;
     Ok(Json(json!({
         "id": trace_id,
         "issueId": issue_id,
@@ -2340,12 +2335,10 @@ async fn delete_feedback_trace(
     State(state): State<AppState>,
     Path(trace_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let affected = sqlx::query("DELETE FROM issue_feedback_traces WHERE id = $1")
-        .bind(trace_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
-    if affected > 0 {
+    let deleted = FeedbackTraceRepo::new(&state.db)
+        .delete(trace_id)
+        .await?;
+    if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound(format!("feedback trace {trace_id}")))
@@ -2356,15 +2349,9 @@ async fn get_feedback_trace_bundle(
     State(state): State<AppState>,
     Path(trace_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Mirrors Node `/feedback-traces/:traceId/bundle`. Surfaces the trace
-    // payload + adjacent events; structured bundle for the UI timeline.
-    let row: Option<(Uuid, Option<Value>)> = sqlx::query_as(
-        "SELECT issue_id, payload FROM issue_feedback_traces WHERE id = $1",
-    )
-    .bind(trace_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (issue_id, payload) = row
+    let (issue_id, payload) = FeedbackTraceRepo::new(&state.db)
+        .get_bundle(trace_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("feedback trace {trace_id}")))?;
     Ok(Json(json!({
         "traceId": trace_id,
