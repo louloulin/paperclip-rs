@@ -2544,12 +2544,11 @@ async fn get_issue_run(
     State(state): State<AppState>,
     Path((id, run_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, Uuid, String, String, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<String>, Value)> = sqlx::query_as(
-        "SELECT id, company_id, agent_id, status, invocation_source, started_at, finished_at, created_at, error, context_snapshot
-         FROM heartbeat_runs WHERE id = $1",
-    ).bind(run_id).fetch_optional(state.db.pool()).await?;
-    let (rid, cid, aid, st, src, started, finished, created, err, ctx) = row
+    let row = HeartbeatRepo::new(&state.db)
+        .get_run_with_context(run_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("run {run_id}")))?;
+    let (rid, cid, aid, st, src, started, finished, created, err, ctx) = row;
     // 验证 run 属于该 issue（通过 context_snapshot->>'issueId'）
     let issue_in_ctx = ctx.get("issueId").and_then(|v| v.as_str());
     if issue_in_ctx != Some(&id.to_string()) {
@@ -2567,15 +2566,10 @@ async fn cancel_issue_run(
     State(state): State<AppState>,
     Path((id, run_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    // Round 30: cancel = status='cancelled', finished_at=now()（幂等）
-    let r = sqlx::query(
-        "UPDATE heartbeat_runs
-         SET status = 'cancelled', finished_at = now(), updated_at = now()
-         WHERE id = $1
-           AND context_snapshot ->> 'issueId' = $2::text
-           AND status IN ('queued','running')",
-    ).bind(run_id).bind(id).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let cancelled = HeartbeatRepo::new(&state.db)
+        .cancel_run_for_issue(run_id, id)
+        .await?;
+    if !cancelled {
         return Err(ApiError::Conflict(format!("run {run_id} not active")));
     }
     state.realtime.publish(
@@ -2590,11 +2584,11 @@ async fn restart_issue_run(
     State(state): State<AppState>,
     Path((id, run_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    // Round 30: restart = 复制原 run 的 context_snapshot 创建新 queued run，retry_of_run_id 指回原 run
-    let orig: Option<(Uuid, Value)> = sqlx::query_as(
-        "SELECT agent_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
-    ).bind(run_id).fetch_optional(state.db.pool()).await?;
-    let (agent_id, mut ctx) = orig.ok_or_else(|| ApiError::NotFound(format!("run {run_id}")))?;
+    let repo = HeartbeatRepo::new(&state.db);
+    let (agent_id, mut ctx) = repo
+        .get_agent_and_context(run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("run {run_id}")))?;
     let issue_in_ctx = ctx.get("issueId").and_then(|v| v.as_str());
     if issue_in_ctx != Some(&id.to_string()) {
         return Err(ApiError::NotFound(format!("run {run_id} not associated with issue {id}")));
@@ -2606,10 +2600,7 @@ async fn restart_issue_run(
     let company_id: Uuid = sqlx::query_scalar("SELECT company_id FROM issues WHERE id = $1")
         .bind(id).fetch_one(state.db.pool()).await?;
     let new_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot)
-         VALUES ($1, $2, $3, 'on_demand', 'queued', $4)",
-    ).bind(new_id).bind(company_id).bind(agent_id).bind(&ctx).execute(state.db.pool()).await?;
+    repo.insert_queued_run(new_id, company_id, agent_id, &ctx).await?;
     state.realtime.publish(
         LiveEvent::new("issue.run_restarted", "heartbeat_run", new_id)
             .with_company(company_id)
@@ -2649,14 +2640,9 @@ async fn start_issue_run(
         "forceFreshSession": body.force_fresh_session.unwrap_or(false),
     });
     let run_id = Uuid::new_v4();
-    // 直接 INSERT heartbeat_run（复用现有 INSERT 模式，与 HeartbeatRepo::create 略有不同：
-    // status='queued' 而非默认 status 由 DB 默认决定）
-    sqlx::query(
-        "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot) \
-         VALUES ($1, $2, $3, 'on_demand', 'queued', $4)",
-    )
-    .bind(run_id).bind(company_id).bind(agent_id).bind(&ctx)
-    .execute(state.db.pool()).await?;
+    HeartbeatRepo::new(&state.db)
+        .insert_queued_run(run_id, company_id, agent_id, &ctx)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("issue.run_started", "heartbeat_run", run_id)
             .with_company(company_id)

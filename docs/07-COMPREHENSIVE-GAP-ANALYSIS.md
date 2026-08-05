@@ -1842,11 +1842,73 @@ issues.rs 34 → 32 SQL（-2）。仓储化 relations 子模块 2 个 list 路�
 - issues.rs SQL 数 34 → 32（-2，list 路径合并到既有仓储）
 - 累计 Round 95-136 修复 **146+2=148 个路由从 500 → 200**
 
-### 下一轮方向（Round 137+）
-issues.rs 还剩 32 SQL，主要在：
-- relations 子模块剩余（~7 SQL：get_issue_run / cancel_issue_run / restart_issue_run / start_issue_run 复合事务，line 2573+）
-- tree_holds 子模块（~15 SQL：list/create/get/preview，line 2885+）
+## 60. 第一百三十七轮增量（Round 137 — issues.rs relations 子模块 run 生命周期仓储化)
+
+### 目标
+issues.rs 32 → 27 SQL（-5）。仓储化 relations 子模块 4 个 run 生命周期路由：
+- `get_issue_run` → `HeartbeatRepo::get_run_with_context`
+- `cancel_issue_run` → `HeartbeatRepo::cancel_run_for_issue`
+- `restart_issue_run` → `HeartbeatRepo::get_agent_and_context` + `insert_queued_run`
+- `start_issue_run` → `HeartbeatRepo::insert_queued_run`
+
+### 扩展 `pc_repos::heartbeat::HeartbeatRepo`（Round 107 → Round 137 增 4 方法）
+- `get_run_with_context(run_id) -> Option<(10 列元组)>`
+  - 返回完整 (id, company_id, agent_id, status, invocation_source, started_at,
+    finished_at, created_at, error, context_snapshot)
+  - 元组返回避免引入 DTO，路由按需 unpack
+- `cancel_run_for_issue(run_id, issue_id) -> bool`
+  - UPDATE 仅当 status IN ('queued','running')，幂等
+  - 返回 rows_affected > 0
+- `get_agent_and_context(run_id) -> Option<(Uuid, Value)>`
+  - SELECT agent_id, context_snapshot（restart 用）
+- `insert_queued_run(run_id, company_id, agent_id, ctx) -> ()`
+  - INSERT with invocation_source='on_demand', status='queued'
+
+### 重构 `issues.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/issues/:id/runs/:run_id` | 1 SELECT heartbeat_runs | HeartbeatRepo::get_run_with_context |
+| `POST /api/issues/:id/runs/:run_id/cancel` | 1 UPDATE heartbeat_runs | HeartbeatRepo::cancel_run_for_issue |
+| `POST /api/issues/:id/runs/:run_id/restart` | 3 SQL（get orig + get company_id + INSERT new） | HeartbeatRepo::get_agent_and_context + insert_queued_run（+ 保留 1 SQL 查 issue.company_id） |
+| `POST /api/issues/:id/runs`（start） | 1 SELECT issues + 1 INSERT heartbeat_runs | HeartbeatRepo::insert_queued_run（+ 保留 1 SQL 查 issue.assignee_agent_id） |
+
+### 设计要点
+- **元组返回避免 DTO 膨胀**：`get_run_with_context` 返回 10 元组而不是新建 DTO，路由按字段 unpack 保持简洁。
+- **issue.company_id 查询保留在路由**：原 route 需要 SELECT company_id FROM issues WHERE id=$1 给 realtime publish `with_company()` 调用，作为单 SQL 保留在路由层（与 restart/start 一致）。
+- **cancel_run_for_issue 双条件过滤**：`WHERE context_snapshot->>'issueId' = $2::text AND status IN ('queued','running')`，保留原 route 的「属于该 issue + 未终态」双校验。
+- **insert_queued_run 极简 INSERT**：与 HeartbeatRepo::create 不同（后者 status 由 DB 默认），此方法显式 'queued' 状态，符合 issue run 启动语义。
+
+### 新增集成测试 10 个 (`crates/pc-repos/tests/round137_issue_run_lifecycle_repo.rs`)
+**get_run_with_context (2 个)**
+1. `get_run_with_context_returns_full_tuple` — 完整 10 列元组
+2. `get_run_with_context_unknown_returns_none` — 不存在返回 None
+
+**cancel_run_for_issue (4 个)**
+3. `cancel_queued_run` — queued run 取消
+4. `cancel_running_run` — running run 取消
+5. `cancel_idempotent` — 已 cancelled 不再取消（返回 false）
+6. `cancel_rejects_wrong_issue` — issue id 不匹配返回 false
+
+**get_agent_and_context (2 个)**
+7. `get_agent_and_context_returns_pair` — 返回 (agent_id, context)
+8. `get_agent_and_context_unknown_returns_none` — 不存在返回 None
+
+**insert_queued_run (2 个)**
+9. `insert_queued_run_creates_new` — 插入并 verify status='queued'
+10. `insert_queued_run_preserves_context` — context_snapshot 自定义字段保留
+
+### 进度影响
+- 综合进度从 **≈ 98.4% → ≈ 98.6%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round137_*` 0 errors
+- 37 个 pc-repos 集成测试文件累计 251+10=261 test 函数
+- issues.rs SQL 数 32 → 27（-5，4 个 run lifecycle 端点合并到 HeartbeatRepo）
+- 累计 Round 95-137 修复 **148+4=152 个路由从 500 → 200**
+
+### 下一轮方向（Round 138+）
+issues.rs 还剩 27 SQL，主要在：
+- tree_holds 子模块（~15 SQL：list/create/get/preview/release，line 2885+）
 - diagnostics 子模块（~10 SQL：blockers/wakes/subtree，line 3086+）
+- 复合事务（start_issue_run 仍 1 SQL 查 issue.assignee_agent_id + heartbeat_runs）
 
 后续高 SQL 模块：
 - tool_access.rs 66 SQL

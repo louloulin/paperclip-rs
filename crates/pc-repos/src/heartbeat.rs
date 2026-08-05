@@ -511,6 +511,84 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
+    /// Round 137: 按 id 取单条 run（含 context_snapshot）。
+    /// 返回完整 10 列元组供 get_issue_run 路由使用。
+    pub async fn get_run_with_context(
+        &self,
+        run_id: Uuid,
+    ) -> sqlx::Result<
+        Option<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            Option<String>,
+            serde_json::Value,
+        )>,
+    > {
+        sqlx::query_as(
+            "SELECT id, company_id, agent_id, status, invocation_source,                 started_at, finished_at, created_at, error, context_snapshot              FROM heartbeat_runs WHERE id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// Round 137: 取消指定 run（幂等：仅当 status IN queued/running 时更新）。
+    /// 返回 rows_affected > 0 表示实际取消。
+    pub async fn cancel_run_for_issue(
+        &self,
+        run_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE heartbeat_runs              SET status = 'cancelled', finished_at = now(), updated_at = now()              WHERE id = $1                AND context_snapshot ->> 'issueId' = $2::text                AND status IN ('queued','running')",
+        )
+        .bind(run_id)
+        .bind(issue_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 137: 取 run 的 agent_id + context_snapshot（供 restart 用）。
+    pub async fn get_agent_and_context(
+        &self,
+        run_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, serde_json::Value)>> {
+        sqlx::query_as(
+            "SELECT agent_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// Round 137: 插入新 run（INSERT 复合）。
+    pub async fn insert_queued_run(
+        &self,
+        run_id: Uuid,
+        company_id: Uuid,
+        agent_id: Uuid,
+        context_snapshot: &serde_json::Value,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot)              VALUES ($1, $2, $3, 'on_demand', 'queued', $4)",
+        )
+        .bind(run_id)
+        .bind(company_id)
+        .bind(agent_id)
+        .bind(context_snapshot)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_by_company(
         &self,
         company_id: Uuid,
