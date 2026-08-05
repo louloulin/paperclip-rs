@@ -392,6 +392,29 @@ fn invocation_json(row: &InvocationRow) -> Value {
     })
 }
 
+
+/// Round 145: 从 repo 的 InvocationSummaryRow → JSON（与 InvocationRow 输出兼容）。
+fn invocation_json_from_summary(row: &pc_repos::tool::InvocationSummaryRow) -> Value {
+    json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "actorType": row.actor_type,
+        "actorId": row.actor_id,
+        "agentId": row.agent_id,
+        "issueId": row.issue_id,
+        "runId": row.run_id,
+        "connectionId": row.connection_id,
+        "catalogEntryId": row.catalog_entry_id,
+        "toolName": row.tool_name,
+        "status": row.status,
+        "resultSummary": row.result_summary,
+        "errorCode": row.error_code,
+        "errorMessage": row.error_message,
+        "startedAt": row.started_at,
+        "completedAt": row.completed_at,
+        "createdAt": row.created_at,
+    })
+}
 // ── Handlers ───────────────────────────────────────────────
 
 async fn start_connection_authz(
@@ -731,70 +754,54 @@ async fn tool_lookup(
     Path(company_id): Path<Uuid>,
     Json(query): Json<ToolLookupQuery>,
 ) -> ApiResult<Json<Value>> {
-    let has_q = query.q.as_deref().is_some_and(|s| !s.is_empty());
-    let has_risk = query.risk_level.is_some();
-    let has_cid = query.connection_id.is_some();
-
-    let mut sql = String::from(
-        "SELECT id, company_id, connection_id, name, title, description, \
-         input_schema, risk_level, status, created_at \
-         FROM tool_catalog_entries WHERE company_id = $1 AND status = 'active'",
-    );
-
-    // Always bind all 4 params; unused ones are harmless (never referenced in SQL)
-    if has_q {
-        sql.push_str(" AND (name ILIKE $2 OR title ILIKE $2 OR description ILIKE $2)");
-    }
-    if has_risk {
-        let _ = write!(sql, " AND risk_level = ${n}", n = 2 + i32::from(has_q));
-    }
-    if has_cid {
-        let _ = write!(
-            sql,
-            " AND connection_id = ${n}",
-            n = 2 + i32::from(has_q) + i32::from(has_risk)
-        );
-    }
-    sql.push_str(" ORDER BY name LIMIT 100");
-
-    let like_pat = query
-        .q
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("%{s}%"))
-        .unwrap_or_default();
-    let risk_val = query.risk_level.clone().unwrap_or_default();
-    let cid = query.connection_id.unwrap_or_else(Uuid::nil);
-
-    let rows: Vec<CatalogEntryRow> = sqlx::query_as(&sql)
-        .bind(company_id)
-        .bind(&like_pat)
-        .bind(&risk_val)
-        .bind(cid)
-        .fetch_all(state.db.pool())
+    let rows = ToolRepo::new(&state.db)
+        .lookup_catalog_entries(
+            company_id,
+            query.q.as_deref(),
+            query.risk_level.as_deref(),
+            query.connection_id,
+        )
         .await?;
-    let tools: Vec<Value> = rows.iter().map(catalog_entry_json).collect();
+    let tools: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, company_id, connection_id, name, title, description, input_schema, risk_level, status, created_at)| {
+            json!({
+                "id": id,
+                "companyId": company_id,
+                "connectionId": connection_id,
+                "name": name,
+                "title": title,
+                "description": description,
+                "inputSchema": input_schema,
+                "riskLevel": risk_level,
+                "status": status,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
     Ok(Json(json!({ "companyId": company_id, "tools": tools })))
 }
-
 async fn get_tool(
     State(state): State<AppState>,
     Path((_company_id, tool_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<CatalogEntryRow> = sqlx::query_as(
-        "SELECT id, company_id, connection_id, name, title, description, \
-         input_schema, risk_level, status, created_at \
-         FROM tool_catalog_entries WHERE id = $1 AND status = 'active'",
-    )
-    .bind(tool_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok(Json(catalog_entry_json(&row))),
-        None => Err(ApiError::NotFound(format!("tool {tool_id}"))),
-    }
+    let row = ToolRepo::new(&state.db)
+        .get_active_catalog_entry(tool_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool {tool_id}")))?;
+    Ok(Json(json!({
+        "id": row.0,
+        "companyId": row.1,
+        "connectionId": row.2,
+        "name": row.3,
+        "title": row.4,
+        "description": row.5,
+        "inputSchema": row.6,
+        "riskLevel": row.7,
+        "status": row.8,
+        "createdAt": row.9,
+    })))
 }
-
 async fn delete_tool(
     State(state): State<AppState>,
     Path((_company_id, tool_id)): Path<(Uuid, Uuid)>,
@@ -808,44 +815,26 @@ async fn invoke_tool(
     Path((company_id, tool_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
+    let repo = ToolRepo::new(&state.db);
     // Look up the catalog entry to get tool_name + connection_id
-    let entry: Option<CatalogEntryRow> = sqlx::query_as(
-        "SELECT id, company_id, connection_id, name, title, description, \
-         input_schema, risk_level, status, created_at \
-         FROM tool_catalog_entries WHERE id = $1 AND company_id = $2 AND status = 'active'",
-    )
-    .bind(tool_id)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-
-    let Some(entry) = entry else {
-        return Err(ApiError::NotFound(format!("tool {tool_id}")));
-    };
-
-    // Insert invocation record
+    let entry = repo
+        .find_active_catalog_entry_by_company(company_id, tool_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool {tool_id}")))?;
     let arguments_summary = body.get("arguments").cloned();
-    let row: InvocationRow = sqlx::query_as(
-        "INSERT INTO tool_invocations \
-         (company_id, actor_type, connection_id, catalog_entry_id, tool_name, \
-          arguments_summary, status, started_at) \
-         VALUES ($1, 'user', $2, $3, $4, $5, 'pending', now()) \
-         RETURNING id, company_id, actor_type, actor_id, agent_id, issue_id, run_id, \
-                   connection_id, catalog_entry_id, tool_name, status, result_summary, \
-                   error_code, error_message, started_at, completed_at, created_at",
-    )
-    .bind(company_id)
-    .bind(entry.connection_id)
-    .bind(tool_id)
-    .bind(&entry.name)
-    .bind(&arguments_summary)
-    .fetch_one(state.db.pool())
-    .await?;
 
+    let row = repo
+        .create_invocation(
+            company_id,
+            entry.2,                // connection_id
+            entry.0,                // catalog_entry_id
+            &entry.3,               // tool_name
+            arguments_summary.as_ref(),
+        )
+        .await?;
     // For now: invocation is queued; actual execution requires runtime slots / MCP bridge
-    Ok((StatusCode::ACCEPTED, Json(invocation_json(&row))))
+    Ok((StatusCode::ACCEPTED, Json(invocation_json_from_summary(&row))))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InvocationListQuery {
@@ -863,42 +852,12 @@ async fn list_invocations(
 ) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(50).min(200);
     let offset = q.offset.unwrap_or(0);
-
-    let rows: Vec<InvocationRow> = if let Some(cid) = q.connection_id {
-        sqlx::query_as(
-            "SELECT id, company_id, actor_type, actor_id, agent_id, issue_id, run_id, \
-             connection_id, catalog_entry_id, tool_name, status, result_summary, \
-             error_code, error_message, started_at, completed_at, created_at \
-             FROM tool_invocations \
-             WHERE company_id = $1 AND connection_id = $2 \
-             ORDER BY created_at DESC LIMIT $3 OFFSET $4",
-        )
-        .bind(company_id)
-        .bind(cid)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(state.db.pool())
-        .await?
-    } else {
-        sqlx::query_as(
-            "SELECT id, company_id, actor_type, actor_id, agent_id, issue_id, run_id, \
-             connection_id, catalog_entry_id, tool_name, status, result_summary, \
-             error_code, error_message, started_at, completed_at, created_at \
-             FROM tool_invocations \
-             WHERE company_id = $1 \
-             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-        )
-        .bind(company_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(state.db.pool())
-        .await?
-    };
-
-    let items: Vec<Value> = rows.iter().map(invocation_json).collect();
+    let rows = ToolRepo::new(&state.db)
+        .list_invocations(company_id, q.connection_id, limit, offset)
+        .await?;
+    let items: Vec<Value> = rows.iter().map(invocation_json_from_summary).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
-
 async fn upsert_oauth_state(state: &AppState, company_id: Uuid, conn: Uuid) -> ApiResult<String> {
     let state_token = Uuid::new_v4().simple().to_string();
     let code_verifier = Uuid::new_v4().simple().to_string();
@@ -1238,32 +1197,19 @@ async fn delete_tool_profile(
     State(state): State<AppState>,
     Path(profile_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    // Repo 端只暴露 (company_id, id) 的 delete；这里我们用 list 反查 company_id。
-    // 因为 list_profiles_by_company 已经 ORDER BY updated_at DESC LIMIT 200，
-    // 单 id 场景会扫描少量行；生产中可以加 by-id 索引提示。
     let repo = ToolRepo::new(&state.db);
-    let mut target_company: Option<Uuid> = None;
-    for cid_row in sqlx::query_as::<_, (Uuid,)>(
-        "SELECT DISTINCT company_id FROM tool_profiles WHERE id = $1"
-    )
-    .bind(profile_id)
-    .fetch_optional(state.db.pool())
-    .await?
-    {
-        target_company = Some(cid_row.0);
-    }
-    let company_id = target_company
+    let company_id = repo
+        .find_profile_company_id(profile_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
-    let n = repo.delete_profile(company_id, profile_id).await?;
-    if n {
-        state.realtime.publish(
-            LiveEvent::new("tool.profile.deleted", "tool_profile", profile_id)
-                .with_company(company_id),
-        );
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("tool profile {profile_id}")))
+    if !repo.delete_profile(company_id, profile_id).await? {
+        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
     }
+    state.realtime.publish(
+        LiveEvent::new("tool_profile.deleted", "tool_profile", profile_id)
+            .with_company(company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // Round 104: 仓储化。原 SQL 引用不存在的列 `decision / scope`；
@@ -1337,20 +1283,13 @@ async fn list_tool_stdio_templates(
 }
 
 async fn list_connection_grants(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(connection_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 95 修复：原 SQL 引用了 v3 schema 已删除的 `tool_oauth_grants` 表 + `scope`/`expires_at` 列；
-    // 真实表是 `connection_grants`，列：id, connection_id, kind, subject_user_id,
-    // provider_tenant (jsonb), credential_secret_refs, status, is_default, ...
-    let rows: Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, connection_id, kind, subject_user_id, status, created_at::text \
-         FROM connection_grants WHERE connection_id = $1 ORDER BY created_at DESC LIMIT 50",
-    )
-    .bind(connection_id)
-    .fetch_all(_state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = ToolRepo::new(&state.db)
+        .list_connection_grants(connection_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, connection_id, kind, subject_user_id, status, created_at)| {
@@ -1366,9 +1305,6 @@ async fn list_connection_grants(
         .collect();
     Ok(Json(json!({ "items": items })))
 }
-
-// Round 105: 仓储化。原 SQL 引用不存在的列 `action_kind / requested_by / payload`；
-// 真实 schema 是 invocation_id / canonical_arguments_* / requested_by_*_id / decided_at / ...
 async fn list_tool_action_requests(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -2181,86 +2117,36 @@ async fn install_example_route(
         .get("description")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let tools: Vec<String> = example
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let mut tx = state.db.pool().begin().await?;
-
-    // application (idempotent on (company_id, name))
-    let application_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO tool_applications (company_id, name, kind, description, config) \
-         VALUES ($1, $2, $3, $4, $5) \
-         ON CONFLICT (company_id, name) DO UPDATE SET updated_at = now() \
-         RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&name)
-    .bind(&kind)
-    .bind(description.as_deref())
-    .bind(&example)
-    .fetch_one(&mut *tx)
-    .await?;
-
-    let uid = format!("tc_{}", Uuid::now_v7().simple());
-    let connection: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_connections (company_id, application_id, name, transport, status, enabled, uid) \
-         VALUES ($1, $2, $3, 'stdio', 'pending', false, $4) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(application_id)
-    .bind(&name)
-    .bind(&uid)
-    .fetch_one(&mut *tx)
-    .await?;
-
-    let profile_key = format!("prof-from-example-{id}");
-    let profile: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
-         VALUES ($1, $2, $3, $4, 'active', 'ask', $5) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&profile_key)
-    .bind(format!("Profile for {name}"))
-    .bind(description.as_deref())
-    .bind(json!({ "sourceExampleId": id }))
-    .fetch_one(&mut *tx)
-    .await?;
-
-    let mut profile_entries: Vec<Value> = Vec::new();
-    if let Some(tools) = example.get("tools").and_then(Value::as_array) {
-        for tool in tools {
-            let tool_name = tool.as_str().unwrap_or("").to_owned();
-            if tool_name.is_empty() {
-                continue;
-            }
-            sqlx::query(
-                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id, connection_id, tool_name) \
-                 VALUES ($1, $2, 'tool', 'include', $3, $4, $5)",
-            )
-            .bind(company_id)
-            .bind(profile.0)
-            .bind(application_id)
-            .bind(connection.0)
-            .bind(&tool_name)
-            .execute(&mut *tx)
-            .await?;
-            profile_entries.push(json!({
-                "selectorType": "tool",
-                "effect": "include",
-                "applicationId": application_id,
-                "connectionId": connection.0,
-                "toolName": tool_name,
-            }));
-        }
-    }
-    tx.commit().await?;
-
+    let result = ToolRepo::new(&state.db)
+        .install_example(
+            company_id,
+            &id,
+            &name,
+            &kind,
+            description.as_deref(),
+            &example,
+            &tools,
+        )
+        .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.example.installed", "tool_example", application_id)
+        LiveEvent::new("tool.example.installed", "tool_example", result.application_id)
             .with_company(company_id)
             .with_data(json!({
-                "applicationId": application_id,
-                "connectionId": connection.0,
-                "profileId": profile.0,
-                "profileEntries": profile_entries.len(),
+                "applicationId": result.application_id,
+                "connectionId": result.connection_id,
+                "profileId": result.profile_id,
+                "profileEntries": result.profile_entries,
             })),
     );
     Ok((
@@ -2268,14 +2154,13 @@ async fn install_example_route(
         Json(json!({
             "created": true,
             "example": example,
-            "application": { "id": application_id, "name": name, "kind": kind },
-            "connection": { "id": connection.0, "applicationId": application_id, "transport": "stdio", "status": "pending" },
-            "profile": { "id": profile.0, "profileKey": profile_key, "name": format!("Profile for {name}") },
-            "profileEntries": profile_entries,
+            "application": { "id": result.application_id, "name": name, "kind": kind },
+            "connection": { "id": result.connection_id, "applicationId": result.application_id, "transport": "stdio", "status": "pending" },
+            "profile": { "id": result.profile_id, "profileKey": format!("prof-from-example-{id}"), "name": format!("Profile for {name}") },
+            "profileEntries": result.profile_entries,
         })),
     ))
 }
-
 async fn smoke_example_route(
     State(_state): State<AppState>,
     Path((company_id, id)): Path<(Uuid, String)>,
@@ -2332,17 +2217,10 @@ async fn list_apps_attention(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Apps needing attention: enabled=false OR health_status='unhealthy'
-    let rows: Vec<(Uuid, String, String, bool, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, name, transport, enabled, health_status, health_message \
-         FROM tool_connections WHERE company_id = $1 \
-            AND (enabled = false OR health_status IN ('unhealthy','stale','unknown')) \
-         ORDER BY updated_at DESC LIMIT 100",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = ToolRepo::new(&state.db)
+        .list_apps_attention(company_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, name, transport, enabled, health_status, health_message)| {
@@ -2503,15 +2381,10 @@ async fn policy_test_route(
     // return a stub decision based on whether any policy rows exist for the
     // company + risk_level (if provided).
     let risk = body.risk_level.clone().unwrap_or_else(|| "low".to_owned());
-    let policies: Vec<(Uuid, String, i32, bool, Value)> = sqlx::query_as(
-        "SELECT id, name, priority, enabled, selectors \
-         FROM tool_policies WHERE company_id = $1 AND enabled = true \
-         ORDER BY priority ASC LIMIT 50",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let policies = ToolRepo::new(&state.db)
+        .list_enabled_policies_for_test(company_id)
+        .await
+        .unwrap_or_default();
     let matched: Vec<Uuid> = policies
         .iter()
         .filter_map(|(id, _name, _prio, _enabled, selectors)| {
@@ -2561,25 +2434,24 @@ async fn policy_test_route(
     });
     let audit_event = if body.write_audit_event.unwrap_or(false) {
         // Persist an audit row
-        let event_id: Option<Uuid> = sqlx::query_scalar(
-            "INSERT INTO tool_call_events (company_id, event_type, actor_type, actor_id, agent_id, application_id, connection_id, catalog_entry_id, tool_name, decision, matched_policy_ids, reason_code, outcome, arguments_summary) \
-             VALUES ($1, 'policy_decision', COALESCE($2, 'system'), $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, 'pending', $12) RETURNING id",
-        )
-        .bind(company_id)
-        .bind(body.actor_type.as_deref())
-        .bind(body.actor_id.as_deref())
-        .bind(body.agent_id)
-        .bind(body.application_id)
-        .bind(body.connection_id)
-        .bind(body.catalog_entry_id)
-        .bind(body.tool_name.as_deref())
-        .bind(decision)
-        .bind(json!(matched))
-        .bind(if matched.is_empty() { "no_policy_match" } else { "policy_match_default_allow" })
-        .bind(body.arguments_summary.clone().unwrap_or_else(|| json!({})))
-        .fetch_one(state.db.pool())
-        .await
-        .ok();
+        let event_id = ToolRepo::new(&state.db)
+            .insert_policy_decision_event(
+                company_id,
+                body.actor_type.as_deref(),
+                body.actor_id.as_deref(),
+                body.agent_id,
+                body.application_id,
+                body.connection_id,
+                body.catalog_entry_id,
+                body.tool_name.as_deref(),
+                decision,
+                &json!(matched),
+                if matched.is_empty() { "no_policy_match" } else { "policy_match_default_allow" },
+                &body.arguments_summary.clone().unwrap_or_else(|| json!({})),
+            )
+            .await
+            .ok()
+            .flatten();
         event_id.and_then(|id| Some(json!({ "id": id, "eventType": "policy_decision" })))
     } else {
         None

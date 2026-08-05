@@ -8,7 +8,7 @@
 //! - 所有方法都强制 `company_id` 过滤
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -2056,6 +2056,38 @@ pub struct ToolActionRequestRow {
     pub updated_at: Timestamp,
 }
 
+/// Round 146: install_example 复合事务的返回结构。
+#[derive(Debug, Clone)]
+pub struct InstallExampleResult {
+    pub application_id: Uuid,
+    pub connection_id: Uuid,
+    pub profile_id: Uuid,
+    pub profile_entries: usize,
+}
+
+/// Round 145: tool_invocations 1:1 schema 投影（供 list_invocations / create_invocation 返回）。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvocationSummaryRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub actor_type: String,
+    pub actor_id: Option<String>,
+    pub agent_id: Option<Uuid>,
+    pub issue_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
+    pub catalog_entry_id: Option<Uuid>,
+    pub tool_name: String,
+    pub status: String,
+    pub result_summary: Option<Value>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: Option<Timestamp>,
+    pub completed_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+}
+
 impl<'a> ToolRepo<'a> {
     /// Round 144: 列出某 company 的 active tool categories（distinct risk_level）。
     pub async fn list_tool_categories(
@@ -2106,6 +2138,333 @@ impl<'a> ToolRepo<'a> {
         .execute(self.db.pool())
         .await?;
         Ok(())
+    }
+
+    /// Round 145: tool_catalog_entries 动态查询（tool_lookup 用）。
+    /// has_q / has_risk / has_cid 决定 WHERE 子句与绑定参数。
+    pub async fn lookup_catalog_entries(
+        &self,
+        company_id: Uuid,
+        q: Option<&str>,
+        risk_level: Option<&str>,
+        connection_id: Option<Uuid>,
+    ) -> RepoResult<Vec<(
+        Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
+        Value, String, String, Timestamp,
+    )>> {
+        let has_q = q.map(|s| !s.is_empty()).unwrap_or(false);
+        let has_risk = risk_level.is_some();
+        let has_cid = connection_id.is_some();
+        let mut sql = String::from(
+            "SELECT id, company_id, connection_id, name, title, description, \
+             input_schema, risk_level, status, created_at \
+             FROM tool_catalog_entries WHERE company_id = $1 AND status = 'active'",
+        );
+        let like_pat = q.filter(|s| !s.is_empty()).map(|s| format!("%{s}%")).unwrap_or_default();
+        let risk_val = risk_level.unwrap_or("");
+        let cid = connection_id.unwrap_or_else(Uuid::nil);
+        if has_q {
+            sql.push_str(" AND (name ILIKE $2 OR title ILIKE $2 OR description ILIKE $2)");
+        }
+        if has_risk {
+            sql.push_str(&format!(" AND risk_level = ${}", 2 + i32::from(has_q)));
+        }
+        if has_cid {
+            sql.push_str(&format!(
+                " AND connection_id = ${}",
+                2 + i32::from(has_q) + i32::from(has_risk)
+            ));
+        }
+        sql.push_str(" ORDER BY name LIMIT 100");
+        let rows: Vec<(
+            Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
+            Value, String, String, Timestamp,
+        )> = sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(&like_pat)
+            .bind(risk_val)
+            .bind(cid)
+            .fetch_all(self.db.pool())
+            .await?;
+        Ok(rows)
+    }
+
+    /// Round 145: 按 id 查 active catalog entry（get_tool 用）。
+    pub async fn get_active_catalog_entry(
+        &self,
+        entry_id: Uuid,
+    ) -> RepoResult<Option<(
+        Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
+        Value, String, String, Timestamp,
+    )>> {
+        let row: Option<(
+            Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
+            Value, String, String, Timestamp,
+        )> = sqlx::query_as(
+            "SELECT id, company_id, connection_id, name, title, description, \
+             input_schema, risk_level, status, created_at \
+             FROM tool_catalog_entries WHERE id = $1 AND status = 'active'",
+        )
+        .bind(entry_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 145: invoke_tool 取 catalog entry（按 company + id + active）。
+    pub async fn find_active_catalog_entry_by_company(
+        &self,
+        company_id: Uuid,
+        entry_id: Uuid,
+    ) -> RepoResult<Option<(
+        Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
+        Value, String, String, Timestamp,
+    )>> {
+        let row: Option<(
+            Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
+            Value, String, String, Timestamp,
+        )> = sqlx::query_as(
+            "SELECT id, company_id, connection_id, name, title, description, \
+             input_schema, risk_level, status, created_at \
+             FROM tool_catalog_entries \
+             WHERE id = $1 AND company_id = $2 AND status = 'active'",
+        )
+        .bind(entry_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 145: 创建 tool_invocation（invoke_tool 用）。
+    pub async fn create_invocation(
+        &self,
+        company_id: Uuid,
+        connection_id: Uuid,
+        catalog_entry_id: Uuid,
+        tool_name: &str,
+        arguments_summary: Option<&Value>,
+    ) -> RepoResult<InvocationSummaryRow> {
+        let row: InvocationSummaryRow = sqlx::query_as(
+            "INSERT INTO tool_invocations \
+             (company_id, actor_type, connection_id, catalog_entry_id, tool_name, \
+              arguments_summary, status, started_at) \
+             VALUES ($1, 'user', $2, $3, $4, $5, 'pending', now()) \
+             RETURNING id, company_id, actor_type, actor_id, agent_id, issue_id, run_id, \
+                       connection_id, catalog_entry_id, tool_name, status, result_summary, \
+                       error_code, error_message, started_at, completed_at, created_at",
+        )
+        .bind(company_id)
+        .bind(connection_id)
+        .bind(catalog_entry_id)
+        .bind(tool_name)
+        .bind(arguments_summary)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 145: list_invocations（按 company + optional connection filter）。
+    pub async fn list_invocations(
+        &self,
+        company_id: Uuid,
+        connection_id: Option<Uuid>,
+        limit: i64,
+        offset: i64,
+    ) -> RepoResult<Vec<InvocationSummaryRow>> {
+        let rows: Vec<InvocationSummaryRow> = if let Some(cid) = connection_id {
+            sqlx::query_as(
+                "SELECT id, company_id, actor_type, actor_id, agent_id, issue_id, run_id, \
+                 connection_id, catalog_entry_id, tool_name, status, result_summary, \
+                 error_code, error_message, started_at, completed_at, created_at \
+                 FROM tool_invocations \
+                 WHERE company_id = $1 AND connection_id = $2 \
+                 ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+            )
+            .bind(company_id)
+            .bind(cid)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self.db.pool())
+            .await?
+        } else {
+            sqlx::query_as(
+                "SELECT id, company_id, actor_type, actor_id, agent_id, issue_id, run_id, \
+                 connection_id, catalog_entry_id, tool_name, status, result_summary, \
+                 error_code, error_message, started_at, completed_at, created_at \
+                 FROM tool_invocations \
+                 WHERE company_id = $1 \
+                 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(company_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self.db.pool())
+            .await?
+        };
+        Ok(rows)
+    }
+
+    /// Round 146: 列出某 company 的 enabled tool_policies（policy_test_route 用）。
+    /// 返回 (id, name, priority, enabled, selectors)
+    pub async fn list_enabled_policies_for_test(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, String, i32, bool, Value)>> {
+        let rows: Vec<(Uuid, String, i32, bool, Value)> = sqlx::query_as(
+            "SELECT id, name, priority, enabled, selectors \
+             FROM tool_policies WHERE company_id = $1 AND enabled = true \
+             ORDER BY priority ASC LIMIT 50",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 146: 插入一条 policy_decision audit event（policy_test_route 用）。
+    pub async fn insert_policy_decision_event(
+        &self,
+        company_id: Uuid,
+        actor_type: Option<&str>,
+        actor_id: Option<&str>,
+        agent_id: Option<Uuid>,
+        application_id: Option<Uuid>,
+        connection_id: Option<Uuid>,
+        catalog_entry_id: Option<Uuid>,
+        tool_name: Option<&str>,
+        decision: &str,
+        matched_policy_ids: &Value,
+        reason_code: &str,
+        arguments_summary: &Value,
+    ) -> RepoResult<Option<Uuid>> {
+        let event_id: Option<Uuid> = sqlx::query_scalar(
+            "INSERT INTO tool_call_events \
+             (company_id, event_type, actor_type, actor_id, agent_id, application_id, connection_id, catalog_entry_id, tool_name, decision, matched_policy_ids, reason_code, outcome, arguments_summary) \
+             VALUES ($1, 'policy_decision', COALESCE($2, 'system'), $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, 'pending', $12) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(actor_type)
+        .bind(actor_id)
+        .bind(agent_id)
+        .bind(application_id)
+        .bind(connection_id)
+        .bind(catalog_entry_id)
+        .bind(tool_name)
+        .bind(decision)
+        .bind(matched_policy_ids)
+        .bind(reason_code)
+        .bind(arguments_summary)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(event_id)
+    }
+
+    /// Round 146: 列出需要关注的 tool_connections（disabled 或 unhealthy）。
+    pub async fn list_apps_attention(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, String, String, bool, String, Option<String>)>> {
+        let rows: Vec<(Uuid, String, String, bool, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, name, transport, enabled, health_status, health_message \
+             FROM tool_connections WHERE company_id = $1 \
+                AND (enabled = false OR health_status IN ('unhealthy','stale','unknown')) \
+             ORDER BY updated_at DESC LIMIT 100",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 146: 列出某 connection 的 connection_grants（list_connection_grants 用）。
+    pub async fn list_connection_grants(
+        &self,
+        connection_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)>> {
+        let rows: Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+            "SELECT id, connection_id, kind, subject_user_id, status, created_at::text \
+             FROM connection_grants WHERE connection_id = $1 ORDER BY created_at DESC LIMIT 50",
+        )
+        .bind(connection_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 146: 安装 example（复合事务：INSERT application + INSERT connection + INSERT profile + INSERT entries）。
+    pub async fn install_example(
+        &self,
+        company_id: Uuid,
+        example_id: &str,
+        name: &str,
+        kind: &str,
+        description: Option<&str>,
+        example_config: &Value,
+        tools: &[String],
+    ) -> RepoResult<InstallExampleResult> {
+        let mut tx = self.db.pool().begin().await?;
+        let application_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO tool_applications (company_id, name, kind, description, config) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (company_id, name) DO UPDATE SET updated_at = now() \
+             RETURNING id",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(kind)
+        .bind(description)
+        .bind(example_config)
+        .fetch_one(&mut *tx)
+        .await?;
+        let uid = format!("tc_{}", Uuid::new_v4().simple());
+        let connection_id: (Uuid,) = sqlx::query_as(
+            "INSERT INTO tool_connections (company_id, application_id, name, transport, status, enabled, uid) \
+             VALUES ($1, $2, $3, 'stdio', 'pending', false, $4) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(application_id)
+        .bind(name)
+        .bind(&uid)
+        .fetch_one(&mut *tx)
+        .await?;
+        let profile_key = format!("prof-from-example-{example_id}");
+        let profile_id: (Uuid,) = sqlx::query_as(
+            "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
+             VALUES ($1, $2, $3, $4, 'active', 'ask', $5) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(&profile_key)
+        .bind(format!("Profile for {name}"))
+        .bind(description)
+        .bind(json!({ "sourceExampleId": example_id }))
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut entries_count: usize = 0;
+        for tool_name in tools {
+            if tool_name.is_empty() {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id, connection_id, tool_name) \
+                 VALUES ($1, $2, 'tool', 'include', $3, $4, $5)",
+            )
+            .bind(company_id)
+            .bind(profile_id.0)
+            .bind(application_id)
+            .bind(connection_id.0)
+            .bind(tool_name)
+            .execute(&mut *tx)
+            .await?;
+            entries_count += 1;
+        }
+        tx.commit().await?;
+        Ok(InstallExampleResult {
+            application_id,
+            connection_id: connection_id.0,
+            profile_id: profile_id.0,
+            profile_entries: entries_count,
+        })
     }
 
     /// Round 143: 列出某 run 的 tool_call_events（get_run_decisions_route 用）。
