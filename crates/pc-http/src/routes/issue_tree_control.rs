@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::issue::IssueRepo;
+use pc_repos::issue_tree_hold::IssueTreeHoldRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -55,12 +57,11 @@ async fn preview_tree_control(
 ) -> ApiResult<Json<Value>> {
     let mode = body.mode.unwrap_or_else(|| "merge".to_owned());
     // Fetch affected child issue IDs (one level deep).
-    let affected: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM issues WHERE parent_id = $1 AND hidden_at IS NULL")
-            .bind(id)
-            .fetch_all(state.db.pool())
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let children = IssueRepo::new(&state.db)
+        .list_children(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let affected: Vec<Uuid> = children.into_iter().map(|c| c.id).collect();
     Ok(Json(json!({
         "issueId": id,
         "mode": mode,
@@ -74,21 +75,14 @@ async fn tree_control_state(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let pool = state.db.pool();
-    let hold_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM issue_tree_holds WHERE root_issue_id = $1 AND released_at IS NULL",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let last: Option<pc_core::Timestamp> =
-        sqlx::query_scalar("SELECT MAX(created_at) FROM issue_tree_holds WHERE root_issue_id = $1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .flatten();
+    let hold_count = IssueTreeHoldRepo::new(&state.db)
+        .count_active_by_released_at(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let last = IssueTreeHoldRepo::new(&state.db)
+        .latest_change_at(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(json!({
         "issueId": id,
         "mode": "merge",
@@ -101,13 +95,10 @@ async fn list_tree_holds(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, Option<String>, Option<String>, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE root_issue_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = IssueTreeHoldRepo::new(&state.db)
+        .list_holds_v1(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let holds: Vec<Value> = rows
         .into_iter()
         .map(|(id, scope, reason, by, created, released)| {
@@ -133,13 +124,10 @@ async fn get_tree_hold(
     }
     let hold_uuid =
         Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
-    let row: Option<(Uuid, Uuid, String, Option<String>, Option<String>, pc_core::Timestamp, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT id, root_issue_id, scope, reason, created_by_user_id, created_at, released_at          FROM issue_tree_holds WHERE id = $1",
-    )
-    .bind(hold_uuid)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = IssueTreeHoldRepo::new(&state.db)
+        .get_hold_by_id_v1(hold_uuid)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let Some((id, root_issue_id, scope, reason, by, created, released)) = row else {
         return Err(ApiError::NotFound(format!("tree hold {hold_id}")));
     };
@@ -167,24 +155,16 @@ async fn create_tree_hold(
 ) -> ApiResult<impl IntoResponse> {
     let scope = body.scope.clone().unwrap_or_else(|| "subtree".to_owned());
     let reason = body.reason.clone();
-    let issue_company: Option<Uuid> = sqlx::query_scalar(
-        "SELECT company_id FROM issues WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let issue_company = issue_company.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    let row: (Uuid, pc_core::Timestamp) = sqlx::query_as(
-        "INSERT INTO issue_tree_holds (company_id, root_issue_id, scope, mode, status, reason, created_by_user_id)          VALUES ($1, $2, $3, 'merge', 'active', $4, 'local-board') RETURNING id, created_at",
-    )
-    .bind(issue_company)
-    .bind(id)
-    .bind(&scope)
-    .bind(&reason)
-    .fetch_one(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let issue_company = IssueRepo::new(&state.db)
+        .get(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map(|i| i.company_id)
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let row = IssueTreeHoldRepo::new(&state.db)
+        .create_v1(issue_company, id, "merge", "active", reason.as_deref(), "local-board")
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -203,13 +183,10 @@ async fn release_tree_hold(
 ) -> ApiResult<impl IntoResponse> {
     let hold_uuid =
         Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
-    sqlx::query(
-        "UPDATE issue_tree_holds SET released_at = now() WHERE id = $1 AND released_at IS NULL",
-    )
-    .bind(hold_uuid)
-    .execute(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    IssueTreeHoldRepo::new(&state.db)
+        .release_by_id(hold_uuid)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::OK,
         Json(json!({ "id": hold_id, "status": "released" })),

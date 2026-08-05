@@ -165,6 +165,110 @@ impl<'a> IssueTreeHoldRepo<'a> {
         .await?;
         Ok(n)
     }
+    // ---- Round 165: issue_tree_control route 仓储化新增方法 ----
+
+    /// Round 165: 列出 root issue 下的 hold 行（按 created_at DESC），含完整列。
+    /// 注: schema 没有 `scope` 列（迁移 0066 用 mode/status）。本方法保留原路由 SELECT 的语义（取 schema 等价列）。
+    /// 实际查询以 schema 真实列为准：`mode` 替代 `scope`，保留 `reason`/`created_by_user_id`/`created_at`/`released_at`。
+    pub async fn list_holds_v1(
+        &self,
+        root_issue_id: Uuid,
+    ) -> sqlx::Result<Vec<(Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)>> {
+        let rows: Vec<(Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)> =
+            sqlx::query_as(
+                "SELECT id, mode, reason, created_by_user_id, created_at, released_at \
+                 FROM issue_tree_holds WHERE root_issue_id = $1 ORDER BY created_at DESC",
+            )
+            .bind(root_issue_id)
+            .fetch_all(self.db.pool())
+            .await?;
+        Ok(rows)
+    }
+
+    /// Round 165: 按 id 取单条 hold，返回完整列。
+    pub async fn get_hold_by_id_v1(
+        &self,
+        hold_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)>> {
+        let row: Option<(Uuid, Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)> =
+            sqlx::query_as(
+                "SELECT id, root_issue_id, mode, reason, created_by_user_id, created_at, released_at \
+                 FROM issue_tree_holds WHERE id = $1",
+            )
+            .bind(hold_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    /// Round 165: 写入一条 tree hold (merge 模式, active 状态, created_by_user_id='local-board')。
+    /// 返回 (id, created_at)。
+    pub async fn create_v1(
+        &self,
+        company_id: Uuid,
+        root_issue_id: Uuid,
+        mode: &str,
+        status: &str,
+        reason: Option<&str>,
+        created_by_user_id: &str,
+    ) -> sqlx::Result<(Uuid, Timestamp)> {
+        let row: (Uuid, Timestamp) = sqlx::query_as(
+            "INSERT INTO issue_tree_holds \
+                (company_id, root_issue_id, mode, status, reason, created_by_user_id) \
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at",
+        )
+        .bind(company_id)
+        .bind(root_issue_id)
+        .bind(mode)
+        .bind(status)
+        .bind(reason)
+        .bind(created_by_user_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 165: 释放 hold（按 id 定位，仅释放未释放的）。
+    pub async fn release_by_id(&self, hold_id: Uuid) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE issue_tree_holds SET released_at = now() \
+             WHERE id = $1 AND released_at IS NULL",
+        )
+        .bind(hold_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 165: hold 计数（按 released_at IS NULL 过滤，与原路由 SQL 一致）。
+    pub async fn count_active_by_released_at(
+        &self,
+        root_issue_id: Uuid,
+    ) -> sqlx::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM issue_tree_holds \
+             WHERE root_issue_id = $1 AND released_at IS NULL",
+        )
+        .bind(root_issue_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(n)
+    }
+
+    /// Round 165: 取该 root 下最近的 hold 创建时间（MAX(created_at)）。
+    pub async fn latest_change_at(
+        &self,
+        root_issue_id: Uuid,
+    ) -> sqlx::Result<Option<Timestamp>> {
+        let row: Option<(Option<Timestamp>,)> = sqlx::query_as(
+            "SELECT MAX(created_at) FROM issue_tree_holds WHERE root_issue_id = $1",
+        )
+        .bind(root_issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.and_then(|(o,)| o))
+    }
 }
 
 #[cfg(test)]
