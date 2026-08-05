@@ -18,6 +18,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::redact::sanitize_record;
+use pc_core::Timestamp;
 use crate::{Db, RepoError, RepoResult};
 
 const LINK_COLS: &str = "company_id, issue_id, approval_id, linked_by_agent_id, \
@@ -421,6 +422,23 @@ impl IssueApprovalRepo {
             .await?;
         }
         Ok(())
+    }
+
+    /// Round 170: 取 approval 关联的 issue 简化投影（issue_id, company_id_text, linked_by_user_id, created_at）。
+    /// 用于 list_approval_issues 路由（需要 raw SQL 形态）。
+    pub async fn list_issues_for_approval_raw(
+        &self,
+        approval_id: Uuid,
+    ) -> IssueApprovalResult<Vec<(Uuid, String, Option<String>, Option<Timestamp>)>> {
+        let rows: Vec<(Uuid, String, Option<String>, Option<Timestamp>)> = sqlx::query_as(
+            "SELECT ia.issue_id, ia.company_id::text, ia.linked_by_user_id, ia.created_at \
+             FROM issue_approvals ia WHERE ia.approval_id = $1 \
+             ORDER BY ia.created_at DESC LIMIT 200",
+        )
+        .bind(approval_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
     }
 }
 

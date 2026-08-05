@@ -560,6 +560,102 @@ impl<'a> ApprovalRepo<'a> {
             .rows_affected();
         Ok(n > 0)
     }
+
+    // ---- Round 170: approvals route 仓储化新增方法 ----
+
+    /// Round 170: 重提交 approval（设为 pending）。
+    /// 若 payload 提供则一并更新 payload，否则只更新 note。
+    pub async fn resubmit(
+        &self,
+        approval_id: Uuid,
+        payload: Option<&Value>,
+        note: Option<&str>,
+    ) -> RepoResult<bool> {
+        if let Some(p) = payload {
+            let n = sqlx::query(
+                "UPDATE approvals SET status = 'pending', payload = $1, decision_note = $2, decided_at = NULL, updated_at = now() \
+                 WHERE id = $3",
+            )
+            .bind(p)
+            .bind(note)
+            .bind(approval_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+            Ok(n > 0)
+        } else {
+            let n = sqlx::query(
+                "UPDATE approvals SET status = 'pending', decision_note = $1, decided_at = NULL, updated_at = now() \
+                 WHERE id = $2",
+            )
+            .bind(note)
+            .bind(approval_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+            Ok(n > 0)
+        }
+    }
+
+    /// Round 170: 取 approval 的 (id, company_id)。
+    pub async fn get_id_company(&self, id: Uuid) -> RepoResult<Option<(Uuid, Uuid)>> {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT id, company_id FROM approvals WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 170: 取 approval 的 company_id。
+    pub async fn get_company_id(&self, id: Uuid) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM approvals WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 170: 写入一条 approval_comment。返回新行 id。
+    pub async fn add_comment_raw(
+        &self,
+        company_id: Uuid,
+        approval_id: Uuid,
+        author_agent_id: Option<Uuid>,
+        author_user_id: Option<&str>,
+        body: &str,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO approval_comments (company_id, approval_id, author_agent_id, author_user_id, body) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(approval_id)
+        .bind(author_agent_id)
+        .bind(author_user_id)
+        .bind(body)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Round 170: 列出 approval 的评论（按 created_at ASC, LIMIT 200）。
+    pub async fn list_comments_raw(
+        &self,
+        approval_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, Timestamp)>> {
+        let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, Timestamp)> = sqlx::query_as(
+            "SELECT id, company_id, author_agent_id, author_user_id, body, created_at \
+             FROM approval_comments WHERE approval_id = $1 ORDER BY created_at ASC LIMIT 200",
+        )
+        .bind(approval_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
 }
 
 

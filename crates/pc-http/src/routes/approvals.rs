@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::approval::ApprovalRepo;
+use pc_repos::issue_approvals::IssueApprovalRepo;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -143,14 +144,10 @@ async fn list_approval_issues(
     Path(approval_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // Issues linked to this approval via issue_approvals table
-    let rows: Vec<(Uuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT ia.issue_id, ia.company_id::text, ia.linked_by_user_id, ia.created_at \
-         FROM issue_approvals ia WHERE ia.approval_id = $1 ORDER BY ia.created_at DESC LIMIT 200",
-    )
-    .bind(approval_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = IssueApprovalRepo::new(&state.db)
+        .list_issues_for_approval_raw(approval_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(issue_id, company_id, linked_by_user_id, created_at)| {
@@ -222,37 +219,13 @@ async fn resubmit_approval(
     Json(body): Json<ResubmitApprovalBody>,
 ) -> ApiResult<Json<Value>> {
     // Set status back to 'pending' and update payload if provided
-    let mut tx = state.db.pool().begin().await?;
-    if let Some(payload) = body.payload.as_ref() {
-        sqlx::query(
-            "UPDATE approvals SET status = 'pending', payload = $1, decision_note = $2, decided_at = NULL, updated_at = now() \
-             WHERE id = $3",
-        )
-        .bind(payload)
-        .bind(body.note.as_deref())
-        .bind(approval_id)
-        .execute(&mut *tx)
+    ApprovalRepo::new(&state.db)
+        .resubmit(approval_id, body.payload.as_ref(), body.note.as_deref())
         .await?;
-    } else {
-        sqlx::query(
-            "UPDATE approvals SET status = 'pending', decision_note = $1, decided_at = NULL, updated_at = now() \
-             WHERE id = $2",
-        )
-        .bind(body.note.as_deref())
-        .bind(approval_id)
-        .execute(&mut *tx)
-        .await?;
-    }
-    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT id, company_id FROM approvals WHERE id = $1",
-    )
-    .bind(approval_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    tx.commit().await?;
-    let (id, company_id) = row.ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let (id, company_id) = ApprovalRepo::new(&state.db)
+        .get_id_company(approval_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
     state.realtime.publish(
         LiveEvent::new("approval.resubmitted", "approval", id).with_company(company_id),
     );
@@ -268,14 +241,10 @@ async fn list_approval_comments(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, company_id, author_agent_id, author_user_id, body, created_at \
-         FROM approval_comments WHERE approval_id = $1 ORDER BY created_at ASC LIMIT 200",
-    )
-    .bind(approval_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = ApprovalRepo::new(&state.db)
+        .list_comments_raw(approval_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, company_id, author_agent_id, author_user_id, body, created_at)| {
@@ -312,24 +281,13 @@ async fn add_approval_comment(
     if body.body.trim().is_empty() {
         return Err(ApiError::BadRequest("body is required".into()));
     }
-    let company_id: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM approvals WHERE id = $1")
-        .bind(approval_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-    let (company_id,) = company_id.ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO approval_comments (company_id, approval_id, author_agent_id, author_user_id, body) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(approval_id)
-    .bind(body.author_agent_id)
-    .bind(body.author_user_id.as_deref())
-    .bind(&body.body)
-    .fetch_one(state.db.pool())
-    .await?;
+    let company_id = ApprovalRepo::new(&state.db)
+        .get_company_id(approval_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let id = ApprovalRepo::new(&state.db)
+        .add_comment_raw(company_id, approval_id, body.author_agent_id, body.author_user_id.as_deref(), &body.body)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("approval.comment_added", "approval_comment", id)
             .with_company(company_id)
