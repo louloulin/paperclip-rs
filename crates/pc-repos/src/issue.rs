@@ -13,6 +13,13 @@ use crate::issue_terminal_effects::{
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct IssueTitleRow {
+    pub id: Uuid,
+    pub title: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct IssueRow {
     pub id: Uuid,
     pub company_id: Uuid,
@@ -425,6 +432,26 @@ impl<'a> IssueRepo<'a> {
             .bind(status)
             .fetch_all(self.db.pool())
             .await
+    }
+
+    /// 公司内 issue 标题模糊搜索（`ILIKE %query%`），返回 `(id, title, status)` 投影。
+    /// 用于 `POST /api/companies/:id/search/extract` 的快速标题级抽取。
+    pub async fn search_titles(
+        &self,
+        company_id: Uuid,
+        query: &str,
+        limit: i64,
+    ) -> sqlx::Result<Vec<IssueTitleRow>> {
+        let limit = limit.clamp(1, 100);
+        sqlx::query_as::<_, IssueTitleRow>(
+            "SELECT id, title, status FROM issues \
+             WHERE company_id = $1 AND title ILIKE $2 LIMIT $3",
+        )
+        .bind(company_id)
+        .bind(format!("%{query}%"))
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await
     }
 
     /// 列出全部（跨公司）；按 status 过滤；limit 默认 200。

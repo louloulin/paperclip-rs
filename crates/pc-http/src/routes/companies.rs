@@ -1657,25 +1657,25 @@ async fn get_org(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 28: 真实 agents 层级 — reports_to 自引用，节点 + 边
-    let rows: Vec<(Uuid, String, Option<String>, Option<String>, Option<Uuid>, String)> = sqlx::query_as(
-        "SELECT id, name, role, title, reports_to, status
-         FROM agents WHERE company_id=$1 ORDER BY name",
-    ).bind(company_id).fetch_all(state.db.pool()).await?;
+    // Round 93: 走 AgentRepo::list_for_org_chart；原内联 SQL 重复在 org.svg 块出现
+    let rows = pc_repos::agent::AgentRepo::new(&state.db)
+        .list_for_org_chart(company_id)
+        .await?;
     let mut nodes = Vec::with_capacity(rows.len());
     let mut edges: Vec<Value> = Vec::new();
     let mut children: std::collections::BTreeMap<Uuid, Vec<Uuid>> = std::collections::BTreeMap::new();
     let mut roots: Vec<Uuid> = Vec::new();
-    for (id, name, role, title, reports_to, status) in rows {
+    for row in rows {
         nodes.push(json!({
-            "id": id, "name": name, "role": role, "title": title, "status": status,
+            "id": row.id, "name": row.name, "role": row.role,
+            "title": row.title, "status": row.status,
         }));
-        match reports_to {
+        match row.reports_to {
             Some(p) => {
-                edges.push(json!({"from": p, "to": id}));
-                children.entry(p).or_default().push(id);
+                edges.push(json!({"from": p, "to": row.id}));
+                children.entry(p).or_default().push(row.id);
             }
-            None => roots.push(id),
+            None => roots.push(row.id),
         }
     }
     // BFS 算 depth（用于 SVG 布局 + JSON 暴露）
@@ -1710,18 +1710,17 @@ async fn get_org_svg(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    // Round 28: 真实层级 SVG 渲染 — BFS 算 depth，layered 布局，节点 box + 边 line
-    let rows: Vec<(Uuid, String, Option<String>, Option<Uuid>, String)> = sqlx::query_as(
-        "SELECT id, name, role, reports_to, status
-         FROM agents WHERE company_id=$1",
-    ).bind(company_id).fetch_all(state.db.pool()).await?;
+    // Round 93: 同样走 AgentRepo::list_for_org_chart
+    let rows = pc_repos::agent::AgentRepo::new(&state.db)
+        .list_for_org_chart(company_id)
+        .await?;
     if rows.is_empty() {
         return Ok(([("content-type", "image/svg+xml")],
             format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 80\"><text x=\"100\" y=\"40\" text-anchor=\"middle\" font-size=\"12\" fill=\"#94a3b8\">company {company_id}: no agents</text></svg>")));
     }
     let mut children: std::collections::BTreeMap<Option<Uuid>, Vec<Uuid>> = std::collections::BTreeMap::new();
-    for (id, _, _, parent, _) in &rows {
-        children.entry(*parent).or_default().push(*id);
+    for row in &rows {
+        children.entry(row.reports_to).or_default().push(row.id);
     }
     for v in children.values_mut() { v.sort(); }
     let roots = children.get(&None).cloned().unwrap_or_default();
@@ -1757,9 +1756,9 @@ async fn get_org_svg(
         w = total_w, h = total_h,
     );
     // edges first
-    for (id, _, _, parent, _) in &rows {
-        let parent = match parent { Some(p) => p, None => continue };
-        let (cd, cp) = match id_pos.get(id) { Some(p) => *p, None => continue };
+    for row in &rows {
+        let parent = match row.reports_to { Some(p) => p, None => continue };
+        let (cd, cp) = match id_pos.get(&row.id) { Some(p) => *p, None => continue };
         let (pd, pp) = match id_pos.get(&parent) { Some(p) => *p, None => continue };
         let x1 = pp * (box_w + gap_x) + gap_x + box_w / 2;
         let y1 = pd * (box_h + gap_y) + gap_y + box_h;
@@ -1772,12 +1771,12 @@ async fn get_org_svg(
         ));
     }
     // nodes
-    for (id, name, role, _, status) in &rows {
-        let (d, p) = match id_pos.get(id) { Some(p) => *p, None => continue };
+    for row in &rows {
+        let (d, p) = match id_pos.get(&row.id) { Some(p) => *p, None => continue };
         let x = p * (box_w + gap_x) + gap_x;
         let y = d * (box_h + gap_y) + gap_y;
-        let role_s = role.clone().unwrap_or_else(|| "agent".into());
-        let status_color = match status.as_str() {
+        let role_s = row.role.clone();
+        let status_color = match row.status.as_str() {
             "active" | "running" => "#10b981",
             "paused" => "#f59e0b",
             "archived" | "crashed" => "#ef4444",
@@ -1790,7 +1789,7 @@ async fn get_org_svg(
             tx = x + 8, ty = y + 22,
             ty2 = y + 40,
             sc = status_color,
-            name = html_escape(name),
+            name = html_escape(&row.name),
             role = html_escape(&role_s),
         ));
     }
@@ -1824,14 +1823,11 @@ async fn search_extract(
 ) -> ApiResult<Json<Value>> {
     let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let limit = body.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
-    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, title, status FROM issues
-         WHERE company_id=$1 AND title ILIKE $2 LIMIT $3",
-    )
-    .bind(company_id).bind(format!("%{query}%")).bind(limit)
-    .fetch_all(state.db.pool()).await?;
-    let hits: Vec<Value> = rows.into_iter().map(|(id, title, status)| json!({
-        "id": id, "title": title, "status": status, "kind": "issue",
+    let rows = pc_repos::issue::IssueRepo::new(&state.db)
+        .search_titles(company_id, query, limit)
+        .await?;
+    let hits: Vec<Value> = rows.into_iter().map(|row| json!({
+        "id": row.id, "title": row.title, "status": row.status, "kind": "issue",
     })).collect();
     Ok(Json(json!({"items": hits, "query": query, "companyId": company_id})))
 }
@@ -1887,13 +1883,19 @@ async fn create_agent(
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateAgentInCompanyBody>,
 ) -> ApiResult<Json<Value>> {
-    let id: Uuid = Uuid::new_v4();
     let role = body.role.clone().unwrap_or_else(|| "general".into());
-    sqlx::query(
-        "INSERT INTO agents (id, company_id, name, role, status, adapter_kind)
-         VALUES ($1,$2,$3,$4,'active','codex_local')",
-    ).bind(id).bind(company_id).bind(&body.name).bind(&role).execute(state.db.pool()).await?;
-    Ok(Json(json!({"id": id, "companyId": company_id, "name": body.name, "role": role})))
+    let row = pc_repos::agent::AgentRepo::new(&state.db)
+        .create_simple(company_id, &body.name, &role)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create agent: {e}")))?;
+    Ok(Json(json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "name": row.name,
+        "role": row.role,
+        "status": row.status,
+        "adapterType": row.adapter_type,
+    })))
 }
 
 async fn provision_built_in_agent(
@@ -1901,12 +1903,16 @@ async fn provision_built_in_agent(
     Path((company_id, id)): Path<(Uuid, String)>,
     Json(_body): Json<serde_json::Value>,
 ) -> ApiResult<Json<Value>> {
+    // Round 93 备注：`company_built_in_agent_provisions` 表在当前迁移集中不存在，
+    // 原 inline SQL 100% 报错。改为返回 200 + stub，待 schema 落地后改为走 Repo。
     let built_in_id: Uuid = Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("bad uuid".into()))?;
-    sqlx::query(
-        "INSERT INTO company_built_in_agent_provisions (company_id, built_in_agent_id)
-         VALUES ($1, $2) ON CONFLICT DO NOTHING",
-    ).bind(company_id).bind(built_in_id).execute(state.db.pool()).await?;
-    Ok(Json(json!({"provisioned": true, "companyId": company_id, "builtInAgentId": built_in_id})))
+    let _ = state.db.pool(); // 静默未用变量警告；保留以备后续切到真表
+    Ok(Json(json!({
+        "provisioned": false,
+        "companyId": company_id,
+        "builtInAgentId": built_in_id,
+        "note": "stub: company_built_in_agent_provisions table not yet in schema",
+    })))
 }
 
 
@@ -1929,30 +1935,28 @@ async fn list_company_activity_route(
     axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
 ) -> ApiResult<Json<Value>> {
     ensure_company_exists(&state, company_id).await?;
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let rows: Vec<(Uuid, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, kind, actor_user_id, agent_id, issue_id, project_id, payload, created_at \
-         FROM activity_log WHERE company_id=$1 \
-         ORDER BY created_at DESC LIMIT $2",
-    )
-    .bind(company_id)
-    .bind(limit)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let filter = pc_repos::activity::ActivityFilter {
+        limit: Some(q.limit.unwrap_or(50).clamp(1, 200)),
+        ..Default::default()
+    };
+    let rows = pc_repos::activity::ActivityRepo::new(&state.db)
+        .list_for_company(company_id, &filter)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, kind, actor_user_id, agent_id, issue_id, project_id, payload, created_at)| {
+        .map(|row| {
             json!({
-                "id": id,
-                "companyId": company_id,
-                "kind": kind,
-                "actorUserId": actor_user_id,
-                "agentId": agent_id,
-                "issueId": issue_id,
-                "projectId": project_id,
-                "payload": payload,
-                "createdAt": created_at,
+                "id": row.id,
+                "companyId": row.company_id,
+                "action": row.action,
+                "actorType": row.actor_type,
+                "actorId": row.actor_id,
+                "entityType": row.entity_type,
+                "entityId": row.entity_id,
+                "agentId": row.agent_id,
+                "details": row.details,
+                "createdAt": row.created_at,
             })
         })
         .collect();
@@ -2061,43 +2065,25 @@ async fn list_company_case_events_route(
 ) -> ApiResult<Json<Value>> {
     ensure_company_exists(&state, company_id).await?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    let kind_filter = q.kind.clone().unwrap_or_default();
-    let rows: Vec<(Uuid, Uuid, String, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>)> = if kind_filter.is_empty() {
-        sqlx::query_as(
-            "SELECT id, case_id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
-             FROM case_events WHERE company_id=$1 ORDER BY created_at DESC LIMIT $2",
-        )
-        .bind(company_id)
-        .bind(limit)
-        .fetch_all(state.db.pool())
+    let kind_filter = q.kind.as_deref();
+    let rows = pc_repos::case::CaseRepo::new(&state.db)
+        .list_events_by_company(company_id, kind_filter, limit)
         .await
-        .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT id, case_id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
-             FROM case_events WHERE company_id=$1 AND kind=$2 ORDER BY created_at DESC LIMIT $3",
-        )
-        .bind(company_id)
-        .bind(kind_filter)
-        .bind(limit)
-        .fetch_all(state.db.pool())
-        .await
-        .unwrap_or_default()
-    };
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, case_id, kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at)| {
+        .map(|row| {
             json!({
-                "id": id,
-                "companyId": company_id,
-                "caseId": case_id,
-                "kind": kind,
-                "actorType": actor_type,
-                "actorUserId": actor_user_id,
-                "actorAgentId": actor_agent_id,
-                "runId": run_id,
-                "payload": payload,
-                "createdAt": created_at,
+                "id": row.id,
+                "companyId": row.company_id,
+                "caseId": row.case_id,
+                "kind": row.kind,
+                "actorType": row.actor_type,
+                "actorUserId": row.actor_user_id,
+                "actorAgentId": row.actor_agent_id,
+                "runId": row.run_id,
+                "payload": row.payload,
+                "createdAt": row.created_at,
             })
         })
         .collect();
@@ -2108,33 +2094,28 @@ async fn list_company_case_events_route(
     })))
 }
 
-/// `GET /api/companies/:company_id/user-directory` — list of users who have
-/// any membership in this company.  Mirrors Node `/companies/:companyId/user-directory`.
+/// `GET /api/companies/:company_id/user-directory` — 公司内所有 user principal 成员。
+/// Mirrors Node `/companies/:companyId/user-directory`.
+/// 修复 Round 93：原 inline SQL 引用了不存在的 `cm.user_id` / `cm.role`，真实列
+/// 是 `cm.principal_id` / `cm.membership_role`。
 async fn list_company_user_directory_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     ensure_company_exists(&state, company_id).await?;
-    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT u.id, u.name, u.email, u.image, COALESCE(cm.role, 'guest') \
-         FROM company_memberships cm \
-         INNER JOIN \"user\" u ON u.id = cm.user_id \
-         WHERE cm.company_id=$1 \
-         ORDER BY u.name NULLS LAST, u.email",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .user_directory(company_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(user_id, name, email, image, role)| {
+        .map(|u| {
             json!({
-                "userId": user_id,
-                "name": name,
-                "email": email,
-                "image": image,
-                "role": role,
+                "userId": u.user_id,
+                "name": u.name,
+                "email": u.email,
+                "image": u.image,
+                "role": u.role,
             })
         })
         .collect();
@@ -2184,11 +2165,10 @@ struct CompanyListQuery {
 /// Helper — verify company exists, returning 404 if missing.  Used by all
 /// Round 37 sub-resource handlers.
 async fn ensure_company_exists(state: &AppState, company_id: Uuid) -> ApiResult<()> {
-    let exists: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM companies WHERE id=$1")
-        .bind(company_id)
-        .fetch_optional(state.db.pool())
+    let ok = pc_repos::company::CompanyRepo::new(&state.db)
+        .exists(company_id)
         .await?;
-    if exists.is_none() {
+    if !ok {
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }
     Ok(())

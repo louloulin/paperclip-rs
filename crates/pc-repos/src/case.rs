@@ -776,6 +776,37 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
+    /// 跨 case 列出公司在指定 kind 下的事件（company-level feed）。
+    /// `kind_filter` 为 `None` 时返回所有 kind；为 `Some("")` 时同样返回所有（与原路由兼容）。
+    pub async fn list_events_by_company(
+        &self,
+        company_id: Uuid,
+        kind_filter: Option<&str>,
+        limit: i64,
+    ) -> sqlx::Result<Vec<CaseEventRow>> {
+        let limit = limit.clamp(1, 500);
+        let sql = if kind_filter.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+            format!(
+                "SELECT {EVENT_COLS} FROM case_events \
+                 WHERE company_id=$1 AND kind=$2 \
+                 ORDER BY created_at DESC, id DESC LIMIT $3"
+            )
+        } else {
+            format!(
+                "SELECT {EVENT_COLS} FROM case_events \
+                 WHERE company_id=$1 \
+                 ORDER BY created_at DESC, id DESC LIMIT $2"
+            )
+        };
+        let q = sqlx::query_as::<_, CaseEventRow>(&sql).bind(company_id);
+        let q = if let Some(kind) = kind_filter.filter(|s| !s.trim().is_empty()) {
+            q.bind(kind).bind(limit)
+        } else {
+            q.bind(limit)
+        };
+        q.fetch_all(self.db.pool()).await
+    }
+
     pub async fn create_event(
         &self,
         company_id: Uuid,

@@ -93,6 +93,15 @@ impl<'a> CompanyRepo<'a> {
         .await
     }
 
+    /// 轻量级存在性检查（用于路由 404 前置守卫）。
+    pub async fn exists(&self, id: Uuid) -> sqlx::Result<bool> {
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM companies WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn create(&self, name: &str, description: Option<&str>) -> sqlx::Result<CompanyRow> {
         for attempt in 1..10_000 {
             let result = sqlx::query_as::<_, CompanyRow>(

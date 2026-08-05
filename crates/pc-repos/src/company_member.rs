@@ -28,6 +28,21 @@ use crate::{Db, RepoError, RepoResult};
 const COLS: &str = "cm.id, cm.company_id, cm.principal_id, cm.membership_role, cm.status, \
     cm.created_at, cm.updated_at";
 
+/// 公司用户目录条目：`"user"` LEFT JOIN `company_memberships`，
+/// 缺成员记录时 `role` 默认为 `'guest'`。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserDirectoryEntry {
+    pub user_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    pub role: String,
+}
+
 /// 公司成员 status 字符串，对应数据库列。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -153,6 +168,27 @@ impl<'a> CompanyMemberRepo<'a> {
             .fetch_optional(self.db.pool())
             .await?;
         Ok(row)
+    }
+
+    /// 公司用户目录：列出在本公司的所有人类成员，附带 `"user"` 表画像字段。
+    /// 用于 `/api/companies/:id/user-directory`：返回 `userId / name / email /
+    /// image / role` 五元组，按 name NULLS LAST 排序。
+    pub async fn user_directory(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<UserDirectoryEntry>> {
+        let rows = sqlx::query_as::<_, UserDirectoryEntry>(
+            "SELECT u.id AS user_id, u.name, u.email, u.image, \
+                    COALESCE(cm.membership_role, 'guest') AS role \
+             FROM company_memberships cm \
+             INNER JOIN \"user\" u ON u.id = cm.principal_id \
+             WHERE cm.company_id = $1 AND cm.principal_type = 'user' \
+             ORDER BY u.name NULLS LAST, u.email",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
     }
 
     /// 通过 user_id (principal_id) 查找一条成员记录。

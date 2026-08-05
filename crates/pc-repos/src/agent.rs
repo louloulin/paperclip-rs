@@ -14,6 +14,20 @@ adapter_type, adapter_config, runtime_config, default_environment_id, budget_mon
 spent_monthly_cents, pause_reason, paused_at, error_reason, permissions, last_heartbeat_at, \
 metadata, created_at, updated_at";
 
+/// 组织架构视图用 agent 投影：仅 6 个核心字段。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgChartAgentRow {
+    pub id: Uuid,
+    pub name: String,
+    pub role: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub reports_to: Option<Uuid>,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRow {
@@ -457,6 +471,44 @@ impl<'a> AgentRepo<'a> {
         )
         .bind(company_id)
         .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// 公司组织架构用的最小列投影：仅返回 (id, name, role, title, reports_to, status)。
+    /// 路由层 (`GET /api/companies/:id/org` + `/org.svg`) 用此构造节点 / 边 / SVG。
+    pub async fn list_for_org_chart(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<OrgChartAgentRow>> {
+        sqlx::query_as::<_, OrgChartAgentRow>(
+            "SELECT id, name, role, title, reports_to, status \
+             FROM agents WHERE company_id = $1 ORDER BY name",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// 公司内创建 agent 的精简路径（`POST /api/companies/:id/agents`）。
+    /// 修复原路由 inline SQL 使用了不存在的 `adapter_kind` 列（实际是 `adapter_type`）。
+    pub async fn create_simple(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        role: &str,
+    ) -> sqlx::Result<AgentRow> {
+        sqlx::query_as::<_, AgentRow>(
+            "INSERT INTO agents (company_id, name, role, status, adapter_type) \
+             VALUES ($1, $2, $3, 'active', 'codex_local') \
+             RETURNING id, company_id, name, role, title, icon, status, reports_to, capabilities, \
+                       adapter_type, adapter_config, runtime_config, default_environment_id, \
+                       budget_monthly_cents, spent_monthly_cents, pause_reason, paused_at, \
+                       error_reason, permissions, last_heartbeat_at, metadata, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(role)
+        .fetch_one(self.db.pool())
         .await
     }
 
