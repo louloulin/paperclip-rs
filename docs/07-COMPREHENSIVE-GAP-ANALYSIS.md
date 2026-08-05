@@ -3586,3 +3586,25 @@ Audit + Actions:
 - 累计 routes 0 SQL 文件: 12 个（共 196 SQL 移除）
 - `pc-repos` 新增 `round162_status_card_repo.rs` (14 测试用例)
 - 剩余 SQL 总数: 191 (最大: company_skills.rs 55 / tool_access.rs 8 / issue_tree_control.rs 8 / plugins.rs 7 / environments.rs 7 / dashboard.rs 7 / built_in_agents.rs 7 / approvals.rs 7)
+
+## 31. 第一百六十三轮增量（Round 163 — company_skills.rs 仓储化）
+
+### 仓储化覆盖（公司级 skills 全套生命周期）
+- **30 个 SkillRepo 新方法** + **1 个 IssueRepo 新方法 (create_harness_issue)**
+- 完整覆盖: 7 张表（company_skills / company_skill_versions / company_skill_comments /
+  company_skill_test_inputs / company_skill_test_run_templates / company_skill_test_runs /
+  harness issue）
+- 关键动态 SQL 模式: `patch_skill_fields`（COALESCE 一次 UPDATE 取代 8 次顺序更新）、
+  `patch_test_input_fields`、`patch_test_run_template_fields`（均用 COALESCE 模式）
+- 事务复合方法: `create_version_and_update_current`（MAX(rev)+1 + INSERT + UPDATE skill）、
+  `fork_from_skill`（SELECT INTO + UPDATE counter）
+
+### 路由重构 company_skills.rs
+- 55 SQL → 0
+- 34 个 handler 全部仓储化
+
+### 进展
+- `company_skills.rs` 累计 SQL: 55 → 0
+- 累计 routes 0 SQL 文件: 13 个（共 251 SQL 移除）
+- 剩余 SQL 总数: 136（最大: tool_access.rs 8 / issue_tree_control.rs 8 / plugins.rs 7 /
+  environments.rs 7 / dashboard.rs 7 / built_in_agents.rs 7 / approvals.rs 7）
