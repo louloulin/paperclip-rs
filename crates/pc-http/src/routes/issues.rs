@@ -2135,21 +2135,15 @@ async fn issue_heartbeat_context(
     // Mirrors Node `/issues/:id/heartbeat-context`. Surfaces the context
     // snapshot the heartbeat supervisor needs to dispatch a run for this
     // issue (project/workspace, current assignee, recent runs).
-    let row = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, String, String)>(
-        "SELECT company_id, assignee_agent_id, project_id, project_workspace_id,                 status, work_mode FROM issues WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let row = IssueRepo::new(&state.db)
+        .heartbeat_context_inputs(id)
+        .await?;
     let (company_id, assignee_agent_id, project_id, project_workspace_id, status, work_mode) = row
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    let recent_runs: Vec<(Uuid, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, status::text, started_at FROM heartbeat_runs          WHERE context_snapshot->>'issueId' = $1          ORDER BY started_at DESC NULLS LAST LIMIT 5",
-    )
-    .bind(id.to_string())
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let recent_runs = HeartbeatRepo::new(&state.db)
+        .recent_runs_for_issue(id, 5)
+        .await
+        .unwrap_or_default();
     Ok(Json(json!({
         "issueId": id,
         "companyId": company_id,
@@ -2170,14 +2164,10 @@ async fn list_company_issues(
     axum::extract::Query(query): axum::extract::Query<IssueListQuery>,
 ) -> ApiResult<Json<Value>> {
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
-    let rows: Vec<(Uuid, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, identifier, title, status, priority FROM issues          WHERE company_id = $1 ORDER BY created_at DESC LIMIT $2",
-    )
-    .bind(company_id)
-    .bind(limit)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = IssueRepo::new(&state.db)
+        .list_company_basic(company_id, limit)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, identifier, title, status, priority)| {
@@ -2242,13 +2232,11 @@ async fn issue_refresh_external_objects(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM issues WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let company_id = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .map(|r| r.company_id)
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     state
         .realtime
         .publish(LiveEvent::new("issue.external_objects.refresh", "issue", id)
@@ -2260,13 +2248,11 @@ async fn issue_low_trust_promotion(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM issues WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let company_id = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .map(|r| r.company_id)
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     state
         .realtime
         .publish(LiveEvent::new("issue.low_trust.promotion", "issue", id)
@@ -2599,8 +2585,11 @@ async fn restart_issue_run(
         obj.insert("retryOf".into(), json!(run_id.to_string()));
         obj.insert("wakeReason".into(), json!("manual_restart"));
     }
-    let company_id: Uuid = sqlx::query_scalar("SELECT company_id FROM issues WHERE id = $1")
-        .bind(id).fetch_one(state.db.pool()).await?;
+    let company_id = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .map(|r| r.company_id)
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let new_id = Uuid::new_v4();
     repo.insert_queued_run(new_id, company_id, agent_id, &ctx).await?;
     state.realtime.publish(
@@ -2627,9 +2616,9 @@ async fn start_issue_run(
     Json(body): Json<StartIssueRunBody>,
 ) -> ApiResult<Json<Value>> {
     // Round 30: 手动触发 heartbeat run — 需要 issue 有 assignee_agent_id
-    let issue_row: Option<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
-        "SELECT company_id, project_id, assignee_agent_id FROM issues WHERE id = $1",
-    ).bind(id).fetch_optional(state.db.pool()).await?;
+    let issue_row = IssueRepo::new(&state.db)
+        .start_run_inputs(id)
+        .await?;
     let (company_id, _project_id, assignee_agent_id) = issue_row
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let agent_id = assignee_agent_id
@@ -2659,10 +2648,9 @@ async fn get_one_comment(
     State(state): State<AppState>,
     Path((id, comment_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, Option<String>, Option<Uuid>, String, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, issue_id, author_user_id, author_agent_id, body, created_at
-         FROM issue_comments WHERE issue_id=$1 AND id=$2 AND deleted_at IS NULL",
-    ).bind(id).bind(comment_id).fetch_optional(state.db.pool()).await?;
+    let row = IssueRepo::new(&state.db)
+        .find_one_comment(id, comment_id)
+        .await?;
     let (cid, iid, user, agent, body, ts) = row
         .ok_or_else(|| ApiError::NotFound(format!("comment {comment_id}")))?;
     Ok(Json(json!({
@@ -2692,21 +2680,19 @@ async fn upsert_issue_document(
     Path((id, key)): Path<(Uuid, String)>,
     Json(body): Json<UpsertIssueDocumentBodyV2>,
 ) -> ApiResult<Json<Value>> {
-    let exists: Option<(bool,)> = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM issue_documents WHERE issue_id=$1 AND key=$2)",
-    ).bind(id).bind(&key).fetch_optional(state.db.pool()).await?;
-    let exists = exists.map(|(b,)| b).unwrap_or(false);
+    let exists = IssueRepo::new(&state.db)
+        .issue_doc_exists(id, &key)
+        .await?;
     if exists {
-        sqlx::query(
-            "UPDATE issue_documents SET content=$1, updated_at=now()
-             WHERE issue_id=$2 AND key=$3",
-        ).bind(&body.content).bind(id).bind(&key).execute(state.db.pool()).await?;
+        IssueRepo::new(&state.db)
+            .update_issue_doc_content(id, &key, body.content.as_ref().unwrap_or(&Value::Null))
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     } else {
-        sqlx::query(
-            "INSERT INTO issue_documents (id, issue_id, key, content, title)
-             SELECT gen_random_uuid(), $1, $2, $3, $4 FROM issues WHERE id=$1",
-        ).bind(id).bind(&key).bind(&body.content).bind(&body.title)
-        .execute(state.db.pool()).await?;
+        IssueRepo::new(&state.db)
+            .insert_issue_doc(id, &key, body.content.as_ref().unwrap_or(&Value::Null), body.title.as_deref())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
     state.realtime.publish(
         LiveEvent::new("issue.document_upserted", "issue", id)
@@ -2719,11 +2705,11 @@ async fn remove_issue_document(
     State(state): State<AppState>,
     Path((id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<StatusCode> {
-    let r = sqlx::query(
-        "UPDATE issue_documents SET deleted_at=now()
-         WHERE issue_id=$1 AND key=$2 AND deleted_at IS NULL",
-    ).bind(id).bind(&key).execute(state.db.pool()).await?;
-    if r.rows_affected() == 0 {
+    let n = IssueRepo::new(&state.db)
+        .soft_delete_issue_doc(id, &key)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !n {
         return Err(ApiError::NotFound(format!("document {key}")));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -2749,10 +2735,10 @@ async fn restore_doc_revision(
     State(state): State<AppState>,
     Path((id, key, revision_id)): Path<(Uuid, String, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE issue_documents SET current_revision_id=$1, updated_at=now()
-         WHERE issue_id=$2 AND key=$3",
-    ).bind(revision_id).bind(id).bind(&key).execute(state.db.pool()).await.ok();
+    let _ = IssueRepo::new(&state.db)
+        .set_issue_doc_current_revision(id, &key, revision_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()));
     Ok(Json(json!({"restored": true, "issueId": id, "key": key, "revisionId": revision_id})))
 }
 
@@ -2845,12 +2831,10 @@ async fn list_tree_holds(
     State(state): State<AppState>,
     Path((issue_id, q)): Path<(Uuid, ListTreeHoldsQuery)>,
 ) -> ApiResult<Json<Value>> {
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
-        .bind(issue_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let company_id = IssueRepo::new(&state.db)
+        .get(issue_id)
+        .await?
+        .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     let status = q.status.as_deref().unwrap_or("active");
     let repo = IssueTreeHoldRepo::new(&state.db);
@@ -2898,12 +2882,10 @@ async fn create_tree_hold(
     if !matches!(body.mode.as_str(), "pause" | "stop" | "throttle" | "isolate") {
         return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
     }
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
-        .bind(issue_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let company_id = IssueRepo::new(&state.db)
+        .get(issue_id)
+        .await?
+        .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     let user_id = crate::state::require_user_id(&state, &headers).await?;
     let id = IssueTreeHoldRepo::new(&state.db)
@@ -2973,12 +2955,10 @@ async fn preview_tree_control(
     Path(issue_id): Path<Uuid>,
     Json(body): Json<TreeControlPreviewBody>,
 ) -> ApiResult<Json<Value>> {
-    let (company_id,): (Uuid,) = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
-        .bind(issue_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
+    let company_id = IssueRepo::new(&state.db)
+        .get(issue_id)
+        .await?
+        .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     if !matches!(body.mode.as_str(), "pause" | "stop" | "throttle" | "isolate") {
         return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
@@ -2986,26 +2966,17 @@ async fn preview_tree_control(
     // Estimate: count active descendants (best-effort: just count active heartbeat_runs referencing this issue)
     let mut affected_runs = 0i64;
     if body.include_estimate.unwrap_or(true) {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT COUNT(*) FROM heartbeat_runs WHERE issue_id = $1 AND status IN ('pending','in_progress')",
-        )
-        .bind(issue_id)
-        .fetch_optional(state.db.pool())
+        affected_runs = HeartbeatRepo::new(&state.db)
+            .count_active_runs_for_issue(issue_id)
+            .await
+            .unwrap_or(0);
+    }
+    // Active hold check
+    let active_hold = IssueTreeHoldRepo::new(&state.db)
+        .find_active_for_root(issue_id)
         .await
         .ok()
         .flatten();
-        affected_runs = row.map(|(c,)| c).unwrap_or(0);
-    }
-    // Active hold check
-    let active_hold: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT id, mode FROM issue_tree_holds \
-         WHERE root_issue_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(issue_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
     let would_conflict = active_hold.is_some();
     Ok(Json(json!({
         "issueId": issue_id,
@@ -3111,13 +3082,10 @@ async fn attachment_content_stub(
     use axum::http::header;
     use bytes::Bytes;
 
-    let row: Option<(Uuid, String, String, String, i32, Option<String>)> = sqlx::query_as(
-        "SELECT a.company_id, a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename          FROM issue_attachments ia          INNER JOIN assets a ON a.id = ia.asset_id          WHERE ia.id = $1",
-    )
-    .bind(attachment_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = IssueRepo::new(&state.db)
+        .attachment_content_meta(attachment_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let (company_id, provider_name, object_key, content_type, byte_size, original_filename) =
         row.ok_or_else(|| ApiError::NotFound(format!("attachment {attachment_id}")))?;

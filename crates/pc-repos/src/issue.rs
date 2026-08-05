@@ -2404,6 +2404,177 @@ impl<'a> IssueRepo<'a> {
         };
         self.unresolved_blocker_ids(issue.company_id, issue_id).await
     }
+
+    // =========================================================================
+    // Round 161: issues.rs route 仓储化新增方法
+    // =========================================================================
+
+    /// Round 161: issue_heartbeat_context — 取 6-tuple (company, assignee, project, project_workspace, status, work_mode)。
+    pub async fn heartbeat_context_inputs(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, String, String)>> {
+        let row: Option<(Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, String, String)> = sqlx::query_as(
+            "SELECT company_id, assignee_agent_id, project_id, project_workspace_id, status, work_mode              FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 161: list_company_issues — 基本 5-tuple (id, identifier, title, status, priority) + limit。
+    pub async fn list_company_basic(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<(Uuid, String, String, String, Option<String>)>> {
+        let rows: Vec<(Uuid, String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, identifier, title, status, priority FROM issues              WHERE company_id = $1 ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(company_id)
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await
+        .unwrap_or_default();
+        Ok(rows)
+    }
+
+    /// Round 161: start_run_inputs — (company_id, project_id, assignee_agent_id)。
+    pub async fn start_run_inputs(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Uuid, Option<Uuid>)>> {
+        let row: Option<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT company_id, project_id, assignee_agent_id FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 161: 查单条 issue_comment（限定 issue_id + 删除过滤）。
+    pub async fn find_one_comment(
+        &self,
+        issue_id: Uuid,
+        comment_id: Uuid,
+    ) -> sqlx::Result<
+        Option<(Uuid, Uuid, Option<String>, Option<Uuid>, String, pc_core::Timestamp)>,
+    > {
+        let row: Option<(Uuid, Uuid, Option<String>, Option<Uuid>, String, pc_core::Timestamp)> = sqlx::query_as(
+            "SELECT id, issue_id, author_user_id, author_agent_id, body, created_at              FROM issue_comments WHERE issue_id=$1 AND id=$2 AND deleted_at IS NULL",
+        )
+        .bind(issue_id)
+        .bind(comment_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 161: issue_doc_exists — key 是否已存在。
+    pub async fn issue_doc_exists(&self, issue_id: Uuid, key: &str) -> sqlx::Result<bool> {
+        let v: Option<(bool,)> = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM issue_documents WHERE issue_id=$1 AND key=$2)",
+        )
+        .bind(issue_id)
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(v.map(|(b,)| b).unwrap_or(false))
+    }
+
+    /// Round 161: UPDATE issue_documents content (存在时)。
+    pub async fn update_issue_doc_content(
+        &self,
+        issue_id: Uuid,
+        key: &str,
+        content: &serde_json::Value,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE issue_documents SET content=$1, updated_at=now()              WHERE issue_id=$2 AND key=$3",
+        )
+        .bind(content)
+        .bind(issue_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 161: INSERT issue_documents (从 issues 取 company_id)。
+    pub async fn insert_issue_doc(
+        &self,
+        issue_id: Uuid,
+        key: &str,
+        content: &serde_json::Value,
+        title: Option<&str>,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "INSERT INTO issue_documents (id, issue_id, key, content, title)              SELECT gen_random_uuid(), $1, $2, $3, $4 FROM issues WHERE id=$1",
+        )
+        .bind(issue_id)
+        .bind(key)
+        .bind(content)
+        .bind(title)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 161: 软删除 issue_document (UPDATE deleted_at)。
+    pub async fn soft_delete_issue_doc(
+        &self,
+        issue_id: Uuid,
+        key: &str,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "UPDATE issue_documents SET deleted_at=now()              WHERE issue_id=$1 AND key=$2 AND deleted_at IS NULL",
+        )
+        .bind(issue_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 161: 设置 issue_document current_revision_id。
+    pub async fn set_issue_doc_current_revision(
+        &self,
+        issue_id: Uuid,
+        key: &str,
+        revision_id: Uuid,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE issue_documents SET current_revision_id=$1, updated_at=now()              WHERE issue_id=$2 AND key=$3",
+        )
+        .bind(revision_id)
+        .bind(issue_id)
+        .bind(key)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 161: attachment_content_meta — JOIN issue_attachments + assets。
+    pub async fn attachment_content_meta(
+        &self,
+        attachment_id: Uuid,
+    ) -> sqlx::Result<
+        Option<(Uuid, String, String, String, i32, Option<String>)>,
+    > {
+        let row: Option<(Uuid, String, String, String, i32, Option<String>)> = sqlx::query_as(
+            "SELECT a.company_id, a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename              FROM issue_attachments ia              INNER JOIN assets a ON a.id = ia.asset_id              WHERE ia.id = $1",
+        )
+        .bind(attachment_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

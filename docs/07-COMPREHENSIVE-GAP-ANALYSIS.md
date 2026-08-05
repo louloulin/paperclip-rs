@@ -3528,3 +3528,19 @@ Audit + Actions:
 - 累计 routes 0 SQL 文件: 8 个（共 140 SQL 移除）
 - `pc-repos` 新增 `round159_execution_workspace_repo.rs` (10 测试用例)
 - 剩余 SQL 总数: 227 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17 / summary_slots.rs 0 / execution_workspaces.rs 0)
+
+## 28. 第一百六十轮增量（Round 160 — projects.rs + decision_training.rs 仓储化）
+
+### 仓储化覆盖
+- **ProjectRepo** 9 新方法（project_workspaces lifecycle 管理）
+- **DecisionTrainingService** 6 新方法
+
+### 路由重构
+- `projects.rs` 10 SQL → 0
+- `decision_training.rs` 10 SQL → 0
+- 清理 routes/decision_training.rs 本地 `TrainingRow` struct（13 字段）→ 1:1 复用 `DecisionTrainingExampleRow`
+
+### 进度影响
+- 累计 routes 0 SQL 文件: 10 个（access + smoke_lab + tool_connections + tool_gateway + secrets + pipelines + summary_slots + execution_workspaces + projects + decision_training 共 160 SQL 移除）
+- `pc-repos` 新增 `round160_projects_decision_training_repo.rs` (16 测试用例)
+- 剩余 SQL 总数: 207 (最大: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)

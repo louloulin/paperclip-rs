@@ -1086,6 +1086,44 @@ impl<'a> HeartbeatRepo<'a> {
             .fetch_optional(self.db.pool())
             .await
     }
+
+    // =========================================================================
+    // Round 161: issues.rs 仓储化新增方法
+    // =========================================================================
+
+    /// Round 161: issue_heartbeat_context — issue 最近 N 次 heartbeat_runs（started_at DESC NULLS LAST）。
+    pub async fn recent_runs_for_issue(
+        &self,
+        issue_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<(Uuid, String, Option<pc_core::Timestamp>)>> {
+        let rows: Vec<(Uuid, String, Option<pc_core::Timestamp>)> = sqlx::query_as(
+            "SELECT id, status::text, started_at FROM heartbeat_runs \
+             WHERE context_snapshot->>'issueId' = $1 \
+             ORDER BY started_at DESC NULLS LAST LIMIT $2",
+        )
+        .bind(issue_id.to_string())
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await
+        .unwrap_or_default();
+        Ok(rows)
+    }
+
+    /// Round 161: preview_tree_control — count active heartbeat_runs for issue。
+    pub async fn count_active_runs_for_issue(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<i64> {
+        let v: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*) FROM heartbeat_runs \
+             WHERE issue_id = $1 AND status IN ('pending','in_progress')",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(v.map(|(c,)| c).unwrap_or(0))
+    }
 }
 
 #[cfg(test)]
