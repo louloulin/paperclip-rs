@@ -2607,6 +2607,36 @@ impl<'a> IssueRepo<'a> {
         .await?;
         Ok(rows)
     }
+
+    /// Round 171: 按 status 拆分 issues 计数（blocked/in_progress/needs_review）。
+    pub async fn status_breakdown_visible(&self, company_id: Uuid) -> sqlx::Result<(i64, i64, i64)> {
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+                COUNT(*) FILTER (WHERE status = 'blocked')::bigint, \
+                COUNT(*) FILTER (WHERE status = 'in_progress')::bigint, \
+                COUNT(*) FILTER (WHERE status = 'needs_review')::bigint \
+             FROM issues WHERE company_id = $1 AND hidden_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await
+        .unwrap_or((0, 0, 0));
+        Ok(row)
+    }
+
+    /// Round 171: 统计未读 issues（assignee_user_id IS NULL 且 7 天内创建）。
+    pub async fn count_unread_visible(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM issues WHERE company_id = $1 AND hidden_at IS NULL \
+             AND (assignee_user_id IS NULL OR assignee_user_id = '') \
+             AND created_at > now() - interval '7 days'",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await
+        .unwrap_or(0);
+        Ok(n)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

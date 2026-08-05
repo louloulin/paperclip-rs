@@ -1144,6 +1144,21 @@ impl<'a> HeartbeatRepo<'a> {
         .await?;
         Ok(rows)
     }
+
+    /// Round 171: heartbeat_runs 按 status 拆分计数（failed_recent/running）。
+    pub async fn status_breakdown(&self, company_id: Uuid) -> sqlx::Result<(i64, i64)> {
+        let row: (i64, i64) = sqlx::query_as(
+            "SELECT \
+                COUNT(*) FILTER (WHERE status = 'failed' AND created_at > now() - interval '24 hours')::bigint, \
+                COUNT(*) FILTER (WHERE status IN ('queued','running'))::bigint \
+             FROM heartbeat_runs WHERE company_id = $1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await
+        .unwrap_or((0, 0));
+        Ok(row)
+    }
 }
 
 #[cfg(test)]

@@ -1441,6 +1441,35 @@ impl<'a> AgentRepo<'a> {
         .rows_affected();
         Ok(n)
     }
+
+    /// Round 171: 按 status 拆分 agents 计数（error/running/paused）。
+    pub async fn status_breakdown(&self, company_id: Uuid) -> sqlx::Result<(i64, i64, i64)> {
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+                COUNT(*) FILTER (WHERE status = 'error')::bigint, \
+                COUNT(*) FILTER (WHERE status = 'running')::bigint, \
+                COUNT(*) FILTER (WHERE status = 'paused')::bigint \
+             FROM agents WHERE company_id = $1",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await
+        .unwrap_or((0, 0, 0));
+        Ok(row)
+    }
+
+    /// Round 171: 统计 over-budget agents（spent >= budget）。
+    pub async fn count_over_budget(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM agents WHERE company_id = $1 \
+             AND budget_monthly_cents > 0 AND spent_monthly_cents >= budget_monthly_cents",
+        )
+        .bind(company_id)
+        .fetch_one(self.db.pool())
+        .await
+        .unwrap_or(0);
+        Ok(n)
+    }
 }
 
 #[cfg(test)]
