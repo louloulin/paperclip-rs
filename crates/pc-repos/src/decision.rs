@@ -43,6 +43,14 @@ const COLS: &str = "id, company_id, bundle_id, origin_agent_id, origin_issue_id,
     input_values, decided_by_user_id, decided_at, expires_at, idempotency_key, signed_spec, \
     target_snapshots, continuation_policy, metadata, created_at, updated_at";
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct SignedDecisionRow {
+    pub company_id: Uuid,
+    pub options: serde_json::Value,
+    pub target_snapshots: serde_json::Value,
+    pub signed_spec: String,
+}
+
 pub struct DecisionRepo<'a> {
     pub db: &'a Db,
 }
@@ -143,6 +151,90 @@ impl<'a> DecisionRepo<'a> {
             .execute(self.db.pool())
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+
+    // ============ Round 173: signed fields + status transitions + stats ============
+
+    /// 取决策签名相关字段（company_id + options + target_snapshots + signed_spec）。
+    pub async fn get_signed_fields(
+        &self,
+        decision_id: Uuid,
+    ) -> sqlx::Result<Option<SignedDecisionRow>> {
+        sqlx::query_as::<_, SignedDecisionRow>(
+            "SELECT company_id, options, target_snapshots, signed_spec              FROM decisions WHERE id = $1",
+        )
+        .bind(decision_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// 将决策置为 decided：写入 chosen_option_id / decided_by / decided_at / input_values。
+    pub async fn mark_decided(
+        &self,
+        decision_id: Uuid,
+        chosen_option_id: &str,
+        decided_by_user_id: Option<&str>,
+        input_values: Option<&serde_json::Value>,
+    ) -> sqlx::Result<bool> {
+        let r = sqlx::query(
+            "UPDATE decisions SET status = 'decided',                 chosen_option_id = $1, decided_by_user_id = $2,                 decided_at = now(),                 input_values = COALESCE($3, input_values),                 updated_at = now()              WHERE id = $4",
+        )
+        .bind(chosen_option_id)
+        .bind(decided_by_user_id)
+        .bind(input_values)
+        .bind(decision_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// 将决策置为 dismissed：把 reason + dismissedByUserId 写入 metadata。
+    pub async fn mark_dismissed(
+        &self,
+        decision_id: Uuid,
+        reason: &str,
+        decided_by_user_id: &str,
+    ) -> sqlx::Result<bool> {
+        let r = sqlx::query(
+            "UPDATE decisions SET status = 'dismissed',                 metadata = COALESCE(metadata, '{}'::jsonb)                     || jsonb_build_object(                         'dismissReason', to_jsonb($1::text),                         'dismissedByUserId', to_jsonb($2::text)                     ),                 updated_at = now()              WHERE id = $3",
+        )
+        .bind(reason)
+        .bind(decided_by_user_id)
+        .bind(decision_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// 取决策的 company_id。
+    pub async fn get_company_id(&self, decision_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM decisions WHERE id = $1")
+            .bind(decision_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// 将决策置为 cancelled。
+    pub async fn mark_cancelled(&self, decision_id: Uuid) -> sqlx::Result<bool> {
+        let r = sqlx::query(
+            "UPDATE decisions SET status = 'cancelled', updated_at = now()              WHERE id = $1",
+        )
+        .bind(decision_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// 按状态统计某公司的决策数。
+    pub async fn status_counts(&self, company_id: Uuid) -> sqlx::Result<Vec<(String, i64)>> {
+        sqlx::query_as(
+            "SELECT status, COUNT(*) FROM decisions              WHERE company_id = $1 GROUP BY status",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
     }
 }
 

@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
-use pc_repos::decision::{verify_decision_signature, DecisionRepo};
+use pc_repos::decision::{verify_decision_signature, DecisionRepo, SignedDecisionRow};
 use pc_repos::decision_bundle::{
     DecisionBundleFilter, DecisionBundleRepo, DecisionBundleRow, NewDecisionBundle,
 };
@@ -119,25 +119,14 @@ struct DecideDecisionBody {
     input_values: Option<Value>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct SignedDecisionRow {
-    company_id: Uuid,
-    options: Value,
-    target_snapshots: Value,
-    signed_spec: String,
-}
-
 async fn load_verified_decision(
     state: &AppState,
     decision_id: Uuid,
 ) -> ApiResult<SignedDecisionRow> {
-    let row = sqlx::query_as::<_, SignedDecisionRow>(
-        "SELECT company_id, options, target_snapshots, signed_spec FROM decisions WHERE id = $1",
-    )
-    .bind(decision_id)
-    .fetch_optional(state.db.pool())
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    let row = DecisionRepo::new(&state.db)
+        .get_signed_fields(decision_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
     let verified = verify_decision_signature(
         decision_id,
         &row.options,
@@ -165,17 +154,14 @@ async fn decide_decision(
     let company_id = load_verified_decision(&state, decision_id)
         .await?
         .company_id;
-    sqlx::query(
-        "UPDATE decisions SET status = 'decided', chosen_option_id = $1, decided_by_user_id = $2, \
-            decided_at = now(), input_values = COALESCE($3, input_values), updated_at = now() \
-         WHERE id = $4",
-    )
-    .bind(&body.chosen_option_id)
-    .bind(body.decided_by_user_id.as_deref())
-    .bind(body.input_values.clone())
-    .bind(decision_id)
-    .execute(state.db.pool())
-    .await?;
+    DecisionRepo::new(&state.db)
+        .mark_decided(
+            decision_id,
+            &body.chosen_option_id,
+            body.decided_by_user_id.as_deref(),
+            body.input_values.as_ref(),
+        )
+        .await?;
     state.realtime.publish(
         LiveEvent::new("decision.decided", "decision", decision_id)
             .with_company(company_id)
@@ -209,17 +195,13 @@ async fn dismiss_decision(
     let company_id = load_verified_decision(&state, decision_id)
         .await?
         .company_id;
-    sqlx::query(
-        "UPDATE decisions SET status = 'dismissed', \
-            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dismissReason', to_jsonb($1::text), 'dismissedByUserId', to_jsonb($2::text)), \
-            updated_at = now() \
-         WHERE id = $3",
-    )
-    .bind(body.reason.clone().unwrap_or_default())
-    .bind(body.decided_by_user_id.clone().unwrap_or_default())
-    .bind(decision_id)
-    .execute(state.db.pool())
-    .await?;
+    DecisionRepo::new(&state.db)
+        .mark_dismissed(
+            decision_id,
+            &body.reason.clone().unwrap_or_default(),
+            &body.decided_by_user_id.clone().unwrap_or_default(),
+        )
+        .await?;
     state.realtime.publish(
         LiveEvent::new("decision.dismissed", "decision", decision_id)
             .with_company(company_id)
@@ -237,17 +219,12 @@ async fn cancel_decision(
     State(state): State<AppState>,
     Path(decision_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM decisions WHERE id = $1")
-        .bind(decision_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-    let (company_id,) = row.ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
-    sqlx::query("UPDATE decisions SET status = 'cancelled', updated_at = now() WHERE id = $1")
-        .bind(decision_id)
-        .execute(state.db.pool())
-        .await?;
+    let repo = DecisionRepo::new(&state.db);
+    let company_id = repo
+        .get_company_id(decision_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    repo.mark_cancelled(decision_id).await?;
     state.realtime.publish(
         LiveEvent::new("decision.cancelled", "decision", decision_id).with_company(company_id),
     );
@@ -262,13 +239,10 @@ async fn decision_stats_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, COUNT(*) FROM decisions WHERE company_id = $1 GROUP BY status",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = DecisionRepo::new(&state.db)
+        .status_counts(company_id)
+        .await
+        .unwrap_or_default();
     let mut total = 0i64;
     let mut by_status: std::collections::BTreeMap<String, i64> = Default::default();
     for (s, c) in &rows {
