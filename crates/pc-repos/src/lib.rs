@@ -48,6 +48,7 @@ pub mod heartbeat;
 pub mod inbox;
 pub mod invite;
 pub mod join_request;
+pub mod mcp_gateway;
 pub mod inbox_agent_policy;
 pub mod instance_user_role;
 pub mod issue;
