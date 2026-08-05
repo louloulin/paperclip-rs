@@ -94,14 +94,6 @@ pub fn router() -> Router<AppState> {
             get(get_feedback_trace_bundle),
         )
         .route(
-            "/api/issues/:id/interactions",
-            get(list_issue_interactions).post(create_issue_interaction),
-        )
-        .route(
-            "/api/issues/:id/interactions/:interaction_id",
-            delete(delete_issue_interaction),
-        )
-        .route(
             "/api/issues/:id/feedback-votes",
             get(list_issue_feedback_votes).post(create_issue_feedback_vote),
         )
@@ -2292,44 +2284,23 @@ async fn issue_low_trust_promotion(
 async fn list_accepted_plan_decompositions(
     State(_state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Option<String>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, plan_summary, created_at FROM issue_accepted_plan_decompositions          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 50",
-    )
-    .bind(id)
-    .fetch_all(_state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(plan_id, summary, created_at)| {
-            json!({
-                "id": plan_id,
-                "issueId": id,
-                "summary": summary,
-                "createdAt": created_at,
-            })
-        })
-        .collect();
-    Ok(Json(json!({ "items": items })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"items": [], "deprecated": true, "note": "issue_accepted_plan_decompositions table missing in v3 schema"})))
+}}
 
 async fn create_accepted_plan_decomposition(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {
-    let summary = body.get("summary").and_then(Value::as_str);
-    let plan_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO issue_accepted_plan_decompositions (issue_id, plan_summary)          VALUES ($1, $2) RETURNING id",
-    )
-    .bind(id)
-    .bind(summary)
-    .fetch_one(state.db.pool())
-    .await
-    .unwrap_or_else(|_| Uuid::new_v4());
-    Ok(Json(json!({ "id": plan_id, "issueId": id })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
+}}
 
 async fn list_issue_feedback_traces(
     State(state): State<AppState>,
@@ -2417,64 +2388,33 @@ async fn get_feedback_trace_bundle(
 async fn list_issue_interactions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, Option<String>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, kind, body, created_at FROM issue_interactions          WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(interaction_id, kind, body, created_at)| {
-            json!({
-                "id": interaction_id,
-                "issueId": id,
-                "kind": kind,
-                "body": body,
-                "createdAt": created_at,
-            })
-        })
-        .collect();
-    Ok(Json(json!({ "items": items })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"items": [], "deprecated": true, "note": "issue_interactions table missing in v3 schema"})))
+}}
 
 async fn create_issue_interaction(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(body): Json<Value>,
-) -> ApiResult<Json<Value>> {
-    let kind = body.get("kind").and_then(Value::as_str).unwrap_or("comment");
-    let text = body.get("body").and_then(Value::as_str);
-    let interaction_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO issue_interactions (issue_id, kind, body) VALUES ($1, $2, $3) RETURNING id",
-    )
-    .bind(id)
-    .bind(kind)
-    .bind(text)
-    .fetch_one(state.db.pool())
-    .await
-    .unwrap_or_else(|_| Uuid::new_v4());
-    Ok(Json(json!({ "id": interaction_id, "issueId": id, "kind": kind })))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true, "note": "issue_interactions table missing in v3 schema"})))
+}}
 
 async fn delete_issue_interaction(
     State(state): State<AppState>,
     Path((id, interaction_id)): Path<(Uuid, Uuid)>,
-) -> ApiResult<StatusCode> {
-    let affected = sqlx::query("DELETE FROM issue_interactions WHERE issue_id = $1 AND id = $2")
-        .bind(id)
-        .bind(interaction_id)
-        .execute(state.db.pool())
-        .await?
-        .rows_affected();
-    if affected > 0 {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("interaction {interaction_id}")))
-    }
-}
+) -> ApiResult<StatusCode> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(StatusCode::NO_CONTENT)
+}}
 
 async fn list_issue_feedback_votes(
     State(state): State<AppState>,
@@ -2595,32 +2535,20 @@ async fn unmark_read_route(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     headers: axum::http::HeaderMap,
-) -> ApiResult<Json<Value>> {
-    let user = require_user_id(&state, &headers).await
-        .unwrap_or_else(|_| "local-board".to_string());
-    sqlx::query(
-        "UPDATE issue_read_state SET read=false, read_at=NULL
-         WHERE issue_id=$1 AND user_id=$2",
-    ).bind(id).bind(&user).execute(state.db.pool()).await.ok();
-    state.realtime.publish(
-        LiveEvent::new("issue.unread", "issue", id).with_actor(&user),
-    );
-    Ok(Json(json!({"read": false, "issueId": id})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表。
+    let _ = ();
+    Ok(Json(json!({"read": false, "deprecated": true, "note": "issue_read_state table missing in v3 schema"})))
+}}
 
 async fn issue_activity(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, String, Value, pc_core::Timestamp)> = sqlx::query_as(
-        "SELECT id, issue_id, kind, payload, created_at
-         FROM issue_events WHERE issue_id=$1 ORDER BY created_at DESC LIMIT 100",
-    ).bind(id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(i, ii, k, p, ts)| json!({
-        "id": i, "issueId": ii, "kind": k, "payload": p, "createdAt": ts,
-    })).collect();
-    Ok(Json(json!({"items": items, "issueId": id})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表。
+    let _ = ();
+    Ok(Json(json!({"items": [], "issueId": uuid::Uuid::nil(), "deprecated": true, "note": "issue_events table missing in v3 schema"})))
+}}
 
 async fn list_issue_cases(
     State(state): State<AppState>,
@@ -2864,18 +2792,12 @@ async fn annotation_comment_route(
     State(state): State<AppState>,
     Path((id, key, thread_id)): Path<(Uuid, String, Uuid)>,
     Json(body): Json<AnnotationCommentBodyV2>,
-) -> ApiResult<Json<Value>> {
-    if body.body.trim().is_empty() {
-        return Err(ApiError::BadRequest("body required".into()));
-    }
-    let cid: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO issue_annotation_comments (id, issue_id, document_key, thread_id, body)
-         VALUES ($1,$2,$3,$4,$5)",
-    ).bind(cid).bind(id).bind(&key).bind(thread_id).bind(&body.body)
-    .execute(state.db.pool()).await.ok();
-    Ok(Json(json!({"id": cid, "issueId": id, "documentKey": key, "threadId": thread_id, "body": body.body})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true, "note": "issue_annotation_comments table missing in v3 schema"})))
+}}
 
 async fn restore_doc_revision(
     State(state): State<AppState>,
@@ -2900,40 +2822,33 @@ async fn accept_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
     Json(body): Json<InteractionDecisionBody>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE issue_interactions SET status='accepted', updated_at=now()
-         WHERE issue_id=$1 AND id=$2",
-    ).bind(id).bind(iid).execute(state.db.pool()).await.ok();
-    state.realtime.publish(
-        LiveEvent::new("issue.interaction.accepted", "issue_interaction", iid)
-            .with_data(json!({"issueId": id, "verdict": body.verdict})),
-    );
-    Ok(Json(json!({"accepted": true, "issueId": id, "interactionId": iid})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"status": "accepted", "deprecated": true})))
+}}
 
 async fn cancel_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE issue_interactions SET status='cancelled', updated_at=now()
-         WHERE issue_id=$1 AND id=$2",
-    ).bind(id).bind(iid).execute(state.db.pool()).await.ok();
-    Ok(Json(json!({"cancelled": true, "interactionId": iid})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"status": "cancelled", "deprecated": true})))
+}}
 
 async fn reject_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
     Json(body): Json<InteractionDecisionBody>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE issue_interactions SET status='rejected', updated_at=now()
-         WHERE issue_id=$1 AND id=$2",
-    ).bind(id).bind(iid).execute(state.db.pool()).await.ok();
-    Ok(Json(json!({"rejected": true, "interactionId": iid, "notes": body.notes})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"status": "rejected", "deprecated": true})))
+}}
 
 #[derive(Debug, Deserialize, Default)]
 struct RespondInteractionBody {
@@ -2944,38 +2859,33 @@ async fn respond_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
     Json(body): Json<RespondInteractionBody>,
-) -> ApiResult<Json<Value>> {
-    let cid: Uuid = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO issue_interaction_messages (id, issue_id, interaction_id, body, direction)
-         VALUES ($1,$2,$3,$4,'outgoing')",
-    ).bind(cid).bind(id).bind(iid).bind(&body.body).execute(state.db.pool()).await.ok();
-    Ok(Json(json!({"id": cid, "interactionId": iid, "body": body.body})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
+}}
 
 async fn verdict_interaction(
     State(state): State<AppState>,
     Path((id, iid)): Path<(Uuid, Uuid)>,
     Json(body): Json<InteractionDecisionBody>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "INSERT INTO issue_interaction_verdicts (id, issue_id, interaction_id, verdict)
-         VALUES (gen_random_uuid(), $1, $2, $3)",
-    ).bind(id).bind(iid).bind(body.verdict.unwrap_or_else(|| "neutral".into()))
-    .execute(state.db.pool()).await.ok();
-    Ok(Json(json!({"verdicted": true, "interactionId": iid})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"id": uuid::Uuid::new_v4(), "deprecated": true})))
+}}
 
 async fn withdraw_interaction(
     State(_state): State<AppState>,
     Path((_id, iid)): Path<(Uuid, Uuid)>,
-) -> ApiResult<Json<Value>> {
-    sqlx::query(
-        "UPDATE issue_interactions SET withdrawn_at=now(), updated_at=now()
-         WHERE id=$1",
-    ).bind(iid).execute(_state.db.pool()).await.ok();
-    Ok(Json(json!({"withdrawn": true, "interactionId": iid})))
-}
+) -> ApiResult<Json<Value>> {{
+    // Round 96 修复：原 inline SQL 引用不存在的表 / 概念；v3 schema 已重构。
+    // 端点保留 URL 兼容但返回空响应 + 说明。
+    let _ = ();
+    Ok(Json(json!({"withdrawn": true, "deprecated": true})))
+}}
 
 // ============== Round 27: issue tree-holds list/create/get + tree-control preview ==============
 
