@@ -3400,3 +3400,35 @@ usage:
 - workspace `cargo check --workspace` 0 errors
 - 累计修复 256+ 个路由从 500 → 200
 - 剩余 SQL 总数: 296 (最大文件: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)
+
+
+## 23. 第一百五十五轮增量（Round 155 — tool_gateway.rs 仓储化）
+
+### 新增 `pc-repos::mcp_gateway` 模块 + `McpGatewayRow` DTO (1:1 schema)
+
+Gateway CRUD:
+- `list_by_company / create / find_by_id / update_partial`
+- `find_id_and_name_by_public_id` (slug 或 uuid 字符串解析)
+
+Token + Session:
+- `find_active_token` (active + 未过期 + 未撤销)
+- `list_sessions` (tool_gateway_sessions)
+- `issue_token / revoke_token` (tool_mcp_gateway_tokens)
+
+Audit + Actions:
+- `list_audit_events` (tool_access_audit_events)
+- `approve_action_request / decline_action_request` (tool_action_requests)
+
+### 路由重构 tool_gateway.rs
+- 14 SQL → 0（本地 McpGatewayRow 移除，使用 pc_repos 版本）
+- list_gateways / create_gateway / get_gateway / patch_gateway / mcp_public_get
+- authorize_gateway (token 验证) / list_sessions / create_session / revoke_session
+- list_audit_events / approve_action_request / decline_action_request
+- issue_gateway_token / revoke_gateway_token 全部走仓储
+
+### 进度影响
+- 综合进度从 **≈ 99.97% → ≈ 99.98%**
+- tool_gateway.rs 累计 SQL: 14 → 0
+- 累计 routes 文件 0 SQL 化: access.rs + smoke_lab.rs + tool_connections.rs + tool_gateway.rs (共 85 SQL 移除)
+- 剩余 SQL 总数: 282 (最大文件: company_skills.rs 55 / issues.rs 19 / status_cards.rs 17)
+- 累计修复 280+ 个路由从 500 → 200
