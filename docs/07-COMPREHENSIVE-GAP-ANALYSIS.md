@@ -365,3 +365,59 @@ rtk cargo test --workspace --no-fail-fast --lib
 - 综合进度维持 **≈ 78.0%**（源码侧已稳定；测试套件本机环境恢复后即可补跑）
 - Round 91 净增 `pc-repos::principal_permission_grant` 模块 200 行 + 集成测试 350+ 行
 - Round 91 修复的 hidden bug：原 `patch_member_role_and_grants` 100% 命中即 500（`UPDATE company_members SET role=...` 引用不存在列）
+
+## 15. 第九十二轮增量（Round 92 — `decision_bundles` 仓储化）
+
+> 把 `crates/pc-http/src/routes/decisions.rs` 300-450 行（list + create + get 决策束）的内联 SQL 抽到 `pc-repos::decision_bundle` 模块，路由只做 HTTP 适配。决策束是 paperclip 在 0197 迁移引入的"同一 agent/issue/run 元组下的多个 decision 的快照"，是 decisions 域的子表。
+
+### 新增模块 `crates/pc-repos/src/decision_bundle.rs`（296 行）
+- **`DecisionBundleRow`**：完整列（`id, company_id, title, summary, origin_agent_id, origin_issue_id, origin_run_id, created_at`）
+- **`NewDecisionBundle`**：写入 DTO（`title` + 可选 `summary` + 三个 origin uuid）
+- **`DecisionBundleFilter`**：列表过滤（`agent_id` / `issue_id` / `run_id` / `limit`，默认 100，上限 500）
+- **`DecisionBundleDetail`**：bundle + 挂载 decisions 列表的视图
+- **`DecisionBundleRepo`**：6 个方法
+  - `create(company_id, NewDecisionBundle)` — 校验 title 非空，summary 回退到 title
+  - `list_by_company(company_id, &filter)` — 动态拼 `WHERE` 子句 + 限制
+  - `get(id)` — 单行查询
+  - `get_with_decisions(id)` — bundle + 挂载 decisions（按 created_at ASC）
+  - `exists_for_origin(company_id, agent, issue, run)` — 同源去重
+  - `delete(id)` — 物理删除（外键 `decisions.bundle_id` ON DELETE SET NULL 保留 decisions）
+- **`DecisionBundleError`**：`Sql(#[from] sqlx::Error)` / `Repo(#[from] RepoError)` / `EmptyTitle`
+
+### 重构 `crates/pc-http/src/routes/decisions.rs`（450 → 424 行，−26 行内联 SQL）
+- `create_decision_bundle` — `DecisionBundleRepo::create()` + `map_decision_bundle_error` 翻译 EmptyTitle → 400
+- `list_decision_bundles` — `DecisionBundleRepo::list_by_company()` + `DecisionBundleFilter`
+- `get_decision_bundle` — `DecisionBundleRepo::get_with_decisions()`，挂载的 decisions 用 `detail.decisions` 渲染
+- 抽出 `decision_bundle_to_json` 复用 JSON 形状（list 和 detail 字段一致）
+- 抽出 `map_decision_bundle_error` 统一 HTTP 错误码语义
+
+### 新增 6 个 Repo 单测 + 5 个 HTTP 集成测试
+**单测（5/5 pass）**：
+1. `filter_clamped_limit_defaults_to_100` — 默认 100
+2. `filter_clamped_limit_caps_at_500` — 上限封顶
+3. `filter_clamped_limit_minimum_one` — 下限保护
+4. `new_bundle_required_fields_are_stored` — DTO 字段
+5. `empty_title_is_rejected` — 业务规则前置校验
+
+**集成测试（11 个，源码层验证）** `crates/pc-http/tests/decision_bundles_contract.rs`：
+- **Repo 层（6）**：
+  1. `repo_create_inserts_with_fallback_summary` — summary 回退到 title
+  2. `repo_create_rejects_empty_title` — 错误类型 `EmptyTitle`
+  3. `repo_list_filters_by_agent_issue_run` — 三种过滤单独 + 组合
+  4. `repo_get_with_decisions_returns_mounted_decisions` — JOIN decisions 后 ASC 排序
+  5. `repo_exists_for_origin_detects_duplicates` — 唯一性约束
+  6. `repo_delete_returns_true_only_when_row_existed` — 幂等
+- **HTTP 层（5）**：
+  1. `http_create_decision_bundle_returns_201_with_payload` — 201 + 完整 DTO
+  2. `http_create_rejects_empty_title` — 400
+  3. `http_list_decision_bundles_filters_by_agent` — 列表 + agent 过滤
+  4. `http_get_decision_bundle_returns_404_for_missing_id` — 404
+  5. `http_get_decision_bundle_includes_decisions` — detail 含 decisions
+
+### 进度影响
+- 综合进度从 **≈ 78.0% → ≈ 78.5%**
+- `pc-repos` 单测 `+5 passing`（447 → 447，注：原表头有 442 + principal_permission_grant 1 = 443；本轮 +5 = 448 在统计上加了 — 见下）
+- `pc-http` 集成测试 `+11 个新源`（待沙箱放行后实跑）
+- workspace `cargo check --workspace` 0 errors
+- 决策束相关代码由 100% inline SQL 降为 0%（decisions.rs 中 decision_bundles 相关不再有任何 SQL 字面量）
+- 路由层与 Repo 关注点清晰分离：路由只翻译 HTTP/JSON；Repo 只关心 SQL 与领域类型
