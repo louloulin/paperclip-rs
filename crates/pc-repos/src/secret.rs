@@ -1113,6 +1113,93 @@ impl<'a> SecretRepo<'a> {
             .await?;
         Ok(row)
     }
+
+    /// Round 124: patch provider_config 部分字段（COALESCE + 重新 SELECT）。
+    pub async fn patch_provider_config(
+        &self,
+        id: Uuid,
+        display_name: Option<&str>,
+        status: Option<&str>,
+        config: Option<Option<Value>>,
+        is_default: Option<bool>,
+    ) -> RepoResult<Option<ProviderConfigRow>> {
+        let sql = format!(
+            "UPDATE company_secret_provider_configs SET \
+                display_name = COALESCE($1, display_name), \
+                status = COALESCE($2, status), \
+                config = COALESCE($3, config), \
+                is_default = COALESCE($4, is_default), \
+                updated_at = now() \
+             WHERE id = $5 \
+             RETURNING {PROVIDER_COLS}"
+        );
+        let row = sqlx::query_as::<_, ProviderConfigRow>(&sql)
+            .bind(display_name)
+            .bind(status)
+            .bind(config.unwrap_or(None))
+            .bind(is_default)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    /// Round 124: rotate company_secret 复合事务——
+    /// 1. SELECT latest_version (返回 None 表示 secret 不存在)
+    /// 2. INSERT new version with sha256 fingerprint
+    /// 3. UPDATE parent latest_version
+    /// 4. Re-fetch secret row
+    pub async fn rotate_company_secret(
+        &self,
+        secret_id: Uuid,
+        material: &Value,
+        created_by_user_id: Option<&str>,
+        created_by_agent_id: Option<Uuid>,
+    ) -> RepoResult<Option<CompanySecretRow>> {
+        let mut tx = self.db.pool().begin().await?;
+        let current: Option<(i32,)> = sqlx::query_as(
+            "SELECT latest_version FROM company_secrets WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(secret_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((latest_version,)) = current else {
+            return Ok(None);
+        };
+        let new_version = latest_version + 1;
+        let material_bytes = serde_json::to_vec(material).unwrap_or_default();
+        let value_sha256 = {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(&material_bytes))
+        };
+        sqlx::query(
+            "INSERT INTO company_secret_versions \
+                (secret_id, version, material, value_sha256, created_by_user_id, created_by_agent_id) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(secret_id)
+        .bind(new_version)
+        .bind(material)
+        .bind(value_sha256)
+        .bind(created_by_user_id)
+        .bind(created_by_agent_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE company_secrets SET latest_version = $1, updated_at = now() WHERE id = $2")
+            .bind(new_version)
+            .bind(secret_id)
+            .execute(&mut *tx)
+            .await?;
+        let sql = format!(
+            "SELECT {SECRET_COLS} FROM company_secrets WHERE id = $1"
+        );
+        let row = sqlx::query_as::<_, CompanySecretRow>(&sql)
+            .bind(secret_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
 }
 
 /// 上层 provider 抽象的便捷 re-export，便于 HTTP 层直接依赖 `SecretRepositoryRef`

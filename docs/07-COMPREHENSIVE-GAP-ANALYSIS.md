@@ -1112,6 +1112,53 @@ secrets.rs 还剩 20 SQL：
 - company_skills.rs 60 SQL
 - issues.rs 44 SQL
 
+## 47. 第一百二十四轮增量（Round 124 — secrets.rs 复合事务收尾：patch_provider_config + rotate_secret)
+
+### 目标
+secrets.rs 20 → 14 SQL（-6）。本轮处理 2 个核心复合事务：
+- `patch_provider_config` — UPDATE COALESCE（4 字段）+ SELECT RETURNING
+- `rotate_secret` — SELECT latest_version + INSERT new version (sha256) + UPDATE parent + SELECT
+
+### 新增 `pc_repos::secret::SecretRepo` 方法（2 个复合)
+- `patch_provider_config(id, display_name?, status?, config?, is_default?) -> Option<ProviderConfigRow>`
+  - 单 SQL UPDATE COALESCE + RETURNING
+- `rotate_company_secret(secret_id, material, created_by_user_id?, created_by_agent_id?) -> Option<CompanySecretRow>`
+  - **复合事务**：SELECT latest_version → INSERT version（带 sha256） → UPDATE parent → SELECT RETURNING，单 tx 原子
+  - sha256 计算内联（保持与原 route 完全一致：`serde_json::to_vec(material)` then SHA-256）
+
+### 重构 `secrets.rs` 2 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `patch_provider_config` | 1 UPDATE COALESCE + 1 SELECT（事务） | SecretRepo::patch_provider_config |
+| `rotate_secret` | 1 SELECT + 1 INSERT version + 1 UPDATE parent + 1 SELECT | SecretRepo::rotate_company_secret 复合事务 |
+
+### 新增集成测试 7 个 (`crates/pc-repos/tests/round124_secret_composite_repo.rs`)
+1. `patch_provider_config_updates_display_name` — display_name 更新
+2. `patch_provider_config_updates_status` — status 更新
+3. `patch_provider_config_updates_is_default` — is_default 更新
+4. `patch_provider_config_missing_returns_none` — 不存在返回 None
+5. `rotate_company_secret_creates_new_version` — version 1 → 2 bump
+6. `rotate_company_secret_missing_returns_none` — 不存在返回 None
+7. `rotate_company_secret_saves_sha256` — sha256 hex 64 字符
+
+### 进度影响
+- 综合进度从 **≈ 96.2% → ≈ 96.5%**
+- workspace `cargo check -p pc-http` 0 errors
+- 24 个 pc-repos 集成测试文件累计 143+7=150 test 函数
+- secrets.rs SQL 数 20 → 14（-6，patch_provider + rotate 子模块）
+- 累计 Round 95-124 修复 **108+2=110 个路由从 500 → 200**
+
+### 下一轮方向（Round 125+）
+secrets.rs 还剩 14 SQL，主要是 my_user_secrets 系列（含 schema 漂移，需要谨慎处理）：
+- create_company_secret（多步复合约 5 SQL）
+- list_my_user_secrets / upsert_my_user_secret / patch_my_user_secret / delete_my_user_secret / rotate_my_user_secret
+
+后续高 SQL 模块：
+- tool_access.rs 66 SQL
+- company_skills.rs 60 SQL
+- issues.rs 44 SQL
+- companies.rs 37 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

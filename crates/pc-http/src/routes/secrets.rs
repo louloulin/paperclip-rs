@@ -603,55 +603,16 @@ async fn rotate_secret(
     Path(secret_id): Path<Uuid>,
     Json(body): Json<RotateSecretBody>,
 ) -> ApiResult<Json<Value>> {
-    // Fetch current secret to get latest_version
-    let current: Option<(i32,)> =
-        sqlx::query_as("SELECT latest_version FROM company_secrets WHERE id = $1")
-            .bind(secret_id)
-            .fetch_optional(state.db.pool())
-            .await?;
-    let Some((latest_version,)) = current else {
-        return Err(ApiError::NotFound(format!("secret {secret_id}")));
-    };
-
-    let new_version = latest_version + 1;
-    let material = &body.material;
-    // Compute SHA-256 of the prepared material bytes for integrity tracking
-    let material_bytes = serde_json::to_vec(material).unwrap_or_default();
-    let mut hasher = Sha256::new();
-    hasher.update(&material_bytes);
-    let value_sha256 = format!("{:x}", hasher.finalize());
-
-    // Insert new version
-    sqlx::query(
-        "INSERT INTO company_secret_versions          (secret_id, version, material, value_sha256, created_by_user_id, created_by_agent_id)          VALUES ($1, $2, $3, $4, $5, $6)",
-    )
-    .bind(secret_id)
-    .bind(new_version)
-    .bind(material)
-    .bind(value_sha256)
-    .bind(&body.created_by_user_id)
-    .bind(body.created_by_agent_id)
-    .execute(state.db.pool())
-    .await?;
-
-    // Bump latest_version on parent
-    sqlx::query("UPDATE company_secrets SET latest_version = $1, updated_at = now() WHERE id = $2")
-        .bind(new_version)
-        .bind(secret_id)
-        .execute(state.db.pool())
-        .await?;
-
-    // Re-fetch
-    let row: Option<CompanySecretRow> = sqlx::query_as(
-        "SELECT id, company_id, name, key, provider, status, scope, description, latest_version,          created_at, updated_at FROM company_secrets WHERE id = $1",
-    )
-    .bind(secret_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok(Json(secret_json(&row))),
-        None => Err(ApiError::NotFound(format!("secret {secret_id}"))),
-    }
+    let row = SecretRepo::new(&state.db)
+        .rotate_company_secret(
+            secret_id,
+            &body.material,
+            body.created_by_user_id.as_deref(),
+            body.created_by_agent_id,
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("secret {secret_id}")))?;
+    Ok(Json(secret_json(&row)))
 }
 
 async fn secret_usage(
@@ -729,53 +690,32 @@ async fn patch_provider_config(
     Path(id): Path<Uuid>,
     Json(body): Json<PatchProviderConfigBody>,
 ) -> ApiResult<Json<Value>> {
-    let mut tx = state.db.pool().begin().await?;
     if body.status.is_none() && body.label.is_none() && body.provider_config.is_none() && body.default_for_kind.is_none() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
-    // Round 95 修复：原 inline SQL 引用不存在的 `secret_provider_configs` 表 + `label` 列；
-    // 真实表是 `company_secret_provider_configs`，列名是 `display_name`（不是 `label`）。
-    sqlx::query(
-        "UPDATE company_secret_provider_configs SET \
-            display_name = COALESCE($1, display_name), \
-            status = COALESCE($2, status), \
-            config = COALESCE($3, config), \
-            is_default = COALESCE($4, is_default), \
-            updated_at = now() \
-         WHERE id = $5",
-    )
-    .bind(body.label.as_deref())
-    .bind(body.status.as_deref())
-    .bind(body.provider_config.clone())
-    .bind(body.default_for_kind)
-    .bind(id)
-    .execute(&mut *tx)
-    .await?;
-    let row: Option<(Uuid, Uuid, String, String, Value, bool, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, company_id, display_name, status, config, is_default, updated_at \
-         FROM company_secret_provider_configs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    tx.commit().await?;
-    let (id, company_id, label, status, config, is_default, updated_at) = row
+    let row = SecretRepo::new(&state.db)
+        .patch_provider_config(
+            id,
+            body.label.as_deref(),
+            body.status.as_deref(),
+            Some(body.provider_config.clone()),
+            body.default_for_kind,
+        )
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("company_secret_provider_config {id}")))?;
     state.realtime.publish(
         LiveEvent::new("secret_provider_config.updated", "secret_provider_config", id)
-            .with_company(company_id)
-            .with_data(json!({"label": label, "status": status})),
+            .with_company(row.company_id)
+            .with_data(json!({"label": row.display_name, "status": row.status})),
     );
     Ok(Json(json!({
-        "id": id,
-        "companyId": company_id,
-        "label": label,
-        "status": status,
-        "config": config,
-        "isDefault": is_default,
-        "updatedAt": updated_at,
+        "id": row.id,
+        "companyId": row.company_id,
+        "label": row.display_name,
+        "status": row.status,
+        "config": row.config,
+        "isDefault": row.is_default,
+        "updatedAt": row.updated_at,
     })))
 }
 
