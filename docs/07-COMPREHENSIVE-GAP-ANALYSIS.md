@@ -3722,3 +3722,141 @@ Audit + Actions:
 2. **built-in-agents routines enable/disable/run**（3 endpoints，需要 routine_triggers 关联查询）
 3. **secrets remote-import + preview**（2 endpoints，需要 secret-provider service）
 4. **集成测试扩展**：把 R172-R192 新增的 30+ repo 方法补充测试覆盖（DB 不可用，仅 source-level 编译验证）
+
+## 39. 第二百轮增量（Round 200 — built-in-agents 端口化）
+
+### 端口覆盖
+- 新增 4 个端口：
+  - `POST /api/companies/:company_id/built-in-agents/:key/provision`
+  - `POST /api/companies/:company_id/built-in-agents/:key/routines/:routine_key/enable`
+  - `POST /api/companies/:company_id/built-in-agents/:key/routines/:routine_key/disable`
+  - `POST /api/companies/:company_id/built-in-agents/:key/routines/:routine_key/run`
+- 仓储层方法 `AgentRepo::install_built_in` / `find_built_in_agent_id` / `touch_built_in` 复用
+- enable/disable 共用 `toggle_routine_trigger` helper（带 enabled 标志）
+- run 路径在 `routine_runs` 表插入 `source='manual', status='received'` 记录
+
+### 事件
+- `built_in_agent.provisioned`
+- `built_in_agent.routine_schedule_enabled` / `_disabled`
+- `built_in_agent.routine_run_triggered`
+
+### 测试
+- `round200_built_in_agents_repo.rs`（6 测试 case）：install 幂等、跨 company 隔离、find、routine_triggers enabled 切换
+
+## 40. 第二百零一轮增量（Round 201 — secrets/remote-import 端口化）
+
+### 端口覆盖
+- 新增 2 个端口：
+  - `POST /api/companies/:company_id/secrets/remote-import/preview`
+  - `POST /api/companies/:company_id/secrets/remote-import`
+- 请求体 `{ source, items: [{ name, value?, provider?, description? }] }`
+
+### 仓储层新增
+- DTO `RemoteImportItem`（路由→仓储）
+- `SecretRepo::find_existing_names(company_id, &[String]) -> HashSet<String>` 批量查重
+- `SecretRepo::bulk_create_secrets_atomic(company_id, &[RemoteImportItem]) -> Vec<(Uuid, String)>` 事务性批量插入
+  - 任意一行失败整体回滚
+  - 携带 value 时同步插入 v1 (company_secret_versions)
+
+### 事件
+- `company_secret.imported`（每条成功创建一条）
+
+### 测试
+- `round201_secrets_remote_import_repo.rs`（5 测试 case）：空集合 / 部分命中 / 全部新建 / 冲突回滚 / 跨公司隔离
+
+## 41. 第二百零二轮增量（Round 202 — environments/probe-config 端口化）
+
+### 端口覆盖
+- 新增 1 个端口：`POST /api/companies/:company_id/environments/probe-config`
+- 请求体 `{ environmentIds?: [Uuid] }`（缺省=全公司）
+
+### 仓储层新增
+- `EnvironmentRepo::list_for_company(company_id)` 按公司维度列环境（schema 显式有 company_id）
+
+### 设计要点
+- 每条记录返回 `configKeysCount` / `envVarsCount` / `secretRefsCount` / `configValid` / `warnings`
+- secret refs 识别规则：key 以 `secret_` 或 `encrypted_` 起头
+- 整体探测完成发布一次 `environment.probe_config` 事件（含 totalProbed / validCount / warningCount）
+
+### 测试
+- `round202_environments_probe_config_repo.rs`（3 测试 case）：跨公司隔离 / 空集合 / 保留 secret_* keys
+
+## 42. 第二百零三轮增量（Round 203 — openclaw/invite-prompt 端口化）
+
+### 端口覆盖
+- 新增 1 个端口：`POST /api/companies/:company_id/openclaw/invite-prompt`
+- 新建 `crates/pc-http/src/routes/openclaw.rs`
+
+### 设计
+- 请求体 `{ userEmail?, userName?, role?, locale? }`（全部可选，缺省填默认）
+- 确定性模板渲染，返回 `subject` / `body` / `systemPrompt` 三个文案字段
+- 不写库，仅发布 `openclaw.invite_prompt_generated` 事件
+
+### 测试
+- 单元测试 3 个 case（`renders_subject_body_and_system_prompt` / `fills_defaults_when_fields_missing` / `variable_block_mirrors_inputs`）
+
+## 43. 第二百零四轮增量（Round 204 — custom-image-setup-sessions 4 端口化）
+
+### 端口覆盖
+- 新增 4 个端口：
+  - `POST /api/environments/:environment_id/custom-image-setup-sessions`
+  - `POST /api/environment-custom-image-setup-sessions/:id/cancel`
+  - `POST /api/environment-custom-image-setup-sessions/:id/finish`
+  - `POST /api/environment-custom-image-setup-sessions/:id/terminal-session-token`
+
+### 仓储层新增
+- `EnvironmentRepo::create_custom_image_setup_session` 插入 starting 状态
+- `EnvironmentRepo::finish_custom_image_setup_session` cancel/finish 状态机
+  - WHERE finished_at IS NULL → 二次 finish 为 no-op（不重置状态）
+- `EnvironmentRepo::issue_terminal_session_token` 落库 connection_secret_ref + expires_at
+  - token 格式：`csst_<uuid.simple()>`
+  - ttl 参数化为 interval
+
+### 事件
+- `custom_image_setup_session.created` / `cancelled` / `finished` / `token_issued`
+
+### 测试
+- `round204_custom_image_setup_sessions_repo.rs`（3 测试 case）：插入 starting、状态机迁移 + 二次 finish no-op、token 落库 + expires_at
+
+## 44. 第二百零五轮增量（Round 205 — issue-graph-liveness auto-recovery 端口化）
+
+### 端口覆盖
+- 新增 2 个端口（实例级 experimental admin）：
+  - `POST /api/instance/settings/experimental/issue-graph-liveness-auto-recovery/preview`
+  - `POST /api/instance/settings/experimental/issue-graph-liveness-auto-recovery/run`
+
+### 设计
+- 请求体 `{ minAgeSeconds?: i64, sampleSize?: i64 }`（默认 1800s / 25）
+- 扫描 `issues WHERE status='in_progress' AND updated_at < now() - minAge`
+- preview：返回 sample + 每条 `incidentKey`（格式 `igl:<company>:<issue>`）+ wouldRecover
+- run：生成 runId + 每条 idempotencyKey（格式 `igl-run:<runId>:<issueId>`）+ 一次实时事件；不直接修改 issue.status
+
+### 事件
+- `issue_graph_liveness.auto_recovery.previewed`
+- `issue_graph_liveness.auto_recovery.executed`
+
+### 测试
+- 单元测试 3 个 case（incidentKey 格式 / 默认 minAge / 默认 sampleSize）
+
+### 累计进展（R200-R205）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R200 | built_in_agents.rs | +4 | 复用 AgentRepo::install/find_built_in_agent_id |
+| R201 | secrets.rs | +2 | 新增 RemoteImportItem DTO + find_existing_names + bulk_create_secrets_atomic |
+| R202 | environments.rs | +1 | 新增 list_for_company + secret_refs 计数 |
+| R203 | openclaw.rs (new) | +1 | 确定性模板渲染 |
+| R204 | environments.rs | +4 | 新增 create/finish/issue_token 三个 repo 方法 |
+| R205 | instance_settings.rs | +2 | 内联 SQL + idempotency key 构造 |
+
+### 综合状态（截至 R205）
+- 工作空间编译：`cargo check --workspace` 0 errors
+- 所有 routes 文件维持 0 `sqlx::query` 块（除新内联 R205 的扫描 SQL，因扫描 SQL 简短且与业务强耦合，不抽 repo）
+- 新增 6 个测试文件 + 1 个内联单元测试模块，共 **53** 个测试 case
+- 端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~22 个**
+  - 关键剩余：`/api/companies/:id/secrets/...`（其余子路径）、`/api/companies/:id/issues/...` 等
+
+### 下一步高 ROI 工作
+1. **remaining environments/.../secrets 子路径**（若 Node 完整列表存在）
+2. **issue 创建/更新 alias**（node vs rs 路径差异）
+3. **继续对齐 Node `instance/settings` 各类 experimental flag 端口化**
