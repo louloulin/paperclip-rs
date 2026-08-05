@@ -1180,6 +1180,30 @@ impl<'a> ToolRepo<'a> {
         Ok(total)
     }
 
+    /// Round 143: 列出 profile 尚未引用的 application（list_tool_profile_new_tools 用）。
+    /// 返回 application_id, key, name, risk_level。
+    pub async fn list_new_tools_for_profile(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, String, Option<String>, Option<String>)>> {
+        let rows: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT ta.id, ta.application_key, ta.display_name, ta.risk_level \
+             FROM tool_applications ta \
+             WHERE ta.company_id=$1 AND ta.status='active' \
+             AND NOT EXISTS ( \
+                SELECT 1 FROM tool_profile_entries tpe \
+                WHERE tpe.profile_id=$2 AND tpe.application_id=ta.id \
+             ) \
+             ORDER BY ta.display_name LIMIT 100",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
     /// Round 141: 通过 entry_id 查找 company_id。
     pub async fn find_profile_entry_company_id(&self, entry_id: Uuid) -> RepoResult<Option<Uuid>> {
         let row: Option<(Uuid,)> = sqlx::query_as(
@@ -1240,6 +1264,145 @@ impl<'a> ToolRepo<'a> {
             .rows_affected();
         Ok(n > 0)
     }
+
+    /// Round 143: 检查 profile_key 是否存在（用于 create dedup 检查）。
+    pub async fn profile_key_exists(
+        &self,
+        company_id: Uuid,
+        profile_key: &str,
+    ) -> RepoResult<bool> {
+        let exists: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_profiles WHERE company_id = $1 AND profile_key = $2",
+        )
+        .bind(company_id)
+        .bind(profile_key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(exists.is_some())
+    }
+
+    /// Round 143: 创建 profile_v2（带 entries），复合事务。
+    pub async fn create_profile_v2(
+        &self,
+        company_id: Uuid,
+        profile_key: &str,
+        name: &str,
+        description: Option<&str>,
+        status: &str,
+        default_action: &str,
+        metadata: &Value,
+        entries: &[ToolProfileEntryInput],
+    ) -> RepoResult<Uuid> {
+        let mut tx = self.db.pool().begin().await?;
+        let profile_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
+             VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '{}'::jsonb)) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(profile_key)
+        .bind(name)
+        .bind(description)
+        .bind(status)
+        .bind(default_action)
+        .bind(metadata)
+        .fetch_one(&mut *tx)
+        .await?;
+        for e in entries {
+            sqlx::query(
+                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb))",
+            )
+            .bind(company_id)
+            .bind(profile_id)
+            .bind(&e.selector_type)
+            .bind(&e.effect)
+            .bind(e.application_id)
+            .bind(e.connection_id)
+            .bind(e.catalog_entry_id)
+            .bind(e.tool_name.as_deref())
+            .bind(e.risk_level.as_deref())
+            .bind(&e.conditions)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(profile_id)
+    }
+
+    /// Round 143: 检查 profile 是否属于某 company（用于 bind 前的存在性检查）。
+    pub async fn profile_belongs_to_company(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+    ) -> RepoResult<bool> {
+        let exists: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_profiles WHERE company_id = $1 AND id = $2",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(exists.is_some())
+    }
+
+    /// Round 143: 创建 profile binding（关联 profile 到 agent/role 等 target）。
+    pub async fn create_profile_binding(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+        target_type: &str,
+        target_id: &str,
+        priority: Option<i32>,
+        metadata: &Value,
+    ) -> RepoResult<Uuid> {
+        let id: (Uuid,) = sqlx::query_as(
+            "INSERT INTO tool_profile_bindings (company_id, profile_id, target_type, target_id, priority, metadata) \
+             VALUES ($1, $2, $3, $4, COALESCE($5, 100), COALESCE($6, '{}'::jsonb)) RETURNING id",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .bind(target_type)
+        .bind(target_id)
+        .bind(priority)
+        .bind(metadata)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(id.0)
+    }
+
+    /// Round 143: 删除 profile binding。
+    pub async fn delete_profile_binding(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+        target_type: &str,
+        target_id: &str,
+    ) -> RepoResult<u64> {
+        Ok(sqlx::query(
+            "DELETE FROM tool_profile_bindings \
+             WHERE company_id = $1 AND profile_id = $2 AND target_type = $3 AND target_id = $4",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .bind(target_type)
+        .bind(target_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected())
+    }
+}
+
+/// Round 143: create_profile_v2 的 entry 输入 DTO（不含 company_id/profile_id）。
+#[derive(Debug, Clone)]
+pub struct ToolProfileEntryInput {
+    pub selector_type: String,
+    pub effect: String,
+    pub application_id: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
+    pub catalog_entry_id: Option<Uuid>,
+    pub tool_name: Option<String>,
+    pub risk_level: Option<String>,
+    pub conditions: Value,
 }
 
 const PROFILE_COLS: &str = "id, company_id, profile_key, name, description, status, default_action, metadata, created_at, updated_at";
@@ -1894,6 +2057,31 @@ pub struct ToolActionRequestRow {
 }
 
 impl<'a> ToolRepo<'a> {
+    /// Round 143: 列出某 run 的 tool_call_events（get_run_decisions_route 用）。
+    /// 返回 (id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at)
+    pub async fn list_tool_call_events_for_run(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+    ) -> RepoResult<Vec<(
+        Uuid, String, Option<String>, Option<String>, Option<String>,
+        Option<Value>, Value, Option<Timestamp>,
+    )>> {
+        let rows: Vec<(
+            Uuid, String, Option<String>, Option<String>, Option<String>,
+            Option<Value>, Value, Option<Timestamp>,
+        )> = sqlx::query_as(
+            "SELECT id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at \
+             FROM tool_call_events WHERE company_id = $1 AND run_id = $2 \
+             ORDER BY created_at DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .bind(run_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn list_action_requests_by_company(
         &self,
         company_id: Uuid,

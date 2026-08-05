@@ -1808,71 +1808,58 @@ async fn create_tool_profile_v2(
         .unwrap_or_else(|| format!("prof_{}", Uuid::now_v7().simple()));
     let status = body.status.clone().unwrap_or_else(|| "active".to_owned());
     let default_action = body.default_action.clone().unwrap_or_else(|| "deny".to_owned());
+    let metadata = body.metadata.clone().unwrap_or_else(|| json!({}));
 
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_profiles WHERE company_id = $1 AND profile_key = $2",
-    )
-    .bind(company_id)
-    .bind(&profile_key)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_some() {
+    let repo = ToolRepo::new(&state.db);
+    if repo.profile_key_exists(company_id, &profile_key).await? {
         return Err(ApiError::Conflict(format!("tool profile {profile_key} already exists")));
     }
 
-    let mut tx = state.db.pool().begin().await?;
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '{}'::jsonb)) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&profile_key)
-    .bind(&body.name)
-    .bind(body.description.as_deref())
-    .bind(&status)
-    .bind(&default_action)
-    .bind(body.metadata.clone().unwrap_or_else(|| json!({})))
-    .fetch_one(&mut *tx)
-    .await?;
+    let entry_inputs: Vec<pc_repos::tool::ToolProfileEntryInput> = body
+        .entries
+        .as_ref()
+        .map(|es| {
+            es.iter()
+                .map(|e| pc_repos::tool::ToolProfileEntryInput {
+                    selector_type: e.selector_type.clone(),
+                    effect: e.effect.clone().unwrap_or_else(|| "include".to_owned()),
+                    application_id: e.application_id,
+                    connection_id: e.connection_id,
+                    catalog_entry_id: e.catalog_entry_id,
+                    tool_name: e.tool_name.clone(),
+                    risk_level: e.risk_level.clone(),
+                    conditions: e.conditions.clone().unwrap_or_else(|| json!({})),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    if let Some(entries) = &body.entries {
-        for e in entries {
-            let effect = e.effect.clone().unwrap_or_else(|| "include".to_owned());
-            sqlx::query(
-                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb))",
-            )
-            .bind(company_id)
-            .bind(row.0)
-            .bind(&e.selector_type)
-            .bind(&effect)
-            .bind(e.application_id)
-            .bind(e.connection_id)
-            .bind(e.catalog_entry_id)
-            .bind(e.tool_name.as_deref())
-            .bind(e.risk_level.as_deref())
-            .bind(e.conditions.clone().unwrap_or_else(|| json!({})))
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
-    tx.commit().await?;
+    let new_id = repo
+        .create_profile_v2(
+            company_id,
+            &profile_key,
+            &body.name,
+            body.description.as_deref(),
+            &status,
+            &default_action,
+            &metadata,
+            &entry_inputs,
+        )
+        .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.profile.created", "tool_profile", row.0).with_company(company_id),
+        LiveEvent::new("tool.profile.created", "tool_profile", new_id).with_company(company_id),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": row.0,
+            "id": new_id,
             "companyId": company_id,
             "profileKey": profile_key,
             "name": body.name,
             "description": body.description,
             "status": status,
             "defaultAction": default_action,
-            "metadata": body.metadata.unwrap_or_else(|| json!({})),
+            "metadata": metadata,
             "entries": body.entries.unwrap_or_default(),
         })),
     ))
@@ -1895,45 +1882,36 @@ async fn bind_profile_route(
     if body.target_type.trim().is_empty() || body.target_id.trim().is_empty() {
         return Err(ApiError::BadRequest("targetType and targetId required".into()));
     }
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_profiles WHERE company_id = $1 AND id = $2",
-    )
-    .bind(company_id)
-    .bind(profile_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_none() {
+    let repo = ToolRepo::new(&state.db);
+    if !repo.profile_belongs_to_company(company_id, profile_id).await? {
         return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
     }
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_profile_bindings (company_id, profile_id, target_type, target_id, priority, metadata) \
-         VALUES ($1, $2, $3, $4, COALESCE($5, 100), COALESCE($6, '{}'::jsonb)) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(profile_id)
-    .bind(&body.target_type)
-    .bind(&body.target_id)
-    .bind(body.priority)
-    .bind(body.metadata.clone().unwrap_or_else(|| json!({})))
-    .fetch_one(state.db.pool())
-    .await?;
+    let metadata = body.metadata.clone().unwrap_or_else(|| json!({}));
+    let binding_id = repo
+        .create_profile_binding(
+            company_id,
+            profile_id,
+            &body.target_type,
+            &body.target_id,
+            body.priority,
+            &metadata,
+        )
+        .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.profile_binding.created", "tool_profile_binding", row.0)
+        LiveEvent::new("tool.profile_binding.created", "tool_profile_binding", binding_id)
             .with_company(company_id)
             .with_data(json!({ "profileId": profile_id, "targetType": body.target_type, "targetId": body.target_id })),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": row.0,
+            "id": binding_id,
             "companyId": company_id,
             "profileId": profile_id,
             "targetType": body.target_type,
             "targetId": body.target_id,
             "priority": body.priority.unwrap_or(100),
-            "metadata": body.metadata.unwrap_or_else(|| json!({})),
+            "metadata": metadata,
         })),
     ))
 }
@@ -1953,16 +1931,9 @@ async fn unbind_profile_route(
     if body.target_type.trim().is_empty() || body.target_id.trim().is_empty() {
         return Err(ApiError::BadRequest("targetType and targetId required".into()));
     }
-    let affected = sqlx::query(
-        "DELETE FROM tool_profile_bindings WHERE company_id = $1 AND profile_id = $2 AND target_type = $3 AND target_id = $4",
-    )
-    .bind(company_id)
-    .bind(profile_id)
-    .bind(&body.target_type)
-    .bind(&body.target_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
+    let affected = ToolRepo::new(&state.db)
+        .delete_profile_binding(company_id, profile_id, &body.target_type, &body.target_id)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("tool.profile_binding.deleted", "tool_profile", profile_id)
             .with_company(company_id)
@@ -1976,7 +1947,6 @@ async fn unbind_profile_route(
         "unbound": affected,
     })))
 }
-
 async fn get_effective_profiles_for_agent(
     State(state): State<AppState>,
     Path((company_id, agent_id)): Path<(Uuid, String)>,
@@ -2423,32 +2393,25 @@ async fn get_run_decisions_route(
     State(state): State<AppState>,
     Path((company_id, run_id)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let run_uuid = Uuid::parse_str(&run_id).ok();
-    let items: Vec<Value> = if let Some(ruid) = run_uuid {
-        sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<String>, Option<Value>, Value, Option<Timestamp>)>(
-            "SELECT id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at \
-             FROM tool_call_events WHERE company_id = $1 AND run_id = $2 \
-             ORDER BY created_at DESC LIMIT 200",
-        )
-        .bind(company_id)
-        .bind(ruid)
-        .fetch_all(state.db.pool())
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at)| {
-            json!({
-                "id": id,
-                "eventType": event_type,
-                "toolName": tool_name,
-                "decision": decision,
-                "reasonCode": reason_code,
-                "argumentsSummary": arguments_summary,
-                "matchedPolicyIds": matched_policy_ids,
-                "createdAt": created_at,
+    let items: Vec<Value> = if let Ok(ruid) = Uuid::parse_str(&run_id) {
+        ToolRepo::new(&state.db)
+            .list_tool_call_events_for_run(company_id, ruid)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at)| {
+                json!({
+                    "id": id,
+                    "eventType": event_type,
+                    "toolName": tool_name,
+                    "decision": decision,
+                    "reasonCode": reason_code,
+                    "argumentsSummary": arguments_summary,
+                    "matchedPolicyIds": matched_policy_ids,
+                    "createdAt": created_at,
+                })
             })
-        })
-        .collect()
+            .collect()
     } else {
         Vec::new()
     };
@@ -2459,9 +2422,6 @@ async fn get_run_decisions_route(
         "items": items,
     })))
 }
-
-// ── MCP JSON import preview + policy test ───────────────────
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportMcpJsonBody {
@@ -2664,29 +2624,15 @@ async fn list_tool_profile_new_tools(
     State(state): State<AppState>,
     Path(profile_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let profile: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
-        .bind(profile_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let Some((company_id,)) = profile else {
-        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
-    };
-    // Synthesize a "new tools" list: tools with no entry in this profile.
-    let rows: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT ta.id, ta.application_key, ta.display_name, ta.risk_level \
-         FROM tool_applications ta \
-         WHERE ta.company_id=$1 AND ta.status='active' \
-         AND NOT EXISTS ( \
-            SELECT 1 FROM tool_profile_entries tpe \
-            WHERE tpe.profile_id=$2 AND tpe.application_id=ta.id \
-         ) \
-         ORDER BY ta.display_name LIMIT 100",
-    )
-    .bind(company_id)
-    .bind(profile_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let repo = ToolRepo::new(&state.db);
+    let company_id = repo
+        .find_profile_company_id(profile_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
+    let rows = repo
+        .list_new_tools_for_profile(company_id, profile_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|(id, key, name, risk)| {
