@@ -2107,15 +2107,10 @@ async fn checkout_issue(
 ) -> ApiResult<Json<Value>> {
     // Mirrors Node `/issues/:id/checkout`. Atomically claims the issue for
     // the agent + run by setting `assignee_agent_id` + `checkout_run_id`.
-    let row = sqlx::query_as::<_, (Uuid, String)>(
-        "UPDATE issues SET assignee_agent_id = $1, checkout_run_id = $2, updated_at = now()          WHERE id = $3 RETURNING company_id, status",
-    )
-    .bind(body.agent_id)
-    .bind(body.run_id)
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (company_id, status) = row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let (company_id, status) = IssueRepo::new(&state.db)
+        .checkout(id, body.agent_id, body.run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     state
         .realtime
         .publish(LiveEvent::new("issue.checked_out", "issue", id).with_company(company_id));
@@ -2203,15 +2198,10 @@ async fn create_company_issue(
         .ok_or_else(|| ApiError::BadRequest("title is required".into()))?;
     let description = body.get("description").and_then(Value::as_str);
     let priority = body.get("priority").and_then(Value::as_str).unwrap_or("normal");
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO issues (company_id, title, description, priority)          VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(title)
-    .bind(description)
-    .bind(priority)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row = IssueRepo::new(&state.db)
+        .create(company_id, title, description, priority, None)
+        .await?;
+    let id = row.id;
     state
         .realtime
         .publish(LiveEvent::new("issue.created", "issue", id).with_company(company_id));
@@ -2231,13 +2221,10 @@ async fn company_search_extract(
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("text is required".into()))?;
     let preview = text.chars().take(280).collect::<String>();
-    let item_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM issues WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .fetch_one(state.db.pool())
-    .await
-    .unwrap_or(0);
+    let item_count = IssueRepo::new(&state.db)
+        .count_for_company(company_id)
+        .await
+        .unwrap_or(0);
     Ok(Json(json!({
         "companyId": company_id,
         "preview": preview,

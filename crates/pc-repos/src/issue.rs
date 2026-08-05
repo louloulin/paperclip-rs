@@ -511,7 +511,16 @@ impl<'a> IssueRepo<'a> {
 
 
 
-        pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
+        /// Round 126: 统计 company 的 issue 总数。
+    pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM issues WHERE company_id=$1")
+            .bind(company_id)
+            .fetch_one(self.db.pool())
+            .await?;
+        Ok(count)
+    }
+
+    pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");
         sqlx::query_as::<_, IssueRow>(&sql)
             .bind(id)
@@ -942,7 +951,26 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
-    // ---------- release / force-release ----------
+    // ---------- checkout / release ----------
+
+    /// Round 126: checkout issue（UPDATE assignee_agent_id + checkout_run_id）。
+    /// 原子操作：单 SQL UPDATE ... RETURNING，返回 (company_id, status) 二元组。
+    pub async fn checkout(
+        &self,
+        id: Uuid,
+        agent_id: Uuid,
+        run_id: Option<Uuid>,
+    ) -> sqlx::Result<Option<(Uuid, String)>> {
+        let sql = format!(
+            "UPDATE issues SET assignee_agent_id = $1, checkout_run_id = $2, updated_at = now()              WHERE id = $3 RETURNING company_id, status"
+        );
+        sqlx::query_as::<_, (Uuid, String)>(&sql)
+            .bind(agent_id)
+            .bind(run_id)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
 
     /// 释放 checkout 锁：清空 checkout_run_id 与 execution_locked_at。
     /// `run_id` 可选：若提供则仅当当前 checkout_run_id 匹配时才释放（所有权保护）。

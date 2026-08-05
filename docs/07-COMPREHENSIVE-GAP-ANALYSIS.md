@@ -1219,6 +1219,56 @@ company_skills.rs 还剩 56 SQL，主要在：
 - issues.rs 44 SQL
 - companies.rs 37 SQL
 
+## 49. 第一百二十六轮增量（Round 126 — issues.rs checkout / create / count 子模块仓储化)
+
+### 目标
+issues.rs 44 → 41 SQL（-3）。首次正式触碰 issues.rs 模块（Round 96 stub 化后未继续），
+仓储化 checkout_issue / create_company_issue / company_search_extract。
+
+### 新增 `pc_repos::issue::IssueRepo` 方法（2 个)
+- `checkout(id, agent_id, run_id?) -> Option<(Uuid, String)>`
+  - 单 SQL UPDATE ... RETURNING，返回 (company_id, status) 二元组
+  - 原子操作：单事务设置 assignee_agent_id + checkout_run_id
+- `count_for_company(company_id) -> i64`
+  - SELECT COUNT(*) FROM issues WHERE company_id=$1
+
+复用已有方法:
+- `create(company_id, title, description?, priority, assignee_agent_id?) -> IssueRow`
+
+### 重构 `issues.rs` 3 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `checkout_issue` | 1 UPDATE RETURNING | IssueRepo::checkout |
+| `create_company_issue` | 1 INSERT RETURNING | IssueRepo::create |
+| `company_search_extract` | 1 SELECT COUNT | IssueRepo::count_for_company |
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round126_issue_basic_repo.rs`)
+1. `checkout_sets_assignee_and_run` — checkout 设置 assignee + run_id
+2. `checkout_missing_returns_none` — 不存在返回 None
+3. `create_issue_inserts` — 基础创建
+4. `create_issue_without_description` — 无 description
+5. `count_for_company_returns_count` — issue 总数
+6. `count_for_company_empty_returns_zero` — 空公司返回 0
+
+### 进度影响
+- 综合进度从 **≈ 96.7% → ≈ 96.8%**
+- workspace `cargo check -p pc-http` 0 errors
+- 26 个 pc-repos 集成测试文件累计 157+6=163 test 函数
+- issues.rs SQL 数 44 → 41（-3，checkout / create / count）
+- 累计 Round 95-126 修复 **114+3=117 个路由从 500 → 200**
+
+### 下一轮方向（Round 127+）
+issues.rs 还剩 41 SQL，主要集中在：
+- 反馈 / 评分（feedback_traces ~6 SQL，~lines 2309-2355）
+- 投票（votes ~5 SQL，~lines 2426-2490）
+- 关系更新（relations ~10 SQL，~lines 2557-2649）
+- 各种 admin / utility（~15 SQL，~lines 2680+）
+
+后续高 SQL 模块：
+- tool_access.rs 66 SQL（多数已有 ToolRepo 覆盖，但仍有 schema drift）
+- companies.rs 37 SQL（Round 98 stub 化）
+- auth.rs 28 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标
