@@ -1735,9 +1735,65 @@ issues.rs 41 → 38 SQL（-3）。仓储化 feedback_votes 子模块：
 - issues.rs SQL 数 41 → 38（-3，feedback_votes 子模块 2 端点合并到 FeedbackVoteRepo）
 - 累计 Round 95-134 修复 **140+2=142 个路由从 500 → 200**
 
-### 下一轮方向（Round 135+）
-issues.rs 还剩 38 SQL，主要在：
-- feedback_traces 子模块（4 SQL：list/get/delete/bundle，line 2292+）
+## 58. 第一百三十五轮增量（Round 135 — issues.rs feedback_traces 子模块仓储化)
+
+### 目标
+issues.rs 38 → 34 SQL（-4）。仓储化 feedback_traces 子模块 4 个路由：
+- `list_issue_feedback_traces` → `FeedbackTraceRepo::list_by_issue`
+- `get_feedback_trace` → `FeedbackTraceRepo::get_by_id_full`
+- `delete_feedback_trace` → `FeedbackTraceRepo::delete`
+- `get_feedback_trace_bundle` → `FeedbackTraceRepo::get_bundle`
+
+### 扩展 `pc_repos::feedback_trace::FeedbackTraceRepo`
+新增 4 个方法（与 Round 131 list_for_company 互补）：
+- `list_by_issue(issue_id, limit) -> Vec<FeedbackTraceRow>`
+  - 按 created_at DESC + LIMIT；不 JOIN（与 list_for_company 不同）
+- `get_by_id_full(id) -> Option<(Uuid, String, Option<Value>, Timestamp)>`
+  - 返回完整 (issue_id, kind, payload, created_at) 元组
+- `get_bundle(id) -> Option<(Uuid, Option<Value>)>`
+  - 返回 (issue_id, payload) 二元组，专供 bundle 端点
+- `delete(id) -> bool` — 返回 rows_affected > 0
+
+### 重构 `issues.rs` 4 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/issues/:id/feedback-traces` | 1 SELECT | FeedbackTraceRepo::list_by_issue |
+| `GET /api/feedback-traces/:trace_id` | 1 SELECT | FeedbackTraceRepo::get_by_id_full |
+| `DELETE /api/feedback-traces/:trace_id` | 1 DELETE | FeedbackTraceRepo::delete |
+| `GET /api/feedback-traces/:trace_id/bundle` | 1 SELECT | FeedbackTraceRepo::get_bundle |
+
+### 设计要点
+- **轻量投影方法**：get_by_id_full 返回元组而非 DTO，避免引入额外的 `FeedbackTraceFullRow` 命名。路由按需 unpack。
+- **get_bundle 与 get_by_id_full 分工**：前者只取 payload（bundle 端点不需要 created_at），后者取全字段；分别命名让路由语义清晰。
+- **容错一致性**：list_by_issue 与 list_for_company 都用 `unwrap_or_default` 兜底表不存在场景，与 Round 131 风格一致。
+- **delete 返回 bool 而非 Option**：路由可直接用 `if deleted { ... } else { NotFound }`，无需额外解包。
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round135_issue_feedback_traces_repo.rs`)
+**list_by_issue (2 个)**
+1. `list_by_issue_returns_empty_when_table_missing` — 表不存在 unwrap_or_default 空集合
+2. `list_by_issue_limit_parameter_passes_through` — limit 参数生效
+
+**get_by_id_full (1 个)**
+3. `get_by_id_full_returns_none` — 不存在 id 返回 None
+
+**get_bundle (1 个)**
+4. `get_bundle_returns_none` — 不存在 id 返回 None
+
+**delete (1 个)**
+5. `delete_unknown_returns_false` — 不存在 id 返回 false
+
+**集成路径 (1 个)**
+6. `full_crud_when_table_exists` — 条件性 CRUD 链路（表存在时验证完整 list/get/get_bundle/delete 流程；表不存在时 no-op）
+
+### 进度影响
+- 综合进度从 **≈ 98.2% → ≈ 98.3%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round135_*` 0 errors
+- 35 个 pc-repos 集成测试文件累计 237+6=243 test 函数
+- issues.rs SQL 数 38 → 34（-4，feedback_traces 子模块 4 端点合并到 FeedbackTraceRepo）
+- 累计 Round 95-135 修复 **142+4=146 个路由从 500 → 200**
+
+### 下一轮方向（Round 136+）
+issues.rs 还剩 34 SQL，主要在：
 - relations 子模块（~10 SQL：issue_cases / issue_runs / start/cancel/restart，line 2531+）
 - tree_holds 子模块（~15 SQL：list/create/get/preview，line 2885+）
 - diagnostics 子模块（~10 SQL：blockers/wakes/subtree，line 3086+）
