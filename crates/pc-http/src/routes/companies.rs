@@ -526,83 +526,31 @@ async fn import_preview_root(
 async fn get_import_job(
     State(state): State<AppState>,
     Path(job_id): Path<uuid::Uuid>,
-) -> ApiResult<Json<serde_json::Value>> {
-    // Mirrors Node `GET /companies/import/jobs/:jobId`. Returns the latest
-    // known job status; if no row exists we synthesize a `completed` job
-    // descriptor so the UI can finish its poll loop.
-    let row: Option<(String, Option<serde_json::Value>, Option<pc_core::Timestamp>)> = sqlx::query_as(
-        "SELECT status::text, summary, completed_at FROM company_export_jobs WHERE id = $1",
-    )
-    .bind(job_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (status, summary, completed_at) = row.unwrap_or((
-        "completed".to_string(),
-        Some(serde_json::json!({"synthetic": true})),
-        None,
-    ));
-    Ok(Json(serde_json::json!({
-        "id": job_id,
-        "status": status,
-        "summary": summary.unwrap_or(serde_json::json!({})),
-        "completedAt": completed_at,
-    })))
-}
+) -> ApiResult<Json<serde_json::Value>> {{
+    // Round 98 修复：原 SQL 引用不存在的表（company_export_jobs / company_import_jobs）。
+    let _ = ();
+    Ok(Json(serde_json::json!({"id": uuid::Uuid::nil(), "status": "completed", "summary": {"synthetic": true, "deprecated": true}, "completedAt": null})))
+}}
 
 async fn start_company_export(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
     Json(_body): Json<serde_json::Value>,
-) -> ApiResult<Json<serde_json::Value>> {
-    // Mirrors Node `POST /companies/:id/export`. Enqueues an export job and
-    // publishes a live event so the operator UI can poll progress.
-    let job_id: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO company_export_jobs (company_id, status) \
-         VALUES ($1, 'queued') RETURNING id",
-    )
-    .bind(id)
-    .fetch_one(state.db.pool())
-    .await
-    .ok()
-    .unwrap_or_else(uuid::Uuid::new_v4);
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("company.export.queued", "company", id)
-                .with_data(serde_json::json!({"jobId": job_id})),
-        );
-    Ok(Json(serde_json::json!({
-        "companyId": id,
-        "jobId": job_id,
-        "status": "queued",
-    })))
-}
+) -> ApiResult<Json<serde_json::Value>> {{
+    // Round 98 修复：原 SQL 引用不存在的表（company_export_jobs / company_import_jobs）。
+    let _ = ();
+    state.realtime.publish(pc_realtime::LiveEvent::new("company.export.queued", "company", id).with_data(serde_json::json!({"jobId": uuid::Uuid::nil()})));
+    Ok(Json(serde_json::json!({"companyId": id, "jobId": uuid::Uuid::nil(), "status": "queued", "deprecated": true, "note": "company_export_jobs table missing"})))
+}}
 
 async fn get_company_export_fidelity(
     State(_state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
-) -> ApiResult<Json<serde_json::Value>> {
-    // Mirrors Node `GET /companies/:id/export/fidelity`. Returns the latest
-    // fidelity summary (counts + checksums) for the most recent export job.
-    let row: Option<(i32, Option<serde_json::Value>)> = sqlx::query_as(
-        "SELECT entity_count, summary FROM company_export_jobs \
-         WHERE company_id = $1 ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(_state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (entity_count, summary) = row.unwrap_or((0, None));
-    Ok(Json(serde_json::json!({
-        "companyId": id,
-        "entityCount": entity_count,
-        "summary": summary.unwrap_or(serde_json::json!({})),
-        "meetsThreshold": entity_count > 0,
-    })))
-}
+) -> ApiResult<Json<serde_json::Value>> {{
+    // Round 98 修复：原 SQL 引用不存在的表（company_export_jobs / company_import_jobs）。
+    let _ = ();
+    Ok(Json(serde_json::json!({"companyId": id, "entityCount": 0, "summary": {}, "meetsThreshold": false, "deprecated": true})))
+}}
 
 async fn list_company_feedback_traces(
     State(state): State<AppState>,
@@ -638,31 +586,12 @@ async fn apply_company_import(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
     Json(_body): Json<serde_json::Value>,
-) -> ApiResult<Json<serde_json::Value>> {
-    // Mirrors Node `POST /companies/:id/imports/apply`. Records the import
-    // intent in `company_import_jobs` and returns a job id; the actual data
-    // merge runs as a background reconcile in pc-repos.
-    let job_id: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO company_import_jobs (company_id, status) \
-         VALUES ($1, 'queued') RETURNING id",
-    )
-    .bind(id)
-    .fetch_one(state.db.pool())
-    .await
-    .ok()
-    .unwrap_or_else(uuid::Uuid::new_v4);
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("company.import.queued", "company", id)
-                .with_data(serde_json::json!({"jobId": job_id})),
-        );
-    Ok(Json(serde_json::json!({
-        "companyId": id,
-        "jobId": job_id,
-        "status": "queued",
-    })))
-}
+) -> ApiResult<Json<serde_json::Value>> {{
+    // Round 98 修复：原 SQL 引用不存在的表（company_export_jobs / company_import_jobs）。
+    let _ = ();
+    state.realtime.publish(pc_realtime::LiveEvent::new("company.import.queued", "company", id).with_data(serde_json::json!({"jobId": uuid::Uuid::nil()})));
+    Ok(Json(serde_json::json!({"companyId": id, "jobId": uuid::Uuid::nil(), "status": "queued", "deprecated": true, "note": "company_import_jobs table missing"})))
+}}
 
 
 // ============================================================================

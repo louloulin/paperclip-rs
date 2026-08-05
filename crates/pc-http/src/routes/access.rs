@@ -134,25 +134,16 @@ async fn board_claim(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, String, Option<Uuid>, String)> = sqlx::query_as(
-        "SELECT id, kind, company_id, status FROM board_claim_tokens WHERE token = $1 LIMIT 1",
-    )
-    .bind(&token)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let Some((id, kind, company_id, status)) = row else {
-        return Ok(Json(
-            json!({"token": token, "kind": "board-claim", "valid": false, "reason": "not found"}),
-        ));
-    };
+    // Round 98 修复：原 SQL 引用不存在的 `board_claim_tokens` 表；
+    // 真实表是 `board_api_keys`（语义不同：API key 持久 vs claim token 一次性）。
+    // 这里 stub 为 404-valid-false，保留 URL 兼容。
+    let _ = (&state, &token);
     Ok(Json(json!({
-        "id": id,
         "token": token,
-        "kind": kind,
-        "companyId": company_id,
-        "status": status,
-        "valid": status == "pending",
+        "kind": "board-claim",
+        "valid": false,
+        "reason": "deprecated: board_claim_tokens table missing in v3 schema",
+        "deprecated": true,
     })))
 }
 
@@ -161,50 +152,18 @@ async fn board_claim_token(
     Path(token): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let user_id = body
-        .get("userId")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .or_else(|| Some("local-board".to_string()));
-    // Mark the token as claimed, create a fresh session token.
-    let session_token = Uuid::new_v4().to_string();
-    let session_token_hash = sha2_sha256(&session_token);
-    let expires = chrono::Utc::now() + chrono::Duration::days(7);
-    let mut tx = state
-        .db
-        .pool()
-        .begin()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query(
-        "UPDATE board_claim_tokens SET status = 'claimed', claimed_by = $1, claimed_at = now()          WHERE token = $2 AND status = 'pending'",
-    )
-    .bind(user_id.as_deref())
-    .bind(&token)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    sqlx::query(
-        "INSERT INTO sessions (id, user_id, token_hash, expires_at)          VALUES ($1, $2, $3, $4)",
-    )
-    .bind(Uuid::new_v4())
-    .bind(user_id.as_deref().unwrap_or("local-board"))
-    .bind(&session_token_hash)
-    .bind(expires)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    tx.commit()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok((
-        StatusCode::OK,
+    // Round 98 修复：原 SQL 引用不存在的 `board_claim_tokens` + `sessions` 表。
+    // 真实 auth 走 `board_api_keys`（API key 验证）和 `cli_auth_challenges`（CLI challenge）。
+    // 这里 stub 返回 410 Gone，URL 兼容保留。
+    let _ = (&state, &token, &body);
+    return Ok((
+        StatusCode::GONE,
         Json(json!({
-            "claimed": true,
-            "sessionToken": session_token,
-            "expiresAt": expires.to_rfc3339(),
+            "claimed": false,
+            "deprecated": true,
+            "reason": "board_claim_tokens / sessions tables missing in v3 schema;                        use POST /api/auth/cli-authorize or board_api_keys instead",
         })),
-    ))
+    ));
 }
 
 async fn bootstrap_claim(
