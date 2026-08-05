@@ -1792,9 +1792,59 @@ issues.rs 38 → 34 SQL（-4）。仓储化 feedback_traces 子模块 4 个路�
 - issues.rs SQL 数 38 → 34（-4，feedback_traces 子模块 4 端点合并到 FeedbackTraceRepo）
 - 累计 Round 95-135 修复 **142+4=146 个路由从 500 → 200**
 
-### 下一轮方向（Round 136+）
-issues.rs 还剩 34 SQL，主要在：
-- relations 子模块（~10 SQL：issue_cases / issue_runs / start/cancel/restart，line 2531+）
+## 59. 第一百三十六轮增量（Round 136 — issues.rs relations 子模块仓储化（list 路径）)
+
+### 目标
+issues.rs 34 → 32 SQL（-2）。仓储化 relations 子模块 2 个 list 路由：
+- `list_issue_cases` → `CaseRepo::list_issue_cases`
+- `list_issue_runs` → `HeartbeatRepo::list_runs_by_issue`
+
+### 复用既有仓储方法
+**`pc_repos::case::CaseRepo`**
+- `list_issue_cases(issue_id) -> Vec<IssueCaseLinkRow>`（Round 119 已实现）
+  - SELECT cil JOIN cases 投影
+  - 返回 `IssueCaseLinkRow { link_id, case_id, role, project_id, parent_case_id, status, linked_at }`
+
+**`pc_repos::heartbeat::HeartbeatRepo`**
+- `list_runs_by_issue(issue_id, limit) -> Vec<HeartbeatRow>`（Round 107 已实现）
+  - 关系走 `context_snapshot->>'issueId'` 字段（heartbeat_runs 无 issue_id 列）
+  - limit 自动 clamp 到 [1, 500]
+
+### 重构 `issues.rs` 2 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/issues/:id/cases` | 1 SELECT case_issue_links | CaseRepo::list_issue_cases |
+| `GET /api/issues/:id/runs` | 1 SELECT heartbeat_runs（带 sub-select company_id） | HeartbeatRepo::list_runs_by_issue |
+
+### 设计要点
+- **`list_issue_cases` 增强输出**：原 route 仅返回 link_id/case_id/issue_id/role 四字段；改用 `IssueCaseLinkRow` 后多输出 caseStatus / projectId / parent_case_id / linked_at，便于 UI 展示。
+- **`list_runs_by_issue` 公司过滤**：原 route 带 `WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)` 子查询过滤；改用 `HeartbeatRepo::list_runs_by_issue` 后无 company 过滤（依赖 context_snapshot->>'issueId' 唯一性）。语义上等价（每个 issueId 全局唯一对应 issue）。
+- **start_issue_run / cancel_issue_run / restart_issue_run 暂未动**：涉及复合事务 + realtime event publish，本次保持原样（仍 7 SQL），留作后续单独 round。
+- **get_issue_run 暂未动**：需要 HeartbeatRepo 新增 `get_with_context` 方法返回 context_snapshot 元组；后续 round 补齐。
+
+### 新增集成测试 8 个 (`crates/pc-repos/tests/round136_issue_relations_repo.rs`)
+**CaseRepo::list_issue_cases (4 个)**
+1. `list_issue_cases_empty` — 空 issue 返回空
+2. `list_issue_cases_returns_links` — 列出 primary + secondary 角色
+3. `list_issue_cases_isolates` — 跨 issue 隔离
+4. `list_issue_cases_full_fields` — 字段投影含 caseStatus / projectId
+
+**HeartbeatRepo::list_runs_by_issue (4 个)**
+5. `list_runs_by_issue_empty` — 空 issue 返回空
+6. `list_runs_by_issue_filters_by_context` — context_snapshot->>'issueId' 过滤
+7. `list_runs_by_issue_respects_limit` — LIMIT 生效
+8. `list_runs_by_issue_clamps_limit` — limit 自动 clamp [1, 500]
+
+### 进度影响
+- 综合进度从 **≈ 98.3% → ≈ 98.4%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round136_*` 0 errors
+- 36 个 pc-repos 集成测试文件累计 243+8=251 test 函数
+- issues.rs SQL 数 34 → 32（-2，list 路径合并到既有仓储）
+- 累计 Round 95-136 修复 **146+2=148 个路由从 500 → 200**
+
+### 下一轮方向（Round 137+）
+issues.rs 还剩 32 SQL，主要在：
+- relations 子模块剩余（~7 SQL：get_issue_run / cancel_issue_run / restart_issue_run / start_issue_run 复合事务，line 2573+）
 - tree_holds 子模块（~15 SQL：list/create/get/preview，line 2885+）
 - diagnostics 子模块（~10 SQL：blockers/wakes/subtree，line 3086+）
 

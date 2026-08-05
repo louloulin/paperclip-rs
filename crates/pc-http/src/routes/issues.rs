@@ -17,6 +17,8 @@ use pc_realtime::LiveEvent;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
 use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
+use pc_repos::case::CaseRepo;
+use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -2505,12 +2507,14 @@ async fn list_issue_cases(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, Uuid, Uuid, String)> = sqlx::query_as(
-        "SELECT id, case_id, issue_id, role
-         FROM case_issue_links WHERE issue_id=$1",
-    ).bind(id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(lid, cid, iid, role)| json!({
-        "linkId": lid, "caseId": cid, "issueId": iid, "role": role,
+    let rows = CaseRepo::new(&state.db).list_issue_cases(id).await?;
+    let items: Vec<Value> = rows.into_iter().map(|r| json!({
+        "linkId": r.link_id,
+        "caseId": r.case_id,
+        "issueId": id,
+        "role": r.role,
+        "caseStatus": r.status,
+        "projectId": r.project_id,
     })).collect();
     Ok(Json(json!({"items": items, "issueId": id})))
 }
@@ -2520,16 +2524,18 @@ async fn list_issue_runs(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // Round 30: heartbeat_runs 没有 issue_id 列 — 关系走 context_snapshot->>'issueId'
-    let rows: Vec<(Uuid, Uuid, String, String, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<String>)> = sqlx::query_as(
-        "SELECT id, agent_id, status, invocation_source, started_at, finished_at, created_at, error
-         FROM heartbeat_runs
-         WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)
-           AND context_snapshot ->> 'issueId' = $1::text
-         ORDER BY created_at DESC LIMIT 100",
-    ).bind(id).fetch_all(state.db.pool()).await?;
-    let items: Vec<Value> = rows.into_iter().map(|(rid, aid, st, src, started, finished, created, err)| json!({
-        "id": rid, "issueId": id, "agentId": aid, "status": st, "invocationSource": src,
-        "startedAt": started, "finishedAt": finished, "createdAt": created, "error": err,
+    let rows = HeartbeatRepo::new(&state.db).list_runs_by_issue(id, 100).await?;
+    let items: Vec<Value> = rows.into_iter().map(|r| json!({
+        "id": r.id,
+        "issueId": id,
+        "companyId": r.company_id,
+        "agentId": r.agent_id,
+        "status": r.status,
+        "invocationSource": r.invocation_source,
+        "startedAt": r.started_at,
+        "finishedAt": r.finished_at,
+        "createdAt": r.created_at,
+        "error": r.error,
     })).collect();
     Ok(Json(json!({"items": items, "issueId": id, "count": items.len()})))
 }
@@ -2643,10 +2649,14 @@ async fn start_issue_run(
         "forceFreshSession": body.force_fresh_session.unwrap_or(false),
     });
     let run_id = Uuid::new_v4();
+    // 直接 INSERT heartbeat_run（复用现有 INSERT 模式，与 HeartbeatRepo::create 略有不同：
+    // status='queued' 而非默认 status 由 DB 默认决定）
     sqlx::query(
-        "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot)
+        "INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot) \
          VALUES ($1, $2, $3, 'on_demand', 'queued', $4)",
-    ).bind(run_id).bind(company_id).bind(agent_id).bind(&ctx).execute(state.db.pool()).await?;
+    )
+    .bind(run_id).bind(company_id).bind(agent_id).bind(&ctx)
+    .execute(state.db.pool()).await?;
     state.realtime.publish(
         LiveEvent::new("issue.run_started", "heartbeat_run", run_id)
             .with_company(company_id)
