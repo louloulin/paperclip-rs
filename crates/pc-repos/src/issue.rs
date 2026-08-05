@@ -1369,6 +1369,25 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+    /// Round 218: 删除指定 issue + user 的已读状态。
+    ///
+    /// 与 Node `svc.markUnread` 对齐 — 用于撤销标记未读。
+    /// 返回是否实际删除（false 表示原本就不存在）。
+    pub async fn delete_read_state(
+        &self,
+        issue_id: Uuid,
+        user_id: &str,
+    ) -> sqlx::Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM issue_read_states WHERE issue_id = $1 AND user_id = $2",
+        )
+        .bind(issue_id)
+        .bind(user_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     // ---------- inbox archive ----------
 
     pub async fn list_inbox_archives(

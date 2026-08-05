@@ -2532,15 +2532,28 @@ struct IssueListQuery {
 // Patches for /api/issues/* sub-routes (Round 20)
 // ============================================================================
 
+/// Round 218: DELETE /api/issues/:id/read — 撤销已读标记。
+///
+/// 与 Node `markUnread` 对齐：仅 board 用户可调用。
 async fn unmark_read_route(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     headers: axum::http::HeaderMap,
-) -> ApiResult<Json<Value>> {{
-    // Round 96 修复：原 inline SQL 引用不存在的表。
-    let _ = ();
-    Ok(Json(json!({"read": false, "deprecated": true, "note": "issue_read_state table missing in v3 schema"})))
-}}
+) -> ApiResult<Json<Value>> {
+    let user_id = crate::state::require_user_id(&state, &headers).await?;
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let removed = IssueRepo::new(&state.db)
+        .delete_read_state(id, &user_id)
+        .await?;
+    Ok(Json(json!({
+        "id": id,
+        "companyId": issue.company_id,
+        "removed": removed,
+    })))
+}
 
 async fn issue_activity(
     State(state): State<AppState>,
