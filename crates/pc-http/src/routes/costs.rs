@@ -10,10 +10,13 @@ use chrono::{DateTime, Utc};
 use pc_repos::cost::{CostRange, CostRepo, CreateCostEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_repos::agent::AgentRepo;
+use pc_repos::approval::ApprovalRepo;
+use pc_repos::company::CompanyRepo;
+use pc_repos::project::ProjectRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -251,31 +254,28 @@ async fn quota_windows() -> Json<Vec<Value>> {
     Json(Vec::new())
 }
 
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct BudgetCounts {
-    pending_approvals: i64,
-    paused_agents: i64,
-    paused_projects: i64,
-}
-
 async fn budget_overview(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let counts = sqlx::query_as::<_, BudgetCounts>(
-        "SELECT (SELECT COUNT(*) FROM approvals WHERE company_id = $1 AND status = 'pending')::bigint AS pending_approvals, \
-                (SELECT COUNT(*) FROM agents WHERE company_id = $1 AND status = 'paused')::bigint AS paused_agents, \
-                (SELECT COUNT(*) FROM projects WHERE company_id = $1 AND status = 'paused')::bigint AS paused_projects",
-    )
-    .bind(company_id)
-    .fetch_one(state.db.pool())
-    .await?;
+    let repo = ApprovalRepo::new(&state.db);
+    let pending_approvals = repo
+        .count_pending(company_id)
+        .await
+        .unwrap_or(0);
+    let paused_agents = AgentRepo::new(&state.db)
+        .count_paused_for_company(company_id)
+        .await
+        .unwrap_or(0);
+    let paused_projects = ProjectRepo::new(&state.db)
+        .count_paused(company_id)
+        .await
+        .unwrap_or(0);
     Ok(Json(json!({
         "activeIncidents": [],
-        "pendingApprovalCount": counts.pending_approvals,
-        "pausedAgentCount": counts.paused_agents,
-        "pausedProjectCount": counts.paused_projects,
+        "pendingApprovalCount": pending_approvals,
+        "pausedAgentCount": paused_agents,
+        "pausedProjectCount": paused_projects,
         "policies": []
     })))
 }
@@ -296,26 +296,14 @@ async fn update_company_budget(
             "budgetMonthlyCents must be non-negative".to_owned(),
         ));
     }
-    let row = sqlx::query_as::<_, ValueRow>(
-        "UPDATE companies SET budget_monthly_cents = $2, updated_at = now() \
-         WHERE id = $1 RETURNING id, budget_monthly_cents",
-    )
-    .bind(company_id)
-    .bind(body.budget_monthly_cents)
-    .fetch_optional(state.db.pool())
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("company {company_id}")))?;
+    let (id, budget_monthly_cents) = CompanyRepo::new(&state.db)
+        .set_budget(company_id, body.budget_monthly_cents)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("company {company_id}")))?;
     Ok(Json(json!({
-        "id": row.id,
-        "budgetMonthlyCents": row.budget_monthly_cents
+        "id": id,
+        "budgetMonthlyCents": budget_monthly_cents
     })))
-}
-
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct ValueRow {
-    id: Uuid,
-    budget_monthly_cents: i32,
 }
 
 async fn update_agent_budget(
@@ -328,30 +316,17 @@ async fn update_agent_budget(
             "budgetMonthlyCents must be non-negative".to_owned(),
         ));
     }
-    let row = sqlx::query_as::<_, AgentBudgetRow>(
-        "UPDATE agents SET budget_monthly_cents = $2, updated_at = now() \
-         WHERE id = $1 RETURNING id, company_id, budget_monthly_cents, spent_monthly_cents",
-    )
-    .bind(agent_id)
-    .bind(body.budget_monthly_cents)
-    .fetch_optional(state.db.pool())
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    let (id, company_id_ret, budget_monthly_cents, spent_monthly_cents) =
+        AgentRepo::new(&state.db)
+            .set_budget(agent_id, body.budget_monthly_cents)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
     Ok(Json(json!({
-        "id": row.id,
-        "companyId": row.company_id,
-        "budgetMonthlyCents": row.budget_monthly_cents,
-        "spentMonthlyCents": row.spent_monthly_cents
+        "id": id,
+        "companyId": company_id_ret,
+        "budgetMonthlyCents": budget_monthly_cents,
+        "spentMonthlyCents": spent_monthly_cents
     })))
-}
-
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct AgentBudgetRow {
-    id: Uuid,
-    company_id: Uuid,
-    budget_monthly_cents: i32,
-    spent_monthly_cents: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -368,36 +343,15 @@ struct IssueCostSummary {
     runtime_ms: i64,
 }
 
-#[derive(Debug, FromRow)]
-#[allow(dead_code)]
-struct IssueCostRow {
-    cost_cents: i64,
-    input_tokens: i64,
-    cached_input_tokens: i64,
-    output_tokens: i64,
-    run_count: i64,
-    runtime_ms: i64,
-}
-
 async fn issue_cost_summary(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
     Query(query): Query<IssueCostQuery>,
 ) -> ApiResult<Json<IssueCostSummary>> {
-    let row = sqlx::query_as::<_, IssueCostRow>(
-        "SELECT COALESCE(SUM(ce.cost_cents),0)::bigint AS cost_cents, \
-                COALESCE(SUM(ce.input_tokens),0)::bigint AS input_tokens, \
-                COALESCE(SUM(ce.cached_input_tokens),0)::bigint AS cached_input_tokens, \
-                COALESCE(SUM(ce.output_tokens),0)::bigint AS output_tokens, \
-                COUNT(DISTINCT ce.heartbeat_run_id)::bigint AS run_count, \
-                COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(hr.finished_at, now()) - hr.started_at)) * 1000),0)::bigint AS runtime_ms \
-         FROM issues i LEFT JOIN cost_events ce ON ce.issue_id = i.id \
-         LEFT JOIN heartbeat_runs hr ON hr.id = ce.heartbeat_run_id WHERE i.id = $1 GROUP BY i.company_id",
-    )
-    .bind(issue_id)
-    .fetch_optional(state.db.pool())
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+    let row = CostRepo::new(&state.db)
+        .issue_summary(issue_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     Ok(Json(IssueCostSummary {
         issue_id,
         issue_count: i64::from(!query.exclude_root),

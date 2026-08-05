@@ -438,6 +438,23 @@ impl<'a> CompanyRepo<'a> {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
+    /// Round 176: 设置 company 的 budget_monthly_cents，返回更新后的 (id, budget) 元组。
+    pub async fn set_budget(
+        &self,
+        company_id: Uuid,
+        budget_monthly_cents: i32,
+    ) -> sqlx::Result<Option<(Uuid, i32)>> {
+        let row: Option<(Uuid, i32)> = sqlx::query_as(
+            "UPDATE companies SET budget_monthly_cents = $2, updated_at = now() \
+             WHERE id = $1 RETURNING id, budget_monthly_cents",
+        )
+        .bind(company_id)
+        .bind(budget_monthly_cents)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
 }
 
 #[cfg(test)]

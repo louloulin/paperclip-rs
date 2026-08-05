@@ -246,6 +246,17 @@ fn default_billing_type() -> String {
     "unknown".to_owned()
 }
 
+
+#[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct IssueCostSummaryRow {
+    pub cost_cents: i64,
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub run_count: i64,
+    pub runtime_ms: i64,
+}
+
 pub struct CostRepo<'a> {
     pub db: &'a Db,
 }
@@ -435,6 +446,25 @@ impl<'a> CostRepo<'a> {
         .fetch_all(self.db.pool())
         .await
     }
+    /// Round 176: 统计单个 issue 的成本/输入/输出/运行数/运行时间（聚合 issues+cost_events+heartbeat_runs）。
+    pub async fn issue_summary(&self, issue_id: Uuid) -> sqlx::Result<Option<IssueCostSummaryRow>> {
+        sqlx::query_as::<_, IssueCostSummaryRow>(
+            "SELECT COALESCE(SUM(ce.cost_cents),0)::bigint AS cost_cents, \
+                    COALESCE(SUM(ce.input_tokens),0)::bigint AS input_tokens, \
+                    COALESCE(SUM(ce.cached_input_tokens),0)::bigint AS cached_input_tokens, \
+                    COALESCE(SUM(ce.output_tokens),0)::bigint AS output_tokens, \
+                    COUNT(DISTINCT ce.heartbeat_run_id)::bigint AS run_count, \
+                    COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(hr.finished_at, now()) - hr.started_at)) * 1000),0)::bigint AS runtime_ms \
+             FROM issues i LEFT JOIN cost_events ce ON ce.issue_id = i.id \
+             LEFT JOIN heartbeat_runs hr ON hr.id = ce.heartbeat_run_id WHERE i.id = $1 GROUP BY i.company_id",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+
+
 
     pub async fn window_spend(&self, company_id: Uuid) -> sqlx::Result<Vec<CostWindowSpendRow>> {
         sqlx::query_as::<_, CostWindowSpendRow>(
@@ -878,4 +908,5 @@ mod finance_create_tests {
             "Issue does not belong to company"
         );
     }
+
 }
