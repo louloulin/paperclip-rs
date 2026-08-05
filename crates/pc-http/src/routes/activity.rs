@@ -14,6 +14,9 @@ use uuid::Uuid;
 use pc_activity::{ActivityActor, ActivityEvent, ActivityFilter, ActivityKind};
 
 use crate::{require_user_id, ApiError, ApiResult, AppState};
+use pc_repos::company_member::CompanyMemberRepo;
+use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -196,13 +199,10 @@ async fn heartbeat_run_issues(
     let _user_id = require_user_id(&state, &headers).await?;
 
     // Resolve the run + company in one query.
-    let row: Option<(Uuid, Option<Value>)> = sqlx::query_as(
-        "SELECT company_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
-    )
-    .bind(run_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = HeartbeatRepo::new(&state.db)
+        .get_company_and_context(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let (company_id, context_snapshot) = match row {
         Some(v) => v,
@@ -210,16 +210,11 @@ async fn heartbeat_run_issues(
     };
 
     // Cross-tenant check: must be a member of the run's company.
-    let membership: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM company_memberships WHERE company_id = $1 AND principal_id = $2 AND status = 'active'",
-    )
-    .bind(company_id)
-    .bind(&_user_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    if membership.is_none() {
+    if !CompanyMemberRepo::new(&state.db)
+        .has_active_membership(company_id, &_user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
         // Indistinguishable 200 [] for cross-tenant.
         return Ok(Json(json!([])));
     }
@@ -232,27 +227,23 @@ async fn heartbeat_run_issues(
         .map(|s| s.to_owned());
 
     // Fetch issues linked to this run via execution_run_id / checkout_run_id.
-    let rows: Vec<(Uuid, Option<String>, String, String, String, String)> = sqlx::query_as(
-        "SELECT i.id, i.identifier, i.title, i.status::text, i.priority::text, COALESCE(i.kind::text,'issue')          FROM issues i          WHERE i.company_id = $1            AND (i.execution_run_id = $2 OR i.checkout_run_id = $2)          ORDER BY i.updated_at DESC          LIMIT 200",
-    )
-    .bind(company_id)
-    .bind(run_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = IssueRepo::new(&state.db)
+        .list_for_run(company_id, run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     use std::collections::BTreeSet;
-    let mut seen: BTreeSet<String> = rows.iter().map(|(id, _, _, _, _, _)| id.to_string()).collect();
+    let mut seen: BTreeSet<String> = rows.iter().map(|r| r.id.to_string()).collect();
     let mut items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, identifier, title, status, priority, kind)| {
+        .map(|r| {
             json!({
-                "id": id,
-                "identifier": identifier,
-                "title": title,
-                "status": status,
-                "priority": priority,
-                "kind": kind,
+                "id": r.id,
+                "identifier": r.identifier,
+                "title": r.title,
+                "status": r.status,
+                "priority": r.priority,
+                "kind": r.kind,
             })
         })
         .collect();
@@ -261,22 +252,17 @@ async fn heartbeat_run_issues(
     if let Some(ctx_id) = context_issue_id {
         if !seen.contains(&ctx_id) {
             if let Ok(uuid) = Uuid::parse_str(&ctx_id) {
-                if let Some((id, identifier, title, status, priority, kind)) = sqlx::query_as::<_, (Uuid, Option<String>, String, String, String, String)>(
-                    "SELECT i.id, i.identifier, i.title, i.status::text, i.priority::text, COALESCE(i.kind::text,'issue')                      FROM issues i WHERE i.company_id = $1 AND i.id = $2",
-                )
-                .bind(company_id)
-                .bind(uuid)
-                .fetch_optional(state.db.pool())
-                .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?
+                if let Ok(Some(r)) = IssueRepo::new(&state.db)
+                    .get_run_link_summary(company_id, uuid)
+                    .await
                 {
                     items.push(json!({
-                        "id": id,
-                        "identifier": identifier,
-                        "title": title,
-                        "status": status,
-                        "priority": priority,
-                        "kind": kind,
+                        "id": r.id,
+                        "identifier": r.identifier,
+                        "title": r.title,
+                        "status": r.status,
+                        "priority": r.priority,
+                        "kind": r.kind,
                     }));
                 }
             }

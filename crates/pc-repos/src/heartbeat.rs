@@ -1182,6 +1182,20 @@ impl<'a> HeartbeatRepo<'a> {
         .fetch_all(self.db.pool())
         .await
     }
+    /// Round 178: activity 心跳关联接口 —— 取 (company_id, context_snapshot)。
+    pub async fn get_company_and_context(
+        &self,
+        run_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Option<serde_json::Value>)>> {
+        let row: Option<(Uuid, Option<serde_json::Value>)> = sqlx::query_as(
+            "SELECT company_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
 
 }
 

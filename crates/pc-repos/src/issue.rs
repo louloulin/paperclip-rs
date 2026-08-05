@@ -364,6 +364,16 @@ pub struct BlockedAttentionRow {
     pub updated_at: pc_core::Timestamp,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct IssueRunLinkRow {
+    pub id: Uuid,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub kind: String,
+}
+
 pub struct IssueRepo<'a> {
     pub db: &'a Db,
 }
@@ -554,6 +564,43 @@ impl<'a> IssueRepo<'a> {
         )
         .bind(company_id)
         .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 178: activity 心跳关联接口 —— 列出某 run 关联的 issues（execution_run_id OR checkout_run_id）。
+    pub async fn list_for_run(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueRunLinkRow>> {
+        sqlx::query_as::<_, IssueRunLinkRow>(
+            "SELECT i.id, i.identifier, i.title, i.status::text, i.priority::text, \
+                    COALESCE(i.kind::text,'issue') \
+             FROM issues i \
+             WHERE i.company_id = $1 \
+               AND (i.execution_run_id = $2 OR i.checkout_run_id = $2) \
+             ORDER BY i.updated_at DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .bind(run_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 178: activity 心跳关联接口 —— 按 id 取单个 issue 的运行关联摘要。
+    pub async fn get_run_link_summary(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<IssueRunLinkRow>> {
+        sqlx::query_as::<_, IssueRunLinkRow>(
+            "SELECT i.id, i.identifier, i.title, i.status::text, i.priority::text, \
+                    COALESCE(i.kind::text,'issue') \
+             FROM issues i WHERE i.company_id = $1 AND i.id = $2",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
         .await
     }
 

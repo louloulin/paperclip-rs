@@ -293,6 +293,23 @@ impl<'a> CompanyMemberRepo<'a> {
         Ok(n)
     }
 
+    /// Round 178: activity 心跳关联接口 —— 检查 principal_id 是否为公司 active member。
+    pub async fn has_active_membership(
+        &self,
+        company_id: Uuid,
+        principal_id: &str,
+    ) -> RepoResult<bool> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM company_memberships \
+             WHERE company_id = $1 AND principal_id = $2 AND status = 'active'",
+        )
+        .bind(company_id)
+        .bind(principal_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.is_some())
+    }
+
     /// Round 140: 列出某用户所有所属公司 id（含 archived/active）。供 profile 端点用。
     pub async fn list_company_ids_for_user(&self, user_id: &str) -> RepoResult<Vec<Uuid>> {
         let rows: Vec<(Uuid,)> = sqlx::query_as(
