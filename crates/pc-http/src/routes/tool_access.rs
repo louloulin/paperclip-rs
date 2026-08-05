@@ -1539,72 +1539,60 @@ async fn duplicate_tool_policy_route(
     Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<DuplicateToolPolicyBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let src: Option<(String, Option<String>, String, i32, bool, Value, Option<Value>, Option<Value>)> = sqlx::query_as(
-        "SELECT name, description, policy_type, priority, enabled, selectors, conditions, config \
-         FROM tool_policies WHERE company_id = $1 AND id = $2",
-    )
-    .bind(company_id)
-    .bind(policy_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let (src_name, src_desc, policy_type, priority, enabled, selectors, conditions, config) = src
+    let repo = ToolRepo::new(&state.db);
+    let src = repo
+        .get_policy(company_id, policy_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool policy {policy_id}")))?;
 
     let new_name = body
         .name
         .clone()
-        .unwrap_or_else(|| format!("{src_name} (copy)"));
-    // Reject duplicate names
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2",
-    )
-    .bind(company_id)
-    .bind(&new_name)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_some() {
+        .unwrap_or_else(|| format!("{} (copy)", src.name));
+    if repo
+        .find_policy_id_by_name(company_id, &new_name)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::Conflict(format!("tool policy {new_name} already exists")));
     }
 
     let new_enabled = body.enabled.unwrap_or(false); // duplicates default to disabled
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_policies (company_id, name, description, policy_type, priority, enabled, selectors, conditions, config) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&new_name)
-    .bind(src_desc.as_deref())
-    .bind(&policy_type)
-    .bind(priority)
-    .bind(new_enabled)
-    .bind(&selectors)
-    .bind(conditions.clone().unwrap_or_else(|| json!({})))
-    .bind(config.clone().unwrap_or_else(|| json!({})))
-    .fetch_one(state.db.pool())
-    .await?;
+    let new_row = repo
+        .create_policy(&pc_repos::tool::NewToolPolicy {
+            company_id,
+            name: new_name.clone(),
+            description: src.description.clone(),
+            policy_type: src.policy_type.clone(),
+            priority: src.priority,
+            enabled: new_enabled,
+            selectors: src.selectors.clone(),
+            conditions: src.conditions.clone().unwrap_or_else(|| json!({})),
+            config: src.config.clone().unwrap_or_else(|| json!({})),
+            created_by_agent_id: None,
+            created_by_user_id: None,
+        })
+        .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.policy.duplicated", "tool_policy", row.0).with_company(company_id),
+        LiveEvent::new("tool.policy.duplicated", "tool_policy", new_row.id).with_company(company_id),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": row.0,
+            "id": new_row.id,
             "companyId": company_id,
             "name": new_name,
-            "description": src_desc,
-            "policyType": policy_type,
-            "priority": priority,
-            "enabled": new_enabled,
-            "selectors": selectors,
-            "conditions": conditions,
-            "config": config,
+            "description": new_row.description,
+            "policyType": new_row.policy_type,
+            "priority": new_row.priority,
+            "enabled": new_row.enabled,
+            "selectors": new_row.selectors,
+            "conditions": new_row.conditions,
+            "config": new_row.config,
             "sourcePolicyId": policy_id,
         })),
     ))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateToolPolicyBody {
@@ -1622,47 +1610,31 @@ async fn patch_tool_policy_route(
     Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateToolPolicyBody>,
 ) -> ApiResult<Json<Value>> {
+    let repo = ToolRepo::new(&state.db);
     // Reject name collisions
     if let Some(ref name) = body.name {
-        let dup: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2 AND id <> $3",
-        )
-        .bind(company_id)
-        .bind(name)
-        .bind(policy_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten();
-        if dup.is_some() {
+        if repo
+            .find_policy_id_by_name_excluding(company_id, name, policy_id)
+            .await?
+            .is_some()
+        {
             return Err(ApiError::Conflict(format!("tool policy {name} already exists")));
         }
     }
-    let affected = sqlx::query(
-        "UPDATE tool_policies SET \
-            name = COALESCE($1, name), \
-            description = COALESCE($2, description), \
-            priority = COALESCE($3, priority), \
-            enabled = COALESCE($4, enabled), \
-            selectors = COALESCE($5, selectors), \
-            conditions = COALESCE($6, conditions), \
-            config = COALESCE($7, config), \
-            updated_at = now() \
-         WHERE company_id = $8 AND id = $9",
-    )
-    .bind(body.name.as_deref())
-    .bind(body.description.as_deref())
-    .bind(body.priority)
-    .bind(body.enabled)
-    .bind(body.selectors.clone())
-    .bind(body.conditions.clone())
-    .bind(body.config.clone())
-    .bind(company_id)
-    .bind(policy_id)
-    .execute(state.db.pool())
-    .await?
-    .rows_affected();
-    if affected == 0 {
+    let updated = repo
+        .patch_policy(
+            company_id,
+            policy_id,
+            body.name.as_deref(),
+            body.description.as_deref(),
+            body.priority,
+            body.enabled,
+            body.selectors.as_ref(),
+            body.conditions.as_ref(),
+            body.config.as_ref(),
+        )
+        .await?;
+    if !updated {
         return Err(ApiError::NotFound(format!("tool policy {policy_id}")));
     }
     state.realtime.publish(
@@ -1674,8 +1646,6 @@ async fn patch_tool_policy_route(
         "updated": true,
     })))
 }
-
-// Round 104: 仓储化。
 async fn delete_tool_policy_route(
     State(state): State<AppState>,
     Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
@@ -1704,35 +1674,29 @@ async fn list_trust_rules_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(Uuid, String, Option<String>, String, i32, bool, Value, Option<Value>, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, name, description, policy_type, priority, enabled, selectors, conditions, updated_at \
-         FROM tool_policies WHERE company_id = $1 AND (policy_type = 'trust' OR policy_type = 'tool_trust_rule' OR selectors ? 'trustRuleKey') \
-         ORDER BY updated_at DESC LIMIT 200",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let rows = ToolRepo::new(&state.db)
+        .list_trust_rules(company_id)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, description, policy_type, priority, enabled, selectors, conditions, updated_at)| {
+        .map(|row| {
             json!({
-                "id": id,
+                "id": row.id,
                 "companyId": company_id,
-                "name": name,
-                "description": description,
-                "policyType": policy_type,
-                "priority": priority,
-                "enabled": enabled,
-                "selectors": selectors,
-                "conditions": conditions,
-                "updatedAt": updated_at,
+                "name": row.name,
+                "description": row.description,
+                "policyType": row.policy_type,
+                "priority": row.priority,
+                "enabled": row.enabled,
+                "selectors": row.selectors,
+                "conditions": row.conditions,
+                "updatedAt": row.updated_at,
             })
         })
         .collect();
     Ok(Json(json!({ "items": items, "trustRules": items })))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RevokeTrustRuleBody {
@@ -1744,29 +1708,12 @@ async fn revoke_trust_rule_route(
     Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RevokeTrustRuleBody>,
 ) -> ApiResult<Json<Value>> {
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_policies WHERE company_id = $1 AND id = $2 AND (policy_type = 'trust' OR policy_type = 'tool_trust_rule')",
-    )
-    .bind(company_id)
-    .bind(policy_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_none() {
+    let repo = ToolRepo::new(&state.db);
+    if !repo.is_trust_rule(company_id, policy_id).await? {
         return Err(ApiError::NotFound(format!("trust rule {policy_id}")));
     }
-    sqlx::query(
-        "UPDATE tool_policies SET enabled = false, \
-            config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('revokedAt', to_jsonb(now()), 'revokeReason', to_jsonb($1::text)), \
-            updated_at = now() \
-         WHERE company_id = $2 AND id = $3",
-    )
-    .bind(body.reason.clone().unwrap_or_default())
-    .bind(company_id)
-    .bind(policy_id)
-    .execute(state.db.pool())
-    .await?;
+    repo.revoke_trust_rule(company_id, policy_id, body.reason.as_deref())
+        .await?;
     state.realtime.publish(
         LiveEvent::new("tool.trust_rule.revoked", "tool_policy", policy_id)
             .with_company(company_id)
@@ -1779,7 +1726,6 @@ async fn revoke_trust_rule_route(
         "reason": body.reason,
     })))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateTrustRuleFromActionRequestBody {
@@ -1795,31 +1741,24 @@ async fn create_trust_rule_from_action_request_route(
     Path((company_id, action_request_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<CreateTrustRuleFromActionRequestBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let repo = ToolRepo::new(&state.db);
     // Fetch action_request to derive selectors
-    let ar: Option<(Value, Option<Uuid>, Option<Uuid>, Option<String>)> = sqlx::query_as(
-        "SELECT canonical_arguments_summary, application_id, connection_id, tool_name \
-         FROM tool_action_requests WHERE company_id = $1 AND id = $2",
-    )
-    .bind(company_id)
-    .bind(action_request_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    let (summary, application_id, connection_id, tool_name) = ar
+    let ar = repo
+        .find_action_request_for_trust_rule(company_id, action_request_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("action request {action_request_id}")))?;
 
     let mut selectors = body.selectors.clone().unwrap_or_else(|| json!({}));
     if !selectors.is_object() {
         selectors = json!({});
     }
-    if let Some(app_id) = application_id {
+    if let Some(app_id) = ar.application_id {
         selectors["applicationId"] = json!(app_id);
     }
-    if let Some(conn_id) = connection_id {
+    if let Some(conn_id) = ar.connection_id {
         selectors["connectionId"] = json!(conn_id);
     }
-    if let Some(ref name) = tool_name {
+    if let Some(ref name) = ar.tool_name {
         selectors["toolName"] = json!(name);
     }
     if let Some(obj) = selectors.as_object_mut() {
@@ -1830,43 +1769,38 @@ async fn create_trust_rule_from_action_request_route(
         .name
         .clone()
         .unwrap_or_else(|| format!("Trust rule from {action_request_id}"));
-    let exists: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM tool_policies WHERE company_id = $1 AND name = $2",
-    )
-    .bind(company_id)
-    .bind(&name)
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    if exists.is_some() {
+    if repo.find_policy_id_by_name(company_id, &name).await?.is_some() {
         return Err(ApiError::Conflict(format!("tool policy {name} already exists")));
     }
 
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO tool_policies (company_id, name, description, policy_type, priority, enabled, selectors, conditions, config) \
-         VALUES ($1, $2, $3, 'trust', 100, true, $4, $5, $6) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(&name)
-    .bind(body.description.as_deref())
-    .bind(&selectors)
-    .bind(body.conditions.clone().unwrap_or_else(|| json!({})))
-    .bind(body.config.clone().unwrap_or_else(|| json!({
+    let config = body.config.clone().unwrap_or_else(|| json!({
         "sourceActionRequestId": action_request_id,
-        "sourceSummary": summary,
-    })))
-    .fetch_one(state.db.pool())
-    .await?;
+        "sourceSummary": ar.summary,
+    }));
+    let new_row = repo
+        .create_policy(&pc_repos::tool::NewToolPolicy {
+            company_id,
+            name: name.clone(),
+            description: body.description.clone(),
+            policy_type: "trust".to_string(),
+            priority: 100,
+            enabled: true,
+            selectors: selectors.clone(),
+            conditions: body.conditions.clone().unwrap_or_else(|| json!({})),
+            config,
+            created_by_agent_id: None,
+            created_by_user_id: None,
+        })
+        .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.trust_rule.created", "tool_policy", row.0)
+        LiveEvent::new("tool.trust_rule.created", "tool_policy", new_row.id)
             .with_company(company_id)
             .with_data(json!({ "sourceActionRequestId": action_request_id })),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": row.0,
+            "id": new_row.id,
             "companyId": company_id,
             "name": name,
             "description": body.description,
@@ -1875,14 +1809,11 @@ async fn create_trust_rule_from_action_request_route(
             "enabled": true,
             "selectors": selectors,
             "conditions": body.conditions,
-            "config": body.config,
+            "config": new_row.config,
             "sourceActionRequestId": action_request_id,
         })),
     ))
 }
-
-// ── Tool profiles: create / bind / unbind / effective ───────
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateToolProfileV2Body {
@@ -2838,26 +2769,14 @@ async fn review_tool_profile_new_tools(
     Path(profile_id): Path<Uuid>,
     Json(body): Json<ReviewNewToolsBody>,
 ) -> ApiResult<Json<Value>> {
-    let profile: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
-        .bind(profile_id)
-        .fetch_optional(state.db.pool())
+    let repo = ToolRepo::new(&state.db);
+    let company_id = repo
+        .find_profile_company_id(profile_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
+    let approved = repo
+        .approve_new_tools_for_profile(company_id, profile_id, &body.approve)
         .await?;
-    let Some((company_id,)) = profile else {
-        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
-    };
-    let mut approved = 0i64;
-    for app_id in &body.approve {
-        let r = sqlx::query(
-            "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id) \
-             VALUES ($1, $2, 'application', 'include', $3) ON CONFLICT DO NOTHING",
-        )
-        .bind(company_id)
-        .bind(profile_id)
-        .bind(app_id)
-        .execute(state.db.pool())
-        .await?;
-        approved += r.rows_affected() as i64;
-    }
     state.realtime.publish(
         LiveEvent::new("tool_profile.new_tools_reviewed", "tool_profile", profile_id)
             .with_company(company_id)
@@ -2872,7 +2791,6 @@ async fn review_tool_profile_new_tools(
         "dismissedCount": body.dismiss.len(),
     })))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DuplicateToolProfileBody {
@@ -2889,44 +2807,20 @@ async fn duplicate_tool_profile(
     Path(profile_id): Path<Uuid>,
     Json(body): Json<DuplicateToolProfileBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let original: Option<(Uuid, String, String, Option<String>, String, Option<serde_json::Value>)> = sqlx::query_as(
-        "SELECT company_id, profile_key, name, description, status, metadata FROM tool_profiles WHERE id=$1",
-    )
-    .bind(profile_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let Some((company_id, old_key, old_name, description, status, metadata)) = original else {
-        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
-    };
+    let repo = ToolRepo::new(&state.db);
+    let original = repo
+        .find_profile_by_id(profile_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
+    let company_id = original.company_id;
     let new_key = body.profile_key.clone().unwrap_or_else(|| {
         let ts = chrono::Utc::now().timestamp();
-        format!("{}_copy_{}", old_key, ts)
+        format!("{}_copy_{}", original.profile_key, ts)
     });
-    let new_name = body.name.clone().unwrap_or_else(|| format!("{} (copy)", old_name));
-    let mut tx = state.db.pool().begin().await?;
-    let new_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
-         SELECT company_id, $2, $3, description, status, default_action, metadata \
-         FROM tool_profiles WHERE id=$1 RETURNING id",
-    )
-    .bind(profile_id)
-    .bind(&new_key)
-    .bind(&new_name)
-    .fetch_one(&mut *tx)
-    .await?;
-    let _ = sqlx::query(
-        "INSERT INTO tool_profile_entries \
-            (company_id, profile_id, selector_type, effect, application_id, connection_id, \
-             catalog_entry_id, tool_name, risk_level, conditions) \
-         SELECT company_id, $2, selector_type, effect, application_id, connection_id, \
-                catalog_entry_id, tool_name, risk_level, conditions \
-         FROM tool_profile_entries WHERE profile_id=$1",
-    )
-    .bind(profile_id)
-    .bind(new_id)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
+    let new_name = body.name.clone().unwrap_or_else(|| format!("{} (copy)", original.name));
+    let new_id = repo
+        .clone_profile(profile_id, &new_key, &new_name)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("tool_profile.duplicated", "tool_profile", new_id)
             .with_company(company_id)
@@ -2943,14 +2837,13 @@ async fn duplicate_tool_profile(
             "companyId": company_id,
             "profileKey": new_key,
             "name": new_name,
-            "description": description,
-            "status": status,
-            "metadata": metadata,
+            "description": original.description,
+            "status": original.status,
+            "metadata": original.metadata,
             "sourceProfileId": profile_id,
         })),
     ))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateToolProfileEntryBody {
@@ -2979,42 +2872,36 @@ async fn create_tool_profile_entry_for_profile(
     Path(profile_id): Path<Uuid>,
     Json(body): Json<CreateToolProfileEntryBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let profile: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
-        .bind(profile_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let Some((company_id,)) = profile else {
-        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
-    };
+    let repo = ToolRepo::new(&state.db);
+    let company_id = repo
+        .find_profile_company_id(profile_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
     let selector = body.selector_type.unwrap_or_else(|| "tool_name".to_string());
     let effect = body.effect.unwrap_or_else(|| "include".to_string());
-    let entry_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO tool_profile_entries \
-            (company_id, profile_id, selector_type, effect, application_id, connection_id, \
-             catalog_entry_id, tool_name, risk_level, conditions) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(profile_id)
-    .bind(&selector)
-    .bind(&effect)
-    .bind(body.application_id)
-    .bind(body.connection_id)
-    .bind(body.catalog_entry_id)
-    .bind(body.tool_name.as_deref())
-    .bind(body.risk_level.as_deref())
-    .bind(body.conditions.clone().unwrap_or_else(|| serde_json::json!({})))
-    .fetch_one(state.db.pool())
-    .await?;
+    let entry = repo
+        .create_profile_entry(&pc_repos::tool::NewToolProfileEntry {
+            company_id,
+            profile_id,
+            selector_type: selector.clone(),
+            effect: effect.clone(),
+            application_id: body.application_id,
+            connection_id: body.connection_id,
+            catalog_entry_id: body.catalog_entry_id,
+            tool_name: body.tool_name.clone(),
+            risk_level: body.risk_level.clone(),
+            conditions: body.conditions.clone(),
+        })
+        .await?;
     state.realtime.publish(
-        LiveEvent::new("tool_profile_entry.created", "tool_profile_entry", entry_id)
+        LiveEvent::new("tool_profile_entry.created", "tool_profile_entry", entry.id)
             .with_company(company_id)
             .with_data(json!({"profileId": profile_id, "selectorType": selector})),
     );
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "id": entry_id,
+            "id": entry.id,
             "profileId": profile_id,
             "companyId": company_id,
             "selectorType": selector,
@@ -3022,40 +2909,30 @@ async fn create_tool_profile_entry_for_profile(
         })),
     ))
 }
-
-/// `GET /api/tool-profile-entries/:entry_id` — read single entry.
 async fn get_tool_profile_entry(
     State(state): State<AppState>,
     Path(entry_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<(Uuid, Uuid, Uuid, String, String, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<String>, Option<String>, Option<serde_json::Value>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, company_id, profile_id, selector_type, effect, application_id, connection_id, \
-                catalog_entry_id, tool_name, risk_level, conditions, created_at, updated_at \
-         FROM tool_profile_entries WHERE id=$1",
-    )
-    .bind(entry_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let Some((id, company_id, profile_id, selector_type, effect, app_id, conn_id, cat_id, tool_name, risk_level, conditions, created_at, updated_at)) = row else {
-        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
-    };
+    let entry = ToolRepo::new(&state.db)
+        .get_profile_entry_by_id(entry_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile entry {entry_id}")))?;
     Ok(Json(json!({
-        "id": id,
-        "companyId": company_id,
-        "profileId": profile_id,
-        "selectorType": selector_type,
-        "effect": effect,
-        "applicationId": app_id,
-        "connectionId": conn_id,
-        "catalogEntryId": cat_id,
-        "toolName": tool_name,
-        "riskLevel": risk_level,
-        "conditions": conditions,
-        "createdAt": created_at,
-        "updatedAt": updated_at,
+        "id": entry.id,
+        "companyId": entry.company_id,
+        "profileId": entry.profile_id,
+        "selectorType": entry.selector_type,
+        "effect": entry.effect,
+        "applicationId": entry.application_id,
+        "connectionId": entry.connection_id,
+        "catalogEntryId": entry.catalog_entry_id,
+        "toolName": entry.tool_name,
+        "riskLevel": entry.risk_level,
+        "conditions": entry.conditions,
+        "createdAt": entry.created_at.as_datetime(),
+        "updatedAt": entry.updated_at.as_datetime(),
     })))
 }
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PatchToolProfileEntryBody {
@@ -3073,29 +2950,20 @@ async fn patch_tool_profile_entry(
     Path(entry_id): Path<Uuid>,
     Json(body): Json<PatchToolProfileEntryBody>,
 ) -> ApiResult<Json<Value>> {
-    let existing: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profile_entries WHERE id=$1")
-        .bind(entry_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let Some((company_id,)) = existing else {
-        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
-    };
+    let repo = ToolRepo::new(&state.db);
+    let company_id = repo
+        .find_profile_entry_company_id(entry_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile entry {entry_id}")))?;
     if body.effect.is_none() && body.risk_level.is_none() && body.conditions.is_none() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
-    sqlx::query(
-        "UPDATE tool_profile_entries SET \
-            effect=COALESCE($2, effect), \
-            risk_level=COALESCE($3, risk_level), \
-            conditions=COALESCE($4, conditions), \
-            updated_at=now() \
-         WHERE id=$1",
+    repo.patch_profile_entry(
+        entry_id,
+        body.effect.as_deref(),
+        body.risk_level.as_deref(),
+        body.conditions.as_ref(),
     )
-    .bind(entry_id)
-    .bind(body.effect.as_deref())
-    .bind(body.risk_level.as_deref())
-    .bind(body.conditions.clone())
-    .execute(state.db.pool())
     .await?;
     state.realtime.publish(
         LiveEvent::new("tool_profile_entry.updated", "tool_profile_entry", entry_id)
@@ -3103,25 +2971,17 @@ async fn patch_tool_profile_entry(
     );
     Ok(Json(json!({"id": entry_id, "updated": true})))
 }
-
-/// `DELETE /api/tool-profile-entries/:entry_id` — remove entry.
 async fn delete_tool_profile_entry(
     State(state): State<AppState>,
     Path(entry_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let existing: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM tool_profile_entries WHERE id=$1")
-        .bind(entry_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let Some((company_id,)) = existing else {
-        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
-    };
-    let affected = sqlx::query("DELETE FROM tool_profile_entries WHERE id=$1")
-        .bind(entry_id)
-        .execute(state.db.pool())
+    let repo = ToolRepo::new(&state.db);
+    let company_id = repo
+        .find_profile_entry_company_id(entry_id)
         .await?
-        .rows_affected();
-    if affected == 0 {
+        .ok_or_else(|| ApiError::NotFound(format!("tool profile entry {entry_id}")))?;
+    let deleted = repo.delete_profile_entry_by_id(entry_id).await?;
+    if !deleted {
         return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
     }
     state.realtime.publish(
@@ -3130,8 +2990,6 @@ async fn delete_tool_profile_entry(
     );
     Ok(StatusCode::NO_CONTENT)
 }
-
-
 // ============================================================================
 // Round 42: runtime-slot restart/stop (company-scoped)
 // ============================================================================

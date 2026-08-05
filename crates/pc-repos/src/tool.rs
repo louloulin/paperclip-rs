@@ -971,6 +971,151 @@ impl<'a> ToolRepo<'a> {
             .fetch_one(self.db.pool())
             .await?)
     }
+
+    /// Round 141: 通过 profile_id 查找 company_id（仅取 company_id 字段）。
+    pub async fn find_profile_company_id(&self, profile_id: Uuid) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM tool_profiles WHERE id=$1",
+        )
+        .bind(profile_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 141: 通过 profile_id 取完整 profile（不限 company）。
+    pub async fn find_profile_by_id(&self, profile_id: Uuid) -> RepoResult<Option<ToolProfileRow>> {
+        let sql = format!(
+            "SELECT {PROFILE_COLS} FROM tool_profiles WHERE id=$1"
+        );
+        Ok(sqlx::query_as::<_, ToolProfileRow>(&sql)
+            .bind(profile_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// Round 141: 复制 profile（含全部 entries），复合事务。
+    /// 返回 (new_profile_id, company_id, source_profile_key, source_name, description, status, metadata)。
+    pub async fn clone_profile(
+        &self,
+        source_id: Uuid,
+        new_key: &str,
+        new_name: &str,
+    ) -> RepoResult<Uuid> {
+        let mut tx = self.db.pool().begin().await?;
+        let new_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO tool_profiles (company_id, profile_key, name, description, status, default_action, metadata) \
+             SELECT company_id, $2, $3, description, status, default_action, metadata \
+             FROM tool_profiles WHERE id=$1 RETURNING id",
+        )
+        .bind(source_id)
+        .bind(new_key)
+        .bind(new_name)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO tool_profile_entries \
+                (company_id, profile_id, selector_type, effect, application_id, connection_id, \
+                 catalog_entry_id, tool_name, risk_level, conditions) \
+             SELECT company_id, $2, selector_type, effect, application_id, connection_id, \
+                    catalog_entry_id, tool_name, risk_level, conditions \
+             FROM tool_profile_entries WHERE profile_id=$1",
+        )
+        .bind(source_id)
+        .bind(new_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(new_id)
+    }
+
+    /// Round 141: 批量添加 application 类型 include 效果 entries（review_tool_profile_new_tools 用）。
+    pub async fn approve_new_tools_for_profile(
+        &self,
+        company_id: Uuid,
+        profile_id: Uuid,
+        app_ids: &[Uuid],
+    ) -> RepoResult<u64> {
+        if app_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut total: u64 = 0;
+        for app_id in app_ids {
+            let n = sqlx::query(
+                "INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, application_id) \
+                 VALUES ($1, $2, 'application', 'include', $3) ON CONFLICT DO NOTHING",
+            )
+            .bind(company_id)
+            .bind(profile_id)
+            .bind(app_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+            total += n;
+        }
+        Ok(total)
+    }
+
+    /// Round 141: 通过 entry_id 查找 company_id。
+    pub async fn find_profile_entry_company_id(&self, entry_id: Uuid) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT company_id FROM tool_profile_entries WHERE id=$1",
+        )
+        .bind(entry_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Round 141: 通过 entry_id 取完整 entry。
+    pub async fn get_profile_entry_by_id(
+        &self,
+        entry_id: Uuid,
+    ) -> RepoResult<Option<ToolProfileEntryRow>> {
+        let sql = format!(
+            "SELECT {PROFILE_ENTRY_COLS} FROM tool_profile_entries WHERE id=$1"
+        );
+        Ok(sqlx::query_as::<_, ToolProfileEntryRow>(&sql)
+            .bind(entry_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    /// Round 141: 增量 UPDATE profile entry（COALESCE 语义）。
+    pub async fn patch_profile_entry(
+        &self,
+        entry_id: Uuid,
+        effect: Option<&str>,
+        risk_level: Option<&str>,
+        conditions: Option<&Value>,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE tool_profile_entries SET \
+                effect=COALESCE($2, effect), \
+                risk_level=COALESCE($3, risk_level), \
+                conditions=COALESCE($4, conditions), \
+                updated_at=now() \
+             WHERE id=$1",
+        )
+        .bind(entry_id)
+        .bind(effect)
+        .bind(risk_level)
+        .bind(conditions)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 141: 按 id 删除 profile entry。
+    pub async fn delete_profile_entry_by_id(&self, entry_id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM tool_profile_entries WHERE id=$1")
+            .bind(entry_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
 }
 
 const PROFILE_COLS: &str = "id, company_id, profile_key, name, description, status, default_action, metadata, created_at, updated_at";
@@ -1426,6 +1571,154 @@ impl<'a> ToolRepo<'a> {
         tx.commit().await?;
         Ok(total)
     }
+
+    /// Round 141: 模糊查询 name 排除自身（patch 时检查 name 冲突用）。
+    pub async fn find_policy_id_by_name_excluding(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        exclude_id: Uuid,
+    ) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_policies WHERE company_id=$1 AND name=$2 AND id <> $3",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(exclude_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 141: 增量 UPDATE（COALESCE 语义：None = 不动）；返回受影响行数。
+    pub async fn patch_policy(
+        &self,
+        company_id: Uuid,
+        policy_id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+        priority: Option<i32>,
+        enabled: Option<bool>,
+        selectors: Option<&Value>,
+        conditions: Option<&Value>,
+        config: Option<&Value>,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE tool_policies SET \
+                name = COALESCE($1, name), \
+                description = COALESCE($2, description), \
+                priority = COALESCE($3, priority), \
+                enabled = COALESCE($4, enabled), \
+                selectors = COALESCE($5, selectors), \
+                conditions = COALESCE($6, conditions), \
+                config = COALESCE($7, config), \
+                updated_at = now() \
+             WHERE company_id = $8 AND id = $9",
+        )
+        .bind(name)
+        .bind(description)
+        .bind(priority)
+        .bind(enabled)
+        .bind(selectors)
+        .bind(conditions)
+        .bind(config)
+        .bind(company_id)
+        .bind(policy_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 141: 列出 trust 类型规则（policy_type='trust' OR 包含 trustRuleKey 选择器）。
+    pub async fn list_trust_rules(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolPolicyRow>> {
+        let sql = format!(
+            "SELECT {POLICY_COLS} FROM tool_policies \
+             WHERE company_id=$1 \
+             AND (policy_type = 'trust' OR policy_type = 'tool_trust_rule' OR selectors ? 'trustRuleKey') \
+             ORDER BY updated_at DESC LIMIT 200"
+        );
+        Ok(sqlx::query_as::<_, ToolPolicyRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    /// Round 141: 检查 policy 是否属于 trust 规则类型。
+    pub async fn is_trust_rule(
+        &self,
+        company_id: Uuid,
+        policy_id: Uuid,
+    ) -> RepoResult<bool> {
+        let exists: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM tool_policies \
+             WHERE company_id = $1 AND id = $2 \
+             AND (policy_type = 'trust' OR policy_type = 'tool_trust_rule')",
+        )
+        .bind(company_id)
+        .bind(policy_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(exists.is_some())
+    }
+
+    /// Round 141: 撤销 trust rule（设置 enabled=false + 在 config 记录 revokedAt/revokeReason）。
+    pub async fn revoke_trust_rule(
+        &self,
+        company_id: Uuid,
+        policy_id: Uuid,
+        reason: Option<&str>,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE tool_policies SET enabled = false, \
+                config = COALESCE(config, '{{}}'::jsonb) || jsonb_build_object('revokedAt', to_jsonb(now()), 'revokeReason', to_jsonb($1::text)), \
+                updated_at = now() \
+             WHERE company_id = $2 AND id = $3",
+        )
+        .bind(reason.unwrap_or(""))
+        .bind(company_id)
+        .bind(policy_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 141: 读取 action_request 派生 trust rule 选择器所需的字段。
+    pub async fn find_action_request_for_trust_rule(
+        &self,
+        company_id: Uuid,
+        action_request_id: Uuid,
+    ) -> RepoResult<Option<ActionRequestTrustFields>> {
+        let row: Option<(Value, Option<Uuid>, Option<Uuid>, Option<String>)> = sqlx::query_as(
+            "SELECT canonical_arguments_summary, application_id, connection_id, tool_name \
+             FROM tool_action_requests WHERE company_id = $1 AND id = $2",
+        )
+        .bind(company_id)
+        .bind(action_request_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(summary, application_id, connection_id, tool_name)| {
+            ActionRequestTrustFields {
+                summary,
+                application_id,
+                connection_id,
+                tool_name,
+            }
+        }))
+    }
+}
+
+// Round 141: trust rule 派生选择器需要的 action_request 字段。
+#[derive(Debug, Clone)]
+pub struct ActionRequestTrustFields {
+    pub summary: Value,
+    pub application_id: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
+    pub tool_name: Option<String>,
 }
 
 const POLICY_COLS: &str = "id, company_id, name, description, policy_type, priority, enabled, selectors, conditions, config, created_by_agent_id, created_by_user_id, created_at, updated_at";
