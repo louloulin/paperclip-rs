@@ -1063,6 +1063,55 @@ secrets.rs 30 → 25 SQL（-5）。仓储化 user_secret_definitions 子模块
 - secrets.rs SQL 数 30 → 25（-5，user_definitions 子模块）
 - 累计 Round 95-122 修复 **101+4=105 个路由从 500 → 200**
 
+## 46. 第一百二十三轮增量（Round 123 — secrets.rs bindings + access_events + update_secret 子模块仓储化)
+
+### 目标
+secrets.rs 25 → 20 SQL（-5）。仓储化 bindings 列表 + access events 列表 + company_secret 部分更新。
+
+### 新增 `pc_repos::secret::SecretRepo` 方法（2 个)
+- `list_access_events_for_secret(secret_id, limit) -> Vec<SecretAccessEventRow>`
+  - 复用 `recent_access_events(company_id, limit)` 的 SELECT 模板，按 secret_id 过滤
+- `patch_company_secret(secret_id, name?, description?) -> Option<CompanySecretRow>`
+  - 单 SQL UPDATE COALESCE + RETURNING（部分更新，None 字段保持原值）
+  - 嵌套 Option: 外层 = 是否提供更新；内层 = 是否设为 null
+
+复用已有方法:
+- `list_bindings_for_secret(secret_id) -> Vec<CompanySecretBindingRow>`
+
+### 重构 `secrets.rs` 3 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `secret_usage` | 1 SELECT | SecretRepo::list_bindings_for_secret |
+| `secret_access_events` | 1 SELECT | SecretRepo::list_access_events_for_secret |
+| `update_secret` | 2 conditional UPDATE + 1 SELECT RETURNING | SecretRepo::patch_company_secret |
+
+### 新增集成测试 6 个 (`crates/pc-repos/tests/round123_secret_access_bindings_repo.rs`)
+1. `list_bindings_for_secret_returns_bindings` — 多 binding 返回
+2. `list_access_events_for_secret_returns_events` — 多 event 返回
+3. `patch_company_secret_updates_name` — 仅 name 更新
+4. `patch_company_secret_updates_description` — 仅 description 更新（嵌套 Option）
+5. `patch_company_secret_missing_returns_none` — 不存在返回 None
+6. `patch_company_secret_keeps_unchanged` — None 字段保留原值
+
+### 进度影响
+- 综合进度从 **≈ 96.0% → ≈ 96.2%**
+- workspace `cargo check -p pc-http` 0 errors
+- 23 个 pc-repos 集成测试文件累计 137+6=143 test 函数
+- secrets.rs SQL 数 25 → 20（-5，bindings + events + update_secret 子模块）
+- 累计 Round 95-123 修复 **105+3=108 个路由从 500 → 200**
+
+### 下一轮方向（Round 124+）
+secrets.rs 还剩 20 SQL：
+- patch_provider_config 复合（约 3 SQL）
+- create_company_secret（多步复合约 5 SQL）
+- rotate_secret（多步复合约 6 SQL，含 sha256 计算）
+- my_user_secrets 系列（注意：与当前 schema 有列漂移，需谨慎处理）
+
+后续模块目标：
+- tool_access.rs 66 SQL（多数复杂 JOIN）
+- company_skills.rs 60 SQL
+- issues.rs 44 SQL
+
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 
 ### 目标

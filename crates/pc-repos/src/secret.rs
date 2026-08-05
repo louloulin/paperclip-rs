@@ -1071,6 +1071,48 @@ impl<'a> SecretRepo<'a> {
             .fetch_all(self.db.pool())
             .await?)
     }
+
+    /// Round 123: 按 secret_id 列 access events（ORDER BY created_at DESC + LIMIT）。
+    pub async fn list_access_events_for_secret(
+        &self,
+        secret_id: Uuid,
+        limit: i64,
+    ) -> RepoResult<Vec<SecretAccessEventRow>> {
+        let sql = format!(
+            "SELECT {ACCESS_EVENT_COLS} FROM secret_access_events \
+             WHERE secret_id=$1 ORDER BY created_at DESC LIMIT $2",
+        );
+        Ok(sqlx::query_as::<_, SecretAccessEventRow>(&sql)
+            .bind(secret_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    /// Round 123: patch company_secret 部分字段（COALESCE + 重新 SELECT）。
+    /// 仅当对应 Option 为 Some 时更新对应字段；None 保留原值。
+    pub async fn patch_company_secret(
+        &self,
+        secret_id: Uuid,
+        name: Option<&str>,
+        description: Option<Option<&str>>,
+    ) -> RepoResult<Option<CompanySecretRow>> {
+        let sql = format!(
+            "UPDATE company_secrets SET \
+                name = COALESCE($1, name), \
+                description = COALESCE($2, description), \
+                updated_at = now() \
+             WHERE id = $3 AND deleted_at IS NULL \
+             RETURNING {SECRET_COLS}"
+        );
+        let row = sqlx::query_as::<_, CompanySecretRow>(&sql)
+            .bind(name)
+            .bind(description.unwrap_or(None))
+            .bind(secret_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row)
+    }
 }
 
 /// 上层 provider 抽象的便捷 re-export，便于 HTTP 层直接依赖 `SecretRepositoryRef`

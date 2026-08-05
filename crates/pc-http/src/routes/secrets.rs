@@ -579,33 +579,15 @@ async fn update_secret(
     Path(secret_id): Path<Uuid>,
     Json(body): Json<UpdateSecretBody>,
 ) -> ApiResult<Json<Value>> {
-    if let Some(ref name) = body.name {
-        sqlx::query("UPDATE company_secrets SET name = $1, updated_at = now() WHERE id = $2")
-            .bind(name)
-            .bind(secret_id)
-            .execute(state.db.pool())
-            .await?;
-    }
-    if let Some(ref desc) = body.description {
-        sqlx::query(
-            "UPDATE company_secrets SET description = $1, updated_at = now() WHERE id = $2",
+    let row = SecretRepo::new(&state.db)
+        .patch_company_secret(
+            secret_id,
+            body.name.as_deref(),
+            Some(body.description.as_deref()),
         )
-        .bind(desc)
-        .bind(secret_id)
-        .execute(state.db.pool())
-        .await?;
-    }
-    // Re-fetch
-    let row: Option<CompanySecretRow> = sqlx::query_as(
-        "SELECT id, company_id, name, key, provider, status, scope, description, latest_version,          created_at, updated_at FROM company_secrets WHERE id = $1",
-    )
-    .bind(secret_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok(Json(secret_json(&row))),
-        None => Err(ApiError::NotFound(format!("secret {secret_id}"))),
-    }
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("secret {secret_id}")))?;
+    Ok(Json(secret_json(&row)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -676,12 +658,9 @@ async fn secret_usage(
     State(state): State<AppState>,
     Path(secret_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let bindings: Vec<SecretBindingRow> = sqlx::query_as(
-        "SELECT id, company_id, secret_id, target_type, target_id, config_path,          version_selector, required, label, created_at          FROM company_secret_bindings WHERE secret_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(secret_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let bindings = SecretRepo::new(&state.db)
+        .list_bindings_for_secret(secret_id)
+        .await?;
     let items: Vec<Value> = bindings
         .iter()
         .map(|b| {
@@ -706,12 +685,9 @@ async fn secret_access_events(
     State(state): State<AppState>,
     Path(secret_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let events: Vec<SecretAccessEventRow> = sqlx::query_as(
-        "SELECT id, company_id, secret_id, secret_scope, version, provider,          actor_type, actor_id, consumer_type, consumer_id, outcome, error_code, created_at          FROM secret_access_events WHERE secret_id = $1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(secret_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let events = SecretRepo::new(&state.db)
+        .list_access_events_for_secret(secret_id, 100)
+        .await?;
     let items: Vec<Value> = events
         .iter()
         .map(|e| {
