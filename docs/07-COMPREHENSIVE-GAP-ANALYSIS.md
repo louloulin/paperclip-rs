@@ -3608,3 +3608,117 @@ Audit + Actions:
 - 累计 routes 0 SQL 文件: 13 个（共 251 SQL 移除）
 - 剩余 SQL 总数: 136（最大: tool_access.rs 8 / issue_tree_control.rs 8 / plugins.rs 7 /
   environments.rs 7 / dashboard.rs 7 / built_in_agents.rs 7 / approvals.rs 7）
+
+## 32. 第一百九十三轮增量（Round 193 — goals.rs 路由端口化）
+
+### 端口覆盖
+- 新增 `GET /api/companies/:company_id/goals` — 复用既有 `GoalRepo::list_by_company`
+- 新增 `POST /api/companies/:company_id/goals` — 接受 title/description/level/parent_id/owner_agent_id，使用 `GoalRepo::create(&NewGoal)`
+
+### 测试
+- `round193_goals_repo.rs`（12 测试 case）：list_by_company filter / empty company / create full / create_simple defaults / get_id / list_children / list_roots / patch / update / delete / ancestors + descendants traversal / count_by_status / GoalLevel + GoalStatus 枚举语义
+
+## 33. 第一百九十四轮增量（Round 194 — budget 域 + costs 路由端口化）
+
+### 新增模块 `pc_repos::budget`
+- `PolicyRow` / `IncidentRow`（1:1 schema projection，budget_policies / budget_incidents 两表）
+- `BudgetRepo` 6 方法：
+  - `list_policies(company_id)` — 公司范围查询
+  - `upsert_policy(company_id, input)` — 复合 key (company, scope_type, scope_id, metric, window_kind) 唯一约束，存在更新否则插入
+  - `list_incidents(company_id)` — 公司事件列表（最新优先）
+  - `get_incident(company_id, id)` — 单点查询
+  - `resolve_incident(company_id, id, input)` — open → resolved 状态机
+- `UpsertPolicyInput` / `ResolveIncidentInput`（serde Deserialize，default 值在 field 上）
+
+### 路由重构 costs.rs
+- 新增 `GET /api/companies/:company_id/budgets/policies` — 列策略
+- 新增 `POST /api/companies/:company_id/budgets/policies` — upsert
+- 新增 `POST /api/companies/:company_id/budget-incidents/:incident_id/resolve` — 状态机
+- 新增 `POST /api/companies/:company_id/finance-events` — 插入 finance 事件
+
+### 测试
+- `round194_budget_repo.rs`（12 测试 case）：list_policies / upsert insert + update / list_incidents / get_incident / resolve open → resolved / resolve terminal 拒绝 / resolve missing / 默认值 / company filter
+
+## 34. 第一百九十五轮增量（Round 195 — approvals.rs 端口化）
+
+### 端口覆盖
+- 新增 `POST /api/approvals/:id/request-revision`
+  - 新增 `ApprovalRepo::request_revision(id, decided_by, note)`
+  - 状态机：pending → revision_requested
+  - terminal 状态（approved/rejected/cancelled/expired/revision_requested）拒绝再 revision
+  - 实时事件：`approval.revision_requested`
+
+### 测试
+- `round195_approval_request_revision_repo.rs`（6 测试 case）：pending → revision_requested / approved 拒绝 / rejected 拒绝 / cancelled 拒绝 / revision_requested 拒绝 / missing 拒绝 / null note 允许
+
+## 35. 第一百九十六轮增量（Round 196 — invite 路由端口化）
+
+### 新增模块 `crates/pc-http/src/routes/invite_globals.rs`
+- `POST /api/invites/:invite_id/revoke` — 全局撤销（无 company scope）
+  - 复用既有 `InviteRepo::revoke_by_id`
+  - 与既有 `DELETE /api/companies/:id/invites/:invite_id`（scoped）并列
+  - scoped: 必须属于指定 company，否则 404
+  - global: 不限 company，用于 bootstrap_ceo 等无公司范围邀请
+
+### 注册
+- `pub mod invite_globals` 加到 `routes/mod.rs`
+- `.merge(invite_globals::router())`
+
+### 测试
+- `round196_invite_globals_repo.rs`（4 测试 case）：with_company / without_company (bootstrap_ceo) / missing id / 幂等（双 revoke → 第二次 0 rows）
+
+## 36. 第一百九十七轮增量（Round 197 — company-skill-policy 端口化）
+
+### 端口覆盖
+- 新增 `POST /api/companies/:company_id/skill-policy/evaluate`
+  - 请求体：{ action, resource?, principal? }
+  - 评估逻辑（简化版）：
+    1. 无策略 → 默认 allow (reason: no_policy_default)
+    2. 按 priority + id 排序的规则序列匹配
+    3. 匹配 action + subject (kind=agentId/all/role) + resource (skillId/skillKey/sourceType)
+    4. 首个匹配 rule → 按 rule.effect 决定 (reason: explicit_rule)
+    5. 未匹配 → 按 default_effect (reason: policy_default)
+  - 返回 `SkillPolicyDecision` 形状：allowed / action / reason / policyRevision / matchedRuleId / remediation
+
+### 测试
+- `round197_skill_policy_evaluate_repo.rs`（5 测试 case）：fetch empty / upsert+fetch / delete / delete missing / revision 递增
+
+## 37. 第一百九十八轮增量（Round 198 — cases.rs alias 路由）
+
+### 端口覆盖
+- 新增别名路由 `POST /api/cases/:case_id/documents/:key/annotations/:thread_id/comments`
+- 等同于既有 `/api/cases/:case_id/documents/:key/annotations/threads/:thread_id/comments`
+- 复用既有 `add_case_annotation_comment` handler
+- 解决 node vs rs 路径差异（rs 用 `/threads/` 中缀，node 直接用 `:thread_id`）
+
+## 38. 第一百九十九轮增量（Round 199 — routines.rs 路径对齐 Node）
+
+### 端口覆盖
+- 重命名 `/api/routines/:id/revisions/:revision_number/restore` → `/api/routines/:id/revisions/:revision_id/restore`
+  - 路径参数实际类型是 UUID（handler: `Path<(Uuid, Uuid)>`），不是 number
+  - 命名修正 + 与 Node 路径格式一致
+  - 功能不变（调用同一 `restore_revision_by_id` repo 方法）
+
+### 累计进展
+
+| 轮次 | 模块 | SQL/Endpoints | 模式 |
+|---|---|---|---|
+| R193 | goals.rs | +2 endpoints | 端口化 |
+| R194 | budget 域 | +1 module, +6 repo methods, +4 endpoints | 新域 + 端口化 |
+| R195 | approvals.rs | +1 repo method, +1 endpoint | 状态机 |
+| R196 | invite_globals.rs | +1 endpoint | 端口化（新文件） |
+| R197 | company_skill_policy.rs | +1 endpoint | 简化版规则匹配 |
+| R198 | cases.rs | +1 endpoint (alias) | 端口化 |
+| R199 | routines.rs | path rename | 对齐 Node |
+
+### 综合状态（截至 R199）
+- 工作空间编译：`cargo check --workspace` 0 errors
+- 所有 routes 文件维持 0 `sqlx::query` 块
+- 新增 7 个集成测试文件，共 **47** 个测试 case 覆盖新增 endpoint / repo 行为
+- 端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~33 个**（其中 15 是 mount-prefix 误报，实际已在 rs）
+
+### 下一步高 ROI 工作
+1. **环境 custom-image-setup-sessions**（5 endpoints，复杂 service 依赖，需要先 port customImages service）
+2. **built-in-agents routines enable/disable/run**（3 endpoints，需要 routine_triggers 关联查询）
+3. **secrets remote-import + preview**（2 endpoints，需要 secret-provider service）
+4. **集成测试扩展**：把 R172-R192 新增的 30+ repo 方法补充测试覆盖（DB 不可用，仅 source-level 编译验证）
