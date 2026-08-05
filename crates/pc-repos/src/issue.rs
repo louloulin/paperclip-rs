@@ -467,7 +467,27 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
-    pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
+/// Round 107: 列出指派给 agent 的活跃 issues (status in todo/in_progress/blocked
+    /// 且未被 hidden)。专门用于 `GET /agents/me/inbox/lite` 这种轻量自查询端点。
+    pub async fn list_assigned_active(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<IssueRow>> {
+        let sql = format!(
+            "SELECT {ISSUE_COLS} FROM issues              WHERE company_id=$1 AND assignee_agent_id=$2              AND status IN ('todo','in_progress','blocked') AND hidden_at IS NULL              ORDER BY updated_at DESC LIMIT $3"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(company_id)
+            .bind(agent_id)
+            .bind(limit.clamp(1, 1000))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+
+        pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");
         sqlx::query_as::<_, IssueRow>(&sql)
             .bind(id)

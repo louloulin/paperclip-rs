@@ -480,6 +480,37 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
+/// Round 107: 查某个 issue 当前是否还有活跃 heartbeat run
+    /// (status in queued/claimed/running/paused)。通常用于前端 polling。
+    pub async fn find_active_run_by_issue(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM heartbeat_runs              WHERE context_snapshot->>'issueId' = $1              AND status::text IN ('queued','claimed','running','paused')              ORDER BY started_at DESC NULLS LAST LIMIT 1",
+        )
+        .bind(issue_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 107: 列出某个 issue 的所有 heartbeat_runs（按 started_at DESC）。
+    pub async fn list_runs_by_issue(
+        &self,
+        issue_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<HeartbeatRow>> {
+        let query = format!(
+            "SELECT {RUN_COLUMNS} FROM heartbeat_runs              WHERE context_snapshot->>'issueId' = $1              ORDER BY started_at DESC NULLS LAST LIMIT $2"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(issue_id.to_string())
+            .bind(limit.clamp(1, 500))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
     pub async fn list_by_company(
         &self,
         company_id: Uuid,

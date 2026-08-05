@@ -1974,40 +1974,33 @@ async fn list_company_live_runs(
     Ok(Json(json!({ "items": items })))
 }
 
+// Round 107: 仓储化。
 async fn get_issue_active_run(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let run: Option<(Uuid,)> = sqlx::query_scalar(
-        "SELECT id FROM heartbeat_runs WHERE context_snapshot->>'issueId' = $1          AND status::text IN ('queued','claimed','running','paused')          ORDER BY started_at DESC NULLS LAST LIMIT 1",
-    )
-    .bind(issue_id.to_string())
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten();
-    Ok(Json(json!({ "run": run.map(|id| json!({ "runId": id })) })))
+    let id = HeartbeatRepo::new(&state.db)
+        .find_active_run_by_issue(issue_id)
+        .await?;
+    Ok(Json(json!({ "run": id.map(|id| json!({ "runId": id })) })))
 }
 
+// Round 107: 仓储化。
 async fn list_issue_live_runs(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let runs: Vec<(Uuid, Uuid, String, Option<Timestamp>)> = sqlx::query_as(
-        "SELECT id, agent_id, status::text, started_at FROM heartbeat_runs          WHERE context_snapshot->>'issueId' = $1          ORDER BY started_at DESC NULLS LAST LIMIT 50",
-    )
-    .bind(issue_id.to_string())
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
-    let items: Vec<Value> = runs
+    let rows = HeartbeatRepo::new(&state.db)
+        .list_runs_by_issue(issue_id, 50)
+        .await?;
+    let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, agent_id, status, started_at)| {
+        .map(|r| {
             json!({
-                "runId": id,
-                "agentId": agent_id,
-                "status": status,
-                "startedAt": started_at,
+                "runId": r.id,
+                "agentId": r.agent_id,
+                "status": r.status,
+                "startedAt": r.started_at,
             })
         })
         .collect();
@@ -2094,28 +2087,9 @@ async fn get_self_inbox_lite(
         .get(agent_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
-    let rows = sqlx::query_as::<_, pc_repos::issue::IssueRow>(
-        "SELECT id, company_id, project_id, project_workspace_id, goal_id, parent_id, \
-                title, description, status, work_mode, harness_kind, priority, \
-                assignee_agent_id, assignee_user_id, checkout_run_id, execution_run_id, \
-                execution_agent_name_key, execution_locked_at, created_by_agent_id, \
-                created_by_user_id, responsible_user_id, issue_number, identifier, \
-                origin_kind, origin_id, origin_run_id, origin_fingerprint, request_depth, \
-                billing_code, assignee_adapter_overrides, execution_policy, execution_state, \
-                monitor_next_check_at, monitor_wake_requested_at, monitor_last_triggered_at, \
-                monitor_attempt_count, monitor_notes, monitor_scheduled_by, \
-                monitor_check_now_requested_at, monitor_scheduled_retry_requested_at, \
-                hidden_at, archived_at, completed_at, started_at, heartbeat_at, due_at, \
-                estimate_minutes, sla_minutes, source_kind, source_ref, created_at, updated_at, \
-                payload, tags \
-         FROM issues WHERE company_id=$1 AND assignee_agent_id=$2 \
-         AND status IN ('todo','in_progress','blocked') AND hidden_at IS NULL \
-         ORDER BY updated_at DESC LIMIT 200",
-    )
-    .bind(agent.company_id)
-    .bind(agent_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows = IssueRepo::new(&state.db)
+        .list_assigned_active(agent.company_id, agent_id, 200)
+        .await?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|row| {

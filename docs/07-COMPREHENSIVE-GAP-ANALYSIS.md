@@ -713,6 +713,47 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
 
+## 30. 第一百零七轮增量（Round 107 — Heartbeat + Issue 端点仓储化)
+
+### 目标
+`agents.rs` 还残留 5 个内联 SQL。本轮聚焦 3 个最容易切到 Repo 的端点：
+
+1. `get_issue_active_run` —— `SELECT id FROM heartbeat_runs WHERE context_snapshot->>'issueId' = ...`
+2. `list_issue_live_runs` —— `SELECT id, agent_id, status::text, started_at FROM heartbeat_runs ...`
+3. `get_self_inbox_lite` —— 50 行 `SELECT ... FROM issues WHERE company_id=$1 AND assignee_agent_id=$2 AND status IN ('todo','in_progress','blocked')`
+
+### 新增 `pc_repos::heartbeat::HeartbeatRepo` 方法
+- `find_active_run_by_issue(issue_id)` —— 单查最近一个活跃 run
+  (status in queued/claimed/running/paused)
+- `list_runs_by_issue(issue_id, limit)` —— 列出该 issue 的所有 run
+  (按 started_at DESC，limit 自动 clamp 到 [1, 500])
+
+### 新增 `pc_repos::issue::IssueRepo` 方法
+- `list_assigned_active(company_id, agent_id, limit)` —— 列出指派给该 agent 的活跃 issues
+  (status in todo/in_progress/blocked，且 hidden_at IS NULL)
+  - 专门为 `GET /api/agents/me/inbox/lite` 设计
+  - 替换原本 50 行 SELECT 元组
+
+### 重构 `agents.rs` 3 个端点
+- `get_issue_active_run` —— `HeartbeatRepo::find_active_run_by_issue()`
+- `list_issue_live_runs` —— `HeartbeatRepo::list_runs_by_issue()`
+- `get_self_inbox_lite` —— `IssueRepo::list_assigned_active()`
+
+### 新增集成测试 4 个 (`crates/pc-repos/tests/round107_agents_issue_repo.rs`)
+1. `heartbeat_repo_find_active_run_filters_by_status_set` —— status 集合过滤 + 最近优先
+2. `heartbeat_repo_find_active_returns_none_when_no_active_runs` —— 没有匹配时 None
+3. `heartbeat_repo_list_runs_by_issue_orders_recent_first` —— 排序 + issue 隔离
+4. `issue_repo_list_assigned_active_filters_correctly` —— 4 个 issue 测试 todo/done/other/hidden 各种过滤
+
+### 进度影响
+- 综合进度从 **≈ 87.7% → ≈ 88.0%**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` **461 passed**（集成测试 source-level 编译通过）
+- 累计 Round 95-107 修复 **47 个路由从 500 → 200**，
+  18 个 tool_* + 1 个 case_event + 3 个 agent/issue 路由进入高内聚低耦合设计
+- `agents.rs` 5 个内联 SQL 剩 2 个（一个是带 status=ANY+user_filter 的复杂 query，
+  一个是 workspace_operations 查 log 关联，均等下一轮）
+
 ## 29. 第一百零六轮增量（Round 106 — CaseEvents 子模块仓储化)
 
 ### 目标
