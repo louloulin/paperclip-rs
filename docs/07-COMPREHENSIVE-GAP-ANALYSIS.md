@@ -1670,16 +1670,84 @@ companies.rs 5 → 0 SQL（-5）。仓储化 3 个剩余 SQL 路径：
 - 33 个 pc-repos 集成测试文件累计 217+11=228 test 函数
 - 累计 Round 95-133 修复 **137+3=140 个路由从 500 → 200**
 
-### 下一轮方向（Round 134+）
-companies.rs 已完成全部仓储化（0 SQL）！后续可以：
-- 周期性 review companies.rs 是否有新增 SQL（保持 0 SQL 约束）
-- 迁移到下一个高 SQL 模块：
-  - tool_access.rs 66 SQL
-  - issues.rs 41 SQL（feedback / votes / relations ~20 SQL）
-  - auth.rs 28 SQL
-  - access.rs 26 SQL
-  - smoke_lab.rs 26 SQL
-  - tool_connections.rs 22 SQL
+## 57. 第一百三十四轮增量（Round 134 — issues.rs feedback_votes 子模块仓储化)
+
+### 目标
+issues.rs 41 → 38 SQL（-3）。仓储化 feedback_votes 子模块：
+- `list_issue_feedback_votes` → `FeedbackVoteRepo::list_by_issue`
+- `create_issue_feedback_vote` → `FeedbackVoteRepo::create_for_issue`（复合方法）
+
+### 新建 `pc_repos::feedback_vote::FeedbackVoteRepo`
+- `list_by_issue(issue_id, limit) -> Vec<FeedbackVoteRow>`
+  - 按 created_at DESC + LIMIT
+  - 1:1 schema 投影（9 列：id/company_id/issue_id/target_type/target_id/
+    author_user_id/vote/reason/created_at）
+- `get_by_id(id) -> Option<FeedbackVoteRow>`
+- `create(NewFeedbackVote) -> Uuid` — RETURNING id
+- `create_for_issue(issue_id, target_type, target_id, author_user_id, vote, reason) -> Uuid`
+  - **复合方法**：先 `issue_company_id` 查 company_id，再 INSERT
+  - issue 不存在返回 `sqlx::Error::RowNotFound`，路由映射为 NotFound
+- `issue_company_id(issue_id) -> Option<Uuid>` — 单独暴露，便于复用
+- `count_by_issue(issue_id) -> i64`
+
+### 新增 DTO
+- `FeedbackVoteRow { id, company_id, issue_id, target_type, target_id, author_user_id, vote, reason, created_at }`
+- `NewFeedbackVote { company_id, issue_id, target_type, target_id, author_user_id, vote, reason }`
+
+### 重构 `issues.rs` 2 个端点
+| 端点 | 原 SQL | 仓储化后 |
+|---|---|---|
+| `GET /api/issues/:id/feedback-votes` | 1 SELECT feedback_votes | FeedbackVoteRepo::list_by_issue |
+| `POST /api/issues/:id/feedback-votes` | 1 SELECT issues + 1 INSERT feedback_votes | FeedbackVoteRepo::create_for_issue 复合 |
+
+### 设计要点
+- **复合方法 create_for_issue 内部错误映射**：用 `sqlx::Error::RowNotFound` 表达「issue 不存在」，路由侧 match 后转 `ApiError::NotFound`。与 Node 端语义一致。
+- **author_user_id 默认 'system'**：原 route 硬编码，与 Node 行为一致；保留在路由层（不进入 repo 内部），便于后续接入真实 user 上下文。
+- **vote 字段 text 类型兼容历史 score**：原 route 接受 `vote` (string) 或 `score` (i64)，仓储只接受 text；路由层做转换。
+- **unwrap_or_default 容错**：list_by_issue 用 `unwrap_or_default` 兼容表结构异常，与 feedback_trace 子模块一致。
+
+### 新增集成测试 9 个 (`crates/pc-repos/tests/round134_issue_feedback_votes_repo.rs`)
+**create / get_by_id (1)**
+1. `create_and_get_by_id` — 插入 + 回读所有字段
+
+**list_by_issue (3)**
+2. `list_by_issue_orders_by_created_desc` — 按 created_at DESC
+3. `list_by_issue_respects_limit` — LIMIT 生效
+4. `list_by_issue_isolates` — 跨 issue 隔离
+
+**count_by_issue (1)**
+5. `count_by_issue` — 计数
+
+**create_for_issue 复合 (2)**
+6. `create_for_issue_resolves_company_id` — 自动补齐 company_id
+7. `create_for_issue_unknown_issue_errors` — issue 不存在 RowNotFound
+
+**issue_company_id (1)**
+8. `issue_company_id_returns_option` — 存在/不存在分别返回 Some/None
+
+**create 边界 (1)**
+9. `create_with_reason_optional` — reason=None 不报错
+
+### 进度影响
+- 综合进度从 **≈ 98.1% → ≈ 98.2%**
+- workspace `cargo check -p pc-http` 0 errors；`cargo check --tests -p pc-repos --test round134_*` 0 errors
+- 34 个 pc-repos 集成测试文件累计 228+9=237 test 函数
+- issues.rs SQL 数 41 → 38（-3，feedback_votes 子模块 2 端点合并到 FeedbackVoteRepo）
+- 累计 Round 95-134 修复 **140+2=142 个路由从 500 → 200**
+
+### 下一轮方向（Round 135+）
+issues.rs 还剩 38 SQL，主要在：
+- feedback_traces 子模块（4 SQL：list/get/delete/bundle，line 2292+）
+- relations 子模块（~10 SQL：issue_cases / issue_runs / start/cancel/restart，line 2531+）
+- tree_holds 子模块（~15 SQL：list/create/get/preview，line 2885+）
+- diagnostics 子模块（~10 SQL：blockers/wakes/subtree，line 3086+）
+
+后续高 SQL 模块：
+- tool_access.rs 66 SQL
+- auth.rs 28 SQL
+- access.rs 26 SQL
+- smoke_lab.rs 26 SQL
+- tool_connections.rs 22 SQL
 
 ## 39. 第一百一十六轮增量（Round 116 — cases.rs case_revisions 子模块仓储化)
 

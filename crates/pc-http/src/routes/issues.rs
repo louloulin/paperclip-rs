@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor};
+use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
@@ -2407,27 +2408,18 @@ async fn list_issue_feedback_votes(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    // Round 95 修复：原 SQL 引用不存在的 `issue_feedback_votes` 表；
-    // 真实表是 `feedback_votes`，列 `target_type / target_id / author_user_id / vote`（text）
-    // 替代原来的 `voter_kind / score`。
-    let rows: Vec<(Uuid, String, String, String, Option<String>, Timestamp)> = sqlx::query_as(
-        "SELECT id, target_type, target_id, vote, reason, created_at \
-         FROM feedback_votes WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(id)
-    .fetch_all(state.db.pool())
-    .await
-    .unwrap_or_default();
+    let repo = FeedbackVoteRepo::new(&state.db);
+    let rows = repo.list_by_issue(id, 100).await.unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(vote_id, target_type, target_id, vote, reason, created_at)| {
+        .map(|r| {
             json!({
-                "id": vote_id,
-                "voterKind": target_type,
-                "targetId": target_id,
-                "vote": vote,
-                "reason": reason,
-                "createdAt": created_at,
+                "id": r.id,
+                "voterKind": r.target_type,
+                "targetId": r.target_id,
+                "vote": r.vote,
+                "reason": r.reason,
+                "createdAt": r.created_at,
             })
         })
         .collect();
@@ -2439,20 +2431,6 @@ async fn create_issue_feedback_vote(
     Path(id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    // Round 95 修复：表名 `issue_feedback_votes` → `feedback_votes`；
-    // 列映射：voter_kind → target_type；score → vote (text)；
-    // 补齐必填字段：company_id (从 issues 查)、author_user_id (默认 'system')。
-    let company_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT company_id FROM issues WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await
-    .unwrap_or(None);
-    let company_id = match company_id {
-        Some(c) => c,
-        None => return Err(ApiError::NotFound(format!("issue {id}"))),
-    };
     let target_type = body.get("voterKind").and_then(Value::as_str).unwrap_or("user").to_string();
     let target_id = body.get("targetId").and_then(Value::as_str)
         .unwrap_or("anonymous").to_string();
@@ -2460,18 +2438,17 @@ async fn create_issue_feedback_vote(
         .or_else(|| body.get("score").and_then(Value::as_i64).map(|n| n.to_string()))
         .unwrap_or_else(|| "neutral".to_string());
     let reason = body.get("reason").and_then(Value::as_str).map(str::to_string);
-    let vote_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO feedback_votes (company_id, issue_id, target_type, target_id, author_user_id, vote, reason) \
-         VALUES ($1, $2, $3, $4, 'system', $5, $6) RETURNING id",
-    )
-    .bind(company_id)
-    .bind(id)
-    .bind(&target_type)
-    .bind(&target_id)
-    .bind(&vote)
-    .bind(reason)
-    .fetch_one(state.db.pool())
-    .await?;
+    let repo = FeedbackVoteRepo::new(&state.db);
+    let vote_id = match repo
+        .create_for_issue(id, &target_type, &target_id, "system", &vote, reason.as_deref())
+        .await
+    {
+        Ok(id) => id,
+        Err(sqlx::Error::RowNotFound) => {
+            return Err(ApiError::NotFound(format!("issue {id}")));
+        }
+        Err(e) => return Err(ApiError::Internal(e.to_string())),
+    };
     Ok(Json(json!({ "id": vote_id, "issueId": id })))
 }
 
