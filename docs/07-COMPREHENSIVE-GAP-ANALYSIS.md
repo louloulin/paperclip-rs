@@ -3860,3 +3860,133 @@ Audit + Actions:
 1. **remaining environments/.../secrets 子路径**（若 Node 完整列表存在）
 2. **issue 创建/更新 alias**（node vs rs 路径差异）
 3. **继续对齐 Node `instance/settings` 各类 experimental flag 端口化**
+
+## 45. 第二百零六轮增量（Round 206 — assets 生命周期 5 端口化）
+
+### 端口覆盖
+- 新增 5 个端口：
+  - `GET /api/companies/:company_id/assets`
+  - `GET /api/companies/:company_id/logo`
+  - `GET /api/assets/:asset_id`
+  - `DELETE /api/assets/:asset_id`
+  - `GET /api/assets/:asset_id/usage`
+
+### 仓储层新增（AssetRepo）
+- `delete_by_id(id) -> bool` — 物理删除
+- `list_attachments_for_asset(asset_id) -> Vec<(Uuid, Uuid, Option<Uuid>)>` — 反查 issue_attachments
+- `list_by_company_with_provider(company_id, Option<&str>, limit) -> Vec<AssetRow>` — 公司+provider 过滤
+
+### 设计要点
+- delete 检查 attachment 引用计数，非空时返回 Conflict
+- usage 返回 attachmentCount + issueCount + 详细 attachment 列表
+- list 支持 `?provider=&limit=` 查询参数（默认 100）
+- logo meta 走既有 find_logo_meta_by_company 仓储方法
+
+### 事件
+- `asset.deleted`
+
+### 测试
+- `round206_assets_lifecycle_repo.rs`（3 测试 case）：删除往返 / 附件引用 / provider 过滤
+- 附带修复：round204 测试 expires_at 比较符号
+
+## 46. 第二百零七轮增量（Round 207 — inbox-dismissals 显式动作 3 端口化）
+
+### 端口覆盖
+- 新增 3 个端口：
+  - `POST /api/companies/:company_id/inbox-dismissals/dismiss`
+  - `POST /api/companies/:company_id/inbox-dismissals/snooze`
+  - `GET  /api/companies/:company_id/inbox-dismissals/count`
+
+### 设计
+- explicit_dismiss: 接受 itemKey + reason + 可选 expiresInSeconds（自动恢复）
+- explicit_snooze: 接受 itemKey + hours(默认 24) 或 snoozedUntil 显式时间戳
+  - 显式时间戳优先于 hours
+  - hours=0 且无显式时间戳 → 400 BadRequest
+- active_count: 复用 InboxRepo::count_active（公司级活跃数，不含 userId 过滤）
+
+### 事件
+- `inbox.item.dismissed`（含 reason/expiresAt）
+- `inbox.item.snoozed`（含 snoozedUntil）
+
+### 测试
+- 单元测试 3 个 case：snooze_uses_hours / snooze_prefers_explicit_until / snooze_rejects_zero_hours
+
+## 47. 第二百零八轮增量（Round 208 — companies 级别 GET 2 端口化）
+
+### 端口覆盖
+- 新增 2 个端口：
+  - `GET /api/companies/:id/branding`
+  - `GET /api/companies/:id/finance-events`
+
+### 设计
+- get_branding: 复用 CompanyRepo::get，从 description 注释中解析 logo URL
+  (`<!-- logo:{url} -->`)；返回 name + brandColor + logoUrl + updatedAt
+- list_company_finance_events: 复用 CostRepo::finance_events(company_id, range, limit)
+  返回公司级 finance events 列表（默认 limit=100，无时间范围）
+
+### 辅助函数
+- `parse_logo_from_description`: 反向解析 logo URL 注释，取最后一条以兼容多次更新
+
+### 测试
+- 单元测试 3 个 case：parse_logo_extracts / parse_logo_returns_none / parse_logo_picks_last
+
+## 48. 第二百零九轮增量（Round 209 — activity 2 端口化）
+
+### 端口覆盖
+- 新增 2 个端口：
+  - `POST /api/activity/emit/batch`
+  - `GET  /api/activity/runs/:run_id`
+
+### 设计
+- emit_events_batch: 接受 items 数组（<=500），一次性 INSERT
+  复用 ActivityRepo::record_batch 减少 round-trip
+  强类型映射：actorType 字符串 -> ActorType 枚举
+  默认 system，未知值也降级为 system
+- list_run_activity: 复用 list_for_run，按 created_at ASC 返回 run 关联事件
+
+### 辅助函数
+- `parse_actor_type`: 字符串 -> ActorType 安全映射
+- `batch_item_to_new_activity`: 路由 DTO -> 仓储 NewActivity
+- `activity_row_json`: 仓储行 -> camelCase JSON
+
+### 测试
+- 单元测试 3 个 case：parse_actor_type_known_values / parse_actor_type_defaults_to_system / activity_row_json_uses_camel_case_keys
+
+## 49. 第二百一十轮增量（Round 210 — issues aggregate 2 端口化）
+
+### 端口覆盖
+- 新增 2 个端口：
+  - `GET /api/companies/:company_id/issues/by-status`
+  - `GET /api/companies/:company_id/issues/by-priority`
+
+### 仓储层新增
+- `IssueRepo::count_visible_by_priority(company_id) -> Vec<(String, i64)>`
+  按 priority 分组，hidden_at IS NULL 过滤
+- 复用 `count_visible_by_status` 既有方法
+
+### 设计
+- 每个端点返回 `{ companyId, total, groups: [{key, count}] }`
+- 累加 total 在路由层完成（仓储返回 raw rows）
+
+### 测试
+- `round210_issue_aggregates_repo.rs`（3 测试 case）：by_status_groups / by_priority_groups / hidden_issues_excluded
+
+### 累计进展（R206-R210）
+
+| 轮次 | 模块 | 端口 | 仓储 / 设计 |
+|---|---|---|---|
+| R206 | assets.rs | +5 | delete_by_id / list_attachments / list_by_company_with_provider |
+| R207 | inbox_dismissals.rs | +3 | 显式 dismiss/snooze/count，snooze 优先 hours 或显式时间戳 |
+| R208 | companies.rs | +2 | get_branding (解析 description 注释) + finance-events alias |
+| R209 | activity.rs | +2 | batch emit (record_batch) + run-scoped list |
+| R210 | issues.rs | +2 | count_visible_by_priority + by-status/by-priority 路由 |
+
+### 综合状态（截至 R210）
+- 工作空间编译：`cargo check --workspace` 0 errors
+- 新增 1 个集成测试文件 + 4 个内联单元测试模块，共 **12** 个新测试 case（R206-R210 累计）
+- 累计端点覆盖率：从 R192 时的 56 个真正缺失端口 → 当前 **~10 个** 真正剩余
+
+### 下一步高 ROI 工作
+1. **companies/:id/skill-policy/audit** — 策略变更历史
+2. **companies/:id/diagnostics** 聚合 — 跨 issue/run/agent 健康度
+3. **continue Round R211+**：寻找新的有意义 endpoint 添加
