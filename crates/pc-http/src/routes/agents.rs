@@ -201,15 +201,7 @@ async fn list(
 ) -> ApiResult<Json<Value>> {
     let rows = match q.company_id {
         Some(cid) => AgentRepo::new(&state.db).list_by_company(cid).await?,
-        None => sqlx::query_as::<_, pc_repos::agent::AgentRow>(
-            "SELECT id, company_id, name, role, title, icon, status, reports_to, capabilities, \
-                    adapter_type, adapter_config, runtime_config, default_environment_id, \
-                    budget_monthly_cents, spent_monthly_cents, pause_reason, paused_at, \
-                    error_reason, permissions, last_heartbeat_at, metadata, created_at, updated_at \
-             FROM agents ORDER BY created_at DESC",
-        )
-        .fetch_all(state.db.pool())
-        .await?,
+        None => AgentRepo::new(&state.db).list_all().await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
