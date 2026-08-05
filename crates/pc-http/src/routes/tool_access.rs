@@ -9,14 +9,13 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::FromRow;
-use std::fmt::Write;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
-    NewToolApplication, NewToolPolicy, NewToolProfile, NewToolProfileEntry,
+    NewToolApplication, NewToolPolicy,
     NewToolStdioTemplate, PatchToolApplication, ToolActionRequestRow,
     ToolApplicationRow, ToolPolicyRow, ToolProfileEntryRow, ToolProfileRow,
     ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
@@ -251,10 +250,29 @@ struct ConnectionRow {
     credential_refs: Value,
     health_status: String,
     health_message: Option<String>,
-    last_health_at: Option<chrono::DateTime<chrono::Utc>>,
-    last_catalog_refresh_at: Option<chrono::DateTime<chrono::Utc>>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
+    last_health_at: Option<Timestamp>,
+    last_catalog_refresh_at: Option<Timestamp>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+}
+
+impl ConnectionRow {
+    fn from_tuple(t: (
+        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+        Option<String>, Option<Timestamp>, Option<Timestamp>,
+        Timestamp, Timestamp,
+    )) -> Self {
+        let (
+            id, company_id, application_id, name, transport, status, enabled, config,
+            credential_refs, health_status, health_message, last_health_at,
+            last_catalog_refresh_at, created_at, updated_at,
+        ) = t;
+        Self {
+            id, company_id, application_id, name, transport, status, enabled, config,
+            credential_refs, health_status, health_message, last_health_at,
+            last_catalog_refresh_at, created_at, updated_at,
+        }
+    }
 }
 
 fn connection_json(row: &ConnectionRow) -> Value {
@@ -450,15 +468,10 @@ async fn connection_token(
         .get("grantKind")
         .and_then(Value::as_str)
         .unwrap_or("oauth_access");
-    let now = chrono::Utc::now();
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO connection_token_issuances (connection_id, path, status, requested_at)          VALUES ($1, $2, 'issued', $3) RETURNING id",
-    )
-    .bind(cid)
-    .bind(grant_kind)
-    .bind(now)
-    .fetch_one(state.db.pool())
-    .await?;
+    let now = pc_core::Timestamp::from_dt(chrono::Utc::now());
+    let id = ToolRepo::new(&state.db)
+        .create_connection_token_issuance(cid, grant_kind, "issued", now)
+        .await?;
     Ok(Json(json!({
         "id": id,
         "connectionId": cid,
@@ -471,13 +484,10 @@ async fn tool_gallery(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let apps: Vec<ApplicationRow> = sqlx::query_as(
-        "SELECT id, company_id, name, type, status, metadata, created_at, updated_at          FROM tool_applications WHERE company_id = $1 AND status = 'active'          ORDER BY created_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
-    let items: Vec<Value> = apps.iter().map(application_json).collect();
+    let apps = ToolRepo::new(&state.db)
+        .list_active_applications_v1(company_id)
+        .await?;
+    let items: Vec<Value> = apps.iter().map(tool_application_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
 async fn connect_tool_app(
@@ -498,37 +508,16 @@ async fn connect_tool_app(
         Uuid::parse_str(existing_id)
             .map_err(|_| ApiError::BadRequest("invalid applicationId".into()))?
     } else {
-        sqlx::query_scalar(
-            "INSERT INTO tool_applications (company_id, name, type, metadata) \
-             VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (company_id, name) DO UPDATE SET updated_at = now() \
-             RETURNING id",
-        )
-        .bind(company_id)
-        .bind(&name)
-        .bind(&app_type)
-        .bind(json!({}))
-        .fetch_one(state.db.pool())
-        .await?
+        ToolRepo::new(&state.db)
+            .upsert_application(company_id, &name, &app_type, &json!({}))
+            .await?
     };
 
     let uid = format!("tc_{}", Uuid::now_v7().simple());
-    let row: ConnectionRow = sqlx::query_as(
-        "INSERT INTO tool_connections \
-         (company_id, application_id, name, transport, config, uid) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
-         RETURNING id, company_id, application_id, name, transport, status, enabled, config, \
-                   credential_refs, health_status, health_message, last_health_at, \
-                   last_catalog_refresh_at, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(application_id)
-    .bind(&name)
-    .bind(&transport)
-    .bind(&config)
-    .bind(&uid)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row_tuple = ToolRepo::new(&state.db)
+        .create_connection_v1(company_id, application_id, &name, &transport, &config, &uid)
+        .await?;
+    let row = ConnectionRow::from_tuple(row_tuple);
 
     Ok((StatusCode::CREATED, Json(connection_json(&row))))
 }
@@ -633,12 +622,10 @@ async fn list_connections(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<ConnectionRow> = sqlx::query_as(
-        "SELECT id, company_id, application_id, name, transport, status, enabled, config,                 credential_refs, health_status, health_message, last_health_at,                 last_catalog_refresh_at, created_at, updated_at          FROM tool_connections WHERE company_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(company_id)
-    .fetch_all(state.db.pool())
-    .await?;
+    let rows_tuple = ToolRepo::new(&state.db)
+        .list_connections_v1(company_id)
+        .await?;
+    let rows: Vec<ConnectionRow> = rows_tuple.into_iter().map(ConnectionRow::from_tuple).collect();
     let items: Vec<Value> = rows.iter().map(connection_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -669,35 +656,26 @@ async fn create_connection(
     let transport = body.transport.clone().unwrap_or_else(|| "http".to_owned());
     let config = body.config.clone().unwrap_or(json!({}));
     let uid = format!("tc_{}", Uuid::now_v7().simple());
-    let row: ConnectionRow = sqlx::query_as(
-        "INSERT INTO tool_connections \
-         (company_id, application_id, name, transport, config, uid) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
-         RETURNING id, company_id, application_id, name, transport, status, enabled, config, \
-                   credential_refs, health_status, health_message, last_health_at, \
-                   last_catalog_refresh_at, created_at, updated_at",
-    )
-    .bind(company_id)
-    .bind(application_id)
-    .bind(&name)
-    .bind(&transport)
-    .bind(&config)
-    .bind(&uid)
-    .fetch_one(state.db.pool())
-    .await?;
+    let row_tuple = ToolRepo::new(&state.db)
+        .create_connection_v1(company_id, application_id, &name, &transport, &config, &uid)
+        .await?;
+    let row = ConnectionRow::from_tuple(row_tuple);
 
-    // Log activity
-    let _ = sqlx::query(
-        "INSERT INTO activity_log \
-         (company_id, actor_type, actor_id, action, entity_type, entity_id, details) \
-         VALUES ($1, 'user', $2, 'tool_connection.created', 'tool_connection', $3, $4)",
-    )
-    .bind(company_id)
-    .bind(&user_id)
-    .bind(row.id)
-    .bind(json!({ "name": &name }))
-    .execute(state.db.pool())
-    .await;
+    // Log activity (use ActivityRepo)
+    let _ = pc_repos::activity::ActivityRepo::new(&state.db)
+        .record(&pc_repos::activity::NewActivity {
+            company_id,
+            actor_type: pc_repos::activity::ActorType::User,
+            actor_id: user_id.clone(),
+            action: "tool_connection.created".to_string(),
+            entity_type: "tool_connection".to_string(),
+            entity_id: row.id.to_string(),
+            agent_id: None,
+            run_id: None,
+            responsible_user_id: None,
+            details: Some(json!({ "name": &name })),
+        })
+        .await;
 
     Ok((StatusCode::CREATED, Json(connection_json(&row))))
 }
@@ -706,15 +684,14 @@ async fn get_connection(
     State(state): State<AppState>,
     Path((company_id, connection_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let row: Option<ConnectionRow> = sqlx::query_as(
-        "SELECT id, company_id, application_id, name, transport, status, enabled, config,                 credential_refs, health_status, health_message, last_health_at,                 last_catalog_refresh_at, created_at, updated_at          FROM tool_connections WHERE id = $1 AND company_id = $2",
-    )
-    .bind(connection_id)
-    .bind(company_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    match row {
-        Some(row) => Ok(Json(connection_json(&row))),
+    let row_opt = ToolRepo::new(&state.db)
+        .get_connection_v1(company_id, connection_id)
+        .await?;
+    match row_opt {
+        Some(t) => {
+            let row = ConnectionRow::from_tuple(t);
+            Ok(Json(connection_json(&row)))
+        }
         None => Err(ApiError::NotFound(format!("connection {connection_id}"))),
     }
 }

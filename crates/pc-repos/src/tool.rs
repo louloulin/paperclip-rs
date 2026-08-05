@@ -1661,6 +1661,157 @@ impl<'a> ToolRepo<'a> {
         .rows_affected();
         Ok(n > 0)
     }
+    // ---- Round 164: tool_access route 仓储化新增方法（针对 0148 tool_connections schema）----
+
+    /// Round 164: 写入 connection_token_issuance，返回新行 id。
+    pub async fn create_connection_token_issuance(
+        &self,
+        connection_id: Uuid,
+        path: &str,
+        status: &str,
+        requested_at: pc_core::Timestamp,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO connection_token_issuances \
+                (connection_id, path, status, requested_at) \
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(connection_id)
+        .bind(path)
+        .bind(status)
+        .bind(requested_at)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Round 164: 列出 company 的 active tool applications（0148 schema）。
+    pub async fn list_active_applications_v1(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<ToolApplicationRow>> {
+        let sql = format!(
+            "SELECT {APP_COLS} FROM tool_applications \
+             WHERE company_id=$1 AND status='active' \
+             ORDER BY created_at DESC",
+        );
+        Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    /// Round 164: 写入/upsert 一个 tool application（0148 schema，name 唯一）。
+    pub async fn upsert_application(
+        &self,
+        company_id: Uuid,
+        name: &str,
+        kind: &str,
+        metadata: &Value,
+    ) -> RepoResult<Uuid> {
+        let row: (Uuid,) = sqlx::query_as(
+            "INSERT INTO tool_applications (company_id, name, type, metadata) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (company_id, name) DO UPDATE SET updated_at=now() \
+             RETURNING id",
+        )
+        .bind(company_id)
+        .bind(name)
+        .bind(kind)
+        .bind(metadata)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Round 164: 创建一个 tool connection（0148 schema），返回完整列。
+    pub async fn create_connection_v1(
+        &self,
+        company_id: Uuid,
+        application_id: Uuid,
+        name: &str,
+        transport: &str,
+        config: &Value,
+        uid: &str,
+    ) -> RepoResult<(
+        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+        Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
+        pc_core::Timestamp, pc_core::Timestamp,
+    )> {
+        let row: (
+            Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+            Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
+            pc_core::Timestamp, pc_core::Timestamp,
+        ) = sqlx::query_as(
+            "INSERT INTO tool_connections \
+                (company_id, application_id, name, transport, config, uid) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             RETURNING id, company_id, application_id, name, transport, status, enabled, config, \
+                       credential_refs, health_status, health_message, last_health_at, \
+                       last_catalog_refresh_at, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(application_id)
+        .bind(name)
+        .bind(transport)
+        .bind(config)
+        .bind(uid)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 164: 列 connection（0148 schema，按 company_id，无 application 过滤）。
+    pub async fn list_connections_v1(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<(
+        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+        Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
+        pc_core::Timestamp, pc_core::Timestamp,
+    )>> {
+        let rows: Vec<(
+            Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+            Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
+            pc_core::Timestamp, pc_core::Timestamp,
+        )> = sqlx::query_as(
+            "SELECT id, company_id, application_id, name, transport, status, enabled, config, \
+                    credential_refs, health_status, health_message, last_health_at, \
+                    last_catalog_refresh_at, created_at, updated_at \
+             FROM tool_connections WHERE company_id=$1 ORDER BY created_at DESC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 164: 按 (id, company_id) 取 connection（0148 schema）。
+    pub async fn get_connection_v1(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> RepoResult<Option<(
+        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+        Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
+        pc_core::Timestamp, pc_core::Timestamp,
+    )>> {
+        let row: Option<(
+            Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
+            Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
+            pc_core::Timestamp, pc_core::Timestamp,
+        )> = sqlx::query_as(
+            "SELECT id, company_id, application_id, name, transport, status, enabled, config, \
+                    credential_refs, health_status, health_message, last_health_at, \
+                    last_catalog_refresh_at, created_at, updated_at \
+             FROM tool_connections WHERE id=$1 AND company_id=$2",
+        )
+        .bind(id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
 }
 
 const STDIO_TEMPLATE_COLS: &str = "id, company_id, template_key, name, description, status, command, args, env_keys, tools, created_by_agent_id, created_by_user_id, disabled_at, created_at, updated_at";
