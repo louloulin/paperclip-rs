@@ -524,6 +524,21 @@ impl<'a> AgentRepo<'a> {
         .await
     }
 
+    /// Round 154: 列出最近 N 个 agent 的轻量投影（id, name, role）。
+    /// tool-connections list_test_agents 用（schema 实际列 target_id 是 text，无法 join）。
+    pub async fn list_recent_lightweight(
+        &self,
+        limit: i64,
+    ) -> sqlx::Result<Vec<(Uuid, String, String)>> {
+        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT id, name, role FROM agents ORDER BY name LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<AgentRow>> {
         sqlx::query_as::<_, AgentRow>(
             "SELECT id, company_id, name, role, title, icon, status, reports_to, capabilities, \

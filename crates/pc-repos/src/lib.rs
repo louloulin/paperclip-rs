@@ -82,6 +82,7 @@ pub mod skill;
 pub mod smoke;
 pub mod summary;
 pub mod tool;
+pub mod tool_connection;
 pub mod tool_runtime_metrics;
 pub mod user_profile;
 pub mod work_timeline;
