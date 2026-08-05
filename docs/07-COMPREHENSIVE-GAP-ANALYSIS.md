@@ -712,3 +712,33 @@ Axum 启动时第二个 `.route()` 不会 panic（无冲突检测），但运行
 - `cargo test --workspace --lib` 449 通过
 - `pc-http` 集成测试 +11 个新源
 - 累计 Round 95/96/97：**修复合计 22 个路由从 100% 500 → 正常 200**
+
+## 21. 第九十八轮增量（Round 98 — access.rs + companies.rs stub 化）
+
+### 修复的 6 个端点
+
+**`access.rs`（2 个）**：
+| 端点 | 原 SQL 问题 | stub 行为 |
+|---|---|---|
+| `GET /api/auth/board-claim/:token` | 表 `board_claim_tokens` 不存在 | 200 + `{valid: false, deprecated: true}` |
+| `POST /api/auth/board-claim/:token` | `board_claim_tokens` + `sessions` 都不存在 | **410 Gone**（区别于普通 deprecated） |
+
+**`companies.rs`（4 个）**：
+| 端点 | 原 SQL 问题 | stub 行为 |
+|---|---|---|
+| `GET /api/companies/import/jobs/:id` | `company_export_jobs` | synthetic `{status: completed, deprecated: true}` |
+| `POST /api/companies/:id/export` | `INSERT company_export_jobs` | queued + jobId = nil + deprecated |
+| `GET /api/companies/:id/export/fidelity` | `SELECT entity_count, summary FROM company_export_jobs` | `{entityCount: 0, meetsThreshold: false, deprecated: true}` |
+| `POST /api/companies/:id/imports/apply` | `INSERT company_import_jobs` | queued + jobId = nil + deprecated |
+
+### 设计选择：410 Gone vs deprecated: true
+- 一般 missing-table 端点用 `{deprecated: true, note: "..."}` 字段保留 URL 兼容
+- **Auth 端点**（board_claim_token）用 **410 Gone 状态码** 显式告诉客户端"不要再重试这个端点"——避免前端无限重试登录
+
+### 新增 6 个集成测试 `crates/pc-http/tests/round98_access_companies_stubs_contract.rs`
+
+### 进度影响
+- 综合进度从 **≈ 81.5% → ≈ 82.0%**
+- 累计 Round 95/96/97/98：**修复合计 28 个路由从 100% 500 → 正常 200/410**
+- workspace `cargo check --workspace` 0 errors
+- `cargo test --workspace --lib` 449 通过
