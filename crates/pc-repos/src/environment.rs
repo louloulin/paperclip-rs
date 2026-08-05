@@ -551,6 +551,77 @@ impl<'a> EnvironmentRepo<'a> {
         .await?;
         Ok(row)
     }
+    /// Round 204: 创建 environment_custom_image_setup_session。
+    /// 返回 (session_id, status)。
+    pub async fn create_custom_image_setup_session(
+        &self,
+        company_id: Uuid,
+        environment_id: Uuid,
+        provider: &str,
+        base_template_ref: Option<&str>,
+        started_by_user_id: Option<&str>,
+        started_by_agent_id: Option<Uuid>,
+    ) -> RepoResult<(Uuid, String)> {
+        let row: (Uuid, String) = sqlx::query_as(
+            "INSERT INTO environment_custom_image_setup_sessions                 (company_id, environment_id, provider, base_template_ref,                  started_by_user_id, started_by_agent_id, status) \
+             VALUES ($1,$2,$3,$4,$5,$6,'starting') \
+             RETURNING id, status::text",
+        )
+        .bind(company_id)
+        .bind(environment_id)
+        .bind(provider)
+        .bind(base_template_ref)
+        .bind(started_by_user_id)
+        .bind(started_by_agent_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// Round 204: 取消 / 完成 setup session（更新 status + finished_at）。
+    pub async fn finish_custom_image_setup_session(
+        &self,
+        session_id: Uuid,
+        new_status: &str,
+        failure_reason: Option<&str>,
+    ) -> RepoResult<bool> {
+        let n = sqlx::query(
+            "UPDATE environment_custom_image_setup_sessions \
+             SET status = $1, finished_at = now(), failure_reason = $2, updated_at = now() \
+             WHERE id = $3 AND finished_at IS NULL",
+        )
+        .bind(new_status)
+        .bind(failure_reason)
+        .bind(session_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 204: 生成（并落库）一个临时 token，用于 terminal 会话鉴权。
+    /// 返回 (token, expires_at)。
+    pub async fn issue_terminal_session_token(
+        &self,
+        session_id: Uuid,
+        ttl_seconds: i64,
+    ) -> RepoResult<(String, Timestamp)> {
+        let token = format!("csst_{}", Uuid::new_v4().simple());
+        let expires: Timestamp = sqlx::query_scalar(
+            "UPDATE environment_custom_image_setup_sessions \
+             SET connection_secret_ref = $1, \
+                 expires_at = now() + ($2 || ' seconds')::interval, \
+                 updated_at = now() \
+             WHERE id = $3 RETURNING expires_at",
+        )
+        .bind(&token)
+        .bind(ttl_seconds.to_string())
+        .bind(session_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok((token, expires))
+    }
+
 }
 
 #[cfg(test)]

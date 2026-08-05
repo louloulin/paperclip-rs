@@ -64,6 +64,23 @@ pub fn router() -> Router<AppState> {
             "/api/environment-custom-image-setup-sessions/:session_id",
             get(get_custom_image_setup_session),
         )
+        // ── Round 204: custom-image-setup-sessions lifecycle ──
+        .route(
+            "/api/environments/:environment_id/custom-image-setup-sessions",
+            post(create_custom_image_setup_session),
+        )
+        .route(
+            "/api/environment-custom-image-setup-sessions/:id/cancel",
+            post(cancel_custom_image_setup_session),
+        )
+        .route(
+            "/api/environment-custom-image-setup-sessions/:id/finish",
+            post(finish_custom_image_setup_session),
+        )
+        .route(
+            "/api/environment-custom-image-setup-sessions/:id/terminal-session-token",
+            post(terminal_session_token),
+        )
         .route(
             "/api/environment-leases/:lease_id",
             get(get_environment_lease),
@@ -516,5 +533,150 @@ async fn probe_company_environments_config(
         "validCount": valid_count,
         "warningCount": warning_count,
         "results": results,
+    })))
+}
+
+// ============================================================================
+// Round 204: custom-image-setup-sessions lifecycle
+//
+// 端口：
+// - POST /api/environments/:environment_id/custom-image-setup-sessions
+// - POST /api/environment-custom-image-setup-sessions/:id/{cancel,finish}
+// - POST /api/environment-custom-image-setup-sessions/:id/terminal-session-token
+// ============================================================================
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct CreateSetupSessionBody {
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    base_template_ref: Option<String>,
+    #[serde(default)]
+    started_by_user_id: Option<String>,
+    #[serde(default)]
+    started_by_agent_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct FinishSetupSessionBody {
+    #[serde(default)]
+    failure_reason: Option<String>,
+    #[serde(default = "default_terminal_ttl")]
+    ttl_seconds: i64,
+}
+
+fn default_terminal_ttl() -> i64 {
+    600
+}
+
+async fn create_custom_image_setup_session(
+    State(state): State<AppState>,
+    Path(environment_id): Path<Uuid>,
+    Json(body): Json<CreateSetupSessionBody>,
+) -> ApiResult<impl IntoResponse> {
+    let env_repo = EnvironmentRepo::new(&state.db);
+    let env = env_repo
+        .get(environment_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("environment {environment_id}")))?;
+    let provider = body.provider.clone().unwrap_or_else(|| env.driver.clone());
+    // EnvironmentRow 不含 company_id，单独查询一次
+    let company_id: Uuid = sqlx::query_scalar(
+        "SELECT company_id FROM environments WHERE id = $1",
+    )
+    .bind(environment_id)
+    .fetch_one(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let (session_id, status) = env_repo
+        .create_custom_image_setup_session(
+            company_id,
+            environment_id,
+            &provider,
+            body.base_template_ref.as_deref(),
+            body.started_by_user_id.as_deref(),
+            body.started_by_agent_id,
+        )
+        .await?;
+    state.realtime.publish(
+        LiveEvent::new("custom_image_setup_session.created", "session", session_id)
+            .with_company(Uuid::nil())
+            .with_data(json!({ "environmentId": environment_id, "provider": provider })),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "sessionId": session_id,
+            "environmentId": environment_id,
+            "provider": provider,
+            "status": status,
+        })),
+    ))
+}
+
+async fn cancel_custom_image_setup_session(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let env_repo = EnvironmentRepo::new(&state.db);
+    let ok = env_repo
+        .finish_custom_image_setup_session(id, "cancelled", Some("cancelled by user"))
+        .await?;
+    if !ok {
+        return Err(ApiError::NotFound(format!("session {id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("custom_image_setup_session.cancelled", "session", id),
+    );
+    Ok(Json(json!({
+        "sessionId": id,
+        "status": "cancelled",
+    })))
+}
+
+async fn finish_custom_image_setup_session(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<FinishSetupSessionBody>,
+) -> ApiResult<Json<Value>> {
+    let env_repo = EnvironmentRepo::new(&state.db);
+    let ok = env_repo
+        .finish_custom_image_setup_session(id, "finished", body.failure_reason.as_deref())
+        .await?;
+    if !ok {
+        return Err(ApiError::NotFound(format!("session {id}")));
+    }
+    state.realtime.publish(
+        LiveEvent::new("custom_image_setup_session.finished", "session", id),
+    );
+    Ok(Json(json!({
+        "sessionId": id,
+        "status": "finished",
+        "failureReason": body.failure_reason,
+    })))
+}
+
+async fn terminal_session_token(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<FinishSetupSessionBody>,
+) -> ApiResult<Json<Value>> {
+    let env_repo = EnvironmentRepo::new(&state.db);
+    let (token, expires_at) = env_repo
+        .issue_terminal_session_token(id, body.ttl_seconds)
+        .await?;
+    state.realtime.publish(
+        LiveEvent::new("custom_image_setup_session.token_issued", "session", id)
+            .with_data(json!({ "ttlSeconds": body.ttl_seconds })),
+    );
+    Ok(Json(json!({
+        "sessionId": id,
+        "token": token,
+        "expiresAt": expires_at,
+        "ttlSeconds": body.ttl_seconds,
     })))
 }
