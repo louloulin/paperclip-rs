@@ -28,6 +28,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/approvals/:id/approve", post(approve_approval))
         .route("/api/approvals/:id/reject", post(reject_approval))
         .route("/api/approvals/:id/resubmit", post(resubmit_approval))
+        // ── Round 195: request revision ──
+        .route("/api/approvals/:id/request-revision", post(request_approval_revision))
         .route("/api/approvals/:id/comments", get(list_approval_comments).post(add_approval_comment))
 }
 
@@ -235,6 +237,37 @@ async fn resubmit_approval(
         "status": "pending",
         "resubmitted": true,
     })))
+}
+
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct RequestRevisionBody {
+    #[serde(default)]
+    decision_note: Option<String>,
+    #[serde(default)]
+    decided_by: Option<String>,
+}
+
+async fn request_approval_revision(
+    State(state): State<AppState>,
+    Path(approval_id): Path<Uuid>,
+    Json(body): Json<RequestRevisionBody>,
+) -> ApiResult<Json<Value>> {
+    let decided_by = body.decided_by.as_deref().unwrap_or("board");
+    let row = ApprovalRepo::new(&state.db)
+        .request_revision(approval_id, decided_by, body.decision_note.as_deref())
+        .await?
+        .ok_or_else(|| {
+            ApiError::Conflict(
+                "Only pending approvals can request revision".into(),
+            )
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("approval.revision_requested", "approval", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
 async fn list_approval_comments(

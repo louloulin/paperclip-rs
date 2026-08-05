@@ -581,6 +581,25 @@ impl<'a> ApprovalRepo<'a> {
 
     // ---- Round 170: approvals route 仓储化新增方法 ----
 
+    /// Round 195: 请求 approval 修订（pending → revision_requested）。
+    /// Returns updated row, or None if not pending.
+    pub async fn request_revision(
+        &self,
+        approval_id: Uuid,
+        decided_by_user_id: &str,
+        decision_note: Option<&str>,
+    ) -> RepoResult<Option<ApprovalRow>> {
+        sqlx::query_as::<_, ApprovalRow>(
+            "UPDATE approvals SET                 status = 'revision_requested',                 decision_note = $2,                 decided_by_user_id = $3,                 decided_at = now(),                 updated_at = now()              WHERE id = $1 AND status = 'pending'              RETURNING id, company_id, type AS approval_type, requested_by_agent_id,                        requested_by_user_id, status, payload, decision_note,                        decided_by_user_id, decided_at, created_at, updated_at",
+        )
+        .bind(approval_id)
+        .bind(decision_note)
+        .bind(decided_by_user_id)
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(Into::into)
+    }
+
     /// Round 170: 重提交 approval（设为 pending）。
     /// 若 payload 提供则一并更新 payload，否则只更新 note。
     pub async fn resubmit(
