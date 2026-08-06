@@ -5324,3 +5324,43 @@ paperclip-rs 在以下场景发 realtime event 委托 Node worker 处理：
 ### 总结
 
 R237完成了两个核心路由的契约归一：成本汇总不再存在重复实现，active-run具备基本真实查询能力。下一轮优先补齐 watchdog 的输入契约与可观测副作用，再深化 recovery-actions 状态机。
+
+## 76. 第二百三十八轮增量（Round 238 — recovery-actions 原子解析与作用域安全）
+
+### 背景
+
+对照 Node `issue-recovery-actions.ts` 与 `issues.ts` 的 resolve 流程，Rust 原实现存在三个关键差距：可以通过任意 `action_id` 解析、不限制 action 必须处于 active 状态、resolve body 使用 snake_case 且没有 outcome 白名单。
+
+### 实现内容
+
+- 新增 `IssueRepo::resolve_recovery_action_for_issue`：
+  - 同时约束 `source_issue_id` 与 `action_id`。
+  - 只允许 `active` / `escalated` 状态进入解析。
+  - 支持 `resolved` 与 `cancelled` 两类最终状态。
+  - 在同一条 SQL UPDATE 中完成状态、outcome、resolution note、resolved_at 更新。
+- `ResolveRecoveryBody` 对齐 Node camelCase：
+  - `actionId`
+  - `outcome`
+  - `sourceIssueStatus`
+  - `resolutionNote`
+- 增加 outcome 白名单：`cancelled`、`restored`、`handed_back`、`owner_completed`、`blocked`、`false_positive`。
+- recovery list 响应增加 `issueId`，并保留 Node 的 `{ active, actions }` 结构。
+- resolve 路由先验证 issue 存在、状态值合法、action 归属于当前 source issue，再发布 realtime 事件。
+
+### 当前仍有差距
+
+- 尚未完整实现 Node 的 actor authority 检查与 board-only 的 `false_positive/cancelled` 权限。
+- `sourceIssueStatus` 当前完成输入校验和返回透传，尚未在同一事务内更新 issues 表及 hand-back assignee。
+- 尚未接入 Node 的 activity log、routine status sync、recovery wakeup queue。
+- list 读取尚未执行 Node 的 `revalidateActiveSourceRecoveryForRead` 自动重算。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round238_tests` | 4 passed |
+| `cargo check -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R238将 recovery resolve 从“按 ID 直接更新”提升为 source-scoped、active-only 的原子状态转换，消除了跨 issue 误解析风险。下一轮应优先补齐 actor authority 与 issue 状态更新事务，形成完整恢复闭环。

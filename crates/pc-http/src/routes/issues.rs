@@ -1344,44 +1344,77 @@ async fn list_recovery_actions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let active = IssueRepo::new(&state.db)
         .get_active_recovery_action(id)
         .await?;
-    let actions = if let Some(ref a) = active {
-        vec![a.clone()]
-    } else {
-        Vec::new()
-    };
     Ok(Json(json!({
         "active": active,
-        "actions": actions,
+        "actions": active.map(|action| vec![action]).unwrap_or_default(),
+        "issueId": issue.id,
     })))
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ResolveRecoveryBody {
     action_id: Uuid,
+    outcome: String,
     #[serde(default)]
-    outcome: Option<String>,
+    source_issue_status: Option<String>,
     #[serde(default)]
     resolution_note: Option<String>,
 }
 
+fn recovery_outcome_status(outcome: &str) -> Option<(&'static str, &'static str)> {
+    match outcome {
+        "cancelled" => Some(("cancelled", "cancelled")),
+        "restored" | "handed_back" | "owner_completed" | "blocked" => {
+            Some(("resolved", "restored"))
+        }
+        "false_positive" => Some(("resolved", "false_positive")),
+        _ => None,
+    }
+}
+
 async fn resolve_recovery(
     State(state): State<AppState>,
-    Path(_id): Path<Uuid>,
+    Path(id): Path<Uuid>,
     Json(body): Json<ResolveRecoveryBody>,
 ) -> ApiResult<Json<Value>> {
-    let outcome = body.outcome.as_deref().unwrap_or("resolved");
-    let row = IssueRepo::new(&state.db)
-        .resolve_recovery_action(body.action_id, body.resolution_note.as_deref(), outcome)
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("recovery action {}", body.action_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let (action_status, recorded_outcome) = recovery_outcome_status(&body.outcome)
+        .ok_or_else(|| ApiError::BadRequest(format!("unsupported recovery outcome: {}", body.outcome)))?;
+    if let Some(status) = body.source_issue_status.as_deref() {
+        if !matches!(status, "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled") {
+            return Err(ApiError::BadRequest(format!("unsupported issue status: {status}")));
+        }
+    }
+    let row = IssueRepo::new(&state.db)
+        .resolve_recovery_action_for_issue(
+            issue.id,
+            body.action_id,
+            body.resolution_note.as_deref(),
+            recorded_outcome,
+            action_status,
+        )
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("active recovery action {}", body.action_id)))?;
     state.realtime.publish(
         LiveEvent::new("issue.recovery.resolved", "issue_recovery_action", row.id)
             .with_company(row.company_id),
     );
-    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+    Ok(Json(json!({
+        "action": row,
+        "issueId": issue.id,
+        "sourceIssueStatus": body.source_issue_status,
+    })))
 }
 
 // ============================================================================
@@ -4556,6 +4589,52 @@ mod round237_tests {
         assert!(src.contains("exclude_root: bool"));
         assert!(src.contains("issue_count: i64::from(!query.exclude_root)"));
         assert!(src.contains("include_descendants: true"));
+    }
+}
+
+#[cfg(test)]
+mod round238_tests {
+    use super::{recovery_outcome_status, ResolveRecoveryBody};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn recovery_outcomes_map_to_node_statuses() {
+        assert_eq!(recovery_outcome_status("cancelled"), Some(("cancelled", "cancelled")));
+        assert_eq!(recovery_outcome_status("restored"), Some(("resolved", "restored")));
+        assert_eq!(recovery_outcome_status("false_positive"), Some(("resolved", "false_positive")));
+        assert_eq!(recovery_outcome_status("unknown"), None);
+    }
+
+    #[test]
+    fn resolve_body_accepts_node_camel_case_fields() {
+        let body: ResolveRecoveryBody = serde_json::from_value(json!({
+            "actionId": Uuid::new_v4(),
+            "outcome": "restored",
+            "sourceIssueStatus": "todo",
+            "resolutionNote": "worker resumed"
+        })).expect("camelCase recovery body");
+        assert_eq!(body.outcome, "restored");
+        assert_eq!(body.source_issue_status.as_deref(), Some("todo"));
+        assert_eq!(body.resolution_note.as_deref(), Some("worker resumed"));
+    }
+
+    #[test]
+    fn resolve_body_requires_outcome_and_action_id() {
+        assert!(serde_json::from_value::<ResolveRecoveryBody>(json!({
+            "outcome": "restored"
+        })).is_err());
+        assert!(serde_json::from_value::<ResolveRecoveryBody>(json!({
+            "actionId": Uuid::new_v4()
+        })).is_err());
+    }
+
+    #[test]
+    fn resolve_repository_query_is_source_scoped_and_active_only() {
+        let src = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(src.contains("source_issue_id = $1"));
+        assert!(src.contains("status IN ('active', 'escalated')"));
+        assert!(src.contains("status = $5"));
     }
 }
 

@@ -2292,17 +2292,19 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-    pub async fn resolve_recovery_action(
+    pub async fn resolve_recovery_action_for_issue(
         &self,
+        source_issue_id: Uuid,
         action_id: Uuid,
         resolution_note: Option<&str>,
         outcome: &str,
+        status: &str,
     ) -> sqlx::Result<Option<IssueRecoveryActionRow>> {
         sqlx::query_as::<_, IssueRecoveryActionRow>(
             "UPDATE issue_recovery_actions SET \
-                status = 'resolved', resolution_note = $2, outcome = $3, \
+                status = $5, resolution_note = $3, outcome = $4, \
                 resolved_at = now(), updated_at = now() \
-             WHERE id = $1 \
+             WHERE id = $2 AND source_issue_id = $1 AND status IN ('active', 'escalated') \
              RETURNING id, company_id, source_issue_id, recovery_issue_id, kind, status, \
                 owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
                 return_owner_agent_id, cause, fingerprint, evidence, next_action, \
@@ -2310,9 +2312,11 @@ impl<'a> IssueRepo<'a> {
                 timeout_at, last_attempt_at, outcome, resolution_note, resolved_at, \
                 created_at, updated_at",
         )
+        .bind(source_issue_id)
         .bind(action_id)
         .bind(resolution_note)
         .bind(outcome)
+        .bind(status)
         .fetch_optional(self.db.pool())
         .await
     }
