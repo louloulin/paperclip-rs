@@ -18,11 +18,13 @@ use pc_activity::types::{ActivityActor, ActivityEvent};
 use pc_realtime::LiveEvent;
 use pc_repos::activity::ActivityRepo;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor, IssueUpdateReceipt};
+use pc_repos::agent::AgentRepo;
 use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::case::CaseRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
+use pc_repos::routine::RoutineRepo;
 use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 
@@ -1458,20 +1460,33 @@ async fn resolve_recovery(
         let actor_type = if actor.agent_id.is_some() { "agent" } else { "user" };
         let actor_id = actor.agent_id.map(|value| value.to_string())
             .or_else(|| actor.user_id.clone()).unwrap_or_else(|| "system".into());
-        let _ = IssueRepo::new(&state.db).enqueue_agent_wakeup(
-            updated_issue.company_id,
-            updated_issue.assignee_agent_id.expect("checked above"),
-            "automation",
-            "issue_recovery_action_restored",
-            &json!({
-                "issueId": updated_issue.id,
-                "recoveryActionId": row.id,
-                "mutation": "recovery_action_resolution",
-            }),
-            actor_type,
-            &actor_id,
-        ).await;
+        let assignee_id = updated_issue.assignee_agent_id.expect("checked above");
+        let idempotency_key = format!("recovery:{}:{}", row.id, updated_issue.id);
+        let already = AgentRepo::new(&state.db)
+            .find_wakeup_by_idempotency_key(updated_issue.company_id, assignee_id, &idempotency_key)
+            .await
+            .ok()
+            .flatten();
+        if already.is_none() {
+            let _ = IssueRepo::new(&state.db).enqueue_agent_wakeup(
+                updated_issue.company_id,
+                assignee_id,
+                "automation",
+                "issue_recovery_action_restored",
+                &json!({
+                    "issueId": updated_issue.id,
+                    "recoveryActionId": row.id,
+                    "mutation": "recovery_action_resolution",
+                    "idempotencyKey": idempotency_key,
+                }),
+                actor_type,
+                &actor_id,
+            ).await;
+        }
     }
+    let _ = RoutineRepo::new(&state.db)
+        .sync_run_status_for_issue(updated_issue.id)
+        .await;
     state.realtime.publish(
         LiveEvent::new("issue.recovery.resolved", "issue_recovery_action", row.id)
             .with_company(row.company_id),
@@ -4790,6 +4805,34 @@ mod round241_tests {
         assert!(src.contains("body.source_issue_status.as_deref() == Some(\"todo\")"));
         assert!(src.contains("issue.status != updated_issue.status"));
         assert!(src.contains("issue.assignee_agent_id != updated_issue.assignee_agent_id"));
+    }
+}
+
+#[cfg(test)]
+mod round242_tests {
+    #[test]
+    fn wakeup_idempotency_key_is_derived_from_action_and_issue() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("format!(\"recovery:{}:{}\""));
+        assert!(src.contains("find_wakeup_by_idempotency_key"));
+        assert!(src.contains("AgentRepo::new(&state.db)"));
+    }
+
+    #[test]
+    fn routine_run_is_synced_after_recovery_resolution() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("sync_run_status_for_issue"));
+        assert!(src.contains("RoutineRepo::new(&state.db)"));
+    }
+
+    #[test]
+    fn routine_sync_helper_targets_routine_execution_origin() {
+        let repo = include_str!("../../../pc-repos/src/routine.rs");
+        assert!(repo.contains("sync_run_status_for_issue"));
+        assert!(repo.contains("origin_kind != \"routine_execution\""));
+        assert!(repo.contains("status='completed'"));
+        assert!(repo.contains("status='failed'"));
+        assert!(repo.contains("Execution issue moved to"));
     }
 }
 

@@ -5471,3 +5471,39 @@ Node recovery resolve 在 issue 被恢复为 `todo` 且 assignee 发生变化时
 ### 总结
 
 R241补齐了 recovery 恢复后的 agent 唤醒和 Node 响应契约，恢复链路从数据库状态转换延伸到运行时调度副作用。下一步重点是 wakeup 幂等、routine 状态同步和 watchdog evaluation 闭环。
+
+## 80. 第二百四十二轮增量（Round 242 — wakeup 幂等 + routine execution 同步）
+
+### 背景
+
+Node recovery resolve 中 `enqueueRecoveryActionWakeup` 会使用幂等键避免重复唤醒，并随后调用 `routinesSvc.syncRunStatusForIssue` 把 routine run 的状态与 source issue 同步。R241 实现了基础唤醒，尚未补齐幂等与 routine 同步。
+
+### 实现内容
+
+- 路由层 wakeup 幂等键：`recovery:{actionId}:{issueId}`。
+- 调用 `AgentRepo::find_wakeup_by_idempotency_key` 检测已存在唤醒，存在则跳过。
+- 唤醒 payload 加入 `idempotencyKey` 便于跨进程一致性。
+- 新增 `RoutineRepo::sync_run_status_for_issue`：
+  - 仅处理 `origin_kind='routine_execution'` 的 issue。
+  - `done` → routine run `completed`。
+  - `blocked` / `cancelled` → routine run `failed`，并写入 `failure_reason`。
+  - 其他状态 → 返回 `Ok(None)`，保持不变。
+- resolve 路由在事务完成后调用同步，最佳努力，不影响已完成的恢复动作。
+
+### 当前仍有差距
+
+- 幂等键只是按 action+issue 推导，跨 resolution run 仍可重复。
+- 同步函数单连接、无事务，与 Node 在同一 transaction 中的 `finalizeRun` 仍有差距。
+- PostgreSQL 连接受限于本地沙箱，仍未做真实数据库集成测试。
+- watchdog evaluation 仍使用现有 lazy 路径，尚未接入 recovery resolve 后的 active-watchdog 重算。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round242_tests` | 3 passed |
+| `cargo check -p pc-repos -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R242 完成了 recovery resolve 的两个运行时副作用收敛：wakeup 幂等和 routine execution 同步，使恢复操作不再在系统其他视角留下半成品状态。下一轮推荐进入 `active-watchdog` 重算，或补真实数据库集成验证。

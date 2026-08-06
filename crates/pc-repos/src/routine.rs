@@ -650,6 +650,61 @@ async fn append_current_routine_revision(
 }
 
 impl<'a> RoutineRepo<'a> {
+    /// Round 242: 对齐 Node `routinesSvc.syncRunStatusForIssue`。
+    pub async fn sync_run_status_for_issue(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT origin_kind, origin_run_id FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        let Some((origin_kind, origin_run_id)) = row else {
+            return Ok(None);
+        };
+        if origin_kind != "routine_execution" {
+            return Ok(None);
+        }
+        let Some(raw_run) = origin_run_id else { return Ok(None); };
+        let Ok(run_id) = Uuid::parse_str(&raw_run) else { return Ok(None); };
+        let status_row: Option<(String,)> = sqlx::query_as(
+            "SELECT status FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        let Some((status,)) = status_row else { return Ok(None); };
+        use sqlx::Row;
+        match status.as_str() {
+            "done" => {
+                let row = sqlx::query(
+                    "UPDATE routine_runs SET status='completed', completed_at=now(), updated_at=now() \
+                     WHERE id=$1 AND status<>'completed' RETURNING id",
+                )
+                .bind(run_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+                if let Some(row) = row { return Ok(Some(row.try_get::<Uuid, _>(0).unwrap_or(run_id))); }
+                Ok(None)
+            }
+            "blocked" | "cancelled" => {
+                let row = sqlx::query(
+                    "UPDATE routine_runs SET status='failed', failure_reason=$2, completed_at=now(), updated_at=now() \
+                     WHERE id=$1 AND status NOT IN ('completed','failed') RETURNING id",
+                )
+                .bind(run_id)
+                .bind(format!("Execution issue moved to {status}"))
+                .fetch_optional(self.db.pool())
+                .await?;
+                if let Some(row) = row { return Ok(Some(row.try_get::<Uuid, _>(0).unwrap_or(run_id))); }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub fn new(db: &'a Db) -> Self {
         Self { db }
     }
