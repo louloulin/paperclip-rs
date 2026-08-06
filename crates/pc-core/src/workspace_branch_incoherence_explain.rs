@@ -56,6 +56,12 @@ pub enum AncestryVerdict {
     Unknown,
 }
 
+impl Default for AncestryVerdict {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
 impl AncestryVerdict {
     pub fn as_str(self) -> &'static str {
         match self {

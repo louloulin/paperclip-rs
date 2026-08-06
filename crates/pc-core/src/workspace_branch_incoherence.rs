@@ -26,6 +26,12 @@ pub enum Cleanliness {
     Unknown,
 }
 
+impl Default for Cleanliness {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
 /// Fingerprint 输入：与 Node `fingerprintWorkspaceBranchIncoherence(input)` 1:1 对齐。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchIncoherenceInput {
