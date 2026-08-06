@@ -5364,3 +5364,35 @@ R237完成了两个核心路由的契约归一：成本汇总不再存在重复�
 ### 总结
 
 R238将 recovery resolve 从“按 ID 直接更新”提升为 source-scoped、active-only 的原子状态转换，消除了跨 issue 误解析风险。下一轮应优先补齐 actor authority 与 issue 状态更新事务，形成完整恢复闭环。
+
+## 77. 第二百三十九轮增量（Round 239 — recovery resolve 权限与 blocker 防护）
+
+### 背景
+
+Node recovery resolve 对 `cancelled` / `false_positive` 有 board authority 要求，对 `blocked` 要求 source issue 存在未解决的一等 blocker，并且 outcome 必须原样记录。Rust R238 已完成 action source-scope，但这三类保护仍缺失。
+
+### 实现内容
+
+- 修正 outcome 映射，确保 `restored`、`handed_back`、`owner_completed`、`blocked`、`false_positive` 不再错误地全部记录为 `restored`。
+- resolve 路由读取 actor headers：`x-paperclip-agent-id`、`x-paperclip-user-id`。
+- agent-only 请求尝试 `cancelled` / `false_positive` 时返回 `403 Forbidden`。
+- `blocked` outcome 调用 `IssueRepo::unresolved_blockers_for`，无未解决 blocker 时返回 `422 Unprocessable Entity`。
+- 保持 action source-scope、active/escalated-only 的原子 UPDATE。
+
+### 当前仍有差距
+
+- issue 状态更新和 recovery action resolve 尚未进入同一数据库事务。
+- `restored + sourceIssueStatus=todo` 尚未自动恢复 `return_owner_agent_id`。
+- 尚未写入 Node activity log，也未接入 routine status sync 和 recovery wakeup queue。
+- actor 校验目前基于 HTTP header 存在性，尚未接入完整的 session/agent/company 授权服务。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round239_tests` | 3 passed |
+| `cargo check -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R239补齐了恢复解析最关键的三类输入安全边界：outcome 保真、board-only 操作保护、blocked 前置条件校验。下一轮应将 issue 状态与 action 状态合并到真实事务，并补齐 hand-back 与审计副作用。

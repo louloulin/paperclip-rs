@@ -1372,9 +1372,10 @@ struct ResolveRecoveryBody {
 fn recovery_outcome_status(outcome: &str) -> Option<(&'static str, &'static str)> {
     match outcome {
         "cancelled" => Some(("cancelled", "cancelled")),
-        "restored" | "handed_back" | "owner_completed" | "blocked" => {
-            Some(("resolved", "restored"))
-        }
+        "restored" => Some(("resolved", "restored")),
+        "handed_back" => Some(("resolved", "handed_back")),
+        "owner_completed" => Some(("resolved", "owner_completed")),
+        "blocked" => Some(("resolved", "blocked")),
         "false_positive" => Some(("resolved", "false_positive")),
         _ => None,
     }
@@ -1383,6 +1384,7 @@ fn recovery_outcome_status(outcome: &str) -> Option<(&'static str, &'static str)
 async fn resolve_recovery(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<ResolveRecoveryBody>,
 ) -> ApiResult<Json<Value>> {
     let issue = IssueRepo::new(&state.db)
@@ -1395,6 +1397,19 @@ async fn resolve_recovery(
         if !matches!(status, "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled") {
             return Err(ApiError::BadRequest(format!("unsupported issue status: {status}")));
         }
+    }
+    if matches!(body.outcome.as_str(), "cancelled" | "false_positive")
+        && headers.get("x-paperclip-agent-id").is_some()
+        && headers.get("x-paperclip-user-id").is_none()
+    {
+        return Err(ApiError::Forbidden("board authority required for this recovery outcome".into()));
+    }
+    if body.outcome == "blocked"
+        && IssueRepo::new(&state.db).unresolved_blockers_for(issue.id).await?.is_empty()
+    {
+        return Err(ApiError::Unprocessable(
+            "blocked recovery resolution requires an unresolved blocker".into(),
+        ));
     }
     let row = IssueRepo::new(&state.db)
         .resolve_recovery_action_for_issue(
@@ -4635,6 +4650,37 @@ mod round238_tests {
         assert!(src.contains("source_issue_id = $1"));
         assert!(src.contains("status IN ('active', 'escalated')"));
         assert!(src.contains("status = $5"));
+    }
+}
+
+#[cfg(test)]
+mod round239_tests {
+    use super::recovery_outcome_status;
+
+    #[test]
+    fn every_node_recovery_outcome_preserves_its_value() {
+        for outcome in ["restored", "handed_back", "owner_completed", "blocked", "false_positive"] {
+            let (_, recorded) = recovery_outcome_status(outcome).expect("supported outcome");
+            assert_eq!(recorded, outcome);
+        }
+        assert_eq!(recovery_outcome_status("cancelled"), Some(("cancelled", "cancelled")));
+    }
+
+    #[test]
+    fn resolve_route_enforces_board_only_and_blocker_guards() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("cancelled\" | \"false_positive"));
+        assert!(src.contains("board authority required for this recovery outcome"));
+        assert!(src.contains("unresolved_blockers_for(issue.id)"));
+        assert!(src.contains("ApiError::Unprocessable"));
+    }
+
+    #[test]
+    fn resolve_route_reads_actor_headers() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("headers: HeaderMap"));
+        assert!(src.contains("x-paperclip-agent-id"));
+        assert!(src.contains("x-paperclip-user-id"));
     }
 }
 
