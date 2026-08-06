@@ -5507,3 +5507,48 @@ Node recovery resolve 中 `enqueueRecoveryActionWakeup` 会使用幂等键避免
 ### 总结
 
 R242 完成了 recovery resolve 的两个运行时副作用收敛：wakeup 幂等和 routine execution 同步，使恢复操作不再在系统其他视角留下半成品状态。下一轮推荐进入 `active-watchdog` 重算，或补真实数据库集成验证。
+
+## 81. 第二百四十三轮增量（Round 243 — watchdog 路由安全闭环与评估队列）
+
+### 背景
+
+Node 端 watchdog PUT/DELETE 会做两类前置检查：`rejectTaskWatchdogConfigMutation`（任务 watchdog run 不能改 watchdog 配置）和 `assertLowTrustControlPlaneDenied`（低信任 agent 不能动控制面），并在变更后调用 `queueTaskWatchdogEvaluation` 触发 reconcile。R236-R241 的 watchdog 路由只实现了 CRUD，缺失这两类前置检查和评估队列。
+
+### 实现内容
+
+- 新增 `IssueRepo::enqueue_task_watchdog_evaluation`：
+  - 同一 transaction 不可用，仅作 best-effort 信号
+  - 增加 `trigger_count` 并刷新 `last_triggered_at`、`updated_by_run_id`
+- 路由层增加 `watchdog_actor_from_headers`：
+  - 解析 `x-paperclip-agent-id`、`x-paperclip-run-id`、`x-paperclip-user-id`
+  - 从 `agents` 表查询 company_id
+  - 构造 `AgentRunActor`
+- 新增 `reject_task_watchdog_config_mutation`：
+  - agent actor 时调用 `resolve_task_watchdog_mutation_scope`
+  - 若命中 `Watchdog` scope，返回 403
+- 新增 `reject_low_trust_control_plane`：
+  - agent actor 时检查 `issue.execution_policy.trust == "low_trust_review"`
+  - 命中返回 403
+- upsert/remove 路由：
+  - 调用两个守卫
+  - 解析 run_id 并写入 watchdog actor / 评估队列
+  - best-effort 调用 `enqueue_task_watchdog_evaluation`
+  - 继续发送 realtime 事件
+
+### 当前仍有差距
+
+- 完整 `reconcileForIssueAndAncestors` 尚未实现，当前仅触发表征 hint。
+- activity log 写入 `issue.watchdog_*` 仍未完成。
+- actor company_id 查询仅取 agent.company_id，未覆盖 board 用户。
+- 低信任判断依赖 `execution_policy.trust` 字段，可能与公司级 trust 配置源不同步。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round243_tests` | 3 passed |
+| `cargo check -p pc-repos -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R243 把 watchdog 路由接到 Rust 已有 task_watchdog_scope 模块，把 Node 的两类权限语义收敛到同一个 actor 解析入口。下一步推进 reconcile 完整实现或 watchdog 评估 worker 入口。

@@ -1298,17 +1298,24 @@ async fn upsert_watchdog(
             .map(|s| s.to_string())
     });
     let user_ref = user.as_deref();
+    let actor = watchdog_actor_from_headers(&state, &headers).await?;
+    reject_task_watchdog_config_mutation(&state, &actor).await?;
+    reject_low_trust_control_plane(&issue, &actor)?;
+    let run_id = actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
     let (row, created) = IssueRepo::new(&state.db)
         .upsert_watchdog(
             issue.company_id,
             id,
             body.watchdog_agent_id,
             body.instructions.as_deref(),
-            None,
+            actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
             user_ref,
-            None,
+            run_id,
         )
         .await?;
+    let _ = IssueRepo::new(&state.db)
+        .enqueue_task_watchdog_evaluation(id, run_id)
+        .await;
     state.realtime.publish(
         LiveEvent::new(
             if created {
@@ -1327,15 +1334,97 @@ async fn upsert_watchdog(
 async fn remove_watchdog(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let actor = watchdog_actor_from_headers(&state, &headers).await?;
+    reject_task_watchdog_config_mutation(&state, &actor).await?;
+    reject_low_trust_control_plane(&issue, &actor)?;
+    let run_id = actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
     let row = IssueRepo::new(&state.db).disable_watchdog(id).await?;
     if let Some(ref w) = row {
+        let _ = IssueRepo::new(&state.db)
+            .enqueue_task_watchdog_evaluation(id, run_id)
+            .await;
         state.realtime.publish(
             LiveEvent::new("issue.watchdog_removed", "issue_watchdog", w.id)
                 .with_company(w.company_id),
         );
     }
     Ok(Json(json!({ "ok": true, "disabled": row })))
+}
+
+
+async fn watchdog_actor_from_headers(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> ApiResult<pc_repos::task_watchdog_scope::AgentRunActor> {
+    use pc_repos::task_watchdog_scope::AgentRunActor;
+    let agent_id = headers
+        .get("x-paperclip-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let run_id = headers
+        .get("x-paperclip-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let user_id = crate::state::require_user_id(state, headers).await.ok();
+    let actor_type = if agent_id.is_some() { "agent".to_owned() } else if user_id.is_some() { "user".to_owned() } else { "board".to_owned() };
+    let company_id = if let Some(agent) = agent_id.as_deref() {
+        if let Ok(uuid) = Uuid::parse_str(agent) {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT company_id FROM agents WHERE id = $1",
+            )
+            .bind(uuid)
+            .fetch_optional(state.db.pool())
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.to_string())
+        } else { None }
+    } else { None };
+    Ok(AgentRunActor {
+        actor_type,
+        agent_id,
+        company_id,
+        run_id,
+    })
+}
+
+async fn reject_task_watchdog_config_mutation(
+    state: &AppState,
+    actor: &pc_repos::task_watchdog_scope::AgentRunActor,
+) -> ApiResult<()> {
+    use pc_repos::task_watchdog_scope::resolve_task_watchdog_mutation_scope;
+    use pc_repos::task_watchdog_scope::TaskWatchdogMutationScope;
+    if actor.actor_type != "agent" { return Ok(()); }
+    let scope = resolve_task_watchdog_mutation_scope(&state.db, actor)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if matches!(scope, TaskWatchdogMutationScope::Watchdog { .. }) {
+        return Err(ApiError::Forbidden(
+            "Task-watchdog runs cannot change watchdog configuration.".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn reject_low_trust_control_plane(
+    issue: &pc_repos::issue::IssueRow,
+    actor: &pc_repos::task_watchdog_scope::AgentRunActor,
+) -> ApiResult<()> {
+    if actor.actor_type != "agent" { return Ok(()); }
+    let policy = issue.execution_policy.as_ref();
+    let trust = policy.and_then(|p| p.get("trust")).and_then(|v| v.as_str());
+    if matches!(trust, Some("low_trust_review")) {
+        return Err(ApiError::Forbidden(
+            "Low-trust actors cannot use this control-plane surface".into(),
+        ));
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -4833,6 +4922,36 @@ mod round242_tests {
         assert!(repo.contains("status='completed'"));
         assert!(repo.contains("status='failed'"));
         assert!(repo.contains("Execution issue moved to"));
+    }
+}
+
+#[cfg(test)]
+mod round243_tests {
+    #[test]
+    fn watchdog_routes_extract_actor_and_run_id_from_headers() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("watchdog_actor_from_headers"));
+        assert!(src.contains("x-paperclip-agent-id"));
+        assert!(src.contains("x-paperclip-run-id"));
+        assert!(src.contains("company_id FROM agents"));
+    }
+
+    #[test]
+    fn watchdog_routes_reject_task_watchdog_and_low_trust() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("reject_task_watchdog_config_mutation"));
+        assert!(src.contains("Task-watchdog runs cannot change watchdog configuration"));
+        assert!(src.contains("reject_low_trust_control_plane"));
+        assert!(src.contains("low_trust_review"));
+    }
+
+    #[test]
+    fn watchdog_routes_enqueue_evaluation_after_mutation() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("enqueue_task_watchdog_evaluation"));
+        let repo = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(repo.contains("pub async fn enqueue_task_watchdog_evaluation("));
+        assert!(repo.contains("trigger_count = trigger_count + 1"));
     }
 }
 

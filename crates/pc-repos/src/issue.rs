@@ -2234,6 +2234,28 @@ impl<'a> IssueRepo<'a> {
         }
     }
 
+    /// Round 243: best-effort 标记 active watchdog 待评估。
+    pub async fn enqueue_task_watchdog_evaluation(
+        &self,
+        issue_id: Uuid,
+        run_id: Option<Uuid>,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE issue_watchdogs \
+             SET last_triggered_at = now(), \
+                 trigger_count = trigger_count + 1, \
+                 updated_by_run_id = COALESCE($2, updated_by_run_id), \
+                 updated_at = now() \
+             WHERE issue_id = $1 AND status = 'active'",
+        )
+        .bind(issue_id)
+        .bind(run_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
     pub async fn disable_watchdog(&self, issue_id: Uuid) -> sqlx::Result<Option<IssueWatchdogRow>> {
         sqlx::query_as::<_, IssueWatchdogRow>(
             "UPDATE issue_watchdogs SET status = 'disabled', updated_at = now() \
