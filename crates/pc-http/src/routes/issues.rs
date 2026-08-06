@@ -144,6 +144,10 @@ pub fn router() -> Router<AppState> {
             "/api/issues/:id/live-runs",
             get(list_live_runs),
         )
+        .route(
+            "/api/issues/:id/active-run",
+            get(active_run),
+        )
         // ===== Round 30: runs deep + diagnostics + monitor =====
         .route("/api/issues/:id/runs/:run_id", get(get_issue_run))
         .route("/api/issues/:id/runs/:run_id/cancel", post(cancel_issue_run))
@@ -4479,6 +4483,81 @@ async fn list_live_runs(
     })))
 }
 
+
+/// R237: GET /api/issues/:id/active-run — 返回当前 issue 的 active run。
+///
+/// 与 Node `heartbeat.getActiveRunForIssue` 对齐。
+/// 当前 Rust 端实现: 通过 heartbeat_runs 表查询最近一个非终态 run。
+async fn active_run(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(issue_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
+    let row: Option<(Uuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT id, status, error, created_at          FROM heartbeat_runs          WHERE company_id = $1            AND (issue_id = $2 OR context_snapshot ->> 'issueId' = $2::text)            AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')          ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(issue.company_id)
+    .bind(issue_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    match row {
+        Some((id, status, error, created_at)) => Ok(Json(json!({
+            "id": id,
+            "status": status,
+            "error": error,
+            "createdAt": created_at,
+            "issueId": issue_id,
+            "companyId": issue.company_id,
+        }))),
+        None => Ok(Json(json!({
+            "activeRun": null,
+            "issueId": issue_id,
+            "companyId": issue.company_id,
+        }))),
+    }
+}
+
+
+#[cfg(test)]
+mod round237_tests {
+    #[test]
+    fn active_run_route_and_handler_are_registered() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("/api/issues/:id/active-run"));
+        assert!(src.contains("async fn active_run("));
+        assert!(src.contains("status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')"));
+    }
+
+    #[test]
+    fn active_run_response_keeps_node_null_shape() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"activeRun\": null"));
+        assert!(src.contains("\"issueId\": issue_id"));
+        assert!(src.contains("\"companyId\": issue.company_id"));
+    }
+
+    #[test]
+    fn cost_summary_is_owned_by_costs_route() {
+        let src = include_str!("issues.rs");
+        assert!(!src.contains("async fn cost_summary(\n"));
+        let costs = include_str!("costs.rs");
+        assert!(costs.contains("/api/issues/:issue_id/cost-summary"));
+        assert!(costs.contains("include_descendants: true"));
+        assert!(costs.contains("cost_cents: row.cost_cents"));
+    }
+
+    #[test]
+    fn cost_summary_supports_exclude_root_query() {
+        let src = include_str!("costs.rs");
+        assert!(src.contains("exclude_root: bool"));
+        assert!(src.contains("issue_count: i64::from(!query.exclude_root)"));
+        assert!(src.contains("include_descendants: true"));
+    }
+}
 
 #[cfg(test)]
 mod round216_tests {

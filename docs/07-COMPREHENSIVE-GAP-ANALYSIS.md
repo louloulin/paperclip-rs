@@ -5294,3 +5294,33 @@ paperclip-rs 在以下场景发 realtime event 委托 Node worker 处理：
 | R239 | `/agents/:id/keys` + `/agents/:id/permissions` | agent 管理 |
 | R240 | `/plugins/:id` + `/plugins/:id/reload` | plugin 管理 |
 | R241 | `/tool-gateway/:id/runtime-slots` | runtime 监控 |
+
+## 75. 第二百三十七轮增量（Round 237 — active-run 与成本汇总兼容性收敛）
+
+### 背景
+
+对照 Node `agents.ts`、`costs.ts` 与 OpenAPI 定义复核 R237 路由，发现 issues 路由中曾存在一份重复的 `cost-summary` 实现：它按 `kind` 聚合并返回 `totalCost/breakdown`，与 Node 的 issue tree summary 契约不一致。Rust 已有 `routes/costs.rs` 和 `CostRepo::issue_summary`，因此本轮收敛到单一实现。
+
+### 实现内容
+
+- 保留 `/api/issues/:id/active-run`：查询同公司、同 issue（含 `context_snapshot.issueId`）的非终态 heartbeat run，空结果返回 Node 兼容的 `activeRun: null`。
+- 移除 `issues.rs` 中重复的错误 `cost-summary` handler 和路由注册，统一使用 `costs.rs` 的 `/api/issues/:issue_id/cost-summary`。
+- 成本汇总统一返回 `issueId/issueCount/includeDescendants/costCents/inputTokens/cachedInputTokens/outputTokens/runCount/runtimeMs`，支持 `excludeRoot` 查询参数。
+- 新增 R237 纯单元契约测试 4 项，覆盖路由注册、空 active-run 响应、成本路由归属和 `excludeRoot` 语义。
+
+### 当前仍有差距
+
+- active-run 尚未复刻 Node 的 agent fallback、agent 元数据装饰和 `outputSilence` 计算。
+- watchdog PUT/DELETE 已有数据层 CRUD，但尚未完整复刻 Node 的访问控制、低信任控制面拒绝、activity log 和 watchdog evaluation queue。
+- recovery-actions 当前仅实现 active projection/resolve 基础路径，Node 的 authority 校验、状态回写和 hand-back 语义仍需继续补齐。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round237_tests` | 4 passed |
+| 工作区编译 | `cargo check --workspace --lib --tests` 通过 |
+
+### 总结
+
+R237完成了两个核心路由的契约归一：成本汇总不再存在重复实现，active-run具备基本真实查询能力。下一轮优先补齐 watchdog 的输入契约与可观测副作用，再深化 recovery-actions 状态机。
