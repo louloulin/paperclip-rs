@@ -123,6 +123,11 @@ pub fn router() -> Router<AppState> {
                 .put(upsert_watchdog)
                 .delete(remove_watchdog),
         )
+        // ---- Round 245: watchdog evaluation worker 上报 ----
+        .route(
+            "/api/issues/:id/watchdog-evaluations/complete",
+            post(complete_watchdog_evaluation),
+        )
         .route("/api/issues/:id/read", delete(unmark_read_route))
         .route("/api/issues/:id/activity", get(issue_activity))
         .route("/api/issues/:id/cases", get(list_issue_cases))
@@ -1357,6 +1362,49 @@ async fn remove_watchdog(
     Ok(Json(json!({ "ok": true, "disabled": row })))
 }
 
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompleteWatchdogEvaluationBody {
+    #[serde(default)]
+    reviewed_fingerprint: Option<String>,
+    #[serde(default)]
+    observed_fingerprint: Option<String>,
+    #[serde(default)]
+    snooze_until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Round 245: watchdog evaluation worker 上报完成。
+async fn complete_watchdog_evaluation(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<CompleteWatchdogEvaluationBody>,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let actor = watchdog_actor_from_headers(&state, &headers).await?;
+    reject_low_trust_control_plane(&issue, &actor)?;
+    let n = IssueRepo::new(&state.db)
+        .mark_watchdog_evaluation_completed(
+            issue.company_id,
+            id,
+            body.reviewed_fingerprint.as_deref(),
+            body.observed_fingerprint.as_deref(),
+            body.snooze_until,
+        )
+        .await?;
+    if n == 0 {
+        return Err(ApiError::NotFound(format!("active watchdog for issue {id}")));
+    }
+    Ok(Json(json!({
+        "issueId": id,
+        "companyId": issue.company_id,
+        "updated": n,
+    })))
+}
 
 async fn watchdog_actor_from_headers(
     state: &AppState,
@@ -4980,6 +5028,37 @@ mod round244_tests {
         assert!(src.contains(".reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)"));
         let production_call_sites = src.matches(".reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)").count();
         assert!(production_call_sites >= 2, "watchdog routes should call reconcile_for_issue_and_ancestors in both upsert and remove");
+    }
+}
+
+#[cfg(test)]
+mod round245_tests {
+    #[test]
+    fn watchdog_evaluation_routes_are_registered() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("/api/issues/:id/watchdog-evaluations/complete"));
+        assert!(src.contains("async fn complete_watchdog_evaluation("));
+        let comp = include_str!("companies.rs");
+        assert!(comp.contains("/api/companies/:company_id/watchdog-evaluations"));
+        assert!(comp.contains("list_pending_watchdog_evaluations"));
+    }
+
+    #[test]
+    fn complete_body_uses_camel_case_fields() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("reviewed_fingerprint"));
+        assert!(src.contains("observed_fingerprint"));
+        assert!(src.contains("snooze_until"));
+        assert!(src.contains("CompleteWatchdogEvaluationBody"));
+    }
+
+    #[test]
+    fn evaluation_helpers_keep_postgres_truth_aligned() {
+        let repo = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(repo.contains("pub async fn list_pending_watchdog_evaluations("));
+        assert!(repo.contains("pub async fn mark_watchdog_evaluation_completed("));
+        assert!(repo.contains("last_completed_at IS NULL OR last_triggered_at > last_completed_at"));
+        assert!(repo.contains("last_reviewed_fingerprint"));
     }
 }
 

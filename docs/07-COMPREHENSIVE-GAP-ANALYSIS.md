@@ -5591,3 +5591,44 @@ R243 已为 watchdog 路由接入守卫与单 issue hint。Node `queueTaskWatchd
 ### 总结
 
 R244 把 watchdog reconcile 从“单 issue”扩展到“祖先链”，与 Node `reconcileForIssueAndAncestors` 行为一致。下一步可以接入真实的 worker 评估入口或 active-run agent fallback 装饰。
+
+## 83. 第二百四十五轮增量（Round 245 — watchdog evaluation worker 入口）
+
+### 背景
+
+R244 完成了 watchdog reconcile hint，但 Node `taskWatchdogEvaluationService` 还需要 worker 拉取候选 + 上报评估结果。本轮为外部 worker 提供仓储 + HTTP 入口。
+
+### 实现内容
+
+- `IssueRepo::list_pending_watchdog_evaluations`：
+  - 仅返回 `status='active'` 且 `last_completed_at IS NULL OR last_triggered_at > last_completed_at` 的 watchdog
+  - 按 last_triggered_at FIFO 返回，便于 worker 顺序处理
+  - 返回 (issue_id, watchdog_id, watchdog_agent_id, last_triggered_at)
+- `IssueRepo::mark_watchdog_evaluation_completed`：
+  - 写入 last_completed_at = now()
+  - 更新 last_reviewed_fingerprint / last_observed_fingerprint
+  - snooze_until 提供时同步刷新 last_triggered_at
+  - 仅作用于 active watchdog
+- 新增路由：
+  - `GET /api/companies/:company_id/watchdog-evaluations`：worker 拉取评估候选
+  - `POST /api/issues/:id/watchdog-evaluations/complete`：worker 上报完成
+- 上报 body camelCase：`reviewedFingerprint` / `observedFingerprint` / `snoozeUntil`
+- 上报 handler 调用既有 low-trust 拦截。
+
+### 当前仍有差距
+
+- worker 评估完成后没有触发 realtime 事件。
+- 没有为 evaluation 写 `activity_log`，仍依赖现有 realtime + watchdog hint 通知。
+- 上报接口只接受单 issue，未提供批量上报。
+- evaluation worker 主体仍未实现：当前只是 worker 的入口与回写点。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round245_tests` | 3 passed |
+| `cargo check -p pc-repos -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R245 闭合了 reconcile hint → worker 评估 → 上报回写三段循环的中间接口。下一步推进 active-run agent fallback 装饰，或把 evaluation worker 与 realtime/activity log 联动。

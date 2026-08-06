@@ -110,6 +110,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:company_id/case-events", get(list_company_case_events_route))
         .route("/api/companies/:company_id/user-directory", get(list_company_user_directory_route))
         .route("/api/companies/:company_id/review-cases", get(list_company_review_cases_route))
+        // ---- Round 245: company watchdog evaluation worker 入口 ----
+        .route(
+            "/api/companies/:company_id/watchdog-evaluations",
+            get(list_company_watchdog_evaluations_route),
+        )
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
@@ -2152,6 +2157,33 @@ async fn list_company_review_cases_route(
     let items: Vec<Value> = rows
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "items": items,
+        "count": items.len(),
+    })))
+}
+
+/// Round 245: watchdog evaluation worker 拉取候选。
+async fn list_company_watchdog_evaluations_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    ensure_company_exists(&state, company_id).await?;
+    let rows = IssueRepo::new(&state.db)
+        .list_pending_watchdog_evaluations(company_id, 200)
+        .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(issue_id, watchdog_id, agent_id, last_triggered_at)| {
+            json!({
+                "watchdogId": watchdog_id,
+                "issueId": issue_id,
+                "watchdogAgentId": agent_id,
+                "lastTriggeredAt": last_triggered_at,
+            })
+        })
         .collect();
     Ok(Json(json!({
         "companyId": company_id,

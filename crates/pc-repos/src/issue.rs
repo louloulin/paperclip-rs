@@ -2234,6 +2234,61 @@ impl<'a> IssueRepo<'a> {
         }
     }
 
+    /// Round 245: 列出待评估 watchdog — 对齐 Node evaluation worker 入口。
+    /// 条件：`status='active'` AND (`last_triggered_at > last_completed_at` OR `last_completed_at IS NULL`)。
+    /// 按 last_triggered_at ASC 返回候选，便于 FIFO 评估。
+    pub async fn list_pending_watchdog_evaluations(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<(Uuid, Uuid, Uuid, Option<chrono::DateTime<chrono::Utc>>)>> {
+        let rows: Vec<(Uuid, Uuid, Uuid, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+            "SELECT issue_id, id, watchdog_agent_id, last_triggered_at \
+             FROM issue_watchdogs \
+             WHERE company_id = $1 AND status = 'active' \
+               AND (last_completed_at IS NULL OR last_triggered_at > last_completed_at) \
+             ORDER BY last_triggered_at ASC NULLS LAST, id ASC \
+             LIMIT $2",
+        )
+        .bind(company_id)
+        .bind(limit.clamp(1, 500))
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
+    }
+
+    /// Round 245: worker 完成一次评估后回写。
+    /// - 更新 `last_completed_at = now()`
+    /// - 写入 `last_reviewed_fingerprint` / `last_observed_fingerprint`
+    /// - 若 `snooze_until` 提供，写入 `last_triggered_at = COALESCE(snooze_until, now())`，让调度器延后
+    pub async fn mark_watchdog_evaluation_completed(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        reviewed_fingerprint: Option<&str>,
+        observed_fingerprint: Option<&str>,
+        snooze_until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE issue_watchdogs \
+             SET last_completed_at = now(), \
+                 last_reviewed_fingerprint = COALESCE($3, last_reviewed_fingerprint), \
+                 last_observed_fingerprint = COALESCE($4, last_observed_fingerprint), \
+                 last_triggered_at = COALESCE($5, last_triggered_at), \
+                 updated_at = now() \
+             WHERE company_id = $1 AND issue_id = $2 AND status = 'active'",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .bind(reviewed_fingerprint)
+        .bind(observed_fingerprint)
+        .bind(snooze_until)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
     /// Round 244: 递归上溯 issue 的祖先链 (parent_id)，按 depth 升序返回 (issue_id)。
     pub async fn list_ancestor_issue_ids(
         &self,
