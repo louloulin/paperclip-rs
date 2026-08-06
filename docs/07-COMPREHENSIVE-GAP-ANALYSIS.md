@@ -4742,3 +4742,94 @@ Node 端 `decomposeAcceptedPlan` 是**事务+游标循环**：每次创建 child
 - 剩余差距主要集中在 **runtime/streaming/AI 集成** 等需要 Node 端 background worker 的部分
 - paperclip-rs 的设计哲学：**完整 1:1 数据层 + 路由层，业务编排通过 realtime event 委托 Node**
 - 这种设计让 Rust 在**类型安全 + 性能 + 部署简单性**上的优势最大化，同时避免重复实现 Node 端已有能力
+
+---
+
+## 60. 第二百二十九轮增量（Round 229 — issues 完整 create/update/child body 对齐 Node schema）
+
+### 背景
+
+Node 端 `/api/companies/:companyId/issues` POST 路由使用 zod `createIssueSchema`（基于 `createIssueBaseSchema`），覆盖 20+ 字段：
+- 关联字段：`projectId` / `projectWorkspaceId` / `goalId` / `parentId` / `inheritExecutionWorkspaceFromIssueId`
+- 工作模式：`workMode` / `harnessKind`
+- 分配：`assigneeAgentId` / `assigneeUserId` / `assigneeAdapterOverrides`
+- 权限：`createdByUserId` / `responsibleUserId` / `billingCode` / `requestDepth`
+- 执行：`executionPolicy` / `executionWorkspaceId` / `executionWorkspacePreference` / `executionWorkspaceSettings`
+- 阻塞：`blockedByIssueIds` / `labelIds` / `unblockDescriptor`
+- 重复保护：`idempotencyKey` / `allowDuplicate`
+
+旧 `CreateBody` / `UpdateBody` / `ChildBody` 只覆盖 5-7 字段，本轮升级到**完整 25 字段**，与 Node 端 1:1 对齐。
+
+### 实现内容
+
+**pc-repos/src/issue.rs** — 新增 3 个 Input 结构体 + 3 个仓储方法：
+
+```rust
+pub struct CreateIssueInput<'a> {           // 25 字段，对齐 createIssueBaseSchema
+    company_id, title, description, status, work_mode, harness_kind, priority,
+    assignee_agent_id, assignee_user_id,
+    project_id, project_workspace_id, goal_id, parent_id,
+    inherit_execution_workspace_from_issue_id,
+    created_by_user_id, responsible_user_id, billing_code, request_depth,
+    assignee_adapter_overrides, execution_policy,
+    execution_workspace_id, execution_workspace_preference, execution_workspace_settings,
+    blocked_by_issue_ids, label_ids, unblock_descriptor,
+}
+
+pub struct UpdateIssuePatch<'a> {           // 20 partial 字段，三态语义
+    title, description, status, work_mode, harness_kind, priority,
+    assignee_agent_id, assignee_user_id, responsible_user_id, billing_code,
+    execution_policy, execution_workspace_id, execution_workspace_preference,
+    execution_workspace_settings, unblock_descriptor, hidden_at,
+    reopen, resume, interrupt,
+}
+
+pub struct CreateChildIssueInput<'a> {      // 22 字段 + acceptanceCriteria / blockParentUntilDone
+    // ... omit parentId / inheritExecutionWorkspaceFromIssueId / watchdogDiscovery
+    acceptance_criteria, block_parent_until_done,
+}
+```
+
+**create_full / update_full / create_child_full** 三个仓储方法：
+- `create_full` — 完整 INSERT 支持所有字段
+- `update_full` — 三态语义 (None/Some(Some(x))/Some(None))，支持 partial patch
+- `create_child_full` — 自动继承 parent_id + project_id/workspace_id/goal_id
+
+**pc-http/src/routes/issues.rs** — Body 结构升级：
+- `CreateBody` → `CreateIssueFullBody` (camelCase rename_all + 25 字段)
+- `UpdateBody` → `UpdateIssueFullBody` (camelCase rename_all + 20 字段 + reopen/resume/interrupt/hiddenAt)
+- `ChildBody` → `ChildIssueFullBody` (camelCase rename_all + 22 字段 + acceptanceCriteria/blockParentUntilDone)
+- create / update / create_child handler 重构为调用新仓储方法
+- unblockDescriptor 必须配 status='blocked' 校验
+
+### 测试
+
+| 模块 | 测试数 | 覆盖内容 |
+|---|---|---|
+| `pc-http::round229_tests` | 11 | full/partial/empty payload、snake_case alias 兼容、unblockDescriptor owner 三种变体（agent/user/board）、camelCase 严格模式、acceptanceCriteria 空数组 |
+| `pc-repos::round229_input_struct_tests` | 6 | Input 结构 default 状态、借用语义（&str / &[Uuid]）、UpdateIssuePatch 三态语义（None/Some(Some)/Some(None)） |
+
+### 构建/测试结果
+
+- `cargo check --workspace --lib --tests` — **0 errors**
+- `cargo test -p pc-http --lib` — **109 passed** (98 + 11 round229)
+- `cargo test -p pc-repos --lib round229` — **6 passed**
+
+### Commit
+
+`8dee920 refactor(pc-http/pc-repos): Round 229 - issues 完整 create/update/child body 对齐 Node schema`
+
+### 进展
+
+- ✅ issues create/update/child 路由 body 现在接受全部 Node schema 字段
+- ✅ idempotencyKey / allowDuplicate 已接受（后端暂不消费，前端可继续发送）
+- ✅ reopen / resume / interrupt 状态机 hint 字段已接受（语义实现留待后续）
+- ✅ blockedByIssueIds / labelIds 在 create 路径上暂不消费（需要事务内处理），仅 update 路径生效
+
+### 后续 R230+ 计划
+
+- **R230** — issues create 路径上处理 blockedByIssueIds / labelIds（事务内同步插入）
+- **R230** — worktree hold acquire / transfer（已完成 release）
+- **R231+** — reopen / resume / interrupt 状态机语义实现
+- **R232+** — acceptCriteria / blockParentUntilDone 持久化到 issue_documents
+- **R233+** — idempotency key 存储 + 幂等性去重
