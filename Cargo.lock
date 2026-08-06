@@ -2250,6 +2250,7 @@ dependencies = [
  "pc-repos",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "uuid",

@@ -1399,6 +1399,40 @@ impl<'a> AgentRepo<'a> {
             .await
     }
 
+    /// Atomically coalesce a new wakeup into an existing active row:
+    /// 1. Merge `merged_payload` into existing payload (jsonb `||`)
+    /// 2. Increment `coalesced_count` by `increment`
+    /// 3. Return the updated row (or None if row is no longer in active state)
+    ///
+    /// The caller is expected to pre-compute `merged_payload` via
+    /// `pc_heartbeat::wake_dedup::merge_wake_payloads`. This method only
+    /// performs the atomic write + increment.
+    pub async fn coalesce_wakeup_with_merge(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+        merged_payload: &serde_json::Value,
+        increment: i32,
+    ) -> sqlx::Result<Option<AgentWakeupRequestRow>> {
+        let increment = increment.max(0);
+        let sql = format!(
+            "UPDATE agent_wakeup_requests \
+             SET payload = COALESCE(payload, '{{}}'::jsonb) || $3::jsonb, \
+                 coalesced_count = coalesced_count + $4, \
+                 updated_at = now() \
+             WHERE company_id=$1 AND id=$2 \
+               AND status IN ('queued','requested','claimed','deferred_issue_execution') \
+             RETURNING {WAKEUP_COLS}"
+        );
+        sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(id)
+            .bind(merged_payload)
+            .bind(increment)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     pub async fn update(
         &self,
         id: Uuid,

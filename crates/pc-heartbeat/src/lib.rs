@@ -1339,6 +1339,30 @@ pub mod run_scratch;
 pub mod run_summary;
 pub mod runtime_status;
 pub mod stop_metadata;
+pub mod wake_dedup;
+pub mod wake_dispatch;
+
+// ============================================================================
+// Public API: wakeup dedup & coalesce
+// ============================================================================
+//
+// pc-heartbeat::wake_dedup is the pure-function set on the enqueueWakeup path:
+// - `decide_wake_action`          3-state decision (Create / Coalesce / Skip)
+// - `merge_wake_payloads`         merge two wakeup payloads
+// - `merge_wake_comment_ids`      multi-source dedup merge of comment IDs
+// - `resolve_suppression`         DB+env joint suppression decision
+// - `build_*_wake_key`            idempotency key constructors for various wake types
+pub use wake_dedup::{
+    build_decision_continuation_wake_key, build_issue_assignment_wake_key,
+    decide_wake_action, is_active_wakeup_status, merge_wake_comment_ids,
+    merge_wake_payloads, resolve_suppression, SuppressionDecision, SuppressionInputs,
+    SuppressionReason, WAKE_COMMENT_IDS_KEY, WAKE_CONTEXT_KEYS, WakeAction, WakeInput,
+    WakeSnapshot,
+};
+
+pub use wake_dispatch::{
+    apply_wakeup_plan, plan_wakeup_dispatch, WakeDispatchOutcome, WakePlan,
+};
 
 // ============================================================================
 // Public API: readiness & staleness recovery
