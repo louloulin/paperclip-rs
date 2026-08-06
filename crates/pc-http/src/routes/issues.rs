@@ -27,7 +27,10 @@ use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
 use pc_repos::routine::RoutineRepo;
 use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
-use pc_repos::task_watchdog_scope::{enqueue_task_watchdog_wake, TaskWatchdogWakeInput};
+use pc_repos::task_watchdog_scope::{
+    classify_task_watchdog_capability, enqueue_task_watchdog_wake,
+    ClassifyTaskWatchdogCapabilityInput, TaskWatchdogWakeInput,
+};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
@@ -1484,6 +1487,12 @@ async fn complete_watchdog_evaluation(
             wd.id,
             stop_fp.unwrap_or("")
         );
+        // R253: 派生 watchdog capability（与 Node TaskWatchdogClassifier 1:1 对齐）。
+        let capability = classify_task_watchdog_capability(&ClassifyTaskWatchdogCapabilityInput {
+            watched_issue_id: id,
+            custom_instructions: wd.instructions.as_deref(),
+            allow_destructive: false,
+        });
         let input = TaskWatchdogWakeInput {
             watchdog_id: wd.id,
             watched_issue_id: id,
@@ -1492,6 +1501,7 @@ async fn complete_watchdog_evaluation(
             watchdog_issue_id: wd.watchdog_issue_id,
             stop_fingerprint: stop_fp,
             custom_instructions: wd.instructions.as_deref(),
+            capabilities: Some(capability),
         };
         if let Err(e) = enqueue_task_watchdog_wake(
             &state.db,
@@ -5082,6 +5092,87 @@ async fn active_run(
     })))
 }
 
+
+#[cfg(test)]
+#[cfg(test)]
+mod round253_tests {
+    /// R253: classifier 模块导出 WatchdogOperation / TaskWatchdogCapability / classify_task_watchdog_capability。
+    #[test]
+    fn classifier_module_exports_main_types() {
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/classifier.rs");
+        assert!(src.contains("pub enum WatchdogOperation"));
+        assert!(src.contains("pub struct TaskWatchdogTargetScope"));
+        assert!(src.contains("pub struct TaskWatchdogCapability"));
+        assert!(src.contains("pub fn classify_task_watchdog_capability"));
+        assert!(src.contains("pub fn default_capability_for_resume"));
+    }
+
+    /// R253: mod.rs 把 classifier 类型 re-export。
+    #[test]
+    fn task_watchdog_scope_mod_reexports_classifier() {
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/mod.rs");
+        assert!(src.contains("pub use classifier::{"));
+        assert!(src.contains("TaskWatchdogCapability"));
+        assert!(src.contains("classify_task_watchdog_capability"));
+    }
+
+    /// R253: context.rs 在 taskWatchdog 嵌套对象下写入 capabilities。
+    #[test]
+    fn context_build_writes_capabilities_into_nested_task_watchdog() {
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/context.rs");
+        assert!(src.contains("pub capabilities: Option<TaskWatchdogCapability>"));
+        assert!(src.contains("task_watchdog[\"capabilities\"] = cap.to_node_json()"));
+    }
+
+    /// R253: complete_watchdog_evaluation 调用 classify_task_watchdog_capability 后再入队。
+    #[test]
+    fn complete_evaluation_handler_invokes_classifier() {
+        let src = include_str!("issues.rs");
+        // pc-http 必须 import classify_task_watchdog_capability
+        assert!(
+            src.contains("classify_task_watchdog_capability,"),
+            "issues.rs must import classify_task_watchdog_capability"
+        );
+        assert!(
+            src.contains("ClassifyTaskWatchdogCapabilityInput"),
+            "issues.rs must import ClassifyTaskWatchdogCapabilityInput"
+        );
+        // handler 必须调用 classifier 并把 capability 放入 input.capabilities
+        assert!(
+            src.contains("let capability = classify_task_watchdog_capability"),
+            "complete_watchdog_evaluation must call classify_task_watchdog_capability"
+        );
+        assert!(
+            src.contains("capabilities: Some(capability)"),
+            "complete_watchdog_evaluation must put capability into input.capabilities"
+        );
+        // classifier 调用必须用 watchdog 行 instructions
+        assert!(
+            src.contains("custom_instructions: wd.instructions.as_deref()"),
+            "complete_watchdog_evaluation must pass watchdog.instructions to classifier"
+        );
+    }
+
+    /// R253: WatchdogOperation 是 snake_case 序列化（与 Node JSON 一致）。
+    #[test]
+    fn watchdog_operation_serializes_as_snake_case() {
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/classifier.rs");
+        assert!(
+            src.contains("#[serde(rename_all = \"snake_case\")]"),
+            "WatchdogOperation must serialize as snake_case"
+        );
+    }
+
+    /// R253: TaskWatchdogCapability 是 camelCase 序列化（与 Node JSON 一致）。
+    #[test]
+    fn capability_struct_serializes_as_camel_case() {
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/classifier.rs");
+        assert!(
+            src.contains("#[serde(rename_all = \"camelCase\")]"),
+            "TaskWatchdogCapability / TaskWatchdogTargetScope must serialize as camelCase"
+        );
+    }
+}
 
 #[cfg(test)]
 #[cfg(test)]

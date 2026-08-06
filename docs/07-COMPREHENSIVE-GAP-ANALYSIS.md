@@ -5964,3 +5964,60 @@ R252 把 realtime bus 从「WS 单端点」扩展为「WS + SSE + 测试 mock + 
 
 下一步可推进 R253（realtime channel multiplex：per-company bus / per-resource channel）或 R254（client SDK：自动 reconnect + resume + filter）。
 
+## 91. 第二百五十三轮增量（Round 253 — task-watchdog capability classifier）
+
+### 背景
+
+R251 把 `taskWatchdog` 基础上下文（4 个核心字段）写入 `heartbeat_runs.context_snapshot`；
+R252 完成了 realtime 订阅抽象。但与 Node 端 `watchdogWakeContext` 完整 shape 对比发现：
+1. 缺少 `taskWatchdog.capabilities.{targetScope, operations, deniedOperations}` 嵌套对象，
+   Node 端由 `TaskWatchdogClassifier` 派生。
+2. subtree mutation scope 检测在 capability 边界情况下失配（agent 无法知道「我是否被允许 archive / delete / disable_monitor」）。
+
+### 实现内容
+
+- **`pc-repos/src/task_watchdog_scope/classifier.rs`**（新增）：
+  - `WatchdogOperation` enum：`Comment / StatusChange / Assign / Label / UpdateMetadata / ManageChildren / Archive / Delete / DisableMonitor`，9 种操作。`as_str()` 提供 snake_case 字符串名，`is_destructive()` 标记破坏性操作。
+  - `TaskWatchdogTargetScope` struct：`watched_issue_id / include_non_watchdog_descendants / include_unwatched_siblings / depth_limit`，4 个字段，全部 camelCase 序列化（与 Node 一致）。
+  - `TaskWatchdogCapability` struct：聚合 `target_scope / operations / denied_operations`，提供 `to_node_json()` 序列化到 Node JSON shape。
+  - `default_capability_for_resume(input)`：保守默认（允许 Comment + StatusChange + Assign + Label + UpdateMetadata；禁止 Archive / Delete / DisableMonitor / ManageChildren）。
+  - `classify_task_watchdog_capability(input)`：从 `custom_instructions` 解析关键字：
+    - `allow_archive` / `allow_destructive` → 解锁 Archive / Delete 操作；
+    - `deny_assign` → 禁止 Assign；
+    - `allow_children` → 解锁 ManageChildren；
+    - `allow_siblings` → 把 `include_unwatched_siblings` 置为 true。
+- **`pc-repos/src/task_watchdog_scope/mod.rs`**：导出 `mod classifier;` 并 re-export `WatchdogOperation / TaskWatchdogCapability / TaskWatchdogTargetScope / classify_task_watchdog_capability / default_capability_for_resume / ClassifyTaskWatchdogCapabilityInput`。
+- **`pc-repos/src/task_watchdog_scope/context.rs`**：
+  - `TaskWatchdogWakeInput` 增加 `capabilities: Option<TaskWatchdogCapability>` 字段。
+  - `build_task_watchdog_wake_context`：当 capabilities 为 Some 时，写入 `taskWatchdog.capabilities` 嵌套对象（camelCase + snake_case operations 数组）。
+- **`pc-repos/src/task_watchdog_scope/wakeup.rs`**：无需改动（capabilities 已通过 `&input` 自动传递）。
+- **`pc-http/src/routes/issues.rs::complete_watchdog_evaluation`**：在构造 `TaskWatchdogWakeInput` 前调用 `classify_task_watchdog_capability(...)`，把 capability 放入 `input.capabilities`。
+
+### 当前仍有差距
+
+- 当前 classifier 只解析 `custom_instructions` 中的关键字；未实现 Node 端基于 `Issue` 状态字段（`work_mode` / `monitor_*`）的派生规则。
+- 默认 `depth_limit = None`（不限深度）；Node 端有「子树深度超限自动禁止 descendants 修改」的逻辑（未实现）。
+- 没有 `capability_explain` / `capability_diff` 工具函数（用于 audit log 记录每次 capability 派生的原因）。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-repos::task_watchdog_scope::classifier::tests` | 11 passed |
+| `pc-repos::task_watchdog_scope::context::tests` | 6 passed (3 R251 + 3 R253) |
+| `pc-http::round253_tests` | 6 passed |
+| `pc-http::round251_tests` | 5 passed (无回归) |
+| `cargo test -p pc-repos --lib` | 518 passed (504 + 11 classifier + 3 R253 context) |
+| `cargo test -p pc-http --lib` | 192 passed (186 + 6 round253) |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R253 完成了 task-watchdog capability 闭环：
+1. **定义**（classifier）：`WatchdogOperation` enum + `TaskWatchdogCapability` + `TaskWatchdogTargetScope` 全套类型，与 Node JSON shape 1:1 对齐。
+2. **派生**（classifier）：`classify_task_watchdog_capability` 从 custom_instructions 关键字派生 capability，default 保守 deny destructive。
+3. **写入**（context）：`build_task_watchdog_wake_context` 在 taskWatchdog 嵌套对象下补齐 capabilities 字段。
+4. **触发**（pc-http）：handler 在 enqueue 前调用 classifier，capability 跟随 context_snapshot 落库。
+
+下一步可推进 R254（per-resource channel 过滤：按 issue_id / run_id 订阅）或 R255（realtime 限流 / throttle）。
+

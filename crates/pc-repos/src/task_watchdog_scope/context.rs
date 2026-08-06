@@ -1,4 +1,8 @@
-//! Round 251: Task-watchdog wake context builder（与 Node `watchdogWakeContext` 1:1 对齐）。
+//! Round 251 + 253: Task-watchdog wake context builder（与 Node `watchdogWakeContext` 1:1 对齐）。
+//!
+//! R253 增量：
+//! - 在 `TaskWatchdogWakeInput` 上增加 `capabilities: Option<TaskWatchdogCapability>` 字段。
+//! - 在 `taskWatchdog` 嵌套对象下补齐 `capabilities: { targetScope, operations, deniedOperations }`。
 //!
 //! 作用：当 watchdog evaluation 触发新的 heartbeat_runs 时，把
 //! `{ taskWatchdog: { watchedIssueId, ... }, watchdogId, watchedIssueId, ... }`
@@ -8,13 +12,15 @@
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use super::classifier::TaskWatchdogCapability;
 use super::types::TASK_WATCHDOG_ORIGIN_KIND;
 
 /// `TaskWatchdogWakeContext` 输入参数（与 Node `watchdogWakeContext` 1:1 对齐）。
 ///
 /// 注：Node 端是从 `IssueWatchdogRow` + `IssueRow` (watchdogIssue / sourceIssue) +
 /// `TaskWatchdogClassifierResult` 派生。Rust 端为简化，只取最关键的几个字段；
-/// 后续可扩展 `pendingInteractions` / `capabilities` 等嵌套结构。
+/// capabilities 通过 `classify_task_watchdog_capability(...)` 派生（见
+/// [`super::classifier`]），传入此 struct。
 #[derive(Debug, Clone)]
 pub struct TaskWatchdogWakeInput<'a> {
     /// Watchdog 行 id
@@ -31,6 +37,9 @@ pub struct TaskWatchdogWakeInput<'a> {
     pub stop_fingerprint: Option<&'a str>,
     /// 自定义 instructions（来自 `issue_watchdogs.instructions`）
     pub custom_instructions: Option<&'a str>,
+    /// R253: watchdog capability 集（target scope + operations + denied operations）。
+    /// 由调用方（pc-http handler）通过 `classify_task_watchdog_capability(...)` 派生。
+    pub capabilities: Option<TaskWatchdogCapability>,
 }
 
 /// 构造 heartbeat_runs.context_snapshot 写入对象。
@@ -90,12 +99,17 @@ pub fn build_task_watchdog_wake_context(input: &TaskWatchdogWakeInput<'_>) -> Va
     }
 
     // 嵌套 taskWatchdog 对象 —— `read_task_watchdog_context` 消费的就是这个 key
-    ctx["taskWatchdog"] = json!({
+    let mut task_watchdog = json!({
         "watchedIssueId": input.watched_issue_id,
         "watchedIssueIdentifier": input.watched_issue_identifier,
         "watchedIssueTitle": input.watched_issue_title,
         "stopFingerprint": input.stop_fingerprint,
     });
+    // R253: capabilities 嵌套对象（与 Node `taskWatchdog.capabilities` 1:1 对齐）。
+    if let Some(cap) = input.capabilities.as_ref() {
+        task_watchdog["capabilities"] = cap.to_node_json();
+    }
+    ctx["taskWatchdog"] = task_watchdog;
 
     ctx
 }
@@ -103,6 +117,9 @@ pub fn build_task_watchdog_wake_context(input: &TaskWatchdogWakeInput<'_>) -> Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_watchdog_scope::classifier::{
+        default_capability_for_resume, ClassifyTaskWatchdogCapabilityInput,
+    };
     use crate::task_watchdog_scope::helpers::read_task_watchdog_context;
 
     #[test]
@@ -115,6 +132,7 @@ mod tests {
             watchdog_issue_id: Some(Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap()),
             stop_fingerprint: Some("fp-abc"),
             custom_instructions: Some("Don't break tests"),
+            capabilities: None,
         };
         let ctx = build_task_watchdog_wake_context(&input);
         // 顶层键
@@ -148,6 +166,7 @@ mod tests {
             watchdog_issue_id: None,
             stop_fingerprint: Some("fp-abc"),
             custom_instructions: None,
+            capabilities: None,
         };
         let ctx = build_task_watchdog_wake_context(&input);
         // read_task_watchdog_context 必须能解析出 watched_issue_id + stop_fingerprint
@@ -169,9 +188,85 @@ mod tests {
             watchdog_issue_id: None,
             stop_fingerprint: None,
             custom_instructions: None,
+            capabilities: None,
         };
         let ctx = build_task_watchdog_wake_context(&input);
         assert!(ctx.get("issueId").is_none());
         assert!(ctx.get("taskId").is_none());
+    }
+
+    /// R253: capabilities 字段会写入 taskWatchdog.capabilities 嵌套对象。
+    #[test]
+    fn build_context_writes_capabilities_into_nested_task_watchdog() {
+        let watched_id = Uuid::new_v4();
+        let capability = default_capability_for_resume(&ClassifyTaskWatchdogCapabilityInput {
+            watched_issue_id: watched_id,
+            custom_instructions: None,
+            allow_destructive: false,
+        });
+        let input = TaskWatchdogWakeInput {
+            watchdog_id: Uuid::new_v4(),
+            watched_issue_id: watched_id,
+            watched_issue_identifier: None,
+            watched_issue_title: None,
+            watchdog_issue_id: None,
+            stop_fingerprint: None,
+            custom_instructions: None,
+            capabilities: Some(capability),
+        };
+        let ctx = build_task_watchdog_wake_context(&input);
+        let tw = ctx.get("taskWatchdog").expect("must have taskWatchdog");
+        let caps = tw.get("capabilities").expect("must have capabilities");
+        // targetScope 必填
+        let ts = caps.get("targetScope").expect("must have targetScope");
+        assert_eq!(ts.get("watchedIssueId").unwrap().as_str().unwrap(), watched_id.to_string());
+        // operations / deniedOperations 是 array
+        assert!(caps.get("operations").unwrap().is_array());
+        assert!(caps.get("deniedOperations").unwrap().is_array());
+    }
+
+    /// R253: capabilities=None 时不会写入 capabilities 字段。
+    #[test]
+    fn build_context_omits_capabilities_when_none() {
+        let input = TaskWatchdogWakeInput {
+            watchdog_id: Uuid::new_v4(),
+            watched_issue_id: Uuid::new_v4(),
+            watched_issue_identifier: None,
+            watched_issue_title: None,
+            watchdog_issue_id: None,
+            stop_fingerprint: None,
+            custom_instructions: None,
+            capabilities: None,
+        };
+        let ctx = build_task_watchdog_wake_context(&input);
+        let tw = ctx.get("taskWatchdog").expect("must have taskWatchdog");
+        assert!(tw.get("capabilities").is_none());
+    }
+
+    /// R253: capabilities 包含 deny_destructive 默认行为（deniedOperations 含 Archive/Delete）。
+    #[test]
+    fn build_context_capability_deny_destructive_visible_in_json() {
+        let watched_id = Uuid::new_v4();
+        let capability = default_capability_for_resume(&ClassifyTaskWatchdogCapabilityInput {
+            watched_issue_id: watched_id,
+            custom_instructions: None,
+            allow_destructive: false,
+        });
+        let input = TaskWatchdogWakeInput {
+            watchdog_id: Uuid::new_v4(),
+            watched_issue_id: watched_id,
+            watched_issue_identifier: None,
+            watched_issue_title: None,
+            watchdog_issue_id: None,
+            stop_fingerprint: None,
+            custom_instructions: None,
+            capabilities: Some(capability),
+        };
+        let ctx = build_task_watchdog_wake_context(&input);
+        let denied = ctx["taskWatchdog"]["capabilities"]["deniedOperations"].as_array().unwrap();
+        let denied_strs: Vec<&str> = denied.iter().filter_map(|v| v.as_str()).collect();
+        assert!(denied_strs.contains(&"archive"));
+        assert!(denied_strs.contains(&"delete"));
+        assert!(denied_strs.contains(&"disable_monitor"));
     }
 }
