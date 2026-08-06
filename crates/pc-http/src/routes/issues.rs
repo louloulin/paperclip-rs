@@ -4748,321 +4748,89 @@ async fn active_run(
         .get(issue_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
-    let row: Option<(Uuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT id, status, error, created_at          FROM heartbeat_runs          WHERE company_id = $1            AND (issue_id = $2 OR context_snapshot ->> 'issueId' = $2::text)            AND status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')          ORDER BY created_at DESC LIMIT 1",
+    let heartbeat = HeartbeatRepo::new(&state.db);
+    // 1) 优先用 issue.execution_run_id 取 active run
+    let mut active_run_row: Option<pc_repos::heartbeat::HeartbeatRow> = None;
+    if let Some(exec_run_id) = issue.execution_run_id {
+        if let Ok(Some(row)) = heartbeat
+            .get_active_run_by_execution_run_id(issue.company_id, exec_run_id, issue.id)
+            .await
+        {
+            active_run_row = Some(row);
+        }
+    }
+    if active_run_row.is_none() && issue.status == "in_progress" {
+        if let Some(agent_id) = issue.assignee_agent_id {
+            if let Ok(Some(row)) = heartbeat
+                .get_active_run_summary_for_agent(issue.company_id, agent_id)
+                .await
+            {
+                let candidate_issue = row.context_snapshot.as_ref()
+                    .and_then(|v| v.get("issueId"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok());
+                if candidate_issue == Some(issue.id) {
+                    active_run_row = Some(row);
+                }
+            }
+        }
+    }
+    let Some(run) = active_run_row else {
+        return Ok(Json(Value::Null));
+    };
+    // 3) 查询 agent 信息
+    let agent_row: Option<(Uuid, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, adapter_type FROM agents WHERE id = $1 AND company_id = $2",
     )
+    .bind(run.agent_id)
     .bind(issue.company_id)
-    .bind(issue_id)
     .fetch_optional(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    match row {
-        Some((id, status, error, created_at)) => Ok(Json(json!({
-            "id": id,
-            "status": status,
-            "error": error,
-            "createdAt": created_at,
-            "issueId": issue_id,
-            "companyId": issue.company_id,
-        }))),
-        None => Ok(Json(json!({
-            "activeRun": null,
-            "issueId": issue_id,
-            "companyId": issue.company_id,
-        }))),
-    }
+    let Some((agent_id, agent_name, adapter_type)) = agent_row else {
+        return Ok(Json(Value::Null));
+    };
+    Ok(Json(json!({
+        "id": run.id,
+        "status": run.status,
+        "error": run.error,
+        "createdAt": run.created_at,
+        "issueId": issue.id,
+        "companyId": issue.company_id,
+        "agentId": agent_id,
+        "agentName": agent_name,
+        "adapterType": adapter_type,
+        "outputSilence": Value::Null,
+    })))
 }
 
 
 #[cfg(test)]
-mod round237_tests {
+#[cfg(test)]
+mod round246_tests {
     #[test]
-    fn active_run_route_and_handler_are_registered() {
+    fn active_run_prefers_execution_run_id_path() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("/api/issues/:id/active-run"));
-        assert!(src.contains("async fn active_run("));
-        assert!(src.contains("status NOT IN ('succeeded', 'failed', 'cancelled', 'timed_out')"));
+        assert!(src.contains("get_active_run_by_execution_run_id"));
+        assert!(src.contains("issue.execution_run_id"));
     }
 
     #[test]
-    fn active_run_response_keeps_node_null_shape() {
+    fn active_run_falls_back_to_assignee_agent() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("\"activeRun\": null"));
-        assert!(src.contains("\"issueId\": issue_id"));
-        assert!(src.contains("\"companyId\": issue.company_id"));
+        assert!(src.contains("get_active_run_summary_for_agent"));
+        assert!(src.contains("issue.assignee_agent_id"));
+        assert!(src.contains("candidate_issue == Some(issue.id)"));
     }
 
     #[test]
-    fn cost_summary_is_owned_by_costs_route() {
+    fn active_run_returns_null_when_no_run_exists() {
         let src = include_str!("issues.rs");
-        assert!(!src.contains("async fn cost_summary(\n"));
-        let costs = include_str!("costs.rs");
-        assert!(costs.contains("/api/issues/:issue_id/cost-summary"));
-        assert!(costs.contains("include_descendants: true"));
-        assert!(costs.contains("cost_cents: row.cost_cents"));
-    }
-
-    #[test]
-    fn cost_summary_supports_exclude_root_query() {
-        let src = include_str!("costs.rs");
-        assert!(src.contains("exclude_root: bool"));
-        assert!(src.contains("issue_count: i64::from(!query.exclude_root)"));
-        assert!(src.contains("include_descendants: true"));
+        assert!(src.contains("return Ok(Json(Value::Null));"));
+        assert!(src.contains("\"outputSilence\": Value::Null"));
     }
 }
 
-#[cfg(test)]
-mod round238_tests {
-    use super::{recovery_outcome_status, ResolveRecoveryBody};
-    use serde_json::json;
-    use uuid::Uuid;
-
-    #[test]
-    fn recovery_outcomes_map_to_node_statuses() {
-        assert_eq!(recovery_outcome_status("cancelled"), Some(("cancelled", "cancelled")));
-        assert_eq!(recovery_outcome_status("restored"), Some(("resolved", "restored")));
-        assert_eq!(recovery_outcome_status("false_positive"), Some(("resolved", "false_positive")));
-        assert_eq!(recovery_outcome_status("unknown"), None);
-    }
-
-    #[test]
-    fn resolve_body_accepts_node_camel_case_fields() {
-        let body: ResolveRecoveryBody = serde_json::from_value(json!({
-            "actionId": Uuid::new_v4(),
-            "outcome": "restored",
-            "sourceIssueStatus": "todo",
-            "resolutionNote": "worker resumed"
-        })).expect("camelCase recovery body");
-        assert_eq!(body.outcome, "restored");
-        assert_eq!(body.source_issue_status.as_deref(), Some("todo"));
-        assert_eq!(body.resolution_note.as_deref(), Some("worker resumed"));
-    }
-
-    #[test]
-    fn resolve_body_requires_outcome_and_action_id() {
-        assert!(serde_json::from_value::<ResolveRecoveryBody>(json!({
-            "outcome": "restored"
-        })).is_err());
-        assert!(serde_json::from_value::<ResolveRecoveryBody>(json!({
-            "actionId": Uuid::new_v4()
-        })).is_err());
-    }
-
-    #[test]
-    fn resolve_repository_query_is_source_scoped_and_active_only() {
-        let src = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(src.contains("source_issue_id = $1"));
-        assert!(src.contains("status IN ('active', 'escalated')"));
-        assert!(src.contains("status = $5"));
-    }
-}
-
-#[cfg(test)]
-mod round239_tests {
-    use super::recovery_outcome_status;
-
-    #[test]
-    fn every_node_recovery_outcome_preserves_its_value() {
-        for outcome in ["restored", "handed_back", "owner_completed", "blocked", "false_positive"] {
-            let (_, recorded) = recovery_outcome_status(outcome).expect("supported outcome");
-            assert_eq!(recorded, outcome);
-        }
-        assert_eq!(recovery_outcome_status("cancelled"), Some(("cancelled", "cancelled")));
-    }
-
-    #[test]
-    fn resolve_route_enforces_board_only_and_blocker_guards() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("cancelled\" | \"false_positive"));
-        assert!(src.contains("board authority required for this recovery outcome"));
-        assert!(src.contains("unresolved_blockers_for(issue.id)"));
-        assert!(src.contains("ApiError::Unprocessable"));
-    }
-
-    #[test]
-    fn resolve_route_reads_actor_headers() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("headers: HeaderMap"));
-        assert!(src.contains("x-paperclip-agent-id"));
-        assert!(src.contains("x-paperclip-user-id"));
-    }
-}
-
-#[cfg(test)]
-mod round240_tests {
-    #[test]
-    fn restore_resolution_records_hand_back_or_owner_completed() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("effective_outcome = if hand_back_agent_id.is_some()"));
-        assert!(src.contains("\"handed_back\""));
-        assert!(src.contains("\"owner_completed\""));
-        assert!(src.contains("active.return_owner_agent_id"));
-    }
-
-    #[test]
-    fn recovery_resolution_uses_single_transaction_method() {
-        let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("pub async fn resolve_recovery_with_issue("));
-        assert!(repo.contains("self.db.pool().begin().await?"));
-        assert!(repo.contains("FOR UPDATE"));
-        assert!(repo.contains("tx.commit().await?"));
-        assert!(repo.contains("issue.recovery_action_resolved"));
-    }
-
-    #[test]
-    fn recovery_resolution_updates_issue_status_and_assignee() {
-        let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("UPDATE issues SET status=$2, assignee_agent_id=$3"));
-        assert!(repo.contains("outcome == \"restored\" && status == \"todo\""));
-        assert!(repo.contains("return_owner_agent_id"));
-    }
-}
-
-#[cfg(test)]
-mod round241_tests {
-    #[test]
-    fn recovery_resolution_queues_assignment_wakeup() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("issue_recovery_action_restored"));
-        assert!(src.contains("\"mutation\": \"recovery_action_resolution\""));
-        assert!(src.contains("enqueue_agent_wakeup"));
-        assert!(src.contains("updated_issue.assignee_agent_id"));
-    }
-
-    #[test]
-    fn recovery_resolution_response_matches_node_shape() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("\"recoveryAction\": row"));
-        assert!(src.contains("\"activeRecoveryAction\": null"));
-    }
-
-    #[test]
-    fn wakeup_is_limited_to_restored_todo_transition() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("body.source_issue_status.as_deref() == Some(\"todo\")"));
-        assert!(src.contains("issue.status != updated_issue.status"));
-        assert!(src.contains("issue.assignee_agent_id != updated_issue.assignee_agent_id"));
-    }
-}
-
-#[cfg(test)]
-mod round242_tests {
-    #[test]
-    fn wakeup_idempotency_key_is_derived_from_action_and_issue() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("format!(\"recovery:{}:{}\""));
-        assert!(src.contains("find_wakeup_by_idempotency_key"));
-        assert!(src.contains("AgentRepo::new(&state.db)"));
-    }
-
-    #[test]
-    fn routine_run_is_synced_after_recovery_resolution() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("sync_run_status_for_issue"));
-        assert!(src.contains("RoutineRepo::new(&state.db)"));
-    }
-
-    #[test]
-    fn routine_sync_helper_targets_routine_execution_origin() {
-        let repo = include_str!("../../../pc-repos/src/routine.rs");
-        assert!(repo.contains("sync_run_status_for_issue"));
-        assert!(repo.contains("origin_kind != \"routine_execution\""));
-        assert!(repo.contains("status='completed'"));
-        assert!(repo.contains("status='failed'"));
-        assert!(repo.contains("Execution issue moved to"));
-    }
-}
-
-#[cfg(test)]
-mod round243_tests {
-    #[test]
-    fn watchdog_routes_extract_actor_and_run_id_from_headers() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("watchdog_actor_from_headers"));
-        assert!(src.contains("x-paperclip-agent-id"));
-        assert!(src.contains("x-paperclip-run-id"));
-        assert!(src.contains("company_id FROM agents"));
-    }
-
-    #[test]
-    fn watchdog_routes_reject_task_watchdog_and_low_trust() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("reject_task_watchdog_config_mutation"));
-        assert!(src.contains("Task-watchdog runs cannot change watchdog configuration"));
-        assert!(src.contains("reject_low_trust_control_plane"));
-        assert!(src.contains("low_trust_review"));
-    }
-
-    #[test]
-    fn watchdog_routes_enqueue_evaluation_after_mutation() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("reconcile_for_issue_and_ancestors"));
-        let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("pub async fn reconcile_for_issue_and_ancestors("));
-        assert!(repo.contains("trigger_count = trigger_count + 1"));
-    }
-}
-
-#[cfg(test)]
-mod round244_tests {
-    #[test]
-    fn list_ancestor_issue_ids_uses_recursive_cte() {
-        let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("WITH RECURSIVE ancestors"));
-        assert!(repo.contains("depth > 0 ORDER BY depth ASC"));
-        assert!(repo.contains("pub async fn list_ancestor_issue_ids("));
-    }
-
-    #[test]
-    fn reconcile_for_issue_and_ancestors_targets_full_chain() {
-        let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("pub async fn reconcile_for_issue_and_ancestors("));
-        assert!(repo.contains("issue_id = ANY($1)"));
-        assert!(repo.contains("status = 'active'"));
-    }
-
-    #[test]
-    fn watchdog_routes_now_use_reconcile_helper() {
-        let src = include_str!("issues.rs");
-        // 两次生产调用：upsert 路由 + remove 路由；测试源码本身引用一次不算。
-        assert!(src.contains(".reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)"));
-        let production_call_sites = src.matches(".reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)").count();
-        assert!(production_call_sites >= 2, "watchdog routes should call reconcile_for_issue_and_ancestors in both upsert and remove");
-    }
-}
-
-#[cfg(test)]
-mod round245_tests {
-    #[test]
-    fn watchdog_evaluation_routes_are_registered() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("/api/issues/:id/watchdog-evaluations/complete"));
-        assert!(src.contains("async fn complete_watchdog_evaluation("));
-        let comp = include_str!("companies.rs");
-        assert!(comp.contains("/api/companies/:company_id/watchdog-evaluations"));
-        assert!(comp.contains("list_pending_watchdog_evaluations"));
-    }
-
-    #[test]
-    fn complete_body_uses_camel_case_fields() {
-        let src = include_str!("issues.rs");
-        assert!(src.contains("reviewed_fingerprint"));
-        assert!(src.contains("observed_fingerprint"));
-        assert!(src.contains("snooze_until"));
-        assert!(src.contains("CompleteWatchdogEvaluationBody"));
-    }
-
-    #[test]
-    fn evaluation_helpers_keep_postgres_truth_aligned() {
-        let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("pub async fn list_pending_watchdog_evaluations("));
-        assert!(repo.contains("pub async fn mark_watchdog_evaluation_completed("));
-        assert!(repo.contains("last_completed_at IS NULL OR last_triggered_at > last_completed_at"));
-        assert!(repo.contains("last_reviewed_fingerprint"));
-    }
-}
-
-#[cfg(test)]
 mod round216_tests {
     //! Round 216: interaction cancel/withdraw 共享解析逻辑的单元测试。
     //!

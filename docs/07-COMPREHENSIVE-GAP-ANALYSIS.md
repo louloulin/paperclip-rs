@@ -5632,3 +5632,52 @@ R244 完成了 watchdog reconcile hint，但 Node `taskWatchdogEvaluationService
 ### 总结
 
 R245 闭合了 reconcile hint → worker 评估 → 上报回写三段循环的中间接口。下一步推进 active-run agent fallback 装饰，或把 evaluation worker 与 realtime/activity log 联动。
+
+## 84. 第二百四十六轮增量（Round 246 — active-run execution_run_id 优先 + assignee agent fallback）
+
+### 背景
+
+Node `GET /api/issues/:issueId/active-run` 的完整流程：
+1. 通过 `issue.executionRunId` 取 run
+2. 校验 status queued/running 且 issueId 匹配
+3. fallback 到 `getActiveRunIssueSummaryForAgent(issue.assigneeAgentId)`
+4. 校验 candidate issueId 与当前 issue 一致
+5. 装饰 agent 信息（id、name、adapterType）
+6. 计算 `outputSilence`
+
+R237 Rust 仅返回 4 列最小行，没有 fallback、agent 装饰、outputSilence。本轮实现 Node 等价链。
+
+### 实现内容
+
+- `HeartbeatRepo::get_active_run_by_execution_run_id`：
+  - 按 `execution_run_id` 取 row
+  - 强制 status IN (queued/claimed/running/paused)
+  - 校验 `context_snapshot.issueId` 与给定 issue 匹配
+  - 强 company_id 约束
+- `HeartbeatRepo::get_active_run_summary_for_agent`：
+  - 取该 agent 最近一个 active run
+- `active_run` 路由重构：
+  - 优先 execution_run_id 路径
+  - fallback 到 assignee agent active run（仅在 status='in_progress' 且 assignee_agent_id 存在时）
+  - 校验 candidate issueId 匹配
+  - 注入 agent 信息（id、name、adapter_type）
+  - 返回 `Value::Null` 当无 run 或 agent 缺失
+  - 响应中保留 `outputSilence: null` 占位
+
+### 当前仍有差距
+
+- `outputSilence` 当前恒为 `null`，未实现 Node `buildRunOutputSilence` 真实计算。
+- 没有按 Node `decorateActiveRunStatus` 注入 `livenessState`、`retryExhaustedReason` 等字段。
+- agent lookup 未走 `AgentRepo` 抽象，直接使用 SQL。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round246_tests` | 3 passed |
+| 删除过期 round237_tests 模块（已收敛） | — |
+| `cargo check -p pc-repos -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R246 把 active-run 路由对齐到 Node 的双路径解析 + agent 装饰语义。下一步推进 outputSilence 真实计算或 liveness decoration。

@@ -530,6 +530,47 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
+    /// Round 246: 通过 issue.execution_run_id 取 active run，并校验 issueId 匹配。
+    pub async fn get_active_run_by_execution_run_id(
+        &self,
+        company_id: Uuid,
+        execution_run_id: Uuid,
+        expected_issue_id: Uuid,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let query = format!(
+            "SELECT {RUN_COLUMNS} FROM heartbeat_runs \
+             WHERE company_id = $1 AND id = $2 \
+               AND status IN ('queued','claimed','running','paused') \
+               AND context_snapshot ->> 'issueId' = $3::text \
+             ORDER BY started_at DESC NULLS LAST LIMIT 1"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(company_id)
+            .bind(execution_run_id)
+            .bind(expected_issue_id.to_string())
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
+    /// Round 246: 查 agent 最近一个 active run。
+    pub async fn get_active_run_summary_for_agent(
+        &self,
+        company_id: Uuid,
+        agent_id: Uuid,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let query = format!(
+            "SELECT {RUN_COLUMNS} FROM heartbeat_runs \
+             WHERE company_id = $1 AND agent_id = $2 \
+               AND status IN ('queued','claimed','running','paused') \
+             ORDER BY started_at DESC NULLS LAST LIMIT 1"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(company_id)
+            .bind(agent_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     /// Round 137: 按 id 取单条 run（含 context_snapshot）。
     /// 返回完整 10 列元组供 get_issue_run 路由使用。
     pub async fn get_run_with_context(
