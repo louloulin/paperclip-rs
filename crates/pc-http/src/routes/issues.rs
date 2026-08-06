@@ -3940,12 +3940,18 @@ async fn list_tree_holds(
     })))
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateTreeHoldBody {
     mode: String,
+    #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
     release_policy: Option<Value>,
+    /// Round 231: 任意 metadata — Node 端用于记录 actor / external references /
+    /// caller-specific 上下文。持久化到 release_policy._metadata。
+    #[serde(default)]
+    metadata: Option<Value>,
 }
 
 async fn create_tree_hold(
@@ -3957,7 +3963,11 @@ async fn create_tree_hold(
     if body.mode.trim().is_empty() {
         return Err(ApiError::BadRequest("mode is required".into()));
     }
-    if !matches!(body.mode.as_str(), "pause" | "stop" | "throttle" | "isolate") {
+    // R231: mode 扩展支持 "resume"（与 Node 端 issueTreeControlModes 对齐）
+    if !matches!(
+        body.mode.as_str(),
+        "pause" | "stop" | "throttle" | "isolate" | "resume"
+    ) {
         return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
     }
     let company_id = IssueRepo::new(&state.db)
@@ -3966,13 +3976,29 @@ async fn create_tree_hold(
         .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     let user_id = crate::state::require_user_id(&state, &headers).await?;
+    // R231: 将 metadata 嵌套到 release_policy._metadata 中（不破坏现有 schema）
+    let release_policy = match (body.release_policy.clone(), body.metadata.clone()) {
+        (Some(mut policy), Some(meta)) => {
+            if let Some(obj) = policy.as_object_mut() {
+                obj.insert("_metadata".to_string(), meta);
+            } else {
+                return Err(ApiError::BadRequest(
+                    "releasePolicy must be an object".into(),
+                ));
+            }
+            policy
+        }
+        (Some(policy), None) => policy,
+        (None, Some(meta)) => json!({"_metadata": meta}),
+        (None, None) => json!({}),
+    };
     let id = IssueTreeHoldRepo::new(&state.db)
         .create(&NewIssueTreeHold {
             company_id,
             root_issue_id: issue_id,
             mode: &body.mode,
             reason: body.reason.as_deref(),
-            release_policy: body.release_policy.clone().unwrap_or_else(|| json!({})),
+            release_policy: release_policy.clone(),
             created_by_user_id: &user_id,
         })
         .await?;
@@ -3990,7 +4016,7 @@ async fn create_tree_hold(
             "mode": body.mode,
             "status": "active",
             "reason": body.reason,
-            "releasePolicy": body.release_policy.unwrap_or_else(|| json!({})),
+            "releasePolicy": release_policy,
         })),
     ))
 }
@@ -4019,12 +4045,17 @@ async fn get_tree_hold(
     })))
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TreeControlPreviewBody {
     mode: String,
+    #[serde(default)]
     reason: Option<String>,
+    /// R231: 完整 release_policy 透传（Node 端 preview schema 包含）
+    #[serde(default)]
+    release_policy: Option<Value>,
     /// Optional: include sub-tree issue count estimate
+    #[serde(default)]
     include_estimate: Option<bool>,
 }
 
@@ -4038,10 +4069,19 @@ async fn preview_tree_control(
         .await?
         .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
-    if !matches!(body.mode.as_str(), "pause" | "stop" | "throttle" | "isolate") {
+    // R231: mode 扩展支持 "resume"（与 Node 端 issueTreeControlModes 对齐）
+    if !matches!(
+        body.mode.as_str(),
+        "pause" | "stop" | "throttle" | "isolate" | "resume"
+    ) {
         return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
     }
-    // Estimate: count active descendants (best-effort: just count active heartbeat_runs referencing this issue)
+    // R231: 统计子树 descendants + active descendants
+    let (total_descendants, active_descendants) = IssueRepo::new(&state.db)
+        .count_descendants(issue_id)
+        .await
+        .unwrap_or((0, 0));
+    // Estimate: count active heartbeat_runs referencing this issue
     let mut affected_runs = 0i64;
     if body.include_estimate.unwrap_or(true) {
         affected_runs = HeartbeatRepo::new(&state.db)
@@ -4056,12 +4096,31 @@ async fn preview_tree_control(
         .ok()
         .flatten();
     let would_conflict = active_hold.is_some();
+
+    // R231: 生成 warning codes（与 Node 端 preview 对齐）
+    let mut warning_codes: Vec<&'static str> = Vec::new();
+    if would_conflict {
+        warning_codes.push("active_hold_exists");
+    }
+    if affected_runs > 0 {
+        warning_codes.push("active_runs_will_be_cancelled");
+    }
+    if matches!(body.mode.as_str(), "stop" | "cancel") && active_descendants > 0 {
+        warning_codes.push("subtree_has_active_work");
+    }
+
     Ok(Json(json!({
         "issueId": issue_id,
         "companyId": company_id,
         "mode": body.mode,
         "reason": body.reason,
-        "affectedRuns": affected_runs,
+        "releasePolicy": body.release_policy,
+        "totals": {
+            "totalDescendants": total_descendants,
+            "activeDescendants": active_descendants,
+            "affectedRuns": affected_runs,
+        },
+        "warnings": warning_codes.iter().map(|c| json!({"code": c})).collect::<Vec<_>>(),
         "wouldConflict": would_conflict,
         "activeHold": active_hold.map(|(id, mode)| json!({"id": id, "mode": mode})),
         "preview": {
@@ -5229,5 +5288,122 @@ mod round230_tests {
             body.acceptance_criteria.as_ref().map(|v| v.len()),
             Some(2)
         );
+    }
+}
+
+// ============================================================================
+// Round 231: tree-control preview / hold body 完整 schema 单元测试
+// ============================================================================
+#[cfg(test)]
+mod round231_tests {
+    //! Round 231: 验证 CreateTreeHoldBody / TreeControlPreviewBody 支持
+    //! Node `createIssueTreeHoldSchema` / `previewIssueTreeControlSchema` 完整字段。
+
+    use super::{CreateTreeHoldBody, TreeControlPreviewBody};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    // ── CreateTreeHoldBody ──
+
+    #[test]
+    fn create_hold_body_parses_mode_reason_release_policy_metadata() {
+        let payload = json!({
+            "mode": "pause",
+            "reason": "Hold for manual review",
+            "releasePolicy": {"strategy": "manual", "note": "release on approval"},
+            "metadata": {"ticketId": "T-001", "operator": "u-op"},
+        });
+        let body: CreateTreeHoldBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.mode, "pause");
+        assert_eq!(body.reason.as_deref(), Some("Hold for manual review"));
+        assert!(body.release_policy.is_some());
+        assert!(body.metadata.is_some());
+        let meta = body.metadata.as_ref().unwrap();
+        assert_eq!(meta["ticketId"], json!("T-001"));
+        assert_eq!(meta["operator"], json!("u-op"));
+    }
+
+    #[test]
+    fn create_hold_body_minimal_required_only() {
+        let payload = json!({"mode": "stop"});
+        let body: CreateTreeHoldBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.mode, "stop");
+        assert!(body.reason.is_none());
+        assert!(body.release_policy.is_none());
+        assert!(body.metadata.is_none());
+    }
+
+    #[test]
+    fn create_hold_body_accepts_resume_mode() {
+        let payload = json!({"mode": "resume", "reason": "Subtree resume applied."});
+        let body: CreateTreeHoldBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.mode, "resume");
+        assert_eq!(body.reason.as_deref(), Some("Subtree resume applied."));
+    }
+
+    #[test]
+    fn create_hold_body_metadata_complex_object() {
+        let payload = json!({
+            "mode": "isolate",
+            "metadata": {
+                "caller": "system",
+                "externalRefs": ["ref-1", "ref-2"],
+                "nested": {"k": "v"}
+            }
+        });
+        let body: CreateTreeHoldBody = serde_json::from_value(payload).expect("parse");
+        let meta = body.metadata.expect("metadata");
+        assert_eq!(meta["caller"], json!("system"));
+        assert_eq!(meta["externalRefs"][0], json!("ref-1"));
+        assert_eq!(meta["nested"]["k"], json!("v"));
+    }
+
+    // ── TreeControlPreviewBody ──
+
+    #[test]
+    fn preview_body_parses_full_payload() {
+        let payload = json!({
+            "mode": "pause",
+            "reason": "preview reason",
+            "releasePolicy": {"strategy": "manual"},
+            "includeEstimate": false,
+        });
+        let body: TreeControlPreviewBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.mode, "pause");
+        assert_eq!(body.reason.as_deref(), Some("preview reason"));
+        assert!(body.release_policy.is_some());
+        assert_eq!(body.include_estimate, Some(false));
+    }
+
+    #[test]
+    fn preview_body_mode_only() {
+        let payload = json!({"mode": "throttle"});
+        let body: TreeControlPreviewBody = serde_json::from_value(payload).expect("parse");
+        assert_eq!(body.mode, "throttle");
+        assert!(body.reason.is_none());
+        assert!(body.release_policy.is_none());
+        // include_estimate 默认 None
+        assert!(body.include_estimate.is_none());
+    }
+
+    #[test]
+    fn preview_body_accepts_all_node_modes() {
+        // 验证 5 种 Node mode 都被接受
+        for mode in ["pause", "stop", "throttle", "isolate", "resume"] {
+            let payload = json!({"mode": mode});
+            let body: TreeControlPreviewBody = serde_json::from_value(payload).expect("parse");
+            assert_eq!(body.mode, mode);
+        }
+    }
+
+    #[test]
+    fn preview_body_camelcase_required() {
+        // include_estimate snake_case 不被识别
+        let payload = json!({"mode": "pause", "include_estimate": true});
+        let body: TreeControlPreviewBody = serde_json::from_value(payload).expect("parse");
+        assert!(body.include_estimate.is_none());
+        let payload2 = json!({"mode": "pause", "includeEstimate": true});
+        let body2: TreeControlPreviewBody = serde_json::from_value(payload2).expect("parse");
+        assert_eq!(body2.include_estimate, Some(true));
     }
 }

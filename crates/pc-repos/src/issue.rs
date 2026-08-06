@@ -1255,6 +1255,27 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
+    /// Round 231: 递归统计 root_issue_id 子树的所有 descendants 数量 + active descendants 数量。
+    ///
+    /// 使用 CTE 递归遍历整棵子树，单 SQL 查询。
+    /// - `total`: 所有 descendants 数量（排除 hidden_at）
+    /// - `active`: status IN ('todo','in_progress','in_review','blocked') 的 descendants
+    ///
+    /// 与 Node `issueTreeControlSvc.preview` 的 totals.totalIssues / activeIssues 对齐。
+    pub async fn count_descendants(
+        &self,
+        root_issue_id: Uuid,
+    ) -> sqlx::Result<(i64, i64)> {
+        let row: (i64, i64) = sqlx::query_as(
+            "WITH RECURSIVE subtree AS (                 SELECT id, status, hidden_at FROM issues WHERE parent_id = $1                 UNION ALL                 SELECT i.id, i.status, i.hidden_at                 FROM issues i INNER JOIN subtree s ON i.parent_id = s.id              )              SELECT                 COUNT(*)::bigint AS total,                 COUNT(*) FILTER (WHERE status IN ('todo','in_progress','in_review','blocked') AND hidden_at IS NULL)::bigint AS active              FROM subtree"
+        )
+        .bind(root_issue_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+
     /// 创建子 issue：自动填充 parent_id。
     pub async fn create_child(
         &self,
