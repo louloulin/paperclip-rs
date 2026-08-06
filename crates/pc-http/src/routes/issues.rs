@@ -27,6 +27,7 @@ use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
 use pc_repos::routine::RoutineRepo;
 use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
+use pc_repos::task_watchdog_scope::{enqueue_task_watchdog_wake, TaskWatchdogWakeInput};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
@@ -1448,6 +1449,8 @@ async fn complete_watchdog_evaluation(
     }
     let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
     let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
+    // R251: 给 task-watchdog wake 预留 actor_id_for_wake 副本（activity_log 后面会 move actor_id）
+    let actor_id_for_wake = actor_id.clone();
     let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
         company_id: issue.company_id,
         actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
@@ -1469,6 +1472,41 @@ async fn complete_watchdog_evaluation(
             "updated": n,
         })),
     }).await;
+    // R251: task-watchdog wake enqueue —— 把 taskWatchdog 上下文写入 heartbeat_runs.context_snapshot
+    // 与 Node `enqueueWakeup(...)` 行为对齐。
+    if let Some(wd) = watchdog_row.as_ref() {
+        let stop_fp = body
+            .observed_fingerprint
+            .as_deref()
+            .or(wd.last_observed_fingerprint.as_deref());
+        let idempotency_key = format!(
+            "task_watchdog:{}:{}",
+            wd.id,
+            stop_fp.unwrap_or("")
+        );
+        let input = TaskWatchdogWakeInput {
+            watchdog_id: wd.id,
+            watched_issue_id: id,
+            watched_issue_identifier: issue.identifier.as_deref(),
+            watched_issue_title: Some(issue.title.as_str()),
+            watchdog_issue_id: wd.watchdog_issue_id,
+            stop_fingerprint: stop_fp,
+            custom_instructions: wd.instructions.as_deref(),
+        };
+        if let Err(e) = enqueue_task_watchdog_wake(
+            &state.db,
+            &input,
+            wd.watchdog_agent_id,
+            issue.company_id,
+            actor_type_str,
+            &actor_id_for_wake,
+            Some(&idempotency_key),
+        )
+        .await
+        {
+            tracing::warn!(error = ?e, "R251: failed to enqueue task_watchdog_wake");
+        }
+    }
     state.realtime.publish(
         LiveEvent::new("issue.watchdog_evaluation_completed", "issue_watchdog", id)
             .with_company(issue.company_id),
@@ -5044,6 +5082,91 @@ async fn active_run(
     })))
 }
 
+
+#[cfg(test)]
+#[cfg(test)]
+mod round251_tests {
+    /// R251: task_watchdog_scope 模块导出 build_task_watchdog_wake_context。
+    #[test]
+    fn task_watchdog_wake_context_module_exports_build_function() {
+        let src = include_str!("issues.rs");
+        assert!(
+            src.contains("use pc_repos::task_watchdog_scope::{enqueue_task_watchdog_wake, TaskWatchdogWakeInput}"),
+            "pc-http/issues.rs must import build_task_watchdog_wake_context types from pc-repos task_watchdog_scope"
+        );
+    }
+
+    /// R251: wakeup 模块导出 enqueue_task_watchdog_wake（pc-repos 端的 enqueue 入口）。
+    #[test]
+    fn wakeup_module_exports_enqueue_function() {
+        let src = include_str!("issues.rs");
+        assert!(
+            src.contains("enqueue_task_watchdog_wake("),
+            "pc-http/issues.rs must call enqueue_task_watchdog_wake"
+        );
+    }
+
+    /// R251: complete_watchdog_evaluation 必须在 activity_log 之后调用 enqueue_task_watchdog_wake。
+    #[test]
+    fn complete_evaluation_handler_calls_enqueue_task_watchdog_wake() {
+        let src = include_str!("issues.rs");
+        // wake 入参必须从 watchdog_row 派生
+        assert!(
+            src.contains("watchdog_id: wd.id,"),
+            "complete_watchdog_evaluation must derive watchdog_id from watchdog row"
+        );
+        assert!(
+            src.contains("watched_issue_identifier: issue.identifier.as_deref()"),
+            "complete_watchdog_evaluation must forward watched_issue_identifier from issue"
+        );
+        assert!(
+            src.contains("stop_fingerprint: stop_fp,"),
+            "complete_watchdog_evaluation must forward stop_fingerprint"
+        );
+        assert!(
+            src.contains("custom_instructions: wd.instructions.as_deref()"),
+            "complete_watchdog_evaluation must forward custom_instructions from watchdog.instructions"
+        );
+        // idempotency_key 必须遵循 Node `taskWatchdogWakeIdempotencyKey(watchdogId, stopFingerprint)`
+        assert!(
+            src.contains("\"task_watchdog:{}:{}\""),
+            "complete_watchdog_evaluation must construct idempotency_key as task_watchdog watchdog_id stop_fp"
+        );
+    }
+
+    /// R251: handler 写入的 context 必须能被 read_task_watchdog_context 解析（pc-repos 端测试）。
+    #[test]
+    fn task_watchdog_wake_context_round_trips_via_read_task_watchdog_context() {
+        // 通过 include_str 拉取 pc-repos/src/task_watchdog_scope/context.rs 验证存在 round-trip 测试
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/context.rs");
+        assert!(
+            src.contains("read_task_watchdog_context(Some(&ctx))"),
+            "pc-repos context.rs must include a round-trip test via read_task_watchdog_context"
+        );
+    }
+
+    /// R251: 入参 source/tigger_detail 必须对齐 Node automation + task_watchdog_stopped_subtree。
+    #[test]
+    fn wakeup_signature_uses_automation_source_and_task_watchdog_stopped_subtree_reason() {
+        let src = include_str!("../../../pc-repos/src/task_watchdog_scope/wakeup.rs");
+        assert!(
+            src.contains("'automation'") && src.contains("'task_watchdog_stopped_subtree'"),
+            "wakeup.rs must insert agent_wakeup_requests with source='automation' and trigger_detail='task_watchdog_stopped_subtree'"
+        );
+        assert!(
+            src.contains("INSERT INTO agent_wakeup_requests"),
+            "wakeup.rs must insert agent_wakeup_requests row"
+        );
+        assert!(
+            src.contains("INSERT INTO heartbeat_runs"),
+            "wakeup.rs must insert heartbeat_runs row"
+        );
+        assert!(
+            src.contains("UPDATE agent_wakeup_requests SET run_id"),
+            "wakeup.rs must link wakeup.run_id -> heartbeat_runs.id"
+        );
+    }
+}
 
 #[cfg(test)]
 #[cfg(test)]

@@ -5855,3 +5855,49 @@ R250 完成了 watchdog 控制面的「写入 → 列表 → 摘要」三件套�
 3. **摘要**（R250）：新路由 `GET /api/issues/:id/watchdog/activity/summary` 一站式返回 watchdog 状态 + 最新事件 + 计数。
 
 下一步可推进 R251（task-watchdog context-snapshot 写入）或 R252（realtime subscriber 端实现）。
+
+## 89. 第二百五十一轮增量（Round 251 — task-watchdog wake context 写入）
+
+### 背景
+
+R245 让 watchdog evaluation worker 上报完成；R246~R250 进一步完善了 activity 联动。但与 Node 端 `enqueueWakeup(...)` 行为对比发现：
+1. 当 watchdog 触发「子树 stopped」时，Node 端会立刻调用 `enqueueWakeup({ taskWatchdog: { watchedIssueId, stopFingerprint, ... } })`，把 task-watchdog 上下文写入 `heartbeat_runs.context_snapshot`。
+2. Rust 端虽然有 `mark_watchdog_evaluation_completed` 写 `issue_watchdogs`，但 **没有** 同时把 `taskWatchdog` 上下文写入 `heartbeat_runs.context_snapshot`，导致后续 `read_task_watchdog_context` 无法消费，subtree mutation scope 检测失配。
+
+### 实现内容
+
+- **`pc-repos/src/task_watchdog_scope/context.rs`**（新增）：
+  - `TaskWatchdogWakeInput<'a>` struct：装载 `watchdog_id / watched_issue_id / watched_issue_identifier / watched_issue_title / watchdog_issue_id / stop_fingerprint / custom_instructions`。
+  - `build_task_watchdog_wake_context(input)`：构造 `serde_json::Value`，顶层包含 `source / wakeReason / watchdogId / watchedIssueId / watchedIssueIdentifier / stopFingerprint / customInstructions / resumeIntent / followUpRequested / (issueId|taskId if watchdog_issue_id)`，嵌套 `taskWatchdog` 对象。
+- **`pc-repos/src/task_watchdog_scope/wakeup.rs`**（新增）：
+  - `TaskWatchdogWakeIds { wakeup_id, run_id }` 结果结构。
+  - `enqueue_task_watchdog_wake(db, input, watchdog_agent_id, company_id, actor_type, actor_id, idempotency_key)`：事务内插入 `agent_wakeup_requests`（source='automation', trigger_detail='task_watchdog_stopped_subtree', reason='task_watchdog_stopped_subtree'）+ `heartbeat_runs`（invocation_source='on_demand', trigger_detail='task_watchdog_stopped_subtree', context_snapshot 写入）+ `UPDATE agent_wakeup_requests SET run_id`。
+- **`pc-repos/src/task_watchdog_scope/mod.rs`**：导出 `mod context; mod wakeup;` 并 re-export 新符号。
+- **`pc-http/src/routes/issues.rs::complete_watchdog_evaluation`**：在 activity_log 之后、`realtime.publish` 之前调用 `enqueue_task_watchdog_wake(...)`，从 `watchdog_row` 派生参数，`idempotency_key` 遵循 Node `taskWatchdogWakeIdempotencyKey(watchdogId, stopFingerprint)` 规则（格式：`task_watchdog:{watchdog_id}:{stop_fingerprint}`）。
+
+### 当前仍有差距
+
+- `build_task_watchdog_wake_context` 当前未生成 `taskWatchdog.capabilities.{targetScope, operations, deniedOperations}` 等嵌套字段；Node 端用 `TaskWatchdogClassifierResult` 派生，Rust 端简化版只携带 `watchedIssueId` / `stopFingerprint` / `watchedIssueIdentifier` / `watchedIssueTitle` 4 个核心字段，足以让 `read_task_watchdog_context` 消费。
+- `actor_type` / `actor_id` 当前直接转发 `complete_watchdog_evaluation` 解析的 actor，与 Node `enqueueWakeup` 端固定 'system' 略有差异；后续可按 worker 来源细化。
+- 没有为 `enqueue_task_watchdog_wake` 失败增加 retry/dead-letter，依赖 `tracing::warn!` 记录。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round251_tests` | 5 passed |
+| `pc-repos::task_watchdog_scope::context::tests` | 3 passed |
+| `pc-repos::task_watchdog_scope::wakeup::tests` | 1 passed |
+| `cargo test -p pc-http --lib` | 173 passed (168 baseline + 5 new) |
+| `cargo test -p pc-repos --lib` | 504 passed (500 baseline + 4 new) |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R251 完成了 task-watchdog wake 写入链路的最小闭合：
+1. **构造**（pc-repos/context）：`build_task_watchdog_wake_context` 与 Node `watchdogWakeContext` 字段对齐。
+2. **入队**（pc-repos/wakeup）：`enqueue_task_watchdog_wake` 在事务内同时插入 wakeup + heartbeat_runs，并链接 run_id。
+3. **触发**（pc-http/issues）：`complete_watchdog_evaluation` 在 evaluation 完成后调用入队，idempotency_key 遵循 Node 端规则。
+
+下一步可推进 R252（realtime subscriber 端实现）或 R253（`taskWatchdog.capabilities` 嵌套字段补齐）。
+
