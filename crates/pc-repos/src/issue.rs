@@ -2321,6 +2321,95 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+
+    /// 原子完成 recovery action，并按 Node 语义同步 source issue。
+    pub async fn resolve_recovery_with_issue(
+        &self,
+        source_issue_id: Uuid,
+        action_id: Uuid,
+        resolution_note: Option<&str>,
+        outcome: &str,
+        action_status: &str,
+        source_status: Option<&str>,
+        hand_back_agent_id: Option<Uuid>,
+        actor: Option<&IssueUpdateActor>,
+    ) -> sqlx::Result<Option<(IssueRow, IssueRecoveryActionRow)>> {
+        let mut tx = self.db.pool().begin().await?;
+        let Some(issue) = sqlx::query_as::<_, IssueRow>(&format!(
+            "SELECT {ISSUE_COLS} FROM issues WHERE id=$1 FOR UPDATE"
+        ))
+        .bind(source_issue_id)
+        .fetch_optional(&mut *tx)
+        .await? else { return Ok(None); };
+        let Some(action) = sqlx::query_as::<_, IssueRecoveryActionRow>(
+            "SELECT id, company_id, source_issue_id, recovery_issue_id, kind, status,
+                owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id,
+                return_owner_agent_id, cause, fingerprint, evidence, next_action,
+                wake_policy, monitor_policy, attempt_count, max_attempts, timeout_at,
+                last_attempt_at, outcome, resolution_note, resolved_at, created_at, updated_at
+             FROM issue_recovery_actions
+             WHERE id=$1 AND source_issue_id=$2 AND status IN ('active','escalated')
+             FOR UPDATE",
+        )
+        .bind(action_id).bind(source_issue_id).fetch_optional(&mut *tx).await? else {
+            return Ok(None);
+        };
+        if let Some(status) = source_status {
+            if status == "blocked" {
+                let unresolved: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM issue_relations ir
+                     JOIN issues blocker ON blocker.id=ir.issue_id AND blocker.company_id=ir.company_id
+                     WHERE ir.company_id=$1 AND ir.related_issue_id=$2 AND ir.type='blocks'
+                       AND blocker.status NOT IN ('done','cancelled') AND blocker.hidden_at IS NULL",
+                ).bind(issue.company_id).bind(issue.id).fetch_one(&mut *tx).await?;
+                if unresolved == 0 {
+                    return Err(sqlx::Error::Protocol("blocked recovery resolution requires an unresolved blocker".into()));
+                }
+            }
+            let assignee = if outcome == "restored" && status == "todo" {
+                hand_back_agent_id.or(issue.assignee_agent_id)
+            } else { issue.assignee_agent_id };
+            sqlx::query(
+                "UPDATE issues SET status=$2, assignee_agent_id=$3,
+                 completed_at=CASE WHEN $2='todo' THEN NULL ELSE completed_at END,
+                 cancelled_at=CASE WHEN $2='todo' THEN NULL ELSE cancelled_at END,
+                 updated_at=now() WHERE id=$1",
+            ).bind(issue.id).bind(status).bind(assignee).execute(&mut *tx).await?;
+        }
+        let updated = sqlx::query_as::<_, IssueRecoveryActionRow>(
+            "UPDATE issue_recovery_actions SET status=$3, resolution_note=$4, outcome=$5,
+             resolved_at=now(), updated_at=now() WHERE id=$1 AND source_issue_id=$2
+             RETURNING id, company_id, source_issue_id, recovery_issue_id, kind, status,
+                owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id,
+                return_owner_agent_id, cause, fingerprint, evidence, next_action,
+                wake_policy, monitor_policy, attempt_count, max_attempts, timeout_at,
+                last_attempt_at, outcome, resolution_note, resolved_at, created_at, updated_at",
+        ).bind(action.id).bind(source_issue_id).bind(action_status).bind(resolution_note)
+         .bind(outcome).fetch_one(&mut *tx).await?;
+        if let Some(actor) = actor {
+            let (actor_type, actor_id) = if let Some(agent_id) = actor.agent_id {
+                ("agent", agent_id.to_string())
+            } else if let Some(user_id) = actor.user_id.as_deref() {
+                ("user", user_id.to_owned())
+            } else { ("system", "issue_service".to_owned()) };
+            sqlx::query(
+                "INSERT INTO activity_log (company_id, actor_type, actor_id, action, entity_type, entity_id, agent_id, run_id, details)
+                 VALUES ($1,$2,$3,'issue.recovery_action_resolved','issue',$4,$5,$6,$7)",
+            ).bind(issue.company_id).bind(actor_type).bind(actor_id).bind(issue.id.to_string())
+             .bind(actor.agent_id).bind(actor.run_id)
+             .bind(serde_json::json!({"recoveryActionId": updated.id, "outcome": outcome, "sourceIssueStatus": source_status, "resolutionNote": resolution_note})).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        let final_issue = if let Some(status) = source_status {
+            let mut result = issue;
+            result.status = status.to_owned();
+            if outcome == "restored" && status == "todo" { result.assignee_agent_id = hand_back_agent_id.or(result.assignee_agent_id); }
+            result.updated_at = pc_core::Timestamp::now();
+            result
+        } else { issue };
+        Ok(Some((final_issue, updated)))
+    }
+
     // =========================================================================
     // Work products
     // =========================================================================

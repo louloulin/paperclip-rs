@@ -1411,13 +1411,42 @@ async fn resolve_recovery(
             "blocked recovery resolution requires an unresolved blocker".into(),
         ));
     }
-    let row = IssueRepo::new(&state.db)
-        .resolve_recovery_action_for_issue(
+    let active = IssueRepo::new(&state.db)
+        .get_active_recovery_action(issue.id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("active recovery action {}", body.action_id)))?;
+    if active.id != body.action_id {
+        return Err(ApiError::NotFound(format!("active recovery action {}", body.action_id)));
+    }
+    let hand_back_agent_id = if body.outcome == "restored"
+        && body.source_issue_status.as_deref() == Some("todo")
+    {
+        active.return_owner_agent_id
+    } else {
+        None
+    };
+    let effective_outcome = if hand_back_agent_id.is_some() {
+        "handed_back"
+    } else if body.outcome == "restored" && body.source_issue_status.as_deref() == Some("done") {
+        "owner_completed"
+    } else {
+        recorded_outcome
+    };
+    let actor = IssueUpdateActor {
+        agent_id: headers.get("x-paperclip-agent-id").and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok()),
+        user_id: headers.get("x-paperclip-user-id").and_then(|v| v.to_str().ok()).map(str::to_owned),
+        run_id: headers.get("x-paperclip-run-id").and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok()),
+    };
+    let (updated_issue, row) = IssueRepo::new(&state.db)
+        .resolve_recovery_with_issue(
             issue.id,
             body.action_id,
             body.resolution_note.as_deref(),
-            recorded_outcome,
+            effective_outcome,
             action_status,
+            body.source_issue_status.as_deref(),
+            hand_back_agent_id,
+            Some(&actor),
         )
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("active recovery action {}", body.action_id)))?;
@@ -1427,6 +1456,7 @@ async fn resolve_recovery(
     );
     Ok(Json(json!({
         "action": row,
+        "issue": updated_issue,
         "issueId": issue.id,
         "sourceIssueStatus": body.source_issue_status,
     })))
@@ -4681,6 +4711,36 @@ mod round239_tests {
         assert!(src.contains("headers: HeaderMap"));
         assert!(src.contains("x-paperclip-agent-id"));
         assert!(src.contains("x-paperclip-user-id"));
+    }
+}
+
+#[cfg(test)]
+mod round240_tests {
+    #[test]
+    fn restore_resolution_records_hand_back_or_owner_completed() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("effective_outcome = if hand_back_agent_id.is_some()"));
+        assert!(src.contains("\"handed_back\""));
+        assert!(src.contains("\"owner_completed\""));
+        assert!(src.contains("active.return_owner_agent_id"));
+    }
+
+    #[test]
+    fn recovery_resolution_uses_single_transaction_method() {
+        let repo = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(repo.contains("pub async fn resolve_recovery_with_issue("));
+        assert!(repo.contains("self.db.pool().begin().await?"));
+        assert!(repo.contains("FOR UPDATE"));
+        assert!(repo.contains("tx.commit().await?"));
+        assert!(repo.contains("issue.recovery_action_resolved"));
+    }
+
+    #[test]
+    fn recovery_resolution_updates_issue_status_and_assignee() {
+        let repo = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(repo.contains("UPDATE issues SET status=$2, assignee_agent_id=$3"));
+        assert!(repo.contains("outcome == \"restored\" && status == \"todo\""));
+        assert!(repo.contains("return_owner_agent_id"));
     }
 }
 

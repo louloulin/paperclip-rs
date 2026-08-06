@@ -5396,3 +5396,41 @@ Node recovery resolve 对 `cancelled` / `false_positive` 有 board authority 要
 ### 总结
 
 R239补齐了恢复解析最关键的三类输入安全边界：outcome 保真、board-only 操作保护、blocked 前置条件校验。下一轮应将 issue 状态与 action 状态合并到真实事务，并补齐 hand-back 与审计副作用。
+
+## 78. 第二百四十轮增量（Round 240 — recovery resolve 真实事务闭环）
+
+### 背景
+
+R238-R239 已完成 action source scope、状态白名单、board-only outcome 和 blocker 前置校验，但 issue 状态更新与 action resolve 仍是分离能力。Node 使用同一数据库事务更新 source issue、恢复 owner、解析 action。本轮实现 Rust 端专用原子仓储方法。
+
+### 实现内容
+
+- 新增 `IssueRepo::resolve_recovery_with_issue`：
+  - 开启 PostgreSQL 事务。
+  - `FOR UPDATE` 锁定 source issue 和 active/escalated recovery action。
+  - 在事务内校验 blocked outcome 的未解决 blocker。
+  - 更新 source issue status、assignee、completed_at/cancelled_at。
+  - 更新 recovery action status/outcome/resolution_note/resolved_at。
+  - 在同一事务写入 `issue.recovery_action_resolved` activity log。
+- hand-back 语义：
+  - `restored + todo + return_owner_agent_id` → 恢复 assignee，记录 `handed_back`。
+  - `restored + done` → 记录 `owner_completed`。
+- resolve 响应返回更新后的 `issue` 与 `action`，便于调用方立即刷新状态。
+
+### 当前仍有差距
+
+- 尚未复用完整 issue update pipeline 的 terminal effects 和 routine status sync。
+- 尚未实现 recovery wakeup queue。
+- actor authority 仍需要接入统一授权服务，而不是只依赖 HTTP actor headers。
+- PostgreSQL 连接在当前沙箱被阻止，因此事务行为只能通过编译和源码契约测试验证，尚未运行真实数据库集成测试。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round240_tests` | 3 passed |
+| `cargo check -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R240首次形成 recovery action 与 source issue 的原子闭环，补齐 hand-back、owner-completed 和事务内审计日志。后续重点转向 recovery wakeup/routine sync，或继续推进 active-run/watchdog 的服务层完整度。
