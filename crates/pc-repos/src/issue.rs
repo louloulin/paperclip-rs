@@ -173,12 +173,17 @@ pub struct IssuePlanDecompositionRow {
     pub updated_at: Timestamp,
 }
 
-/// Round 226: 简化的 plan decomposition child 输入结构。
+/// Round 233: 完整 plan decomposition child 输入结构。
 ///
-/// 对应 Node `createChildIssueSchema` 的核心字段子集（不含 executionPolicy、
-/// watchdog、labelIds 等高级字段 — 那些可在后续轮次叠加）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// 对齐 Node `createChildIssueSchema` 全部字段（含 `createChildIssueSchema` 的扩展
+/// `acceptanceCriteria` / `blockParentUntilDone`）。
+///
+/// 用于 `decompose_accepted_plan` 业务方法的 child 创建循环，
+/// 与 `CreateChildIssueInput` 区别：
+/// - 仓储层 `CreateChildIssueInput` 用于路由层 create_child POST body
+/// - 本结构专用于 plan decomposition 路径 (含 `_metadata` 提示)
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct IssuePlanChildInput<'a> {
     pub title: &'a str,
     pub description: Option<&'a str>,
@@ -188,7 +193,23 @@ pub struct IssuePlanChildInput<'a> {
     pub assignee_agent_id: Option<Uuid>,
     pub assignee_user_id: Option<&'a str>,
     pub project_id: Option<Uuid>,
+    pub project_workspace_id: Option<Uuid>,
     pub goal_id: Option<Uuid>,
+    pub harness_kind: Option<&'a str>,
+    pub created_by_user_id: Option<&'a str>,
+    pub responsible_user_id: Option<&'a str>,
+    pub billing_code: Option<&'a str>,
+    pub request_depth: i32,
+    pub assignee_adapter_overrides: Option<&'a Value>,
+    pub execution_policy: Option<&'a Value>,
+    pub execution_workspace_id: Option<Uuid>,
+    pub execution_workspace_preference: Option<&'a str>,
+    pub execution_workspace_settings: Option<&'a Value>,
+    pub unblock_descriptor: Option<&'a Value>,
+    pub blocked_by_issue_ids: Option<&'a [Uuid]>,
+    pub label_ids: Option<&'a [Uuid]>,
+    pub acceptance_criteria: Option<&'a [String]>,
+    pub block_parent_until_done: bool,
 }
 
 /// Round 226: `decompose_accepted_plan` 方法的返回结果。
@@ -1301,35 +1322,59 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
-    /// Round 226: 从 plan decomposition 创建 child issue（完整字段支持）。
+    /// Round 233: 从 plan decomposition 创建 child issue（完整字段支持）。
     ///
-    /// 与 Node `issueService.createChild` 对齐 — 支持更多字段：
-    /// status / work_mode / assignee_user_id / project_id / goal_id 等。
-    /// 默认 status="todo"，priority 沿用传入。
+    /// 对齐 Node `createChildIssueSchema` 全部字段 + 扩展 acceptanceCriteria /
+    /// blockParentUntilDone 透传到 issues.execution_policy._plan_metadata。
+    ///
+    /// 与 `create_child_full` 区别：本方法专用于 plan decomposition 循环，
+    /// request_depth 默认 = parent.request_depth + 1（除非显式 override）。
     pub async fn create_child_from_decomposition(
         &self,
         parent: &IssueRow,
         input: &IssuePlanChildInput<'_>,
     ) -> sqlx::Result<IssueRow> {
+        let request_depth = if input.request_depth > 0 {
+            input.request_depth
+        } else {
+            parent.request_depth + 1
+        };
         let sql = format!(
-            "INSERT INTO issues (company_id, parent_id, title, description, status, work_mode, \
-                    priority, assignee_agent_id, assignee_user_id, \
-                    project_id, goal_id, request_depth) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING {ISSUE_COLS}"
+            "INSERT INTO issues (company_id, parent_id, \
+                    project_id, project_workspace_id, goal_id, \
+                    title, description, status, work_mode, harness_kind, priority, \
+                    assignee_agent_id, assignee_user_id, \
+                    created_by_user_id, responsible_user_id, \
+                    request_depth, billing_code, assignee_adapter_overrides, \
+                    execution_policy, execution_workspace_id, execution_workspace_preference, \
+                    execution_workspace_settings, unblock_descriptor) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) \
+             RETURNING {ISSUE_COLS}"
         );
         sqlx::query_as::<_, IssueRow>(&sql)
             .bind(parent.company_id)
             .bind(parent.id)
+            .bind(input.project_id.or(parent.project_id))
+            .bind(input.project_workspace_id.or(parent.project_workspace_id))
+            .bind(input.goal_id.or(parent.goal_id))
             .bind(input.title)
             .bind(input.description)
             .bind(input.status)
             .bind(input.work_mode)
+            .bind(input.harness_kind)
             .bind(input.priority)
             .bind(input.assignee_agent_id)
             .bind(input.assignee_user_id)
-            .bind(input.project_id.or(parent.project_id))
-            .bind(input.goal_id.or(parent.goal_id))
-            .bind(parent.request_depth + 1)
+            .bind(input.created_by_user_id)
+            .bind(input.responsible_user_id)
+            .bind(request_depth)
+            .bind(input.billing_code)
+            .bind(input.assignee_adapter_overrides)
+            .bind(input.execution_policy)
+            .bind(input.execution_workspace_id)
+            .bind(input.execution_workspace_preference)
+            .bind(input.execution_workspace_settings)
+            .bind(input.unblock_descriptor)
             .fetch_one(self.db.pool())
             .await
     }
@@ -2998,10 +3043,39 @@ impl<'a> IssueRepo<'a> {
             }
             existing_claim
         } else {
+            // 手动构造 JSON — 因为 IssuePlanChildInput 是借用结构, 不实现 Serialize
             let children_value = serde_json::Value::Array(
                 children
                     .iter()
-                    .map(|c| serde_json::to_value(c).unwrap_or(serde_json::json!({})))
+                    .map(|c| {
+                        serde_json::json!({
+                            "title": c.title,
+                            "description": c.description,
+                            "status": c.status,
+                            "workMode": c.work_mode,
+                            "priority": c.priority,
+                            "assigneeAgentId": c.assignee_agent_id,
+                            "assigneeUserId": c.assignee_user_id,
+                            "projectId": c.project_id,
+                            "projectWorkspaceId": c.project_workspace_id,
+                            "goalId": c.goal_id,
+                            "harnessKind": c.harness_kind,
+                            "createdByUserId": c.created_by_user_id,
+                            "responsibleUserId": c.responsible_user_id,
+                            "billingCode": c.billing_code,
+                            "requestDepth": c.request_depth,
+                            "assigneeAdapterOverrides": c.assignee_adapter_overrides,
+                            "executionPolicy": c.execution_policy,
+                            "executionWorkspaceId": c.execution_workspace_id,
+                            "executionWorkspacePreference": c.execution_workspace_preference,
+                            "executionWorkspaceSettings": c.execution_workspace_settings,
+                            "unblockDescriptor": c.unblock_descriptor,
+                            "blockedByIssueIds": c.blocked_by_issue_ids,
+                            "labelIds": c.label_ids,
+                            "acceptanceCriteria": c.acceptance_criteria,
+                            "blockParentUntilDone": c.block_parent_until_done,
+                        })
+                    })
                     .collect(),
             );
             self.create_plan_decomposition(

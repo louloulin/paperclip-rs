@@ -2629,7 +2629,7 @@ async fn issue_low_trust_promotion(
     Ok(Json(json!({ "promoted": true, "issueId": id })))
 }
 
-/// Round 226: 单个 child issue 输入（与 Node `createChildIssueSchema` 子集对齐）
+/// Round 233: 单个 child issue 输入（完整 Node `createChildIssueSchema` 字段）
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlanDecompositionChildInput {
@@ -2643,13 +2643,45 @@ struct PlanDecompositionChildInput {
     #[serde(default = "default_child_priority")]
     priority: String,
     #[serde(default)]
+    harness_kind: Option<String>,
+    #[serde(default)]
     assignee_agent_id: Option<Uuid>,
     #[serde(default)]
     assignee_user_id: Option<String>,
     #[serde(default)]
     project_id: Option<Uuid>,
     #[serde(default)]
+    project_workspace_id: Option<Uuid>,
+    #[serde(default)]
     goal_id: Option<Uuid>,
+    #[serde(default)]
+    created_by_user_id: Option<String>,
+    #[serde(default)]
+    responsible_user_id: Option<String>,
+    #[serde(default)]
+    billing_code: Option<String>,
+    #[serde(default)]
+    request_depth: Option<i32>,
+    #[serde(default)]
+    assignee_adapter_overrides: Option<Value>,
+    #[serde(default)]
+    execution_policy: Option<Value>,
+    #[serde(default)]
+    execution_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    execution_workspace_preference: Option<String>,
+    #[serde(default)]
+    execution_workspace_settings: Option<Value>,
+    #[serde(default)]
+    unblock_descriptor: Option<Value>,
+    #[serde(default)]
+    blocked_by_issue_ids: Option<Vec<Uuid>>,
+    #[serde(default)]
+    label_ids: Option<Vec<Uuid>>,
+    #[serde(default)]
+    acceptance_criteria: Option<Vec<String>>,
+    #[serde(default)]
+    block_parent_until_done: Option<bool>,
 }
 
 fn default_child_status() -> String {
@@ -2742,6 +2774,8 @@ async fn create_accepted_plan_decomposition(
     //    - while 循环创建每个 child issue
     //    - 更新 claim status + child_issue_ids
     //    - 全部完成时切换为 'completed'
+    // R233: 转换完整 Node createChildIssueSchema 字段到 IssuePlanChildInput
+    // 借用结构 — 所有字段都用 &ref 而非 owned, 避免 E0515 错误
     let child_inputs: Vec<pc_repos::issue::IssuePlanChildInput> = body
         .children
         .iter()
@@ -2754,7 +2788,24 @@ async fn create_accepted_plan_decomposition(
             assignee_agent_id: c.assignee_agent_id,
             assignee_user_id: c.assignee_user_id.as_deref(),
             project_id: c.project_id,
+            project_workspace_id: c.project_workspace_id,
             goal_id: c.goal_id,
+            harness_kind: c.harness_kind.as_deref(),
+            created_by_user_id: c.created_by_user_id.as_deref(),
+            responsible_user_id: c.responsible_user_id.as_deref(),
+            billing_code: c.billing_code.as_deref(),
+            request_depth: c.request_depth.unwrap_or(0),
+            assignee_adapter_overrides: c.assignee_adapter_overrides.as_ref(),
+            // execution_policy: 暂时透传原始值, _plan_metadata 嵌套由 service 层处理
+            execution_policy: c.execution_policy.as_ref(),
+            execution_workspace_id: c.execution_workspace_id,
+            execution_workspace_preference: c.execution_workspace_preference.as_deref(),
+            execution_workspace_settings: c.execution_workspace_settings.as_ref(),
+            unblock_descriptor: c.unblock_descriptor.as_ref(),
+            blocked_by_issue_ids: c.blocked_by_issue_ids.as_deref(),
+            label_ids: c.label_ids.as_deref(),
+            acceptance_criteria: c.acceptance_criteria.as_deref(),
+            block_parent_until_done: c.block_parent_until_done.unwrap_or(false),
         })
         .collect();
     let outcome = match IssueRepo::new(&state.db)
@@ -4526,10 +4577,26 @@ mod round216_tests {
                 status: "todo".to_string(),
                 work_mode: "standard".to_string(),
                 priority: "medium".to_string(),
+                harness_kind: None,
                 assignee_agent_id: None,
                 assignee_user_id: None,
                 project_id: None,
+                project_workspace_id: None,
                 goal_id: None,
+                created_by_user_id: None,
+                responsible_user_id: None,
+                billing_code: None,
+                request_depth: None,
+                assignee_adapter_overrides: None,
+                execution_policy: None,
+                execution_workspace_id: None,
+                execution_workspace_preference: None,
+                execution_workspace_settings: None,
+                unblock_descriptor: None,
+                blocked_by_issue_ids: None,
+                label_ids: None,
+                acceptance_criteria: None,
+                block_parent_until_done: None,
             },
             super::PlanDecompositionChildInput {
                 title: "b".to_string(),
@@ -4537,10 +4604,26 @@ mod round216_tests {
                 status: "todo".to_string(),
                 work_mode: "standard".to_string(),
                 priority: "medium".to_string(),
+                harness_kind: None,
                 assignee_agent_id: None,
                 assignee_user_id: None,
                 project_id: None,
+                project_workspace_id: None,
                 goal_id: None,
+                created_by_user_id: None,
+                responsible_user_id: None,
+                billing_code: None,
+                request_depth: None,
+                assignee_adapter_overrides: None,
+                execution_policy: None,
+                execution_workspace_id: None,
+                execution_workspace_preference: None,
+                execution_workspace_settings: None,
+                unblock_descriptor: None,
+                blocked_by_issue_ids: None,
+                label_ids: None,
+                acceptance_criteria: None,
+                block_parent_until_done: None,
             },
         ];
         let fp1 = super::compute_plan_decomposition_fingerprint(rev, &children);
@@ -4557,10 +4640,26 @@ mod round216_tests {
             status: "todo".to_string(),
             work_mode: "standard".to_string(),
             priority: "medium".to_string(),
+            harness_kind: None,
             assignee_agent_id: None,
             assignee_user_id: None,
             project_id: None,
+            project_workspace_id: None,
             goal_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: None,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            unblock_descriptor: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            acceptance_criteria: None,
+            block_parent_until_done: None,
         }];
         let children2 = vec![super::PlanDecompositionChildInput {
             title: "b".to_string(),
@@ -4568,10 +4667,26 @@ mod round216_tests {
             status: "todo".to_string(),
             work_mode: "standard".to_string(),
             priority: "medium".to_string(),
+            harness_kind: None,
             assignee_agent_id: None,
             assignee_user_id: None,
             project_id: None,
+            project_workspace_id: None,
             goal_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: None,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            unblock_descriptor: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            acceptance_criteria: None,
+            block_parent_until_done: None,
         }];
         let fp1 = super::compute_plan_decomposition_fingerprint(rev, &children1);
         let fp2 = super::compute_plan_decomposition_fingerprint(rev, &children2);
@@ -4588,10 +4703,26 @@ mod round216_tests {
             status: "todo".to_string(),
             work_mode: "standard".to_string(),
             priority: "medium".to_string(),
+            harness_kind: None,
             assignee_agent_id: None,
             assignee_user_id: None,
             project_id: None,
+            project_workspace_id: None,
             goal_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: None,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            unblock_descriptor: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            acceptance_criteria: None,
+            block_parent_until_done: None,
         }];
         let fp1 = super::compute_plan_decomposition_fingerprint(rev1, &children);
         let fp2 = super::compute_plan_decomposition_fingerprint(rev2, &children);
@@ -4728,10 +4859,26 @@ mod round216_tests {
             status: "todo".to_string(),
             work_mode: "standard".to_string(),
             priority: "medium".to_string(),
+            harness_kind: None,
             assignee_agent_id: None,
             assignee_user_id: Some("u-1".to_string()),
             project_id: None,
+            project_workspace_id: None,
             goal_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: None,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            unblock_descriptor: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            acceptance_criteria: None,
+            block_parent_until_done: None,
         };
         let v = serde_json::to_value(&input).expect("serialize");
         let obj = v.as_object().expect("object");
@@ -5430,5 +5577,222 @@ mod round231_tests {
         let payload2 = json!({"mode": "pause", "includeEstimate": true});
         let body2: TreeControlPreviewBody = serde_json::from_value(payload2).expect("parse");
         assert_eq!(body2.include_estimate, Some(true));
+    }
+}
+
+// ============================================================================
+// Round 233: accepted_plan_decomposition 完整 schema 单元测试
+// ============================================================================
+#[cfg(test)]
+mod round233_tests {
+    //! Round 233: 验证 PlanDecompositionChildInput 接受完整 Node
+    //! `createChildIssueSchema` 字段（含 acceptanceCriteria /
+    //! blockParentUntilDone 扩展字段）。
+
+    use super::PlanDecompositionChildInput;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn plan_child_input_parses_full_camelcase_payload() {
+        let payload = json!({
+            "title": "Ship feature X",
+            "description": "Full implementation",
+            "status": "todo",
+            "workMode": "standard",
+            "harnessKind": "plan",
+            "priority": "high",
+            "assigneeAgentId": Uuid::new_v4(),
+            "assigneeUserId": "u-1",
+            "projectId": Uuid::new_v4(),
+            "projectWorkspaceId": Uuid::new_v4(),
+            "goalId": Uuid::new_v4(),
+            "createdByUserId": "u-creator",
+            "responsibleUserId": "u-owner",
+            "billingCode": "BILL-1",
+            "requestDepth": 2,
+            "assigneeAdapterOverrides": {"kind": "openai"},
+            "executionPolicy": {"maxSteps": 50},
+            "executionWorkspaceId": Uuid::new_v4(),
+            "executionWorkspacePreference": "isolated",
+            "executionWorkspaceSettings": {"isolated": true},
+            "unblockDescriptor": {"owner": "board", "action": "manual"},
+            "blockedByIssueIds": [Uuid::new_v4(), Uuid::new_v4()],
+            "labelIds": [Uuid::new_v4()],
+            "acceptanceCriteria": ["c1", "c2"],
+            "blockParentUntilDone": true,
+        });
+        let input: PlanDecompositionChildInput =
+            serde_json::from_value(payload).expect("parse");
+        assert_eq!(input.title, "Ship feature X");
+        assert_eq!(input.status, "todo");
+        assert_eq!(input.work_mode, "standard");
+        assert_eq!(input.harness_kind.as_deref(), Some("plan"));
+        assert_eq!(input.priority, "high");
+        assert!(input.assignee_agent_id.is_some());
+        assert_eq!(input.assignee_user_id.as_deref(), Some("u-1"));
+        assert!(input.project_id.is_some());
+        assert!(input.project_workspace_id.is_some());
+        assert!(input.goal_id.is_some());
+        assert_eq!(input.created_by_user_id.as_deref(), Some("u-creator"));
+        assert_eq!(input.responsible_user_id.as_deref(), Some("u-owner"));
+        assert_eq!(input.billing_code.as_deref(), Some("BILL-1"));
+        assert_eq!(input.request_depth, Some(2));
+        assert!(input.assignee_adapter_overrides.is_some());
+        assert!(input.execution_policy.is_some());
+        assert!(input.execution_workspace_id.is_some());
+        assert_eq!(
+            input.execution_workspace_preference.as_deref(),
+            Some("isolated")
+        );
+        assert!(input.execution_workspace_settings.is_some());
+        assert!(input.unblock_descriptor.is_some());
+        assert_eq!(input.blocked_by_issue_ids.as_ref().map(|v| v.len()), Some(2));
+        assert_eq!(input.label_ids.as_ref().map(|v| v.len()), Some(1));
+        assert_eq!(
+            input.acceptance_criteria.as_ref().map(|v| v.len()),
+            Some(2)
+        );
+        assert_eq!(input.block_parent_until_done, Some(true));
+    }
+
+    #[test]
+    fn plan_child_input_minimal_required_only() {
+        let payload = json!({"title": "minimal"});
+        let input: PlanDecompositionChildInput =
+            serde_json::from_value(payload).expect("parse");
+        assert_eq!(input.title, "minimal");
+        // 默认值由 default_* 函数提供
+        assert_eq!(input.status, "todo");
+        assert_eq!(input.work_mode, "standard");
+        assert_eq!(input.priority, "medium");
+        assert!(input.assignee_agent_id.is_none());
+        assert!(input.project_id.is_none());
+        assert!(input.goal_id.is_none());
+        assert!(input.acceptance_criteria.is_none());
+        assert!(input.block_parent_until_done.is_none());
+    }
+
+    #[test]
+    fn plan_child_input_accepts_acceptance_criteria_array() {
+        let payload = json!({
+            "title": "with criteria",
+            "acceptanceCriteria": ["criterion 1", "criterion 2", "criterion 3"],
+            "blockParentUntilDone": true,
+        });
+        let input: PlanDecompositionChildInput =
+            serde_json::from_value(payload).expect("parse");
+        let criteria = input.acceptance_criteria.expect("criteria");
+        assert_eq!(criteria.len(), 3);
+        assert_eq!(criteria[0], "criterion 1");
+        assert!(input.block_parent_until_done.unwrap_or(false));
+    }
+
+    #[test]
+    fn plan_child_input_accepts_empty_acceptance_criteria() {
+        let payload = json!({"title": "x", "acceptanceCriteria": []});
+        let input: PlanDecompositionChildInput =
+            serde_json::from_value(payload).expect("parse");
+        let criteria = input.acceptance_criteria.expect("criteria");
+        assert!(criteria.is_empty());
+    }
+
+    #[test]
+    fn plan_child_input_serializes_camelcase_full() {
+        // 验证 serialization 也是 camelCase
+        let input = PlanDecompositionChildInput {
+            title: "t".to_string(),
+            description: Some("d".to_string()),
+            status: "todo".to_string(),
+            work_mode: "standard".to_string(),
+            priority: "medium".to_string(),
+            harness_kind: Some("plan".to_string()),
+            assignee_agent_id: None,
+            assignee_user_id: Some("u-1".to_string()),
+            project_id: None,
+            project_workspace_id: None,
+            goal_id: None,
+            created_by_user_id: Some("u-creator".to_string()),
+            responsible_user_id: None,
+            billing_code: None,
+            request_depth: Some(1),
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            unblock_descriptor: None,
+            blocked_by_issue_ids: None,
+            label_ids: None,
+            acceptance_criteria: None,
+            block_parent_until_done: Some(false),
+        };
+        let v = serde_json::to_value(&input).expect("serialize");
+        let obj = v.as_object().expect("object");
+        assert!(obj.contains_key("workMode"));
+        assert!(obj.contains_key("harnessKind"));
+        assert!(obj.contains_key("assigneeAgentId"));
+        assert!(obj.contains_key("assigneeUserId"));
+        assert!(obj.contains_key("projectWorkspaceId"));
+        assert!(obj.contains_key("createdByUserId"));
+        assert!(obj.contains_key("responsibleUserId"));
+        assert!(obj.contains_key("billingCode"));
+        assert!(obj.contains_key("requestDepth"));
+        assert!(obj.contains_key("assigneeAdapterOverrides"));
+        assert!(obj.contains_key("executionPolicy"));
+        assert!(obj.contains_key("executionWorkspaceId"));
+        assert!(obj.contains_key("executionWorkspacePreference"));
+        assert!(obj.contains_key("executionWorkspaceSettings"));
+        assert!(obj.contains_key("unblockDescriptor"));
+        assert!(obj.contains_key("blockedByIssueIds"));
+        assert!(obj.contains_key("labelIds"));
+        assert!(obj.contains_key("acceptanceCriteria"));
+        assert!(obj.contains_key("blockParentUntilDone"));
+    }
+
+    #[test]
+    fn plan_child_input_camelcase_strict_no_snake_alias() {
+        // 验证 rename_all = "camelCase" 严格, snake_case 不识别
+        let payload = json!({
+            "title": "x",
+            "work_mode": "standard",       // snake_case — 应被忽略
+            "assignee_agent_id": Uuid::new_v4(),
+        });
+        let input: PlanDecompositionChildInput =
+            serde_json::from_value(payload).expect("parse");
+        assert_eq!(input.title, "x");
+        // snake_case 字段被忽略，使用 default
+        assert_eq!(input.work_mode, "standard"); // default
+        assert!(input.assignee_agent_id.is_none());
+    }
+
+    #[test]
+    fn plan_child_input_with_relations_full_payload() {
+        // 同时包含 relations + acceptance criteria + blockParentUntilDone
+        let blocker_id = Uuid::new_v4();
+        let label_id = Uuid::new_v4();
+        let payload = json!({
+            "title": "child with all",
+            "priority": "high",
+            "status": "todo",
+            "blockedByIssueIds": [blocker_id],
+            "labelIds": [label_id],
+            "acceptanceCriteria": ["must pass tests"],
+            "blockParentUntilDone": true,
+            "executionPolicy": {"maxSteps": 100},
+            "executionWorkspacePreference": "isolated",
+        });
+        let input: PlanDecompositionChildInput =
+            serde_json::from_value(payload).expect("parse");
+        assert_eq!(input.priority, "high");
+        let blockers = input.blocked_by_issue_ids.expect("blockers");
+        assert_eq!(blockers.len(), 1);
+        assert_eq!(blockers[0], blocker_id);
+        let labels = input.label_ids.expect("labels");
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0], label_id);
+        let criteria = input.acceptance_criteria.expect("criteria");
+        assert_eq!(criteria[0], "must pass tests");
+        assert!(input.block_parent_until_done.unwrap_or(false));
     }
 }
