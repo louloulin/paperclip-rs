@@ -73,6 +73,12 @@ struct StreamQuery {
     /// R254: 仅订阅某个 resource_id 的事件（任意 resource 类型）。
     #[serde(default)]
     resource_id: Option<Uuid>,
+    /// R256: 仅订阅 `at >= since` 的事件（ISO8601 时间戳 / RFC3339）。
+    #[serde(default)]
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    /// R256: 仅订阅 `at <= until` 的事件（ISO8601 时间戳 / RFC3339）。
+    #[serde(default)]
+    until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 async fn handler(
@@ -180,6 +186,8 @@ async fn handler(
         company_id,
         resume_from,
         channels_filter,
+        query.since,
+        query.until,
     ))
     .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive"));
     sse.into_response()
@@ -196,6 +204,8 @@ fn build_event_stream(
     company_id: Option<Uuid>,
     resume_from: Option<u64>,
     channels: Vec<ChannelFilter>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> + Send + 'static {
     let channels = Arc::new(channels);
     async_stream::stream! {
@@ -207,7 +217,7 @@ fn build_event_stream(
             let replay = state.realtime.replay_after(last_id);
             let mut replayed_count: usize = 0;
             for arc_evt in replay {
-                if !passes_filter(&arc_evt, company_id, channels.as_ref()) {
+                if !passes_filter(&arc_evt, company_id, channels.as_ref(), since, until) {
                     continue;
                 }
                 if let Some(ev) = to_sse_event(&arc_evt) {
@@ -237,7 +247,7 @@ fn build_event_stream(
         loop {
             match subscriber.next_event().await {
                 Some(arc_evt) => {
-                    if !passes_filter(&arc_evt, company_id, channels.as_ref()) {
+                    if !passes_filter(&arc_evt, company_id, channels.as_ref(), since, until) {
                         continue;
                     }
                     if let Some(ev) = to_sse_event(&arc_evt) {
@@ -276,10 +286,30 @@ pub(super) fn extract_client_ip(headers: &axum::http::HeaderMap) -> Option<std::
     None
 }
 
-/// 判定一条事件是否通过 channel + company_id 过滤。
-fn passes_filter(evt: &LiveEvent, company_id: Option<Uuid>, channels: &[ChannelFilter]) -> bool {
+/// 判定一条事件是否通过 channel + company_id + time-range 过滤。
+///
+/// R256: 新增 `since` / `until` 参数（`chrono::DateTime<Utc>`，来自 query 参数）。
+/// - `Some(since)`：仅 `evt.at >= since` 通过
+/// - `Some(until)`：仅 `evt.at <= until` 通过
+fn passes_filter(
+    evt: &LiveEvent,
+    company_id: Option<Uuid>,
+    channels: &[ChannelFilter],
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
+) -> bool {
     if let Some(cid) = company_id {
         if evt.company_id != Some(cid) {
+            return false;
+        }
+    }
+    if let Some(since_ts) = since {
+        if evt.at < since_ts {
+            return false;
+        }
+    }
+    if let Some(until_ts) = until {
+        if evt.at > until_ts {
             return false;
         }
     }
@@ -300,6 +330,92 @@ fn to_sse_event(evt: &LiveEvent) -> Option<Event> {
 // 我们需要 async_stream crate；检查 Cargo.toml。
 #[allow(dead_code)]
 fn _unused_broadcast_receiver_type_check(_: broadcast::Receiver<Arc<LiveEvent>>) {}
+
+#[cfg(test)]
+#[cfg(test)]
+mod round256_tests {
+    /// R256: StreamQuery 增加 since / until 字段。
+    #[test]
+    fn stream_query_supports_time_range_fields() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("since: Option<chrono::DateTime<chrono::Utc>>"),
+            "StreamQuery must have since field"
+        );
+        assert!(
+            src.contains("until: Option<chrono::DateTime<chrono::Utc>>"),
+            "StreamQuery must have until field"
+        );
+    }
+
+    /// R256: passes_filter 签名扩展为 5 参数（含 since / until）。
+    #[test]
+    fn passes_filter_signature_extended_with_time_range() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("fn passes_filter(\n    evt: &LiveEvent,\n    company_id: Option<Uuid>,\n    channels: &[ChannelFilter],\n    since: Option<chrono::DateTime<chrono::Utc>>,\n    until: Option<chrono::DateTime<chrono::Utc>>,\n) -> bool"),
+            "passes_filter must accept since and until parameters"
+        );
+    }
+
+    /// R256: passes_filter 在 since / until 不为空时按时间戳判定。
+    #[test]
+    fn passes_filter_checks_time_range() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("if evt.at < since_ts"), "passes_filter must compare evt.at with since_ts");
+        assert!(src.contains("if evt.at > until_ts"), "passes_filter must compare evt.at with until_ts");
+    }
+
+    /// R256: build_event_stream 函数签名扩展为接受 since / until。
+    #[test]
+    fn build_event_stream_signature_extended_with_time_range() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("fn build_event_stream(\n    state: Arc<WsState>,\n    company_id: Option<Uuid>,\n    resume_from: Option<u64>,\n    channels: Vec<ChannelFilter>,\n    since: Option<chrono::DateTime<chrono::Utc>>,\n    until: Option<chrono::DateTime<chrono::Utc>>,\n)"),
+            "build_event_stream must accept since and until parameters"
+        );
+    }
+
+    /// R256: SSE handler 把 query.since / query.until 透传给 build_event_stream。
+    #[test]
+    fn sse_handler_passes_since_until_to_build_event_stream() {
+        let src = include_str!("realtime_stream.rs");
+        // 找 build_event_stream 调用点
+        assert!(src.contains("query.since,\n        query.until,"), "SSE handler must forward query.since / query.until to build_event_stream");
+    }
+
+    /// R256: WS handler AuthQuery 增加 since / until 字段。
+    #[test]
+    fn ws_auth_query_supports_time_range_fields() {
+        let src = include_str!("live_events.rs");
+        assert!(
+            src.contains("since: Option<chrono::DateTime<chrono::Utc>>"),
+            "AuthQuery must have since field"
+        );
+        assert!(
+            src.contains("until: Option<chrono::DateTime<chrono::Utc>>"),
+            "AuthQuery must have until field"
+        );
+    }
+
+    /// R256: WS handle_socket 函数签名扩展为接受 since / until。
+    #[test]
+    fn ws_handle_socket_signature_extended_with_time_range() {
+        let src = include_str!("live_events.rs");
+        assert!(
+            src.contains("async fn handle_socket(\n    socket: WebSocket,\n    state: Arc<WsState>,\n    initial_company_id: Option<Uuid>,\n    resume_from: Option<u64>,\n    since: Option<chrono::DateTime<chrono::Utc>>,\n    until: Option<chrono::DateTime<chrono::Utc>>,\n)"),
+            "handle_socket must accept since and until parameters"
+        );
+    }
+
+    /// R256: WS handle_socket 在 live 阶段按 since / until 过滤。
+    #[test]
+    fn ws_handle_socket_filters_by_time_range() {
+        let src = include_str!("live_events.rs");
+        assert!(src.contains("if arc_evt.at < since_ts { continue; }"), "WS handler must skip events before since_ts");
+        assert!(src.contains("if arc_evt.at > until_ts { continue; }"), "WS handler must skip events after until_ts");
+    }
+}
 
 #[cfg(test)]
 #[cfg(test)]
@@ -634,17 +750,61 @@ mod tests {
         let cid_a = Uuid::new_v4();
         let cid_b = Uuid::new_v4();
         let evt = LiveEvent::new("x", "y", Uuid::new_v4()).with_company(cid_a);
-        assert!(passes_filter(&evt, Some(cid_a), &[]));
-        assert!(!passes_filter(&evt, Some(cid_b), &[]));
-        assert!(passes_filter(&evt, None, &[]));
+        assert!(passes_filter(&evt, Some(cid_a), &[], None, None));
+        assert!(!passes_filter(&evt, Some(cid_b), &[], None, None));
+        assert!(passes_filter(&evt, None, &[], None, None));
     }
 
     #[test]
     fn passes_filter_applies_channel_predicate() {
         let evt = LiveEvent::new("issue.created", "issue", Uuid::new_v4());
         let filters = parse_channels("issue.*");
-        assert!(passes_filter(&evt, None, &filters));
+        assert!(passes_filter(&evt, None, &filters, None, None));
         let filters2 = parse_channels("watchdog.*");
-        assert!(!passes_filter(&evt, None, &filters2));
+        assert!(!passes_filter(&evt, None, &filters2, None, None));
+    }
+
+    /// R256: passes_filter 支持 since 时间戳过滤。
+    #[test]
+    fn passes_filter_applies_since() {
+        use chrono::{Duration, Utc};
+        let evt = LiveEvent::new("issue.created", "issue", Uuid::new_v4());
+        // since 在未来 → evt.at < since → 事件被过滤掉（返回 false）
+        let since_future = Utc::now() + Duration::seconds(60);
+        assert!(!passes_filter(&evt, None, &[], Some(since_future), None));
+        // since 在过去 → evt.at >= since → 事件通过（返回 true）
+        let since_past = Utc::now() - Duration::seconds(60);
+        assert!(passes_filter(&evt, None, &[], Some(since_past), None));
+        // since 为 None → 不过滤
+        assert!(passes_filter(&evt, None, &[], None, None));
+    }
+
+    /// R256: passes_filter 支持 until 时间戳过滤。
+    #[test]
+    fn passes_filter_applies_until() {
+        use chrono::{Duration, Utc};
+        let evt = LiveEvent::new("issue.created", "issue", Uuid::new_v4());
+        let until_past = Utc::now() - Duration::seconds(60);
+        let until_future = Utc::now() + Duration::seconds(60);
+        // until 在过去 → evt.at > until → false
+        assert!(!passes_filter(&evt, None, &[], None, Some(until_past)));
+        // until 在未来 → evt.at <= until → true
+        assert!(passes_filter(&evt, None, &[], None, Some(until_future)));
+    }
+
+    /// R256: passes_filter 支持 since + until 组合窗口过滤。
+    #[test]
+    fn passes_filter_applies_since_and_until() {
+        use chrono::{Duration, Utc};
+        let evt = LiveEvent::new("issue.created", "issue", Uuid::new_v4());
+        let now = Utc::now();
+        // 5 秒窗口：now-1s ~ now+1s，应该包含 evt（at ≈ now）
+        let since = now - Duration::seconds(1);
+        let until = now + Duration::seconds(1);
+        assert!(passes_filter(&evt, None, &[], Some(since), Some(until)));
+        // 窗口完全在过去：now-60s ~ now-30s
+        let since_past = now - Duration::seconds(60);
+        let until_past = now - Duration::seconds(30);
+        assert!(!passes_filter(&evt, None, &[], Some(since_past), Some(until_past)));
     }
 }

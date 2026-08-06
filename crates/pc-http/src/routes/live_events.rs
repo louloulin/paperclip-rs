@@ -42,6 +42,12 @@ struct AuthQuery {
     /// 服务器会先重放 resume_buffer 中 event_id > resume 的事件，再切换到实时广播。
     #[serde(default)]
     resume: Option<u64>,
+    /// R256: 仅订阅 `at >= since` 的事件（ISO8601 / RFC3339 时间戳）。
+    #[serde(default)]
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    /// R256: 仅订阅 `at <= until` 的事件（ISO8601 / RFC3339 时间戳）。
+    #[serde(default)]
+    until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 async fn handler(
@@ -123,10 +129,12 @@ async fn handler(
     };
     let ws_state = state.ws.clone();
     let resume_from = query.resume;
+    let since = query.since;
+    let until = query.until;
     ws.on_upgrade(move |socket| {
         // 把 guard move 进 task；guard 在 socket drop 时自动 release。
         let _guard = connection_guard;
-        handle_socket(socket, ws_state, company_id, resume_from)
+        handle_socket(socket, ws_state, company_id, resume_from, since, until)
     })
 }
 
@@ -209,6 +217,8 @@ async fn handle_socket(
     state: Arc<WsState>,
     initial_company_id: Option<Uuid>,
     resume_from: Option<u64>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
 ) {
     let client_id = Uuid::new_v4();
     info!(%client_id, ?initial_company_id, ?resume_from, "ws connected");
@@ -265,6 +275,12 @@ async fn handle_socket(
                     Ok(arc_evt) => {
                         if let Some(cid) = company_filter {
                             if arc_evt.company_id != Some(cid) { continue; }
+                        }
+                        if let Some(since_ts) = since {
+                            if arc_evt.at < since_ts { continue; }
+                        }
+                        if let Some(until_ts) = until {
+                            if arc_evt.at > until_ts { continue; }
                         }
                         let frame = json!({"type":"event","event":&*arc_evt}).to_string();
                         if sender.send(Message::Text(frame)).await.is_err() { break; }
