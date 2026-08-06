@@ -241,6 +241,16 @@ mod tests {
     }
 }
 
+/// Round 252: Subscriber 抽象层（被 WS / SSE / 测试共用）。
+pub mod subscriber;
+pub use subscriber::{
+    BroadcastSubscriber, FilteredSubscriber, ReplayThenLiveSubscriber, Subscriber,
+};
+
+/// Round 252: Realtime channel namespace + 客户端订阅过滤。
+pub mod channels;
+pub use channels::{default_channels, matches_any, parse_channels, ChannelFilter};
+
 /// WebSocket state（server 名 + realtime handle）。
 #[derive(Clone)]
 pub struct WsState {

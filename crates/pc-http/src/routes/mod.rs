@@ -66,6 +66,7 @@ pub mod workspace_runtime_service_authz;
 
 pub mod labels;
 pub mod live_events;
+pub mod realtime_stream;
 
 use axum::Router;
 
@@ -140,4 +141,5 @@ pub fn router() -> Router<AppState> {
         .merge(extensions::router())
         .merge(adapters::router())
         .merge(live_events::router())
+        .merge(realtime_stream::router())
 }

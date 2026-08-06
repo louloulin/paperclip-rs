@@ -85,7 +85,7 @@ async fn handler(
 /// carries a valid agent API key matching the requested company, the
 /// request is a logged-in user with a session, or the server is in
 /// `local_trusted` mode (anonymous board context).
-async fn authorize_ws(
+pub(super) async fn authorize_ws(
     state: &AppState,
     token: Option<&str>,
     company_id: Option<Uuid>,

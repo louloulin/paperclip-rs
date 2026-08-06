@@ -5901,3 +5901,66 @@ R251 完成了 task-watchdog wake 写入链路的最小闭合：
 
 下一步可推进 R252（realtime subscriber 端实现）或 R253（`taskWatchdog.capabilities` 嵌套字段补齐）。
 
+## 90. 第二百五十二轮增量（Round 252 — realtime subscriber + SSE 端点）
+
+### 背景
+
+R1~R251 都在「事件发布侧」补齐（pc-realtime 的 `RealtimeHandle::publish` + 各种 handler），但订阅侧仍然是单一 `broadcast::Receiver` 直接喂给 WS handler，缺少：
+1. **抽象订阅层**：WS handler / 未来的 SSE handler / 测试 mock 都需要统一的「next_event」抽象。
+2. **Channel namespace**：客户端无法按业务 channel 过滤订阅（如只订阅 `issue.*` / `heartbeat.*`）。
+3. **SSE 端点**：浏览器原生 `EventSource` 无法复用现有的 broadcast bus；需要 HTTP/1.1 chunked SSE 通道。
+
+### 实现内容
+
+- **`pc-realtime/src/subscriber.rs`**（新增）：
+  - `Subscriber` trait：`next_event() -> BoxFuture<Option<Arc<LiveEvent>>>` + `try_next_event() -> Option<Arc<LiveEvent>>`。
+  - `BroadcastSubscriber`：包装 `broadcast::Receiver<Arc<LiveEvent>>`，把 `Lag(n)` 视为跳过 + 继续读，`Closed` 视为 `None`。
+  - `FilteredSubscriber<F>`：装饰器，按 predicate 过滤；不匹配事件循环 `next_event` 直到匹配或关闭。
+  - `ReplayThenLiveSubscriber`：先重放 Vec<Arc<LiveEvent>>，再切换到 live Subscriber。用于 SSE 重连 resume。
+- **`pc-realtime/src/channels.rs`**（新增）：
+  - `ChannelFilter` enum：`Prefix(String)` / `Exact(String)` / `all()`（空字符串 prefix）。
+  - `ChannelFilter::parse("*")` / `parse("issue.*")` / `parse("issue.created")` 解析规则。
+  - `parse_channels(s)`：逗号分隔解析，自动 trim 空项。
+  - `matches_any(filters, event)`：OR 语义判定；空列表 = 全部放行。
+  - `default_channels()`：默认订阅串 `issue.*,heartbeat.*,watchdog.*,task_watchdog.*,recovery.*,wakeup.*,comment.*,plan.*`。
+- **`pc-realtime/src/lib.rs`**：新增 `pub mod subscriber;` + `pub mod channels;`，并 re-export 所有公开类型。
+- **`pc-http/src/routes/realtime_stream.rs`**（新增）：
+  - `GET /api/realtime/stream` SSE handler（`text/event-stream`）：
+    - query: `?token=&company_id=&resume=<event_id>&channels=issue.*,heartbeat.tick`
+    - 鉴权复用 `live_events::authorize_ws`（已改成 `pub(super)`，避免逻辑漂移）。
+    - resume：先 `replay_after(last_id)` 重放所有 `event_id > last_id` 的事件（且通过 channel/company 过滤），再发 `event: resumed\nid: <last_id>\ndata: {"replayed":N,...}` 哨兵，然后切换到 live。
+    - live：`BroadcastSubscriber` 包 `FilteredSubscriber` 包 `ReplayThenLiveSubscriber`，把 channel filter 透传到 predicate。
+    - keep-alive：每 15 秒发 `data: keep-alive`。
+- **`crates/pc-http/src/routes/mod.rs`**：新增 `pub mod realtime_stream;` 并 merge router。
+- **`crates/pc-http/src/routes/live_events.rs::authorize_ws`**：可见性从 private 改为 `pub(super)`，允许兄弟模块（realtime_stream）复用。
+
+### 当前仍有差距
+
+- SSE handler 没有 rate-limit / per-IP throttle：恶意客户端可以同时开多个 SSE 连接耗尽 broadcast buffer。
+- 没有 reconnect-after-disconnect 的客户端 SDK：当前只发布 server-side，前端需自行实现。
+- channel 过滤仅按事件名前缀，没考虑 resource（`resource_id`）。后续如需「只订阅 issue_id=X 的事件」，需扩展为 `ChannelFilter::IssueId(Uuid)` 形态。
+- 没有 WebSocket 端点的 resume 改用 `Subscriber` trait（R253 计划）。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-realtime::subscriber::tests` | 6 passed |
+| `pc-realtime::channels::tests` | 9 passed |
+| `pc-realtime::tests`（原 lib.rs） | 7 passed |
+| `pc-http::realtime_stream::tests` | 3 passed |
+| `pc-http::realtime_stream::round252_tests` | 10 passed |
+| `cargo test -p pc-realtime --lib` | 22 passed (7 + 6 + 9) |
+| `cargo test -p pc-http --lib` | 186 passed (176 baseline + 3 realtime_stream + 10 round252 = 189; -3 旧测试因重复 import 调整) |
+| `cargo test -p pc-repos --lib` | 504 passed (无变化) |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R252 把 realtime bus 从「WS 单端点」扩展为「WS + SSE + 测试 mock + channel 过滤」：
+1. **抽象**（subscriber）：统一订阅 trait，让上层不再直接依赖 `broadcast::Receiver`。
+2. **过滤**（channels）：把业务 channel namespace 提到客户端可控的 query 参数。
+3. **SSE**（realtime_stream）：新增 `GET /api/realtime/stream`，支持 `EventSource` 原生消费 + resume + channel 过滤。
+
+下一步可推进 R253（realtime channel multiplex：per-company bus / per-resource channel）或 R254（client SDK：自动 reconnect + resume + filter）。
+
