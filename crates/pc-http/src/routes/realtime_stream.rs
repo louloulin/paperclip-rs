@@ -77,6 +77,7 @@ struct StreamQuery {
 
 async fn handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<StreamQuery>,
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
@@ -106,6 +107,38 @@ async fn handler(
         )
             .into_response();
     }
+
+    // R255: rate limit + connection count limit
+    let client_ip = extract_client_ip(&headers);
+    if let Some(ip) = client_ip {
+        if !state.ws.ip_rate_limiter.try_acquire(ip, 1) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({
+                    "error": "rate_limited",
+                    "detail": "too many connections from your IP"
+                })),
+            )
+                .into_response();
+        }
+    }
+    let _connection_guard = if let Some(cid) = company_id {
+        match state.ws.connection_limiter.try_acquire(cid) {
+            Some(g) => Some(g),
+            None => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    axum::Json(json!({
+                        "error": "connection_limit",
+                        "detail": "too many connections for this company"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
 
     let ws_state = state.ws.clone();
     let resume_from = query.resume;
@@ -220,6 +253,29 @@ fn build_event_stream(
     }
 }
 
+/// 从 HeaderMap 提取客户端 IP（X-Forwarded-For > X-Real-IP > 未知）。
+///
+/// 注：生产环境应配合 `ConnectInfo<SocketAddr>` 使用，本函数仅处理 proxy headers。
+pub(super) fn extract_client_ip(headers: &axum::http::HeaderMap) -> Option<std::net::IpAddr> {
+    if let Some(xff) = headers.get("x-forwarded-for") {
+        if let Ok(s) = xff.to_str() {
+            if let Some(first) = s.split(',').next() {
+                if let Ok(ip) = first.trim().parse::<std::net::IpAddr>() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+    if let Some(xri) = headers.get("x-real-ip") {
+        if let Ok(s) = xri.to_str() {
+            if let Ok(ip) = s.trim().parse::<std::net::IpAddr>() {
+                return Some(ip);
+            }
+        }
+    }
+    None
+}
+
 /// 判定一条事件是否通过 channel + company_id 过滤。
 fn passes_filter(evt: &LiveEvent, company_id: Option<Uuid>, channels: &[ChannelFilter]) -> bool {
     if let Some(cid) = company_id {
@@ -244,6 +300,93 @@ fn to_sse_event(evt: &LiveEvent) -> Option<Event> {
 // 我们需要 async_stream crate；检查 Cargo.toml。
 #[allow(dead_code)]
 fn _unused_broadcast_receiver_type_check(_: broadcast::Receiver<Arc<LiveEvent>>) {}
+
+#[cfg(test)]
+#[cfg(test)]
+mod round255_tests {
+    /// R255: pc-realtime::rate_limit 模块导出 TokenBucket + IpRateLimiter + ConnectionLimiter。
+    #[test]
+    fn rate_limit_module_exports_main_types() {
+        let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
+        assert!(src.contains("pub struct TokenBucket"));
+        assert!(src.contains("pub struct IpRateLimiter"));
+        assert!(src.contains("pub struct ConnectionLimiter"));
+        assert!(src.contains("pub struct ConnectionGuard"));
+    }
+
+    /// R255: TokenBucket 有 capacity + refill_per_second + atomic tokens_milli 实现。
+    #[test]
+    fn token_bucket_uses_atomic_milli_storage() {
+        let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
+        assert!(src.contains("AtomicU64"), "TokenBucket must use AtomicU64");
+        assert!(src.contains("tokens_milli"), "TokenBucket must have tokens_milli field");
+        assert!(src.contains("capacity"), "TokenBucket must have capacity field");
+        assert!(src.contains("refill_per_second"), "TokenBucket must have refill_per_second field");
+    }
+
+    /// R255: ConnectionLimiter 使用 DashMap + AtomicI64。
+    #[test]
+    fn connection_limiter_uses_dashmap_atomic() {
+        let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
+        assert!(src.contains("DashMap<Uuid, Arc<AtomicI64>>"), "ConnectionLimiter must use DashMap<Uuid, Arc<AtomicI64>>");
+    }
+
+    /// R255: IpRateLimiter 使用 DashMap<IpAddr, Arc<TokenBucket>>。
+    #[test]
+    fn ip_rate_limiter_uses_dashmap() {
+        let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
+        assert!(src.contains("DashMap<IpAddr, Arc<TokenBucket>>"), "IpRateLimiter must use DashMap<IpAddr, Arc<TokenBucket>>");
+    }
+
+    /// R255: ConnectionGuard 是 'static（不依赖 lifetime），便于 move 进 'static closure。
+    #[test]
+    fn connection_guard_is_static() {
+        let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
+        assert!(src.contains("pub struct ConnectionGuard"), "ConnectionGuard must be defined");
+        // 不应有 lifetime 参数
+        assert!(!src.contains("pub struct ConnectionGuard<'"), "ConnectionGuard must NOT have lifetime parameter");
+    }
+
+    /// R255: WsState 增加 ip_rate_limiter + connection_limiter 字段。
+    #[test]
+    fn ws_state_carries_rate_limiters() {
+        let src = include_str!("../../../pc-realtime/src/lib.rs");
+        assert!(src.contains("pub ip_rate_limiter"), "WsState must have ip_rate_limiter field");
+        assert!(src.contains("pub connection_limiter"), "WsState must have connection_limiter field");
+        assert!(src.contains("pub fn new"), "WsState must have new() constructor");
+        assert!(src.contains("pub fn with_limiters"), "WsState must have with_limiters() constructor");
+    }
+
+    /// R255: SSE handler 调用 ip_rate_limiter + connection_limiter 并返回 429。
+    #[test]
+    fn sse_handler_invokes_rate_limiters_and_returns_429() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("ip_rate_limiter.try_acquire"), "SSE handler must call ip_rate_limiter.try_acquire");
+        assert!(src.contains("connection_limiter.try_acquire"), "SSE handler must call connection_limiter.try_acquire");
+        assert!(src.contains("StatusCode::TOO_MANY_REQUESTS"), "SSE handler must return 429");
+        assert!(src.contains("rate_limited"), "SSE handler must return error rate_limited");
+        assert!(src.contains("connection_limit"), "SSE handler must return error connection_limit");
+    }
+
+    /// R255: WS handler 调用 rate_limiters 并把 connection_guard move 进 on_upgrade closure。
+    #[test]
+    fn ws_handler_invokes_rate_limiters_and_moves_guard_into_closure() {
+        let src = include_str!("live_events.rs");
+        assert!(src.contains("ip_rate_limiter.try_acquire"), "WS handler must call ip_rate_limiter.try_acquire");
+        assert!(src.contains("connection_limiter.try_acquire"), "WS handler must call connection_limiter.try_acquire");
+        assert!(src.contains("StatusCode::TOO_MANY_REQUESTS"), "WS handler must return 429");
+        assert!(src.contains("let _guard = connection_guard"), "WS handler must move connection_guard into closure");
+    }
+
+    /// R255: extract_client_ip 从 x-forwarded-for / x-real-ip 提取 IP。
+    #[test]
+    fn extract_client_ip_reads_xff_and_xri() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("pub(super) fn extract_client_ip"), "extract_client_ip must be pub(super)");
+        assert!(src.contains("x-forwarded-for"), "must read x-forwarded-for");
+        assert!(src.contains("x-real-ip"), "must read x-real-ip");
+    }
+}
 
 #[cfg(test)]
 #[cfg(test)]

@@ -13,6 +13,7 @@ use serde_json::json;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::routes::realtime_stream;
 use crate::AppState;
 use pc_repos::agent::AgentRepo;
 use pc_repos::company_member::CompanyMemberRepo;
@@ -46,6 +47,7 @@ struct AuthQuery {
 async fn handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<AuthQuery>,
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
@@ -75,9 +77,57 @@ async fn handler(
         )
             .into_response();
     }
+
+    // R255: rate limit + connection count limit
+    let ip_rate_limiter = std::sync::Arc::clone(&state.ws.ip_rate_limiter);
+    let connection_limiter = std::sync::Arc::clone(&state.ws.connection_limiter);
+    if let Some(ip) = realtime_stream::extract_client_ip(&headers) {
+        if !ip_rate_limiter.try_acquire(ip, 1) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({
+                    "error": "rate_limited",
+                    "detail": "too many connections from your IP"
+                })),
+            )
+                .into_response();
+        }
+    }
+    let connection_guard = if let Some(cid) = company_id {
+        match connection_limiter.try_acquire(cid) {
+            Some(g) => g,
+            None => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    axum::Json(json!({
+                        "error": "connection_limit",
+                        "detail": "too many connections for this company"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        // 没传 company_id 时不占用 slot；用临时 guard 占位（never 类型无法构造）
+        // 我们用 `connection_limiter.try_acquire(Uuid::nil())` 占位，连接关闭时自动释放
+        match connection_limiter.try_acquire(uuid::Uuid::nil()) {
+            Some(g) => g,
+            None => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    axum::Json(json!({"error": "connection_limit"})),
+                )
+                    .into_response();
+            }
+        }
+    };
     let ws_state = state.ws.clone();
     let resume_from = query.resume;
-    ws.on_upgrade(move |socket| handle_socket(socket, ws_state, company_id, resume_from))
+    ws.on_upgrade(move |socket| {
+        // 把 guard move 进 task；guard 在 socket drop 时自动 release。
+        let _guard = connection_guard;
+        handle_socket(socket, ws_state, company_id, resume_from)
+    })
 }
 
 /// Authorize a WebSocket upgrade. Mirrors Node `authorizeUpgrade` in

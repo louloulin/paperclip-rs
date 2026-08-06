@@ -6082,3 +6082,75 @@ R254 把 channel filter 从「event name 维度」扩展到「resource_id 维度
 
 下一步可推进 R255（realtime 限流 / throttle：per-IP token bucket）或 R256（time-range 过滤：`?since=&until=`）。
 
+## 93. 第二百五十五轮增量（Round 255 — realtime rate limit + connection count limit）
+
+### 背景
+
+R252 把 realtime 订阅抽象为 `Subscriber` trait + `ChannelFilter`，并新增 SSE endpoint；
+R254 增加 per-resource filter。但与 Node paperclip 对比发现：
+1. 没有 per-IP 限流：恶意客户端可以并发开大量连接耗尽 broadcast buffer + Tokio task 资源。
+2. 没有 per-company 连接数限制：单个 company 可以占满所有 slot。
+3. 没有 IP 提取：WS / SSE handler 无法识别客户端 IP（依赖 `x-forwarded-for` / `x-real-ip` proxy headers）。
+
+### 实现内容
+
+- **`crates/pc-realtime/src/rate_limit.rs`**（新增）：
+  - `TokenBucket` struct：经典令牌桶实现，`capacity` / `refill_per_second` / `tokens_milli: AtomicU64` / `last_refill: parking_lot::Mutex<Instant>`。
+    - `try_acquire(n) -> bool`：非阻塞，检查 + 扣减。
+    - `try_acquire_at(now, n) -> bool`：在指定时刻按 elapsed 时间补 token 后扣减（用于测试可重复性）。
+    - `available_tokens() -> u64`：当前可用 token 数。
+  - `IpRateLimiter` struct：按 IP 维度分配 token bucket，`DashMap<IpAddr, Arc<TokenBucket>>`。
+    - `try_acquire(ip, n) -> bool`：懒初始化 bucket。
+    - `tracked_ip_count() / forget_ip(...)`：用于 metrics / 测试。
+  - `ConnectionLimiter` struct：per-company 并发连接数限制器，`DashMap<Uuid, Arc<AtomicI64>>` + CAS 循环。
+    - `try_acquire(company_id) -> Option<ConnectionGuard>`：检查 + 增加计数，返回 guard；超出 `max_per_company` 时返回 `None`。
+    - `current_count(company_id) / reset_all()`：用于 metrics / 测试。
+  - `ConnectionGuard` struct：RAII guard，drop 时自动 release 一次槽。`'static` 设计（不依赖 lifetime），可安全 move 进 `ws.on_upgrade(...)` 的 'static closure。
+  - 默认常量：`DEFAULT_BUCKET_CAPACITY = 32`、`DEFAULT_BUCKET_REFILL_PER_SECOND = 8`、`DEFAULT_MAX_CONNECTIONS_PER_COMPANY = 100`。
+- **`pc-realtime::Cargo.toml`**：新增 `dashmap = "6"` + `parking_lot = "0.12"` + `futures` 依赖。
+- **`pc-realtime::lib.rs`**：
+  - 导出 `pub mod rate_limit;` 并 re-export `ConnectionGuard / ConnectionLimiter / IpRateLimiter / TokenBucket` + 默认常量。
+  - `WsState` 增加 `ip_rate_limiter: Arc<IpRateLimiter>` + `connection_limiter: Arc<ConnectionLimiter>` 字段。
+  - `WsState::new(realtime, server_name)` 自动使用默认配置；`WsState::with_limiters(...)` 允许注入自定义限流器。
+- **`Cargo.toml`**（workspace）：新增 `dashmap = "6"` + `parking_lot = "0.12"` 共享依赖。
+- **`crates/pc-http/src/routes/realtime_stream.rs`**（SSE handler）：
+  - 新增 `extract_client_ip(headers) -> Option<IpAddr>` helper（pub(super)，兄弟模块可复用）：从 `x-forwarded-for` / `x-real-ip` 提取首个 IP。
+  - SSE handler 调用 `ip_rate_limiter.try_acquire(ip, 1)` 失败时返回 429 + `{"error":"rate_limited"}`。
+  - SSE handler 调用 `connection_limiter.try_acquire(company_id)` 失败时返回 429 + `{"error":"connection_limit"}`。
+- **`crates/pc-http/src/routes/live_events.rs`**（WS handler）：相同的 IP + connection limit 检查，`connection_guard` move 进 `ws.on_upgrade` closure（guard 在 socket drop 时自动 release）。
+- **`crates/pc-server/src/main.rs`** + 5+ 个 contract tests：用 `WsState::new(realtime, server_name)` 替换旧的 `WsState { realtime, server_name }`。
+
+### 当前仍有差距
+
+- `extract_client_ip` 仅解析 proxy headers（`x-forwarded-for` / `x-real-ip`），不直接读 socket peer address。生产环境需配合 `ConnectInfo<SocketAddr>` 使用（`tower-http::set_x_forwarded_for`）。
+- `IpRateLimiter::forget_ip` 没有自动过期机制：长尾 IP 会一直占用内存。后续可加 LRU 淘汰（`bounded DashMap`）。
+- `ConnectionLimiter` 没有按 user_id / session 区分：所有连接只按 company 计数。后续可扩展为 `ConnectionLimiter` 接受 `(company_id, user_id)` tuple。
+- 限流阈值（32 capacity / 8 per sec / 100 connections）写死在常量里；生产环境应该从 config / env 注入。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-realtime::rate_limit::tests` | 11 passed |
+| `pc-realtime::subscriber::tests` | 6 passed (无变化) |
+| `pc-realtime::channels::tests` | 17 passed (无变化) |
+| `pc-realtime::tests`（lib.rs 原 7 个） | 7 passed (无变化) |
+| `pc-http::round255_tests` | 9 passed |
+| `pc-http::round254_tests` | 8 passed (无回归) |
+| `pc-http::round252_tests` | 10 passed (无回归) |
+| `pc-http::realtime_stream::tests` | 3 passed (无变化) |
+| `cargo test -p pc-realtime --lib` | 41 passed (30 + 11 rate_limit) |
+| `cargo test -p pc-http --lib` | 209 passed (200 + 9 round255) |
+| `cargo test -p pc-repos --lib` | 518 passed (无变化) |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R255 给 realtime 链路加上了「防滥用」防护层：
+1. **类型抽象**（rate_limit）：`TokenBucket` + `IpRateLimiter` + `ConnectionLimiter` + `ConnectionGuard` 全套，与 Node 端 server-side rate limit 1:1 对齐。
+2. **WsState 集成**：每个 `WsState` 携带 `ip_rate_limiter` + `connection_limiter`，无需额外配置。
+3. **WS / SSE 双覆盖**：两个 handler 都做相同检查，guard 自动在 socket 关闭时 release。
+4. **RAII guard 'static 设计**：`ConnectionGuard` 不依赖 lifetime 参数，可 move 进 'static closure（`ws.on_upgrade`）。
+
+下一步可推进 R256（time-range 过滤：`?since=&until=`，与 resume 配合做时间窗口订阅）或 R257（metrics 端点：暴露 rate limit 当前状态）。
+

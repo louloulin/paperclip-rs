@@ -47,10 +47,10 @@ fn test_state_with_storage(db: Db, storage_root: std::path::PathBuf) -> AppState
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState {
-            realtime: realtime.clone(),
-            server_name: "test".into(),
-        }),
+        Arc::new(WsState::new(
+            realtime.clone(),
+            "test".to_string(),
+        )),
         realtime,
     );
     state.storage = Arc::new(storage);

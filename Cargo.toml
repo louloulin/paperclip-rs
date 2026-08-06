@@ -75,6 +75,10 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 
+# 并发原语
+dashmap = "6"
+parking_lot = "0.12"
+
 # 加密 / 哈希
 sha2 = "0.10"
 hmac = "0.12"

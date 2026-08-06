@@ -251,9 +251,48 @@ pub use subscriber::{
 pub mod channels;
 pub use channels::{default_channels, matches_any, parse_channels, ChannelFilter};
 
+/// Round 255: Rate limit + connection count limit（防滥用）。
+pub mod rate_limit;
+pub use rate_limit::{
+    ConnectionGuard, ConnectionLimiter, IpRateLimiter, TokenBucket,
+    DEFAULT_BUCKET_CAPACITY, DEFAULT_BUCKET_REFILL_PER_SECOND,
+    DEFAULT_MAX_CONNECTIONS_PER_COMPANY,
+};
+
 /// WebSocket state（server 名 + realtime handle）。
 #[derive(Clone)]
 pub struct WsState {
     pub realtime: RealtimeHandle,
     pub server_name: String,
+    /// R255: per-IP token bucket 限流器。
+    pub ip_rate_limiter: Arc<crate::rate_limit::IpRateLimiter>,
+    /// R255: per-company 并发连接数限制器。
+    pub connection_limiter: Arc<crate::rate_limit::ConnectionLimiter>,
+}
+
+impl WsState {
+    /// 构造默认配置的 WsState（含默认限流器）。
+    pub fn new(realtime: RealtimeHandle, server_name: impl Into<String>) -> Self {
+        Self {
+            realtime,
+            server_name: server_name.into(),
+            ip_rate_limiter: Arc::new(crate::rate_limit::IpRateLimiter::default()),
+            connection_limiter: Arc::new(crate::rate_limit::ConnectionLimiter::default()),
+        }
+    }
+
+    /// 自定义限流器配置构造 WsState。
+    pub fn with_limiters(
+        realtime: RealtimeHandle,
+        server_name: impl Into<String>,
+        ip_rate_limiter: Arc<crate::rate_limit::IpRateLimiter>,
+        connection_limiter: Arc<crate::rate_limit::ConnectionLimiter>,
+    ) -> Self {
+        Self {
+            realtime,
+            server_name: server_name.into(),
+            ip_rate_limiter,
+            connection_limiter,
+        }
+    }
 }

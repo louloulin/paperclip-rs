@@ -64,10 +64,10 @@ fn test_state_with_adapters(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState {
-            realtime: realtime.clone(),
-            server_name: "test".into(),
-        }),
+        Arc::new(WsState::new(
+            realtime.clone(),
+            "test".to_string(),
+        )),
         realtime,
     )
 }

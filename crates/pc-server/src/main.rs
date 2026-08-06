@@ -164,10 +164,7 @@ async fn main() -> anyhow::Result<()> {
         .context("register agent supervisor")?;
     recover_heartbeat_runs(&db, &heartbeat).await?;
     let realtime = RealtimeHandle::start(1024);
-    let ws = std::sync::Arc::new(WsState {
-        realtime: realtime.clone(),
-        server_name: "paperclip-rs".into(),
-    });
+    let ws = std::sync::Arc::new(WsState::new(realtime.clone(), "paperclip-rs"));
     let state = AppState::new(
         db,
         pc_http::state::RuntimeHandles {

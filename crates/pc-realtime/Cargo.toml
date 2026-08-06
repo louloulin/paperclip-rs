@@ -19,3 +19,5 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
