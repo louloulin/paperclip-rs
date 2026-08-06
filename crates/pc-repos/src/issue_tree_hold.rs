@@ -139,6 +139,60 @@ pub struct NewIssueTreeHold<'a> {
     pub created_by_user_id: &'a str,
 }
 
+
+// ============================================================================
+// Round 232: issue_tree_hold_members 子表 (Node 端 service 层持久化 affected issues)
+// ============================================================================
+
+/// Round 232: issue_tree_hold_members 表的完整行结构。
+///
+/// 对应 Node `issueTreeHoldMembers.$inferSelect`：
+/// - 每个 affected issue 一行 (depth, identifier, status, assignee 等快照)
+/// - 持久化于 hold 创建时, 用于:
+///   1. UI 列出 hold 影响的所有 issues
+///   2. resume 时自动 release 之前 active pause hold
+///   3. 心跳监控 / escalation 检测
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTreeHoldMemberRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub hold_id: Uuid,
+    pub issue_id: Uuid,
+    pub parent_issue_id: Option<Uuid>,
+    pub depth: i32,
+    pub issue_identifier: Option<String>,
+    pub issue_title: String,
+    pub issue_status: String,
+    pub assignee_agent_id: Option<Uuid>,
+    pub assignee_user_id: Option<String>,
+    pub active_run_id: Option<Uuid>,
+    pub active_run_status: Option<String>,
+    pub skipped: bool,
+    pub skip_reason: Option<String>,
+    pub created_at: Timestamp,
+}
+
+/// Round 232: issue_tree_hold_members 写入输入结构（不含 id / created_at）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewIssueTreeHoldMember<'a> {
+    pub company_id: Uuid,
+    pub hold_id: Uuid,
+    pub issue_id: Uuid,
+    pub parent_issue_id: Option<Uuid>,
+    pub depth: i32,
+    pub issue_identifier: Option<&'a str>,
+    pub issue_title: &'a str,
+    pub issue_status: &'a str,
+    pub assignee_agent_id: Option<Uuid>,
+    pub assignee_user_id: Option<&'a str>,
+    pub active_run_id: Option<Uuid>,
+    pub active_run_status: Option<&'a str>,
+    pub skipped: bool,
+    pub skip_reason: Option<&'a str>,
+}
+
 pub struct IssueTreeHoldRepo<'a> {
     pub db: &'a Db,
 }
@@ -447,6 +501,91 @@ impl<'a> IssueTreeHoldRepo<'a> {
         .await?;
         Ok(row.and_then(|(o,)| o))
     }
+
+    // ============================================================================
+    // Round 232: issue_tree_hold_members 子表仓储方法
+    // ============================================================================
+
+    /// Round 232: 事务内批量插入 hold members。
+    ///
+    /// 与 Node 端 `db.transaction(tx => tx.insert(issueTreeHoldMembers).values(memberRows))` 对齐。
+    /// `ON CONFLICT (hold_id, issue_id) DO NOTHING` 保证幂等 — 同一 issue 重复插入不会失败。
+    ///
+    /// 返回成功插入的行数 (rows_affected)。
+    pub async fn create_members_in_tx(
+        &self,
+        members: &[NewIssueTreeHoldMember<'_>],
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> sqlx::Result<u64> {
+        if members.is_empty() {
+            return Ok(0);
+        }
+        let mut total = 0u64;
+        for member in members {
+            let n = sqlx::query(
+                "INSERT INTO issue_tree_hold_members                     (company_id, hold_id, issue_id, parent_issue_id, depth,                      issue_identifier, issue_title, issue_status,                      assignee_agent_id, assignee_user_id,                      active_run_id, active_run_status, skipped, skip_reason)                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)                  ON CONFLICT (hold_id, issue_id) DO NOTHING",
+            )
+            .bind(member.company_id)
+            .bind(member.hold_id)
+            .bind(member.issue_id)
+            .bind(member.parent_issue_id)
+            .bind(member.depth)
+            .bind(member.issue_identifier)
+            .bind(member.issue_title)
+            .bind(member.issue_status)
+            .bind(member.assignee_agent_id)
+            .bind(member.assignee_user_id)
+            .bind(member.active_run_id)
+            .bind(member.active_run_status)
+            .bind(member.skipped)
+            .bind(member.skip_reason)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected();
+            total += n;
+        }
+        Ok(total)
+    }
+
+    /// Round 232: 列出 hold 的所有 members（按 depth, created_at 排序）。
+    pub async fn list_members_by_hold(
+        &self,
+        hold_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueTreeHoldMemberRow>> {
+        sqlx::query_as::<_, IssueTreeHoldMemberRow>(
+            "SELECT id, company_id, hold_id, issue_id, parent_issue_id, depth,                 issue_identifier, issue_title, issue_status,                 assignee_agent_id, assignee_user_id,                 active_run_id, active_run_status, skipped, skip_reason, created_at              FROM issue_tree_hold_members              WHERE hold_id = $1              ORDER BY depth ASC, created_at ASC",
+        )
+        .bind(hold_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// Round 232: 统计 hold 的 member 数（包含 skipped 与 active）。
+    pub async fn count_members_by_hold(
+        &self,
+        hold_id: Uuid,
+    ) -> sqlx::Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM issue_tree_hold_members WHERE hold_id = $1",
+        )
+        .bind(hold_id)
+        .fetch_one(self.db.pool())
+        .await
+    }
+
+    /// Round 232: 删除 hold 的所有 members（用于 release 时清理）。
+    pub async fn delete_members_by_hold(
+        &self,
+        hold_id: Uuid,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query("DELETE FROM issue_tree_hold_members WHERE hold_id = $1")
+            .bind(hold_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n)
+    }
+
 }
 
 #[cfg(test)]
@@ -468,5 +607,239 @@ mod tests {
     fn full_cols_adds_released_at() {
         assert!(FULL_COLS.contains("released_at"));
         assert!(FULL_COLS.contains("created_at"));
+    }
+}
+
+
+// ============================================================================
+// Round 232: issue_tree_hold_members 仓储结构单元测试
+// ============================================================================
+#[cfg(test)]
+mod round232_member_tests {
+    //! Round 232: 验证 IssueTreeHoldMemberRow / NewIssueTreeHoldMember
+    //! 结构体的字段、camelCase 序列化、借用语义。
+    //!
+    //! 注意：DB 集成测试因 127.0.0.1:5432 权限问题被 skip,
+    //! 这里只验证纯结构 + serde 行为。
+
+    use super::{IssueTreeHoldMemberRow, NewIssueTreeHoldMember};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    // ── IssueTreeHoldMemberRow ──
+
+    #[test]
+    fn member_row_serializes_camelcase() {
+        let id = Uuid::new_v4();
+        let hold_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let assignee_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let value = json!({
+            "id": id,
+            "companyId": company_id,
+            "holdId": hold_id,
+            "issueId": issue_id,
+            "parentIssueId": null,
+            "depth": 2,
+            "issueIdentifier": "ENG-123",
+            "issueTitle": "Implement X",
+            "issueStatus": "in_progress",
+            "assigneeAgentId": assignee_id,
+            "assigneeUserId": "u-1",
+            "activeRunId": run_id,
+            "activeRunStatus": "running",
+            "skipped": false,
+            "skipReason": null,
+            "createdAt": "2026-08-01T10:00:00Z",
+        });
+        let row: IssueTreeHoldMemberRow = serde_json::from_value(value).expect("parse");
+        assert_eq!(row.id, id);
+        assert_eq!(row.hold_id, hold_id);
+        assert_eq!(row.issue_id, issue_id);
+        assert_eq!(row.depth, 2);
+        assert_eq!(row.issue_identifier.as_deref(), Some("ENG-123"));
+        assert_eq!(row.issue_title, "Implement X");
+        assert_eq!(row.issue_status, "in_progress");
+        assert_eq!(row.assignee_agent_id, Some(assignee_id));
+        assert_eq!(row.active_run_status.as_deref(), Some("running"));
+        assert!(!row.skipped);
+        assert!(row.skip_reason.is_none());
+
+        // 序列化回来 — 应为 camelCase
+        let serialized = serde_json::to_value(&row).expect("serialize");
+        assert_eq!(serialized["companyId"], json!(company_id));
+        assert_eq!(serialized["issueId"], json!(issue_id));
+        assert_eq!(serialized["assigneeAgentId"], json!(assignee_id));
+        assert_eq!(serialized["activeRunId"], json!(run_id));
+    }
+
+    #[test]
+    fn member_row_minimal_required() {
+        // issue_title / issue_status 必填, 其他可空
+        let id = Uuid::new_v4();
+        let hold_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let value = json!({
+            "id": id,
+            "companyId": company_id,
+            "holdId": hold_id,
+            "issueId": issue_id,
+            "depth": 0,
+            "issueTitle": "minimal",
+            "issueStatus": "todo",
+            "skipped": false,
+            "createdAt": "2026-08-01T10:00:00Z",
+        });
+        let row: IssueTreeHoldMemberRow = serde_json::from_value(value).expect("parse");
+        assert_eq!(row.depth, 0);
+        assert!(row.parent_issue_id.is_none());
+        assert!(row.assignee_agent_id.is_none());
+        assert!(row.assignee_user_id.is_none());
+        assert!(row.active_run_id.is_none());
+        assert!(row.skip_reason.is_none());
+    }
+
+    #[test]
+    fn member_row_skipped_with_reason() {
+        let id = Uuid::new_v4();
+        let hold_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let value = json!({
+            "id": id,
+            "companyId": company_id,
+            "holdId": hold_id,
+            "issueId": issue_id,
+            "depth": 1,
+            "issueTitle": "skipped issue",
+            "issueStatus": "done",
+            "skipped": true,
+            "skipReason": "Already completed",
+            "createdAt": "2026-08-01T10:00:00Z",
+        });
+        let row: IssueTreeHoldMemberRow = serde_json::from_value(value).expect("parse");
+        assert!(row.skipped);
+        assert_eq!(row.skip_reason.as_deref(), Some("Already completed"));
+    }
+
+    // ── NewIssueTreeHoldMember ──
+
+    #[test]
+    fn new_member_borrows_string_slices() {
+        // 借用语义：&str / Option<&str>
+        let hold_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let title = String::from("Child issue");
+        let identifier = String::from("ENG-456");
+        let agent = Uuid::new_v4();
+        let member = NewIssueTreeHoldMember {
+            company_id,
+            hold_id,
+            issue_id,
+            parent_issue_id: Some(Uuid::new_v4()),
+            depth: 1,
+            issue_identifier: Some(&identifier),
+            issue_title: &title,
+            issue_status: "in_progress",
+            assignee_agent_id: Some(agent),
+            assignee_user_id: Some("u-owner"),
+            active_run_id: Some(Uuid::new_v4()),
+            active_run_status: Some("running"),
+            skipped: false,
+            skip_reason: None,
+        };
+        assert_eq!(member.hold_id, hold_id);
+        assert_eq!(member.issue_id, issue_id);
+        assert_eq!(member.depth, 1);
+        assert!(member.assignee_agent_id.is_some());
+        assert!(!member.skipped);
+        // 借用值仍可访问
+        assert_eq!(member.issue_title, "Child issue");
+    }
+
+    #[test]
+    fn new_member_serializes_camelcase() {
+        let hold_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let title = String::from("X");
+        let member = NewIssueTreeHoldMember {
+            company_id,
+            hold_id,
+            issue_id,
+            parent_issue_id: None,
+            depth: 0,
+            issue_identifier: None,
+            issue_title: &title,
+            issue_status: "todo",
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            active_run_id: None,
+            active_run_status: None,
+            skipped: false,
+            skip_reason: None,
+        };
+        let value = serde_json::to_value(&member).expect("serialize");
+        // snake_case 字段名 → camelCase JSON
+        assert!(value.get("companyId").is_some());
+        assert!(value.get("holdId").is_some());
+        assert!(value.get("issueId").is_some());
+        assert!(value.get("parentIssueId").is_some());
+        assert!(value.get("issueTitle").is_some());
+        assert!(value.get("issueStatus").is_some());
+        assert!(value.get("assigneeAgentId").is_some());
+        assert!(value.get("assigneeUserId").is_some());
+        assert!(value.get("activeRunId").is_some());
+        assert!(value.get("activeRunStatus").is_some());
+        assert!(value.get("skipReason").is_some());
+        // 验证值
+        assert_eq!(value["companyId"], json!(company_id));
+        assert_eq!(value["holdId"], json!(hold_id));
+        assert_eq!(value["depth"], json!(0));
+        assert_eq!(value["issueStatus"], json!("todo"));
+    }
+
+    // ── 集合场景 ──
+
+    #[test]
+    fn multiple_members_with_varying_depths() {
+        // 模拟一个 hold 影响 3 个 issues, depth 0/1/2
+        let hold_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let titles: Vec<String> = vec!["Root".to_string(), "Child".to_string(), "Grandchild".to_string()];
+        let mut members: Vec<NewIssueTreeHoldMember<'_>> = Vec::new();
+        for (idx, title) in titles.iter().enumerate() {
+            members.push(NewIssueTreeHoldMember {
+                company_id,
+                hold_id,
+                issue_id: Uuid::new_v4(),
+                parent_issue_id: if idx > 0 { Some(Uuid::new_v4()) } else { None },
+                depth: idx as i32,
+                issue_identifier: None,
+                issue_title: title.as_str(),
+                issue_status: "todo",
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                active_run_id: None,
+                active_run_status: None,
+                skipped: false,
+                skip_reason: None,
+            });
+        }
+        assert_eq!(members.len(), 3);
+        assert_eq!(members[0].depth, 0);
+        assert_eq!(members[1].depth, 1);
+        assert_eq!(members[2].depth, 2);
+        assert!(members[0].parent_issue_id.is_none());
+        assert!(members[1].parent_issue_id.is_some());
+        assert!(members[2].parent_issue_id.is_some());
+        // 验证所有 title 正确
+        assert_eq!(members[0].issue_title, "Root");
+        assert_eq!(members[1].issue_title, "Child");
+        assert_eq!(members[2].issue_title, "Grandchild");
     }
 }

@@ -4029,6 +4029,29 @@ async fn get_tree_hold(
         .get_by_id(hold_id, issue_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("tree hold {hold_id}")))?;
+    // R232: 列出 affected members
+    let members = IssueTreeHoldRepo::new(&state.db)
+        .list_members_by_hold(hold_id)
+        .await
+        .unwrap_or_default();
+    let member_count = members.len() as i64;
+    let members_json: Vec<Value> = members.iter().map(|m| json!({
+        "id": m.id,
+        "holdId": m.hold_id,
+        "issueId": m.issue_id,
+        "parentIssueId": m.parent_issue_id,
+        "depth": m.depth,
+        "issueIdentifier": m.issue_identifier,
+        "issueTitle": m.issue_title,
+        "issueStatus": m.issue_status,
+        "assigneeAgentId": m.assignee_agent_id,
+        "assigneeUserId": m.assignee_user_id,
+        "activeRunId": m.active_run_id,
+        "activeRunStatus": m.active_run_status,
+        "skipped": m.skipped,
+        "skipReason": m.skip_reason,
+        "createdAt": m.created_at,
+    })).collect();
     let (id, root_issue_id, mode, status, reason, release_policy, released_at, created_at) = (
         row.id, row.root_issue_id, row.mode, row.status, row.reason, row.release_policy,
         row.released_at, row.created_at,
@@ -4042,6 +4065,8 @@ async fn get_tree_hold(
         "releasePolicy": release_policy,
         "releasedAt": released_at,
         "createdAt": created_at,
+        "memberCount": member_count,
+        "members": members_json,
     })))
 }
 
