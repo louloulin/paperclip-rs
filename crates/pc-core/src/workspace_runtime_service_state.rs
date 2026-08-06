@@ -81,7 +81,9 @@ impl DesiredStateAction {
 /// - 删除所有 `PAPERCLIP_*` 键
 /// - 强制删除 `DATABASE_URL`
 /// - 删除 `npm_config_tailscale_auth` / `npm_config_authenticated_private`
-pub fn sanitize_runtime_service_base_env(base_env: &HashMap<String, String>) -> HashMap<String, String> {
+pub fn sanitize_runtime_service_base_env(
+    base_env: &HashMap<String, String>,
+) -> HashMap<String, String> {
     let mut env = base_env.clone();
     let keys: Vec<String> = env
         .keys()
@@ -157,9 +159,7 @@ pub struct BuildDesiredStatePatchOutput {
 pub fn build_workspace_runtime_desired_state_patch(
     input: BuildDesiredStatePatchInput<'_>,
 ) -> BuildDesiredStatePatchOutput {
-    let fallback_state = input
-        .current_desired_state
-        .unwrap_or(DesiredState::Stopped);
+    let fallback_state = input.current_desired_state.unwrap_or(DesiredState::Stopped);
     let mut next: ServiceStatesMap = ServiceStatesMap::new();
 
     for index in 0..input.configured_service_count {

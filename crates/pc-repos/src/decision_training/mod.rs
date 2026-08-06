@@ -22,14 +22,14 @@ mod types;
 // ============================================================================
 
 pub use capture::{
-    build_snapshot, capture_decision_snapshot, load_source_decision,
-    LoadedSourceDecision, DECISION_TRAINING_RETENTION_POLICY,
+    build_snapshot, capture_decision_snapshot, load_source_decision, LoadedSourceDecision,
+    DECISION_TRAINING_RETENTION_POLICY,
 };
 pub use commit_sha::{find_commit_sha, is_commit_sha, json_copy, COMMIT_SHA_KEYS};
 pub use service::DecisionTrainingService;
 pub use types::{
     CaptureInput, CaptureResult, CreateInput, DecisionTrainingExampleRow,
     DecisionTrainingSnapshotV1, DecisionTrainingSourceKind, ListExampleRow, ListInput,
-    NotesHistoryEntry, ScrubDeletedCommentsInput, ScrubDeletedCommentsResult,
-    SnapshotCode, SnapshotCutoff, SnapshotDecision, SnapshotRetention,
+    NotesHistoryEntry, ScrubDeletedCommentsInput, ScrubDeletedCommentsResult, SnapshotCode,
+    SnapshotCutoff, SnapshotDecision, SnapshotRetention,
 };

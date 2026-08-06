@@ -124,7 +124,10 @@ async fn tool_runtime_slot_repo_health_aggregates_active_slots() {
         .expect("insert");
     }
 
-    let h = ToolRepo::new(&db).runtime_health(cid).await.expect("health");
+    let h = ToolRepo::new(&db)
+        .runtime_health(cid)
+        .await
+        .expect("health");
     assert_eq!(h.active_slots, 2);
     assert_eq!(h.company_id, cid);
     // last_used_at 默认 NULL，因为我们没有显式设置

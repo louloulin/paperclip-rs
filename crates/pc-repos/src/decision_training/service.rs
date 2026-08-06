@@ -15,11 +15,10 @@ use uuid::Uuid;
 
 use super::capture::capture_decision_snapshot;
 use super::types::{
-    CaptureInput, CaptureResult, CreateInput, DecisionTrainingExampleRow,
-    ListExampleRow, ListInput, NotesHistoryEntry, ScrubDeletedCommentsInput,
-    ScrubDeletedCommentsResult,
+    CaptureInput, CaptureResult, CreateInput, DecisionTrainingExampleRow, ListExampleRow,
+    ListInput, NotesHistoryEntry, ScrubDeletedCommentsInput, ScrubDeletedCommentsResult,
 };
-use crate::{RepoError, RepoResult, Db};
+use crate::{Db, RepoError, RepoResult};
 
 /// Decision training 仓储入口（与 Node `decisionTrainingService(db)` factory 1:1 对齐）。
 pub struct DecisionTrainingService<'a> {
@@ -57,8 +56,9 @@ impl<'a> DecisionTrainingService<'a> {
         .await
         .map_err(RepoError::Sql)?;
 
-        let row: Option<DecisionTrainingExampleRow> = sqlx::query_as::<_, DecisionTrainingExampleRow>(
-            "INSERT INTO decision_training_examples \
+        let row: Option<DecisionTrainingExampleRow> =
+            sqlx::query_as::<_, DecisionTrainingExampleRow>(
+                "INSERT INTO decision_training_examples \
              (company_id, source_kind, source_id, issue_id, cutoff_at, notes, notes_history, \
               decision_outcome, retention_policy, snapshot, created_by_user_id) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
@@ -66,21 +66,21 @@ impl<'a> DecisionTrainingService<'a> {
              RETURNING id, company_id, source_kind, source_id, issue_id, cutoff_at, notes, \
                        notes_history, decision_outcome, snapshot, retention_policy, \
                        created_by_user_id, created_at, updated_at",
-        )
-        .bind(input.company_id)
-        .bind(input.source_kind.as_str())
-        .bind(input.source_id)
-        .bind(input.issue_id)
-        .bind(captured.cutoff_at)
-        .bind(&input.notes)
-        .bind(Json::<Vec<NotesHistoryEntry>>(Vec::new()))
-        .bind(captured.decision_outcome.clone())
-        .bind(super::capture::DECISION_TRAINING_RETENTION_POLICY)
-        .bind(Json(&captured.snapshot))
-        .bind(&input.created_by_user_id)
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(RepoError::Sql)?;
+            )
+            .bind(input.company_id)
+            .bind(input.source_kind.as_str())
+            .bind(input.source_id)
+            .bind(input.issue_id)
+            .bind(captured.cutoff_at)
+            .bind(&input.notes)
+            .bind(Json::<Vec<NotesHistoryEntry>>(Vec::new()))
+            .bind(captured.decision_outcome.clone())
+            .bind(super::capture::DECISION_TRAINING_RETENTION_POLICY)
+            .bind(Json(&captured.snapshot))
+            .bind(&input.created_by_user_id)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(RepoError::Sql)?;
 
         row.ok_or_else(|| {
             RepoError::Invalid("This decision is already trained by this user".to_string())
@@ -117,9 +117,7 @@ impl<'a> DecisionTrainingService<'a> {
             sql.push_str(" AND e.created_by_user_id = $?");
         }
         if input.q.is_some() {
-            sql.push_str(
-                " AND (e.notes ILIKE $? OR i.title ILIKE $? OR i.identifier ILIKE $?)",
-            );
+            sql.push_str(" AND (e.notes ILIKE $? OR i.title ILIKE $? OR i.identifier ILIKE $?)");
         }
         sql.push_str(" ORDER BY e.created_at DESC, e.id DESC");
 
@@ -199,15 +197,16 @@ impl<'a> DecisionTrainingService<'a> {
     ) -> sqlx::Result<Option<DecisionTrainingExampleRow>> {
         let mut tx = self.db.pool().begin().await?;
 
-        let existing: Option<DecisionTrainingExampleRow> = sqlx::query_as::<_, DecisionTrainingExampleRow>(
-            "SELECT id, company_id, source_kind, source_id, issue_id, cutoff_at, notes, \
+        let existing: Option<DecisionTrainingExampleRow> =
+            sqlx::query_as::<_, DecisionTrainingExampleRow>(
+                "SELECT id, company_id, source_kind, source_id, issue_id, cutoff_at, notes, \
                     notes_history, decision_outcome, snapshot, retention_policy, \
                     created_by_user_id, created_at, updated_at \
              FROM decision_training_examples WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
         let Some(row) = existing else {
             return Ok(None);
@@ -225,19 +224,20 @@ impl<'a> DecisionTrainingService<'a> {
             body: row.notes.clone(),
         });
 
-        let updated: Option<DecisionTrainingExampleRow> = sqlx::query_as::<_, DecisionTrainingExampleRow>(
-            "UPDATE decision_training_examples \
+        let updated: Option<DecisionTrainingExampleRow> =
+            sqlx::query_as::<_, DecisionTrainingExampleRow>(
+                "UPDATE decision_training_examples \
              SET notes = $1, notes_history = $2, updated_at = now() \
              WHERE id = $3 \
              RETURNING id, company_id, source_kind, source_id, issue_id, cutoff_at, notes, \
                        notes_history, decision_outcome, snapshot, retention_policy, \
                        created_by_user_id, created_at, updated_at",
-        )
-        .bind(notes)
-        .bind(Json(&history))
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
+            )
+            .bind(notes)
+            .bind(Json(&history))
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
         tx.commit().await?;
         Ok(updated)
@@ -279,10 +279,7 @@ impl<'a> DecisionTrainingService<'a> {
             let mut changed = false;
 
             // 提取 comments 数组
-            if let Some(comments) = snapshot
-                .get_mut("comments")
-                .and_then(|v| v.as_array_mut())
-            {
+            if let Some(comments) = snapshot.get_mut("comments").and_then(|v| v.as_array_mut()) {
                 for comment in comments.iter_mut() {
                     let Some(comment_obj) = comment.as_object_mut() else {
                         continue;
@@ -346,12 +343,11 @@ impl<'a> DecisionTrainingService<'a> {
 
     /// 按 id 删除（与 Node `delete` 1:1 对齐）。
     pub async fn delete(&self, id: Uuid) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "DELETE FROM decision_training_examples WHERE id = $1 RETURNING id",
-        )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("DELETE FROM decision_training_examples WHERE id = $1 RETURNING id")
+                .bind(id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(id,)| id))
     }
 
@@ -373,14 +369,29 @@ impl<'a> DecisionTrainingService<'a> {
              FROM decision_training_examples WHERE company_id = $1",
         );
         let mut idx = 2;
-        if kind.is_some() { sql.push_str(&format!(" AND source_kind = ${idx}")); idx += 1; }
-        if author.is_some() { sql.push_str(&format!(" AND created_by_user_id = ${idx}")); idx += 1; }
-        if q_pattern.is_some() { sql.push_str(&format!(" AND notes ILIKE ${idx}")); idx += 1; }
+        if kind.is_some() {
+            sql.push_str(&format!(" AND source_kind = ${idx}"));
+            idx += 1;
+        }
+        if author.is_some() {
+            sql.push_str(&format!(" AND created_by_user_id = ${idx}"));
+            idx += 1;
+        }
+        if q_pattern.is_some() {
+            sql.push_str(&format!(" AND notes ILIKE ${idx}"));
+            idx += 1;
+        }
         sql.push_str(" ORDER BY created_at DESC LIMIT 500");
         let mut query = sqlx::query_as::<_, DecisionTrainingExampleRow>(&sql).bind(company_id);
-        if let Some(k) = kind { query = query.bind(k); }
-        if let Some(a) = author { query = query.bind(a); }
-        if let Some(p) = q_pattern { query = query.bind(format!("%{p}%")); }
+        if let Some(k) = kind {
+            query = query.bind(k);
+        }
+        if let Some(a) = author {
+            query = query.bind(a);
+        }
+        if let Some(p) = q_pattern {
+            query = query.bind(format!("%{p}%"));
+        }
         Ok(query.fetch_all(self.db.pool()).await?)
     }
 
@@ -407,13 +418,12 @@ impl<'a> DecisionTrainingService<'a> {
         company_id: Uuid,
         source_id: Uuid,
     ) -> sqlx::Result<Option<(String,)>> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT status FROM approvals WHERE company_id = $1 AND id = $2",
-        )
-        .bind(company_id)
-        .bind(source_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM approvals WHERE company_id = $1 AND id = $2")
+                .bind(company_id)
+                .bind(source_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row)
     }
 
@@ -434,10 +444,7 @@ impl<'a> DecisionTrainingService<'a> {
     }
 
     /// Round 160: 取 example 的 created_by_user_id (用于 patch/delete owner 校验)。
-    pub async fn owner_for_id(
-        &self,
-        id: Uuid,
-    ) -> sqlx::Result<Option<String>> {
+    pub async fn owner_for_id(&self, id: Uuid) -> sqlx::Result<Option<String>> {
         let row: Option<(Option<String>,)> = sqlx::query_as(
             "SELECT created_by_user_id FROM decision_training_examples WHERE id = $1",
         )

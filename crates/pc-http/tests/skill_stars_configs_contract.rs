@@ -44,10 +44,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -108,14 +105,13 @@ async fn insert_skill(db: &Db, company_id: Uuid, key: &str) -> Uuid {
 }
 
 async fn current_star_count(db: &Db, company_id: Uuid, skill_id: Uuid) -> i32 {
-    let row: (i32,) = sqlx::query_as(
-        "SELECT star_count FROM company_skills WHERE company_id=$1 AND id=$2",
-    )
-    .bind(company_id)
-    .bind(skill_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("read star_count");
+    let row: (i32,) =
+        sqlx::query_as("SELECT star_count FROM company_skills WHERE company_id=$1 AND id=$2")
+            .bind(company_id)
+            .bind(skill_id)
+            .fetch_one(db.pool())
+            .await
+            .expect("read star_count");
     row.0
 }
 
@@ -261,8 +257,12 @@ async fn repo_set_config_is_upsert() {
     let cid = insert_company(&db, "cfg-upsert").await;
     let sid = insert_skill(&db, cid, "cfgup").await;
     let repo = pc_repos::skill::SkillRepo::new(&db);
-    repo.set_config(cid, sid, &serde_json::json!({"v": 1}), None).await.unwrap();
-    repo.set_config(cid, sid, &serde_json::json!({"v": 2}), None).await.unwrap();
+    repo.set_config(cid, sid, &serde_json::json!({"v": 1}), None)
+        .await
+        .unwrap();
+    repo.set_config(cid, sid, &serde_json::json!({"v": 2}), None)
+        .await
+        .unwrap();
     let got = repo.get_config(cid, sid).await.unwrap().unwrap();
     assert_eq!(got, serde_json::json!({"v": 2}));
     // 唯一索引保证只有一行
@@ -296,7 +296,9 @@ async fn repo_delete_config_returns_true_only_when_existed() {
     let sid = insert_skill(&db, cid, "cfgdel").await;
     let repo = pc_repos::skill::SkillRepo::new(&db);
     assert!(!repo.delete_config(cid, sid).await.unwrap(), "first delete");
-    repo.set_config(cid, sid, &serde_json::json!({"x": 1}), None).await.unwrap();
+    repo.set_config(cid, sid, &serde_json::json!({"x": 1}), None)
+        .await
+        .unwrap();
     assert!(repo.delete_config(cid, sid).await.unwrap(), "second delete");
     assert!(repo.get_config(cid, sid).await.unwrap().is_none());
 }

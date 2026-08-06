@@ -62,7 +62,9 @@ pub fn runtime_service_identity_key(row: &WorkspaceRuntimeServiceRow) -> String 
         "{}:{}:{}:{}:{}:{}:{}",
         row.scope_type,
         row.scope_id.as_deref().unwrap_or(""),
-        row.project_workspace_id.map(|u| u.to_string()).unwrap_or_default(),
+        row.project_workspace_id
+            .map(|u| u.to_string())
+            .unwrap_or_default(),
         "", // execution_workspace_id 不在 row 中；Node 端也是相同占位
         row.service_name,
         row.command.as_deref().unwrap_or(""),
@@ -181,7 +183,12 @@ impl<'a> WorkspaceRuntimeReadModelRepo<'a> {
 mod tests {
     use super::*;
 
-    fn row(reuse: Option<&str>, scope: &str, name: &str, command: Option<&str>) -> WorkspaceRuntimeServiceRow {
+    fn row(
+        reuse: Option<&str>,
+        scope: &str,
+        name: &str,
+        command: Option<&str>,
+    ) -> WorkspaceRuntimeServiceRow {
         WorkspaceRuntimeServiceRow {
             id: Uuid::new_v4(),
             company_id: Uuid::nil(),

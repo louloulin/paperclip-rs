@@ -8,9 +8,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -25,14 +23,13 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
     id
 }
 
-async fn insert_card(
-    db: &Db,
-    company_id: Uuid,
-    title: Option<&str>,
-    archived: bool,
-) -> Uuid {
+async fn insert_card(db: &Db, company_id: Uuid, title: Option<&str>, archived: bool) -> Uuid {
     let id = Uuid::new_v4();
-    let archived_at = if archived { Some(chrono::Utc::now()) } else { None };
+    let archived_at = if archived {
+        Some(chrono::Utc::now())
+    } else {
+        None
+    };
     sqlx::query(
         "INSERT INTO status_cards \\
          (id, company_id, title, interest_prompt, queries, refresh_policy, state, query_version, archived_at) \\
@@ -96,7 +93,7 @@ async fn create_basic() {
         .await
         .expect("create");
     assert_eq!(row.title.as_deref(), Some("created"));
-    assert_eq!(row.state, "compiling");  // 初始为 compiling
+    assert_eq!(row.state, "compiling"); // 初始为 compiling
 }
 
 /// 4. patch — COALESCE 模式 + archived_at 翻转。
@@ -155,7 +152,11 @@ async fn recompile_basic() {
     let cid = insert_company(&db, "rc1").await;
     let id = insert_card(&db, cid, None, false).await;
     let repo = StatusCardRepo::new(&db);
-    let row = repo.recompile(id).await.expect("recompile").expect("present");
+    let row = repo
+        .recompile(id)
+        .await
+        .expect("recompile")
+        .expect("present");
     assert_eq!(row.state, "compiling");
 
     let miss = repo.recompile(Uuid::new_v4()).await.expect("miss");
@@ -204,7 +205,11 @@ async fn update_queries_basic() {
     let cid = insert_company(&db, "uq1").await;
     let id = insert_card(&db, cid, None, false).await;
     let repo = StatusCardRepo::new(&db);
-    let row = repo.update_queries(id, &json!([{"q": "new"}])).await.expect("upd").expect("present");
+    let row = repo
+        .update_queries(id, &json!([{"q": "new"}]))
+        .await
+        .expect("upd")
+        .expect("present");
     assert_eq!(row.queries, json!([{"q": "new"}]));
 }
 

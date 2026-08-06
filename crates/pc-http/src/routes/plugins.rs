@@ -22,8 +22,8 @@ use pc_plugin_host::{
     WorkerHandle,
 };
 use pc_plugin_protocol::{
-    ExecuteToolParams, PaperclipPluginManifestV1, PluginLocalFolderAccess, PluginLocalFolderDeclaration,
-    RunJobParams,
+    ExecuteToolParams, PaperclipPluginManifestV1, PluginLocalFolderAccess,
+    PluginLocalFolderDeclaration, RunJobParams,
 };
 use pc_plugin_protocol::{GetDataParams, PerformActionParams};
 use pc_realtime::LiveEvent;
@@ -431,7 +431,14 @@ async fn bridge_data(
     let data = body.get("data").cloned().unwrap_or(json!({}));
     let result: Result<Uuid, _> = PluginRepo::new(&state.db)
         .upsert_entity(
-            pid, entity_type, scope_kind, scope_id.as_deref(), external_id.as_deref(), title.as_deref(), &data, cid,
+            pid,
+            entity_type,
+            scope_kind,
+            scope_id.as_deref(),
+            external_id.as_deref(),
+            title.as_deref(),
+            &data,
+            cid,
         )
         .await;
     match result {
@@ -1357,7 +1364,6 @@ mod tests {
     }
 }
 
-
 // ============================================================================
 // Round 46: Plugin local folders
 // ============================================================================
@@ -1421,7 +1427,10 @@ struct LocalFolderStatus {
     checked_at: chrono::DateTime<chrono::Utc>,
 }
 
-async fn get_plugin_manifest_from_db(state: &AppState, plugin_id: Uuid) -> ApiResult<Option<PaperclipPluginManifestV1>> {
+async fn get_plugin_manifest_from_db(
+    state: &AppState,
+    plugin_id: Uuid,
+) -> ApiResult<Option<PaperclipPluginManifestV1>> {
     use pc_repos::plugin::PluginRepo;
     let row = PluginRepo::new(&state.db)
         .get_by_id(plugin_id)
@@ -1430,10 +1439,14 @@ async fn get_plugin_manifest_from_db(state: &AppState, plugin_id: Uuid) -> ApiRe
     Ok(row.and_then(|r| serde_json::from_value(r.manifest_json).ok()))
 }
 
-fn get_stored_local_folders(settings_json: Option<&Value>) -> std::collections::HashMap<String, LocalFolderStoredConfig> {
+fn get_stored_local_folders(
+    settings_json: Option<&Value>,
+) -> std::collections::HashMap<String, LocalFolderStoredConfig> {
     let mut out = std::collections::HashMap::new();
     let Some(v) = settings_json else { return out };
-    let Some(map) = v.get("localFolders").and_then(|x| x.as_object()) else { return out };
+    let Some(map) = v.get("localFolders").and_then(|x| x.as_object()) else {
+        return out;
+    };
     for (k, val) in map {
         if let Ok(cfg) = serde_json::from_value::<LocalFolderStoredConfig>(val.clone()) {
             out.insert(k.clone(), cfg);
@@ -1442,13 +1455,19 @@ fn get_stored_local_folders(settings_json: Option<&Value>) -> std::collections::
     out
 }
 
-fn upsert_stored_local_folder(settings_json: Option<Value>, folder_key: &str, cfg: LocalFolderStoredConfig) -> Value {
+fn upsert_stored_local_folder(
+    settings_json: Option<Value>,
+    folder_key: &str,
+    cfg: LocalFolderStoredConfig,
+) -> Value {
     let mut v = settings_json.unwrap_or_else(|| serde_json::json!({}));
     if !v.is_object() {
         v = serde_json::json!({});
     }
     let obj = v.as_object_mut().unwrap();
-    let lf = obj.entry("localFolders".to_string()).or_insert_with(|| serde_json::json!({}));
+    let lf = obj
+        .entry("localFolders".to_string())
+        .or_insert_with(|| serde_json::json!({}));
     if !lf.is_object() {
         *lf = serde_json::json!({});
     }
@@ -1650,24 +1669,24 @@ async fn plugin_local_folder_status(
     let Some(manifest) = get_plugin_manifest_from_db(&state, plugin_id).await? else {
         return Err(ApiError::NotFound("plugin not found".into()));
     };
-    let declaration = manifest.local_folders.iter().find(|d| d.folder_key == folder_key).cloned();
+    let declaration = manifest
+        .local_folders
+        .iter()
+        .find(|d| d.folder_key == folder_key)
+        .cloned();
     if declaration.is_none() {
-        return Err(ApiError::NotFound(format!("folder {folder_key} not declared by plugin")));
+        return Err(ApiError::NotFound(format!(
+            "folder {folder_key} not declared by plugin"
+        )));
     }
     let settings = pc_repos::plugin::PluginRepo::new(&state.db)
         .get_company_settings(plugin_id, company_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .map(|r| r.settings_json);
-    let stored = get_stored_local_folders(settings.as_ref())
-        .remove(&folder_key);
-    let status = inspect_local_folder(
-        &folder_key,
-        declaration.as_ref(),
-        stored.as_ref(),
-        None,
-    )
-    .await;
+    let stored = get_stored_local_folders(settings.as_ref()).remove(&folder_key);
+    let status =
+        inspect_local_folder(&folder_key, declaration.as_ref(), stored.as_ref(), None).await;
     Ok(Json(serde_json::to_value(&status).unwrap_or(Value::Null)))
 }
 
@@ -1678,10 +1697,14 @@ async fn plugin_local_folder_validate(
 ) -> ApiResult<Json<Value>> {
     let _ = (plugin_id, company_id);
     let Some(path) = body.path else {
-        return Err(ApiError::BadRequest("\"path\" is required and must be a non-empty string".into()));
+        return Err(ApiError::BadRequest(
+            "\"path\" is required and must be a non-empty string".into(),
+        ));
     };
     if path.trim().is_empty() {
-        return Err(ApiError::BadRequest("\"path\" is required and must be a non-empty string".into()));
+        return Err(ApiError::BadRequest(
+            "\"path\" is required and must be a non-empty string".into(),
+        ));
     }
     let override_cfg = LocalFolderStoredConfig {
         path: path.clone(),
@@ -1699,7 +1722,9 @@ async fn plugin_local_folder_save(
     Json(body): Json<LocalFolderSaveBody>,
 ) -> ApiResult<Json<Value>> {
     if body.path.trim().is_empty() {
-        return Err(ApiError::BadRequest("\"path\" is required and must be a non-empty string".into()));
+        return Err(ApiError::BadRequest(
+            "\"path\" is required and must be a non-empty string".into(),
+        ));
     }
     let Some(manifest) = get_plugin_manifest_from_db(&state, plugin_id).await? else {
         return Err(ApiError::NotFound("plugin not found".into()));
@@ -1731,26 +1756,17 @@ async fn plugin_local_folder_save(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     state.realtime.publish(
-        pc_realtime::LiveEvent::new(
-            "plugin.local_folder.saved",
-            "plugin",
-            plugin_id,
-        )
-        .with_data(serde_json::json!({
-            "pluginId": plugin_id,
-            "companyId": company_id,
-            "folderKey": folder_key,
-        })),
+        pc_realtime::LiveEvent::new("plugin.local_folder.saved", "plugin", plugin_id).with_data(
+            serde_json::json!({
+                "pluginId": plugin_id,
+                "companyId": company_id,
+                "folderKey": folder_key,
+            }),
+        ),
     );
 
     let stored = Some(cfg.clone());
-    let status = inspect_local_folder(
-        &folder_key,
-        Some(&declaration),
-        stored.as_ref(),
-        None,
-    )
-    .await;
+    let status = inspect_local_folder(&folder_key, Some(&declaration), stored.as_ref(), None).await;
     Ok(Json(serde_json::json!({
         "pluginId": plugin_id,
         "companyId": company_id,

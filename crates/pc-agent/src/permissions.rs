@@ -211,8 +211,14 @@ mod tests {
             "canCreateSkills": false,
         });
         let p = normalize_agent_permissions(input, "ceo");
-        assert!(!p.can_create_agents(), "explicit false must override ceo default");
-        assert!(!p.can_create_skills(), "explicit false must override default true");
+        assert!(
+            !p.can_create_agents(),
+            "explicit false must override ceo default"
+        );
+        assert!(
+            !p.can_create_skills(),
+            "explicit false must override default true"
+        );
     }
 
     #[test]
@@ -224,7 +230,10 @@ mod tests {
         });
         let p = normalize_agent_permissions(input, "ceo");
         assert!(p.can_create_agents(), "null must fall back to ceo default");
-        assert!(p.can_create_skills(), "non-bool string must fall back to default true");
+        assert!(
+            p.can_create_skills(),
+            "non-bool string must fall back to default true"
+        );
     }
 
     #[test]
@@ -239,7 +248,10 @@ mod tests {
         let p = normalize_agent_permissions(input, "worker");
         let obj = p.as_object();
         assert_eq!(obj.get("trustPreset"), Some(&json!("standard")));
-        assert_eq!(obj.get("authorizationPolicy"), Some(&json!({ "mode": "allow" })));
+        assert_eq!(
+            obj.get("authorizationPolicy"),
+            Some(&json!({ "mode": "allow" }))
+        );
         assert_eq!(obj.get("customField"), Some(&json!(42)));
     }
 
@@ -270,9 +282,7 @@ mod tests {
     #[test]
     fn can_create_helpers_safe_for_missing_keys() {
         // Direct construction bypassing default fn
-        let p = AgentPermissions {
-            inner: Map::new(),
-        };
+        let p = AgentPermissions { inner: Map::new() };
         assert!(!p.can_create_agents()); // no key → false
         assert!(!p.can_create_skills()); // no key → false
     }

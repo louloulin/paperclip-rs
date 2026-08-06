@@ -13,9 +13,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -109,10 +107,9 @@ async fn decompose_creates_all_children_and_marks_completed() {
     assert_eq!(outcome.created_child_ids.len(), 3);
 
     // 验证 child_issue_ids 数组包含所有创建的 child
-    let stored_ids: Vec<String> = serde_json::from_value(
-        outcome.decomposition.child_issue_ids.clone(),
-    )
-    .expect("parse child_issue_ids");
+    let stored_ids: Vec<String> =
+        serde_json::from_value(outcome.decomposition.child_issue_ids.clone())
+            .expect("parse child_issue_ids");
     assert_eq!(stored_ids.len(), 3);
 
     // 验证每个 child issue 真的存在
@@ -133,7 +130,11 @@ async fn decompose_is_idempotent_on_repeat_call() {
     let db = db().await;
     let company_id = insert_company(&db, "idem").await;
     let source_id = insert_issue(&db, company_id, "idem").await;
-    let source = IssueRepo::new(&db).get(source_id).await.expect("get").expect("exists");
+    let source = IssueRepo::new(&db)
+        .get(source_id)
+        .await
+        .expect("get")
+        .expect("exists");
     let revision_id = Uuid::new_v4();
     let children = vec![
         make_child("a", "first", "medium"),
@@ -153,7 +154,11 @@ async fn decompose_is_idempotent_on_repeat_call() {
         .decompose_accepted_plan(&source, revision_id, &children, &fingerprint)
         .await
         .expect("second decompose (idempotent)");
-    assert_eq!(second.created_child_ids.len(), 0, "重复调用不应再创建 child");
+    assert_eq!(
+        second.created_child_ids.len(),
+        0,
+        "重复调用不应再创建 child"
+    );
     assert_eq!(second.decomposition.id, first.decomposition.id);
     assert_eq!(second.decomposition.status, "completed");
 }
@@ -164,7 +169,11 @@ async fn decompose_rejects_fingerprint_mismatch() {
     let db = db().await;
     let company_id = insert_company(&db, "fp_mismatch").await;
     let source_id = insert_issue(&db, company_id, "fp_mismatch").await;
-    let source = IssueRepo::new(&db).get(source_id).await.expect("get").expect("exists");
+    let source = IssueRepo::new(&db)
+        .get(source_id)
+        .await
+        .expect("get")
+        .expect("exists");
     let revision_id = Uuid::new_v4();
     let children_a = vec![make_child("a", "first", "medium")];
     let children_b = vec![make_child("b", "DIFFERENT", "medium")];
@@ -181,7 +190,10 @@ async fn decompose_rejects_fingerprint_mismatch() {
         .await;
     assert!(result.is_err(), "fingerprint mismatch 应返回错误");
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("different child set"), "错误信息应说明 child set 冲突: {err_msg}");
+    assert!(
+        err_msg.contains("different child set"),
+        "错误信息应说明 child set 冲突: {err_msg}"
+    );
 }
 
 #[tokio::test]
@@ -190,7 +202,11 @@ async fn create_child_from_decomposition_persists_all_fields() {
     let db = db().await;
     let company_id = insert_company(&db, "child_fields").await;
     let source_id = insert_issue(&db, company_id, "child_fields").await;
-    let source = IssueRepo::new(&db).get(source_id).await.expect("get").expect("exists");
+    let source = IssueRepo::new(&db)
+        .get(source_id)
+        .await
+        .expect("get")
+        .expect("exists");
     let user_id = format!("u-{}", Uuid::new_v4().simple());
     let input = IssuePlanChildInput {
         title: "test-child-with-all-fields",

@@ -125,9 +125,7 @@ pub async fn canonicalize_local_plugin_path(raw_path: &str) -> LocalPluginPathVa
         }
     }
 
-    LocalPluginPathValidation::Ok {
-        canonical_path,
-    }
+    LocalPluginPathValidation::Ok { canonical_path }
 }
 
 // ============================================================================
@@ -243,10 +241,8 @@ mod tests {
 
     #[test]
     fn cloud_managed_when_env_key_present_with_value() {
-        let env: HashMap<String, String> = HashMap::from([(
-            MANAGED_CONFIG_ENV_KEY.to_string(),
-            "{\"v\":1}".to_string(),
-        )]);
+        let env: HashMap<String, String> =
+            HashMap::from([(MANAGED_CONFIG_ENV_KEY.to_string(), "{\"v\":1}".to_string())]);
         assert!(is_cloud_managed_instance(&env));
     }
 
@@ -260,7 +256,10 @@ mod tests {
 
     #[test]
     fn lexical_resolve_absolute_unchanged() {
-        assert_eq!(lexical_resolve("/app/packages/plugins"), "/app/packages/plugins");
+        assert_eq!(
+            lexical_resolve("/app/packages/plugins"),
+            "/app/packages/plugins"
+        );
     }
 
     #[test]
@@ -327,7 +326,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_nonexistent_path() {
-        let result = canonicalize_local_plugin_path("/nonexistent/path/that/should/not/exist/12345").await;
+        let result =
+            canonicalize_local_plugin_path("/nonexistent/path/that/should/not/exist/12345").await;
         match result {
             LocalPluginPathValidation::Failed { reason } => {
                 assert!(reason.contains("does not exist"));
@@ -344,7 +344,11 @@ mod tests {
         let result = canonicalize_local_plugin_path(&path_str).await;
         match result {
             LocalPluginPathValidation::Failed { reason } => {
-                assert!(reason.contains("not a directory"), "unexpected reason: {}", reason);
+                assert!(
+                    reason.contains("not a directory"),
+                    "unexpected reason: {}",
+                    reason
+                );
             }
             LocalPluginPathValidation::Ok { canonical_path } => {
                 panic!("expected failure for file, got ok: {}", canonical_path);
@@ -363,7 +367,9 @@ mod tests {
         let canonical_path = tokio::fs::canonicalize(&sub).await.unwrap();
         let canonical_path_str = canonical_path.to_string_lossy().into_owned();
 
-        let result = is_within_bundled_plugin_root(&canonical_path_str, Some(&temp_root.to_string_lossy())).await;
+        let result =
+            is_within_bundled_plugin_root(&canonical_path_str, Some(&temp_root.to_string_lossy()))
+                .await;
         assert!(result);
 
         let _ = std::fs::remove_dir_all(&temp_root);
@@ -376,7 +382,9 @@ mod tests {
         let canonical_path = tokio::fs::canonicalize(&temp_root).await.unwrap();
         let canonical_path_str = canonical_path.to_string_lossy().into_owned();
 
-        let result = is_within_bundled_plugin_root(&canonical_path_str, Some(&temp_root.to_string_lossy())).await;
+        let result =
+            is_within_bundled_plugin_root(&canonical_path_str, Some(&temp_root.to_string_lossy()))
+                .await;
         // Root itself 不算"内部"
         assert!(!result);
 
@@ -393,7 +401,8 @@ mod tests {
         let canonical_b = tokio::fs::canonicalize(&temp_b).await.unwrap();
         let canonical_b_str = canonical_b.to_string_lossy().into_owned();
 
-        let result = is_within_bundled_plugin_root(&canonical_b_str, Some(&temp_a.to_string_lossy())).await;
+        let result =
+            is_within_bundled_plugin_root(&canonical_b_str, Some(&temp_a.to_string_lossy())).await;
         assert!(!result);
 
         let _ = std::fs::remove_dir_all(&temp_a);

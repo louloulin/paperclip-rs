@@ -47,10 +47,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -190,13 +187,12 @@ async fn http_create_tool_application_writes_type_and_metadata() {
     assert_eq!(body["config"]["command"], "echo hello");
 
     // 反查 DB 验证：kind 写到 type；metadata 内嵌 description + config
-    let row: (String, serde_json::Value) = sqlx::query_as(
-        "SELECT type, metadata FROM tool_applications WHERE id = $1",
-    )
-    .bind(body["id"].as_str().expect("id string"))
-    .fetch_one(db.pool())
-    .await
-    .expect("query row");
+    let row: (String, serde_json::Value) =
+        sqlx::query_as("SELECT type, metadata FROM tool_applications WHERE id = $1")
+            .bind(body["id"].as_str().expect("id string"))
+            .fetch_one(db.pool())
+            .await
+            .expect("query row");
     let (db_kind, db_meta) = row;
     assert_eq!(db_kind, "stdio");
     assert_eq!(db_meta["description"], "writes to stdout");
@@ -246,14 +242,8 @@ async fn http_patch_tool_application_merges_metadata_jsonb() {
     let state = test_state(db.clone());
     let app = routes::router().with_state(state);
     let cid = insert_company(&db, "patch").await;
-    let aid = insert_tool_application(
-        &db,
-        cid,
-        "mcp",
-        "before",
-        serde_json::json!({"flag": true}),
-    )
-    .await;
+    let aid =
+        insert_tool_application(&db, cid, "mcp", "before", serde_json::json!({"flag": true})).await;
 
     let (status, body) = call(
         &app,
@@ -271,13 +261,12 @@ async fn http_patch_tool_application_merges_metadata_jsonb() {
     // 验证 metadata 在 DB 中确实被 jsonb 合并：
     //   description 由 "before" → "after"
     //   config 由 {flag: true} → {flag: false, added: 1}
-    let (db_meta,): (serde_json::Value,) = sqlx::query_as(
-        "SELECT metadata FROM tool_applications WHERE id = $1",
-    )
-    .bind(aid)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (db_meta,): (serde_json::Value,) =
+        sqlx::query_as("SELECT metadata FROM tool_applications WHERE id = $1")
+            .bind(aid)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(db_meta["description"], "after");
     assert_eq!(db_meta["config"]["flag"], false);
     assert_eq!(db_meta["config"]["added"], 1);

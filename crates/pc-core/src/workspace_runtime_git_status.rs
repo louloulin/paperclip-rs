@@ -116,12 +116,17 @@ pub struct QuarantineSourceIssueRef {
 /// `buildDirtyQuarantineRescueBranch(sourceIssue)`：构造 rescue 分支名。
 ///
 /// `paperclip/rescue/<id-or-identifier-or-"issue">/<UTC-timestamp>`，每段经过 `sanitize_branch_name`。
-pub fn build_dirty_quarantine_rescue_branch(source_issue: Option<&QuarantineSourceIssueRef>) -> String {
+pub fn build_dirty_quarantine_rescue_branch(
+    source_issue: Option<&QuarantineSourceIssueRef>,
+) -> String {
     let raw_id = source_issue
         .and_then(|s| s.identifier.as_deref().or(s.id.as_deref()))
         .unwrap_or("issue");
     let issue_component = sanitize_branch_name(raw_id);
-    let inner = format!("paperclip/rescue/{issue_component}/{}", format_utc_branch_timestamp_now());
+    let inner = format!(
+        "paperclip/rescue/{issue_component}/{}",
+        format_utc_branch_timestamp_now()
+    );
     sanitize_branch_name(&inner)
 }
 
@@ -161,7 +166,10 @@ mod tests {
 
     #[test]
     fn parse_porcelain_trims_end() {
-        assert_eq!(parse_git_porcelain_path("M  path/with/trailing  "), "path/with/trailing");
+        assert_eq!(
+            parse_git_porcelain_path("M  path/with/trailing  "),
+            "path/with/trailing"
+        );
     }
 
     #[test]
@@ -230,10 +238,7 @@ mod tests {
             format_issue_reference(Some("uuid-1"), None),
             "`uuid-1`".to_string()
         );
-        assert_eq!(
-            format_issue_reference(None, None),
-            "`unknown`".to_string()
-        );
+        assert_eq!(format_issue_reference(None, None), "`unknown`".to_string());
     }
 
     #[test]
@@ -253,7 +258,10 @@ mod tests {
         let name = build_dirty_quarantine_rescue_branch(Some(&issue));
         // 形如：paperclip/rescue/PAPER-42/<UTC-timestamp>
         // timestamp 是 15 字符：YYYYMMDDTHHmmssZ
-        assert!(name.starts_with("paperclip/rescue/PAPER-42/"), "got: {name}");
+        assert!(
+            name.starts_with("paperclip/rescue/PAPER-42/"),
+            "got: {name}"
+        );
         assert!(name.len() >= 30, "got: {name}");
     }
 

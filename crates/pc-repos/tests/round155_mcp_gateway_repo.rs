@@ -104,7 +104,10 @@ async fn find_id_and_name_by_public_id_hit() {
     let pid = insert_profile(&db, cid).await;
     let id = insert_gateway(&db, cid, pid, "by-slug", "by-slug").await;
     let repo = McpGatewayRepo::new(&db);
-    let found = repo.find_id_and_name_by_public_id("by-slug").await.expect("find");
+    let found = repo
+        .find_id_and_name_by_public_id("by-slug")
+        .await
+        .expect("find");
     assert!(found.is_some());
     let (fid, fname) = found.unwrap();
     assert_eq!(fid, id);
@@ -138,15 +141,15 @@ async fn issue_and_find_token() {
     let pid = insert_profile(&db, cid).await;
     let gw_id = insert_gateway(&db, cid, pid, "gw-tk", "gw-tk").await;
     let repo = McpGatewayRepo::new(&db);
-    let token_id = repo
-        .issue_token(gw_id, "hash-1")
-        .await
-        .expect("issue");
+    let token_id = repo.issue_token(gw_id, "hash-1").await.expect("issue");
     let found = repo.find_active_token(gw_id, "hash-1").await.expect("find");
     assert!(found);
 
     repo.revoke_token(token_id).await.expect("revoke");
-    let found_after = repo.find_active_token(gw_id, "hash-1").await.expect("find2");
+    let found_after = repo
+        .find_active_token(gw_id, "hash-1")
+        .await
+        .expect("find2");
     assert!(!found_after);
 }
 
@@ -159,7 +162,10 @@ async fn find_active_token_wrong_hash() {
     let gw_id = insert_gateway(&db, cid, pid, "gw-tk2", "gw-tk2").await;
     let repo = McpGatewayRepo::new(&db);
     let _ = repo.issue_token(gw_id, "right-hash").await.expect("issue");
-    let found = repo.find_active_token(gw_id, "wrong-hash").await.expect("find");
+    let found = repo
+        .find_active_token(gw_id, "wrong-hash")
+        .await
+        .expect("find");
     assert!(!found);
 }
 

@@ -55,7 +55,9 @@ async fn oauth_token_insert_and_delete() {
     let db = db().await;
     let cid = insert_company(&db, "ot1").await;
     let repo = SmokeRepo::new(&db);
-    repo.insert_oauth_token("token-1", cid).await.expect("insert");
+    repo.insert_oauth_token("token-1", cid)
+        .await
+        .expect("insert");
     let affected = repo.delete_oauth_token("token-1").await.expect("delete");
     assert_eq!(affected, 1);
 }
@@ -66,7 +68,9 @@ async fn oauth_token_delete_idempotent() {
     let db = db().await;
     let cid = insert_company(&db, "ot2").await;
     let repo = SmokeRepo::new(&db);
-    repo.insert_oauth_token("token-2", cid).await.expect("insert");
+    repo.insert_oauth_token("token-2", cid)
+        .await
+        .expect("insert");
     let _ = repo.delete_oauth_token("token-2").await.expect("first");
     let affected = repo.delete_oauth_token("token-2").await.expect("second");
     assert_eq!(affected, 0);
@@ -80,8 +84,12 @@ async fn service_upsert_running_idempotent() {
     let db = db().await;
     let cid = insert_company(&db, "sv1").await;
     let repo = SmokeRepo::new(&db);
-    repo.upsert_service_running(cid, "svc1").await.expect("first");
-    repo.upsert_service_running(cid, "svc1").await.expect("second");
+    repo.upsert_service_running(cid, "svc1")
+        .await
+        .expect("first");
+    repo.upsert_service_running(cid, "svc1")
+        .await
+        .expect("second");
     let rows = repo.list_services(cid).await.expect("list");
     let s1: Vec<_> = rows.iter().filter(|(k, _, _)| k == "svc1").collect();
     assert_eq!(s1.len(), 1);
@@ -94,7 +102,9 @@ async fn service_stop_changes_status() {
     let db = db().await;
     let cid = insert_company(&db, "sv2").await;
     let repo = SmokeRepo::new(&db);
-    repo.upsert_service_running(cid, "svc2").await.expect("start");
+    repo.upsert_service_running(cid, "svc2")
+        .await
+        .expect("start");
     repo.stop_service(cid, "svc2").await.expect("stop");
     let rows = repo.list_services(cid).await.expect("list");
     let s2: Vec<_> = rows.iter().filter(|(k, _, _)| k == "svc2").collect();
@@ -137,7 +147,9 @@ async fn insert_smoke_project_basic() {
     let db = db().await;
     let cid = insert_company(&db, "sp1").await;
     let repo = SmokeRepo::new(&db);
-    repo.insert_smoke_project(cid, "My Project").await.expect("insert");
+    repo.insert_smoke_project(cid, "My Project")
+        .await
+        .expect("insert");
     assert_eq!(repo.count_projects(cid).await.expect("count"), 1);
 }
 
@@ -150,8 +162,18 @@ async fn insert_and_count_agent_by_name() {
     repo.insert_smoke_agent(cid, "Bot", "tester", "idle", "codex_local")
         .await
         .expect("insert");
-    assert_eq!(repo.count_agents_with_name(cid, "Bot").await.expect("count"), 1);
-    assert_eq!(repo.count_agents_with_name(cid, "Other").await.expect("count"), 0);
+    assert_eq!(
+        repo.count_agents_with_name(cid, "Bot")
+            .await
+            .expect("count"),
+        1
+    );
+    assert_eq!(
+        repo.count_agents_with_name(cid, "Other")
+            .await
+            .expect("count"),
+        0
+    );
 }
 
 /// 12. insert_smoke_issue + count_issues_with_title — 命中计数。
@@ -164,11 +186,15 @@ async fn insert_and_count_issue_by_title() {
         .await
         .expect("insert");
     assert_eq!(
-        repo.count_issues_with_title(cid, "Smoke probe").await.expect("count"),
+        repo.count_issues_with_title(cid, "Smoke probe")
+            .await
+            .expect("count"),
         1
     );
     assert_eq!(
-        repo.count_issues_with_title(cid, "Other title").await.expect("count"),
+        repo.count_issues_with_title(cid, "Other title")
+            .await
+            .expect("count"),
         0
     );
 }
@@ -201,27 +227,32 @@ async fn reset_company_clears_smoke_data() {
     let repo = SmokeRepo::new(&db);
     repo.insert_oauth_code("code-r1", cid).await.expect("code");
     repo.insert_oauth_token("tok-r1", cid).await.expect("tok");
-    repo.upsert_service_running(cid, "svc-r1").await.expect("svc");
+    repo.upsert_service_running(cid, "svc-r1")
+        .await
+        .expect("svc");
 
     // Reset
     repo.reset_company(cid).await.expect("reset");
 
     // All smoke_lab_* 应该清空
-    let codes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM smoke_lab_oauth_codes WHERE company_id = $1")
-        .bind(cid)
-        .fetch_one(db.pool())
-        .await
-        .expect("count");
-    let toks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM smoke_lab_oauth_tokens WHERE company_id = $1")
-        .bind(cid)
-        .fetch_one(db.pool())
-        .await
-        .expect("count");
-    let svcs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM smoke_lab_services WHERE company_id = $1")
-        .bind(cid)
-        .fetch_one(db.pool())
-        .await
-        .expect("count");
+    let codes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM smoke_lab_oauth_codes WHERE company_id = $1")
+            .bind(cid)
+            .fetch_one(db.pool())
+            .await
+            .expect("count");
+    let toks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM smoke_lab_oauth_tokens WHERE company_id = $1")
+            .bind(cid)
+            .fetch_one(db.pool())
+            .await
+            .expect("count");
+    let svcs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM smoke_lab_services WHERE company_id = $1")
+            .bind(cid)
+            .fetch_one(db.pool())
+            .await
+            .expect("count");
     assert_eq!(codes, 0);
     assert_eq!(toks, 0);
     assert_eq!(svcs, 0);
@@ -251,9 +282,15 @@ fn smoke_run_trigger_parse_round_trip() {
 #[test]
 fn smoke_step_path_parse_round_trip() {
     for (s, expected) in [
-        ("oauth/authorize", pc_repos::smoke::SmokeStepPath::OauthAuthorize),
+        (
+            "oauth/authorize",
+            pc_repos::smoke::SmokeStepPath::OauthAuthorize,
+        ),
         ("oauth/token", pc_repos::smoke::SmokeStepPath::OauthToken),
-        ("services/start", pc_repos::smoke::SmokeStepPath::ServiceStart),
+        (
+            "services/start",
+            pc_repos::smoke::SmokeStepPath::ServiceStart,
+        ),
         ("custom", pc_repos::smoke::SmokeStepPath::Custom),
     ] {
         assert_eq!(pc_repos::smoke::SmokeStepPath::parse(s), Some(expected));

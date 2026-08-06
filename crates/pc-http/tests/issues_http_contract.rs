@@ -38,10 +38,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test",
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test")),
         realtime,
     )
 }
@@ -705,16 +702,20 @@ async fn issue_recovery_actions_list_and_resolve() {
         "POST",
         &format!("/api/issues/{issue_id}/recovery-actions/resolve"),
         serde_json::json!({
-            "action_id": action_id,
-            "outcome": "reassigned",
-            "resolution_note": "reassigned to new agent",
+            "actionId": action_id,
+            // Round 282: aligned with Node ISSUE_RECOVERY_ACTION_OUTCOMES — `reassigned`
+        // is not a valid outcome; the closest semantic is `delegated`. The
+        // recovery handler now also surfaces `status`/`outcome` at the top level
+        // (was nested inside `recoveryAction`).
+        "outcome": "delegated",
+            "resolutionNote": "reassigned to new agent",
         }),
         None,
     )
     .await;
     assert_eq!(status, 200, "resolve: {body}");
     assert_eq!(body["status"], "resolved");
-    assert_eq!(body["outcome"], "reassigned");
+    assert_eq!(body["outcome"], "delegated");
 
     // GET 列表应为空
     let (status, body) = call_no_body(
@@ -1131,26 +1132,27 @@ async fn issue_feedback_votes_crud() {
     let state = test_state(db.clone());
     let app = routes::issues::router().with_state(state);
 
-    // POST vote
+    // POST vote — Round 282: aligned with the merged `list_issue_feedback_votes` /
+    // `create_issue_feedback_vote` handlers (camelCase DTO + `{items: [...]}` list envelope,
+    // matching Node `feedbackVoteDto` 1:1).
     let (status, body) = call(
         &app,
         "POST",
         &format!("/api/issues/{issue_id}/feedback-votes"),
         serde_json::json!({
-            "target_type": "issue",
-            "target_id": issue_id.to_string(),
+            "voterKind": "user",
+            "targetId": issue_id.to_string(),
             "vote": "up",
             "reason": "looks good",
-            "author_user_id": "reviewer-1",
         }),
         None,
     )
     .await;
-    assert_eq!(status, 201, "vote: {body}");
-    assert_eq!(body["vote"], "up");
-    assert_eq!(body["author_user_id"], "reviewer-1");
+    assert_eq!(status, 200, "vote: {body}");
+    assert!(body["id"].is_string(), "vote id present: {body}");
+    assert_eq!(body["issueId"], issue_id.to_string());
 
-    // GET list
+    // GET list — the Round 219 handler returns `{ "items": [...] }`.
     let (status, body) = call_no_body(
         &app,
         "GET",
@@ -1159,8 +1161,10 @@ async fn issue_feedback_votes_crud() {
     )
     .await;
     assert_eq!(status, 200);
-    let arr = body.as_array().expect("array");
+    let arr = body["items"].as_array().expect("items array");
     assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["voterKind"], "user");
+    assert_eq!(arr[0]["vote"], "up");
     assert_eq!(arr[0]["reason"], "looks good");
 }
 
@@ -1391,4 +1395,103 @@ async fn issue_tree_control() {
     assert_eq!(status, 200, "retry_now: {body}");
     assert!(body["monitor_next_check_at"].is_string());
     assert!(body["monitor_attempt_count"].as_i64().unwrap() >= 1);
+}
+#[tokio::test(flavor = "current_thread")]
+async fn issue_execution_policy_write_through() {
+    // Round 281: 验证 PATCH /api/issues/:id 串接了
+    // `apply_issue_execution_policy_transition`，并把 execution_state / monitor_*
+    // 真正写入 issues 表。
+    use pc_repos::issue::IssueRepo;
+    use serde_json::Value;
+
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    let user_id = insert_user(&db).await;
+    let session = insert_session(&db, &user_id).await;
+    let agent_id = insert_agent(&db, company_id).await;
+    let issue_id = insert_issue(&db, company_id, "Write-through test").await;
+
+    let state = test_state(db.clone());
+    let app = routes::issues::router().with_state(state);
+
+    let stage_id = Uuid::new_v4().to_string();
+    let policy = serde_json::json!({
+        "mode": "normal",
+        "commentRequired": true,
+        "stages": [{
+            "id": stage_id,
+            "type": "review",
+            "approvalsNeeded": 1,
+            "participants": [{
+                "id": Uuid::new_v4().to_string(),
+                "type": "agent",
+                "agentId": agent_id.to_string()
+            }]
+        }],
+        "monitor": {
+            "nextCheckAt": "2099-01-01T00:00:00.000Z",
+            "notes": "check deploy",
+            "scheduledBy": "assignee"
+        }
+    });
+
+    let (status, body) = call(
+        &app,
+        "PATCH",
+        &format!("/api/issues/{issue_id}"),
+        serde_json::json!({
+            "status": "in_review",
+            "executionPolicy": policy,
+        }),
+        Some(&session),
+    )
+    .await;
+    assert_eq!(status, 200, "patch returned: {body}");
+
+    // 1) 顶层 status：transition 输出"in_review"。
+    assert_eq!(body["status"], "in_review");
+
+    // 2) 顶层 assignee 字段：transition 把 stage 的第一个 participant 设为 assignee。
+    assert_eq!(body["assignee_agent_id"], agent_id.to_string());
+    assert_eq!(body["assignee_user_id"], Value::Null);
+
+    // 3) 顶层 monitor_* 字段：transition 把 monitor state 落库。
+    assert!(body["monitor_next_check_at"].is_string());
+    assert_eq!(body["monitor_scheduled_by"], "assignee");
+    assert_eq!(body["monitor_notes"], "check deploy");
+
+    // 4) execution_state：嵌套对象，键走 camelCase（与 Node 1:1）。
+    let exec_state = body["execution_state"]
+        .as_object()
+        .expect("execution_state must be an object");
+    assert_eq!(exec_state["status"], "pending");
+    assert_eq!(exec_state["currentStageId"], stage_id);
+    assert_eq!(exec_state["currentStageType"], "review");
+    let participant = exec_state["currentParticipant"]
+        .as_object()
+        .expect("currentParticipant object");
+    assert_eq!(participant["type"], "agent");
+    assert_eq!(participant["agentId"], agent_id.to_string());
+
+    // 5) execution_state.monitor：transition 合并 monitor 到 execution_state。
+    let monitor = exec_state["monitor"].as_object().expect("monitor object");
+    assert_eq!(monitor["status"], "scheduled");
+    assert_eq!(monitor["nextCheckAt"], "2099-01-01T00:00:00.000Z");
+    assert_eq!(monitor["notes"], "check deploy");
+
+    // 6) 真正查回 DB 行：验证写入层与内存层一致。
+    let row = IssueRepo::new(&db)
+        .get(issue_id)
+        .await
+        .expect("get")
+        .expect("issue exists");
+    assert_eq!(row.status, "in_review");
+    assert_eq!(row.assignee_agent_id, Some(agent_id));
+    assert!(row.execution_state.is_some(), "execution_state persisted");
+    assert!(
+        row.monitor_next_check_at.is_some(),
+        "monitor_next_check_at persisted"
+    );
+    assert_eq!(row.monitor_scheduled_by.as_deref(), Some("assignee"));
+    assert_eq!(row.monitor_notes.as_deref(), Some("check deploy"));
 }

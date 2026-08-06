@@ -201,19 +201,20 @@ pub fn to_execution_workspace(
     row: &ExecutionWorkspaceRow,
     runtime_services: Vec<WorkspaceRuntimeService>,
 ) -> ExecutionWorkspace {
-    let cfg = crate::execution_workspace_config::read_execution_workspace_config(
-        row.metadata.as_ref(),
-    );
+    let cfg =
+        crate::execution_workspace_config::read_execution_workspace_config(row.metadata.as_ref());
     ExecutionWorkspace {
         id: row.id.clone(),
         company_id: row.company_id.clone(),
         project_id: row.project_id.clone(),
         project_workspace_id: row.project_workspace_id.clone(),
         source_issue_id: row.source_issue_id.clone(),
-        mode: ExecutionWorkspaceMode::from_str(&row.mode).unwrap_or(ExecutionWorkspaceMode::Worktree),
+        mode: ExecutionWorkspaceMode::from_str(&row.mode)
+            .unwrap_or(ExecutionWorkspaceMode::Worktree),
         strategy_type: row.strategy_type.clone(),
         name: row.name.clone(),
-        status: ExecutionWorkspaceStatus::from_str(&row.status).unwrap_or(ExecutionWorkspaceStatus::Idle),
+        status: ExecutionWorkspaceStatus::from_str(&row.status)
+            .unwrap_or(ExecutionWorkspaceStatus::Idle),
         cwd: row.cwd.clone(),
         repo_url: row.repo_url.clone(),
         base_ref: row.base_ref.clone(),
@@ -272,13 +273,9 @@ pub fn assignee_matches_execution_principal(
     };
     match principal.principal_type.as_str() {
         "agent" => {
-            input.assignee_agent_id == principal.agent_id
-                && input.assignee_user_id.is_none()
+            input.assignee_agent_id == principal.agent_id && input.assignee_user_id.is_none()
         }
-        "user" => {
-            input.assignee_agent_id.is_none()
-                && input.assignee_user_id == principal.user_id
-        }
+        "user" => input.assignee_agent_id.is_none() && input.assignee_user_id == principal.user_id,
         _ => false,
     }
 }
@@ -322,7 +319,10 @@ fn parse_execution_principal(v: &Value) -> Option<ExecutionPrincipal> {
     }
     Some(ExecutionPrincipal {
         principal_type: t.to_string(),
-        agent_id: obj.get("agentId").and_then(|v| v.as_str()).map(String::from),
+        agent_id: obj
+            .get("agentId")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         user_id: obj.get("userId").and_then(|v| v.as_str()).map(String::from),
     })
 }
@@ -330,7 +330,9 @@ fn parse_execution_principal(v: &Value) -> Option<ExecutionPrincipal> {
 /// `quarantineRestoreRequestedSourceStatus(input)`：
 /// - status === "pending" && input.status === "in_review" && assignee matches → undefined
 /// - 其它 → "todo"
-pub fn quarantine_restore_requested_source_status(input: &QuarantineRestoreInput) -> QuarantineRestoreStatus {
+pub fn quarantine_restore_requested_source_status(
+    input: &QuarantineRestoreInput,
+) -> QuarantineRestoreStatus {
     let state = parse_issue_execution_state(input.execution_state.as_ref());
     if let Some(state) = state {
         let principal = state.current_participant.as_ref();
@@ -374,18 +376,14 @@ pub struct WorkspaceRuntimeValidationFailure {
 /// - code === "workspace_validation_failed"
 /// - message 是 string
 /// - resultJson 是 object（非 array）
-pub fn is_workspace_runtime_validation_failure(
-    error: &Value,
-) -> bool {
+pub fn is_workspace_runtime_validation_failure(error: &Value) -> bool {
     let obj = match error.as_object() {
         Some(o) => o,
         None => return false,
     };
-    let code_matches = obj.get("code").and_then(|v| v.as_str()) == Some("workspace_validation_failed");
-    let message_is_string = obj
-        .get("message")
-        .map(|v| v.is_string())
-        .unwrap_or(false);
+    let code_matches =
+        obj.get("code").and_then(|v| v.as_str()) == Some("workspace_validation_failed");
+    let message_is_string = obj.get("message").map(|v| v.is_string()).unwrap_or(false);
     let result_json_is_object = obj
         .get("resultJson")
         .map(|v| v.is_object())
@@ -464,10 +462,7 @@ mod tests {
         row.metadata = Some(meta);
         let ws = to_execution_workspace(&row, vec![]);
         let c = ws.config.expect("config should be present");
-        assert_eq!(
-            c.provision_command.flatten(),
-            Some("pnpm i".to_string())
-        );
+        assert_eq!(c.provision_command.flatten(), Some("pnpm i".to_string()));
     }
 
     #[test]
@@ -545,7 +540,10 @@ mod tests {
             ExecutionWorkspaceProviderType::Ecs,
             ExecutionWorkspaceProviderType::K8s,
         ] {
-            assert_eq!(ExecutionWorkspaceProviderType::from_str(p.as_str()), Some(p));
+            assert_eq!(
+                ExecutionWorkspaceProviderType::from_str(p.as_str()),
+                Some(p)
+            );
         }
     }
 
@@ -556,7 +554,7 @@ mod tests {
             assignee_user_id: None,
         };
         let p = ExecutionPrincipal {
-            principal_type: "agent".into(),
+            principal_type: "agent".to_string().into(),
             agent_id: Some("a-1".into()),
             user_id: None,
         };
@@ -570,7 +568,7 @@ mod tests {
             assignee_user_id: Some("u-1".into()),
         };
         let p = ExecutionPrincipal {
-            principal_type: "agent".into(),
+            principal_type: "agent".to_string().into(),
             agent_id: Some("a-1".into()),
             user_id: None,
         };
@@ -584,7 +582,7 @@ mod tests {
             assignee_user_id: Some("u-1".into()),
         };
         let p = ExecutionPrincipal {
-            principal_type: "user".into(),
+            principal_type: "user".to_string().into(),
             agent_id: None,
             user_id: Some("u-1".into()),
         };
@@ -692,7 +690,10 @@ mod tests {
     #[test]
     fn is_validation_failure_true_for_valid_shape() {
         let mut obj = Map::new();
-        obj.insert("code".into(), Value::String("workspace_validation_failed".into()));
+        obj.insert(
+            "code".into(),
+            Value::String("workspace_validation_failed".into()),
+        );
         obj.insert("message".into(), Value::String("bad".into()));
         let mut rj = Map::new();
         rj.insert("k".into(), Value::String("v".into()));
@@ -703,10 +704,15 @@ mod tests {
     #[test]
     fn is_validation_failure_false_for_array_result_json() {
         let mut obj = Map::new();
-        obj.insert("code".into(), Value::String("workspace_validation_failed".into()));
+        obj.insert(
+            "code".into(),
+            Value::String("workspace_validation_failed".into()),
+        );
         obj.insert("message".into(), Value::String("bad".into()));
         obj.insert("resultJson".into(), Value::Array(vec![]));
-        assert!(!is_workspace_runtime_validation_failure(&Value::Object(obj)));
+        assert!(!is_workspace_runtime_validation_failure(&Value::Object(
+            obj
+        )));
     }
 
     #[test]
@@ -717,13 +723,17 @@ mod tests {
         let mut rj = Map::new();
         rj.insert("k".into(), Value::String("v".into()));
         obj.insert("resultJson".into(), Value::Object(rj));
-        assert!(!is_workspace_runtime_validation_failure(&Value::Object(obj)));
+        assert!(!is_workspace_runtime_validation_failure(&Value::Object(
+            obj
+        )));
     }
 
     #[test]
     fn is_validation_failure_false_for_non_object() {
         assert!(!is_workspace_runtime_validation_failure(&Value::Null));
         assert!(!is_workspace_runtime_validation_failure(&Value::Bool(true)));
-        assert!(!is_workspace_runtime_validation_failure(&Value::Number(1.into())));
+        assert!(!is_workspace_runtime_validation_failure(&Value::Number(
+            1.into()
+        )));
     }
 }

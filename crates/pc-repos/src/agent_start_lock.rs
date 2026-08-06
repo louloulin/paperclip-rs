@@ -35,12 +35,7 @@ impl AgentStartLock {
     /// - 如果同一 agent 的上一次调用还没结束，最多等 `stale_ms` 毫秒
     /// - 超时后跳过等待继续执行（不阻塞）
     /// - 闭包返回后（含 panic → JoinError）锁被释放
-    pub async fn with_lock<F, Fut, T>(
-        &self,
-        agent_id: Uuid,
-        stale_ms: u64,
-        f: F,
-    ) -> T
+    pub async fn with_lock<F, Fut, T>(&self, agent_id: Uuid, stale_ms: u64, f: F) -> T
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = T>,
@@ -198,9 +193,7 @@ mod tests {
         // 等 h1 拿到锁
         sleep(TokioDuration::from_millis(20)).await;
         let started_at = Instant::now();
-        let res = lock
-            .with_lock(agent, 50, || async { "fast" })
-            .await;
+        let res = lock.with_lock(agent, 50, || async { "fast" }).await;
         let elapsed = started_at.elapsed();
         assert_eq!(res, "fast");
         // 必须在 stale 50ms 之后很快跑完（不卡 500ms）

@@ -1,20 +1,18 @@
 //! Round 160 集成测试：projects.rs + decision_training.rs 仓储化扩展。
 //!
-//! ProjectRepo 9 新方法（workspaces 生命周期管理）+ 
+//! ProjectRepo 9 新方法（workspaces 生命周期管理）+
 //! DecisionTrainingService 6 新方法（list_filtered / preview / patch_with_history / owner_for_id）。
 
 use pc_db::Db;
 use pc_repos::decision_training::DecisionTrainingService;
 use pc_repos::project::ProjectRepo;
-use uuid::Uuid;
 use serde_json::json;
+use uuid::Uuid;
 
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -72,7 +70,10 @@ async fn company_id_for_project_basic() {
     let hit = repo.company_id_for_project(pid).await.expect("hit");
     assert_eq!(hit, Some(cid));
 
-    let miss = repo.company_id_for_project(Uuid::new_v4()).await.expect("miss");
+    let miss = repo
+        .company_id_for_project(Uuid::new_v4())
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 
@@ -90,7 +91,10 @@ async fn company_id_for_workspace_basic() {
 
     // miss 路径: workspace 不属于此 project
     let other_pid = insert_project(&db, cid).await;
-    let miss = repo.company_id_for_workspace(wsid, other_pid).await.expect("miss");
+    let miss = repo
+        .company_id_for_workspace(wsid, other_pid)
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 
@@ -129,7 +133,10 @@ async fn unset_other_primary_workspaces_basic() {
     let ws1 = insert_workspace(&db, cid, pid, true).await;
     let _ws2 = insert_workspace(&db, cid, pid, true).await;
     let repo = ProjectRepo::new(&db);
-    let n = repo.unset_other_primary_workspaces(pid, ws1).await.expect("unset");
+    let n = repo
+        .unset_other_primary_workspaces(pid, ws1)
+        .await
+        .expect("unset");
     assert_eq!(n, 1);
 }
 
@@ -142,8 +149,12 @@ async fn insert_workspace_simple_basic() {
     let repo = ProjectRepo::new(&db);
     let id = repo
         .insert_workspace_simple(
-            cid, pid, "simple-ws", "/simple/path",
-            Some("git@github.com:x/y.git"), None,
+            cid,
+            pid,
+            "simple-ws",
+            "/simple/path",
+            Some("git@github.com:x/y.git"),
+            None,
             Some(json!({"created_by": "test"})),
             Some(true),
         )
@@ -163,7 +174,16 @@ async fn patch_workspace_partial_basic() {
 
     // 只改 name
     let n = repo
-        .patch_workspace_partial(wsid, pid, Some("updated-name"), None, None, None, None, None)
+        .patch_workspace_partial(
+            wsid,
+            pid,
+            Some("updated-name"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .expect("patch");
     assert_eq!(n, 1);
@@ -185,11 +205,17 @@ async fn delete_workspace_in_project_basic() {
     let wsid = insert_workspace(&db, cid, pid, false).await;
     let repo = ProjectRepo::new(&db);
 
-    let n = repo.delete_workspace_in_project(wsid, pid).await.expect("del");
+    let n = repo
+        .delete_workspace_in_project(wsid, pid)
+        .await
+        .expect("del");
     assert_eq!(n, 1);
 
     // 重复 delete → 0 affected
-    let n = repo.delete_workspace_in_project(wsid, pid).await.expect("del2");
+    let n = repo
+        .delete_workspace_in_project(wsid, pid)
+        .await
+        .expect("del2");
     assert_eq!(n, 0);
 }
 
@@ -201,7 +227,10 @@ async fn append_runtime_action_basic() {
     let pid = insert_project(&db, cid).await;
     let wsid = insert_workspace(&db, cid, pid, false).await;
     let repo = ProjectRepo::new(&db);
-    let n = repo.append_runtime_action(wsid, "start").await.expect("append");
+    let n = repo
+        .append_runtime_action(wsid, "start")
+        .await
+        .expect("append");
     assert_eq!(n, 1);
 }
 
@@ -245,7 +274,10 @@ async fn list_filtered_simple_basic() {
     let _cid = insert_company(&db, "lfs1").await;
     let svc = DecisionTrainingService::new(&db);
     // 没有 example → 返空
-    let rows = svc.list_filtered_simple(_cid, None, None, None).await.expect("list");
+    let rows = svc
+        .list_filtered_simple(_cid, None, None, None)
+        .await
+        .expect("list");
     // 接受任意（含残留）
     let _ = rows;
 }
@@ -262,7 +294,10 @@ async fn preview_decision_basic() {
     let (st, _outcome, _opts) = row.unwrap();
     assert_eq!(st, "open");
 
-    let miss = svc.preview_decision(cid, Uuid::new_v4()).await.expect("miss");
+    let miss = svc
+        .preview_decision(cid, Uuid::new_v4())
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 
@@ -276,7 +311,10 @@ async fn preview_approval_basic() {
     let row = svc.preview_approval(cid, approval_id).await.expect("get");
     assert!(row.is_some());
 
-    let miss = svc.preview_approval(cid, Uuid::new_v4()).await.expect("miss");
+    let miss = svc
+        .preview_approval(cid, Uuid::new_v4())
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 
@@ -309,7 +347,10 @@ async fn patch_with_history_basic() {
     let _cid = insert_company(&db, "pwh1").await;
     let svc = DecisionTrainingService::new(&db);
     // miss — 不存在的 id 应返 None
-    let miss = svc.patch_with_history(Uuid::new_v4(), Some("n".into()), None).await.expect("miss");
+    let miss = svc
+        .patch_with_history(Uuid::new_v4(), Some("n".into()), None)
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 

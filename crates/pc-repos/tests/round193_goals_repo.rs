@@ -21,9 +21,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -315,15 +313,36 @@ async fn count_by_status_aggregates_correctly() {
     let repo = GoalRepo::new(&db);
 
     // Insert 3 goals with different statuses
-    sqlx::query("INSERT INTO goals (company_id, title, level, status) VALUES ($1, 'g1', 'task', 'active')")
-        .bind(cid).execute(db.pool()).await.unwrap();
-    sqlx::query("INSERT INTO goals (company_id, title, level, status) VALUES ($1, 'g2', 'task', 'planned')")
-        .bind(cid).execute(db.pool()).await.unwrap();
-    sqlx::query("INSERT INTO goals (company_id, title, level, status) VALUES ($1, 'g3', 'task', 'active')")
-        .bind(cid).execute(db.pool()).await.unwrap();
+    sqlx::query(
+        "INSERT INTO goals (company_id, title, level, status) VALUES ($1, 'g1', 'task', 'active')",
+    )
+    .bind(cid)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (company_id, title, level, status) VALUES ($1, 'g2', 'task', 'planned')",
+    )
+    .bind(cid)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (company_id, title, level, status) VALUES ($1, 'g3', 'task', 'active')",
+    )
+    .bind(cid)
+    .execute(db.pool())
+    .await
+    .unwrap();
 
-    let active = repo.count_by_status(cid, GoalStatus::Active).await.expect("active");
-    let planned = repo.count_by_status(cid, GoalStatus::Planned).await.expect("planned");
+    let active = repo
+        .count_by_status(cid, GoalStatus::Active)
+        .await
+        .expect("active");
+    let planned = repo
+        .count_by_status(cid, GoalStatus::Planned)
+        .await
+        .expect("planned");
     assert_eq!(active, 2);
     assert_eq!(planned, 1);
 }

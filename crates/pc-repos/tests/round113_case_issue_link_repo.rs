@@ -20,7 +20,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r113-{tag}-{id}"))
         .bind(format!("R113{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -45,7 +47,9 @@ async fn insert_issue(db: &Db, company_id: Uuid, title: &str) -> Uuid {
     .bind(company_id)
     .bind(format!("ISS-{}", &id.simple().to_string()[..6]))
     .bind(title)
-    .execute(db.pool()).await.expect("insert issue");
+    .execute(db.pool())
+    .await
+    .expect("insert issue");
     id
 }
 
@@ -55,8 +59,14 @@ async fn insert_link(db: &Db, company_id: Uuid, case_id: Uuid, issue_id: Uuid, r
         "INSERT INTO case_issue_links (id, company_id, case_id, issue_id, role) \
          VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(id).bind(company_id).bind(case_id).bind(issue_id).bind(role)
-    .execute(db.pool()).await.expect("insert link");
+    .bind(id)
+    .bind(company_id)
+    .bind(case_id)
+    .bind(issue_id)
+    .bind(role)
+    .execute(db.pool())
+    .await
+    .expect("insert link");
     id
 }
 
@@ -73,13 +83,12 @@ async fn record_issue_linked_event_writes() {
         .record_issue_linked_event(cid, case_id, issue_id, "reference")
         .await
         .expect("record");
-    let (kind, payload): (String, serde_json::Value) = sqlx::query_as(
-        "SELECT kind, payload FROM case_events WHERE id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (kind, payload): (String, serde_json::Value) =
+        sqlx::query_as("SELECT kind, payload FROM case_events WHERE id = $1")
+            .bind(event_id)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(kind, "issue_linked");
     assert_eq!(payload["issueId"], serde_json::json!(issue_id.to_string()));
     assert_eq!(payload["role"], serde_json::json!("reference"));
@@ -98,13 +107,12 @@ async fn record_issue_unlinked_event_writes() {
         .record_issue_unlinked_event(cid, case_id, issue_id)
         .await
         .expect("record");
-    let (kind, payload): (String, serde_json::Value) = sqlx::query_as(
-        "SELECT kind, payload FROM case_events WHERE id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (kind, payload): (String, serde_json::Value) =
+        sqlx::query_as("SELECT kind, payload FROM case_events WHERE id = $1")
+            .bind(event_id)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(kind, "issue_unlinked");
     assert_eq!(payload["issueId"], serde_json::json!(issue_id.to_string()));
 }
@@ -121,7 +129,10 @@ async fn list_issue_links_with_issue_joins() {
     insert_link(&db, cid, case_id, i2, "work").await;
 
     let repo = CaseRepo::new(&db);
-    let rows = repo.list_issue_links_with_issue(cid, case_id).await.expect("list");
+    let rows = repo
+        .list_issue_links_with_issue(cid, case_id)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 2);
     // 按 created_at ASC，所以 i1 在前
     assert_eq!(rows[0].issue_id, i1);
@@ -145,8 +156,14 @@ async fn list_issue_links_with_issue_isolates() {
     insert_link(&db, cid, case_b, issue, "work").await;
 
     let repo = CaseRepo::new(&db);
-    let a = repo.list_issue_links_with_issue(cid, case_a).await.expect("a");
-    let b = repo.list_issue_links_with_issue(cid, case_b).await.expect("b");
+    let a = repo
+        .list_issue_links_with_issue(cid, case_a)
+        .await
+        .expect("a");
+    let b = repo
+        .list_issue_links_with_issue(cid, case_b)
+        .await
+        .expect("b");
     assert_eq!(a.len(), 1);
     assert_eq!(a[0].role, "origin");
     assert_eq!(b.len(), 1);
@@ -171,13 +188,11 @@ async fn delete_issue_link_by_id_returns_issue() {
     assert_eq!(back, issue_id);
 
     // 验证真删
-    let n: i64 = sqlx::query_scalar(
-        "SELECT count(*)::bigint FROM case_issue_links WHERE id = $1",
-    )
-    .bind(link_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("q");
+    let n: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM case_issue_links WHERE id = $1")
+        .bind(link_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("q");
     assert_eq!(n, 0);
 }
 
@@ -233,7 +248,10 @@ async fn link_issue_then_list_with_issue() {
         .await
         .expect("link");
 
-    let rows = repo.list_issue_links_with_issue(cid, case_id).await.expect("list");
+    let rows = repo
+        .list_issue_links_with_issue(cid, case_id)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].role, "work");
     assert_eq!(rows[0].issue_title, Some("ink".to_owned()));

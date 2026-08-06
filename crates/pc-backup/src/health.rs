@@ -177,12 +177,7 @@ fn find_latest_backup(backup_dir: &str, now: SystemTime) -> Option<DatabaseBacku
             Err(_) => continue,
         };
         let mtime = metadata.modified().ok()?;
-        candidates.push((
-            mtime,
-            entry.path(),
-            name,
-            metadata.len(),
-        ));
+        candidates.push((mtime, entry.path(), name, metadata.len()));
     }
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
     let (mtime, full_path, name, size_bytes) = candidates.into_iter().next()?;
@@ -374,10 +369,10 @@ mod tests {
         let opts = make_options(&backup_dir, true);
         let status = inspect_database_backup_health(&opts);
         assert_eq!(status.status, BackupHealthOverallStatus::Warning);
-        assert!(status.warnings.iter().any(|w| matches!(
-            w.code,
-            DatabaseBackupHealthWarningCode::DatabaseBackupStale
-        )));
+        assert!(status
+            .warnings
+            .iter()
+            .any(|w| matches!(w.code, DatabaseBackupHealthWarningCode::DatabaseBackupStale)));
     }
 
     #[test]
@@ -451,11 +446,11 @@ mod tests {
 
         let opts = make_options(&backup_dir, true);
         let status = inspect_database_backup_health(&opts);
-        assert!(status.last_failure.is_some(), "should pick up alert from parent dir");
-        assert_eq!(
-            status.last_failure.unwrap().message,
-            "Failure from parent"
+        assert!(
+            status.last_failure.is_some(),
+            "should pick up alert from parent dir"
         );
+        assert_eq!(status.last_failure.unwrap().message, "Failure from parent");
     }
 
     #[test]
@@ -492,10 +487,10 @@ mod tests {
         let status = inspect_database_backup_health(&opts);
         assert_eq!(status.max_age_hours, 1);
         // 2h > 1h → stale
-        assert!(status.warnings.iter().any(|w| matches!(
-            w.code,
-            DatabaseBackupHealthWarningCode::DatabaseBackupStale
-        )));
+        assert!(status
+            .warnings
+            .iter()
+            .any(|w| matches!(w.code, DatabaseBackupHealthWarningCode::DatabaseBackupStale)));
     }
 
     #[test]

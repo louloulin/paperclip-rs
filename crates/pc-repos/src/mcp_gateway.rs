@@ -154,12 +154,26 @@ impl<'a> McpGatewayRepo<'a> {
         project_id: Option<Uuid>,
         issue_id: Option<Uuid>,
     ) -> RepoResult<McpGatewayRow> {
-        create(self.db, company_id, name, slug, description, profile_id, agent_id, project_id, issue_id).await
+        create(
+            self.db,
+            company_id,
+            name,
+            slug,
+            description,
+            profile_id,
+            agent_id,
+            project_id,
+            issue_id,
+        )
+        .await
     }
     pub async fn find_by_id(&self, id: Uuid) -> RepoResult<Option<McpGatewayRow>> {
         find_by_id(self.db, id).await
     }
-    pub async fn find_id_and_name_by_public_id(&self, public_id: &str) -> RepoResult<Option<(Uuid, String)>> {
+    pub async fn find_id_and_name_by_public_id(
+        &self,
+        public_id: &str,
+    ) -> RepoResult<Option<(Uuid, String)>> {
         find_id_and_name_by_public_id(self.db, public_id).await
     }
     pub async fn update_partial(
@@ -200,23 +214,20 @@ impl<'a> McpGatewayRepo<'a> {
         &self,
         limit: i64,
     ) -> sqlx::Result<Vec<(Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>)>> {
-        let rows: Vec<(Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-            "SELECT id, gateway_id::text, status::text, created_at FROM tool_gateway_sessions \
+        let rows: Vec<(Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx::query_as(
+                "SELECT id, gateway_id::text, status::text, created_at FROM tool_gateway_sessions \
              ORDER BY created_at DESC LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(self.db.pool())
-        .await
-        .unwrap_or_default();
+            )
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+            .unwrap_or_default();
         Ok(rows)
     }
 
     /// Round 155: 签发 gateway token。返回 token id。
-    pub async fn issue_token(
-        &self,
-        gateway_id: Uuid,
-        token_hash: &str,
-    ) -> sqlx::Result<Uuid> {
+    pub async fn issue_token(&self, gateway_id: Uuid, token_hash: &str) -> sqlx::Result<Uuid> {
         let id: Uuid = sqlx::query_scalar(
             "INSERT INTO tool_mcp_gateway_tokens (gateway_id, token_hash, created_at) \
              VALUES ($1, $2, now()) RETURNING id",
@@ -230,12 +241,10 @@ impl<'a> McpGatewayRepo<'a> {
 
     /// Round 155: 撤销 gateway token（写 revoked_at）。
     pub async fn revoke_token(&self, token_id: Uuid) -> sqlx::Result<u64> {
-        let r = sqlx::query(
-            "UPDATE tool_mcp_gateway_tokens SET revoked_at = now() WHERE id = $1",
-        )
-        .bind(token_id)
-        .execute(self.db.pool())
-        .await?;
+        let r = sqlx::query("UPDATE tool_mcp_gateway_tokens SET revoked_at = now() WHERE id = $1")
+            .bind(token_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected())
     }
 
@@ -243,8 +252,20 @@ impl<'a> McpGatewayRepo<'a> {
     pub async fn list_audit_events(
         &self,
         limit: i64,
-    ) -> sqlx::Result<Vec<(Uuid, String, Option<serde_json::Value>, Option<chrono::DateTime<chrono::Utc>>)>> {
-        let rows: Vec<(Uuid, String, Option<serde_json::Value>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+    ) -> sqlx::Result<
+        Vec<(
+            Uuid,
+            String,
+            Option<serde_json::Value>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )>,
+    > {
+        let rows: Vec<(
+            Uuid,
+            String,
+            Option<serde_json::Value>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )> = sqlx::query_as(
             "SELECT id, kind, payload, created_at FROM tool_access_audit_events \
              ORDER BY created_at DESC LIMIT $1",
         )
@@ -257,23 +278,19 @@ impl<'a> McpGatewayRepo<'a> {
 
     /// Round 155: 批准 action request（UPDATE tool_action_requests SET status='approved'）。
     pub async fn approve_action_request(&self, request_id: Uuid) -> sqlx::Result<u64> {
-        let r = sqlx::query(
-            "UPDATE tool_action_requests SET status = 'approved' WHERE id = $1",
-        )
-        .bind(request_id)
-        .execute(self.db.pool())
-        .await?;
+        let r = sqlx::query("UPDATE tool_action_requests SET status = 'approved' WHERE id = $1")
+            .bind(request_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected())
     }
 
     /// Round 155: 拒绝 action request。
     pub async fn decline_action_request(&self, request_id: Uuid) -> sqlx::Result<u64> {
-        let r = sqlx::query(
-            "UPDATE tool_action_requests SET status = 'declined' WHERE id = $1",
-        )
-        .bind(request_id)
-        .execute(self.db.pool())
-        .await?;
+        let r = sqlx::query("UPDATE tool_action_requests SET status = 'declined' WHERE id = $1")
+            .bind(request_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(r.rows_affected())
     }
 }

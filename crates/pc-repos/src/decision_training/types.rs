@@ -225,7 +225,10 @@ mod tests {
 
     #[test]
     fn source_kind_as_str_matches_node() {
-        assert_eq!(DecisionTrainingSourceKind::Interaction.as_str(), "interaction");
+        assert_eq!(
+            DecisionTrainingSourceKind::Interaction.as_str(),
+            "interaction"
+        );
         assert_eq!(DecisionTrainingSourceKind::Approval.as_str(), "approval");
         assert_eq!(
             DecisionTrainingSourceKind::ExecutionDecision.as_str(),

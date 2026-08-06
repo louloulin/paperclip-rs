@@ -8,9 +8,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -46,7 +44,10 @@ async fn get_in_company_basic() {
     let hit: Option<DocumentRow> = repo.get_in_company(cid, did).await.expect("hit");
     assert!(hit.is_some());
 
-    let wrong_company: Option<DocumentRow> = repo.get_in_company(Uuid::new_v4(), did).await.expect("wrong");
+    let wrong_company: Option<DocumentRow> = repo
+        .get_in_company(Uuid::new_v4(), did)
+        .await
+        .expect("wrong");
     assert!(wrong_company.is_none());
 }
 
@@ -68,10 +69,16 @@ async fn latest_revision_id_in_company_basic() {
     .expect("doc");
 
     let repo = DocumentRepo::new(&db);
-    let v = repo.latest_revision_id_in_company(cid, did).await.expect("get");
+    let v = repo
+        .latest_revision_id_in_company(cid, did)
+        .await
+        .expect("get");
     assert_eq!(v, Some(rid));
 
-    let none_v = repo.latest_revision_id_in_company(Uuid::new_v4(), did).await.expect("get wrong");
+    let none_v = repo
+        .latest_revision_id_in_company(Uuid::new_v4(), did)
+        .await
+        .expect("get wrong");
     assert!(none_v.is_none());
 }
 
@@ -195,7 +202,10 @@ async fn list_revisions_in_company_basic() {
             .expect("insert rev");
     }
 
-    let rows = repo.list_revisions_in_company(cid, did, 20).await.expect("list");
+    let rows = repo
+        .list_revisions_in_company(cid, did, 20)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 3);
     // 倒序：3, 2, 1
     assert_eq!(rows[0].revision_number, 3);
@@ -203,7 +213,10 @@ async fn list_revisions_in_company_basic() {
     assert_eq!(rows[2].revision_number, 1);
 
     // limit=2 只取前两个
-    let top2 = repo.list_revisions_in_company(cid, did, 2).await.expect("top2");
+    let top2 = repo
+        .list_revisions_in_company(cid, did, 2)
+        .await
+        .expect("top2");
     assert_eq!(top2.len(), 2);
     assert_eq!(top2[0].revision_number, 3);
 }
@@ -262,7 +275,10 @@ async fn mark_slot_written_basic() {
     let db = db().await;
     let cid = insert_company(&db, "msw1").await;
     let repo = SummaryRepo::new(&db);
-    let slot = repo.insert_idle(cid, "company", None, "msw-slot").await.expect("idle");
+    let slot = repo
+        .insert_idle(cid, "company", None, "msw-slot")
+        .await
+        .expect("idle");
     let did = Uuid::new_v4();
     let now = chrono::Utc::now();
     let back: SummarySlotRow = repo
@@ -281,7 +297,10 @@ async fn update_to_generating_basic() {
     let db = db().await;
     let cid = insert_company(&db, "utg1").await;
     let repo = SummaryRepo::new(&db);
-    let slot = repo.insert_idle(cid, "company", None, "utg-slot").await.expect("idle");
+    let slot = repo
+        .insert_idle(cid, "company", None, "utg-slot")
+        .await
+        .expect("idle");
     let issue_id: Uuid = Uuid::new_v4();
     let back: SummarySlotRow = repo
         .update_to_generating(slot.id, issue_id)
@@ -329,4 +348,3 @@ fn summary_slot_row_typecheck() {
     fn assert_from_row<T: for<'a> sqlx::FromRow<'a, sqlx::postgres::PgRow>>() {}
     assert_from_row::<SummarySlotRow>();
 }
-

@@ -41,20 +41,12 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -118,8 +110,13 @@ async fn feature_flags_list_reflects_registered_flags() {
     assert_eq!(status, 200);
     let items = body["items"].as_array().expect("items array");
     assert_eq!(items.len(), before + 1, "list should grow after register");
-    let found = items.iter().any(|it| it["key"] == key && it["enabled"] == json!(true) && it["hasRollout"] == json!(true));
-    assert!(found, "registered flag should appear in list with enabled+hasRollout true: {body}");
+    let found = items.iter().any(|it| {
+        it["key"] == key && it["enabled"] == json!(true) && it["hasRollout"] == json!(true)
+    });
+    assert!(
+        found,
+        "registered flag should appear in list with enabled+hasRollout true: {body}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -23,7 +23,11 @@ use serde_json::{Map, Value};
 /// - `SHELL` 不存在 → fallback
 /// - `SHELL` 是绝对路径但文件不存在 → fallback
 /// - 否则返回 `SHELL.trim()`
-pub fn resolve_shell(platform_is_windows: bool, env_shell: Option<&str>, shell_exists: bool) -> String {
+pub fn resolve_shell(
+    platform_is_windows: bool,
+    env_shell: Option<&str>,
+    shell_exists: bool,
+) -> String {
     let fallback = if platform_is_windows { "sh" } else { "/bin/sh" };
     let shell = env_shell.map(|s| s.trim()).unwrap_or("");
     if shell.is_empty() {
@@ -64,10 +68,7 @@ pub fn looks_like_workspace_dev_server_command(command: &str) -> bool {
 /// - serviceName ∈ {"paperclip-dev", "paperclip-dev-once"} → true
 /// - command 同时包含 "dev:once" 和 "tailscale-auth" → true
 /// - 否则 → false
-pub fn is_paperclip_dev_runtime_service(
-    service_name: Option<&str>,
-    command: Option<&str>,
-) -> bool {
+pub fn is_paperclip_dev_runtime_service(service_name: Option<&str>, command: Option<&str>) -> bool {
     let service_name = service_name.unwrap_or("").trim().to_lowercase();
     let command = command.unwrap_or("").trim().to_lowercase();
     if service_name == "paperclip-dev" || service_name == "paperclip-dev-once" {
@@ -136,7 +137,6 @@ pub fn resolve_runtime_service_health_url(
     }
     Some(url.to_string())
 }
-
 
 // ============================================================================
 // 简单 URL 解析（仅支持 http/https）
@@ -281,8 +281,12 @@ mod tests {
 
     #[test]
     fn dev_server_with_prefix() {
-        assert!(looks_like_workspace_dev_server_command("cd /repo && pnpm dev"));
-        assert!(looks_like_workspace_dev_server_command("npm run dev -- --port=3000"));
+        assert!(looks_like_workspace_dev_server_command(
+            "cd /repo && pnpm dev"
+        ));
+        assert!(looks_like_workspace_dev_server_command(
+            "npm run dev -- --port=3000"
+        ));
     }
 
     #[test]
@@ -302,7 +306,10 @@ mod tests {
 
     #[test]
     fn paperclip_dev_by_service_name() {
-        assert!(is_paperclip_dev_runtime_service(Some("paperclip-dev"), None));
+        assert!(is_paperclip_dev_runtime_service(
+            Some("paperclip-dev"),
+            None
+        ));
         assert!(is_paperclip_dev_runtime_service(
             Some("paperclip-dev-once"),
             None
@@ -329,69 +336,54 @@ mod tests {
     fn readiness_timeout_explicit() {
         let mut s = Map::new();
         let mut readiness = Map::new();
-        readiness.insert("timeoutSec".into(), Value::Number(serde_json::Number::from(45)));
-        s.insert("readiness".into(), Value::Object(readiness));
-        assert_eq!(
-            resolve_workspace_runtime_readiness_timeout_sec(&s),
-            45
+        readiness.insert(
+            "timeoutSec".into(),
+            Value::Number(serde_json::Number::from(45)),
         );
+        s.insert("readiness".into(), Value::Object(readiness));
+        assert_eq!(resolve_workspace_runtime_readiness_timeout_sec(&s), 45);
     }
 
     #[test]
     fn readiness_timeout_explicit_min_one() {
         let mut s = Map::new();
         let mut readiness = Map::new();
-        readiness.insert("timeoutSec".into(), Value::Number(serde_json::Number::from(0)));
+        readiness.insert(
+            "timeoutSec".into(),
+            Value::Number(serde_json::Number::from(0)),
+        );
         s.insert("readiness".into(), Value::Object(readiness));
         // 0 时不会进 max(1, ...) 分支，落在 dev server 检测
-        s.insert(
-            "command".into(),
-            Value::String("node server.js".into()),
-        );
-        assert_eq!(
-            resolve_workspace_runtime_readiness_timeout_sec(&s),
-            30
-        );
+        s.insert("command".into(), Value::String("node server.js".into()));
+        assert_eq!(resolve_workspace_runtime_readiness_timeout_sec(&s), 30);
     }
 
     #[test]
     fn readiness_timeout_dev_server_default_90() {
         let mut s = Map::new();
         s.insert("command".into(), Value::String("pnpm run dev".into()));
-        assert_eq!(
-            resolve_workspace_runtime_readiness_timeout_sec(&s),
-            90
-        );
+        assert_eq!(resolve_workspace_runtime_readiness_timeout_sec(&s), 90);
     }
 
     #[test]
     fn readiness_timeout_non_dev_default_30() {
         let mut s = Map::new();
         s.insert("command".into(), Value::String("node server.js".into()));
-        assert_eq!(
-            resolve_workspace_runtime_readiness_timeout_sec(&s),
-            30
-        );
+        assert_eq!(resolve_workspace_runtime_readiness_timeout_sec(&s), 30);
     }
 
     #[test]
     fn readiness_timeout_no_service_command_30() {
         let s = Map::new();
-        assert_eq!(
-            resolve_workspace_runtime_readiness_timeout_sec(&s),
-            30
-        );
+        assert_eq!(resolve_workspace_runtime_readiness_timeout_sec(&s), 30);
     }
 
     // ----- resolve_runtime_service_health_url -----
 
     #[test]
     fn health_url_non_paperclip_dev_returns_unchanged() {
-        let url = resolve_runtime_service_health_url(
-            Some("http://localhost:3000/"),
-            Some("web"),
-            None,
-        );
+        let url =
+            resolve_runtime_service_health_url(Some("http://localhost:3000/"), Some("web"), None);
         assert_eq!(url, Some("http://localhost:3000/".to_string()));
     }
 
@@ -417,11 +409,8 @@ mod tests {
 
     #[test]
     fn health_url_invalid_url_returns_unchanged() {
-        let url = resolve_runtime_service_health_url(
-            Some("not a url"),
-            Some("paperclip-dev"),
-            None,
-        );
+        let url =
+            resolve_runtime_service_health_url(Some("not a url"), Some("paperclip-dev"), None);
         // url::Url::parse 失败 → 原 url 返回
         assert_eq!(url, Some("not a url".to_string()));
     }

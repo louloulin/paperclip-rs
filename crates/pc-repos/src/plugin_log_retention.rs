@@ -49,10 +49,7 @@ pub const DEFAULT_INTERVAL_MS: u64 = 60 * 60 * 1_000;
 /// 4. 命中 iteration 上限 → warn 日志
 /// 5. 总删行 > 0 → info 日志
 /// 6. 返回 `totalDeleted`
-pub async fn prune_plugin_logs(
-    db: &Db,
-    retention_days: i64,
-) -> sqlx::Result<u64> {
+pub async fn prune_plugin_logs(db: &Db, retention_days: i64) -> sqlx::Result<u64> {
     let cutoff: DateTime<Utc> = Utc::now() - chrono::Duration::days(retention_days);
 
     let mut total_deleted: u64 = 0;
@@ -60,12 +57,11 @@ pub async fn prune_plugin_logs(
 
     while iterations < MAX_ITERATIONS {
         // 单次 batch DELETE + RETURNING id
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
-            "DELETE FROM plugin_logs WHERE created_at < $1 RETURNING id",
-        )
-        .bind(cutoff)
-        .fetch_all(db.pool())
-        .await?;
+        let rows: Vec<(Uuid,)> =
+            sqlx::query_as("DELETE FROM plugin_logs WHERE created_at < $1 RETURNING id")
+                .bind(cutoff)
+                .fetch_all(db.pool())
+                .await?;
         let deleted = rows.len() as u64;
 
         total_deleted += deleted;
@@ -86,11 +82,7 @@ pub async fn prune_plugin_logs(
     }
 
     if total_deleted > 0 {
-        info!(
-            total_deleted,
-            retention_days,
-            "Pruned expired plugin logs"
-        );
+        info!(total_deleted, retention_days, "Pruned expired plugin logs");
     }
 
     Ok(total_deleted)

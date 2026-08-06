@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -64,12 +61,7 @@ async fn insert_company(db: &Db) -> Uuid {
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -114,7 +106,10 @@ async fn summary_slot_get_returns_null_when_missing() {
     .await;
     assert_eq!(status, 200, "get missing: {body}");
     assert!(body["slot"].is_null(), "slot should be null: {body}");
-    assert!(body["document"].is_null(), "document should be null: {body}");
+    assert!(
+        body["document"].is_null(),
+        "document should be null: {body}"
+    );
     assert!(body["generatingIssue"].is_null());
 }
 

@@ -37,12 +37,7 @@ async fn insert_application(db: &Db, company_id: Uuid, name: &str) -> Uuid {
     id
 }
 
-async fn insert_tool_connection(
-    db: &Db,
-    company_id: Uuid,
-    app_id: Uuid,
-    name: &str,
-) -> Uuid {
+async fn insert_tool_connection(db: &Db, company_id: Uuid, app_id: Uuid, name: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO tool_connections \
@@ -131,7 +126,9 @@ async fn update_jsonb_fields() {
     let new_config = serde_json::json!({"key": "value"});
     let new_refs = serde_json::json!([{"name": "cred1"}]);
     repo.update_config(id, &new_config).await.expect("config");
-    repo.update_credential_refs(id, &new_refs).await.expect("refs");
+    repo.update_credential_refs(id, &new_refs)
+        .await
+        .expect("refs");
 
     let row = repo.find_by_id(id).await.expect("find").unwrap();
     assert_eq!(row.config, new_config);
@@ -146,7 +143,10 @@ async fn update_health_check_basic() {
     let app = insert_application(&db, cid, "app5").await;
     let id = insert_tool_connection(&db, cid, app, "health-test").await;
     let repo = ToolConnectionRepo::new(&db);
-    let affected = repo.update_health_check(id, "ok", None).await.expect("health");
+    let affected = repo
+        .update_health_check(id, "ok", None)
+        .await
+        .expect("health");
     assert_eq!(affected, 1);
     let row = repo.find_by_id(id).await.expect("find").unwrap();
     assert_eq!(row.health_status, "ok");
@@ -174,7 +174,9 @@ async fn update_status_to_reconnecting_basic() {
     let app = insert_application(&db, cid, "app7").await;
     let id = insert_tool_connection(&db, cid, app, "reconn").await;
     let repo = ToolConnectionRepo::new(&db);
-    repo.update_status_to_reconnecting(id).await.expect("reconnect");
+    repo.update_status_to_reconnecting(id)
+        .await
+        .expect("reconnect");
     let row = repo.find_by_id(id).await.expect("find").unwrap();
     assert_eq!(row.status, "reconnecting");
 }
@@ -201,7 +203,9 @@ async fn upsert_then_list_installs() {
     let app = insert_application(&db, cid, "app9").await;
     let id = insert_tool_connection(&db, cid, app, "inst-test").await;
     let repo = ToolConnectionRepo::new(&db);
-    repo.upsert_install(id, cid, "agent", "agent-1").await.expect("install");
+    repo.upsert_install(id, cid, "agent", "agent-1")
+        .await
+        .expect("install");
     let rows = repo.list_installs(id).await.expect("list");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].3, "agent-1"); // target_id
@@ -241,7 +245,9 @@ async fn usage_install_count_nonzero() {
     let id = insert_tool_connection(&db, cid, app, "usage-test2").await;
     let repo = ToolConnectionRepo::new(&db);
     for n in 0..3 {
-        repo.upsert_install(id, cid, "agent", &format!("a-{n}")).await.expect("install");
+        repo.upsert_install(id, cid, "agent", &format!("a-{n}"))
+            .await
+            .expect("install");
     }
     let count = repo.usage_install_count(id).await.expect("count");
     assert_eq!(count, Some(3));

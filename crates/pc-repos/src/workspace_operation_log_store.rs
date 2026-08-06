@@ -24,7 +24,6 @@ use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
 
-
 // ============================================================================
 // 错误
 // ============================================================================
@@ -146,8 +145,6 @@ impl LocalFileWorkspaceOperationLogStore {
         }
     }
 
-
-
     pub fn base_path(&self) -> &Path {
         &self.base_path
     }
@@ -165,7 +162,10 @@ impl LocalFileWorkspaceOperationLogStore {
                 })
                 .collect()
         };
-        (clean(&company_id.to_string()), clean(&operation_id.to_string()))
+        (
+            clean(&company_id.to_string()),
+            clean(&operation_id.to_string()),
+        )
     }
 
     /// 限制 `relative` 不得越出 `base`。返回绝对路径。
@@ -195,7 +195,10 @@ impl LocalFileWorkspaceOperationLogStore {
         Ok(self.base_path.clone())
     }
 
-    async fn ensure_dir(&self, relative_dir: &str) -> Result<PathBuf, WorkspaceOperationLogStoreError> {
+    async fn ensure_dir(
+        &self,
+        relative_dir: &str,
+    ) -> Result<PathBuf, WorkspaceOperationLogStoreError> {
         let abs = self.resolve_within(relative_dir)?;
         fs::create_dir_all(&abs).await?;
         Ok(abs)
@@ -332,7 +335,10 @@ impl WorkspaceOperationLogStore for LocalFileWorkspaceOperationLogStore {
             None
         };
 
-        Ok(WorkspaceOperationLogReadResult { content, next_offset })
+        Ok(WorkspaceOperationLogReadResult {
+            content,
+            next_offset,
+        })
     }
 }
 
@@ -346,17 +352,18 @@ use tokio::sync::RwLock;
 /// 类型擦除的 box 克隆辅助（当前仅支持 `LocalFileWorkspaceOperationLogStore` 一种实现）。
 /// 后续要新增实现时，需要在 `WorkspaceOperationLogStore` trait 上挂 `Clone` 或者返回 `Arc`。
 fn clone_box(store: &dyn WorkspaceOperationLogStore) -> Box<dyn WorkspaceOperationLogStore> {
-    if let Some(local) = (store as &dyn std::any::Any).downcast_ref::<LocalFileWorkspaceOperationLogStore>() {
+    if let Some(local) =
+        (store as &dyn std::any::Any).downcast_ref::<LocalFileWorkspaceOperationLogStore>()
+    {
         Box::new(local.clone())
     } else {
-        Box::new(LocalFileWorkspaceOperationLogStore::new(
-            default_base_path(),
-        ))
+        Box::new(LocalFileWorkspaceOperationLogStore::new(default_base_path()))
     }
 }
 
 /// 默认 store 缓存：双检锁模式（同步 OnceLock + tokio RwLock）。
-static DEFAULT_STORE: OnceLock<RwLock<Option<Box<dyn WorkspaceOperationLogStore>>>> = OnceLock::new();
+static DEFAULT_STORE: OnceLock<RwLock<Option<Box<dyn WorkspaceOperationLogStore>>>> =
+    OnceLock::new();
 
 fn default_store_cell() -> &'static RwLock<Option<Box<dyn WorkspaceOperationLogStore>>> {
     DEFAULT_STORE.get_or_init(|| RwLock::new(None))
@@ -440,7 +447,9 @@ pub fn default_base_path() -> PathBuf {
 }
 
 fn is_valid_segment(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn expand_home(value: &str) -> PathBuf {
@@ -558,7 +567,11 @@ mod tests {
             .await
             .unwrap();
         // NDJSON 每行是 {"ts":"...","stream":"stdout","chunk":"..."}
-        assert!(out.content.starts_with('{'), "got: {:?}", &out.content[..20.min(out.content.len())]);
+        assert!(
+            out.content.starts_with('{'),
+            "got: {:?}",
+            &out.content[..20.min(out.content.len())]
+        );
         // 文件仅 5 行，远小于 256_000 字节限制，next_offset 应当为 None（已读完）
         assert_eq!(out.next_offset, None);
         // 内容应能反序列化为 JSON 行
@@ -671,10 +684,22 @@ mod tests {
         let company = Uuid::new_v4();
         let op = Uuid::new_v4();
         let handle = store.begin(company, op).await.unwrap();
-        store.append(&handle, &new_event(LogStream::Stdout, "x")).await.unwrap();
+        store
+            .append(&handle, &new_event(LogStream::Stdout, "x"))
+            .await
+            .unwrap();
         let summary = store.finalize(&handle).await.unwrap();
         let size = summary.bytes;
-        let out = store.read(&handle, WorkspaceOperationLogReadOptions { offset: Some(size), limit_bytes: Some(10) }).await.unwrap();
+        let out = store
+            .read(
+                &handle,
+                WorkspaceOperationLogReadOptions {
+                    offset: Some(size),
+                    limit_bytes: Some(10),
+                },
+            )
+            .await
+            .unwrap();
         assert!(out.content.is_empty());
         assert_eq!(out.next_offset, Some(size));
     }

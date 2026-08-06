@@ -39,7 +39,12 @@ pub enum InviteStatus {
 }
 
 impl InviteStatus {
-    fn from_row(revoked_at: Option<Timestamp>, accepted_at: Option<Timestamp>, expires_at: Timestamp, now: DateTime<Utc>) -> Self {
+    fn from_row(
+        revoked_at: Option<Timestamp>,
+        accepted_at: Option<Timestamp>,
+        expires_at: Timestamp,
+        now: DateTime<Utc>,
+    ) -> Self {
         if revoked_at.is_some() {
             InviteStatus::Revoked
         } else if accepted_at.is_some() {
@@ -126,14 +131,14 @@ impl<'a> InviteRepo<'a> {
             .bind(company_id)
             .fetch_all(self.db.pool())
             .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| decorate_with_status(r))
-            .collect())
+        Ok(rows.into_iter().map(|r| decorate_with_status(r)).collect())
     }
 
     /// 通过 token 哈希查找未撤销的邀请（公开端口使用）。
-    pub async fn find_active_by_token_hash(&self, token_hash: &str) -> RepoResult<Option<InviteRow>> {
+    pub async fn find_active_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> RepoResult<Option<InviteRow>> {
         let row: Option<InviteRow> = sqlx::query_as(&format!(
             "SELECT {COLS} FROM invites \
              WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now() LIMIT 1"
@@ -146,7 +151,8 @@ impl<'a> InviteRepo<'a> {
 
     /// 通过 token 明文查找未撤销的邀请（公开端口使用）。
     pub async fn find_active_by_token(&self, raw_token: &str) -> RepoResult<Option<InviteRow>> {
-        self.find_active_by_token_hash(&hash_token_hex(raw_token)).await
+        self.find_active_by_token_hash(&hash_token_hex(raw_token))
+            .await
     }
 
     /// 通过 token 哈希查找邀请（不限定 active）。
@@ -185,12 +191,10 @@ impl<'a> InviteRepo<'a> {
             .execute(self.db.pool())
             .await?;
         // 回读以确保 created_at / updated_at 与数据库同步返回。
-        let row: InviteRow = sqlx::query_as(&format!(
-            "SELECT {COLS} FROM invites WHERE id = $1"
-        ))
-        .bind(id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let row: InviteRow = sqlx::query_as(&format!("SELECT {COLS} FROM invites WHERE id = $1"))
+            .bind(id)
+            .fetch_one(self.db.pool())
+            .await?;
         let now = Utc::now();
         Ok(CreatedInvite {
             row,
@@ -206,7 +210,16 @@ impl<'a> InviteRepo<'a> {
     pub async fn lookup_by_token_hash(
         &self,
         token_hash: &str,
-    ) -> RepoResult<Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+        )>,
+    > {
         let row: Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)> = sqlx::query_as(
             "SELECT i.id, i.company_id, i.defaults_payload->>'role' as role, i.expires_at, i.accepted_at, i.revoked_at \
              FROM invites i WHERE i.token_hash = $1 LIMIT 1",
@@ -334,10 +347,16 @@ mod tests {
     fn generate_url_safe_token_has_expected_min_length_and_unique() {
         let t1 = generate_url_safe_token(32);
         let t2 = generate_url_safe_token(32);
-        assert!(t1.len() >= 43, "32-byte base64url >= 43 chars; got {}", t1.len());
+        assert!(
+            t1.len() >= 43,
+            "32-byte base64url >= 43 chars; got {}",
+            t1.len()
+        );
         assert!(t2.len() >= 43);
         assert_ne!(t1, t2, "two consecutive tokens must differ");
-        assert!(t1.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(t1
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     }
 
     #[test]
@@ -362,8 +381,14 @@ mod tests {
         let past_ts = TS::from_dt(now - chrono::Duration::days(1));
         let future: TS = future_ts;
         let past: TS = past_ts;
-        assert_eq!(InviteStatus::from_row(None, None, future, now), InviteStatus::Pending);
-        assert_eq!(InviteStatus::from_row(None, None, past, now), InviteStatus::Expired);
+        assert_eq!(
+            InviteStatus::from_row(None, None, future, now),
+            InviteStatus::Pending
+        );
+        assert_eq!(
+            InviteStatus::from_row(None, None, past, now),
+            InviteStatus::Expired
+        );
         assert_eq!(
             InviteStatus::from_row(Some(TS::from_dt(now)), None, future, now),
             InviteStatus::Revoked

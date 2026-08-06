@@ -11,9 +11,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -73,7 +71,10 @@ async fn list_by_company_default_active_only() {
     assert_eq!(rows.len(), 2);
 
     // 释放 h1
-    IssueTreeHoldRepo::new(&db).release(i1, h1).await.expect("release");
+    IssueTreeHoldRepo::new(&db)
+        .release(i1, h1)
+        .await
+        .expect("release");
 
     // 默认（include_released=false）应仅看到 h2
     let active = IssueTreeHoldRepo::new(&db)
@@ -91,7 +92,10 @@ async fn list_by_company_include_released() {
     let cid = insert_company(&db, "rel").await;
     let i1 = insert_issue(&db, cid).await;
     let h1 = make_hold(&db, cid, i1, "rerun").await;
-    IssueTreeHoldRepo::new(&db).release(i1, h1).await.expect("release");
+    IssueTreeHoldRepo::new(&db)
+        .release(i1, h1)
+        .await
+        .expect("release");
 
     let all = IssueTreeHoldRepo::new(&db)
         .list_by_company(cid, true)

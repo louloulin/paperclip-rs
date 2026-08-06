@@ -24,8 +24,7 @@ use super::origins::recovery_reason_kinds;
 // ============================================================================
 
 /// Run liveness 续跑的 wake reason，对齐 Node `RUN_LIVENESS_CONTINUATION_REASON`。
-pub const RUN_LIVENESS_CONTINUATION_REASON: &str =
-    recovery_reason_kinds::RUN_LIVENESS_CONTINUATION;
+pub const RUN_LIVENESS_CONTINUATION_REASON: &str = recovery_reason_kinds::RUN_LIVENESS_CONTINUATION;
 
 /// 默认最大续跑尝试次数（2）。
 pub const DEFAULT_MAX_LIVENESS_CONTINUATION_ATTEMPTS: u32 = 2;
@@ -37,12 +36,10 @@ pub const ACTIONABLE_LIVENESS_STATES: &[&str] = &["plan_only", "empty_response"]
 pub const CONTINUATION_ACTIVE_ISSUE_STATUSES: &[&str] = &["todo", "in_progress"];
 
 /// Agent 允许被续跑的状态集合（含 error，因为前次错误不应永久抑制 bounded 续跑）。
-pub const CONTINUATION_AGENT_STATUSES: &[&str] =
-    &["active", "idle", "running", "error"];
+pub const CONTINUATION_AGENT_STATUSES: &[&str] = &["active", "idle", "running", "error"];
 
 /// Idempotent wake 视为已存在的状态集合。
-pub const IDEMPOTENT_WAKE_STATUSES: &[&str] =
-    &["queued", "deferred_issue_execution", "completed"];
+pub const IDEMPOTENT_WAKE_STATUSES: &[&str] = &["queued", "deferred_issue_execution", "completed"];
 
 // ============================================================================
 // Inputs / Decision
@@ -292,8 +289,7 @@ pub fn decide_run_liveness_continuation(
     // 10. idempotent wake 已存在
     if input.idempotent_wake_exists {
         return RunContinuationDecision::Skip {
-            reason: "continuation wake already exists for this source run and attempt"
-                .to_string(),
+            reason: "continuation wake already exists for this source run and attempt".to_string(),
         };
     }
 

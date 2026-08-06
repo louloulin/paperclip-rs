@@ -209,9 +209,7 @@ impl<'a> ProjectRepo<'a> {
         company_id: Uuid,
         only_active: bool,
     ) -> RepoResult<Vec<ProjectRow>> {
-        let mut sql = format!(
-            "SELECT {PROJ_COLS} FROM projects WHERE company_id=$1"
-        );
+        let mut sql = format!("SELECT {PROJ_COLS} FROM projects WHERE company_id=$1");
         if only_active {
             sql.push_str(" AND status NOT IN ('archived','completed')");
         }
@@ -223,23 +221,15 @@ impl<'a> ProjectRepo<'a> {
     }
 
     pub async fn list_all(&self, limit: i64) -> RepoResult<Vec<ProjectRow>> {
-        let sql = format!(
-            "SELECT {PROJ_COLS} FROM projects ORDER BY created_at DESC LIMIT $1"
-        );
+        let sql = format!("SELECT {PROJ_COLS} FROM projects ORDER BY created_at DESC LIMIT $1");
         Ok(sqlx::query_as::<_, ProjectRow>(&sql)
             .bind(limit)
             .fetch_all(self.db.pool())
             .await?)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<ProjectRow>> {
-        let sql = format!(
-            "SELECT {PROJ_COLS} FROM projects WHERE company_id=$1 AND id=$2"
-        );
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<ProjectRow>> {
+        let sql = format!("SELECT {PROJ_COLS} FROM projects WHERE company_id=$1 AND id=$2");
         Ok(sqlx::query_as::<_, ProjectRow>(&sql)
             .bind(company_id)
             .bind(id)
@@ -318,11 +308,7 @@ impl<'a> ProjectRepo<'a> {
             .await?)
     }
 
-    pub async fn resume(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<ProjectRow>> {
+    pub async fn resume(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<ProjectRow>> {
         let sql = format!(
             "UPDATE projects SET status='active', pause_reason=NULL, paused_at=NULL, updated_at=now()              WHERE company_id=$1 AND id=$2 AND status='paused'              RETURNING {PROJ_COLS}"
         );
@@ -445,10 +431,7 @@ impl<'a> ProjectRepo<'a> {
 
     // ---- workspaces ----
 
-    pub async fn list_workspaces(
-        &self,
-        project_id: Uuid,
-    ) -> RepoResult<Vec<ProjectWorkspaceRow>> {
+    pub async fn list_workspaces(&self, project_id: Uuid) -> RepoResult<Vec<ProjectWorkspaceRow>> {
         Ok(sqlx::query_as::<_, ProjectWorkspaceRow>(
             "SELECT id, company_id, project_id, name, source_type, cwd, repo_url, repo_ref,              default_ref, visibility, setup_command, cleanup_command, remote_provider,              remote_workspace_ref, shared_workspace_key, metadata, is_primary,              created_at, updated_at              FROM project_workspaces WHERE project_id=$1 ORDER BY is_primary DESC, created_at",
         )
@@ -551,26 +534,17 @@ impl<'a> ProjectRepo<'a> {
         Ok(())
     }
 
-    pub async fn detach_goal(
-        &self,
-        project_id: Uuid,
-        goal_id: Uuid,
-    ) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "DELETE FROM project_goals WHERE project_id=$1 AND goal_id=$2",
-        )
-        .bind(project_id)
-        .bind(goal_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn detach_goal(&self, project_id: Uuid, goal_id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM project_goals WHERE project_id=$1 AND goal_id=$2")
+            .bind(project_id)
+            .bind(goal_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
 
-    pub async fn goals_for_project(
-        &self,
-        project_id: Uuid,
-    ) -> RepoResult<Vec<ProjectGoalRow>> {
+    pub async fn goals_for_project(&self, project_id: Uuid) -> RepoResult<Vec<ProjectGoalRow>> {
         Ok(sqlx::query_as::<_, ProjectGoalRow>(
             "SELECT project_id, goal_id, company_id, created_at, updated_at              FROM project_goals WHERE project_id=$1 ORDER BY created_at",
         )
@@ -636,12 +610,10 @@ impl<'a> ProjectRepo<'a> {
 
     /// Round 160: 取 project 的 company_id。
     pub async fn company_id_for_project(&self, id: Uuid) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM projects WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM projects WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 
@@ -666,27 +638,22 @@ impl<'a> ProjectRepo<'a> {
         &self,
         workspace_id: Uuid,
     ) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM project_workspaces WHERE id = $1",
-        )
-        .bind(workspace_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM project_workspaces WHERE id = $1")
+                .bind(workspace_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(c,)| c))
     }
 
     /// Round 160: 把 project 下的所有 workspaces 的 is_primary 设为 false。
-    pub async fn unset_all_primary_workspaces(
-        &self,
-        project_id: Uuid,
-    ) -> RepoResult<u64> {
-        let n = sqlx::query(
-            "UPDATE project_workspaces SET is_primary = false WHERE project_id = $1",
-        )
-        .bind(project_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn unset_all_primary_workspaces(&self, project_id: Uuid) -> RepoResult<u64> {
+        let n =
+            sqlx::query("UPDATE project_workspaces SET is_primary = false WHERE project_id = $1")
+                .bind(project_id)
+                .execute(self.db.pool())
+                .await?
+                .rows_affected();
         Ok(n)
     }
 
@@ -778,23 +745,17 @@ impl<'a> ProjectRepo<'a> {
         workspace_id: Uuid,
         project_id: Uuid,
     ) -> RepoResult<u64> {
-        let n = sqlx::query(
-            "DELETE FROM project_workspaces WHERE id = $1 AND project_id = $2",
-        )
-        .bind(workspace_id)
-        .bind(project_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+        let n = sqlx::query("DELETE FROM project_workspaces WHERE id = $1 AND project_id = $2")
+            .bind(workspace_id)
+            .bind(project_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n)
     }
 
     /// Round 160: 在 metadata 里追加 lastRuntimeAction + lastRuntimeActionAt。
-    pub async fn append_runtime_action(
-        &self,
-        workspace_id: Uuid,
-        action: &str,
-    ) -> RepoResult<u64> {
+    pub async fn append_runtime_action(&self, workspace_id: Uuid, action: &str) -> RepoResult<u64> {
         let n = sqlx::query(
             "UPDATE project_workspaces SET \
              metadata = COALESCE(metadata, '{}'::jsonb) \

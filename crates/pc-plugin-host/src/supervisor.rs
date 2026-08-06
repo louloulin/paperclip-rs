@@ -68,7 +68,10 @@ pub struct WorkerSupervisor {
 }
 
 impl WorkerSupervisor {
-    pub fn new(pool: Arc<WorkerPool>, config: SupervisorConfig) -> (Self, mpsc::UnboundedReceiver<SupervisorEvent>) {
+    pub fn new(
+        pool: Arc<WorkerPool>,
+        config: SupervisorConfig,
+    ) -> (Self, mpsc::UnboundedReceiver<SupervisorEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (Self { pool, config, tx }, rx)
     }
@@ -110,7 +113,10 @@ impl WorkerSupervisor {
                 let state = handle.state().await;
                 // 只重启之前启动过且处于 ready/running 状态的 worker；
                 // 仍处于 starting 状态的可能是冷启动太慢，跳过。
-                if matches!(state, WorkerState::Ready | WorkerState::Running | WorkerState::Error) {
+                if matches!(
+                    state,
+                    WorkerState::Ready | WorkerState::Running | WorkerState::Error
+                ) {
                     if let Err(e) = self.restart_worker(handle.clone()).await {
                         warn!(plugin_id = %plugin_id, error = %e, "supervisor restart failed");
                     }
@@ -127,12 +133,12 @@ impl WorkerSupervisor {
             handle.mark_crashed().await;
             let _ = self.tx.send(SupervisorEvent::Crashed {
                 plugin_id,
-                reason: format!(
-                    "worker crashed after {} restart attempts",
-                    restart_count
-                ),
+                reason: format!("worker crashed after {} restart attempts", restart_count),
             });
-            return Err(format!("max restarts {} exceeded", self.config.max_restarts));
+            return Err(format!(
+                "max restarts {} exceeded",
+                self.config.max_restarts
+            ));
         }
 
         let delay = self.config.backoff_delay_ms(restart_count + 1);
@@ -184,10 +190,7 @@ impl WorkerSupervisor {
     }
 
     /// Spawn a fresh worker with options and register it.
-    pub async fn spawn_and_register(
-        &self,
-        options: WorkerOptions,
-    ) -> Result<Uuid, String> {
+    pub async fn spawn_and_register(&self, options: WorkerOptions) -> Result<Uuid, String> {
         let handle = self.pool.spawn(options).await?;
         let id = handle.plugin_id();
         self.pool.register(handle).await;

@@ -16,7 +16,8 @@ use pc_core::Timestamp;
 use crate::Db;
 
 /// 列表 / 获取轻量投影（不包含 release 元数据列）。
-pub const LIST_COLS: &str = "id, root_issue_id, mode, status, reason, release_policy, created_at";
+pub const LIST_COLS: &str =
+    "id, root_issue_id, mode, status, reason, release_policy, created_at, updated_at";
 
 /// 完整字段投影（含 release 元数据）。
 pub const FULL_COLS: &str = "id, root_issue_id, mode, status, reason, release_policy, \
@@ -102,7 +103,10 @@ impl std::fmt::Display for ReleaseHoldError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "issue tree hold not found"),
-            Self::WrongRoot => write!(f, "issue tree hold does not belong to the requested root issue"),
+            Self::WrongRoot => write!(
+                f,
+                "issue tree hold does not belong to the requested root issue"
+            ),
             Self::AlreadyReleased => write!(f, "issue tree hold is already released"),
             Self::Db(e) => write!(f, "db error: {e}"),
         }
@@ -138,7 +142,6 @@ pub struct NewIssueTreeHold<'a> {
     pub release_policy: serde_json::Value,
     pub created_by_user_id: &'a str,
 }
-
 
 // ============================================================================
 // Round 232: issue_tree_hold_members 子表 (Node 端 service 层持久化 affected issues)
@@ -342,6 +345,21 @@ impl<'a> IssueTreeHoldRepo<'a> {
     }
 
     /// 按 issue 列出 active holds（路由层 `active_hold` 预览用）。
+    /// Round 296: 列出某 company 内所有 active pause holds（mode='pause', status='active'）。
+    /// 用于 pause-hold 抑制闸门（pause_hold_guard）。
+    pub async fn list_active_pause_holds_for_company(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueTreeHoldRow>> {
+        let sql = format!(
+            "SELECT {LIST_COLS} FROM issue_tree_holds              WHERE company_id = $1 AND status = 'active' AND mode = 'pause'              ORDER BY created_at ASC, id ASC"
+        );
+        sqlx::query_as::<_, IssueTreeHoldRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
     pub async fn find_active_for_root(
         &self,
         root_issue_id: Uuid,
@@ -374,15 +392,30 @@ impl<'a> IssueTreeHoldRepo<'a> {
     pub async fn list_holds_v1(
         &self,
         root_issue_id: Uuid,
-    ) -> sqlx::Result<Vec<(Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)>> {
-        let rows: Vec<(Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)> =
-            sqlx::query_as(
-                "SELECT id, mode, reason, created_by_user_id, created_at, released_at \
+    ) -> sqlx::Result<
+        Vec<(
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Timestamp,
+            Option<Timestamp>,
+        )>,
+    > {
+        let rows: Vec<(
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Timestamp,
+            Option<Timestamp>,
+        )> = sqlx::query_as(
+            "SELECT id, mode, reason, created_by_user_id, created_at, released_at \
                  FROM issue_tree_holds WHERE root_issue_id = $1 ORDER BY created_at DESC",
-            )
-            .bind(root_issue_id)
-            .fetch_all(self.db.pool())
-            .await?;
+        )
+        .bind(root_issue_id)
+        .fetch_all(self.db.pool())
+        .await?;
         Ok(rows)
     }
 
@@ -392,8 +425,26 @@ impl<'a> IssueTreeHoldRepo<'a> {
         &self,
         company_id: Uuid,
         include_released: bool,
-    ) -> sqlx::Result<Vec<(Uuid, Uuid, String, String, Option<String>, Option<Timestamp>, Timestamp)>> {
-        let rows: Vec<(Uuid, Uuid, String, String, Option<String>, Option<Timestamp>, Timestamp)> = if include_released {
+    ) -> sqlx::Result<
+        Vec<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<Timestamp>,
+            Timestamp,
+        )>,
+    > {
+        let rows: Vec<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<Timestamp>,
+            Timestamp,
+        )> = if include_released {
             sqlx::query_as(
                 "SELECT id, root_issue_id, mode, status, reason, released_at, created_at \
                  FROM issue_tree_holds WHERE company_id = $1 \
@@ -416,20 +467,36 @@ impl<'a> IssueTreeHoldRepo<'a> {
         Ok(rows)
     }
 
-
     /// Round 165: 按 id 取单条 hold，返回完整列。
     pub async fn get_hold_by_id_v1(
         &self,
         hold_id: Uuid,
-    ) -> sqlx::Result<Option<(Uuid, Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)>> {
-        let row: Option<(Uuid, Uuid, String, Option<String>, Option<String>, Timestamp, Option<Timestamp>)> =
-            sqlx::query_as(
-                "SELECT id, root_issue_id, mode, reason, created_by_user_id, created_at, released_at \
+    ) -> sqlx::Result<
+        Option<(
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Timestamp,
+            Option<Timestamp>,
+        )>,
+    > {
+        let row: Option<(
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Timestamp,
+            Option<Timestamp>,
+        )> = sqlx::query_as(
+            "SELECT id, root_issue_id, mode, reason, created_by_user_id, created_at, released_at \
                  FROM issue_tree_holds WHERE id = $1",
-            )
-            .bind(hold_id)
-            .fetch_optional(self.db.pool())
-            .await?;
+        )
+        .bind(hold_id)
+        .fetch_optional(self.db.pool())
+        .await?;
         Ok(row)
     }
 
@@ -474,10 +541,7 @@ impl<'a> IssueTreeHoldRepo<'a> {
     }
 
     /// Round 165: hold 计数（按 released_at IS NULL 过滤，与原路由 SQL 一致）。
-    pub async fn count_active_by_released_at(
-        &self,
-        root_issue_id: Uuid,
-    ) -> sqlx::Result<i64> {
+    pub async fn count_active_by_released_at(&self, root_issue_id: Uuid) -> sqlx::Result<i64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM issue_tree_holds \
              WHERE root_issue_id = $1 AND released_at IS NULL",
@@ -489,16 +553,12 @@ impl<'a> IssueTreeHoldRepo<'a> {
     }
 
     /// Round 165: 取该 root 下最近的 hold 创建时间（MAX(created_at)）。
-    pub async fn latest_change_at(
-        &self,
-        root_issue_id: Uuid,
-    ) -> sqlx::Result<Option<Timestamp>> {
-        let row: Option<(Option<Timestamp>,)> = sqlx::query_as(
-            "SELECT MAX(created_at) FROM issue_tree_holds WHERE root_issue_id = $1",
-        )
-        .bind(root_issue_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn latest_change_at(&self, root_issue_id: Uuid) -> sqlx::Result<Option<Timestamp>> {
+        let row: Option<(Option<Timestamp>,)> =
+            sqlx::query_as("SELECT MAX(created_at) FROM issue_tree_holds WHERE root_issue_id = $1")
+                .bind(root_issue_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.and_then(|(o,)| o))
     }
 
@@ -561,10 +621,7 @@ impl<'a> IssueTreeHoldRepo<'a> {
     }
 
     /// Round 232: 统计 hold 的 member 数（包含 skipped 与 active）。
-    pub async fn count_members_by_hold(
-        &self,
-        hold_id: Uuid,
-    ) -> sqlx::Result<i64> {
+    pub async fn count_members_by_hold(&self, hold_id: Uuid) -> sqlx::Result<i64> {
         sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM issue_tree_hold_members WHERE hold_id = $1",
         )
@@ -574,10 +631,7 @@ impl<'a> IssueTreeHoldRepo<'a> {
     }
 
     /// Round 232: 删除 hold 的所有 members（用于 release 时清理）。
-    pub async fn delete_members_by_hold(
-        &self,
-        hold_id: Uuid,
-    ) -> sqlx::Result<u64> {
+    pub async fn delete_members_by_hold(&self, hold_id: Uuid) -> sqlx::Result<u64> {
         let n = sqlx::query("DELETE FROM issue_tree_hold_members WHERE hold_id = $1")
             .bind(hold_id)
             .execute(self.db.pool())
@@ -585,7 +639,6 @@ impl<'a> IssueTreeHoldRepo<'a> {
             .rows_affected();
         Ok(n)
     }
-
 }
 
 #[cfg(test)]
@@ -609,7 +662,6 @@ mod tests {
         assert!(FULL_COLS.contains("created_at"));
     }
 }
-
 
 // ============================================================================
 // Round 232: issue_tree_hold_members 仓储结构单元测试
@@ -810,7 +862,11 @@ mod round232_member_tests {
         // 模拟一个 hold 影响 3 个 issues, depth 0/1/2
         let hold_id = Uuid::new_v4();
         let company_id = Uuid::new_v4();
-        let titles: Vec<String> = vec!["Root".to_string(), "Child".to_string(), "Grandchild".to_string()];
+        let titles: Vec<String> = vec![
+            "Root".to_string(),
+            "Child".to_string(),
+            "Grandchild".to_string(),
+        ];
         let mut members: Vec<NewIssueTreeHoldMember<'_>> = Vec::new();
         for (idx, title) in titles.iter().enumerate() {
             members.push(NewIssueTreeHoldMember {

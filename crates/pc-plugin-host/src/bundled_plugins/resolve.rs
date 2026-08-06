@@ -65,8 +65,7 @@ pub fn lexical_resolve(p: &str) -> String {
                     }
                 } else if !cwd.as_os_str().is_empty() {
                     // pop a component from cwd
-                    let mut cwd_components: Vec<Component> =
-                        cwd.components().collect();
+                    let mut cwd_components: Vec<Component> = cwd.components().collect();
                     if !cwd_components.is_empty() {
                         cwd_components.pop();
                     }
@@ -175,10 +174,7 @@ pub fn resolve_bundled_plugin_installs(
 
         let local_path = match override_path {
             Some(p) => lexical_resolve(p),
-            None => lexical_resolve(&format!(
-                "{}/{}",
-                opts.catalog_root, entry.relative_path
-            )),
+            None => lexical_resolve(&format!("{}/{}", opts.catalog_root, entry.relative_path)),
         };
 
         if opts.enforce_catalog_root
@@ -224,13 +220,19 @@ mod tests {
 
     #[test]
     fn lexical_resolve_absolute_unchanged() {
-        assert_eq!(lexical_resolve("/app/packages/plugins"), "/app/packages/plugins");
+        assert_eq!(
+            lexical_resolve("/app/packages/plugins"),
+            "/app/packages/plugins"
+        );
     }
 
     #[test]
     fn lexical_resolve_relative_dot() {
         let result = lexical_resolve("./foo/bar");
-        assert!(!result.starts_with('.'), "should resolve ./foo/bar to absolute-like");
+        assert!(
+            !result.starts_with('.'),
+            "should resolve ./foo/bar to absolute-like"
+        );
     }
 
     #[test]
@@ -254,22 +256,34 @@ mod tests {
 
     #[test]
     fn is_inside_root_positive() {
-        assert!(is_inside_root("/app/packages/plugins/kubernetes", "/app/packages/plugins"));
+        assert!(is_inside_root(
+            "/app/packages/plugins/kubernetes",
+            "/app/packages/plugins"
+        ));
     }
 
     #[test]
     fn is_inside_root_root_itself() {
-        assert!(is_inside_root("/app/packages/plugins", "/app/packages/plugins"));
+        assert!(is_inside_root(
+            "/app/packages/plugins",
+            "/app/packages/plugins"
+        ));
     }
 
     #[test]
     fn is_inside_root_negative_sibling() {
-        assert!(!is_inside_root("/app/packages/other", "/app/packages/plugins"));
+        assert!(!is_inside_root(
+            "/app/packages/other",
+            "/app/packages/plugins"
+        ));
     }
 
     #[test]
     fn is_inside_root_negative_parent_traversal() {
-        assert!(!is_inside_root("/app/other/kubernetes", "/app/packages/plugins"));
+        assert!(!is_inside_root(
+            "/app/other/kubernetes",
+            "/app/packages/plugins"
+        ));
     }
 
     #[test]
@@ -373,7 +387,9 @@ mod tests {
         )
         .expect_err("path escape must fail when enforced");
         match err {
-            BundledPluginError::PathEscape { key, local_path, .. } => {
+            BundledPluginError::PathEscape {
+                key, local_path, ..
+            } => {
                 assert_eq!(key, "kubernetes");
                 assert_eq!(local_path, "/etc/passwd");
             }

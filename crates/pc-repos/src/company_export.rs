@@ -58,10 +58,7 @@ impl<'a> CompanyExportRepo<'a> {
     }
 
     /// 按 company 列出 issues 的轻量摘要（最多 1000 条）。
-    pub async fn list_issue_summaries(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<Vec<IssueSummary>> {
+    pub async fn list_issue_summaries(&self, company_id: Uuid) -> sqlx::Result<Vec<IssueSummary>> {
         sqlx::query_as::<_, IssueSummary>(
             "SELECT id, title, status, priority FROM issues \
              WHERE company_id = $1 AND hidden_at IS NULL \
@@ -73,10 +70,7 @@ impl<'a> CompanyExportRepo<'a> {
     }
 
     /// 按 company 列出 agents 的轻量摘要（最多 1000 条）。
-    pub async fn list_agent_summaries(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<Vec<AgentSummary>> {
+    pub async fn list_agent_summaries(&self, company_id: Uuid) -> sqlx::Result<Vec<AgentSummary>> {
         sqlx::query_as::<_, AgentSummary>(
             "SELECT id, name, role FROM agents WHERE company_id = $1 \
              ORDER BY name LIMIT 1000",
@@ -103,10 +97,7 @@ impl<'a> CompanyExportRepo<'a> {
 
     /// 复合方法：一次拉取 issues + agents + pipelines。
     /// 调用方按需 `.await?` 任一字段失败都会立即返回 Err。
-    pub async fn preview(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<CompanyExportPreview> {
+    pub async fn preview(&self, company_id: Uuid) -> sqlx::Result<CompanyExportPreview> {
         let issues = self.list_issue_summaries(company_id).await?;
         let agents = self.list_agent_summaries(company_id).await?;
         let pipelines = self.list_pipeline_summaries(company_id).await?;

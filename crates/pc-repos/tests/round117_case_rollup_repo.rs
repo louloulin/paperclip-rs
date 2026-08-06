@@ -16,7 +16,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r117-{tag}-{id}"))
         .bind(format!("R117{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -37,10 +39,13 @@ async fn insert_issue(db: &Db, company_id: Uuid, status: &str) -> Uuid {
         "INSERT INTO issues (id, company_id, identifier, title, status, kind) \
          VALUES ($1, $2, $3, 'i', $4, 'task')",
     )
-    .bind(id).bind(company_id)
+    .bind(id)
+    .bind(company_id)
     .bind(format!("ISS-{}", &id.simple().to_string()[..6]))
     .bind(status)
-    .execute(db.pool()).await.expect("insert issue");
+    .execute(db.pool())
+    .await
+    .expect("insert issue");
     id
 }
 
@@ -49,8 +54,13 @@ async fn link_issue(db: &Db, company_id: Uuid, case_id: Uuid, issue_id: Uuid) {
         "INSERT INTO case_issue_links (id, company_id, case_id, issue_id, role) \
          VALUES ($1, $2, $3, $4, 'reference')",
     )
-    .bind(Uuid::new_v4()).bind(company_id).bind(case_id).bind(issue_id)
-    .execute(db.pool()).await.expect("link");
+    .bind(Uuid::new_v4())
+    .bind(company_id)
+    .bind(case_id)
+    .bind(issue_id)
+    .execute(db.pool())
+    .await
+    .expect("link");
 }
 
 /// 1. 空 case rollup
@@ -81,7 +91,10 @@ async fn rollup_child_and_descendant_counts() {
     let repo = CaseRepo::new(&db);
     let r = repo.get_case_rollup(cid, root).await.expect("rollup");
     assert_eq!(r.child_count, 2, "root should have 2 direct children");
-    assert_eq!(r.descendant_count, 3, "root should have 3 descendants total");
+    assert_eq!(
+        r.descendant_count, 3,
+        "root should have 3 descendants total"
+    );
 }
 
 /// 3. status breakdown 包含 self + 直接子

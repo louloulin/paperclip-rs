@@ -18,8 +18,12 @@ async fn db() -> Db {
 async fn insert_user(db: &Db, tag: &str) -> String {
     let id = format!("u_r149_{}_{}", tag, Uuid::new_v4().simple());
     sqlx::query(r#"INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)"#)
-        .bind(&id).bind(format!("r149-{tag}")).bind(format!("r149_{tag}_{id}@x"))
-        .execute(db.pool()).await.expect("user");
+        .bind(&id)
+        .bind(format!("r149-{tag}"))
+        .bind(format!("r149_{tag}_{id}@x"))
+        .execute(db.pool())
+        .await
+        .expect("user");
     id
 }
 
@@ -82,7 +86,16 @@ async fn challenge_find_by_id_returns_some() {
     let db = db().await;
     let repo = ChallengeRepo::new(&db);
     let created = repo
-        .create("sh2", "cmd2", None, "board", None, "pk2", "pn2", pc_core::Timestamp::now())
+        .create(
+            "sh2",
+            "cmd2",
+            None,
+            "board",
+            None,
+            "pk2",
+            "pn2",
+            pc_core::Timestamp::now(),
+        )
         .await
         .expect("create");
     let fetched = repo.find_by_id(created.id).await.expect("find");
@@ -108,7 +121,16 @@ async fn challenge_approve_sets_fields() {
     let user = insert_user(&db, "approve").await;
     let repo = ChallengeRepo::new(&db);
     let created = repo
-        .create("sh3", "cmd3", None, "board", None, "pk3", "pn3", pc_core::Timestamp::now())
+        .create(
+            "sh3",
+            "cmd3",
+            None,
+            "board",
+            None,
+            "pk3",
+            "pn3",
+            pc_core::Timestamp::now(),
+        )
         .await
         .expect("create");
     let row = repo.approve(created.id, &user).await.expect("approve");
@@ -125,7 +147,16 @@ async fn challenge_cancel_writes_cancelled_at() {
     let db = db().await;
     let repo = ChallengeRepo::new(&db);
     let created = repo
-        .create("sh4", "cmd4", None, "board", None, "pk4", "pn4", pc_core::Timestamp::now())
+        .create(
+            "sh4",
+            "cmd4",
+            None,
+            "board",
+            None,
+            "pk4",
+            "pn4",
+            pc_core::Timestamp::now(),
+        )
         .await
         .expect("create");
     let row = repo.cancel(created.id).await.expect("cancel");
@@ -146,7 +177,9 @@ async fn board_key_create_then_list() {
         .await
         .expect("create");
     let rows = repo.list_active_by_user(&user).await.expect("list");
-    assert!(rows.iter().any(|r| r.name == "laptop" && r.key_hash == "kh1"));
+    assert!(rows
+        .iter()
+        .any(|r| r.name == "laptop" && r.key_hash == "kh1"));
 }
 
 /// 8. board_key create + revoke — 撤销后从 list 消失。

@@ -13,26 +13,28 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
-use pc_repos::approval::ApprovalRepo;
+use pc_repos::agent::AgentRepo;
 use pc_repos::agent_action_audit::{
     AgentActionAuditFilters, AgentActionAuditPage, AgentActionAuditRepo,
 };
+use pc_repos::approval::ApprovalRepo;
+use pc_repos::asset::AssetRepo;
 use pc_repos::case::CaseRepo;
-use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
+use pc_repos::company_export::CompanyExportRepo;
+use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
 use pc_repos::decision::DecisionRepo;
-use pc_repos::goal::GoalRepo;
-use pc_repos::pipeline::PipelineRepo;
-use pc_repos::label::{LabelRepo, NewLabel, LabelPatch};
+use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
 use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
-use pc_repos::asset::AssetRepo;
-use pc_repos::company_export::CompanyExportRepo;
-use pc_repos::agent::AgentRepo;
-use pc_repos::feedback_trace::FeedbackTraceRepo;
-use pc_repos::issue::IssueRepo;
+use pc_repos::goal::GoalRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
-use pc_repos::work_timeline::{WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult};
+use pc_repos::issue::IssueRepo;
+use pc_repos::label::{LabelPatch, LabelRepo, NewLabel};
+use pc_repos::pipeline::PipelineRepo;
+use pc_repos::work_timeline::{
+    WorkTimelineQuery as RepoWorkTimelineQuery, WorkTimelineRepo, WorkTimelineResult,
+};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
@@ -41,75 +43,178 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/companies", get(list).post(create))
         .route(
-            "/api/companies/:id",
+            "/api/companies/:company_id",
             get(get_one).patch(update).delete(remove),
         )
-        .route("/api/companies/:id/archive", post(archive))
-        .route("/api/companies/:id/stats", get(get_stats))
-        .route("/api/companies/:id/timeline", get(get_timeline))
-        .route("/api/companies/:id/artifacts", get(list_artifacts))
-        .route("/api/companies/:id/branding", get(get_branding).patch(update_branding))
+        .route("/api/companies/:company_id/archive", post(archive))
+        .route("/api/companies/:company_id/stats", get(get_stats))
+        .route("/api/companies/:company_id/timeline", get(get_timeline))
+        .route("/api/companies/:company_id/artifacts", get(list_artifacts))
+        .route(
+            "/api/companies/:company_id/branding",
+            get(get_branding).patch(update_branding),
+        )
         // ── Round 211: company-level diagnostics aggregate ──
         .route(
-            "/api/companies/:id/diagnostics",
+            "/api/companies/:company_id/diagnostics",
             get(company_diagnostics),
         )
         // ── Round 208: company-level GET aliases ──
         .route(
-            "/api/companies/:id/finance-events",
+            "/api/companies/:company_id/finance-events",
             get(list_company_finance_events),
         )
-        .route("/api/companies/:id/exports/preview", post(export_preview))
-        .route("/api/companies/:id/imports/preview", post(import_preview))
+        .route(
+            "/api/companies/:company_id/exports/preview",
+            post(export_preview),
+        )
+        .route(
+            "/api/companies/:company_id/imports/preview",
+            post(import_preview),
+        )
         .route("/api/companies/import/preview", post(import_preview_root))
         .route("/api/companies/import/jobs/:job_id", get(get_import_job))
-        .route("/api/companies/:id/export", post(start_company_export))
+        .route(
+            "/api/companies/:company_id/export",
+            post(start_company_export),
+        )
         // ── Round 45: cross-company aggregation + export plural alias ──
         .route("/api/companies/stats", get(get_companies_stats))
         .route("/api/companies/issues", get(get_companies_issues_malformed))
-        .route("/api/companies/:company_id/exports", post(start_company_export))
+        .route(
+            "/api/companies/:company_id/exports",
+            post(start_company_export),
+        )
         // ── Round 49: removed duplicate plugin_ui_static alias ──
         // Real impl lives in routes/plugin_ui_static.rs (registered via routes/mod.rs)
-        .route("/api/companies/:id/export/fidelity", get(get_company_export_fidelity))
-        .route("/api/companies/:id/feedback-traces", get(list_company_feedback_traces))
-        .route("/api/companies/:id/imports/apply", post(apply_company_import))
-        // ===== labels / folders / invites / members / org / audit =====
-        .route("/api/companies/:id/labels", get(list_labels).post(create_label))
-        .route("/api/companies/:id/labels/:label_id", patch(patch_label).delete(delete_label))
-        .route("/api/companies/:id/folders", get(list_folders).post(create_folder))
-        .route("/api/companies/:id/folders/ensure-my", post(ensure_my_folder))
-        .route("/api/companies/:id/folders/:folder_id", patch(patch_folder).delete(delete_folder))
-        .route("/api/companies/:id/folders/:folder_id/move", post(move_folder))
-        .route("/api/companies/:id/folders/items/move", post(move_folder_item))
-        .route("/api/companies/:id/invites", get(list_invites).post(create_invite))
-        .route("/api/companies/:id/invites/:invite_id", delete(revoke_invite))
-        .route("/api/companies/:id/join-requests", get(list_join_requests))
-        .route("/api/companies/:id/join-requests/:req_id/approve", post(approve_join_request))
-        .route("/api/companies/:id/join-requests/:req_id/reject", post(reject_join_request))
-        .route("/api/companies/:id/members", get(list_members))
-        .route("/api/companies/:id/members/:member_id", patch(patch_member))
-        .route("/api/companies/:id/members/:member_id/archive", post(archive_member))
-        .route("/api/companies/:id/members/:member_id/permissions", patch(patch_member_permissions))
-        .route("/api/companies/:id/members/:member_id/role-and-grants", patch(patch_member_role_and_grants))
-        .route("/api/companies/:id/users/me/inbox-agent-policy", get(get_my_inbox_agent_policy).put(put_my_inbox_agent_policy))
-        .route("/api/companies/:id/audit/agent-actions", get(list_agent_actions))
-        .route("/api/companies/:id/audit/agent-actions.csv", get(export_agent_actions_csv))
-        .route("/api/companies/:id/org", get(get_org))
-        .route("/api/companies/:id/org.svg", get(get_org_svg))
-        .route("/api/companies/:id/org.png", get(get_org_png))
-        .route("/api/companies/:id/search/extract", post(search_extract))
-        .route("/api/companies/:id/finance-events", post(create_finance_event))
-        .route("/api/companies/:id/agents", post(create_agent))
-        .route("/api/companies/:id/built-in-agents/:id/provision", post(provision_built_in_agent))
+        .route(
+            "/api/companies/:company_id/export/fidelity",
+            get(get_company_export_fidelity),
+        )
+        .route(
+            "/api/companies/:company_id/feedback-traces",
+            get(list_company_feedback_traces),
+        )
+        .route(
+            "/api/companies/:company_id/imports/apply",
+            post(apply_company_import),
+        )
+        // NOTE: `/api/companies/:company_id/labels` is registered by labels.rs.
+        // The duplicate GET/POST registration here was removed in Round 282 because
+        // it produced axum "Overlapping method route" panics during integration tests.
+        // NOTE: `/api/companies/:company_id/folders*` routes are registered by
+        // folders.rs (the canonical folders router module). The duplicate registrations
+        // were removed in Round 282 because they produced axum "Overlapping method route"
+        // panics. The local handler functions remain as dead code (kept for reference).
+        // ===== labels / invites / members / org / audit =====
+        .route(
+            "/api/companies/:company_id/labels/:label_id",
+            patch(patch_label).delete(delete_label),
+        )
+        .route(
+            "/api/companies/:company_id/invites",
+            get(list_invites).post(create_invite),
+        )
+        .route(
+            "/api/companies/:company_id/invites/:invite_id",
+            delete(revoke_invite),
+        )
+        .route(
+            "/api/companies/:company_id/join-requests",
+            get(list_join_requests),
+        )
+        .route(
+            "/api/companies/:company_id/join-requests/:req_id/approve",
+            post(approve_join_request),
+        )
+        .route(
+            "/api/companies/:company_id/join-requests/:req_id/reject",
+            post(reject_join_request),
+        )
+        .route("/api/companies/:company_id/members", get(list_members))
+        .route(
+            "/api/companies/:company_id/members/:member_id",
+            patch(patch_member),
+        )
+        .route(
+            "/api/companies/:company_id/members/:member_id/archive",
+            post(archive_member),
+        )
+        .route(
+            "/api/companies/:company_id/members/:member_id/permissions",
+            patch(patch_member_permissions),
+        )
+        .route(
+            "/api/companies/:company_id/members/:member_id/role-and-grants",
+            patch(patch_member_role_and_grants),
+        )
+        // NOTE: `/api/companies/:company_id/users/me/inbox-agent-policy` is registered
+        // by inbox_agent_policy.rs (the canonical module). The duplicate registration
+        // here was removed in Round 282 because it produced axum "Overlapping method
+        // route" panics during integration tests. The local handler functions remain
+        // as dead code (kept for reference); they can be deleted in a follow-up.
+        .route(
+            "/api/companies/:company_id/audit/agent-actions",
+            get(list_agent_actions),
+        )
+        .route(
+            "/api/companies/:company_id/audit/agent-actions.csv",
+            get(export_agent_actions_csv),
+        )
+        .route("/api/companies/:company_id/org", get(get_org))
+        .route("/api/companies/:company_id/org.svg", get(get_org_svg))
+        .route("/api/companies/:company_id/org.png", get(get_org_png))
+        .route(
+            "/api/companies/:company_id/search/extract",
+            post(search_extract),
+        )
+        // NOTE: POST `/api/companies/:company_id/finance-events` is registered by
+        // costs.rs (the canonical module). The duplicate registration here was
+        // removed in Round 282 because it produced axum "Overlapping method route"
+        // panics during integration tests. The local `create_finance_event` handler
+        // remains as dead code (kept for reference).
+        .route("/api/companies/:company_id/agents", post(create_agent))
+        // NOTE: `/api/companies/:company_id/built-in-agents/:key/provision` is
+        // registered by built_in_agents.rs (the canonical module). The duplicate
+        // single-route registration here was removed in Round 282 because it
+        // produced axum "Invalid route ... insertion failed" panics during
+        // integration tests (path param name `:id` vs `:key` mismatch).
+        // The local `provision_built_in_agent` handler remains as dead code
+        // (kept for reference).
         // ---- Round 37: company sub-resources (activity / approvals / decisions / goals / pipelines / case-events / user-directory / review-cases) ----
-        .route("/api/companies/:company_id/activity", get(list_company_activity_route))
-        .route("/api/companies/:company_id/approvals", get(list_company_approvals_route))
-        .route("/api/companies/:company_id/decisions", get(list_company_decisions_route))
-        .route("/api/companies/:company_id/goals", get(list_company_goals_route))
-        .route("/api/companies/:company_id/pipelines", get(list_company_pipelines_route))
-        .route("/api/companies/:company_id/case-events", get(list_company_case_events_route))
-        .route("/api/companies/:company_id/user-directory", get(list_company_user_directory_route))
-        .route("/api/companies/:company_id/review-cases", get(list_company_review_cases_route))
+        .route(
+            "/api/companies/:company_id/activity",
+            get(list_company_activity_route),
+        )
+        .route(
+            "/api/companies/:company_id/approvals",
+            get(list_company_approvals_route),
+        )
+        .route(
+            "/api/companies/:company_id/decisions",
+            get(list_company_decisions_route),
+        )
+        // NOTE: `/api/companies/:company_id/goals` is registered by goals.rs (the
+        // canonical goals router module). The duplicate registration here was removed
+        // in Round 282 because it produced axum "Overlapping method route" panics
+        // during integration tests. The local `list_company_goals_route` handler
+        // remains as dead code (kept for reference).
+        .route(
+            "/api/companies/:company_id/pipelines",
+            get(list_company_pipelines_route),
+        )
+        .route(
+            "/api/companies/:company_id/case-events",
+            get(list_company_case_events_route),
+        )
+        .route(
+            "/api/companies/:company_id/user-directory",
+            get(list_company_user_directory_route),
+        )
+        .route(
+            "/api/companies/:company_id/review-cases",
+            get(list_company_review_cases_route),
+        )
         // ---- Round 245: company watchdog evaluation worker 入口 ----
         .route(
             "/api/companies/:company_id/watchdog-evaluations",
@@ -446,12 +551,10 @@ async fn import_preview_root(
         "payloadKeys": payload.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
         "previewedAt": chrono::Utc::now(),
     });
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("company.import.preview", "company", uuid::Uuid::nil())
-                .with_data(preview.clone()),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("company.import.preview", "company", uuid::Uuid::nil())
+            .with_data(preview.clone()),
+    );
     Ok(Json(preview))
 }
 
@@ -629,7 +732,6 @@ async fn apply_company_import(
     })))
 }
 
-
 // ============================================================================
 // Labels / Folders / Invites / Members / Org / Audit / Search / Decision Bundles
 // ============================================================================
@@ -643,9 +745,14 @@ async fn list_labels(
     let rows = LabelRepo::new(&state.db)
         .list_by_company(company_id)
         .await?;
-    let items: Vec<Value> = rows.iter().map(|r| json!({
-        "id": r.id, "companyId": r.company_id, "name": r.name, "color": r.color,
-    })).collect();
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.id, "companyId": r.company_id, "name": r.name, "color": r.color,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "companyId": company_id})))
 }
 
@@ -688,7 +795,9 @@ async fn create_label(
             .with_company(company_id)
             .with_data(json!({"name": name})),
     );
-    Ok(Json(json!({"id": row.id, "companyId": company_id, "name": name, "color": body.color})))
+    Ok(Json(
+        json!({"id": row.id, "companyId": company_id, "name": name, "color": body.color}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -713,9 +822,7 @@ async fn patch_label(
         name: body.name.clone(),
         color: body.color.clone(),
     };
-    let updated = LabelRepo::new(&state.db)
-        .patch(label_id, &patch)
-        .await?;
+    let updated = LabelRepo::new(&state.db).patch(label_id, &patch).await?;
     if updated.is_none() {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
@@ -726,9 +833,7 @@ async fn delete_label(
     State(state): State<AppState>,
     Path((_company_id, label_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let deleted = LabelRepo::new(&state.db)
-        .delete(label_id)
-        .await?;
+    let deleted = LabelRepo::new(&state.db).delete(label_id).await?;
     if !deleted {
         return Err(ApiError::NotFound(format!("label {label_id}")));
     }
@@ -782,9 +887,7 @@ async fn create_folder(
     // 优先用 FolderKind 枚举（routine / skill），其它 kind（legacy "personal"）走兜底 SQL
     if let Some(kind) = FolderKind::parse(&body.kind) {
         let slug = pc_repos::folder::slug::normalize_folder_slug(&body.name);
-        let next_pos = repo
-            .next_position(company_id, kind, None)
-            .await?;
+        let next_pos = repo.next_position(company_id, kind, None).await?;
         let input = NewFolder {
             company_id,
             kind,
@@ -1025,13 +1128,9 @@ async fn create_invite(
         .invite_type
         .clone()
         .unwrap_or_else(|| "member".to_string());
-    let role = body
-        .role
-        .clone()
-        .unwrap_or_else(|| "member".to_string());
+    let role = body.role.clone().unwrap_or_else(|| "member".to_string());
     let days = body.expires_in_days.unwrap_or(7).clamp(1, 365);
-    let expires_at =
-        pc_core::Timestamp::from_dt(chrono::Utc::now() + chrono::Duration::days(days));
+    let expires_at = pc_core::Timestamp::from_dt(chrono::Utc::now() + chrono::Duration::days(days));
     let defaults = serde_json::json!({"role": role});
     let created = pc_repos::invite::InviteRepo::new(&state.db)
         .create(pc_repos::invite::NewInvite {
@@ -1135,7 +1234,9 @@ async fn approve_join_request(
             use pc_repos::join_request::JoinRequestError::*;
             match e {
                 NotPending(_) => ApiError::Conflict("join request not pending".to_string()),
-                UnknownRequestType(s) => ApiError::BadRequest(format!("unknown request_type '{s}'")),
+                UnknownRequestType(s) => {
+                    ApiError::BadRequest(format!("unknown request_type '{s}'"))
+                }
                 Db(err) => ApiError::Internal(format!("{err}")),
             }
         })?;
@@ -1170,7 +1271,9 @@ async fn reject_join_request(
             "join request {req_id} not pending"
         )));
     }
-    Ok(Json(json!({"id": req_id, "status": "rejected", "note": body.note})))
+    Ok(Json(
+        json!({"id": req_id, "status": "rejected", "note": body.note}),
+    ))
 }
 
 // ---------- members ----------
@@ -1314,14 +1417,15 @@ async fn patch_member_permissions(
     // permissions 字段：保持向后兼容，如果给的是数组，写入 principal_permission_grants。
     if let Some(json) = body.permissions.as_ref() {
         if let Some(arr) = json.as_array() {
-            let mut grants: Vec<pc_repos::principal_permission_grant::PermissionGrantInput> = Vec::new();
+            let mut grants: Vec<pc_repos::principal_permission_grant::PermissionGrantInput> =
+                Vec::new();
             for entry in arr {
-                let key = entry
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .or_else(|| {
-                        entry.get("key").and_then(|v| v.as_str()).map(|s| s.to_string())
-                    });
+                let key = entry.as_str().map(|s| s.to_string()).or_else(|| {
+                    entry
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
                 if let Some(k) = key {
                     grants.push(pc_repos::principal_permission_grant::PermissionGrantInput {
                         permission_key: k,
@@ -1330,7 +1434,12 @@ async fn patch_member_permissions(
                     });
                 }
             }
-            let mut tx = state.db.pool().begin().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+            let mut tx = state
+                .db
+                .pool()
+                .begin()
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
             pc_repos::principal_permission_grant::PrincipalPermissionGrantRepo::new(&state.db)
                 .replace_all_for_principal(
                     &mut tx,
@@ -1341,24 +1450,24 @@ async fn patch_member_permissions(
                 )
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?;
-            tx.commit().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+            tx.commit()
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
         }
     }
-    state
-        .realtime
-        .publish(
-            LiveEvent::new(
-                "company_member.permissions_updated",
-                "company_member",
-                member_id,
-            )
-            .with_company(company_id)
-            .with_data(json!({
-                "userId": row.principal_id,
-                "role": body.role,
-                "permissions": body.permissions,
-            })),
-        );
+    state.realtime.publish(
+        LiveEvent::new(
+            "company_member.permissions_updated",
+            "company_member",
+            member_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({
+            "userId": row.principal_id,
+            "role": body.role,
+            "permissions": body.permissions,
+        })),
+    );
     Ok(Json(json!({
         "id": row.id,
         "companyId": row.company_id,
@@ -1395,7 +1504,12 @@ async fn patch_member_role_and_grants(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("member {member_id}")))?;
     // 单事务：role UPDATE + grants 全量替换
-    let mut tx = state.db.pool().begin().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut tx = state
+        .db
+        .pool()
+        .begin()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let updated_member = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
         .patch(
             company_id,
@@ -1415,11 +1529,13 @@ async fn patch_member_role_and_grants(
     let grant_inputs: Vec<pc_repos::principal_permission_grant::PermissionGrantInput> = body
         .grants
         .iter()
-        .map(|k| pc_repos::principal_permission_grant::PermissionGrantInput {
-            permission_key: k.clone(),
-            scope: None,
-            granted_by_user_id: None,
-        })
+        .map(
+            |k| pc_repos::principal_permission_grant::PermissionGrantInput {
+                permission_key: k.clone(),
+                scope: None,
+                granted_by_user_id: None,
+            },
+        )
         .collect();
     pc_repos::principal_permission_grant::PrincipalPermissionGrantRepo::new(&state.db)
         .replace_all_for_principal(
@@ -1431,22 +1547,22 @@ async fn patch_member_role_and_grants(
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    tx.commit().await.map_err(|e| ApiError::Internal(e.to_string()))?;
-    state
-        .realtime
-        .publish(
-            LiveEvent::new(
-                "company_member.role_and_grants_updated",
-                "company_member",
-                member_id,
-            )
-            .with_company(company_id)
-            .with_data(json!({
-                "userId": updated_member.principal_id,
-                "role": body.role,
-                "grants": body.grants,
-            })),
-        );
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.realtime.publish(
+        LiveEvent::new(
+            "company_member.role_and_grants_updated",
+            "company_member",
+            member_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({
+            "userId": updated_member.principal_id,
+            "role": body.role,
+            "grants": body.grants,
+        })),
+    );
     Ok(Json(json!({
         "id": updated_member.id,
         "companyId": updated_member.company_id,
@@ -1505,17 +1621,15 @@ async fn put_my_inbox_agent_policy(
         .update(company_id, &user_id, input)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    state
-        .realtime
-        .publish(
-            LiveEvent::new(
-                "user_inbox_agent_policy.updated",
-                "user_inbox_agent_policy",
-                company_id,
-            )
-            .with_company(company_id)
-            .with_data(json!({"userId": user_id, "mode": body.mode})),
-        );
+    state.realtime.publish(
+        LiveEvent::new(
+            "user_inbox_agent_policy.updated",
+            "user_inbox_agent_policy",
+            company_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"userId": user_id, "mode": body.mode})),
+    );
     Ok(Json(json!({
         "companyId": policy.company_id,
         "userId": policy.user_id,
@@ -1611,12 +1725,9 @@ async fn list_agent_actions(
     Path(company_id): Path<Uuid>,
     Query(q): Query<AgentActionAuditQuery>,
 ) -> ApiResult<Json<AgentActionAuditPage>> {
-    let _ = crate::state::require_user_id(
-        &state,
-        &axum::http::HeaderMap::new(),
-    )
-    .await
-    .map_err(|_| ApiError::Forbidden("Board authentication required".into()))?;
+    let _ = crate::state::require_user_id(&state, &axum::http::HeaderMap::new())
+        .await
+        .map_err(|_| ApiError::Forbidden("Board authentication required".into()))?;
     let filters = parse_agent_audit_query(company_id, q)?;
     let repo = AgentActionAuditRepo::new(&state.db);
     let page = repo
@@ -1631,12 +1742,9 @@ async fn export_agent_actions_csv(
     Path(company_id): Path<Uuid>,
     Query(q): Query<AgentActionAuditQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    let _ = crate::state::require_user_id(
-        &state,
-        &axum::http::HeaderMap::new(),
-    )
-    .await
-    .map_err(|_| ApiError::Forbidden("Board authentication required".into()))?;
+    let _ = crate::state::require_user_id(&state, &axum::http::HeaderMap::new())
+        .await
+        .map_err(|_| ApiError::Forbidden("Board authentication required".into()))?;
     let filters = parse_agent_audit_query(company_id, q)?;
     let repo = AgentActionAuditRepo::new(&state.db);
     let page = repo
@@ -1667,7 +1775,6 @@ fn csv_field(value: &str) -> String {
     }
 }
 
-
 async fn get_org(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -1678,7 +1785,8 @@ async fn get_org(
         .await?;
     let mut nodes = Vec::with_capacity(rows.len());
     let mut edges: Vec<Value> = Vec::new();
-    let mut children: std::collections::BTreeMap<Uuid, Vec<Uuid>> = std::collections::BTreeMap::new();
+    let mut children: std::collections::BTreeMap<Uuid, Vec<Uuid>> =
+        std::collections::BTreeMap::new();
     let mut roots: Vec<Uuid> = Vec::new();
     for row in rows {
         nodes.push(json!({
@@ -1700,11 +1808,17 @@ async fn get_org(
     while let Some((id, d)) = queue.pop_front() {
         depth_map.insert(id, d);
         if let Some(kids) = children.get(&id) {
-            for k in kids { queue.push_back((*k, d + 1)); }
+            for k in kids {
+                queue.push_back((*k, d + 1));
+            }
         }
     }
     for n in nodes.iter_mut() {
-        if let Some(id) = n.get("id").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok()) {
+        if let Some(id) = n
+            .get("id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+        {
             if let Some(d) = depth_map.get(&id) {
                 if let Some(obj) = n.as_object_mut() {
                     obj.insert("depth".into(), json!(*d));
@@ -1733,11 +1847,14 @@ async fn get_org_svg(
         return Ok(([("content-type", "image/svg+xml")],
             format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 80\"><text x=\"100\" y=\"40\" text-anchor=\"middle\" font-size=\"12\" fill=\"#94a3b8\">company {company_id}: no agents</text></svg>")));
     }
-    let mut children: std::collections::BTreeMap<Option<Uuid>, Vec<Uuid>> = std::collections::BTreeMap::new();
+    let mut children: std::collections::BTreeMap<Option<Uuid>, Vec<Uuid>> =
+        std::collections::BTreeMap::new();
     for row in &rows {
         children.entry(row.reports_to).or_default().push(row.id);
     }
-    for v in children.values_mut() { v.sort(); }
+    for v in children.values_mut() {
+        v.sort();
+    }
     let roots = children.get(&None).cloned().unwrap_or_default();
     let mut depth_map: std::collections::HashMap<Uuid, usize> = std::collections::HashMap::new();
     let mut order: Vec<Uuid> = Vec::new();
@@ -1747,11 +1864,14 @@ async fn get_org_svg(
         depth_map.insert(id, d);
         order.push(id);
         if let Some(kids) = children.get(&Some(id)) {
-            for k in kids { queue.push_back((*k, d + 1)); }
+            for k in kids {
+                queue.push_back((*k, d + 1));
+            }
         }
     }
     let mut layer_pos: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    let mut id_pos: std::collections::HashMap<Uuid, (usize, usize)> = std::collections::HashMap::new();
+    let mut id_pos: std::collections::HashMap<Uuid, (usize, usize)> =
+        std::collections::HashMap::new();
     for id in &order {
         let d = depth_map[id];
         let p = layer_pos.entry(d).or_insert(0);
@@ -1772,22 +1892,38 @@ async fn get_org_svg(
     );
     // edges first
     for row in &rows {
-        let parent = match row.reports_to { Some(p) => p, None => continue };
-        let (cd, cp) = match id_pos.get(&row.id) { Some(p) => *p, None => continue };
-        let (pd, pp) = match id_pos.get(&parent) { Some(p) => *p, None => continue };
+        let parent = match row.reports_to {
+            Some(p) => p,
+            None => continue,
+        };
+        let (cd, cp) = match id_pos.get(&row.id) {
+            Some(p) => *p,
+            None => continue,
+        };
+        let (pd, pp) = match id_pos.get(&parent) {
+            Some(p) => *p,
+            None => continue,
+        };
         let x1 = pp * (box_w + gap_x) + gap_x + box_w / 2;
         let y1 = pd * (box_h + gap_y) + gap_y + box_h;
         let x2 = cp * (box_w + gap_x) + gap_x + box_w / 2;
         let y2 = cd * (box_h + gap_y) + gap_y;
         svg.push_str(&format!(
             "<path class=\"l\" d=\"M{x1} {y1} C{x1} {my} {x2} {my2} {x2} {y2}\" fill=\"none\"/>",
-            x1 = x1, y1 = y1, x2 = x2, y2 = y2,
-            my = y1 + 20, my2 = y2 - 20,
+            x1 = x1,
+            y1 = y1,
+            x2 = x2,
+            y2 = y2,
+            my = y1 + 20,
+            my2 = y2 - 20,
         ));
     }
     // nodes
     for row in &rows {
-        let (d, p) = match id_pos.get(&row.id) { Some(p) => *p, None => continue };
+        let (d, p) = match id_pos.get(&row.id) {
+            Some(p) => *p,
+            None => continue,
+        };
         let x = p * (box_w + gap_x) + gap_x;
         let y = d * (box_h + gap_y) + gap_y;
         let role_s = row.role.clone();
@@ -1818,15 +1954,11 @@ async fn get_org_png(
 ) -> ApiResult<impl IntoResponse> {
     // Minimal 1×1 transparent PNG
     let png: Vec<u8> = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-        0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
-        0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
-        0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     Ok(([("content-type", "image/png")], png))
 }
@@ -1837,14 +1969,25 @@ async fn search_extract(
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult<Json<Value>> {
     let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let limit = body.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100);
+    let limit = body
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(20)
+        .clamp(1, 100);
     let rows = pc_repos::issue::IssueRepo::new(&state.db)
         .search_titles(company_id, query, limit)
         .await?;
-    let hits: Vec<Value> = rows.into_iter().map(|row| json!({
-        "id": row.id, "title": row.title, "status": row.status, "kind": "issue",
-    })).collect();
-    Ok(Json(json!({"items": hits, "query": query, "companyId": company_id})))
+    let hits: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id, "title": row.title, "status": row.status, "kind": "issue",
+            })
+        })
+        .collect();
+    Ok(Json(
+        json!({"items": hits, "query": query, "companyId": company_id}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1873,15 +2016,13 @@ async fn create_finance_event(
                 pc_repos::cost::FkError::NotFound(label)
                 | pc_repos::cost::FkError::WrongCompany(label),
             ) => ApiError::NotFound(label),
-            pc_repos::cost::FinanceCreateError::Fk(
-                pc_repos::cost::FkError::Db(_),
-            ) => ApiError::Internal("finance FK lookup failed".into()),
-            pc_repos::cost::FinanceCreateError::Fk(
-                pc_repos::cost::FkError::Internal(msg),
-            ) => ApiError::Internal(msg),
-            pc_repos::cost::FinanceCreateError::Db(err) => {
-                ApiError::Internal(err.to_string())
+            pc_repos::cost::FinanceCreateError::Fk(pc_repos::cost::FkError::Db(_)) => {
+                ApiError::Internal("finance FK lookup failed".into())
             }
+            pc_repos::cost::FinanceCreateError::Fk(pc_repos::cost::FkError::Internal(msg)) => {
+                ApiError::Internal(msg)
+            }
+            pc_repos::cost::FinanceCreateError::Db(err) => ApiError::Internal(err.to_string()),
         })?;
     Ok(Json(row))
 }
@@ -1920,7 +2061,8 @@ async fn provision_built_in_agent(
 ) -> ApiResult<Json<Value>> {
     // Round 93 备注：`company_built_in_agent_provisions` 表在当前迁移集中不存在，
     // 原 inline SQL 100% 报错。改为返回 200 + stub，待 schema 落地后改为走 Repo。
-    let built_in_id: Uuid = Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("bad uuid".into()))?;
+    let built_in_id: Uuid =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("bad uuid".into()))?;
     let _ = state.db.pool(); // 静默未用变量警告；保留以备后续切到真表
     Ok(Json(json!({
         "provisioned": false,
@@ -1930,11 +2072,12 @@ async fn provision_built_in_agent(
     })))
 }
 
-
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
-
 
 // ============================================================================
 // Round 37: company sub-resources (activity / approvals / decisions / goals /
@@ -1990,7 +2133,10 @@ async fn list_company_approvals_route(
 ) -> ApiResult<Json<Value>> {
     ensure_company_exists(&state, company_id).await?;
     let mut filter = pc_repos::approval::ApprovalFilter::default();
-    filter.status = q.status.as_deref().and_then(pc_repos::approval::ApprovalStatus::parse);
+    filter.status = q
+        .status
+        .as_deref()
+        .and_then(pc_repos::approval::ApprovalStatus::parse);
     filter.limit = Some(q.limit.unwrap_or(50).clamp(1, 200));
     let rows = ApprovalRepo::new(&state.db)
         .list_by_company(company_id, &filter)
@@ -2036,9 +2182,7 @@ async fn list_company_goals_route(
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     ensure_company_exists(&state, company_id).await?;
-    let rows = GoalRepo::new(&state.db)
-        .list_by_company(company_id)
-        .await?;
+    let rows = GoalRepo::new(&state.db).list_by_company(company_id).await?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
@@ -2285,7 +2429,11 @@ fn parse_logo_from_description(desc: Option<&str>) -> Option<String> {
     desc?
         .lines()
         .rev()
-        .find_map(|line| line.trim().strip_prefix("<!-- logo:").and_then(|s| s.strip_suffix(" -->")))
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("<!-- logo:")
+                .and_then(|s| s.strip_suffix(" -->"))
+        })
         .map(str::to_owned)
 }
 
@@ -2316,7 +2464,10 @@ async fn list_company_finance_events(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     use pc_repos::cost::CostRange;
-    let range = CostRange { from: None, to: None };
+    let range = CostRange {
+        from: None,
+        to: None,
+    };
     let events: Vec<FinanceEventRow> = CostRepo::new(&state.db)
         .finance_events(id, range, 100)
         .await?;
@@ -2367,10 +2518,7 @@ mod round208_tests {
     #[test]
     fn parse_logo_picks_last_logo_if_multiple() {
         let desc = Some("<!-- logo:old -->\nnew text\n<!-- logo:new -->");
-        assert_eq!(
-            parse_logo_from_description(desc).as_deref(),
-            Some("new")
-        );
+        assert_eq!(parse_logo_from_description(desc).as_deref(), Some("new"));
     }
 }
 
@@ -2410,7 +2558,6 @@ mod round211_tests {
     }
 }
 
-
 // ============================================================================
 // Round 211: company-level diagnostics aggregate
 //
@@ -2445,11 +2592,10 @@ async fn company_diagnostics(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let (issue_blocked, issue_in_progress, issue_needs_review) =
-        IssueRepo::new(&state.db)
-            .status_breakdown_visible(id)
-            .await
-            .unwrap_or((0, 0, 0));
+    let (issue_blocked, issue_in_progress, issue_needs_review) = IssueRepo::new(&state.db)
+        .status_breakdown_visible(id)
+        .await
+        .unwrap_or((0, 0, 0));
     let (agent_error, agent_running, agent_paused) = AgentRepo::new(&state.db)
         .status_breakdown(id)
         .await
@@ -2685,9 +2831,8 @@ mod round224_tests {
     //! - `build_export_fidelity_report` 输出 V1 schema + counts + warnings
     //! - `CompanyExportBody` / `CompanyImportApplyBody` 反序列化（camelCase）
     use super::{
-        build_export_fidelity_report, build_export_fidelity_warnings,
-        CompanyExportBody, CompanyImportApplyBody, ExportFidelityCounts,
-        EXPORT_FIDELITY_REPORT_SCHEMA,
+        build_export_fidelity_report, build_export_fidelity_warnings, CompanyExportBody,
+        CompanyImportApplyBody, ExportFidelityCounts, EXPORT_FIDELITY_REPORT_SCHEMA,
     };
     use serde_json::json;
 

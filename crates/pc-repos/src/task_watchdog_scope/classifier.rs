@@ -144,7 +144,9 @@ pub struct ClassifyTaskWatchdogCapabilityInput<'a> {
 /// - operations: Comment + StatusChange + Assign + Label + UpdateMetadata
 /// - denied_operations: 破坏性操作（Archive / Delete / DisableMonitor）
 ///   除非 `allow_destructive` 为 true
-pub fn default_capability_for_resume(input: &ClassifyTaskWatchdogCapabilityInput<'_>) -> TaskWatchdogCapability {
+pub fn default_capability_for_resume(
+    input: &ClassifyTaskWatchdogCapabilityInput<'_>,
+) -> TaskWatchdogCapability {
     let operations = vec![
         WatchdogOperation::Comment,
         WatchdogOperation::StatusChange,
@@ -180,21 +182,35 @@ pub fn classify_task_watchdog_capability(
         // 解析 custom_instructions 中的关键字
         let lower = instr.to_ascii_lowercase();
         if lower.contains("allow_archive") || lower.contains("allow_destructive") {
-            capability.denied_operations.retain(|op| !op.is_destructive());
+            capability
+                .denied_operations
+                .retain(|op| !op.is_destructive());
             if !capability.operations.contains(&WatchdogOperation::Archive) {
                 capability.operations.push(WatchdogOperation::Archive);
             }
         }
         if lower.contains("deny_assign") {
-            capability.operations.retain(|op| *op != WatchdogOperation::Assign);
-            if !capability.denied_operations.contains(&WatchdogOperation::Assign) {
+            capability
+                .operations
+                .retain(|op| *op != WatchdogOperation::Assign);
+            if !capability
+                .denied_operations
+                .contains(&WatchdogOperation::Assign)
+            {
                 capability.denied_operations.push(WatchdogOperation::Assign);
             }
         }
         if lower.contains("allow_children") {
-            capability.denied_operations.retain(|op| *op != WatchdogOperation::ManageChildren);
-            if !capability.operations.contains(&WatchdogOperation::ManageChildren) {
-                capability.operations.push(WatchdogOperation::ManageChildren);
+            capability
+                .denied_operations
+                .retain(|op| *op != WatchdogOperation::ManageChildren);
+            if !capability
+                .operations
+                .contains(&WatchdogOperation::ManageChildren)
+            {
+                capability
+                    .operations
+                    .push(WatchdogOperation::ManageChildren);
             }
         }
         if lower.contains("allow_siblings") {
@@ -254,7 +270,9 @@ mod tests {
         });
         assert!(cap.denied_operations.contains(&WatchdogOperation::Archive));
         assert!(cap.denied_operations.contains(&WatchdogOperation::Delete));
-        assert!(cap.denied_operations.contains(&WatchdogOperation::DisableMonitor));
+        assert!(cap
+            .denied_operations
+            .contains(&WatchdogOperation::DisableMonitor));
         assert!(cap.operations.contains(&WatchdogOperation::Comment));
         assert!(cap.operations.contains(&WatchdogOperation::StatusChange));
         assert!(!cap.operations.contains(&WatchdogOperation::Archive));
@@ -270,7 +288,9 @@ mod tests {
         });
         assert!(!cap.denied_operations.contains(&WatchdogOperation::Archive));
         assert!(!cap.denied_operations.contains(&WatchdogOperation::Delete));
-        assert!(!cap.denied_operations.contains(&WatchdogOperation::DisableMonitor));
+        assert!(!cap
+            .denied_operations
+            .contains(&WatchdogOperation::DisableMonitor));
     }
 
     #[test]

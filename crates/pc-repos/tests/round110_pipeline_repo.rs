@@ -11,9 +11,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -59,12 +57,7 @@ async fn insert_stage(db: &Db, pipeline_id: Uuid, key: &str, kind: &str) -> Uuid
     id
 }
 
-async fn insert_pipeline_document(
-    db: &Db,
-    company_id: Uuid,
-    pipeline_id: Uuid,
-    key: &str,
-) -> Uuid {
+async fn insert_pipeline_document(db: &Db, company_id: Uuid, pipeline_id: Uuid, key: &str) -> Uuid {
     let id = Uuid::new_v4();
     let doc_id = Uuid::new_v4();
     sqlx::query(
@@ -87,10 +80,7 @@ async fn insert_pipeline_document(
 async fn stage_config_missing_returns_none() {
     let db = db().await;
     let repo = PipelineRepo::new(&db);
-    let none = repo
-        .get_stage_config(Uuid::new_v4())
-        .await
-        .expect("get");
+    let none = repo.get_stage_config(Uuid::new_v4()).await.expect("get");
     assert!(none.is_none());
 }
 
@@ -169,7 +159,10 @@ async fn touch_pipeline_document_updates_existing() {
     insert_pipeline_document(&db, cid, pid, "design").await;
 
     let repo = PipelineRepo::new(&db);
-    assert!(repo.touch_pipeline_document(pid, "design").await.expect("touch"));
+    assert!(repo
+        .touch_pipeline_document(pid, "design")
+        .await
+        .expect("touch"));
 }
 
 /// 7. touch_pipeline_document：upsert 缺失时插入
@@ -180,16 +173,18 @@ async fn touch_pipeline_document_inserts_when_missing() {
     let pid = insert_pipeline(&db, cid).await;
 
     let repo = PipelineRepo::new(&db);
-    assert!(repo.touch_pipeline_document(pid, "newkey").await.expect("touch"));
+    assert!(repo
+        .touch_pipeline_document(pid, "newkey")
+        .await
+        .expect("touch"));
 
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT key FROM pipeline_documents WHERE pipeline_id=$1 AND key=$2",
-    )
-    .bind(pid)
-    .bind("newkey")
-    .fetch_optional(db.pool())
-    .await
-    .expect("query");
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT key FROM pipeline_documents WHERE pipeline_id=$1 AND key=$2")
+            .bind(pid)
+            .bind("newkey")
+            .fetch_optional(db.pool())
+            .await
+            .expect("query");
     assert_eq!(row.map(|(k,)| k), Some("newkey".to_string()));
 }
 

@@ -168,10 +168,7 @@ impl<'a> BoardChatRepo<'a> {
             .await?)
     }
 
-    pub async fn get_or_create_thread(
-        &self,
-        n: &NewThread,
-    ) -> RepoResult<BoardThreadRow> {
+    pub async fn get_or_create_thread(&self, n: &NewThread) -> RepoResult<BoardThreadRow> {
         if let Some(issue_id) = n.issue_id {
             if let Some(existing) = sqlx::query_as::<_, BoardThreadRow>(&format!(
                 "SELECT {THREAD_COLS} FROM board_chat_threads \
@@ -261,11 +258,7 @@ impl<'a> BoardChatRepo<'a> {
 
     /// Ensure a board issue exists for a chat session.
     /// 优先按 (company_id, title) 查；找不到则创建；创建若遇 origin_fingerprint 唯一冲突则回查。
-    pub async fn ensure_board_issue(
-        &self,
-        company_id: Uuid,
-        title: &str,
-    ) -> RepoResult<Uuid> {
+    pub async fn ensure_board_issue(&self, company_id: Uuid, title: &str) -> RepoResult<Uuid> {
         if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
             "SELECT id FROM issues WHERE company_id=$1 AND title=$2 LIMIT 1",
         )

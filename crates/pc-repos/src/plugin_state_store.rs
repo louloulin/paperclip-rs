@@ -144,11 +144,10 @@ pub struct PluginStateStore<'a> {
 impl<'a> PluginStateStore<'a> {
     /// 校验 plugin 存在（与 Node `assertPluginExists` 1:1 对齐）。
     async fn assert_plugin_exists(&self, plugin_id: Uuid) -> PluginStateStoreResult<()> {
-        let row: Option<(Uuid,)> =
-            sqlx::query_as("SELECT id FROM plugins WHERE id = $1")
-                .bind(plugin_id)
-                .fetch_optional(self.db.pool())
-                .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM plugins WHERE id = $1")
+            .bind(plugin_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         if row.is_none() {
             return Err(PluginStateStoreError::PluginNotFound(plugin_id.to_string()));
         }
@@ -165,11 +164,12 @@ impl<'a> PluginStateStore<'a> {
         state_key: &str,
         options: ScopeOptions,
     ) -> PluginStateStoreResult<Option<Value>> {
-        let namespace = options.namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+        let namespace = options
+            .namespace
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
         let scope_id = options.scope_id;
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            "SELECT value_json FROM plugin_state WHERE plugin_id = ",
-        );
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT value_json FROM plugin_state WHERE plugin_id = ");
         qb.push_bind(plugin_id);
         qb.push(" AND scope_kind = ");
         qb.push_bind(scope_kind.as_str());
@@ -199,7 +199,9 @@ impl<'a> PluginStateStore<'a> {
     ) -> PluginStateStoreResult<()> {
         self.assert_plugin_exists(plugin_id).await?;
 
-        let namespace = input.namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+        let namespace = input
+            .namespace
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
         let scope_id = input.scope_id;
 
         sqlx::query(
@@ -228,11 +230,12 @@ impl<'a> PluginStateStore<'a> {
         state_key: &str,
         options: ScopeOptions,
     ) -> PluginStateStoreResult<()> {
-        let namespace = options.namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+        let namespace = options
+            .namespace
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
         let scope_id = options.scope_id;
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            "DELETE FROM plugin_state WHERE plugin_id = ",
-        );
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("DELETE FROM plugin_state WHERE plugin_id = ");
         qb.push_bind(plugin_id);
         qb.push(" AND scope_kind = ");
         qb.push_bind(scope_kind.as_str());

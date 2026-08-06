@@ -17,15 +17,20 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r112-{tag}-{id}"))
         .bind(format!("R112{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
 async fn insert_project(db: &Db, company_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO projects (id, company_id, name) VALUES ($1, $2, 'p112')")
-        .bind(id).bind(company_id)
-        .execute(db.pool()).await.expect("insert project");
+        .bind(id)
+        .bind(company_id)
+        .execute(db.pool())
+        .await
+        .expect("insert project");
     id
 }
 
@@ -34,8 +39,11 @@ async fn insert_agent(db: &Db, company_id: Uuid) -> Uuid {
     sqlx::query(
         "INSERT INTO agents (id, company_id, name, status) VALUES ($1, $2, 'a112', 'active')",
     )
-    .bind(id).bind(company_id)
-    .execute(db.pool()).await.expect("insert agent");
+    .bind(id)
+    .bind(company_id)
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
     id
 }
 
@@ -45,8 +53,13 @@ async fn insert_routine(db: &Db, company_id: Uuid, project_id: Uuid, agent_id: U
         "INSERT INTO routines (id, company_id, project_id, title, assignee_agent_id, status) \
          VALUES ($1, $2, $3, 'r112', $4, 'active')",
     )
-    .bind(id).bind(company_id).bind(project_id).bind(agent_id)
-    .execute(db.pool()).await.expect("insert routine");
+    .bind(id)
+    .bind(company_id)
+    .bind(project_id)
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .expect("insert routine");
     id
 }
 
@@ -61,8 +74,13 @@ async fn insert_trigger(
         "INSERT INTO routine_triggers (id, company_id, routine_id, kind, secret_ref) \
          VALUES ($1, $2, $3, 'webhook', $4)",
     )
-    .bind(id).bind(company_id).bind(routine_id).bind(secret_ref)
-    .execute(db.pool()).await.expect("insert trigger");
+    .bind(id)
+    .bind(company_id)
+    .bind(routine_id)
+    .bind(secret_ref)
+    .execute(db.pool())
+    .await
+    .expect("insert trigger");
     id
 }
 
@@ -72,8 +90,12 @@ async fn insert_revision(db: &Db, routine_id: Uuid, n: i32) -> Uuid {
         "INSERT INTO routine_revisions (id, routine_id, revision_number, title, snapshot) \
          VALUES ($1, $2, $3, 'rev', '{}'::jsonb)",
     )
-    .bind(id).bind(routine_id).bind(n)
-    .execute(db.pool()).await.expect("insert revision");
+    .bind(id)
+    .bind(routine_id)
+    .bind(n)
+    .execute(db.pool())
+    .await
+    .expect("insert revision");
     id
 }
 
@@ -125,13 +147,12 @@ async fn update_revision_pointer_description_none() {
         .await
         .expect("upd");
     assert_eq!(n, 1);
-    let description: Option<String> = sqlx::query_scalar(
-        "SELECT description FROM routines WHERE id = $1",
-    )
-    .bind(rid)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let description: Option<String> =
+        sqlx::query_scalar("SELECT description FROM routines WHERE id = $1")
+            .bind(rid)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert!(description.is_none());
 }
 
@@ -185,7 +206,11 @@ async fn get_trigger_for_rotation_null_secret() {
     let tid = insert_trigger(&db, cid, rid, None).await;
 
     let repo = RoutineRepo::new(&db);
-    let info = repo.get_trigger_for_rotation(tid).await.expect("get").expect("present");
+    let info = repo
+        .get_trigger_for_rotation(tid)
+        .await
+        .expect("get")
+        .expect("present");
     assert!(info.existing_secret_ref.is_none());
 }
 
@@ -206,13 +231,12 @@ async fn set_trigger_secret_ref_writes_and_metadata() {
         .expect("set");
     assert_eq!(n, 1);
 
-    let (secret_ref_col, meta): (Option<String>, serde_json::Value) = sqlx::query_as(
-        "SELECT secret_ref, metadata FROM routine_triggers WHERE id = $1",
-    )
-    .bind(tid)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (secret_ref_col, meta): (Option<String>, serde_json::Value) =
+        sqlx::query_as("SELECT secret_ref, metadata FROM routine_triggers WHERE id = $1")
+            .bind(tid)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(secret_ref_col, Some("new://ref".to_owned()));
     assert_eq!(meta["rotateReason"], serde_json::json!("manual rotation"));
     assert!(meta["rotatedAt"].is_string());

@@ -167,7 +167,14 @@ async fn create_tree_hold(
         .map(|i| i.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let row = IssueTreeHoldRepo::new(&state.db)
-        .create_v1(issue_company, id, "merge", "active", reason.as_deref(), "local-board")
+        .create_v1(
+            issue_company,
+            id,
+            "merge",
+            "active",
+            reason.as_deref(),
+            "local-board",
+        )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
@@ -229,17 +236,19 @@ async fn list_company_tree_holds(
     let items: Vec<Value> = rows
         .iter()
         .take(q.limit as usize)
-        .map(|(id, root_id, mode, status, reason, released_at, created_at)| {
-            json!({
-                "id": id,
-                "rootIssueId": root_id,
-                "mode": mode,
-                "status": status,
-                "reason": reason,
-                "releasedAt": released_at,
-                "createdAt": created_at,
-            })
-        })
+        .map(
+            |(id, root_id, mode, status, reason, released_at, created_at)| {
+                json!({
+                    "id": id,
+                    "rootIssueId": root_id,
+                    "mode": mode,
+                    "status": status,
+                    "reason": reason,
+                    "releasedAt": released_at,
+                    "createdAt": created_at,
+                })
+            },
+        )
         .collect();
     Ok(Json(json!({
         "companyId": company_id,

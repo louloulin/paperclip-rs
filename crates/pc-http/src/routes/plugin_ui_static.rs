@@ -34,7 +34,12 @@ async fn plugin_ui_static(
             .await
             .ok()
             .flatten()
-            .map(|row| row.manifest_json.get("ui").cloned().unwrap_or(serde_json::json!({})))
+            .map(|row| {
+                row.manifest_json
+                    .get("ui")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}))
+            })
     } else {
         None
     };

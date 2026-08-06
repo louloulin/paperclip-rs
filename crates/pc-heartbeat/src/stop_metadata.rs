@@ -230,7 +230,9 @@ pub fn resolve_heartbeat_run_timeout_policy(
 }
 
 /// 根据 outcome + errorCode / errorMessage 推断 stop reason。
-pub fn infer_heartbeat_run_stop_reason(input: HeartbeatRunStopReasonInput) -> HeartbeatRunStopReason {
+pub fn infer_heartbeat_run_stop_reason(
+    input: HeartbeatRunStopReasonInput,
+) -> HeartbeatRunStopReason {
     if input.outcome == HeartbeatRunOutcome::Succeeded {
         return HeartbeatRunStopReason::Completed;
     }
@@ -253,11 +255,7 @@ pub fn infer_heartbeat_run_stop_reason(input: HeartbeatRunStopReasonInput) -> He
         }
     }
     if input.outcome == HeartbeatRunOutcome::Cancelled {
-        let message = input
-            .error_message
-            .as_deref()
-            .unwrap_or("")
-            .to_lowercase();
+        let message = input.error_message.as_deref().unwrap_or("").to_lowercase();
         if message.contains("budget") {
             return HeartbeatRunStopReason::BudgetPaused;
         }
@@ -280,10 +278,8 @@ pub struct HeartbeatRunStopReasonInput {
 pub fn build_heartbeat_run_stop_metadata(
     input: HeartbeatRunStopMetadataInput,
 ) -> HeartbeatRunStopMetadata {
-    let timeout_policy = resolve_heartbeat_run_timeout_policy(
-        &input.adapter_type,
-        input.adapter_config.as_ref(),
-    );
+    let timeout_policy =
+        resolve_heartbeat_run_timeout_policy(&input.adapter_type, input.adapter_config.as_ref());
     let stop_reason = infer_heartbeat_run_stop_reason(HeartbeatRunStopReasonInput {
         outcome: input.outcome,
         error_code: input.error_code.clone(),
@@ -319,9 +315,8 @@ pub fn merge_heartbeat_run_stop_metadata(
     result_json: Option<&serde_json::Map<String, serde_json::Value>>,
     metadata: &HeartbeatRunStopMetadata,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let mut out: serde_json::Map<String, serde_json::Value> = result_json
-        .cloned()
-        .unwrap_or_default();
+    let mut out: serde_json::Map<String, serde_json::Value> =
+        result_json.cloned().unwrap_or_default();
     let existing_max_turn: Option<HeartbeatRunStopReason> = {
         let s: Option<String> = result_json
             .and_then(|obj| obj.get("stopReason"))
@@ -454,7 +449,8 @@ mod tests {
 
     #[test]
     fn timeout_sec_override_for_claude_local() {
-        let policy = resolve_heartbeat_run_timeout_policy("claude_local", Some(&cfg_with_timeout_sec(60)));
+        let policy =
+            resolve_heartbeat_run_timeout_policy("claude_local", Some(&cfg_with_timeout_sec(60)));
         assert_eq!(policy.effective_timeout_sec, Some(60.0));
         assert!(policy.timeout_configured);
         assert_eq!(policy.timeout_source, TimeoutSource::Config);

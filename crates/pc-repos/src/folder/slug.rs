@@ -40,7 +40,11 @@ pub fn normalize_folder_slug(value: &str) -> String {
 }
 
 /// 顶级 skill 文件夹保留名判定。
-pub(crate) fn is_reserved_root_slug(kind: crate::folder::FolderKind, parent_id: Option<Uuid>, slug: &str) -> bool {
+pub(crate) fn is_reserved_root_slug(
+    kind: crate::folder::FolderKind,
+    parent_id: Option<Uuid>,
+    slug: &str,
+) -> bool {
     kind == crate::folder::FolderKind::Skill
         && parent_id.is_none()
         && RESERVED_ROOT_SLUGS.contains(&slug)

@@ -50,8 +50,14 @@ pub struct BuildWorkspaceCommandEnvInput<'a> {
 /// - created → "true" / "false"
 pub fn build_workspace_command_env(input: BuildWorkspaceCommandEnvInput<'_>) -> MapStringString {
     let mut env: MapStringString = MapStringString::new();
-    env.insert("PAPERCLIP_WORKSPACE_CWD".into(), input.worktree_path.to_string());
-    env.insert("PAPERCLIP_WORKSPACE_PATH".into(), input.worktree_path.to_string());
+    env.insert(
+        "PAPERCLIP_WORKSPACE_CWD".into(),
+        input.worktree_path.to_string(),
+    );
+    env.insert(
+        "PAPERCLIP_WORKSPACE_PATH".into(),
+        input.worktree_path.to_string(),
+    );
     env.insert(
         "PAPERCLIP_WORKSPACE_WORKTREE_PATH".into(),
         input.worktree_path.to_string(),
@@ -68,7 +74,10 @@ pub fn build_workspace_command_env(input: BuildWorkspaceCommandEnvInput<'_>) -> 
         "PAPERCLIP_WORKSPACE_REPO_ROOT".into(),
         input.repo_root.to_string(),
     );
-    env.insert("PAPERCLIP_WORKSPACE_SOURCE".into(), input.base.source.clone());
+    env.insert(
+        "PAPERCLIP_WORKSPACE_SOURCE".into(),
+        input.base.source.clone(),
+    );
     env.insert(
         "PAPERCLIP_WORKSPACE_REPO_REF".into(),
         input.base.repo_ref.clone().unwrap_or_default(),
@@ -321,10 +330,7 @@ mod tests {
         });
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(), "/wt");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_PATH").unwrap(), "/wt");
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(),
-            "/wt"
-        );
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(), "/wt");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_BRANCH").unwrap(), "feat/x");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_BASE_CWD").unwrap(), "/base");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_REPO_ROOT").unwrap(), "/repo");
@@ -338,10 +344,7 @@ mod tests {
         assert_eq!(env.get("PAPERCLIP_AGENT_NAME").unwrap(), "agent-1");
         assert_eq!(env.get("PAPERCLIP_COMPANY_ID").unwrap(), "co-1");
         assert_eq!(env.get("PAPERCLIP_ISSUE_ID").unwrap(), "iss-1");
-        assert_eq!(
-            env.get("PAPERCLIP_ISSUE_IDENTIFIER").unwrap(),
-            "PROJ-1"
-        );
+        assert_eq!(env.get("PAPERCLIP_ISSUE_IDENTIFIER").unwrap(), "PROJ-1");
         assert_eq!(env.get("PAPERCLIP_ISSUE_TITLE").unwrap(), "fix");
         assert_eq!(env.get("PAPERCLIP_ISSUE_WORK_MODE").unwrap(), "work");
     }
@@ -386,29 +389,14 @@ mod tests {
         let env = build_execution_workspace_cleanup_env(&w, Some("/base"));
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(), "/repo");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_PATH").unwrap(), "/repo");
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(),
-            "/wt"
-        );
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(), "/wt");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_BRANCH").unwrap(), "feat");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_BASE_CWD").unwrap(), "/base");
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_REPO_ROOT").unwrap(),
-            "/base"
-        );
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_REPO_URL").unwrap(),
-            "git@x"
-        );
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_REPO_REF").unwrap(),
-            "main"
-        );
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_REPO_ROOT").unwrap(), "/base");
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_REPO_URL").unwrap(), "git@x");
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_REPO_REF").unwrap(), "main");
         assert_eq!(env.get("PAPERCLIP_PROJECT_ID").unwrap(), "p-1");
-        assert_eq!(
-            env.get("PAPERCLIP_PROJECT_WORKSPACE_ID").unwrap(),
-            "pws-1"
-        );
+        assert_eq!(env.get("PAPERCLIP_PROJECT_WORKSPACE_ID").unwrap(), "pws-1");
         assert_eq!(env.get("PAPERCLIP_ISSUE_ID").unwrap(), "iss-1");
     }
 
@@ -429,10 +417,7 @@ mod tests {
             env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(),
             "/repo"
         );
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_BASE_CWD").unwrap(),
-            ""
-        );
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_BASE_CWD").unwrap(), "");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_BRANCH").unwrap(), "");
     }
 
@@ -442,61 +427,48 @@ mod tests {
         let env = build_execution_workspace_cleanup_env(&w, None);
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(), "");
         assert_eq!(env.get("PAPERCLIP_WORKSPACE_PATH").unwrap(), "");
-        assert_eq!(
-            env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(),
-            ""
-        );
+        assert_eq!(env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(), "");
     }
 
     // ----- resolveRepoManagedWorkspaceCommand -----
 
     #[test]
     fn resolve_repo_managed_command_replaces_when_exists() {
-        let resolved = resolve_repo_managed_workspace_command(
-            "bash ./scripts/setup.sh",
-            "/repo",
-            |p| p == "/repo/scripts/setup.sh",
-        );
+        let resolved =
+            resolve_repo_managed_workspace_command("bash ./scripts/setup.sh", "/repo", |p| {
+                p == "/repo/scripts/setup.sh"
+            });
         assert_eq!(resolved, "bash '/repo/scripts/setup.sh'");
     }
 
     #[test]
     fn resolve_repo_managed_command_keeps_when_missing() {
-        let resolved = resolve_repo_managed_workspace_command(
-            "bash ./scripts/missing.sh",
-            "/repo",
-            |_| false,
-        );
+        let resolved =
+            resolve_repo_managed_workspace_command("bash ./scripts/missing.sh", "/repo", |_| false);
         assert_eq!(resolved, "bash ./scripts/missing.sh");
     }
 
     #[test]
     fn resolve_repo_managed_command_no_prefix_with_suffix() {
-        let resolved = resolve_repo_managed_workspace_command(
-            "./bin/run --port=3000",
-            "/repo",
-            |p| p == "/repo/bin/run",
-        );
+        let resolved =
+            resolve_repo_managed_workspace_command("./bin/run --port=3000", "/repo", |p| {
+                p == "/repo/bin/run"
+            });
         assert_eq!(resolved, "'/repo/bin/run' --port=3000");
     }
 
     #[test]
     fn resolve_repo_managed_command_non_relative_unchanged() {
-        let resolved = resolve_repo_managed_workspace_command(
-            "pnpm install",
-            "/repo",
-            |_| true,
-        );
+        let resolved = resolve_repo_managed_workspace_command("pnpm install", "/repo", |_| true);
         assert_eq!(resolved, "pnpm install");
     }
 
     #[test]
     fn resolve_repo_managed_command_quoted_relative() {
-        let resolved = resolve_repo_managed_workspace_command(
-            "sh './scripts/x.sh'",
-            "/repo",
-            |p| p == "/repo/scripts/x.sh",
-        );
+        let resolved =
+            resolve_repo_managed_workspace_command("sh './scripts/x.sh'", "/repo", |p| {
+                p == "/repo/scripts/x.sh"
+            });
         assert_eq!(resolved, "sh '/repo/scripts/x.sh'");
     }
 

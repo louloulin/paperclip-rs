@@ -202,8 +202,10 @@ pub fn parse_claude_jsonl(stdout: &str) -> ParsedClaudeOutput {
             "turn.completed" => {
                 out.saw_protocol_terminal_event = true;
                 if let Some(usage) = val.get("usage") {
-                    out.input_tokens =
-                        usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    out.input_tokens = usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     out.output_tokens = usage
                         .get("output_tokens")
                         .and_then(|v| v.as_u64())
@@ -315,10 +317,7 @@ impl Adapter for ClaudeLocalAdapter {
         let mut result = execution.result;
         result.session_id = parsed.session_id.clone();
         result.provider = Some("claude_local".into());
-        result.model = parsed
-            .model
-            .clone()
-            .or_else(|| built.model.clone());
+        result.model = parsed.model.clone().or_else(|| built.model.clone());
         result.billing_type = Some("subscription".into());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
         result.usage = Some(UsageSummary {
@@ -407,7 +406,9 @@ mod tests {
         let model_idx = built.args.iter().position(|a| a == "--model").unwrap();
         assert_eq!(built.args[model_idx + 1], "claude-opus-4-7");
         assert!(built.args.contains(&"--effort".to_string()));
-        assert!(built.args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(built
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
         // extraArgs 追加在末尾
         let resume_idx = built.args.iter().position(|a| a == "--resume").unwrap();
         assert_eq!(built.args[resume_idx + 1], "abc123");
@@ -438,7 +439,8 @@ mod tests {
             json!({
                 "type":"item.completed",
                 "item":{"type":"agent_message","text":"partial"}
-            }).to_string(),
+            })
+            .to_string(),
             json!({
                 "type":"result",
                 "is_error": false,
@@ -447,7 +449,8 @@ mod tests {
                 "model": "claude-opus-4-7",
                 "stop_reason": "end_turn",
                 "usage": {"input_tokens": 11, "output_tokens": 7, "cache_read_input_tokens": 4}
-            }).to_string(),
+            })
+            .to_string(),
         ]
         .join("\n");
 

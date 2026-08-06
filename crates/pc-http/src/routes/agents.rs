@@ -37,73 +37,92 @@ use pc_repos::change_consent_gate::{
 };
 use pc_repos::cost::CostRepo;
 use pc_repos::execution::ExecutionRepo;
-use pc_repos::skill::SkillRepo;
 use pc_repos::heartbeat::{
-    CreateHeartbeat, HeartbeatRepo, HeartbeatRow, HeartbeatWatchdogDecisionRow, NewWatchdogDecision,
-    WatchdogDecision,
+    CreateHeartbeat, HeartbeatRepo, HeartbeatRow, HeartbeatWatchdogDecisionRow,
+    NewWatchdogDecision, WatchdogDecision,
 };
 use pc_repos::issue::IssueRepo;
+use pc_repos::skill::SkillRepo;
 
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/agents", get(list).post(create))
+        // GET only here; POST is registered by companies.rs (Simple Create).
         .route(
             "/api/companies/:company_id/agents",
-            get(list_company_agents).post(create_company_agent),
+            get(list_company_agents),
         )
         .route("/api/companies/:company_id/agent-hires", post(hire_agent))
-        .route("/api/agents/:id", get(get_one).patch(update).delete(remove))
-        .route("/api/agents/:id/configuration", get(get_configuration))
         .route(
-            "/api/agents/:id/config-revisions",
+            "/api/agents/:agent_id",
+            get(get_one).patch(update).delete(remove),
+        )
+        .route(
+            "/api/agents/:agent_id/configuration",
+            get(get_configuration),
+        )
+        .route(
+            "/api/agents/:agent_id/config-revisions",
             get(list_config_revisions),
         )
         .route(
-            "/api/agents/:id/config-revisions/:revision_id",
+            "/api/agents/:agent_id/config-revisions/:revision_id",
             get(get_config_revision),
         )
         .route(
-            "/api/agents/:id/config-revisions/:revision_id/rollback",
+            "/api/agents/:agent_id/config-revisions/:revision_id/rollback",
             post(rollback_config_revision),
         )
-        .route("/api/agents/:id/wakeup", post(wakeup))
-        .route("/api/agents/:id/pause", post(pause_agent))
-        .route("/api/agents/:id/resume", post(resume_agent))
-        .route("/api/agents/:id/clear-error", post(clear_agent_error))
-        .route("/api/agents/:id/terminate", post(terminate_agent))
-        .route("/api/agents/:id/approve", post(approve_agent))
+        .route("/api/agents/:agent_id/wakeup", post(wakeup))
+        .route("/api/agents/:agent_id/pause", post(pause_agent))
+        .route("/api/agents/:agent_id/resume", post(resume_agent))
+        .route("/api/agents/:agent_id/clear-error", post(clear_agent_error))
+        .route("/api/agents/:agent_id/terminate", post(terminate_agent))
+        .route("/api/agents/:agent_id/approve", post(approve_agent))
         .route(
-            "/api/agents/:id/permissions",
+            "/api/agents/:agent_id/permissions",
             patch(update_agent_permissions),
         )
         .route(
-            "/api/agents/:id/instructions-path",
+            "/api/agents/:agent_id/instructions-path",
             patch(update_instructions_path),
         )
         .route(
-            "/api/agents/:id/instructions-bundle",
+            "/api/agents/:agent_id/instructions-bundle",
             get(get_instructions_bundle).patch(update_instructions_bundle),
         )
         .route(
-            "/api/agents/:id/instructions-bundle/file",
+            "/api/agents/:agent_id/instructions-bundle/file",
             get(get_instructions_file)
                 .put(put_instructions_file)
                 .delete(delete_instructions_file),
         )
-        .route("/api/agents/:id/runtime-state", get(get_runtime_state))
-        .route("/api/agents/:id/task-sessions", get(list_task_sessions))
         .route(
-            "/api/agents/:id/runtime-state/reset-session",
+            "/api/agents/:agent_id/runtime-state",
+            get(get_runtime_state),
+        )
+        .route(
+            "/api/agents/:agent_id/task-sessions",
+            get(list_task_sessions),
+        )
+        .route(
+            "/api/agents/:agent_id/runtime-state/reset-session",
             post(reset_runtime_session),
         )
         .route(
-            "/api/agents/:id/keys",
+            "/api/agents/:agent_id/keys",
             get(list_agent_keys).post(create_agent_key),
         )
-        .route("/api/agents/:id/keys/:key_id", delete(revoke_agent_key))
-        .route("/api/agents/:id/heartbeat/invoke", post(legacy_invoke))
+        .route(
+            "/api/agents/:agent_id/keys/:key_id",
+            delete(revoke_agent_key),
+        )
+        .route(
+            "/api/agents/:agent_id/heartbeat/invoke",
+            post(legacy_invoke),
+        )
         .route(
             "/api/companies/:company_id/heartbeat-runs",
             get(list_heartbeat_runs),
@@ -117,34 +136,23 @@ pub fn router() -> Router<AppState> {
             "/api/heartbeat-runs/:run_id/events",
             get(list_heartbeat_events),
         )
-        .route(
-            "/api/heartbeat-runs/:run_id/log",
-            get(read_heartbeat_log),
-        )
-        .route(
-            "/api/heartbeat-runs/:run_id/watchdog-decisions",
-            get(list_watchdog_decisions),
-        )
+        .route("/api/heartbeat-runs/:run_id/log", get(read_heartbeat_log))
+        // NOTE: `/api/heartbeat-runs/:run_id/watchdog-decisions` (GET + POST) is
+        // registered below in the Round 35 block alongside the rest of the heartbeat
+        // routes; the standalone GET-only registration here was removed in Round 282
+        // because it was producing axum \"Overlapping method route\" panics for the
+        // `agents_http_contract` integration tests.
         .route(
             "/api/heartbeat-runs/:run_id/workspace-operations",
             get(list_heartbeat_workspace_operations),
         )
+        .route("/api/agents/:agent_id/skills", get(list_agent_skills))
+        .route("/api/agents/:agent_id/skills/sync", post(sync_agent_skills))
         .route(
-            "/api/agents/:id/skills",
-            get(list_agent_skills),
-        )
-        .route(
-            "/api/agents/:id/skills/sync",
-            post(sync_agent_skills),
-        )
-        .route(
-            "/api/agents/:id/budgets",
+            "/api/agents/:agent_id/budgets",
             get(get_agent_budgets).patch(update_agent_budgets),
         )
-        .route(
-            "/api/agents/:id/claude-login",
-            post(claude_login),
-        )
+        .route("/api/agents/:agent_id/claude-login", post(claude_login))
         .route(
             "/api/companies/:company_id/agent-configurations",
             get(list_agent_configurations),
@@ -153,14 +161,11 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/live-runs",
             get(list_company_live_runs),
         )
-        .route(
-            "/api/issues/:issue_id/active-run",
-            get(get_issue_active_run),
-        )
-        .route(
-            "/api/issues/:issue_id/live-runs",
-            get(list_issue_live_runs),
-        )
+        // NOTE: `/api/issues/:issue_id/active-run` and `/api/issues/:issue_id/live-runs`
+        // are registered by issues.rs (the issue routes module). The duplicate registrations
+        // here were removed in Round 282 because they produced axum "Overlapping method
+        // route" panics during integration tests. The local handlers (`get_issue_active_run`,
+        // `list_issue_live_runs`) are kept for reference but unused.
         .route(
             "/api/instance/scheduler-heartbeats",
             get(list_instance_scheduler_heartbeats),
@@ -794,7 +799,6 @@ async fn update_instructions_bundle(
     Ok(Json(serde_json::to_value(result.bundle)?))
 }
 
-
 #[derive(Debug, Deserialize)]
 struct InstructionsFileQuery {
     #[serde(default)]
@@ -1383,7 +1387,10 @@ pub async fn dispatch_due_timer_heartbeats(state: &AppState, limit: usize) -> Ap
         if agent.status == "paused" || agent.status == "terminated" {
             continue;
         }
-        let Some(heartbeat) = agent.runtime_config.get("heartbeat").and_then(Value::as_object)
+        let Some(heartbeat) = agent
+            .runtime_config
+            .get("heartbeat")
+            .and_then(Value::as_object)
         else {
             continue;
         };
@@ -1675,7 +1682,9 @@ async fn sync_skill_test_run(
         _ => return Ok(()),
     };
     let repo = SkillRepo::new(db);
-    let Some(skill_run) = repo.active_test_run_for_issue(heartbeat_run.company_id, issue_id).await?
+    let Some(skill_run) = repo
+        .active_test_run_for_issue(heartbeat_run.company_id, issue_id)
+        .await?
     else {
         return Ok(());
     };
@@ -1797,7 +1806,10 @@ async fn read_heartbeat_log(
         .await?
         .ok_or_else(|| ApiError::NotFound("Heartbeat run not found".to_string()))?;
     let after_seq = query.offset.unwrap_or(0).max(0);
-    let limit_bytes = query.limit_bytes.unwrap_or(64 * 1024).clamp(1024, 1024 * 1024);
+    let limit_bytes = query
+        .limit_bytes
+        .unwrap_or(64 * 1024)
+        .clamp(1024, 1024 * 1024);
     let events = HeartbeatRepo::new(&state.db)
         .list_events_for_company(run.company_id, run_id, after_seq, 1_000)
         .await?;
@@ -1806,7 +1818,10 @@ async fn read_heartbeat_log(
     let mut next_seq = after_seq;
     let mut truncated = false;
     for event in events.iter().filter(|event| {
-        matches!(event.stream.as_deref(), Some("log") | Some("stdout") | Some("stderr"))
+        matches!(
+            event.stream.as_deref(),
+            Some("log") | Some("stdout") | Some("stderr")
+        )
     }) {
         let line = event.message.clone().unwrap_or_default();
         let projected = bytes + line.len() + 1;
@@ -1901,9 +1916,7 @@ async fn list_agent_skills(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let agent = load_agent(&state, id).await?;
-    let skills = SkillRepo::new(&state.db)
-        .list_for_company(id)
-        .await?;
+    let skills = SkillRepo::new(&state.db).list_for_company(id).await?;
     let items: Vec<Value> = skills
         .iter()
         .map(|skill| {
@@ -1926,13 +1939,12 @@ async fn sync_agent_skills(
 ) -> ApiResult<Json<Value>> {
     let agent = load_agent(&state, id).await?;
     SkillRepo::new(&state.db)
-        .list_for_company(id).await
+        .list_for_company(id)
+        .await
         .unwrap_or_default();
     state
         .realtime
-        .publish(
-            LiveEvent::new("agent.skills.synced", "agent", id).with_company(agent.company_id),
-        );
+        .publish(LiveEvent::new("agent.skills.synced", "agent", id).with_company(agent.company_id));
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1942,7 +1954,13 @@ async fn get_agent_budgets(
 ) -> ApiResult<Json<Value>> {
     let agent = load_agent(&state, id).await?;
     let budgets = CostRepo::new(&state.db)
-        .by_agent(agent.company_id, pc_repos::cost::CostRange { from: None, to: None })
+        .by_agent(
+            agent.company_id,
+            pc_repos::cost::CostRange {
+                from: None,
+                to: None,
+            },
+        )
         .await
         .unwrap_or_default();
     Ok(Json(json!({ "items": budgets })))
@@ -1955,7 +1973,13 @@ async fn update_agent_budgets(
 ) -> ApiResult<Json<Value>> {
     let agent = load_agent(&state, id).await?;
     let budgets = CostRepo::new(&state.db)
-        .by_agent(agent.company_id, pc_repos::cost::CostRange { from: None, to: None })
+        .by_agent(
+            agent.company_id,
+            pc_repos::cost::CostRange {
+                from: None,
+                to: None,
+            },
+        )
         .await
         .unwrap_or_default();
     Ok(Json(json!({ "items": budgets })))
@@ -2059,9 +2083,7 @@ async fn list_instance_scheduler_heartbeats(
     State(state): State<AppState>,
 ) -> ApiResult<Json<Value>> {
     // Aggregate the most recent heartbeat-run per agent for the dashboard.
-    let runs = HeartbeatRepo::new(&state.db)
-        .list_recoverable(200)
-        .await?;
+    let runs = HeartbeatRepo::new(&state.db).list_recoverable(200).await?;
     let items: Vec<Value> = runs
         .iter()
         .map(|run| {
@@ -2181,7 +2203,9 @@ async fn get_self_inbox_mine(
     // For agents the typical filter is assignee_agent_id + status.  When user_id
     // is provided we additionally filter by responsible_user_id to support the
     // user-curated inbox view.
-    let status = q.status.unwrap_or_else(|| "todo,in_progress,blocked".to_string());
+    let status = q
+        .status
+        .unwrap_or_else(|| "todo,in_progress,blocked".to_string());
     let user_filter = q.user_id.as_deref();
     let rows = IssueRepo::new(&state.db)
         .list_assigned_filtered(agent.company_id, agent_id, &status, user_filter, 200)
@@ -2311,10 +2335,12 @@ async fn read_workspace_operation_log(
         let events = HeartbeatRepo::new(&state.db)
             .list_events_for_company(_company_id, run_id, after_seq, 1_000)
             .await?;
-        for event in events
-            .iter()
-            .filter(|event| matches!(event.stream.as_deref(), Some("log") | Some("stdout") | Some("stderr")))
-        {
+        for event in events.iter().filter(|event| {
+            matches!(
+                event.stream.as_deref(),
+                Some("log") | Some("stdout") | Some("stderr")
+            )
+        }) {
             let line = event.message.clone().unwrap_or_default();
             let projected = bytes + line.len() + 1;
             if projected > limit_bytes {

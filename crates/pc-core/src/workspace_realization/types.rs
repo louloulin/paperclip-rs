@@ -225,4 +225,3 @@ pub struct WorkspaceDriverWorkspace {
     pub mode: Option<String>,
     pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
-

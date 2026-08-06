@@ -47,26 +47,38 @@ pub fn router() -> Router<AppState> {
         .route("/api/cases/:case_id/transition", post(transition_case))
         .route("/api/cases/:case_id/claim", post(claim_case_route))
         .route("/api/cases/:case_id/release", post(release_case_route))
-        .route("/api/cases/:case_id/events", get(list_case_events))
-        .route(
-            "/api/cases/:case_id/issue-links",
-            get(list_case_links).post(link_case_issue_route),
-        )
-        .route(
-            "/api/cases/:case_id/issue-links/:link_id",
-            delete(unlink_case_issue_route),
-        )
+        // NOTE: `/api/cases/:case_id/{events,issue-links,issue-links/:link_id}` are
+        // registered by cases.rs (the canonical cases router module). The duplicate
+        // registrations here were removed in Round 282 because they produced axum
+        // "Overlapping method route" panics during integration tests. The local
+        // handlers (`list_case_events`, `list_case_links`, `link_case_issue_route`,
+        // `unlink_case_issue_route`) remain as dead code (kept for reference).
         // archive
         .route("/api/pipelines/:id/archive", post(archive_pipeline))
         // additional pipeline sub-routes
-        .route("/api/pipelines/:id/stages/:stage_id/automation-env", patch(patch_stage_automation_env))
+        .route(
+            "/api/pipelines/:id/stages/:stage_id/automation-env",
+            patch(patch_stage_automation_env),
+        )
         .route("/api/pipelines/:id/cases/batch", post(create_cases_batch))
-        .route("/api/pipelines/:id/documents/:key", get(get_pipeline_document).put(put_pipeline_document))
-        .route("/api/pipelines/:id/documents/:key/revisions", get(list_pipeline_document_revisions))
-        .route("/api/pipelines/:id/documents/:key/revisions/:revision_id/restore", post(restore_pipeline_document_revision))
+        .route(
+            "/api/pipelines/:id/documents/:key",
+            get(get_pipeline_document).put(put_pipeline_document),
+        )
+        .route(
+            "/api/pipelines/:id/documents/:key/revisions",
+            get(list_pipeline_document_revisions),
+        )
+        .route(
+            "/api/pipelines/:id/documents/:key/revisions/:revision_id/restore",
+            post(restore_pipeline_document_revision),
+        )
         .route("/api/pipelines/:id/health", get(get_pipeline_health))
         .route("/api/pipelines/:id/intake-form", get(get_intake_form))
-        .route("/api/pipelines/:id/transitions/replace", put(replace_transitions))
+        .route(
+            "/api/pipelines/:id/transitions/replace",
+            put(replace_transitions),
+        )
         // ---- Round 47: cases automation retry ----
         .route(
             "/api/cases/:case_id/automation/retry-plan",
@@ -600,7 +612,6 @@ async fn archive_pipeline(
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
-
 // ============================================================================
 // Pipeline sub-resources (documents / stages automation / batch cases / health)
 // ============================================================================
@@ -619,7 +630,9 @@ async fn patch_stage_automation_env(
 ) -> ApiResult<Json<Value>> {
     let env = body.automation_env.unwrap_or_else(|| serde_json::json!({}));
     let repo = PipelineRepo::new(&state.db);
-    let existing = repo.get_stage_config(stage_id).await?
+    let existing = repo
+        .get_stage_config(stage_id)
+        .await?
         .unwrap_or_else(|| serde_json::json!({}));
     let mut new_cfg = existing.clone();
     if let Some(obj) = new_cfg.as_object_mut() {
@@ -631,10 +644,14 @@ async fn patch_stage_automation_env(
     if !ok {
         return Err(ApiError::NotFound(format!("stage {stage_id}")));
     }
-    state.realtime.publish(
-        LiveEvent::new("pipeline.stage_automation_env_updated", "stage", stage_id),
-    );
-    Ok(Json(serde_json::json!({"updated": true, "stageId": stage_id, "automationEnv": env})))
+    state.realtime.publish(LiveEvent::new(
+        "pipeline.stage_automation_env_updated",
+        "stage",
+        stage_id,
+    ));
+    Ok(Json(
+        serde_json::json!({"updated": true, "stageId": stage_id, "automationEnv": env}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -668,11 +685,7 @@ async fn create_cases_batch(
     // Round 110 警告：pipeline_cases.stage_id 是 NOT NULL 但这里批量创建没有 stage；
     // 我们用 PipelineRepo::list_stages 拿第一个 stage 作为默认归属，
     // 如果 pipeline 没有任何 stage 则跳过（避免 NOT NULL 违规）。
-    let default_stage = repo
-        .list_stages(pipeline_id)
-        .await?
-        .first()
-        .map(|s| s.id);
+    let default_stage = repo.list_stages(pipeline_id).await?.first().map(|s| s.id);
     let mut i: i32 = 0;
     for item in items {
         i += 1;
@@ -694,7 +707,9 @@ async fn create_cases_batch(
         LiveEvent::new("pipeline.cases_batch_created", "pipeline", pipeline_id)
             .with_data(serde_json::json!({"count": created.len()})),
     );
-    Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "created": created, "count": created.len()})))
+    Ok(Json(
+        serde_json::json!({"pipelineId": pipeline_id, "created": created, "count": created.len()}),
+    ))
 }
 
 // Round 110: 仓储化。PipelineRepo::get_pipeline_document_meta。
@@ -708,7 +723,9 @@ async fn get_pipeline_document(
         .get_pipeline_document_meta(pipeline_id, &key)
         .await?
         .unwrap_or_else(|| serde_json::json!({}));
-    Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "key": key, "document": doc})))
+    Ok(Json(
+        serde_json::json!({"pipelineId": pipeline_id, "key": key, "document": doc}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -734,7 +751,9 @@ async fn put_pipeline_document(
         LiveEvent::new("pipeline.document_upserted", "pipeline", pipeline_id)
             .with_data(serde_json::json!({"key": key})),
     );
-    Ok(Json(serde_json::json!({"saved": true, "pipelineId": pipeline_id, "key": key, "content": content})))
+    Ok(Json(
+        serde_json::json!({"saved": true, "pipelineId": pipeline_id, "key": key, "content": content}),
+    ))
 }
 
 // Round 110: 仓储化。PipelineRepo::list_pipeline_document_revisions。
@@ -743,12 +762,16 @@ async fn list_pipeline_document_revisions(
     Path((pipeline_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
     let repo = PipelineRepo::new(&state.db);
-    let timestamps = repo.list_pipeline_document_revisions(pipeline_id, &key).await?;
+    let timestamps = repo
+        .list_pipeline_document_revisions(pipeline_id, &key)
+        .await?;
     let items: Vec<Value> = timestamps
         .into_iter()
         .map(|ts| serde_json::json!({"createdAt": ts}))
         .collect();
-    Ok(Json(serde_json::json!({"items": items, "pipelineId": pipeline_id, "key": key})))
+    Ok(Json(
+        serde_json::json!({"items": items, "pipelineId": pipeline_id, "key": key}),
+    ))
 }
 
 // Round 110: 仓储化。PipelineRepo::touch_pipeline_document（仅触发 updated_at 刷新）。
@@ -760,13 +783,22 @@ async fn restore_pipeline_document_revision(
     let repo = PipelineRepo::new(&state.db);
     let ok = repo.touch_pipeline_document(pipeline_id, &key).await?;
     if !ok {
-        return Err(ApiError::NotFound(format!("pipeline_document {}/{}", pipeline_id, key)));
+        return Err(ApiError::NotFound(format!(
+            "pipeline_document {}/{}",
+            pipeline_id, key
+        )));
     }
     state.realtime.publish(
-        LiveEvent::new("pipeline.document_revision_restored", "pipeline", pipeline_id)
-            .with_data(serde_json::json!({"key": key})),
+        LiveEvent::new(
+            "pipeline.document_revision_restored",
+            "pipeline",
+            pipeline_id,
+        )
+        .with_data(serde_json::json!({"key": key})),
     );
-    Ok(Json(serde_json::json!({"restored": true, "pipelineId": pipeline_id, "key": key})))
+    Ok(Json(
+        serde_json::json!({"restored": true, "pipelineId": pipeline_id, "key": key}),
+    ))
 }
 
 async fn get_pipeline_health(
@@ -799,8 +831,13 @@ async fn get_intake_form(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .unwrap_or_else(|| serde_json::json!({}));
-    let form = config.get("intakeForm").cloned().unwrap_or_else(|| serde_json::json!({}));
-    Ok(Json(serde_json::json!({"pipelineId": pipeline_id, "form": form})))
+    let form = config
+        .get("intakeForm")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    Ok(Json(
+        serde_json::json!({"pipelineId": pipeline_id, "form": form}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -818,7 +855,10 @@ async fn replace_transitions(
         .transitions
         .iter()
         .filter_map(|tr| {
-            let from = tr.get("fromStageKey").and_then(|v| v.as_str()).unwrap_or("");
+            let from = tr
+                .get("fromStageKey")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let to = tr.get("toStageKey").and_then(|v| v.as_str()).unwrap_or("");
             if from.is_empty() || to.is_empty() {
                 None
@@ -835,9 +875,10 @@ async fn replace_transitions(
         LiveEvent::new("pipeline.transitions_replaced", "pipeline", pipeline_id)
             .with_data(serde_json::json!({"count": count})),
     );
-    Ok(Json(serde_json::json!({"replaced": count, "pipelineId": pipeline_id})))
+    Ok(Json(
+        serde_json::json!({"replaced": count, "pipelineId": pipeline_id}),
+    ))
 }
-
 
 // ============================================================================
 // Round 41: company-scoped pipelines-attention + bulk review-cases
@@ -866,19 +907,22 @@ async fn list_pipelines_attention_route(
     let rows = PipelineRepo::new(&state.db)
         .list_attention_pipelines(company_id, limit)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;    let items: Vec<Value> = rows
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, description, review_count, total_count, updated_at)| {
-            json!({
-                "id": id,
-                "name": name,
-                "description": description,
-                "reviewCount": review_count,
-                "totalCaseCount": total_count,
-                "needsAttention": review_count > 0,
-                "updatedAt": updated_at,
-            })
-        })
+        .map(
+            |(id, name, description, review_count, total_count, updated_at)| {
+                json!({
+                    "id": id,
+                    "name": name,
+                    "description": description,
+                    "reviewCount": review_count,
+                    "totalCaseCount": total_count,
+                    "needsAttention": review_count > 0,
+                    "updatedAt": updated_at,
+                })
+            },
+        )
         .collect();
     Ok(Json(json!({
         "companyId": company_id,
@@ -947,7 +991,8 @@ async fn bulk_review_cases_route(
                         &item.decision,
                         item.note.as_deref().unwrap_or(""),
                     )
-                    .await;                results.push(json!({
+                    .await;
+                results.push(json!({
                     "caseId": item.case_id,
                     "ok": true,
                     "newStatus": new_status,
@@ -987,7 +1032,9 @@ async fn bulk_review_cases_route(
     state.realtime.publish(
         LiveEvent::new("cases.bulk_reviewed", "company", company_id)
             .with_company(company_id)
-            .with_data(json!({"succeeded": succeeded, "failed": failed, "total": body.items.len()})),
+            .with_data(
+                json!({"succeeded": succeeded, "failed": failed, "total": body.items.len()}),
+            ),
     );
     Ok(Json(json!({
         "companyId": company_id,
@@ -997,7 +1044,6 @@ async fn bulk_review_cases_route(
         "total": body.items.len(),
     })))
 }
-
 
 // ============================================================================
 // Round 47: cases automation retry endpoints
@@ -1011,7 +1057,8 @@ async fn case_automation_retry_plan(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let user_id = crate::require_user_id(&state, &axum::http::HeaderMap::new()).await
+    let user_id = crate::require_user_id(&state, &axum::http::HeaderMap::new())
+        .await
         .unwrap_or_else(|_| "anonymous".to_string());
 
     let row = PipelineRepo::new(&state.db)

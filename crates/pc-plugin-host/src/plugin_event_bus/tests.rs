@@ -2,8 +2,8 @@
 //!
 //! 与 Node 端 `plugin-event-bus.ts` 1:1 对齐 + Round 105 mod/ 拆分经验（tests.rs 单文件聚合）。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use chrono::Utc;
 use serde_json::json;
@@ -29,7 +29,12 @@ fn event(event_type: &str, company_id: &str) -> PluginEvent {
     }
 }
 
-fn event_with_entity(event_type: &str, entity_type: &str, entity_id: &str, company_id: &str) -> PluginEvent {
+fn event_with_entity(
+    event_type: &str,
+    entity_type: &str,
+    entity_id: &str,
+    company_id: &str,
+) -> PluginEvent {
     PluginEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         event_type: event_type.to_string(),
@@ -43,7 +48,11 @@ fn event_with_entity(event_type: &str, entity_type: &str, entity_id: &str, compa
     }
 }
 
-fn event_with_payload(event_type: &str, company_id: &str, payload: serde_json::Value) -> PluginEvent {
+fn event_with_payload(
+    event_type: &str,
+    company_id: &str,
+    payload: serde_json::Value,
+) -> PluginEvent {
     PluginEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         event_type: event_type.to_string(),
@@ -73,7 +82,10 @@ fn pattern_exact_no_match() {
 
 #[test]
 fn pattern_wildcard_suffix_matches() {
-    assert!(matches_pattern("plugin.acme.linear.sync-done", "plugin.acme.linear.*"));
+    assert!(matches_pattern(
+        "plugin.acme.linear.sync-done",
+        "plugin.acme.linear.*"
+    ));
     assert!(matches_pattern("plugin.foo.bar", "plugin.foo.*"));
 }
 
@@ -273,7 +285,9 @@ async fn bus_emit_pattern_wildcard_matches_multiple_events() {
             "issue.*",
             FilterOrHandler::Handler(move |_e: PluginEvent| {
                 let c = c1.clone();
-                async move { c.fetch_add(1, Ordering::SeqCst); }
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                }
             }),
             None,
         )
@@ -283,7 +297,9 @@ async fn bus_emit_pattern_wildcard_matches_multiple_events() {
             "issue.created",
             FilterOrHandler::Handler(move |_e: PluginEvent| {
                 let c = c2.clone();
-                async move { c.fetch_add(10, Ordering::SeqCst); }
+                async move {
+                    c.fetch_add(10, Ordering::SeqCst);
+                }
             }),
             None,
         )
@@ -316,7 +332,9 @@ async fn bus_emit_with_filter_only_delivers_matching_events() {
             FilterOrHandler::Filter(filter),
             Some(move |_e: PluginEvent| {
                 let c = c.clone();
-                async move { c.fetch_add(1, Ordering::SeqCst); }
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                }
             }),
         )
         .unwrap();
@@ -352,7 +370,9 @@ async fn bus_per_plugin_isolation() {
         "issue.*",
         FilterOrHandler::Handler(move |_e: PluginEvent| {
             let c = ca.clone();
-            async move { c.fetch_add(1, Ordering::SeqCst); }
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         }),
         None,
     )
@@ -363,7 +383,9 @@ async fn bus_per_plugin_isolation() {
         "issue.*",
         FilterOrHandler::Handler(move |_e: PluginEvent| {
             let c = cb.clone();
-            async move { c.fetch_add(1, Ordering::SeqCst); }
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         }),
         None,
     )
@@ -391,7 +413,9 @@ async fn bus_clear_plugin_removes_all_subs() {
         "issue.*",
         FilterOrHandler::Handler(move |_e: PluginEvent| {
             let c = c.clone();
-            async move { c.fetch_add(1, Ordering::SeqCst); }
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         }),
         None,
     )
@@ -428,7 +452,10 @@ async fn scoped_emit_auto_namespaces() {
     )
     .unwrap();
 
-    let r = a.emit("sync-done", "c1", json!({"ok": true})).await.unwrap();
+    let r = a
+        .emit("sync-done", "c1", json!({"ok": true}))
+        .await
+        .unwrap();
     assert!(r.errors.is_empty());
     assert_eq!(
         *received_type.lock().unwrap(),
@@ -489,7 +516,9 @@ async fn filter_or_handler_handler_path_works() {
         "issue.created",
         FilterOrHandler::Handler(move |_e: PluginEvent| {
             let c = c.clone();
-            async move { c.fetch_add(1, Ordering::SeqCst); }
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         }),
         None,
     );

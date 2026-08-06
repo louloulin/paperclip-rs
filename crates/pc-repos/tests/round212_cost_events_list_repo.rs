@@ -11,9 +11,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -42,12 +40,7 @@ async fn insert_agent(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn make_cost_event(
-    db: &Db,
-    company_id: Uuid,
-    agent_id: Uuid,
-    cost_cents: i32,
-) {
+async fn make_cost_event(db: &Db, company_id: Uuid, agent_id: Uuid, cost_cents: i32) {
     let input = CreateCostEvent {
         agent_id,
         issue_id: None,
@@ -113,10 +106,16 @@ async fn list_cost_events_limit_clamp() {
         make_cost_event(&db, cid, aid, 10 * (i + 1)).await;
     }
     // limit=0 应被 clamp 到 1
-    let r0 = CostRepo::new(&db).list_cost_events(cid, 0).await.expect("c0");
+    let r0 = CostRepo::new(&db)
+        .list_cost_events(cid, 0)
+        .await
+        .expect("c0");
     assert_eq!(r0.len(), 1, "limit=0 should clamp to 1");
     // limit=1000 应被 clamp 到 500（不会报错；只取 3 条）
-    let r1 = CostRepo::new(&db).list_cost_events(cid, 1000).await.expect("c1");
+    let r1 = CostRepo::new(&db)
+        .list_cost_events(cid, 1000)
+        .await
+        .expect("c1");
     assert_eq!(r1.len(), 3);
 }
 
@@ -132,8 +131,14 @@ async fn list_cost_events_company_isolation() {
     make_cost_event(&db, c1, a1, 200).await;
     make_cost_event(&db, c2, a2, 999).await;
 
-    let r1 = CostRepo::new(&db).list_cost_events(c1, 100).await.expect("c1");
-    let r2 = CostRepo::new(&db).list_cost_events(c2, 100).await.expect("c2");
+    let r1 = CostRepo::new(&db)
+        .list_cost_events(c1, 100)
+        .await
+        .expect("c1");
+    let r2 = CostRepo::new(&db)
+        .list_cost_events(c2, 100)
+        .await
+        .expect("c2");
     assert_eq!(r1.len(), 2);
     assert_eq!(r2.len(), 1);
     assert_eq!(r2[0].cost_cents, 999);

@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::secret::{CompanySecretRow, NewProviderConfig, NewUserSecretDefinition, ProviderConfigRow, RemoteImportItem, SecretRepo, UserSecretDefinitionRow};
+use pc_repos::secret::{
+    CompanySecretRow, NewProviderConfig, NewUserSecretDefinition, ProviderConfigRow,
+    RemoteImportItem, SecretRepo, UserSecretDefinitionRow,
+};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, serde::Serialize)]
@@ -142,16 +145,18 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/secret-provider-configs/:id",
-            get(get_provider_config).patch(patch_provider_config).delete(delete_provider_config),
+            get(get_provider_config)
+                .patch(patch_provider_config)
+                .delete(delete_provider_config),
         )
         .route(
             "/api/companies/:company_id/secret-provider-configs/discovery/preview",
             post(discovery_preview),
         )
-        .route(
-            "/api/secret-provider-configs/:id",
-            get(get_provider_config).delete(delete_provider_config),
-        )
+        // NOTE: `/api/secret-provider-configs/:id` (GET + PATCH + DELETE) is
+        // already registered above. The second registration here was removed in
+        // Round 282 because two GET registrations of the same path produced axum
+        // \"Overlapping method route\" panics during integration tests.
         .route(
             "/api/secret-provider-configs/:id/default",
             post(make_default_provider),
@@ -160,7 +165,10 @@ pub fn router() -> Router<AppState> {
             "/api/secret-provider-configs/:id/health",
             post(provider_health_check),
         )
-        .route("/api/companies/:company_id/secrets", get(list_secrets).post(create_company_secret))
+        .route(
+            "/api/companies/:company_id/secrets",
+            get(list_secrets).post(create_company_secret),
+        )
         .route(
             "/api/companies/:company_id/me/user-secrets/:secret_id",
             patch(patch_my_user_secret).delete(delete_my_user_secret),
@@ -442,7 +450,9 @@ async fn delete_user_def(
     State(state): State<AppState>,
     Path((_company_id, def_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    SecretRepo::new(&state.db).archive_user_definition(def_id).await?;
+    SecretRepo::new(&state.db)
+        .archive_user_definition(def_id)
+        .await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
 
@@ -507,7 +517,13 @@ async fn upsert_my_user_secret(
     let value_ciphertext = body.value_ciphertext.clone().unwrap_or_default();
     let metadata = body.metadata.clone().unwrap_or(json!({}));
     SecretRepo::new(&state.db)
-        .upsert_user_declaration(company_id, &user_id, definition_id, &value_ciphertext, &metadata)
+        .upsert_user_declaration(
+            company_id,
+            &user_id,
+            definition_id,
+            &value_ciphertext,
+            &metadata,
+        )
         .await?;
     Ok((StatusCode::OK, Json(json!({ "stored": true }))))
 }
@@ -682,7 +698,11 @@ async fn patch_provider_config(
     Path(id): Path<Uuid>,
     Json(body): Json<PatchProviderConfigBody>,
 ) -> ApiResult<Json<Value>> {
-    if body.status.is_none() && body.label.is_none() && body.provider_config.is_none() && body.default_for_kind.is_none() {
+    if body.status.is_none()
+        && body.label.is_none()
+        && body.provider_config.is_none()
+        && body.default_for_kind.is_none()
+    {
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
     let row = SecretRepo::new(&state.db)
@@ -696,9 +716,13 @@ async fn patch_provider_config(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("company_secret_provider_config {id}")))?;
     state.realtime.publish(
-        LiveEvent::new("secret_provider_config.updated", "secret_provider_config", id)
-            .with_company(row.company_id)
-            .with_data(json!({"label": row.display_name, "status": row.status})),
+        LiveEvent::new(
+            "secret_provider_config.updated",
+            "secret_provider_config",
+            id,
+        )
+        .with_company(row.company_id)
+        .with_data(json!({"label": row.display_name, "status": row.status})),
     );
     Ok(Json(json!({
         "id": row.id,
@@ -730,11 +754,17 @@ async fn create_company_secret(
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name is required".into()));
     }
-    let provider = body.provider.clone().unwrap_or_else(|| "local_encrypted".to_owned());
+    let provider = body
+        .provider
+        .clone()
+        .unwrap_or_else(|| "local_encrypted".to_owned());
     let secret_repo = SecretRepo::new(&state.db);
     let existing = secret_repo.find_id_by_name(company_id, &body.name).await?;
     if existing.is_some() {
-        return Err(ApiError::Conflict(format!("secret {} already exists", body.name)));
+        return Err(ApiError::Conflict(format!(
+            "secret {} already exists",
+            body.name
+        )));
     }
     let external_ref = if let Some(v) = body.value.as_deref() {
         // Persist a placeholder external_ref + first version
@@ -743,7 +773,13 @@ async fn create_company_secret(
         format!("local:{}", Uuid::new_v4().simple())
     };
     let id = secret_repo
-        .create_company_secret(company_id, &body.name, &provider, &external_ref, body.description.as_deref())
+        .create_company_secret(
+            company_id,
+            &body.name,
+            &provider,
+            &external_ref,
+            body.description.as_deref(),
+        )
         .await?;
     // If value provided, create v1
     if let Some(v) = body.value.as_deref() {
@@ -797,15 +833,23 @@ async fn patch_my_user_secret(
         use sha2::{Digest, Sha256};
         let sha = format!("{:x}", Sha256::digest(v.as_bytes()));
         secret_repo
-            .insert_version(company_id, secret_id, next_version, &sha, &json!({ "value": v }))
+            .insert_version(
+                company_id,
+                secret_id,
+                next_version,
+                &sha,
+                &json!({ "value": v }),
+            )
             .await?;
-        secret_repo.update_latest_version(secret_id, next_version).await?;
+        secret_repo
+            .update_latest_version(secret_id, next_version)
+            .await?;
     }
     let row = secret_repo
         .find_summary_by_owner(company_id, secret_id, &user_id)
         .await?;
-    let (id, _, name, status, latest_version, updated_at) = row
-        .ok_or_else(|| ApiError::NotFound(format!("user secret {secret_id}")))?;
+    let (id, _, name, status, latest_version, updated_at) =
+        row.ok_or_else(|| ApiError::NotFound(format!("user secret {secret_id}")))?;
     state.realtime.publish(
         LiveEvent::new("user_secret.updated", "company_secret", id)
             .with_company(company_id)
@@ -867,7 +911,13 @@ async fn rotate_my_user_secret(
     use sha2::{Digest, Sha256};
     let sha = format!("{:x}", Sha256::digest(new_value.as_bytes()));
     secret_repo
-        .insert_version(company_id, secret_id, next_version, &sha, &json!({ "value": new_value }))
+        .insert_version(
+            company_id,
+            secret_id,
+            next_version,
+            &sha,
+            &json!({ "value": new_value }),
+        )
         .await?;
     secret_repo
         .rotate_with_owner(company_id, secret_id, &user_id, next_version)
@@ -920,9 +970,13 @@ async fn patch_user_def(
     let key = row.key.clone();
     let updated_at = row.updated_at;
     state.realtime.publish(
-        LiveEvent::new("user_secret_definition.updated", "user_secret_definition", id)
-            .with_company(company_id)
-            .with_data(json!({"name": name, "key": key, "status": status})),
+        LiveEvent::new(
+            "user_secret_definition.updated",
+            "user_secret_definition",
+            id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"name": name, "key": key, "status": status})),
     );
     Ok(Json(json!({
         "id": id,
@@ -1002,7 +1056,11 @@ async fn remote_import_preview(
         .iter()
         .filter_map(|i| {
             let n = i.name.trim().to_owned();
-            if n.is_empty() { None } else { Some(n) }
+            if n.is_empty() {
+                None
+            } else {
+                Some(n)
+            }
         })
         .collect();
     let secret_repo = SecretRepo::new(&state.db);
@@ -1027,7 +1085,11 @@ async fn remote_import_preview(
             Ok((name, provider)) => {
                 let is_conflict = existing.contains(&name);
                 let will = !is_conflict;
-                if is_conflict { conflicts += 1; } else { would_create += 1; }
+                if is_conflict {
+                    conflicts += 1;
+                } else {
+                    would_create += 1;
+                }
                 preview.push(RemoteImportPreviewEntry {
                     name,
                     provider: provider.unwrap_or_else(|| "local_encrypted".to_owned()),
@@ -1077,9 +1139,8 @@ async fn remote_import(
         .find_existing_names(company_id, &names)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (to_create, skipped_existing): (Vec<RemoteImportItem>, Vec<RemoteImportItem>) = items
-        .into_iter()
-        .partition(|i| !existing.contains(&i.name));
+    let (to_create, skipped_existing): (Vec<RemoteImportItem>, Vec<RemoteImportItem>) =
+        items.into_iter().partition(|i| !existing.contains(&i.name));
     let mut skipped = skipped;
     for it in &skipped_existing {
         skipped.push(json!({ "name": it.name, "reason": "already exists" }));

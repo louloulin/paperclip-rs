@@ -5,7 +5,6 @@
 use pc_db::Db;
 use pc_repos::{
     activity::ActivityRepo,
-    cost::{AgentCostWindow, CostRepo},
     agent::{
         AgentRepo, HeartbeatInvocationSource, NewAgentWakeupRequest, WakeupActorType,
         WakeupRequestStatus, WakeupTriggerDetail,
@@ -13,15 +12,29 @@ use pc_repos::{
     approval::ApprovalRepo,
     auth::AuthRepo,
     case::{CaseActor, CaseFilter, CasePatch, CaseRepo, CaseStatus, NewCaseRecord},
-    decision::DecisionRepo, document::DocumentRepo, environment::EnvironmentRepo,
-    execution::ExecutionRepo, folder::FolderRepo, goal::GoalRepo,
+    cost::{AgentCostWindow, CostRepo},
+    decision::DecisionRepo,
+    document::DocumentRepo,
+    environment::EnvironmentRepo,
+    execution::ExecutionRepo,
+    folder::FolderRepo,
+    goal::GoalRepo,
     heartbeat::{
         CreateHeartbeat, HeartbeatEventStream, HeartbeatRepo, HeartbeatRunStatus,
         NewHeartbeatEvent, NewWatchdogDecision, WatchdogDecision,
     },
-    inbox::InboxRepo, issue::IssueRepo, pipeline::PipelineRepo, plugin::PluginRepo, project::ProjectRepo,
-    routine::RoutineRepo, settings::SettingsRepo, sidebar::SidebarRepo, skill::SkillRepo,
-    smoke::SmokeRepo, summary::SummaryRepo, tool::ToolRepo,
+    inbox::InboxRepo,
+    issue::IssueRepo,
+    pipeline::PipelineRepo,
+    plugin::PluginRepo,
+    project::ProjectRepo,
+    routine::RoutineRepo,
+    settings::SettingsRepo,
+    sidebar::SidebarRepo,
+    skill::SkillRepo,
+    smoke::SmokeRepo,
+    summary::SummaryRepo,
+    tool::ToolRepo,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
@@ -75,29 +88,84 @@ async fn all_repos_queryable() {
     truncate_all(&db).await;
     let cid = uuid::Uuid::new_v4();
     let _ = ActivityRepo::new(&db)
-        .list_for_company(cid, &Default::default()).await.expect("list activity");
+        .list_for_company(cid, &Default::default())
+        .await
+        .expect("list activity");
     let _ = ApprovalRepo::new(&db)
-        .list_by_company_simple(cid).await.expect("list approvals");
-    let _ = CaseRepo::new(&db).list_by_company(cid).await.expect("list cases");
-    let _ = DecisionRepo::new(&db).list_by_company(cid).await.expect("list decisions");
-    let _ = DocumentRepo::new(&db).list_by_company(cid).await.expect("list documents");
-    let _ = EnvironmentRepo::new(&db).list_all().await.expect("list environments");
-    let _ = ExecutionRepo::new(&db).list_by_company(cid).await.expect("list executions");
-    let _ = FolderRepo::new(&db).list_by_company(cid).await.expect("list folders");
-    let _ = GoalRepo::new(&db).list_by_company(cid).await.expect("list goals");
-    let _ = InboxRepo::new(&db).list_for_user(cid, "u1").await.expect("list inbox");
-    let _ = PipelineRepo::new(&db).list_by_company(cid).await.expect("list pipelines");
+        .list_by_company_simple(cid)
+        .await
+        .expect("list approvals");
+    let _ = CaseRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list cases");
+    let _ = DecisionRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list decisions");
+    let _ = DocumentRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list documents");
+    let _ = EnvironmentRepo::new(&db)
+        .list_all()
+        .await
+        .expect("list environments");
+    let _ = ExecutionRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list executions");
+    let _ = FolderRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list folders");
+    let _ = GoalRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list goals");
+    let _ = InboxRepo::new(&db)
+        .list_for_user(cid, "u1")
+        .await
+        .expect("list inbox");
+    let _ = PipelineRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list pipelines");
     let _ = PluginRepo::new(&db).list().await.expect("list plugins");
-    let _ = ProjectRepo::new(&db).list_by_company(cid, true).await.expect("list projects");
-    let _ = RoutineRepo::new(&db).list_by_company(cid).await.expect("list routines");
+    let _ = ProjectRepo::new(&db)
+        .list_by_company(cid, true)
+        .await
+        .expect("list projects");
+    let _ = RoutineRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list routines");
     let _ = SettingsRepo::new(&db).get().await.expect("get setting");
     let _ = SidebarRepo::new(&db).get("u1").await; // OK return Option
-    let _ = SkillRepo::new(&db).list_for_company(cid).await.expect("list skills");
-    let _ = SmokeRepo::new(&db).list_by_company(cid, None).await.expect("list smoke");
-    let _ = SummaryRepo::new(&db).list_by_company(cid).await.expect("list summary");
-    let _ = ToolRepo::new(&db).list_by_company(cid).await.expect("list tools");
-    let _ = HeartbeatRepo::new(&db).list_for_agent(cid).await.expect("list heartbeats");
-    let _ = AuthRepo::new(&db).find_by_email("nobody@example.com").await.expect("find user");
+    let _ = SkillRepo::new(&db)
+        .list_for_company(cid)
+        .await
+        .expect("list skills");
+    let _ = SmokeRepo::new(&db)
+        .list_by_company(cid, None)
+        .await
+        .expect("list smoke");
+    let _ = SummaryRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list summary");
+    let _ = ToolRepo::new(&db)
+        .list_by_company(cid)
+        .await
+        .expect("list tools");
+    let _ = HeartbeatRepo::new(&db)
+        .list_for_agent(cid)
+        .await
+        .expect("list heartbeats");
+    let _ = AuthRepo::new(&db)
+        .find_by_email("nobody@example.com")
+        .await
+        .expect("find user");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -215,13 +283,11 @@ async fn case_upsert_records_events_and_preserves_terminal_invariants() {
     let db = fresh_db();
     truncate_all(&db).await;
     let company_id = uuid::Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO companies (id, name, issue_prefix) VALUES ($1, 'Case Corp', 'CAS')",
-    )
-    .bind(company_id)
-    .execute(db.pool())
-    .await
-    .expect("insert company");
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, 'Case Corp', 'CAS')")
+        .bind(company_id)
+        .execute(db.pool())
+        .await
+        .expect("insert company");
 
     let repo = CaseRepo::new(&db);
     let created = repo
@@ -379,7 +445,13 @@ async fn heartbeat_events_are_serialized_and_watchdog_decisions_are_scoped() {
     assert_eq!(sequences, [1, 2]);
 
     let running = repo
-        .claim_for_company(company_id, queued.id, Some("user-1"), Some(1234), Some(1234))
+        .claim_for_company(
+            company_id,
+            queued.id,
+            Some("user-1"),
+            Some(1234),
+            Some(1234),
+        )
         .await
         .expect("claim run")
         .expect("running row");
@@ -553,7 +625,10 @@ async fn cost_repo_sum_agent_window_cost_cents_matches_inserted_rows() {
         })
         .await
         .expect("sum");
-    assert_eq!(sum, 1000, "only today's events contribute to the daily window");
+    assert_eq!(
+        sum, 1000,
+        "only today's events contribute to the daily window"
+    );
 
     // Different agent should see zero
     let other_id = uuid::Uuid::new_v4();
@@ -674,8 +749,16 @@ async fn issue_unresolved_blockers_returns_open_blockers_only() {
     assert!(!blockers.contains(&blocker_hidden_id));
 }
 
-fn blocker_id_or_issue(open_id: uuid::Uuid, issue_id: uuid::Uuid, current: uuid::Uuid) -> uuid::Uuid {
-    if current == issue_id { open_id } else { current }
+fn blocker_id_or_issue(
+    open_id: uuid::Uuid,
+    issue_id: uuid::Uuid,
+    current: uuid::Uuid,
+) -> uuid::Uuid {
+    if current == issue_id {
+        open_id
+    } else {
+        current
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -738,7 +821,10 @@ async fn agent_recover_stale_wakeup_claims_resets_only_old_claims() {
     .expect("insert fresh");
 
     let repo = AgentRepo::new(&db);
-    let recovered = repo.recover_stale_wakeup_claims(300).await.expect("recover");
+    let recovered = repo
+        .recover_stale_wakeup_claims(300)
+        .await
+        .expect("recover");
     assert_eq!(recovered, 1);
 
     let stale = repo

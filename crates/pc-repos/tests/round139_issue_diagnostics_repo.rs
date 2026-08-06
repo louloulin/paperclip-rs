@@ -19,7 +19,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r139-{tag}-{id}"))
         .bind(format!("R139{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
@@ -31,7 +33,13 @@ async fn insert_agent(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn insert_issue(db: &Db, company_id: Uuid, parent_id: Option<Uuid>, status: &str, assignee: Option<Uuid>) -> Uuid {
+async fn insert_issue(
+    db: &Db,
+    company_id: Uuid,
+    parent_id: Option<Uuid>,
+    status: &str,
+    assignee: Option<Uuid>,
+) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO issues (id, company_id, identifier, title, kind, status, priority, parent_id, assignee_agent_id) VALUES ($1,$2,$3,'i','task',$4,'normal',$5,$6)")
         .bind(id).bind(company_id).bind(format!("ISS-{}", &id.simple().to_string()[..6]))
@@ -56,7 +64,10 @@ async fn list_blockers_empty() {
     let db = db().await;
     let cid = insert_company(&db, "be").await;
     let iid = insert_issue(&db, cid, None, "todo", None).await;
-    let list = IssueDiagnosticsRepo::new(&db).list_blockers(iid, 100).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_blockers(iid, 100)
+        .await
+        .expect("list");
     assert!(list.is_empty());
 }
 
@@ -66,7 +77,10 @@ async fn list_blockers_includes_self() {
     let db = db().await;
     let cid = insert_company(&db, "bs").await;
     let iid = insert_issue(&db, cid, None, "blocked", None).await;
-    let list = IssueDiagnosticsRepo::new(&db).list_blockers(iid, 100).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_blockers(iid, 100)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, iid);
 }
@@ -78,7 +92,10 @@ async fn list_blockers_includes_children() {
     let cid = insert_company(&db, "bc").await;
     let parent = insert_issue(&db, cid, None, "todo", None).await;
     let child = insert_issue(&db, cid, Some(parent), "blocked", None).await;
-    let list = IssueDiagnosticsRepo::new(&db).list_blockers(parent, 100).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_blockers(parent, 100)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, child);
 }
@@ -91,7 +108,10 @@ async fn list_blockers_filters_status() {
     let parent = insert_issue(&db, cid, None, "todo", None).await;
     insert_issue(&db, cid, Some(parent), "todo", None).await;
     insert_issue(&db, cid, Some(parent), "in_progress", None).await;
-    let list = IssueDiagnosticsRepo::new(&db).list_blockers(parent, 100).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_blockers(parent, 100)
+        .await
+        .expect("list");
     assert!(list.is_empty(), "todo + in_progress should not be blockers");
 }
 
@@ -104,7 +124,10 @@ async fn assignee_agent_id_some() {
     let cid = insert_company(&db, "aa").await;
     let aid = insert_agent(&db, cid).await;
     let iid = insert_issue(&db, cid, None, "todo", Some(aid)).await;
-    let r = IssueDiagnosticsRepo::new(&db).assignee_agent_id(iid).await.expect("ok");
+    let r = IssueDiagnosticsRepo::new(&db)
+        .assignee_agent_id(iid)
+        .await
+        .expect("ok");
     assert_eq!(r, Some(aid));
 }
 
@@ -114,7 +137,10 @@ async fn assignee_agent_id_none() {
     let db = db().await;
     let cid = insert_company(&db, "an").await;
     let iid = insert_issue(&db, cid, None, "todo", None).await;
-    let r = IssueDiagnosticsRepo::new(&db).assignee_agent_id(iid).await.expect("ok");
+    let r = IssueDiagnosticsRepo::new(&db)
+        .assignee_agent_id(iid)
+        .await
+        .expect("ok");
     assert!(r.is_none());
 }
 
@@ -163,7 +189,10 @@ async fn list_subtree_root_only() {
     let db = db().await;
     let cid = insert_company(&db, "sr").await;
     let iid = insert_issue(&db, cid, None, "todo", None).await;
-    let list = IssueDiagnosticsRepo::new(&db).list_subtree(iid, 8).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_subtree(iid, 8)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].depth, 0);
 }
@@ -177,7 +206,10 @@ async fn list_subtree_recursive() {
     let child1 = insert_issue(&db, cid, Some(root), "todo", None).await;
     let child2 = insert_issue(&db, cid, Some(root), "todo", None).await;
     let grand = insert_issue(&db, cid, Some(child1), "todo", None).await;
-    let list = IssueDiagnosticsRepo::new(&db).list_subtree(root, 8).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_subtree(root, 8)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 4);
     let ids: Vec<_> = list.iter().map(|n| n.id).collect();
     assert!(ids.contains(&root));
@@ -195,6 +227,9 @@ async fn list_subtree_respects_max_depth() {
     let child = insert_issue(&db, cid, Some(root), "todo", None).await;
     insert_issue(&db, cid, Some(child), "todo", None).await;
     // max_depth=1 → root + child（不含 grandchild）
-    let list = IssueDiagnosticsRepo::new(&db).list_subtree(root, 1).await.expect("list");
+    let list = IssueDiagnosticsRepo::new(&db)
+        .list_subtree(root, 1)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 2);
 }

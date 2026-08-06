@@ -185,7 +185,10 @@ mod tests {
         );
         // 最后一条以序号 + sql 结尾；不需要硬编码名字以避免每次新迁移都要改测试
         let last = ordered.last().unwrap().name.clone();
-        assert!(last.ends_with(".sql"), "last migration must end with .sql: {last}");
+        assert!(
+            last.ends_with(".sql"),
+            "last migration must end with .sql: {last}"
+        );
     }
 
     #[test]

@@ -39,11 +39,7 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
     id
 }
 
-async fn insert_action_request(
-    db: &Db,
-    company_id: Uuid,
-    status: &str,
-) -> Uuid {
+async fn insert_action_request(db: &Db, company_id: Uuid, status: &str) -> Uuid {
     let id = Uuid::new_v4();
     let inv_id = Uuid::new_v4();
     let canonical_summary = json!({"action_name": "stripe.refund", "amount": 100});
@@ -76,10 +72,13 @@ async fn tool_action_request_repo_list_orders_by_created_at_desc() {
         .expect("list");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].status, "approved"); // 最近
-    // 真实列投影
+                                            // 真实列投影
     for r in &rows {
         assert!(!r.canonical_arguments_hash.is_empty());
-        assert_eq!(r.canonical_arguments_summary["action_name"], "stripe.refund");
+        assert_eq!(
+            r.canonical_arguments_summary["action_name"],
+            "stripe.refund"
+        );
     }
 }
 
@@ -90,13 +89,19 @@ async fn tool_action_request_repo_get_by_company_and_id() {
     let cid = insert_company(&db, "get").await;
     let aid = insert_action_request(&db, cid, "pending").await;
 
-    let row = repo_get(&ToolRepo::new(&db), cid, aid).await.expect("get").expect("present");
+    let row = repo_get(&ToolRepo::new(&db), cid, aid)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(row.status, "pending");
     assert!(!row.canonical_arguments_hash.is_empty());
 
     // 跨 company 查不到
     let other = insert_company(&db, "other").await;
-    let none = ToolRepo::new(&db).get_action_request(other, aid).await.expect("get other");
+    let none = ToolRepo::new(&db)
+        .get_action_request(other, aid)
+        .await
+        .expect("get other");
     assert!(none.is_none());
 }
 
@@ -170,7 +175,11 @@ async fn tool_action_requests_table_real_column_audit() {
     .await
     .expect("query real");
     let names: std::collections::HashSet<String> = real.into_iter().map(|(s,)| s).collect();
-    for must in ["invocation_id", "canonical_arguments_hash", "canonical_arguments_summary"] {
+    for must in [
+        "invocation_id",
+        "canonical_arguments_hash",
+        "canonical_arguments_summary",
+    ] {
         assert!(names.contains(must), "missing: {must}");
     }
 }

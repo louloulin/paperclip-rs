@@ -70,11 +70,7 @@ impl<'a> LabelRepo<'a> {
     }
 
     /// 按 (company, name) 查询。
-    pub async fn find_by_name(
-        &self,
-        company_id: Uuid,
-        name: &str,
-    ) -> RepoResult<Option<LabelRow>> {
+    pub async fn find_by_name(&self, company_id: Uuid, name: &str) -> RepoResult<Option<LabelRow>> {
         let sql = format!("SELECT {COLS} FROM labels WHERE company_id=$1 AND name=$2");
         Ok(sqlx::query_as::<_, LabelRow>(&sql)
             .bind(company_id)
@@ -134,21 +130,16 @@ impl<'a> LabelRepo<'a> {
 
     /// 校验一组 label id 是否全部属于指定 company（用于 case / issue update 时的引用完整性）。
     /// 返回属于 company 的 id 集合；调用方对比输入集合即可判断是否存在越界引用。
-    pub async fn filter_to_company(
-        &self,
-        company_id: Uuid,
-        ids: &[Uuid],
-    ) -> RepoResult<Vec<Uuid>> {
+    pub async fn filter_to_company(&self, company_id: Uuid, ids: &[Uuid]) -> RepoResult<Vec<Uuid>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM labels WHERE company_id=$1 AND id = ANY($2::uuid[])",
-        )
-        .bind(company_id)
-        .bind(ids)
-        .fetch_all(self.db.pool())
-        .await?;
+        let rows: Vec<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM labels WHERE company_id=$1 AND id = ANY($2::uuid[])")
+                .bind(company_id)
+                .bind(ids)
+                .fetch_all(self.db.pool())
+                .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }

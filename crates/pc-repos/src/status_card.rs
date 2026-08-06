@@ -74,10 +74,7 @@ impl<'a> StatusCardRepo<'a> {
     }
 
     /// Round 162: 列出某 company 的 active status_cards (archived_at IS NULL)。
-    pub async fn list_active(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<Vec<StatusCardRow>> {
+    pub async fn list_active(&self, company_id: Uuid) -> sqlx::Result<Vec<StatusCardRow>> {
         sqlx::query_as::<_, StatusCardRow>(
             "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
                     last_generated_at, next_eval_at, archived_at, document_id, \\
@@ -183,16 +180,12 @@ impl<'a> StatusCardRepo<'a> {
     }
 
     /// Round 162: card_summary_revisions — 取 card (company_id, document_id)。
-    pub async fn get_doc_link(
-        &self,
-        card_id: Uuid,
-    ) -> sqlx::Result<Option<(Uuid, Option<Uuid>)>> {
-        let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
-            "SELECT company_id, document_id FROM status_cards WHERE id = $1",
-        )
-        .bind(card_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn get_doc_link(&self, card_id: Uuid) -> sqlx::Result<Option<(Uuid, Option<Uuid>)>> {
+        let row: Option<(Uuid, Option<Uuid>)> =
+            sqlx::query_as("SELECT company_id, document_id FROM status_cards WHERE id = $1")
+                .bind(card_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row)
     }
 
@@ -247,10 +240,7 @@ impl<'a> StatusCardRepo<'a> {
     }
 
     /// Round 162: card_dry_run — 取 (query_version, queries, mentioned_issue_ids)。
-    pub async fn dry_run_meta(
-        &self,
-        id: Uuid,
-    ) -> sqlx::Result<Option<(i32, Value, Value)>> {
+    pub async fn dry_run_meta(&self, id: Uuid) -> sqlx::Result<Option<(i32, Value, Value)>> {
         let row: Option<(i32, Value, Value)> = sqlx::query_as(
             "SELECT query_version, queries, mentioned_issue_ids FROM status_cards WHERE id = $1",
         )

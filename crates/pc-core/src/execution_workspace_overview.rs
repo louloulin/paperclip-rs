@@ -16,7 +16,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::execution_workspace_config::{read_execution_workspace_config, ExecutionWorkspaceConfig};
+use crate::execution_workspace_config::{
+    read_execution_workspace_config, ExecutionWorkspaceConfig,
+};
 
 // ============================================================================
 // maxDate（Round 279）
@@ -292,7 +294,9 @@ pub struct ExecutionWorkspaceSummaryRow {
 }
 
 /// `toExecutionWorkspaceSummary(row)`：DB row → typed summary。
-pub fn to_execution_workspace_summary(row: &ExecutionWorkspaceSummaryRow) -> ExecutionWorkspaceSummary {
+pub fn to_execution_workspace_summary(
+    row: &ExecutionWorkspaceSummaryRow,
+) -> ExecutionWorkspaceSummary {
     ExecutionWorkspaceSummary {
         id: row.id.clone(),
         name: row.name.clone(),
@@ -374,7 +378,8 @@ pub fn uses_inherited_project_runtime_services(
     }
     let map = metadata.and_then(|v| v.as_object());
     let cfg: Option<ExecutionWorkspaceConfig> = read_execution_workspace_config(map);
-    cfg.map(|c| c.workspace_runtime.flatten().is_none()).unwrap_or(true)
+    cfg.map(|c| c.workspace_runtime.flatten().is_none())
+        .unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -538,22 +543,16 @@ mod tests {
     #[test]
     fn uses_inherited_shared_no_runtime_in_metadata() {
         let meta = serde_json::json!({"config": {"provisionCommand": "pnpm i"}});
-        let v = uses_inherited_project_runtime_services(
-            "shared_workspace",
-            Some("pws-1"),
-            Some(&meta),
-        );
+        let v =
+            uses_inherited_project_runtime_services("shared_workspace", Some("pws-1"), Some(&meta));
         assert!(v);
     }
 
     #[test]
     fn uses_inherited_shared_with_runtime_in_metadata() {
         let meta = serde_json::json!({"config": {"workspaceRuntime": {"k": 1}}});
-        let v = uses_inherited_project_runtime_services(
-            "shared_workspace",
-            Some("pws-1"),
-            Some(&meta),
-        );
+        let v =
+            uses_inherited_project_runtime_services("shared_workspace", Some("pws-1"), Some(&meta));
         assert!(!v);
     }
 

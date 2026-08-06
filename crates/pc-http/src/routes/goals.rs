@@ -10,7 +10,6 @@
 //! | PATCH  | `/api/goals/:id` | ✅ | update |
 //! | DELETE | `/api/goals/:id` | ✅ | delete |
 
-
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
@@ -56,7 +55,8 @@ async fn list(
     }))
 }
 async fn get_one(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let r = GoalRepo::new(&s.db).get_id(id)
+    let r = GoalRepo::new(&s.db)
+        .get_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?;
     Ok(Json(serde_json::to_value(r).unwrap_or_default()))
@@ -78,7 +78,8 @@ async fn create(
     if b.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title required".into()));
     }
-    let r = GoalRepo::new(&s.db).create_simple(
+    let r = GoalRepo::new(&s.db)
+        .create_simple(
             b.company_id,
             &b.title,
             b.description.as_deref(),
@@ -106,9 +107,7 @@ async fn list_company_goals(
     State(s): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = GoalRepo::new(&s.db)
-        .list_by_company(company_id)
-        .await?;
+    let rows = GoalRepo::new(&s.db).list_by_company(company_id).await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -148,9 +147,7 @@ async fn create_company_goal(
         parent_id: b.parent_id,
         owner_agent_id: b.owner_agent_id,
     };
-    let r = GoalRepo::new(&s.db)
-        .create(&new_goal)
-        .await?;
+    let r = GoalRepo::new(&s.db).create(&new_goal).await?;
     s.realtime
         .publish(LiveEvent::new("goal.created", "goal", r.id).with_company(r.company_id));
     Ok((
@@ -165,7 +162,14 @@ async fn update(
     Json(b): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     let r = GoalRepo::new(&s.db)
-        .update(id, b.title.as_deref(), b.description.as_deref(), b.status.as_deref(), None, None)
+        .update(
+            id,
+            b.title.as_deref(),
+            b.description.as_deref(),
+            b.status.as_deref(),
+            None,
+            None,
+        )
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?;
     s.realtime

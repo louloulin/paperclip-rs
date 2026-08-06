@@ -76,10 +76,7 @@ impl<'a> IssueDiagnosticsRepo<'a> {
     }
 
     /// 查 issue 的 assignee_agent_id（可能为 NULL）。
-    pub async fn assignee_agent_id(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Option<Uuid>> {
+    pub async fn assignee_agent_id(&self, issue_id: Uuid) -> sqlx::Result<Option<Uuid>> {
         sqlx::query_scalar("SELECT assignee_agent_id FROM issues WHERE id = $1")
             .bind(issue_id)
             .fetch_optional(self.db.pool())

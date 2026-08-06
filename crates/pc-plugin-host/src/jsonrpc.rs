@@ -13,8 +13,7 @@ use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 use pc_plugin_protocol::{
-    JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse,
-    WORKER_TO_HOST_METHODS,
+    JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse, WORKER_TO_HOST_METHODS,
 };
 
 /// Async trait for handling worker → host JSON-RPC requests. The host
@@ -23,11 +22,7 @@ use pc_plugin_protocol::{
 #[async_trait::async_trait]
 pub trait WorkerToHostHandler: Send + Sync {
     /// Handle the worker request and return a JSON value (or error).
-    async fn handle(
-        &self,
-        method: &str,
-        params: Option<Value>,
-    ) -> Result<Value, JsonRpcError>;
+    async fn handle(&self, method: &str, params: Option<Value>) -> Result<Value, JsonRpcError>;
 }
 
 /// 待处理 RPC 调用的 `HashMap` 别名。
@@ -70,7 +65,10 @@ impl JsonRpcStream {
         let pending_reader = pending.clone();
         let worker_to_host_reader = Arc::new(Mutex::new(None));
         let stdin_reader = Arc::new(Mutex::new(
-            child.stdin.take().ok_or_else(|| "worker stdin not available".to_string())?,
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| "worker stdin not available".to_string())?,
         ));
 
         // Spawn reader task

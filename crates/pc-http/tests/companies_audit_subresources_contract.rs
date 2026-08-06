@@ -39,10 +39,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -115,7 +112,13 @@ async fn add_membership(db: &Db, company_id: Uuid, user_id: &str, role: &str) {
     .expect("insert membership");
 }
 
-async fn insert_activity(db: &Db, company_id: Uuid, action: &str, entity_type: &str, entity_id: &str) {
+async fn insert_activity(
+    db: &Db,
+    company_id: Uuid,
+    action: &str,
+    entity_type: &str,
+    entity_id: &str,
+) {
     sqlx::query(
         "INSERT INTO activity_log \
          (company_id, actor_type, actor_id, action, entity_type, entity_id, details) \
@@ -153,8 +156,14 @@ async fn insert_issue(db: &Db, company_id: Uuid, title: &str) -> Uuid {
 async fn repo_company_exists_returns_true_when_present() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let cid = insert_company(&db, "exists-yes").await;
-    assert!(pc_repos::company::CompanyRepo::new(&db).exists(cid).await.unwrap());
-    assert!(!pc_repos::company::CompanyRepo::new(&db).exists(Uuid::new_v4()).await.unwrap());
+    assert!(pc_repos::company::CompanyRepo::new(&db)
+        .exists(cid)
+        .await
+        .unwrap());
+    assert!(!pc_repos::company::CompanyRepo::new(&db)
+        .exists(Uuid::new_v4())
+        .await
+        .unwrap());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -175,7 +184,11 @@ async fn repo_user_directory_returns_active_members_with_role() {
     assert!(ids.contains(&u1.as_str()) && ids.contains(&u2.as_str()));
     let owner = entries.iter().find(|e| e.user_id == u1).unwrap();
     assert_eq!(owner.role, "owner");
-    assert!(owner.email.as_deref().unwrap_or_default().contains("@test.local"));
+    assert!(owner
+        .email
+        .as_deref()
+        .unwrap_or_default()
+        .contains("@test.local"));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -19,7 +19,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r120-{tag}-{id}"))
         .bind(format!("R120{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -40,9 +42,12 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
         "INSERT INTO issues (id, company_id, identifier, title, status, kind) \
          VALUES ($1, $2, $3, 'i', 'open', 'task')",
     )
-    .bind(id).bind(company_id)
+    .bind(id)
+    .bind(company_id)
     .bind(format!("ISS-{}", &id.simple().to_string()[..6]))
-    .execute(db.pool()).await.expect("insert issue");
+    .execute(db.pool())
+    .await
+    .expect("insert issue");
     id
 }
 
@@ -57,8 +62,13 @@ async fn insert_event(
         "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload) \
          VALUES ($1, $2, $3, 'user', $4::jsonb)",
     )
-    .bind(company_id).bind(case_id).bind(kind).bind(payload)
-    .execute(db.pool()).await.expect("insert event");
+    .bind(company_id)
+    .bind(case_id)
+    .bind(kind)
+    .bind(payload)
+    .execute(db.pool())
+    .await
+    .expect("insert event");
 }
 
 /// 1. breakdown_case — 复合事务：插入 N child + 事件 + commit
@@ -87,7 +97,11 @@ async fn breakdown_case_creates_children_and_events() {
         .expect("breakdown");
     assert_eq!(ids.len(), 2);
     for id in &ids {
-        let row = CaseRepo::new(&db).get(*id).await.expect("get child").unwrap();
+        let row = CaseRepo::new(&db)
+            .get(*id)
+            .await
+            .expect("get child")
+            .unwrap();
         assert_eq!(row.parent_case_id, Some(parent));
         assert_eq!(row.status, "draft");
     }
@@ -119,9 +133,12 @@ async fn replace_blockers_replaces_set() {
         .await
         .expect("replace");
     // Verify
-    let rows: Vec<(Uuid,)> = sqlx::query_as("SELECT case_id FROM pipeline_case_blockers WHERE case_id = $1")
-        .bind(case)
-        .fetch_all(db.pool()).await.expect("list blockers");
+    let rows: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT case_id FROM pipeline_case_blockers WHERE case_id = $1")
+            .bind(case)
+            .fetch_all(db.pool())
+            .await
+            .expect("list blockers");
     assert_eq!(rows.len(), 2);
 }
 
@@ -135,9 +152,13 @@ async fn replace_blockers_skips_self() {
         .replace_blockers(cid, case, vec![case], json!({}))
         .await
         .expect("replace");
-    let count: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM pipeline_case_blockers WHERE case_id = $1")
-        .bind(case)
-        .fetch_one(db.pool()).await.expect("count");
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM pipeline_case_blockers WHERE case_id = $1",
+    )
+    .bind(case)
+    .fetch_one(db.pool())
+    .await
+    .expect("count");
     assert_eq!(count, 0);
 }
 
@@ -152,8 +173,12 @@ async fn open_conversation_creates_issue_and_link() {
         .await
         .expect("open conversation");
     assert!(!issue_id.is_nil());
-    let links: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM case_issue_links WHERE case_id = $1")
-        .bind(case).fetch_one(db.pool()).await.expect("count links");
+    let links: i64 =
+        sqlx::query_scalar("SELECT count(*)::bigint FROM case_issue_links WHERE case_id = $1")
+            .bind(case)
+            .fetch_one(db.pool())
+            .await
+            .expect("count links");
     assert_eq!(links, 1);
 }
 
@@ -180,7 +205,10 @@ async fn count_children_returns_count() {
     insert_case(&db, cid, Some(parent), "draft").await;
     insert_case(&db, cid, Some(parent), "draft").await;
     insert_case(&db, cid, Some(parent), "draft").await;
-    let count = CaseRepo::new(&db).count_children(cid, parent).await.expect("count");
+    let count = CaseRepo::new(&db)
+        .count_children(cid, parent)
+        .await
+        .expect("count");
     assert_eq!(count, 3);
 }
 
@@ -196,9 +224,15 @@ async fn list_context_events_and_issues() {
     sqlx::query("INSERT INTO case_issue_links (id, company_id, case_id, issue_id, role) VALUES ($1, $2, $3, $4, 'reference')")
         .bind(Uuid::new_v4()).bind(cid).bind(case).bind(issue)
         .execute(db.pool()).await.expect("link issue");
-    let events = CaseRepo::new(&db).list_context_events(cid, case).await.expect("events");
+    let events = CaseRepo::new(&db)
+        .list_context_events(cid, case)
+        .await
+        .expect("events");
     assert_eq!(events.len(), 2);
-    let issues = CaseRepo::new(&db).list_context_issues(cid, case).await.expect("issues");
+    let issues = CaseRepo::new(&db)
+        .list_context_issues(cid, case)
+        .await
+        .expect("issues");
     assert_eq!(issues.len(), 1);
 }
 
@@ -212,7 +246,10 @@ async fn list_outputs_returns_outputs() {
     sqlx::query("INSERT INTO case_issue_links (id, company_id, case_id, issue_id, role) VALUES ($1, $2, $3, $4, 'reference')")
         .bind(Uuid::new_v4()).bind(cid).bind(case).bind(issue)
         .execute(db.pool()).await.expect("link");
-    let rows = CaseRepo::new(&db).list_outputs(cid, case).await.expect("outputs");
+    let rows = CaseRepo::new(&db)
+        .list_outputs(cid, case)
+        .await
+        .expect("outputs");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].link_role, "reference");
 }

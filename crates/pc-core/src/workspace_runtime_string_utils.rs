@@ -30,7 +30,13 @@ pub fn sanitize_slug_part(value: Option<&str>, fallback: &str) -> String {
     let raw = value.unwrap_or("").trim().to_lowercase();
     let normalized: String = raw
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .replace("--", "-");
     // 连续 `-` 折叠到单 `-`
@@ -253,7 +259,8 @@ pub fn build_dirty_quarantine_rescue_branch(
     source_issue_id: Option<&str>,
     now: &chrono::DateTime<chrono::Utc>,
 ) -> String {
-    let issue_part = sanitize_branch_name(source_issue_identifier.unwrap_or(source_issue_id.unwrap_or("issue")));
+    let issue_part =
+        sanitize_branch_name(source_issue_identifier.unwrap_or(source_issue_id.unwrap_or("issue")));
     sanitize_branch_name(&format!(
         "paperclip/rescue/{}/{}",
         issue_part,
@@ -282,9 +289,7 @@ pub fn git_error_includes(error: &str, needle: &str) -> bool {
 /// - remote 不合法（不匹配 `[A-Za-z0-9._-]+`）→ null
 pub fn parse_remote_tracking_ref(r#ref: &str) -> Option<(String, String)> {
     let trimmed = r#ref.trim();
-    let normalized = trimmed
-        .strip_prefix("refs/remotes/")
-        .unwrap_or(trimmed);
+    let normalized = trimmed.strip_prefix("refs/remotes/").unwrap_or(trimmed);
     let slash_index = normalized.find('/')?;
     if slash_index == 0 || slash_index == normalized.len() - 1 {
         return None;
@@ -410,7 +415,10 @@ mod tests {
 
     #[test]
     fn sanitize_slug_part_basic() {
-        assert_eq!(sanitize_slug_part(Some("Hello World!"), "fb"), "hello-world");
+        assert_eq!(
+            sanitize_slug_part(Some("Hello World!"), "fb"),
+            "hello-world"
+        );
         assert_eq!(sanitize_slug_part(Some("foo___bar"), "fb"), "foo___bar");
         assert_eq!(sanitize_slug_part(Some("--foo--"), "fb"), "foo");
         assert_eq!(sanitize_slug_part(Some("__foo__"), "fb"), "foo");
@@ -600,7 +608,10 @@ mod tests {
 
     #[test]
     fn git_error_includes_case_insensitive() {
-        assert!(git_error_includes("Error: Authentication Failed", "tion fail"));
+        assert!(git_error_includes(
+            "Error: Authentication Failed",
+            "tion fail"
+        ));
         assert!(!git_error_includes("Error: foo", "bar"));
     }
 

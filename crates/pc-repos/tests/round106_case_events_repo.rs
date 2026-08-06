@@ -50,7 +50,6 @@ async fn seed_case_event(db: &Db, company_id: Uuid, case_id: Uuid, kind: &str) -
     id
 }
 
-
 /// 1. list_events_by_case_id：按 case_id 单查，按 created_at DESC 排序
 #[tokio::test(flavor = "current_thread")]
 async fn case_events_repo_list_by_case_id_orders_recent_first() {
@@ -84,8 +83,14 @@ async fn case_events_repo_list_filters_by_case_id() {
     seed_case_event(&db, cid, case_b, "created").await;
     seed_case_event(&db, cid, case_b, "updated").await;
 
-    let a_rows = repo.list_events_by_case_id(case_a, 100).await.expect("list a");
-    let b_rows = repo.list_events_by_case_id(case_b, 100).await.expect("list b");
+    let a_rows = repo
+        .list_events_by_case_id(case_a, 100)
+        .await
+        .expect("list a");
+    let b_rows = repo
+        .list_events_by_case_id(case_b, 100)
+        .await
+        .expect("list b");
 
     assert_eq!(a_rows.len(), 1, "case_a events only");
     assert_eq!(b_rows.len(), 2, "case_b events only");
@@ -103,10 +108,7 @@ async fn case_events_repo_list_clamps_limit() {
     seed_case_event(&db, cid, case_id, "created").await;
 
     // limit=0 应该被 clamp 到 1
-    let rows = repo
-        .list_events_by_case_id(case_id, 0)
-        .await
-        .expect("list");
+    let rows = repo.list_events_by_case_id(case_id, 0).await.expect("list");
     assert_eq!(rows.len(), 1);
 
     // limit=99999 应该被 clamp 到 500（因为只有一个 event,应该返回 1）

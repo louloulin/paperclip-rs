@@ -17,7 +17,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r123-{tag}-{id}"))
         .bind(format!("R123{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -58,7 +60,10 @@ async fn list_bindings_for_secret_returns_bindings() {
     let sid = insert_secret(&db, cid, "test-secret").await;
     insert_binding(&db, cid, sid).await;
     insert_binding(&db, cid, sid).await;
-    let rows = SecretRepo::new(&db).list_bindings_for_secret(sid).await.expect("list bindings");
+    let rows = SecretRepo::new(&db)
+        .list_bindings_for_secret(sid)
+        .await
+        .expect("list bindings");
     assert_eq!(rows.len(), 2);
 }
 

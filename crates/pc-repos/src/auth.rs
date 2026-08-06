@@ -16,8 +16,7 @@ use crate::{Db, RepoError, RepoResult};
 
 // ---------- user ----------
 
-const USER_COLS: &str =
-    "id, name, email, email_verified, image, created_at, updated_at";
+const USER_COLS: &str = "id, name, email, email_verified, image, created_at, updated_at";
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -141,12 +140,14 @@ impl<'a> AuthRepo<'a> {
     }
 
     pub async fn find_by_id(&self, id: &str) -> RepoResult<Option<UserRow>> {
-        Ok(sqlx::query_as::<_, UserRow>(&format!(
-            "SELECT {USER_COLS} FROM \"user\" WHERE id = $1"
-        ))
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?)
+        Ok(
+            sqlx::query_as::<_, UserRow>(&format!(
+                "SELECT {USER_COLS} FROM \"user\" WHERE id = $1"
+            ))
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?,
+        )
     }
 
     pub async fn upsert_user(&self, u: &NewUser) -> RepoResult<UserRow> {
@@ -166,13 +167,12 @@ impl<'a> AuthRepo<'a> {
     }
 
     pub async fn set_email_verified(&self, user_id: &str) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE \"user\" SET email_verified=true, updated_at=now() WHERE id=$1",
-        )
-        .bind(user_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+        let n =
+            sqlx::query("UPDATE \"user\" SET email_verified=true, updated_at=now() WHERE id=$1")
+                .bind(user_id)
+                .execute(self.db.pool())
+                .await?
+                .rows_affected();
         Ok(n > 0)
     }
 
@@ -249,11 +249,13 @@ impl<'a> AuthRepo<'a> {
 
     /// Round 140: 检查 user 是否存在（按 id）。轻量，仅返回 bool。
     pub async fn user_exists(&self, user_id: &str) -> RepoResult<bool> {
-        Ok(sqlx::query_scalar::<_, i32>("SELECT 1 FROM \"user\" WHERE id = $1 LIMIT 1")
-            .bind(user_id)
-            .fetch_optional(self.db.pool())
-            .await?
-            .is_some())
+        Ok(
+            sqlx::query_scalar::<_, i32>("SELECT 1 FROM \"user\" WHERE id = $1 LIMIT 1")
+                .bind(user_id)
+                .fetch_optional(self.db.pool())
+                .await?
+                .is_some(),
+        )
     }
 
     // ---- session ----
@@ -312,11 +314,13 @@ impl<'a> AuthRepo<'a> {
     }
 
     pub async fn delete_sessions_for_user(&self, user_id: &str) -> RepoResult<u64> {
-        Ok(sqlx::query("DELETE FROM session WHERE user_id=$1 AND expires_at > now()")
-            .bind(user_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected())
+        Ok(
+            sqlx::query("DELETE FROM session WHERE user_id=$1 AND expires_at > now()")
+                .bind(user_id)
+                .execute(self.db.pool())
+                .await?
+                .rows_affected(),
+        )
     }
 
     pub async fn prune_expired(&self) -> RepoResult<u64> {
@@ -356,10 +360,7 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn upsert_account(
-        &self,
-        a: &AccountRow,
-    ) -> RepoResult<AccountRow> {
+    pub async fn upsert_account(&self, a: &AccountRow) -> RepoResult<AccountRow> {
         Ok(sqlx::query_as::<_, AccountRow>(&format!(
             "INSERT INTO account (id, account_id, provider_id, user_id, access_token,                 refresh_token, id_token, access_token_expires_at, refresh_token_expires_at,                 scope, password, created_at, updated_at)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)              ON CONFLICT (id) DO UPDATE SET                 access_token=EXCLUDED.access_token,                 refresh_token=EXCLUDED.refresh_token,                 id_token=EXCLUDED.id_token,                 access_token_expires_at=EXCLUDED.access_token_expires_at,                 refresh_token_expires_at=EXCLUDED.refresh_token_expires_at,                 scope=EXCLUDED.scope, password=EXCLUDED.password, updated_at=now()              RETURNING {ACCOUNT_COLS}"
         ))
@@ -391,10 +392,7 @@ impl<'a> AuthRepo<'a> {
 
     // ---- verification ----
 
-    pub async fn find_verification(
-        &self,
-        identifier: &str,
-    ) -> RepoResult<Option<VerificationRow>> {
+    pub async fn find_verification(&self, identifier: &str) -> RepoResult<Option<VerificationRow>> {
         Ok(sqlx::query_as::<_, VerificationRow>(&format!(
             "SELECT {VERIF_COLS} FROM verification              WHERE identifier=$1 AND expires_at > now()              ORDER BY created_at DESC LIMIT 1"
         ))
@@ -403,11 +401,7 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn consume_verification(
-        &self,
-        identifier: &str,
-        value: &str,
-    ) -> RepoResult<bool> {
+    pub async fn consume_verification(&self, identifier: &str, value: &str) -> RepoResult<bool> {
         let n = sqlx::query(
             "DELETE FROM verification              WHERE identifier=$1 AND value=$2 AND expires_at > now()",
         )
@@ -437,10 +431,12 @@ impl<'a> AuthRepo<'a> {
     }
 
     pub async fn purge_expired_verifications(&self) -> RepoResult<u64> {
-        Ok(sqlx::query("DELETE FROM verification WHERE expires_at <= now()")
-            .execute(self.db.pool())
-            .await?
-            .rows_affected())
+        Ok(
+            sqlx::query("DELETE FROM verification WHERE expires_at <= now()")
+                .execute(self.db.pool())
+                .await?
+                .rows_affected(),
+        )
     }
 
     // ---- Round 140: API key + session helpers for auth.rs route ----
@@ -567,7 +563,9 @@ mod tests {
             id: "v_1".into(),
             identifier: "user@example.com".into(),
             value: "123456".into(),
-            expires_at: pc_core::Timestamp::from_dt(chrono::Utc::now() + chrono::Duration::minutes(10)),
+            expires_at: pc_core::Timestamp::from_dt(
+                chrono::Utc::now() + chrono::Duration::minutes(10),
+            ),
         };
         assert!(v.expires_at.as_datetime() > chrono::Utc::now());
     }

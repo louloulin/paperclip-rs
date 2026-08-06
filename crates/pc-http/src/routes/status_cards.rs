@@ -12,7 +12,9 @@ use serde_json::{json, Value};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use pc_repos::status_card::{StatusCardRepo, StatusCardRow, StatusCardUpdateRow, SummaryRevisionRow};
+use pc_repos::status_card::{
+    StatusCardRepo, StatusCardRow, StatusCardUpdateRow, SummaryRevisionRow,
+};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -108,9 +110,7 @@ async fn get_status_card(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row = StatusCardRepo::new(&state.db)
-        .get_by_id(id)
-        .await?;
+    let row = StatusCardRepo::new(&state.db).get_by_id(id).await?;
     match row {
         Some(row) => Ok(Json(row_json(&row))),
         None => Err(ApiError::NotFound(format!("status card {id}"))),
@@ -173,9 +173,7 @@ async fn card_updates(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Vec<UpdateRow>>> {
-    let rows = StatusCardRepo::new(&state.db)
-        .list_updates(id)
-        .await?;
+    let rows = StatusCardRepo::new(&state.db).list_updates(id).await?;
     Ok(Json(rows))
 }
 
@@ -213,9 +211,7 @@ async fn card_recompile(
 ) -> ApiResult<impl IntoResponse> {
     // Mark card as "compiling" and bump query_version; the watcher will pick
     // it up and produce a fresh compiled query.
-    let row = StatusCardRepo::new(&state.db)
-        .recompile(id)
-        .await?;
+    let row = StatusCardRepo::new(&state.db).recompile(id).await?;
     let Some(row) = row else {
         return Err(ApiError::NotFound(format!("status card {id}")));
     };
@@ -257,21 +253,12 @@ async fn card_refresh(
 /// that admits a refresh. Mirrors Node `claimDueStatusCardUpdates` in
 /// `services/status-cards.ts`. Returns the claimed rows so the caller can
 /// hand them to the refresh / recompile pipeline.
-pub async fn claim_due_status_card_updates(
-    state: &AppState,
-    limit: i64,
-) -> ApiResult<usize> {
-    let count = StatusCardRepo::new(&state.db)
-        .claim_due(limit)
-        .await?;
+pub async fn claim_due_status_card_updates(state: &AppState, limit: i64) -> ApiResult<usize> {
+    let count = StatusCardRepo::new(&state.db).claim_due(limit).await?;
     if count > 0 {
         state.realtime.publish(
-            pc_realtime::LiveEvent::new(
-                "status_card.tick.claimed",
-                "status_card",
-                Uuid::nil(),
-            )
-            .with_data(json!({ "claimedCount": count })),
+            pc_realtime::LiveEvent::new("status_card.tick.claimed", "status_card", Uuid::nil())
+                .with_data(json!({ "claimedCount": count })),
         );
     }
     Ok(count as usize)
@@ -281,9 +268,7 @@ async fn card_dry_run(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row = StatusCardRepo::new(&state.db)
-        .dry_run_meta(id)
-        .await?;
+    let row = StatusCardRepo::new(&state.db).dry_run_meta(id).await?;
     let Some((query_version, queries, mentioned_issues)) = row else {
         return Err(ApiError::NotFound(format!("status card {id}")));
     };

@@ -40,16 +40,17 @@ impl<'a> CompanyAssetRepo<'a> {
     }
 
     /// Round 182: 按 id 取 (key, content_type)。
-    pub async fn get_content_meta(
-        &self,
-        asset_id: Uuid,
-    ) -> sqlx::Result<Option<(String, String)>> {
-        let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT key, content_type FROM company_assets WHERE id = $1",
-        )
-        .bind(asset_id)
-        .fetch_optional(self.db.pool())
-        .await?;
-        Ok(row.map(|(k, ct)| (k, ct.unwrap_or_else(|| "application/octet-stream".to_owned()))))
+    pub async fn get_content_meta(&self, asset_id: Uuid) -> sqlx::Result<Option<(String, String)>> {
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT key, content_type FROM company_assets WHERE id = $1")
+                .bind(asset_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(row.map(|(k, ct)| {
+            (
+                k,
+                ct.unwrap_or_else(|| "application/octet-stream".to_owned()),
+            )
+        }))
     }
 }

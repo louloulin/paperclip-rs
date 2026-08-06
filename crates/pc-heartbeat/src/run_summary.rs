@@ -32,7 +32,10 @@ fn truncate_summary_text(value: Option<&serde_json::Value>, max_length: usize) -
     }
 }
 
-fn read_numeric_field(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<serde_json::Value> {
+fn read_numeric_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<serde_json::Value> {
     obj.get(key).cloned()
 }
 
@@ -125,7 +128,9 @@ pub fn summarize_heartbeat_run_result_json(
     let mut summary: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
 
     for key in ["summary", "result", "message", "error"] {
-        if let Some(value) = truncate_summary_text(obj.get(key), HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS) {
+        if let Some(value) =
+            truncate_summary_text(obj.get(key), HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS)
+        {
             summary.insert(key.into(), serde_json::Value::String(value));
         }
     }
@@ -191,11 +196,14 @@ mod tests {
     #[test]
     fn merge_null_result_with_text_summary_returns_object() {
         let merged = merge_heartbeat_run_result_json(None, Some("hello"));
-        assert_eq!(merged, Some({
-            let mut m = serde_json::Map::new();
-            m.insert("summary".into(), json!("hello"));
-            m
-        }));
+        assert_eq!(
+            merged,
+            Some({
+                let mut m = serde_json::Map::new();
+                m.insert("summary".into(), json!("hello"));
+                m
+            })
+        );
     }
 
     #[test]
@@ -211,7 +219,10 @@ mod tests {
         let merged = merge_heartbeat_run_result_json(Some(&result), Some("ran ok"));
         assert!(merged.is_some());
         let m = merged.unwrap();
-        assert_eq!(m.get("stopReason").and_then(|v| v.as_str()), Some("completed"));
+        assert_eq!(
+            m.get("stopReason").and_then(|v| v.as_str()),
+            Some("completed")
+        );
         assert_eq!(m.get("summary").and_then(|v| v.as_str()), Some("ran ok"));
         assert_eq!(m.get("durationMs").and_then(|v| v.as_i64()), Some(120));
     }
@@ -221,7 +232,10 @@ mod tests {
         let result = json!({ "summary": "keep me" });
         let merged = merge_heartbeat_run_result_json(Some(&result), Some("new"));
         assert_eq!(
-            merged.as_ref().and_then(|m| m.get("summary")).and_then(|v| v.as_str()),
+            merged
+                .as_ref()
+                .and_then(|m| m.get("summary"))
+                .and_then(|v| v.as_str()),
             Some("keep me")
         );
     }
@@ -231,7 +245,10 @@ mod tests {
         let result = json!({ "summary": "   " });
         let merged = merge_heartbeat_run_result_json(Some(&result), Some("fresh"));
         assert_eq!(
-            merged.as_ref().and_then(|m| m.get("summary")).and_then(|v| v.as_str()),
+            merged
+                .as_ref()
+                .and_then(|m| m.get("summary"))
+                .and_then(|v| v.as_str()),
             Some("fresh")
         );
     }
@@ -241,7 +258,10 @@ mod tests {
         let arr = json!([1, 2, 3]);
         let merged = merge_heartbeat_run_result_json(Some(&arr), Some("x"));
         assert_eq!(
-            merged.as_ref().and_then(|m| m.get("summary")).and_then(|v| v.as_str()),
+            merged
+                .as_ref()
+                .and_then(|m| m.get("summary"))
+                .and_then(|v| v.as_str()),
             Some("x")
         );
     }
@@ -251,7 +271,10 @@ mod tests {
         let result = json!({ "k": "v" });
         let merged = merge_heartbeat_run_result_json(Some(&result), Some(""));
         assert_eq!(
-            merged.as_ref().and_then(|m| m.get("k")).and_then(|v| v.as_str()),
+            merged
+                .as_ref()
+                .and_then(|m| m.get("k"))
+                .and_then(|v| v.as_str()),
             Some("v")
         );
         assert!(merged.as_ref().and_then(|m| m.get("summary")).is_none());
@@ -298,12 +321,30 @@ mod tests {
             "timeoutFired": false,
         });
         let summary = summarize_heartbeat_run_result_json(Some(&result)).unwrap();
-        assert_eq!(summary.get("stopReason").and_then(|v| v.as_str()), Some("completed"));
-        assert_eq!(summary.get("timeoutSource").and_then(|v| v.as_str()), Some("config"));
-        assert_eq!(summary.get("effectiveTimeoutSec").and_then(|v| v.as_f64()), Some(30.0));
-        assert_eq!(summary.get("effectiveTimeoutMs").and_then(|v| v.as_i64()), Some(30000));
-        assert_eq!(summary.get("timeoutConfigured").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(summary.get("timeoutFired").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            summary.get("stopReason").and_then(|v| v.as_str()),
+            Some("completed")
+        );
+        assert_eq!(
+            summary.get("timeoutSource").and_then(|v| v.as_str()),
+            Some("config")
+        );
+        assert_eq!(
+            summary.get("effectiveTimeoutSec").and_then(|v| v.as_f64()),
+            Some(30.0)
+        );
+        assert_eq!(
+            summary.get("effectiveTimeoutMs").and_then(|v| v.as_i64()),
+            Some(30000)
+        );
+        assert_eq!(
+            summary.get("timeoutConfigured").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            summary.get("timeoutFired").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]

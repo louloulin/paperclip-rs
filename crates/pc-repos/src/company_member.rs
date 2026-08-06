@@ -101,7 +101,11 @@ pub struct MemberFilter<'a> {
 impl<'a> MemberFilter<'a> {
     /// 最常用：`include_archived=false`、`principal_type='user'`。
     pub fn user() -> Self {
-        Self { include_archived: false, role: None, principal_type: "user" }
+        Self {
+            include_archived: false,
+            role: None,
+            principal_type: "user",
+        }
     }
 }
 
@@ -173,10 +177,7 @@ impl<'a> CompanyMemberRepo<'a> {
     /// 公司用户目录：列出在本公司的所有人类成员，附带 `"user"` 表画像字段。
     /// 用于 `/api/companies/:id/user-directory`：返回 `userId / name / email /
     /// image / role` 五元组，按 name NULLS LAST 排序。
-    pub async fn user_directory(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<UserDirectoryEntry>> {
+    pub async fn user_directory(&self, company_id: Uuid) -> RepoResult<Vec<UserDirectoryEntry>> {
         let rows = sqlx::query_as::<_, UserDirectoryEntry>(
             "SELECT u.id AS user_id, u.name, u.email, u.image, \
                     COALESCE(cm.membership_role, 'guest') AS role \
@@ -235,9 +236,7 @@ impl<'a> CompanyMemberRepo<'a> {
         if patch.status.is_some() {
             sql.push_str(", status = $4");
         }
-        sql.push_str(
-            " WHERE id = $1 AND company_id = $2",
-        );
+        sql.push_str(" WHERE id = $1 AND company_id = $2");
         let mut q = sqlx::query(&sql).bind(member_id).bind(company_id);
         if let Some(role) = patch.membership_role.as_ref() {
             q = q.bind(role);
@@ -254,11 +253,7 @@ impl<'a> CompanyMemberRepo<'a> {
     }
 
     /// 软归档：将 status 切到 `'archived'`；幂等。
-    pub async fn archive(
-        &self,
-        company_id: Uuid,
-        member_id: Uuid,
-    ) -> RepoResult<bool> {
+    pub async fn archive(&self, company_id: Uuid, member_id: Uuid) -> RepoResult<bool> {
         let r = sqlx::query(
             "UPDATE company_memberships SET status = 'archived', updated_at = now() \
              WHERE id = $1 AND company_id = $2 AND status != 'archived'",
@@ -310,11 +305,7 @@ impl<'a> CompanyMemberRepo<'a> {
         Ok(row.is_some())
     }
     /// Round 183: live_events auth -- check if user_id is an active member of company.
-    pub async fn is_active_member(
-        &self,
-        user_id: &str,
-        company_id: Uuid,
-    ) -> RepoResult<bool> {
+    pub async fn is_active_member(&self, user_id: &str, company_id: Uuid) -> RepoResult<bool> {
         let row: Option<(Uuid,)> = sqlx::query_as(
             "SELECT company_id FROM company_memberships \
              WHERE user_id = $1 AND company_id = $2 AND status = 'active'",
@@ -325,7 +316,6 @@ impl<'a> CompanyMemberRepo<'a> {
         .await?;
         Ok(row.is_some())
     }
-
 
     /// Round 140: 列出某用户所有所属公司 id（含 archived/active）。供 profile 端点用。
     pub async fn list_company_ids_for_user(&self, user_id: &str) -> RepoResult<Vec<Uuid>> {
@@ -398,7 +388,6 @@ impl<'a> CompanyMemberRepo<'a> {
         .await
         .map_err(RepoError::from)
     }
-
 }
 
 // ============================================================================
@@ -414,7 +403,10 @@ mod tests {
         assert_eq!(MemberStatus::Active.as_str(), "active");
         assert_eq!(MemberStatus::Archived.as_str(), "archived");
         assert_eq!(MemberStatus::parse("active"), Some(MemberStatus::Active));
-        assert_eq!(MemberStatus::parse("archived"), Some(MemberStatus::Archived));
+        assert_eq!(
+            MemberStatus::parse("archived"),
+            Some(MemberStatus::Archived)
+        );
         assert_eq!(MemberStatus::parse("deleted"), None);
         assert_eq!(MemberStatus::parse(""), None);
     }

@@ -128,7 +128,8 @@ pub async fn hydrate_successful_run_handoff_liveness(
     for issue_id in required_issue_ids {
         if let Some(state) = states.get_mut(&issue_id) {
             let live_run_id = live_run_by_issue_id.get(&issue_id).cloned();
-            state.has_live_continuation = live_run_id.is_some() || live_wake_issue_ids.contains(&issue_id);
+            state.has_live_continuation =
+                live_run_id.is_some() || live_wake_issue_ids.contains(&issue_id);
             if let Some(rid) = live_run_id {
                 state.live_run_id = Some(rid);
             }
@@ -187,7 +188,10 @@ pub async fn resolve_required_successful_run_handoff_on_valid_path(
     .or(handoff.run_id);
 
     let mut details = serde_json::Map::new();
-    details.insert("label".to_string(), JsonValue::String("Successful run handoff continuation confirmed".to_string()));
+    details.insert(
+        "label".to_string(),
+        JsonValue::String("Successful run handoff continuation confirmed".to_string()),
+    );
     if let Some(sid) = source_run_id {
         details.insert("sourceRunId".to_string(), JsonValue::String(sid));
     }
@@ -200,7 +204,10 @@ pub async fn resolve_required_successful_run_handoff_on_valid_path(
         JsonValue::String(input.skip_reason),
     );
     let mut issue_obj = serde_json::Map::new();
-    issue_obj.insert("id".to_string(), JsonValue::String(input.issue_id.to_string()));
+    issue_obj.insert(
+        "id".to_string(),
+        JsonValue::String(input.issue_id.to_string()),
+    );
     if let Some(ident) = input.issue_identifier {
         issue_obj.insert("identifier".to_string(), JsonValue::String(ident));
     }
@@ -377,7 +384,10 @@ mod tests {
     fn handoff_state_kind_as_str() {
         assert_eq!(SuccessfulRunHandoffStateKind::Required.as_str(), "required");
         assert_eq!(SuccessfulRunHandoffStateKind::Resolved.as_str(), "resolved");
-        assert_eq!(SuccessfulRunHandoffStateKind::Escalated.as_str(), "escalated");
+        assert_eq!(
+            SuccessfulRunHandoffStateKind::Escalated.as_str(),
+            "escalated"
+        );
     }
 
     fn required_state() -> SuccessfulRunHandoffState {
@@ -431,7 +441,8 @@ mod tests {
         // With `#[serde(untagged)]`, an ISO-8601 string may be parsed either as
         // `DateTime<Utc>` (when chrono recognizes the format) or `String` fallback.
         // Both are acceptable; we just need the round trip to succeed.
-        let j: JsonDateTime = serde_json::from_value(JsonValue::String("2026-07-23T18:13:03.000Z".into())).unwrap();
+        let j: JsonDateTime =
+            serde_json::from_value(JsonValue::String("2026-07-23T18:13:03.000Z".into())).unwrap();
         match j {
             JsonDateTime::DateTime(_) | JsonDateTime::String(_) => {}
         }

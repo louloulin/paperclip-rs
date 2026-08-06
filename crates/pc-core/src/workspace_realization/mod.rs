@@ -19,10 +19,9 @@ pub mod types;
 pub use types::{
     Environment, EnvironmentLease, ExecutionWorkspaceConfig, RealizedAdditionalWorkspace,
     RealizedExecutionWorkspace, WorkspaceDriverWorkspace, WorkspaceRealizationBootstrap,
-    WorkspaceRealizationLocalSource, WorkspaceRealizationMode,
-    WorkspaceRealizationPathAlias, WorkspaceRealizationRebuild, WorkspaceRealizationRecord,
-    WorkspaceRealizationRequest, WorkspaceRealizationRequestSource,
-    WorkspaceRealizationSync, WorkspaceRealizationSyncStrategy,
+    WorkspaceRealizationLocalSource, WorkspaceRealizationMode, WorkspaceRealizationPathAlias,
+    WorkspaceRealizationRebuild, WorkspaceRealizationRecord, WorkspaceRealizationRequest,
+    WorkspaceRealizationRequestSource, WorkspaceRealizationSync, WorkspaceRealizationSyncStrategy,
     WorkspaceRealizationTransport, WorkspaceRuntimeOverlay,
 };
 
@@ -31,7 +30,9 @@ pub use types::{
 // ============================================================================
 
 /// 把 `value` 规范为 `Record<string, unknown>`：非对象 → `{}`。
-pub fn parse_object(value: Option<&serde_json::Value>) -> serde_json::Map<String, serde_json::Value> {
+pub fn parse_object(
+    value: Option<&serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
     match value {
         Some(serde_json::Value::Object(map)) => map.clone(),
         _ => serde_json::Map::new(),
@@ -60,9 +61,7 @@ pub fn read_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
 }
 
 /// 读取 `Array<{ path, target }>`，丢弃任何缺字段项。
-pub fn read_path_aliases(
-    value: Option<&serde_json::Value>,
-) -> Vec<WorkspaceRealizationPathAlias> {
+pub fn read_path_aliases(value: Option<&serde_json::Value>) -> Vec<WorkspaceRealizationPathAlias> {
     let Some(arr) = value.and_then(|v| v.as_array()) else {
         return Vec::new();
     };
@@ -265,7 +264,9 @@ fn derive_transport(driver: &str) -> WorkspaceRealizationTransport {
 }
 
 fn derive_mode(metadata: &serde_json::Map<String, serde_json::Value>) -> WorkspaceRealizationMode {
-    let v = metadata.get("mode").or_else(|| metadata.get("realizationMode"));
+    let v = metadata
+        .get("mode")
+        .or_else(|| metadata.get("realizationMode"));
     match v.and_then(|x| x.as_str()) {
         Some("in_place") => "in_place".to_string(),
         _ => "copy".to_string(),
@@ -555,13 +556,10 @@ pub fn build_workspace_realization_record_from_driver_input(
     input: DriverInput,
 ) -> Result<WorkspaceRealizationRecord, RealizationRequestError> {
     let workspace_meta = input.workspace.metadata.as_ref();
-    let request_opt: Option<WorkspaceRealizationRequest> =
-        read_workspace_realization_request(
-            workspace_meta.and_then(|m| m.get("workspaceRealizationRequest")),
-        )
-        .or_else(|| {
-            read_workspace_realization_request(workspace_meta.and_then(|m| m.get("request")))
-        });
+    let request_opt: Option<WorkspaceRealizationRequest> = read_workspace_realization_request(
+        workspace_meta.and_then(|m| m.get("workspaceRealizationRequest")),
+    )
+    .or_else(|| read_workspace_realization_request(workspace_meta.and_then(|m| m.get("request"))));
     let request = match request_opt {
         Some(r) => r,
         None => {
@@ -607,15 +605,13 @@ pub fn build_workspace_realization_record_from_driver_input(
         }
     };
 
-    Ok(build_workspace_realization_record(
-        BuildRecordInput {
-            environment: &input.environment,
-            lease: &input.lease,
-            request: &request,
-            realized_cwd: input.cwd.as_deref(),
-            provider_metadata: input.provider_metadata.clone(),
-        },
-    ))
+    Ok(build_workspace_realization_record(BuildRecordInput {
+        environment: &input.environment,
+        lease: &input.lease,
+        request: &request,
+        realized_cwd: input.cwd.as_deref(),
+        provider_metadata: input.provider_metadata.clone(),
+    }))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -842,10 +838,7 @@ mod tests {
             req.runtime_overlay.provision_command.as_deref(),
             Some("pnpm i")
         );
-        assert_eq!(
-            req.runtime_overlay.teardown_command.as_deref(),
-            Some("rm")
-        );
+        assert_eq!(req.runtime_overlay.teardown_command.as_deref(), Some("rm"));
         assert_eq!(
             req.runtime_overlay.cleanup_command.as_deref(),
             Some("clean")
@@ -1012,7 +1005,11 @@ mod tests {
         // provider_metadata 覆盖 lease_metadata 中 remoteCwd / remotePath /
         // sandboxId 等"远程路径"字段；但 host/port/username 是 lease 专属字段，
         // 不会被 provider 覆盖（与 Node 一致）。
-        let remote_path = rec.remote.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        let remote_path = rec
+            .remote
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         assert_eq!(remote_path, "/from-provider");
     }
 

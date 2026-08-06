@@ -133,10 +133,7 @@ impl RecoveryKeyPrefix {
 ///
 /// 对齐 Node `isStrandedIssueRecoveryOriginKind`。
 pub fn is_stranded_issue_recovery_origin_kind(origin: Option<&str>) -> bool {
-    matches!(
-        origin,
-        Some(recovery_origin_kinds::STRANDED_ISSUE_RECOVERY)
-    )
+    matches!(origin, Some(recovery_origin_kinds::STRANDED_ISSUE_RECOVERY))
 }
 
 /// 构建 issue graph liveness incident key。
@@ -144,9 +141,7 @@ pub fn is_stranded_issue_recovery_origin_kind(origin: Option<&str>) -> bool {
 /// 格式：`harness_liveness:{companyId}:{issueId}:{state}:{blockerIssueId|participantAgentId|"none"}`
 ///
 /// 对齐 Node `buildIssueGraphLivenessIncidentKey`。
-pub fn build_issue_graph_liveness_incident_key(
-    input: IncidentKeyInput<'_>,
-) -> String {
+pub fn build_issue_graph_liveness_incident_key(input: IncidentKeyInput<'_>) -> String {
     let leaf = input
         .blocker_issue_id
         .or(input.participant_agent_id)
@@ -392,10 +387,10 @@ mod tests {
     #[test]
     fn parse_incident_key_rejects_wrong_segment_count() {
         // 4 segments
-        assert!(parse_issue_graph_liveness_incident_key(Some(
-            "harness_liveness:co1:is1:stuck"
-        ))
-        .is_none());
+        assert!(
+            parse_issue_graph_liveness_incident_key(Some("harness_liveness:co1:is1:stuck"))
+                .is_none()
+        );
         // 6 segments
         assert!(parse_issue_graph_liveness_incident_key(Some(
             "harness_liveness:co1:is1:stuck:x:y"
@@ -406,8 +401,7 @@ mod tests {
     #[test]
     fn parse_incident_key_rejects_wrong_prefix() {
         assert!(
-            parse_issue_graph_liveness_incident_key(Some("wrong_prefix:co1:is1:stuck:x"))
-                .is_none()
+            parse_issue_graph_liveness_incident_key(Some("wrong_prefix:co1:is1:stuck:x")).is_none()
         );
         assert!(parse_issue_graph_liveness_incident_key(Some(
             "harness_liveness_leaf:co1:is1:stuck:x"
@@ -418,15 +412,14 @@ mod tests {
     #[test]
     fn parse_incident_key_rejects_empty_segments() {
         // Empty companyId
-        assert!(parse_issue_graph_liveness_incident_key(Some(
-            "harness_liveness::is1:stuck:x"
-        ))
-        .is_none());
+        assert!(
+            parse_issue_graph_liveness_incident_key(Some("harness_liveness::is1:stuck:x"))
+                .is_none()
+        );
         // Empty state
-        assert!(parse_issue_graph_liveness_incident_key(Some(
-            "harness_liveness:co1:is1::x"
-        ))
-        .is_none());
+        assert!(
+            parse_issue_graph_liveness_incident_key(Some("harness_liveness:co1:is1::x")).is_none()
+        );
     }
 
     // -----------------------------------------------------------------------

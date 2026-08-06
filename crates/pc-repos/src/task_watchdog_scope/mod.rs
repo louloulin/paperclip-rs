@@ -19,18 +19,18 @@ mod wakeup;
 #[cfg(test)]
 mod tests;
 
-pub use context::{build_task_watchdog_wake_context, TaskWatchdogWakeInput};
-pub use types::{
-    AgentRunActor, IssueScopeTarget, TaskWatchdogMutationScope, TaskWatchdogMutationScopeKind,
-    TASK_WATCHDOG_ORIGIN_KIND,
-};
-pub use resolver::{
-    issue_is_in_task_watchdog_subtree, resolve_task_watchdog_mutation_scope,
-    task_watchdog_scope_allows_issue_mutation, TaskWatchdogScopeAllowsOptions,
-};
 pub use classifier::{
     classify_task_watchdog_capability, default_capability_for_resume,
     ClassifyTaskWatchdogCapabilityInput, TaskWatchdogCapability, TaskWatchdogTargetScope,
     WatchdogOperation,
+};
+pub use context::{build_task_watchdog_wake_context, TaskWatchdogWakeInput};
+pub use resolver::{
+    issue_is_in_task_watchdog_subtree, resolve_task_watchdog_mutation_scope,
+    task_watchdog_scope_allows_issue_mutation, TaskWatchdogScopeAllowsOptions,
+};
+pub use types::{
+    AgentRunActor, IssueScopeTarget, TaskWatchdogMutationScope, TaskWatchdogMutationScopeKind,
+    TASK_WATCHDOG_ORIGIN_KIND,
 };
 pub use wakeup::{enqueue_task_watchdog_wake, TaskWatchdogWakeIds};

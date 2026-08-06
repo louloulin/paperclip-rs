@@ -134,10 +134,7 @@ impl<'a> SummaryRepo<'a> {
         Self { db }
     }
 
-    pub async fn list_by_company(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<SummarySlotRow>> {
+    pub async fn list_by_company(&self, company_id: Uuid) -> RepoResult<Vec<SummarySlotRow>> {
         let sql = format!(
             "SELECT {COLS} FROM summary_slots WHERE company_id=$1              ORDER BY updated_at DESC",
         );
@@ -201,11 +198,7 @@ impl<'a> SummaryRepo<'a> {
     }
 
     /// 标记生成开始（status=generating, generating_issue_id 写入）
-    pub async fn mark_generating(
-        &self,
-        id: Uuid,
-        issue_id: Uuid,
-    ) -> RepoResult<()> {
+    pub async fn mark_generating(&self, id: Uuid, issue_id: Uuid) -> RepoResult<()> {
         sqlx::query(
             "UPDATE summary_slots SET status='generating', generating_issue_id=$2,              failure_reason=NULL, updated_at=now() WHERE id=$1",
         )
@@ -237,11 +230,7 @@ impl<'a> SummaryRepo<'a> {
     }
 
     /// 标记生成失败（保留 generating_issue_id 以便重试）
-    pub async fn mark_failed(
-        &self,
-        id: Uuid,
-        reason: &str,
-    ) -> RepoResult<()> {
+    pub async fn mark_failed(&self, id: Uuid, reason: &str) -> RepoResult<()> {
         sqlx::query(
             "UPDATE summary_slots SET status='failed', failure_reason=$2, updated_at=now()              WHERE id=$1",
         )
@@ -282,9 +271,8 @@ impl<'a> SummaryRepo<'a> {
 
     /// 查找一个 company 下所有 stale 状态的槽位（用于后台 sweep）
     pub async fn list_stale(&self, company_id: Uuid) -> RepoResult<Vec<SummarySlotRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM summary_slots WHERE company_id=$1 AND status='stale'"
-        );
+        let sql =
+            format!("SELECT {COLS} FROM summary_slots WHERE company_id=$1 AND status='stale'");
         Ok(sqlx::query_as::<_, SummarySlotRow>(&sql)
             .bind(company_id)
             .fetch_all(self.db.pool())
@@ -407,7 +395,12 @@ mod tests {
 
     #[test]
     fn scope_kind_strings_round_trip() {
-        for k in [ScopeKind::Company, ScopeKind::Agent, ScopeKind::Document, ScopeKind::Issue] {
+        for k in [
+            ScopeKind::Company,
+            ScopeKind::Agent,
+            ScopeKind::Document,
+            ScopeKind::Issue,
+        ] {
             assert_eq!(ScopeKind::parse(k.as_str()), Some(k));
         }
         assert_eq!(ScopeKind::parse("nope"), None);
@@ -422,7 +415,13 @@ mod tests {
     }
     #[test]
     fn slot_key_strings() {
-        assert_eq!(SummarySlotKey::WeeklyBoardUpdate.as_str(), "weekly_board_update");
-        assert_eq!(SummarySlotKey::AgentPerformance.as_str(), "agent_performance");
+        assert_eq!(
+            SummarySlotKey::WeeklyBoardUpdate.as_str(),
+            "weekly_board_update"
+        );
+        assert_eq!(
+            SummarySlotKey::AgentPerformance.as_str(),
+            "agent_performance"
+        );
     }
 }

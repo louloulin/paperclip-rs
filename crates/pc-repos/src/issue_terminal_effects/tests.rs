@@ -16,8 +16,12 @@ fn issue(status: &'static str) -> TerminalEffectIssue<'static> {
 
 #[test]
 fn summary_reason_only_applies_to_terminal_statuses() {
-    assert!(summary_failure_reason(&issue("done")).unwrap().contains("finished"));
-    assert!(summary_failure_reason(&issue("cancelled")).unwrap().contains("cancelled"));
+    assert!(summary_failure_reason(&issue("done"))
+        .unwrap()
+        .contains("finished"));
+    assert!(summary_failure_reason(&issue("cancelled"))
+        .unwrap()
+        .contains("cancelled"));
     assert!(summary_failure_reason(&issue("blocked")).is_none());
 }
 

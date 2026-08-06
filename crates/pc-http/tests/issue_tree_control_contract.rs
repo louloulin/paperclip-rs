@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -93,12 +90,7 @@ async fn insert_issue(db: &Db, company_id: Uuid, parent_id: Option<Uuid>) -> Uui
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -149,8 +141,14 @@ async fn tree_control_preview_lists_affected_subtree() {
     assert_eq!(body["mode"], "merge");
     let affected = body["affectedIssueIds"].as_array().expect("affected array");
     let affected_ids: Vec<&str> = affected.iter().map(|v| v.as_str().unwrap_or("")).collect();
-    assert!(affected_ids.contains(&c1.to_string().as_str()), "should include c1: {body}");
-    assert!(affected_ids.contains(&c2.to_string().as_str()), "should include c2: {body}");
+    assert!(
+        affected_ids.contains(&c1.to_string().as_str()),
+        "should include c1: {body}"
+    );
+    assert!(
+        affected_ids.contains(&c2.to_string().as_str()),
+        "should include c2: {body}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -202,7 +200,10 @@ async fn tree_hold_create_list_get_release_lifecycle() {
     .await;
     assert_eq!(status, 200, "list: {body}");
     let holds = body["holds"].as_array().expect("holds array");
-    assert!(holds.iter().any(|h| h["id"] == hold_id), "should list our hold: {body}");
+    assert!(
+        holds.iter().any(|h| h["id"] == hold_id),
+        "should list our hold: {body}"
+    );
 
     // GET
     let (status, body) = call(

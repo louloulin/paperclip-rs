@@ -41,10 +41,7 @@ fn test_state_with_realtime(db: Db, realtime: RealtimeHandle) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test",
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test")),
         realtime,
     )
 }
@@ -121,15 +118,9 @@ async fn live_events_resume_replays_missed_events() {
     let id1 = Uuid::new_v4();
     let id2 = Uuid::new_v4();
     let id3 = Uuid::new_v4();
-    realtime.publish(
-        pc_realtime::LiveEvent::new("test.first", "x", id1).with_company(company_id),
-    );
-    realtime.publish(
-        pc_realtime::LiveEvent::new("test.second", "x", id2).with_company(company_id),
-    );
-    realtime.publish(
-        pc_realtime::LiveEvent::new("test.third", "x", id3).with_company(company_id),
-    );
+    realtime.publish(pc_realtime::LiveEvent::new("test.first", "x", id1).with_company(company_id));
+    realtime.publish(pc_realtime::LiveEvent::new("test.second", "x", id2).with_company(company_id));
+    realtime.publish(pc_realtime::LiveEvent::new("test.third", "x", id3).with_company(company_id));
 
     let state = test_state_with_realtime(db, realtime.clone());
     let url = spawn_app(state).await;
@@ -138,7 +129,9 @@ async fn live_events_resume_replays_missed_events() {
         url, token, company_id
     );
 
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(ws_url).await.expect("ws connect");
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(ws_url)
+        .await
+        .expect("ws connect");
     // 期望收到：3 条 replay 事件 + 1 条 resumed ack + 1 条 welcome
     let mut events = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
@@ -159,9 +152,18 @@ async fn live_events_resume_replays_missed_events() {
         .iter()
         .map(|e| e["type"].as_str().unwrap_or(""))
         .collect();
-    assert!(kinds.contains(&"event"), "expected 'event' frame: {events:?}");
-    assert!(kinds.contains(&"resumed"), "expected 'resumed' frame: {events:?}");
-    assert!(kinds.contains(&"welcome"), "expected 'welcome' frame: {events:?}");
+    assert!(
+        kinds.contains(&"event"),
+        "expected 'event' frame: {events:?}"
+    );
+    assert!(
+        kinds.contains(&"resumed"),
+        "expected 'resumed' frame: {events:?}"
+    );
+    assert!(
+        kinds.contains(&"welcome"),
+        "expected 'welcome' frame: {events:?}"
+    );
     let replayed_count = events
         .iter()
         .find(|e| e["type"] == "resumed")
@@ -191,7 +193,9 @@ async fn live_events_no_resume_just_gets_welcome() {
         url, token, company_id
     );
 
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(ws_url).await.expect("ws connect");
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(ws_url)
+        .await
+        .expect("ws connect");
     let mut events = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     while events.len() < 3 && tokio::time::Instant::now() < deadline {
@@ -209,7 +213,10 @@ async fn live_events_no_resume_just_gets_welcome() {
         .collect();
     assert!(kinds.contains(&"welcome"));
     // 没有 resumed 帧（无 resume 参数）
-    assert!(!kinds.contains(&"resumed"), "should not emit resumed without resume param");
+    assert!(
+        !kinds.contains(&"resumed"),
+        "should not emit resumed without resume param"
+    );
     let _ = ws.close(None);
 }
 
@@ -221,15 +228,12 @@ async fn live_events_resume_from_high_id_skips_misses() {
     let (token, _kid) = seed_agent_api_key(&db, company_id).await;
 
     let realtime = RealtimeHandle::start_with_replay(64, 64);
-    realtime.publish(
-        pc_realtime::LiveEvent::new("e1", "x", Uuid::new_v4()).with_company(company_id),
-    );
-    realtime.publish(
-        pc_realtime::LiveEvent::new("e2", "x", Uuid::new_v4()).with_company(company_id),
-    );
-    realtime.publish(
-        pc_realtime::LiveEvent::new("e3", "x", Uuid::new_v4()).with_company(company_id),
-    );
+    realtime
+        .publish(pc_realtime::LiveEvent::new("e1", "x", Uuid::new_v4()).with_company(company_id));
+    realtime
+        .publish(pc_realtime::LiveEvent::new("e2", "x", Uuid::new_v4()).with_company(company_id));
+    realtime
+        .publish(pc_realtime::LiveEvent::new("e3", "x", Uuid::new_v4()).with_company(company_id));
     // 用第 2 个 event_id 作为 resume 起点 → 应只收到第 3 条
     let all = realtime.replay_after(0);
     assert_eq!(all.len(), 3);
@@ -242,7 +246,9 @@ async fn live_events_resume_from_high_id_skips_misses() {
         url, token, company_id, resume_from
     );
 
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(ws_url).await.expect("ws connect");
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(ws_url)
+        .await
+        .expect("ws connect");
     let mut events = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     while events.len() < 3 && tokio::time::Instant::now() < deadline {

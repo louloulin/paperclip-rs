@@ -78,7 +78,13 @@ async fn board_chat_stream(
     };
 
     // Persist the user message into a board chat thread (idempotent).
-    let _thread_id = persist_user_message(&state, body.company_id, Some(resolved_issue_id), &body.message).await?;
+    let _thread_id = persist_user_message(
+        &state,
+        body.company_id,
+        Some(resolved_issue_id),
+        &body.message,
+    )
+    .await?;
 
     let claude = body
         .claude_command
@@ -248,7 +254,13 @@ async fn board_chat_one_shot(
         Some(id) => id,
         None => ensure_board_issue(&state, body.company_id, "Board Operations").await?,
     };
-    let _thread_id = persist_user_message(&state, body.company_id, Some(resolved_issue_id), &body.message).await?;
+    let _thread_id = persist_user_message(
+        &state,
+        body.company_id,
+        Some(resolved_issue_id),
+        &body.message,
+    )
+    .await?;
     let claude = body
         .claude_command
         .clone()
@@ -296,7 +308,6 @@ async fn ensure_board_issue(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))
 }
-
 
 async fn list_threads(
     State(state): State<AppState>,
@@ -360,8 +371,6 @@ async fn list_messages(
         "items": items,
     })))
 }
-
-
 
 /// Persist the user message into a board_chat_thread BEFORE starting the LLM turn.
 /// Returns the thread id for downstream callers (so they can tie the assistant reply

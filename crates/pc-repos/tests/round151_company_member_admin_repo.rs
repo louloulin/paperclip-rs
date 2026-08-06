@@ -117,7 +117,9 @@ async fn replace_user_companies_empty_clears() {
     insert_membership(&db, &user, c).await;
 
     let repo = CompanyMemberRepo::new(&db);
-    repo.replace_user_companies(&user, &[]).await.expect("replace");
+    repo.replace_user_companies(&user, &[])
+        .await
+        .expect("replace");
 
     let rows = repo.list_for_user_with_company(&user).await.expect("list");
     assert!(rows.is_empty());
@@ -131,8 +133,12 @@ async fn replace_user_companies_idempotent() {
     let c = insert_company(&db, "rp3-c").await;
 
     let repo = CompanyMemberRepo::new(&db);
-    repo.replace_user_companies(&user, &[c]).await.expect("first");
-    repo.replace_user_companies(&user, &[c]).await.expect("second");
+    repo.replace_user_companies(&user, &[c])
+        .await
+        .expect("first");
+    repo.replace_user_companies(&user, &[c])
+        .await
+        .expect("second");
 
     let rows = repo.list_for_user_with_company(&user).await.expect("list");
     assert_eq!(rows.len(), 1);

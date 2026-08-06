@@ -651,31 +651,32 @@ async fn append_current_routine_revision(
 
 impl<'a> RoutineRepo<'a> {
     /// Round 242: 对齐 Node `routinesSvc.syncRunStatusForIssue`。
-    pub async fn sync_run_status_for_issue(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT origin_kind, origin_run_id FROM issues WHERE id = $1",
-        )
-        .bind(issue_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn sync_run_status_for_issue(&self, issue_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT origin_kind, origin_run_id FROM issues WHERE id = $1")
+                .bind(issue_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         let Some((origin_kind, origin_run_id)) = row else {
             return Ok(None);
         };
         if origin_kind != "routine_execution" {
             return Ok(None);
         }
-        let Some(raw_run) = origin_run_id else { return Ok(None); };
-        let Ok(run_id) = Uuid::parse_str(&raw_run) else { return Ok(None); };
-        let status_row: Option<(String,)> = sqlx::query_as(
-            "SELECT status FROM issues WHERE id = $1",
-        )
-        .bind(issue_id)
-        .fetch_optional(self.db.pool())
-        .await?;
-        let Some((status,)) = status_row else { return Ok(None); };
+        let Some(raw_run) = origin_run_id else {
+            return Ok(None);
+        };
+        let Ok(run_id) = Uuid::parse_str(&raw_run) else {
+            return Ok(None);
+        };
+        let status_row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM issues WHERE id = $1")
+                .bind(issue_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        let Some((status,)) = status_row else {
+            return Ok(None);
+        };
         use sqlx::Row;
         match status.as_str() {
             "done" => {
@@ -686,7 +687,9 @@ impl<'a> RoutineRepo<'a> {
                 .bind(run_id)
                 .fetch_optional(self.db.pool())
                 .await?;
-                if let Some(row) = row { return Ok(Some(row.try_get::<Uuid, _>(0).unwrap_or(run_id))); }
+                if let Some(row) = row {
+                    return Ok(Some(row.try_get::<Uuid, _>(0).unwrap_or(run_id)));
+                }
                 Ok(None)
             }
             "blocked" | "cancelled" => {
@@ -698,7 +701,9 @@ impl<'a> RoutineRepo<'a> {
                 .bind(format!("Execution issue moved to {status}"))
                 .fetch_optional(self.db.pool())
                 .await?;
-                if let Some(row) = row { return Ok(Some(row.try_get::<Uuid, _>(0).unwrap_or(run_id))); }
+                if let Some(row) = row {
+                    return Ok(Some(row.try_get::<Uuid, _>(0).unwrap_or(run_id)));
+                }
                 Ok(None)
             }
             _ => Ok(None),
@@ -720,9 +725,7 @@ impl<'a> RoutineRepo<'a> {
     }
 
     pub async fn list_all(&self, limit: i64) -> sqlx::Result<Vec<RoutineRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM routines ORDER BY updated_at DESC LIMIT $1"
-        );
+        let sql = format!("SELECT {COLS} FROM routines ORDER BY updated_at DESC LIMIT $1");
         sqlx::query_as::<_, RoutineRow>(&sql)
             .bind(limit)
             .fetch_all(self.db.pool())
@@ -2478,11 +2481,10 @@ impl<'a> RoutineRepo<'a> {
 
     /// Round 111: 查 routine 的 company_id（auth 辅助，4× 用法）。
     pub async fn get_company_id(&self, routine_id: Uuid) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> =
-            sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
-                .bind(routine_id)
-                .fetch_optional(self.db.pool())
-                .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM routines WHERE id = $1")
+            .bind(routine_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 

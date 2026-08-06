@@ -183,7 +183,8 @@ impl<'a> SidebarBadgesService<'a> {
             .count() as i64;
 
         // 4) inbox = sum of the three sources + unread touched
-        let inbox = actionable_approvals + failed_runs + join_requests + extra.unread_touched_issues;
+        let inbox =
+            actionable_approvals + failed_runs + join_requests + extra.unread_touched_issues;
 
         Ok(SidebarBadges {
             inbox,
@@ -275,6 +276,9 @@ mod tests {
             join_requests: 2,
         };
         assert_eq!(badges.inbox, 20);
-        assert_eq!(badges.approvals + badges.failed_runs + badges.join_requests + 10, badges.inbox);
+        assert_eq!(
+            badges.approvals + badges.failed_runs + badges.join_requests + 10,
+            badges.inbox
+        );
     }
 }

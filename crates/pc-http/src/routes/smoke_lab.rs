@@ -312,9 +312,16 @@ async fn install_fixtures(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if issue_count == 0 {
-        repo.insert_smoke_issue(company_id, "Smoke probe", "normal", "open", "smoke", "smoke-fixture")
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        repo.insert_smoke_issue(
+            company_id,
+            "Smoke probe",
+            "normal",
+            "open",
+            "smoke",
+            "smoke-fixture",
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
         installed.push("issue".into());
     }
 

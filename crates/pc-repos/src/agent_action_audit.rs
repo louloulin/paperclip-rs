@@ -133,7 +133,10 @@ pub fn excerpt(value: &str, max_length: usize) -> String {
     if normalized.chars().count() <= max_length {
         return normalized;
     }
-    let mut out: String = normalized.chars().take(max_length.saturating_sub(1)).collect();
+    let mut out: String = normalized
+        .chars()
+        .take(max_length.saturating_sub(1))
+        .collect();
     out.push('…');
     out
 }
@@ -157,7 +160,10 @@ impl AgentActionAuditRepo {
     /// 3. 富化：`issue_comment` / `issue` / `issue_document` 三类行再做关联
     /// 4. 详情 redact：调用 `crate::redact::sanitize_record`
     /// 5. 编码 next_cursor：基于本页最后一行 `(created_at, id)`
-    pub async fn list(&self, filters: AgentActionAuditFilters) -> Result<AgentActionAuditPage, RepoErr> {
+    pub async fn list(
+        &self,
+        filters: AgentActionAuditFilters,
+    ) -> Result<AgentActionAuditPage, RepoErr> {
         let decoded_cursor = match filters.cursor.as_deref() {
             None => None,
             Some(cursor) => Some(decode_cursor(cursor).map_err(|_| RepoErr::BadCursor)?),
@@ -222,7 +228,11 @@ impl AgentActionAuditRepo {
         .await?;
 
         let has_more = rows.len() as i64 > limit;
-        let page_rows = if has_more { &rows[..limit as usize] } else { &rows[..] };
+        let page_rows = if has_more {
+            &rows[..limit as usize]
+        } else {
+            &rows[..]
+        };
 
         // Hydrate comments
         let comment_ids: Vec<String> = page_rows
@@ -260,11 +270,15 @@ impl AgentActionAuditRepo {
                 .fetch_all(self.db.pool())
                 .await?
             };
-        let comment_map: std::collections::HashMap<Uuid, (String, Uuid, Option<String>, Option<String>)> =
-            comment_rows
-                .into_iter()
-                .map(|(id, body, issue_id, identifier, title)| (id, (body, issue_id, identifier, title)))
-                .collect();
+        let comment_map: std::collections::HashMap<
+            Uuid,
+            (String, Uuid, Option<String>, Option<String>),
+        > = comment_rows
+            .into_iter()
+            .map(|(id, body, issue_id, identifier, title)| {
+                (id, (body, issue_id, identifier, title))
+            })
+            .collect();
 
         // Hydrate issues
         let issue_ids: Vec<String> = page_rows
@@ -279,7 +293,8 @@ impl AgentActionAuditRepo {
                 .filter(|id| seen.insert(id.clone()))
                 .collect()
         };
-        let issue_rows: Vec<(Uuid, Option<String>, Option<String>)> = if issue_ids_unique.is_empty() {
+        let issue_rows: Vec<(Uuid, Option<String>, Option<String>)> = if issue_ids_unique.is_empty()
+        {
             Vec::new()
         } else {
             sqlx::query_as(
@@ -297,12 +312,17 @@ impl AgentActionAuditRepo {
             .await?
         };
         let issue_map: std::collections::HashMap<Uuid, (Option<String>, Option<String>)> =
-            issue_rows.into_iter().map(|(id, i, t)| (id, (i, t))).collect();
+            issue_rows
+                .into_iter()
+                .map(|(id, i, t)| (id, (i, t)))
+                .collect();
 
         // Hydrate documents
         let document_ids: Vec<String> = page_rows
             .iter()
-            .filter(|r| r.try_get::<String, _>("entity_type").ok().as_deref() == Some("issue_document"))
+            .filter(|r| {
+                r.try_get::<String, _>("entity_type").ok().as_deref() == Some("issue_document")
+            })
             .filter_map(|r| r.try_get::<String, _>("entity_id").ok())
             .collect();
         let document_ids_unique: Vec<String> = {
@@ -333,8 +353,10 @@ impl AgentActionAuditRepo {
                 .fetch_all(self.db.pool())
                 .await?
             };
-        let mut document_map: std::collections::HashMap<String, (String, Uuid, Option<String>, Option<String>)> =
-            std::collections::HashMap::new();
+        let mut document_map: std::collections::HashMap<
+            String,
+            (String, Uuid, Option<String>, Option<String>),
+        > = std::collections::HashMap::new();
         for (id, document_id, key, issue_id, identifier, title) in document_rows {
             let snippet = (key, issue_id, identifier, title);
             document_map.insert(id.to_string(), snippet.clone());
@@ -355,7 +377,8 @@ impl AgentActionAuditRepo {
             let run_id: Option<Uuid> = row.try_get("run_id")?;
             let details: Option<Value> = row.try_get("details")?;
             let created_at: DateTime<Utc> = row.try_get("created_at")?;
-            let responsible_user_id: Option<String> = row.try_get("effective_responsible_user_id")?;
+            let responsible_user_id: Option<String> =
+                row.try_get("effective_responsible_user_id")?;
 
             // Hydrate entity
             let mut entity = AgentActionAuditEntity::default();
@@ -466,10 +489,16 @@ mod tests {
 
     #[test]
     fn cursor_rejects_garbage() {
-        assert_eq!(decode_cursor("not-base64").unwrap_err(), CursorError::Invalid);
-        let wrong_json = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(b"{\"id\":\"not-a-uuid\"}");
-        assert_eq!(decode_cursor(&wrong_json).unwrap_err(), CursorError::Invalid);
+        assert_eq!(
+            decode_cursor("not-base64").unwrap_err(),
+            CursorError::Invalid
+        );
+        let wrong_json =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"id\":\"not-a-uuid\"}");
+        assert_eq!(
+            decode_cursor(&wrong_json).unwrap_err(),
+            CursorError::Invalid
+        );
     }
 
     #[test]

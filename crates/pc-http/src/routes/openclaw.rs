@@ -38,17 +38,17 @@ struct InvitePromptBody {
 }
 
 fn render_invite_prompt(company_id: Uuid, body: &InvitePromptBody) -> Value {
-    let email = body.user_email.clone().unwrap_or_else(|| "<user-email>".into());
-    let name = body
-        .user_name
+    let email = body
+        .user_email
         .clone()
-        .unwrap_or_else(|| "there".into());
-    let role = body
-        .role
-        .clone()
-        .unwrap_or_else(|| "collaborator".into());
+        .unwrap_or_else(|| "<user-email>".into());
+    let name = body.user_name.clone().unwrap_or_else(|| "there".into());
+    let role = body.role.clone().unwrap_or_else(|| "collaborator".into());
     let locale = body.locale.clone().unwrap_or_else(|| "en-US".into());
-    let subject = format!("You're invited to OpenClaw for company {}", company_id.simple());
+    let subject = format!(
+        "You're invited to OpenClaw for company {}",
+        company_id.simple()
+    );
     let body_text = format!(
         "Hi {name},\n\n\
          You ({email}, role: {role}) have been invited to connect OpenClaw with this workspace.\n\

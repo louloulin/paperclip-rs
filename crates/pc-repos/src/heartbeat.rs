@@ -55,7 +55,9 @@ impl HeartbeatRunStatus {
                     | Self::Cancelled
                     | Self::TimedOut
             ),
-            Self::ScheduledRetry => matches!(target, Self::Queued | Self::Running | Self::Cancelled),
+            Self::ScheduledRetry => {
+                matches!(target, Self::Queued | Self::Running | Self::Cancelled)
+            }
             Self::Running => matches!(
                 target,
                 Self::ScheduledRetry
@@ -326,7 +328,6 @@ impl RunOutputSilenceSummary {
     }
 }
 
-
 impl HeartbeatRow {
     pub fn run_status(&self) -> Option<HeartbeatRunStatus> {
         self.status.parse().ok()
@@ -485,9 +486,8 @@ impl<'a> HeartbeatRepo<'a> {
         company_id: Uuid,
         run_id: Uuid,
     ) -> sqlx::Result<Option<HeartbeatRow>> {
-        let query = format!(
-            "SELECT {RUN_COLUMNS} FROM heartbeat_runs WHERE company_id=$1 AND id=$2"
-        );
+        let query =
+            format!("SELECT {RUN_COLUMNS} FROM heartbeat_runs WHERE company_id=$1 AND id=$2");
         sqlx::query_as::<_, HeartbeatRow>(&query)
             .bind(company_id)
             .bind(run_id)
@@ -554,12 +554,9 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
-/// Round 107: 查某个 issue 当前是否还有活跃 heartbeat run
+    /// Round 107: 查某个 issue 当前是否还有活跃 heartbeat run
     /// (status in queued/claimed/running/paused)。通常用于前端 polling。
-    pub async fn find_active_run_by_issue(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Option<Uuid>> {
+    pub async fn find_active_run_by_issue(&self, issue_id: Uuid) -> sqlx::Result<Option<Uuid>> {
         let row: Option<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM heartbeat_runs              WHERE context_snapshot->>'issueId' = $1              AND status::text IN ('queued','claimed','running','paused')              ORDER BY started_at DESC NULLS LAST LIMIT 1",
         )
@@ -655,11 +652,7 @@ impl<'a> HeartbeatRepo<'a> {
 
     /// Round 137: 取消指定 run（幂等：仅当 status IN queued/running 时更新）。
     /// 返回 rows_affected > 0 表示实际取消。
-    pub async fn cancel_run_for_issue(
-        &self,
-        run_id: Uuid,
-        issue_id: Uuid,
-    ) -> sqlx::Result<bool> {
+    pub async fn cancel_run_for_issue(&self, run_id: Uuid, issue_id: Uuid) -> sqlx::Result<bool> {
         let n = sqlx::query(
             "UPDATE heartbeat_runs              SET status = 'cancelled', finished_at = now(), updated_at = now()              WHERE id = $1                AND context_snapshot ->> 'issueId' = $2::text                AND status IN ('queued','running')",
         )
@@ -676,12 +669,10 @@ impl<'a> HeartbeatRepo<'a> {
         &self,
         run_id: Uuid,
     ) -> sqlx::Result<Option<(Uuid, serde_json::Value)>> {
-        sqlx::query_as(
-            "SELECT agent_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
-        )
-        .bind(run_id)
-        .fetch_optional(self.db.pool())
-        .await
+        sqlx::query_as("SELECT agent_id, context_snapshot FROM heartbeat_runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await
     }
 
     /// Round 137: 插入新 run（INSERT 复合）。
@@ -1199,10 +1190,8 @@ impl<'a> HeartbeatRepo<'a> {
         run: &HeartbeatRow,
         now: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<RunOutputSilenceSummary> {
-        let silence_started_at: Option<Timestamp> = run
-            .last_output_at
-            .or(run.started_at)
-            .map(|ts| ts);
+        let silence_started_at: Option<Timestamp> =
+            run.last_output_at.or(run.started_at).map(|ts| ts);
         let silence_age_ms = if run.status == "running" {
             silence_started_at.map(|t| (now - t.as_datetime()).num_milliseconds().max(0))
         } else {
@@ -1213,11 +1202,15 @@ impl<'a> HeartbeatRepo<'a> {
         } else {
             let snooze = self.active_watchdog_snooze(run.company_id, run.id).await?;
             if let Some(s) = snooze.as_ref() {
-                if s.snoozed_until.map(|t| t.as_datetime() > now).unwrap_or(false) {
+                if s.snoozed_until
+                    .map(|t| t.as_datetime() > now)
+                    .unwrap_or(false)
+                {
                     "snoozed".to_string()
                 } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS {
                     "critical".to_string()
-                } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS {
+                } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS
+                {
                     "suspicious".to_string()
                 } else {
                     "ok".to_string()
@@ -1230,7 +1223,8 @@ impl<'a> HeartbeatRepo<'a> {
                 "ok".to_string()
             }
         };
-        let snoozed_until = self.active_watchdog_snooze(run.company_id, run.id)
+        let snoozed_until = self
+            .active_watchdog_snooze(run.company_id, run.id)
             .await?
             .and_then(|s| s.snoozed_until);
         let evaluation: Option<(Uuid, Option<String>, Option<Uuid>)> = sqlx::query_as(
@@ -1239,7 +1233,14 @@ impl<'a> HeartbeatRepo<'a> {
                AND status IN ('in_progress','blocked') AND hidden_at IS NULL",
         )
         .bind(run.company_id)
-        .bind(run.context_snapshot.as_ref().and_then(|v| v.get("issueId")).and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok()).unwrap_or(Uuid::nil()))
+        .bind(
+            run.context_snapshot
+                .as_ref()
+                .and_then(|v| v.get("issueId"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .unwrap_or(Uuid::nil()),
+        )
         .fetch_optional(self.db.pool())
         .await?;
         let evaluation = evaluation.unwrap_or((Uuid::nil(), None, None));
@@ -1253,7 +1254,11 @@ impl<'a> HeartbeatRepo<'a> {
             suspicion_threshold_ms: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
             critical_threshold_ms: ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
             snoozed_until,
-            evaluation_issue_id: if evaluation.0.is_nil() { None } else { Some(evaluation.0) },
+            evaluation_issue_id: if evaluation.0.is_nil() {
+                None
+            } else {
+                Some(evaluation.0)
+            },
             evaluation_issue_identifier: evaluation.1,
             evaluation_issue_assignee_agent_id: evaluation.2,
         })
@@ -1300,10 +1305,7 @@ impl<'a> HeartbeatRepo<'a> {
     }
 
     /// Round 161: preview_tree_control — count active heartbeat_runs for issue。
-    pub async fn count_active_runs_for_issue(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<i64> {
+    pub async fn count_active_runs_for_issue(&self, issue_id: Uuid) -> sqlx::Result<i64> {
         let v: Option<(i64,)> = sqlx::query_as(
             "SELECT COUNT(*) FROM heartbeat_runs \
              WHERE issue_id = $1 AND status IN ('pending','in_progress')",
@@ -1368,12 +1370,11 @@ impl<'a> HeartbeatRepo<'a> {
         &self,
         run_id: Uuid,
     ) -> sqlx::Result<Option<(Uuid, Option<serde_json::Value>)>> {
-        let row: Option<(Uuid, Option<serde_json::Value>)> = sqlx::query_as(
-            "SELECT company_id, context_snapshot FROM heartbeat_runs WHERE id = $1",
-        )
-        .bind(run_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid, Option<serde_json::Value>)> =
+            sqlx::query_as("SELECT company_id, context_snapshot FROM heartbeat_runs WHERE id = $1")
+                .bind(run_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row)
     }
     /// Round 185: extensions /api/issues/:id/heartbeat-context -- most recent N runs for an issue.
@@ -1426,9 +1427,7 @@ impl<'a> HeartbeatRepo<'a> {
         // 当 company_id = None 时, $1 = silence, $2 = limit
         // 当 company_id = Some 时, $1 = company_id, $2 = silence, $3 = limit
         if company_id.is_some() {
-            query = query
-                .bind(silence_threshold_ms.to_string())
-                .bind(limit);
+            query = query.bind(silence_threshold_ms.to_string()).bind(limit);
         } else {
             query = query.bind(silence_threshold_ms.to_string()).bind(limit);
         }
@@ -1437,11 +1436,7 @@ impl<'a> HeartbeatRepo<'a> {
 
     /// 标记 run 为 abandoned（仅在 active 状态下生效；幂等）。
     /// 返回 true 表示状态被改变，false 表示已是终态或不存在。
-    pub async fn mark_run_abandoned(
-        &self,
-        run_id: Uuid,
-        reason: &str,
-    ) -> sqlx::Result<bool> {
+    pub async fn mark_run_abandoned(&self, run_id: Uuid, reason: &str) -> sqlx::Result<bool> {
         let result = sqlx::query(
             "UPDATE heartbeat_runs \
              SET status = 'failed', \
@@ -1460,10 +1455,7 @@ impl<'a> HeartbeatRepo<'a> {
 
     /// 列出运行中的 stale active run，按 silence 倒序。
     /// 用于 scheduler tick 周期扫描；返回的 silence_age_ms 由 DB 计算。
-    pub async fn count_silent_active_runs(
-        &self,
-        silence_threshold_ms: i64,
-    ) -> sqlx::Result<i64> {
+    pub async fn count_silent_active_runs(&self, silence_threshold_ms: i64) -> sqlx::Result<i64> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM heartbeat_runs \
              WHERE status IN ('queued','claimed','running','scheduled_retry') \

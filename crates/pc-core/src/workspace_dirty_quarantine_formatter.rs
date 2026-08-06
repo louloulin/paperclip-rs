@@ -6,7 +6,9 @@
 //! 设计目标：纯函数模块，不依赖 DB/IO。
 use serde::{Deserialize, Serialize};
 
-use crate::workspace_runtime_string_utils::{format_branch_for_message, format_issue_reference, git_error_includes};
+use crate::workspace_runtime_string_utils::{
+    format_branch_for_message, format_issue_reference, git_error_includes,
+};
 
 // ============================================================================
 // Enums & types
@@ -92,7 +94,9 @@ pub struct FormatDirtyQuarantineAuditCommentInput {
 /// 与 Node 1:1 对齐：
 /// - activeRun → " with active run <id>"
 /// - 否则 → " with no active run"
-pub fn format_dirty_quarantine_contention_refusal(contention: &GitWorktreeBranchContention) -> String {
+pub fn format_dirty_quarantine_contention_refusal(
+    contention: &GitWorktreeBranchContention,
+) -> String {
     let active_run_text = match &contention.active_run {
         Some(run) => format!(" with active run {}", run.id),
         None => " with no active run".to_string(),
@@ -153,11 +157,10 @@ pub fn format_dirty_quarantine_audit_comment(
 
     let source_ref = format_issue_reference(
         input.evidence.source_issue_id.as_deref(),
-        input
-            .evidence
-            .source_identifier
-            .as_deref()
-            .or(input.source_issue.as_ref().and_then(|i| i.identifier.as_deref())),
+        input.evidence.source_identifier.as_deref().or(input
+            .source_issue
+            .as_ref()
+            .and_then(|i| i.identifier.as_deref())),
     );
 
     let claimant_line = match &input.claimant {
@@ -274,8 +277,11 @@ mod tests {
 
     #[test]
     fn failure_index_lock() {
-        let out = format_dirty_quarantine_failure("fatal: Unable to create '.git/index.lock': File exists");
-        assert!(out.starts_with("dirty quarantine repair aborted because git reported index contention"));
+        let out = format_dirty_quarantine_failure(
+            "fatal: Unable to create '.git/index.lock': File exists",
+        );
+        assert!(out
+            .starts_with("dirty quarantine repair aborted because git reported index contention"));
         assert!(out.contains("Unable to create"));
     }
 
@@ -430,7 +436,10 @@ mod tests {
     fn in_progress_operation_labels() {
         assert_eq!(GitWorktreeInProgressOperation::Rebase.as_str(), "rebase");
         assert_eq!(GitWorktreeInProgressOperation::Merge.as_str(), "merge");
-        assert_eq!(GitWorktreeInProgressOperation::CherryPick.as_str(), "cherry-pick");
+        assert_eq!(
+            GitWorktreeInProgressOperation::CherryPick.as_str(),
+            "cherry-pick"
+        );
         assert_eq!(GitWorktreeInProgressOperation::Revert.as_str(), "revert");
         assert_eq!(GitWorktreeInProgressOperation::Bisect.as_str(), "bisect");
     }

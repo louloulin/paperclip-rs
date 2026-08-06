@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -197,9 +194,7 @@ async fn call_no_auth(
 
 #[tokio::test(flavor = "current_thread")]
 async fn sidebar_badges_returns_zero_counts_for_empty_company() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::sidebar_badges::router().with_state(test_state(db.clone()));
 
@@ -218,23 +213,15 @@ async fn sidebar_badges_returns_zero_counts_for_empty_company() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn sidebar_preferences_get_then_put_persists_company_order() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let user_id = format!("user-sp-{}", Uuid::new_v4().simple());
     insert_user(&db, &user_id).await;
     let session = insert_session(&db, &user_id).await;
     let app = routes::sidebar_preferences::router().with_state(test_state(db.clone()));
 
     // Default empty
-    let (status, body) = call_with_session(
-        &app,
-        "GET",
-        "/api/sidebar-preferences/me",
-        None,
-        &session,
-    )
-    .await;
+    let (status, body) =
+        call_with_session(&app, "GET", "/api/sidebar-preferences/me", None, &session).await;
     assert_eq!(status, 200, "get default: {body}");
     assert_eq!(body["orderedIds"], json!([]));
 
@@ -250,29 +237,18 @@ async fn sidebar_preferences_get_then_put_persists_company_order() {
     )
     .await;
     assert_eq!(status, 200, "put: {body}");
-    assert_eq!(
-        body["orderedIds"],
-        json!([company_a, company_b])
-    );
+    assert_eq!(body["orderedIds"], json!([company_a, company_b]));
 
     // GET returns same
-    let (status, body) = call_with_session(
-        &app,
-        "GET",
-        "/api/sidebar-preferences/me",
-        None,
-        &session,
-    )
-    .await;
+    let (status, body) =
+        call_with_session(&app, "GET", "/api/sidebar-preferences/me", None, &session).await;
     assert_eq!(status, 200);
     assert_eq!(body["orderedIds"], json!([company_a, company_b]));
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn resource_memberships_star_project_persists() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let _agent_id = insert_agent(&db, company_id).await;
     let project_id = insert_project(&db, company_id).await;
@@ -291,7 +267,9 @@ async fn resource_memberships_star_project_persists() {
     )
     .await;
     assert_eq!(status, 200, "list empty: {body}");
-    let _ = body["starredProjectIds"].as_array().expect("starred projects array");
+    let _ = body["starredProjectIds"]
+        .as_array()
+        .expect("starred projects array");
 
     // Star the project
     let (status, body) = call_with_session(
@@ -317,7 +295,9 @@ async fn resource_memberships_star_project_persists() {
     )
     .await;
     assert_eq!(status, 200);
-    let starred = body["starredProjectIds"].as_array().expect("starred projects array");
+    let starred = body["starredProjectIds"]
+        .as_array()
+        .expect("starred projects array");
     assert!(
         starred.iter().any(|id| id == &project_id.to_string()),
         "starred project should appear in starredProjectIds"
@@ -326,9 +306,7 @@ async fn resource_memberships_star_project_persists() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn inbox_dismissals_create_and_list_lifecycle() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let user_id = format!("user-id-{}", Uuid::new_v4().simple());
     insert_user(&db, &user_id).await;

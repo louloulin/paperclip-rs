@@ -66,22 +66,21 @@ impl WakeDispatchOutcome {
 ///
 /// Returns `(action, merged_payload)`: when action is Coalesce, merged_payload is
 /// the pre-merged payload ready for the DB; otherwise merged_payload = incoming payload.
-pub fn plan_wakeup_dispatch(
-    incoming: &WakeInput,
-    existing: Option<&WakeSnapshot>,
-) -> WakePlan {
+pub fn plan_wakeup_dispatch(incoming: &WakeInput, existing: Option<&WakeSnapshot>) -> WakePlan {
     let action = decide_wake_action(existing, incoming);
     let merged_payload = match &action {
         WakeAction::Coalesce { .. } => merge_wake_payloads(
             existing.and_then(|e| e.payload.as_ref()),
             incoming.payload.as_ref(),
         ),
-        WakeAction::Create | WakeAction::Skip { .. } => incoming
-            .payload
-            .clone()
-            .unwrap_or(Value::Null),
+        WakeAction::Create | WakeAction::Skip { .. } => {
+            incoming.payload.clone().unwrap_or(Value::Null)
+        }
     };
-    WakePlan { action, merged_payload }
+    WakePlan {
+        action,
+        merged_payload,
+    }
 }
 
 /// `plan_wakeup_dispatch` output (pure data, testable).
@@ -190,7 +189,8 @@ mod tests {
 
     #[test]
     fn plan_coalesce_merges_payload() {
-        let existing_payload = json!({"issueId": "iss-1", "wakeCommentIds": ["c-0"], "taskKey": "tk-1"});
+        let existing_payload =
+            json!({"issueId": "iss-1", "wakeCommentIds": ["c-0"], "taskKey": "tk-1"});
         let snapshot = snapshot_active("w-1", Some(existing_payload));
         let plan = plan_wakeup_dispatch(&incoming(), Some(&snapshot));
         assert!(plan.action.is_coalesce());

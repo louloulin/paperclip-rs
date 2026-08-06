@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -176,10 +173,7 @@ async fn board_chat_repo_appends_messages_round_trip() {
         .await
         .expect("append assistant");
 
-    let messages = repo
-        .list_messages(thread.id, 10)
-        .await
-        .expect("list");
+    let messages = repo.list_messages(thread.id, 10).await.expect("list");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[0].body, "hello");

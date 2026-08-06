@@ -26,8 +26,7 @@ const PATH_CANDIDATE_RE_STR: &str =
     r#"(?:^|[\s`"'(])((?:server|ui|packages|doc|scripts|\.github)/[A-Za-z0-9._/-]+)"#;
 
 /// "wait for review/approval/..." 匹配（与 Node `WAITING_FOR_REVIEW_OR_APPROVAL_RE` 1:1 对齐）。
-const WAITING_FOR_REVIEW_OR_APPROVAL_RE_STR: &str =
-    r"(?i)\bwait(?:ing)? for\b.{0,160}\b(?:review(?:er)?(?: feedback)?|approval|board|human|user|operator)\b";
+const WAITING_FOR_REVIEW_OR_APPROVAL_RE_STR: &str = r"(?i)\bwait(?:ing)? for\b.{0,160}\b(?:review(?:er)?(?: feedback)?|approval|board|human|user|operator)\b";
 
 // ============================================================================
 // Trivial helpers
@@ -189,10 +188,12 @@ pub fn infer_next_action(
     previous_next_action: Option<&str>,
 ) -> String {
     if issue.status == "done" {
-        return "Review the completed issue output and close any remaining follow-up comments.".to_string();
+        return "Review the completed issue output and close any remaining follow-up comments."
+            .to_string();
     }
     if issue.status == "in_review" {
-        return "Wait for reviewer feedback or approval before continuing executor work.".to_string();
+        return "Wait for reviewer feedback or approval before continuing executor work."
+            .to_string();
     }
     if run.status == "failed" || run.status == "timed_out" {
         return "Inspect the failed run, fix the cause, and resume from the most recent concrete action above.".to_string();
@@ -200,11 +201,10 @@ pub fn infer_next_action(
     if run.status == "cancelled" {
         return "Confirm the cancellation reason before starting another run.".to_string();
     }
-    previous_next_action
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            "Resume implementation from the acceptance criteria, latest comments, and this summary.".to_string()
-        })
+    previous_next_action.map(str::to_string).unwrap_or_else(|| {
+        "Resume implementation from the acceptance criteria, latest comments, and this summary."
+            .to_string()
+    })
 }
 
 // ============================================================================
@@ -230,7 +230,10 @@ pub fn extract_previous_next_action(previous_body: Option<&str>) -> Option<Strin
     let section = extract_markdown_section(previous_body, "Next Action")?;
     section
         .lines()
-        .map(|line| line.trim_start_matches(|c: char| matches!(c, '-' | '*')).trim_start())
+        .map(|line| {
+            line.trim_start_matches(|c: char| matches!(c, '-' | '*'))
+                .trim_start()
+        })
         .find(|s| !s.is_empty())
         .map(str::to_string)
 }
@@ -304,11 +307,18 @@ pub fn build_continuation_summary_markdown(input: &BuildSummaryInput) -> String 
     ]);
 
     let objective = extract_markdown_section(issue.description.as_deref(), "Objective")
-        .or_else(|| issue.description.as_deref().map(str::trim).map(str::to_string))
+        .or_else(|| {
+            issue
+                .description
+                .as_deref()
+                .map(str::trim)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "No objective captured.".to_string());
 
-    let acceptance_criteria = extract_markdown_section(issue.description.as_deref(), "Acceptance Criteria")
-        .unwrap_or_else(|| "No explicit acceptance criteria captured.".to_string());
+    let acceptance_criteria =
+        extract_markdown_section(issue.description.as_deref(), "Acceptance Criteria")
+            .unwrap_or_else(|| "No explicit acceptance criteria captured.".to_string());
 
     let mode = infer_mode(issue, run);
     let previous_next = extract_previous_next_action(input.previous_summary_body.as_deref());
@@ -512,8 +522,14 @@ mod tests {
 
     #[test]
     fn infer_mode_done_or_in_review_returns_review() {
-        assert_eq!(infer_mode(&issue("done"), &run("queued")), SummaryMode::Review);
-        assert_eq!(infer_mode(&issue("in_review"), &run("queued")), SummaryMode::Review);
+        assert_eq!(
+            infer_mode(&issue("done"), &run("queued")),
+            SummaryMode::Review
+        );
+        assert_eq!(
+            infer_mode(&issue("in_review"), &run("queued")),
+            SummaryMode::Review
+        );
     }
 
     #[test]
@@ -529,13 +545,22 @@ mod tests {
 
     #[test]
     fn infer_mode_backlog_or_todo_returns_plan() {
-        assert_eq!(infer_mode(&issue("backlog"), &run("queued")), SummaryMode::Plan);
-        assert_eq!(infer_mode(&issue("todo"), &run("queued")), SummaryMode::Plan);
+        assert_eq!(
+            infer_mode(&issue("backlog"), &run("queued")),
+            SummaryMode::Plan
+        );
+        assert_eq!(
+            infer_mode(&issue("todo"), &run("queued")),
+            SummaryMode::Plan
+        );
     }
 
     #[test]
     fn infer_mode_default_implementation() {
-        assert_eq!(infer_mode(&issue("in_progress"), &run("queued")), SummaryMode::Implementation);
+        assert_eq!(
+            infer_mode(&issue("in_progress"), &run("queued")),
+            SummaryMode::Implementation
+        );
     }
 
     // ----- infer_next_action -----
@@ -554,7 +579,11 @@ mod tests {
 
     #[test]
     fn infer_next_action_falls_back_to_previous() {
-        let act = infer_next_action(&issue("in_progress"), &run("succeeded"), Some("Continue from X"));
+        let act = infer_next_action(
+            &issue("in_progress"),
+            &run("succeeded"),
+            Some("Continue from X"),
+        );
         assert_eq!(act, "Continue from X");
     }
 
@@ -622,7 +651,9 @@ mod tests {
 
     #[test]
     fn parks_executor_false_for_missing_next_action() {
-        assert!(!continuation_summary_parks_executor(Some("## Objective\nfoo")));
+        assert!(!continuation_summary_parks_executor(Some(
+            "## Objective\nfoo"
+        )));
         assert!(!continuation_summary_parks_executor(None));
     }
 

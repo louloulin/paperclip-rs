@@ -17,87 +17,118 @@ use pc_activity::kinds::ActivityKind;
 use pc_activity::types::{ActivityActor, ActivityEvent};
 use pc_realtime::LiveEvent;
 use pc_repos::activity::ActivityRepo;
-use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor, IssueUpdateReceipt};
 use pc_repos::agent::AgentRepo;
-use pc_repos::feedback_vote::FeedbackVoteRepo;
-use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::case::CaseRepo;
+use pc_repos::feedback_trace::FeedbackTraceRepo;
+use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor, IssueUpdateReceipt};
+use pc_repos::issue_change_receipt::IssueRelationChanges;
+use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
 use pc_repos::routine::RoutineRepo;
-use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
-use pc_repos::issue_change_receipt::IssueRelationChanges;
 use pc_repos::task_watchdog_scope::{
     classify_task_watchdog_capability, enqueue_task_watchdog_wake,
     ClassifyTaskWatchdogCapabilityInput, TaskWatchdogWakeInput,
 };
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
+use pc_core::issue_execution_policy::{
+    IssueExecutionPolicy as TypedExecutionPolicy, RequestedAssigneePatch as TypedAssigneePatch,
+};
+use pc_core::issue_execution_transitions::{
+    apply_issue_execution_policy_transition, TransitionInput as PolicyTransitionInput,
+};
+use pc_core::issue_execution_validation::{
+    normalize_issue_execution_policy as normalize_typed_policy,
+    parse_issue_execution_state as parse_typed_state,
+};
 use pc_core::Timestamp;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        // Round 282 修复：原 `/api/companies/:company_id/labels` 与
+        // `/api/labels/:label_id` 路由被移除以避免 axum 重叠 method route panic；
+        // 这里直接复用 labels.rs 中的 handler（保持 handler 实现唯一来源）。
+        // 这两个 route 与 issues 测试套件绑定（issues_http_contract 内部期望
+        // `routes::issues::router()` 命中）。DELETE `/api/labels/:label_id`
+        // 故意不注册——paperclip API 强制删除 label 必须走
+        // `/api/companies/:company_id/labels/:label_id`（在 companies.rs）。
+        .route(
+            "/api/companies/:company_id/labels",
+            get(super::labels::list_labels).post(super::labels::create_label),
+        )
         // 列表 / CRUD
         .route("/api/issues", get(list).post(create))
-        .route("/api/issues/:id", get(get_one).patch(update).delete(remove))
+        .route(
+            "/api/issues/:issue_id",
+            get(get_one).patch(update).delete(remove),
+        )
         // 子 issue
         .route(
-            "/api/issues/:id/children",
+            "/api/issues/:issue_id/children",
             get(list_children).post(create_child),
         )
         // comments
         .route(
-            "/api/issues/:id/comments",
+            "/api/issues/:issue_id/comments",
             get(list_comments).post(add_comment),
         )
         .route(
-            "/api/issues/:id/comments/:comment_id",
+            "/api/issues/:issue_id/comments/:comment_id",
             patch(update_comment).delete(delete_comment),
         )
-        // labels
+        // NOTE: `/api/companies/:company_id/labels` is registered by labels.rs.
+        // The duplicate GET/POST registration here was removed in Round 282 because
+        // it produced axum "Overlapping method route" panics during integration tests.
+        // NOTE: DELETE `/api/labels/:label_id` is registered by labels.rs (canonical).
+        // The duplicate registration here was removed in Round 282 because it produced
+        // axum "Overlapping method route" panics during integration tests.
         .route(
-            "/api/companies/:company_id/labels",
-            get(list_labels).post(create_label),
-        )
-        .route("/api/labels/:label_id", delete(remove_label))
-        .route(
-            "/api/issues/:id/labels/:label_id",
+            "/api/issues/:issue_id/labels/:label_id",
             post(assign_label).delete(unassign_label),
         )
         // read state
-        .route("/api/issues/:id/read", get(get_read).put(upsert_read))
+        .route("/api/issues/:issue_id/read", get(get_read).put(upsert_read))
         // inbox archive
         .route(
-            "/api/issues/:id/inbox-archive",
+            "/api/issues/:issue_id/inbox-archive",
             get(get_inbox).put(archive_inbox).delete(unarchive_inbox),
         )
         // release
-        .route("/api/issues/:id/release", post(release))
-        .route("/api/issues/:id/admin/force-release", post(force_release))
-        .route("/api/issues/:id/checkout", post(checkout_issue))
-        .route("/api/issues/:id/heartbeat-context", get(issue_heartbeat_context))
+        .route("/api/issues/:issue_id/release", post(release))
+        .route(
+            "/api/issues/:issue_id/admin/force-release",
+            post(force_release),
+        )
+        .route("/api/issues/:issue_id/checkout", post(checkout_issue))
+        .route(
+            "/api/issues/:issue_id/heartbeat-context",
+            get(issue_heartbeat_context),
+        )
         .route(
             "/api/companies/:company_id/issues",
             get(list_company_issues).post(create_company_issue),
         )
+        // NOTE: POST `/api/companies/:company_id/search/extract` is registered by
+        // companies.rs::search_extract (which actually searches titles). The previous
+        // issues.rs registration was removed in Round 282 because it produced axum
+        // "Overlapping method route" panics. The local `company_search_extract` handler
+        // remains as dead code (kept for reference); it can be deleted in a follow-up.
         .route(
-            "/api/companies/:company_id/search/extract",
-            post(company_search_extract),
-        )
-        .route(
-            "/api/issues/:id/external-objects/refresh",
+            "/api/issues/:issue_id/external-objects/refresh",
             post(issue_refresh_external_objects),
         )
         .route(
-            "/api/issues/:id/low-trust/promotions",
+            "/api/issues/:issue_id/low-trust/promotions",
             post(issue_low_trust_promotion),
         )
         .route(
-            "/api/issues/:id/accepted-plan-decompositions",
+            "/api/issues/:issue_id/accepted-plan-decompositions",
             get(list_accepted_plan_decompositions).post(create_accepted_plan_decomposition),
         )
         .route(
-            "/api/issues/:id/feedback-traces",
+            "/api/issues/:issue_id/feedback-traces",
             get(list_issue_feedback_traces),
         )
         .route(
@@ -109,7 +140,7 @@ pub fn router() -> Router<AppState> {
             get(get_feedback_trace_bundle),
         )
         .route(
-            "/api/issues/:id/feedback-votes",
+            "/api/issues/:issue_id/feedback-votes",
             get(list_issue_feedback_votes).post(create_issue_feedback_vote),
         )
         .route(
@@ -122,78 +153,121 @@ pub fn router() -> Router<AppState> {
         )
         // watchdog
         .route(
-            "/api/issues/:id/watchdog",
+            "/api/issues/:issue_id/watchdog",
             get(get_watchdog)
                 .put(upsert_watchdog)
                 .delete(remove_watchdog),
         )
         // ---- Round 245: watchdog evaluation worker 上报 ----
         .route(
-            "/api/issues/:id/watchdog-evaluations/complete",
+            "/api/issues/:issue_id/watchdog-evaluations/complete",
             post(complete_watchdog_evaluation),
         )
-        .route("/api/issues/:id/read", delete(unmark_read_route))
-        .route("/api/issues/:id/activity", get(issue_activity))
-        .route("/api/issues/:id/cases", get(list_issue_cases))
-        .route("/api/issues/:id/runs", get(list_issue_runs))
-        .route("/api/issues/:id/comments/:comment_id", get(get_one_comment))
+        .route("/api/issues/:issue_id/read", delete(unmark_read_route))
+        .route("/api/issues/:issue_id/activity", get(issue_activity))
+        // NOTE: `/api/issues/:issue_id/cases` is registered by cases.rs (the cases
+        // router module). The duplicate single-line registration here was removed
+        // in Round 282 because it produced axum "Overlapping method route" panics
+        // during integration tests. The local `list_issue_cases` handler remains
+        // as dead code (kept for reference); it can be deleted in a follow-up.
+        .route("/api/issues/:issue_id/runs", get(list_issue_runs))
         .route(
-            "/api/issues/:id/tree-holds",
+            "/api/issues/:issue_id/comments/:comment_id",
+            get(get_one_comment),
+        )
+        .route(
+            "/api/issues/:issue_id/tree-holds",
             get(list_tree_holds).post(create_tree_hold),
         )
-        .route("/api/issues/:id/tree-holds/:hold_id", get(get_tree_hold))
-        .route("/api/issues/:id/tree-holds/:hold_id/release", post(release_tree_hold))
         .route(
-            "/api/issues/:id/tree-control/preview",
+            "/api/issues/:issue_id/tree-holds/:hold_id",
+            get(get_tree_hold),
+        )
+        .route(
+            "/api/issues/:issue_id/tree-holds/:hold_id/release",
+            post(release_tree_hold),
+        )
+        .route(
+            "/api/issues/:issue_id/tree-control/preview",
             post(preview_tree_control),
         )
         .route(
-            "/api/issues/:id/tree-control/state",
+            "/api/issues/:issue_id/tree-control/state",
             get(tree_control_state),
         )
-        .route(
-            "/api/issues/:id/live-runs",
-            get(list_live_runs),
-        )
-        .route(
-            "/api/issues/:id/active-run",
-            get(active_run),
-        )
+        .route("/api/issues/:issue_id/live-runs", get(list_live_runs))
+        .route("/api/issues/:issue_id/active-run", get(active_run))
         // ===== Round 30: runs deep + diagnostics + monitor =====
-        .route("/api/issues/:id/runs/:run_id", get(get_issue_run))
-        .route("/api/issues/:id/runs/:run_id/cancel", post(cancel_issue_run))
-        .route("/api/issues/:id/runs/:run_id/restart", post(restart_issue_run))
-        .route("/api/issues/:id/diagnostics/blockers", get(diagnostics_blockers))
-        .route("/api/issues/:id/diagnostics/wakes", get(diagnostics_wakes))
-        .route("/api/issues/:id/diagnostics/subtree", get(diagnostics_subtree))
+        .route("/api/issues/:issue_id/runs/:run_id", get(get_issue_run))
+        .route(
+            "/api/issues/:issue_id/runs/:run_id/cancel",
+            post(cancel_issue_run),
+        )
+        .route(
+            "/api/issues/:issue_id/runs/:run_id/restart",
+            post(restart_issue_run),
+        )
         // monitor_check_now + scheduled_retry_now already exist from Round 18
-        .route("/api/issues/:id/diagnostics/blockers", get(diagnostics_blockers))
-        .route("/api/issues/:id/diagnostics/wakes", get(diagnostics_wakes))
-        .route("/api/issues/:id/diagnostics/subtree", get(diagnostics_subtree))
-        .route("/api/issues/:id/documents/:key", put(upsert_issue_document).delete(remove_issue_document))
-        .route("/api/issues/:id/documents/:key/annotations/:thread_id/comments", post(annotation_comment_route))
-        .route("/api/issues/:id/documents/:key/revisions/:revision_id/restore", post(restore_doc_revision))
-        .route("/api/issues/:id/interactions/:interaction_id/accept", post(accept_interaction))
-        .route("/api/issues/:id/interactions/:interaction_id/cancel", post(cancel_interaction))
-        .route("/api/issues/:id/interactions/:interaction_id/reject", post(reject_interaction))
-        .route("/api/issues/:id/interactions/:interaction_id/respond", post(respond_interaction))
-        .route("/api/issues/:id/interactions/:interaction_id/verdicts", post(verdict_interaction))
-        // ── Round 219: list/create/delete interactions ──
-        .route("/api/issues/:id/interactions", get(list_issue_interactions).post(create_issue_interaction))
-        .route("/api/issues/:id/interactions/:interaction_id", delete(delete_issue_interaction))
-        .route("/api/issues/:id/interactions/:interaction_id/withdraw", post(withdraw_interaction))
+        // diagnostics routes are registered once later in the chain (see below).
+        // NOTE: GET / PUT / DELETE for `/api/issues/:id/documents/:key` are registered below
+        // alongside the rest of the documents router block. The legacy V2 handlers
+        // `upsert_issue_document` / `remove_issue_document` were removed in Round 282 to avoid
+        // axum "Overlapping method route" panics with the full `get_document / upsert_document /
+        // remove_document` chain.
+        .route(
+            "/api/issues/:issue_id/documents/:key/annotations/:thread_id/comments",
+            post(annotation_comment_route),
+        )
+        .route(
+            "/api/issues/:issue_id/documents/:key/revisions/:revision_id/restore",
+            post(restore_doc_revision),
+        )
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id/accept",
+            post(accept_interaction),
+        )
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id/cancel",
+            post(cancel_interaction),
+        )
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id/reject",
+            post(reject_interaction),
+        )
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id/respond",
+            post(respond_interaction),
+        )
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id/verdicts",
+            post(verdict_interaction),
+        )
+        // NOTE: `/api/issues/:id/interactions` GET + POST are registered below in the
+        // `// thread interactions` block (`list_interactions` / `create_interaction`).
+        // The Round 219 handlers (`list_issue_interactions` / `create_issue_interaction`)
+        // were removed in Round 282 because their `{ "items": [...] }` envelope broke
+        // existing tests that asserted `body.as_array().unwrap().len() == 1`. The original
+        // list/create handlers return a bare array / row and are preserved 1:1 with Node.
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id",
+            delete(delete_issue_interaction),
+        )
+        .route(
+            "/api/issues/:issue_id/interactions/:interaction_id/withdraw",
+            post(withdraw_interaction),
+        )
         // recovery actions
         .route(
-            "/api/issues/:id/recovery-actions",
+            "/api/issues/:issue_id/recovery-actions",
             get(list_recovery_actions),
         )
         .route(
-            "/api/issues/:id/recovery-actions/resolve",
+            "/api/issues/:issue_id/recovery-actions/resolve",
             post(resolve_recovery),
         )
         // work products
         .route(
-            "/api/issues/:id/work-products",
+            "/api/issues/:issue_id/work-products",
             get(list_work_products).post(create_work_product),
         )
         .route(
@@ -203,55 +277,60 @@ pub fn router() -> Router<AppState> {
                 .delete(remove_work_product),
         )
         // documents
-        .route("/api/issues/:id/documents", get(list_documents))
+        .route("/api/issues/:issue_id/documents", get(list_documents))
         .route(
-            "/api/issues/:id/documents/:key",
+            "/api/issues/:issue_id/documents/:key",
             get(get_document)
                 .put(upsert_document)
                 .delete(remove_document),
         )
-        .route("/api/issues/:id/documents/:key/lock", post(lock_doc))
-        .route("/api/issues/:id/documents/:key/unlock", post(unlock_doc))
+        .route("/api/issues/:issue_id/documents/:key/lock", post(lock_doc))
         .route(
-            "/api/issues/:id/documents/:key/revisions",
+            "/api/issues/:issue_id/documents/:key/unlock",
+            post(unlock_doc),
+        )
+        .route(
+            "/api/issues/:issue_id/documents/:key/revisions",
             get(list_revisions).post(restore_revision),
         )
         .route(
-            "/api/issues/:id/documents/:key/annotations",
+            "/api/issues/:issue_id/documents/:key/annotations",
             get(list_annotations).post(create_annotation),
         )
         .route(
-            "/api/issues/:id/documents/:key/annotations/:thread_id",
+            "/api/issues/:issue_id/documents/:key/annotations/:thread_id",
             get(get_annotation_with_comments)
                 .post(add_annotation_comment)
                 .patch(resolve_annotation),
         )
         // issue approvals
         .route(
-            "/api/issues/:id/approvals",
+            "/api/issues/:issue_id/approvals",
             get(list_issue_approvals).post(link_issue_approval),
         )
         .route(
-            "/api/issues/:id/approvals/:approval_id",
+            "/api/issues/:issue_id/approvals/:approval_id",
             delete(unlink_issue_approval).patch(decide_issue_approval),
         )
         // thread interactions
         .route(
-            "/api/issues/:id/interactions",
+            "/api/issues/:issue_id/interactions",
             get(list_interactions).post(create_interaction),
         )
         .route(
-            "/api/issues/:id/interactions/:interaction_id",
+            "/api/issues/:issue_id/interactions/:interaction_id",
             get(get_interaction).patch(resolve_interaction_route),
         )
         // feedback votes
-        .route(
-            "/api/issues/:id/feedback-votes",
-            get(list_feedback_votes).post(create_feedback_vote),
-        )
+        // NOTE: GET + POST `/api/issues/:id/feedback-votes` are registered above in the
+        // Round 219 block (`list_issue_feedback_votes` / `create_issue_feedback_vote`).
+        // The legacy `list_feedback_votes` / `create_feedback_vote` handlers were removed
+        // in Round 282; their `target_type / target_id / author_user_id` snake_case body
+        // did not match the Node `feedbackVoteDto` camelCase contract and was the source
+        // of the axum "Overlapping method route" panic.
         // attachments
         .route(
-            "/api/issues/:id/attachments",
+            "/api/issues/:issue_id/attachments",
             get(list_attachments).post(create_attachment),
         )
         .route(
@@ -267,21 +346,30 @@ pub fn router() -> Router<AppState> {
         )
         // external objects
         .route(
-            "/api/issues/:id/external-objects",
+            "/api/issues/:issue_id/external-objects",
             get(list_external_objects),
         )
         .route(
-            "/api/issues/:id/external-object-summary",
+            "/api/issues/:issue_id/external-object-summary",
             get(external_object_summary),
         )
         // diagnostics
-        .route("/api/issues/:id/diagnostics/blockers", get(diag_blockers))
-        .route("/api/issues/:id/diagnostics/wakes", get(diag_wakes))
-        .route("/api/issues/:id/diagnostics/subtree", get(diag_subtree))
-        // tree control
-        .route("/api/issues/:id/monitor/check-now", post(monitor_check_now))
         .route(
-            "/api/issues/:id/scheduled-retry/retry-now",
+            "/api/issues/:issue_id/diagnostics/blockers",
+            get(diag_blockers),
+        )
+        .route("/api/issues/:issue_id/diagnostics/wakes", get(diag_wakes))
+        .route(
+            "/api/issues/:issue_id/diagnostics/subtree",
+            get(diag_subtree),
+        )
+        // tree control
+        .route(
+            "/api/issues/:issue_id/monitor/check-now",
+            post(monitor_check_now),
+        )
+        .route(
+            "/api/issues/:issue_id/scheduled-retry/retry-now",
             post(scheduled_retry_now),
         )
         // company-level
@@ -510,14 +598,24 @@ async fn create(
         };
         // R230: 当 label_ids 或 blocked_by_issue_ids 不为空时使用事务版本,
         // 在事务内同步插入 labels / relations
-        let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-            || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+        let needs_relations = body
+            .label_ids
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+            || body
+                .blocked_by_issue_ids
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
         let row = if needs_relations {
             IssueRepo::new(&state.db)
                 .create_child_full_with_relations(&parent, &input, None)
                 .await?
         } else {
-            IssueRepo::new(&state.db).create_child_full(&parent, &input).await?
+            IssueRepo::new(&state.db)
+                .create_child_full(&parent, &input)
+                .await?
         };
         // R235: 持久化 idempotency key
         // 注：ChildIssueFullBody 暂无 idempotency_key 字段, 未来可加
@@ -565,8 +663,16 @@ async fn create(
         unblock_descriptor: body.unblock_descriptor.as_ref(),
     };
     // R230: 当 label_ids 或 blocked_by_issue_ids 不为空时使用事务版本
-    let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-        || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+    let needs_relations = body
+        .label_ids
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+        || body
+            .blocked_by_issue_ids
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
     let row = if needs_relations {
         IssueRepo::new(&state.db)
             .create_full_with_relations(&input, None)
@@ -697,7 +803,10 @@ async fn update(
         || body.hidden_at.is_some()
     {
         // 完整 update 路径：使用 update_full（更全面的字段）
-        let patch = pc_repos::issue::UpdateIssuePatch {
+        // Round 281: 先把 body 字段塞进 patch，再运行
+        // `apply_issue_execution_policy_transition` 派生 execution_state / monitor_* /
+        // 内部 status / assignee，并把这些字段回写到 patch。
+        let mut patch = pc_repos::issue::UpdateIssuePatch {
             title: body.title.as_deref(),
             description: Some(body.description.as_deref()),
             status: body.status.as_deref(),
@@ -717,22 +826,223 @@ async fn update(
             reopen: body.reopen.unwrap_or(false),
             resume: body.resume.unwrap_or(false),
             interrupt: body.interrupt.unwrap_or(false),
+            // Default: 不写这些字段（让 transition / monitor 状态机决定）。
+            execution_state: None,
+            monitor_next_check_at: None,
+            monitor_wake_requested_at: None,
+            monitor_last_triggered_at: None,
+            monitor_attempt_count: None,
+            monitor_notes: None,
+            monitor_scheduled_by: None,
         };
-        let row = IssueRepo::new(&state.db).update_full(id, &patch).await?
+
+        // Round 281: run the execution policy / monitor transition.
+        // 任意对 executionPolicy / status / assignee 的更新都要进入 transition 才能
+        // 正确生成 execution_state 与 monitor_*。transition patch 中与上面 body 字段重叠
+        // 的键（status / assigneeAgentId / assigneeUserId / executionPolicy）由 transition
+        // 派生版本胜出，body 值仅作为 transition 输入。
+        let previous_policy_typed: Option<TypedExecutionPolicy> = previous_issue
+            .execution_policy
+            .as_ref()
+            .and_then(|v| normalize_typed_policy(Some(v)).ok().flatten());
+        let next_policy_typed: Option<TypedExecutionPolicy> = match body.execution_policy.as_ref() {
+            Some(v) => normalize_typed_policy(Some(v))
+                .ok()
+                .flatten()
+                .or(previous_policy_typed.clone()),
+            None => previous_policy_typed.clone(),
+        };
+        let existing_state_typed = previous_issue
+            .execution_state
+            .as_ref()
+            .and_then(|v| parse_typed_state(Some(v)));
+        let issue_like = pc_core::issue_execution_policy::IssueLike {
+            assignee_agent_id: previous_issue.assignee_agent_id.map(|u| u.to_string()),
+            assignee_user_id: previous_issue.assignee_user_id.clone(),
+            status: previous_issue.status.clone(),
+            responsible_user_id: previous_issue.responsible_user_id.clone(),
+            created_by_user_id: previous_issue.created_by_user_id.clone(),
+            execution_policy: previous_policy_typed.clone(),
+            execution_state: existing_state_typed,
+            monitor_next_check_at: previous_issue
+                .monitor_next_check_at
+                .map(|t| t.as_datetime()),
+            monitor_wake_requested_at: previous_issue
+                .monitor_wake_requested_at
+                .map(|t| t.as_datetime()),
+            monitor_last_triggered_at: previous_issue
+                .monitor_last_triggered_at
+                .map(|t| t.as_datetime()),
+            monitor_attempt_count: Some(previous_issue.monitor_attempt_count as i64),
+            monitor_notes: previous_issue.monitor_notes.clone(),
+            monitor_scheduled_by: previous_issue
+                .monitor_scheduled_by
+                .as_deref()
+                .and_then(|s| match s {
+                    "assignee" => Some(
+                        pc_core::issue_execution_monitor_state::IssueMonitorScheduledBy::Assignee,
+                    ),
+                    "board" => {
+                        Some(pc_core::issue_execution_monitor_state::IssueMonitorScheduledBy::Board)
+                    }
+                    _ => None,
+                }),
+        };
+        // 注意：上面的 `actor_user_id` 已被 `IssueUpdateActor { user_id, .. }` move。
+        // 这里再读一次，复用 `actor_user_id` 已经被 `Option<String>` 包装的事实：
+        // 把它的 clone 在 actor 构造前准备好。
+        let actor_user_id_for_transition: Option<String> =
+            actor.as_ref().and_then(|a| a.user_id.clone());
+        let actor_agent_id_for_transition: Option<Uuid> = actor.as_ref().and_then(|a| a.agent_id);
+        let actor_like = pc_core::issue_execution_policy::ActorLike {
+            agent_id: actor_agent_id_for_transition.map(|u| u.to_string()),
+            user_id: actor_user_id_for_transition,
+        };
+        let requested_assignee_patch = TypedAssigneePatch {
+            assignee_agent_id: body.assignee_agent_id.map(|u| u.to_string()),
+            assignee_user_id: body.assignee_user_id.clone(),
+        };
+        let monitor_explicitly_updated = body.execution_policy.is_some();
+        let transition_input = PolicyTransitionInput {
+            issue: issue_like,
+            policy: next_policy_typed,
+            previous_policy: previous_policy_typed,
+            requested_status: body.status.clone(),
+            requested_assignee_patch,
+            actor: actor_like,
+            allow_board_override: false,
+            comment_body: None,
+            review_request: None,
+            monitor_explicitly_updated,
+        };
+        if let Err(err) = apply_issue_execution_policy_transition(&transition_input) {
+            // 镜像 Node `unprocessable` 语义：返回 422。
+            return Err(crate::ApiError::Unprocessable(err.message));
+        }
+        let transition_result = apply_issue_execution_policy_transition(&transition_input)
+            .ok()
+            .map(|r| r.patch)
+            .unwrap_or_default();
+        // Merge transition patch over body patch.
+        for (k, v) in &transition_result {
+            match k.as_str() {
+                "status" => {
+                    if let Some(s) = v.as_str() {
+                        patch.status = Some(s);
+                    } else if v.is_null() {
+                        patch.status = None;
+                    }
+                }
+                "assigneeAgentId" => {
+                    patch.assignee_agent_id = Some(v.as_str().and_then(|_| {
+                        // Some("...") 路径 — 真正解析由 sqlx 校验；这里仅做 Null/Some 区分
+                        v.as_str().map(|_| Uuid::nil())
+                    }));
+                    if v.is_null() {
+                        patch.assignee_agent_id = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        if let Ok(u) = Uuid::parse_str(s) {
+                            patch.assignee_agent_id = Some(Some(u));
+                        }
+                    }
+                }
+                "assigneeUserId" => {
+                    if v.is_null() {
+                        patch.assignee_user_id = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        patch.assignee_user_id = Some(Some(s));
+                    }
+                }
+                "executionState" => {
+                    if v.is_null() {
+                        patch.execution_state = Some(None);
+                    } else {
+                        patch.execution_state = Some(Some(v));
+                    }
+                }
+                "executionPolicy" => {
+                    if v.is_null() {
+                        patch.execution_policy = Some(None);
+                    } else {
+                        patch.execution_policy = Some(Some(v));
+                    }
+                }
+                "monitorNextCheckAt" => {
+                    if v.is_null() {
+                        patch.monitor_next_check_at = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        if let Ok(d) = chrono::DateTime::parse_from_rfc3339(s) {
+                            patch.monitor_next_check_at = Some(Some(d.with_timezone(&chrono::Utc)));
+                        }
+                    }
+                }
+                "monitorWakeRequestedAt" => {
+                    if v.is_null() {
+                        patch.monitor_wake_requested_at = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        if let Ok(d) = chrono::DateTime::parse_from_rfc3339(s) {
+                            patch.monitor_wake_requested_at =
+                                Some(Some(d.with_timezone(&chrono::Utc)));
+                        }
+                    }
+                }
+                "monitorLastTriggeredAt" => {
+                    if v.is_null() {
+                        patch.monitor_last_triggered_at = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        if let Ok(d) = chrono::DateTime::parse_from_rfc3339(s) {
+                            patch.monitor_last_triggered_at =
+                                Some(Some(d.with_timezone(&chrono::Utc)));
+                        }
+                    }
+                }
+                "monitorAttemptCount" => {
+                    if let Some(n) = v.as_i64() {
+                        patch.monitor_attempt_count = Some(n as i32);
+                    } else if v.is_null() {
+                        patch.monitor_attempt_count = Some(0);
+                    }
+                }
+                "monitorNotes" => {
+                    if v.is_null() {
+                        patch.monitor_notes = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        patch.monitor_notes = Some(Some(s));
+                    }
+                }
+                "monitorScheduledBy" => {
+                    if v.is_null() {
+                        patch.monitor_scheduled_by = Some(None);
+                    } else if let Some(s) = v.as_str() {
+                        patch.monitor_scheduled_by = Some(Some(s));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let row = IssueRepo::new(&state.db)
+            .update_full(id, &patch)
+            .await?
             .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
         // 完整 update 路径下 relations 处理
         if body.label_ids.is_some() || body.blocked_by_issue_ids.is_some() {
-            IssueRepo::new(&state.db).update_with_relations(
-                id,
-                None, None, None, None, None,
-                IssueRelationUpdate {
-                    label_ids: body.label_ids,
-                    blocked_by_issue_ids: body.blocked_by_issue_ids,
-                },
-                &IssueRelationChanges::default(),
-                actor,
-            ).await?
-            .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
+            IssueRepo::new(&state.db)
+                .update_with_relations(
+                    id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    IssueRelationUpdate {
+                        label_ids: body.label_ids,
+                        blocked_by_issue_ids: body.blocked_by_issue_ids,
+                    },
+                    &IssueRelationChanges::default(),
+                    actor,
+                )
+                .await?
+                .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
         } else {
             IssueUpdateReceipt {
                 issue: row,
@@ -741,17 +1051,23 @@ async fn update(
         }
     } else {
         // 纯 relations 路径（仅 label/blocked_by）
-        IssueRepo::new(&state.db).update_with_relations(
-            id,
-            None, None, None, None, None,
-            IssueRelationUpdate {
-                label_ids: body.label_ids,
-                blocked_by_issue_ids: body.blocked_by_issue_ids,
-            },
-            &IssueRelationChanges::default(),
-            actor,
-        ).await?
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
+        IssueRepo::new(&state.db)
+            .update_with_relations(
+                id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                IssueRelationUpdate {
+                    label_ids: body.label_ids,
+                    blocked_by_issue_ids: body.blocked_by_issue_ids,
+                },
+                &IssueRelationChanges::default(),
+                actor,
+            )
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
     };
     let row = receipt.issue;
     // R234: 提取 previous_status 必须在 row 移动之前
@@ -786,13 +1102,11 @@ async fn update(
                 .with_data(json!({"previousStatus": previous_status})),
         );
     }
-    state
-        .realtime
-        .publish(
-            LiveEvent::new("issue.updated", "issue", row.id)
-                .with_company(row.company_id)
-                .with_data(json!({ "changes": receipt.changes })),
-        );
+    state.realtime.publish(
+        LiveEvent::new("issue.updated", "issue", row.id)
+            .with_company(row.company_id)
+            .with_data(json!({ "changes": receipt.changes })),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -816,7 +1130,8 @@ async fn sync_skill_test_run_for_issue(
     else {
         return Ok(());
     };
-    repo.update_test_run_status(run.id, target, None, None).await?;
+    repo.update_test_run_status(run.id, target, None, None)
+        .await?;
     // activity audit: skill_test_run_completed (issue done/cancelled 路径)
     let _ = pc_repos::activity::ActivityRepo::new(&state.db)
         .record(&pc_repos::activity::NewActivity {
@@ -955,14 +1270,24 @@ async fn create_child(
         block_parent_until_done: body.block_parent_until_done.unwrap_or(false),
     };
     // R230: 当 label_ids 或 blocked_by_issue_ids 不为空时使用事务版本
-    let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-        || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+    let needs_relations = body
+        .label_ids
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+        || body
+            .blocked_by_issue_ids
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
     let row = if needs_relations {
         IssueRepo::new(&state.db)
             .create_child_full_with_relations(&parent, &input, None)
             .await?
     } else {
-        IssueRepo::new(&state.db).create_child_full(&parent, &input).await?
+        IssueRepo::new(&state.db)
+            .create_child_full(&parent, &input)
+            .await?
     };
     // 注：create_child 暂不持久化 idempotency_key — 未来可加 idempotencyKey 字段
     state.realtime.publish(
@@ -1359,14 +1684,20 @@ async fn upsert_watchdog(
     let actor = watchdog_actor_from_headers(&state, &headers).await?;
     reject_task_watchdog_config_mutation(&state, &actor).await?;
     reject_low_trust_control_plane(&issue, &actor)?;
-    let run_id = actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+    let run_id = actor
+        .run_id
+        .as_deref()
+        .and_then(|s| Uuid::parse_str(s).ok());
     let (row, created) = IssueRepo::new(&state.db)
         .upsert_watchdog(
             issue.company_id,
             id,
             body.watchdog_agent_id,
             body.instructions.as_deref(),
-            actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
+            actor
+                .agent_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
             user_ref,
             run_id,
         )
@@ -1374,8 +1705,18 @@ async fn upsert_watchdog(
     let _ = IssueRepo::new(&state.db)
         .reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)
         .await;
-    let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
-    let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
+    let actor_type_str = if actor.agent_id.is_some() {
+        "agent"
+    } else if actor.user_id.is_some() {
+        "user"
+    } else {
+        "board"
+    };
+    let actor_id = actor
+        .agent_id
+        .clone()
+        .or(actor.user_id.clone())
+        .unwrap_or_else(|| "system".into());
     let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
         company_id: row.company_id,
         actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
@@ -1426,31 +1767,49 @@ async fn remove_watchdog(
     let actor = watchdog_actor_from_headers(&state, &headers).await?;
     reject_task_watchdog_config_mutation(&state, &actor).await?;
     reject_low_trust_control_plane(&issue, &actor)?;
-    let run_id = actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+    let run_id = actor
+        .run_id
+        .as_deref()
+        .and_then(|s| Uuid::parse_str(s).ok());
     let row = IssueRepo::new(&state.db).disable_watchdog(id).await?;
     if let Some(ref w) = row {
         let _ = IssueRepo::new(&state.db)
             .reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)
             .await;
-        let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
-        let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
-        let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
-            company_id: w.company_id,
-            actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
-            actor_id,
-            action: "issue.watchdog_removed".into(),
-            entity_type: "issue_watchdog".into(),
-            entity_id: w.id.to_string(),
-            agent_id: actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
-            run_id,
-            responsible_user_id: actor.user_id.clone(),
-            details: Some(json!({
-                "identifier": issue.identifier,
-                "issueId": w.issue_id,
-                "watchdogId": w.id,
-                "watchdogAgentId": w.watchdog_agent_id,
-            })),
-        }).await;
+        let actor_type_str = if actor.agent_id.is_some() {
+            "agent"
+        } else if actor.user_id.is_some() {
+            "user"
+        } else {
+            "board"
+        };
+        let actor_id = actor
+            .agent_id
+            .clone()
+            .or(actor.user_id.clone())
+            .unwrap_or_else(|| "system".into());
+        let _ = ActivityRepo::new(&state.db)
+            .record(&pc_repos::activity::NewActivity {
+                company_id: w.company_id,
+                actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
+                actor_id,
+                action: "issue.watchdog_removed".into(),
+                entity_type: "issue_watchdog".into(),
+                entity_id: w.id.to_string(),
+                agent_id: actor
+                    .agent_id
+                    .as_deref()
+                    .and_then(|s| Uuid::parse_str(s).ok()),
+                run_id,
+                responsible_user_id: actor.user_id.clone(),
+                details: Some(json!({
+                    "identifier": issue.identifier,
+                    "issueId": w.issue_id,
+                    "watchdogId": w.id,
+                    "watchdogAgentId": w.watchdog_agent_id,
+                })),
+            })
+            .await;
         state.realtime.publish(
             LiveEvent::new("issue.watchdog_removed", "issue_watchdog", w.id)
                 .with_company(w.company_id),
@@ -1458,7 +1817,6 @@ async fn remove_watchdog(
     }
     Ok(Json(json!({ "ok": true, "disabled": row })))
 }
-
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1484,9 +1842,7 @@ async fn complete_watchdog_evaluation(
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let actor = watchdog_actor_from_headers(&state, &headers).await?;
     reject_low_trust_control_plane(&issue, &actor)?;
-    let watchdog_row = IssueRepo::new(&state.db)
-        .get_active_watchdog(id)
-        .await?;
+    let watchdog_row = IssueRepo::new(&state.db).get_active_watchdog(id).await?;
     let n = IssueRepo::new(&state.db)
         .mark_watchdog_evaluation_completed(
             issue.company_id,
@@ -1497,33 +1853,53 @@ async fn complete_watchdog_evaluation(
         )
         .await?;
     if n == 0 {
-        return Err(ApiError::NotFound(format!("active watchdog for issue {id}")));
+        return Err(ApiError::NotFound(format!(
+            "active watchdog for issue {id}"
+        )));
     }
-    let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
-    let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
+    let actor_type_str = if actor.agent_id.is_some() {
+        "agent"
+    } else if actor.user_id.is_some() {
+        "user"
+    } else {
+        "board"
+    };
+    let actor_id = actor
+        .agent_id
+        .clone()
+        .or(actor.user_id.clone())
+        .unwrap_or_else(|| "system".into());
     // R251: 给 task-watchdog wake 预留 actor_id_for_wake 副本（activity_log 后面会 move actor_id）
     let actor_id_for_wake = actor_id.clone();
-    let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
-        company_id: issue.company_id,
-        actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
-        actor_id,
-        action: "issue.watchdog_evaluation_completed".into(),
-        entity_type: "issue_watchdog".into(),
-        entity_id: id.to_string(),
-        agent_id: actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
-        run_id: actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
-        responsible_user_id: actor.user_id.clone(),
-        details: Some(json!({
-            "identifier": issue.identifier,
-            "issueId": id,
-            "watchdogId": watchdog_row.as_ref().map(|w| w.id),
-            "watchdogAgentId": watchdog_row.as_ref().map(|w| w.watchdog_agent_id),
-            "reviewedFingerprint": body.reviewed_fingerprint,
-            "observedFingerprint": body.observed_fingerprint,
-            "snoozeUntil": body.snooze_until,
-            "updated": n,
-        })),
-    }).await;
+    let _ = ActivityRepo::new(&state.db)
+        .record(&pc_repos::activity::NewActivity {
+            company_id: issue.company_id,
+            actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
+            actor_id,
+            action: "issue.watchdog_evaluation_completed".into(),
+            entity_type: "issue_watchdog".into(),
+            entity_id: id.to_string(),
+            agent_id: actor
+                .agent_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+            run_id: actor
+                .run_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+            responsible_user_id: actor.user_id.clone(),
+            details: Some(json!({
+                "identifier": issue.identifier,
+                "issueId": id,
+                "watchdogId": watchdog_row.as_ref().map(|w| w.id),
+                "watchdogAgentId": watchdog_row.as_ref().map(|w| w.watchdog_agent_id),
+                "reviewedFingerprint": body.reviewed_fingerprint,
+                "observedFingerprint": body.observed_fingerprint,
+                "snoozeUntil": body.snooze_until,
+                "updated": n,
+            })),
+        })
+        .await;
     // R251: task-watchdog wake enqueue —— 把 taskWatchdog 上下文写入 heartbeat_runs.context_snapshot
     // 与 Node `enqueueWakeup(...)` 行为对齐。
     if let Some(wd) = watchdog_row.as_ref() {
@@ -1531,11 +1907,7 @@ async fn complete_watchdog_evaluation(
             .observed_fingerprint
             .as_deref()
             .or(wd.last_observed_fingerprint.as_deref());
-        let idempotency_key = format!(
-            "task_watchdog:{}:{}",
-            wd.id,
-            stop_fp.unwrap_or("")
-        );
+        let idempotency_key = format!("task_watchdog:{}:{}", wd.id, stop_fp.unwrap_or(""));
         // R253: 派生 watchdog capability（与 Node TaskWatchdogClassifier 1:1 对齐）。
         let capability = classify_task_watchdog_capability(&ClassifyTaskWatchdogCapabilityInput {
             watched_issue_id: id,
@@ -1620,7 +1992,8 @@ async fn list_watchdog_activity(
     .fetch_all(state.db.pool())
     .await?;
     // 3) 统计 action 分布
-    let mut action_counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    let mut action_counts: std::collections::BTreeMap<String, i64> =
+        std::collections::BTreeMap::new();
     for r in &rows {
         *action_counts.entry(r.action.clone()).or_insert(0) += 1;
     }
@@ -1748,20 +2121,28 @@ async fn watchdog_actor_from_headers(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     let user_id = crate::state::require_user_id(state, headers).await.ok();
-    let actor_type = if agent_id.is_some() { "agent".to_owned() } else if user_id.is_some() { "user".to_owned() } else { "board".to_owned() };
+    let actor_type = if agent_id.is_some() {
+        "agent".to_owned()
+    } else if user_id.is_some() {
+        "user".to_owned()
+    } else {
+        "board".to_owned()
+    };
     let company_id = if let Some(agent) = agent_id.as_deref() {
         if let Ok(uuid) = Uuid::parse_str(agent) {
-            sqlx::query_scalar::<_, Uuid>(
-                "SELECT company_id FROM agents WHERE id = $1",
-            )
-            .bind(uuid)
-            .fetch_optional(state.db.pool())
-            .await
-            .ok()
-            .flatten()
-            .map(|c| c.to_string())
-        } else { None }
-    } else { None };
+            sqlx::query_scalar::<_, Uuid>("SELECT company_id FROM agents WHERE id = $1")
+                .bind(uuid)
+                .fetch_optional(state.db.pool())
+                .await
+                .ok()
+                .flatten()
+                .map(|c| c.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     Ok(WatchdogActor {
         actor_type,
         agent_id,
@@ -1777,7 +2158,9 @@ async fn reject_task_watchdog_config_mutation(
 ) -> ApiResult<()> {
     use pc_repos::task_watchdog_scope::resolve_task_watchdog_mutation_scope;
     use pc_repos::task_watchdog_scope::TaskWatchdogMutationScope;
-    if actor.actor_type != "agent" { return Ok(()); }
+    if actor.actor_type != "agent" {
+        return Ok(());
+    }
     let probe = actor.as_agent_run_actor();
     let scope = resolve_task_watchdog_mutation_scope(&state.db, &probe)
         .await
@@ -1794,7 +2177,9 @@ fn reject_low_trust_control_plane(
     issue: &pc_repos::issue::IssueRow,
     actor: &WatchdogActor,
 ) -> ApiResult<()> {
-    if actor.actor_type != "agent" { return Ok(()); }
+    if actor.actor_type != "agent" {
+        return Ok(());
+    }
     let policy = issue.execution_policy.as_ref();
     let trust = policy.and_then(|p| p.get("trust")).and_then(|v| v.as_str());
     if matches!(trust, Some("low_trust_review")) {
@@ -1838,14 +2223,18 @@ struct ResolveRecoveryBody {
     resolution_note: Option<String>,
 }
 
+/// Node `ISSUE_RECOVERY_ACTION_OUTCOMES` 1:1：restored / handed_back /
+/// owner_completed / delegated / false_positive / blocked / escalated / cancelled.
 fn recovery_outcome_status(outcome: &str) -> Option<(&'static str, &'static str)> {
     match outcome {
         "cancelled" => Some(("cancelled", "cancelled")),
         "restored" => Some(("resolved", "restored")),
         "handed_back" => Some(("resolved", "handed_back")),
         "owner_completed" => Some(("resolved", "owner_completed")),
-        "blocked" => Some(("resolved", "blocked")),
+        "delegated" => Some(("resolved", "delegated")),
         "false_positive" => Some(("resolved", "false_positive")),
+        "blocked" => Some(("resolved", "blocked")),
+        "escalated" => Some(("escalated", "escalated")),
         _ => None,
     }
 }
@@ -1860,21 +2249,41 @@ async fn resolve_recovery(
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    let (action_status, recorded_outcome) = recovery_outcome_status(&body.outcome)
-        .ok_or_else(|| ApiError::BadRequest(format!("unsupported recovery outcome: {}", body.outcome)))?;
+    let (action_status, recorded_outcome) =
+        recovery_outcome_status(&body.outcome).ok_or_else(|| {
+            ApiError::BadRequest(format!("unsupported recovery outcome: {}", body.outcome))
+        })?;
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let (action_status, recorded_outcome) =
+        recovery_outcome_status(&body.outcome).ok_or_else(|| {
+            ApiError::BadRequest(format!("unsupported recovery outcome: {}", body.outcome))
+        })?;
     if let Some(status) = body.source_issue_status.as_deref() {
-        if !matches!(status, "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled") {
-            return Err(ApiError::BadRequest(format!("unsupported issue status: {status}")));
+        if !matches!(
+            status,
+            "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled"
+        ) {
+            return Err(ApiError::BadRequest(format!(
+                "unsupported issue status: {status}"
+            )));
         }
     }
     if matches!(body.outcome.as_str(), "cancelled" | "false_positive")
         && headers.get("x-paperclip-agent-id").is_some()
         && headers.get("x-paperclip-user-id").is_none()
     {
-        return Err(ApiError::Forbidden("board authority required for this recovery outcome".into()));
+        return Err(ApiError::Forbidden(
+            "board authority required for this recovery outcome".into(),
+        ));
     }
     if body.outcome == "blocked"
-        && IssueRepo::new(&state.db).unresolved_blockers_for(issue.id).await?.is_empty()
+        && IssueRepo::new(&state.db)
+            .unresolved_blockers_for(issue.id)
+            .await?
+            .is_empty()
     {
         return Err(ApiError::Unprocessable(
             "blocked recovery resolution requires an unresolved blocker".into(),
@@ -1885,15 +2294,17 @@ async fn resolve_recovery(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("active recovery action {}", body.action_id)))?;
     if active.id != body.action_id {
-        return Err(ApiError::NotFound(format!("active recovery action {}", body.action_id)));
+        return Err(ApiError::NotFound(format!(
+            "active recovery action {}",
+            body.action_id
+        )));
     }
-    let hand_back_agent_id = if body.outcome == "restored"
-        && body.source_issue_status.as_deref() == Some("todo")
-    {
-        active.return_owner_agent_id
-    } else {
-        None
-    };
+    let hand_back_agent_id =
+        if body.outcome == "restored" && body.source_issue_status.as_deref() == Some("todo") {
+            active.return_owner_agent_id
+        } else {
+            None
+        };
     let effective_outcome = if hand_back_agent_id.is_some() {
         "handed_back"
     } else if body.outcome == "restored" && body.source_issue_status.as_deref() == Some("done") {
@@ -1902,9 +2313,18 @@ async fn resolve_recovery(
         recorded_outcome
     };
     let actor = IssueUpdateActor {
-        agent_id: headers.get("x-paperclip-agent-id").and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok()),
-        user_id: headers.get("x-paperclip-user-id").and_then(|v| v.to_str().ok()).map(str::to_owned),
-        run_id: headers.get("x-paperclip-run-id").and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v).ok()),
+        agent_id: headers
+            .get("x-paperclip-agent-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| Uuid::parse_str(v).ok()),
+        user_id: headers
+            .get("x-paperclip-user-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned),
+        run_id: headers
+            .get("x-paperclip-run-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| Uuid::parse_str(v).ok()),
     };
     let (updated_issue, row) = IssueRepo::new(&state.db)
         .resolve_recovery_with_issue(
@@ -1924,9 +2344,16 @@ async fn resolve_recovery(
         && (issue.status != updated_issue.status
             || issue.assignee_agent_id != updated_issue.assignee_agent_id)
     {
-        let actor_type = if actor.agent_id.is_some() { "agent" } else { "user" };
-        let actor_id = actor.agent_id.map(|value| value.to_string())
-            .or_else(|| actor.user_id.clone()).unwrap_or_else(|| "system".into());
+        let actor_type = if actor.agent_id.is_some() {
+            "agent"
+        } else {
+            "user"
+        };
+        let actor_id = actor
+            .agent_id
+            .map(|value| value.to_string())
+            .or_else(|| actor.user_id.clone())
+            .unwrap_or_else(|| "system".into());
         let assignee_id = updated_issue.assignee_agent_id.expect("checked above");
         let idempotency_key = format!("recovery:{}:{}", row.id, updated_issue.id);
         let already = AgentRepo::new(&state.db)
@@ -1935,20 +2362,22 @@ async fn resolve_recovery(
             .ok()
             .flatten();
         if already.is_none() {
-            let _ = IssueRepo::new(&state.db).enqueue_agent_wakeup(
-                updated_issue.company_id,
-                assignee_id,
-                "automation",
-                "issue_recovery_action_restored",
-                &json!({
-                    "issueId": updated_issue.id,
-                    "recoveryActionId": row.id,
-                    "mutation": "recovery_action_resolution",
-                    "idempotencyKey": idempotency_key,
-                }),
-                actor_type,
-                &actor_id,
-            ).await;
+            let _ = IssueRepo::new(&state.db)
+                .enqueue_agent_wakeup(
+                    updated_issue.company_id,
+                    assignee_id,
+                    "automation",
+                    "issue_recovery_action_restored",
+                    &json!({
+                        "issueId": updated_issue.id,
+                        "recoveryActionId": row.id,
+                        "mutation": "recovery_action_resolution",
+                        "idempotencyKey": idempotency_key,
+                    }),
+                    actor_type,
+                    &actor_id,
+                )
+                .await;
         }
     }
     let _ = RoutineRepo::new(&state.db)
@@ -1958,11 +2387,16 @@ async fn resolve_recovery(
         LiveEvent::new("issue.recovery.resolved", "issue_recovery_action", row.id)
             .with_company(row.company_id),
     );
+    // Top-level `status`/`outcome` mirror the action-level outcome so callers
+    // (and the Round 281+ contract tests) can read it without traversing the
+    // nested `recoveryAction` object.
     Ok(Json(json!({
         "issue": { "id": updated_issue.id, "status": updated_issue.status,
             "assigneeAgentId": updated_issue.assignee_agent_id,
             "activeRecoveryAction": null },
         "recoveryAction": row,
+        "status": row.status,
+        "outcome": row.outcome,
     })))
 }
 
@@ -2744,70 +3178,6 @@ async fn resolve_interaction_route(
 }
 
 // ============================================================================
-// Feedback votes
-// ============================================================================
-
-async fn list_feedback_votes(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let rows = IssueRepo::new(&state.db).list_feedback_votes(id).await?;
-    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateFeedbackVoteBody {
-    target_type: String, // "issue" | "comment" | "work_product" | "document"
-    target_id: String,
-    vote: String, // "up" | "down"
-    #[serde(default)]
-    reason: Option<String>,
-    #[serde(default)]
-    author_user_id: Option<String>,
-}
-
-async fn create_feedback_vote(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<CreateFeedbackVoteBody>,
-) -> ApiResult<impl IntoResponse> {
-    let issue = IssueRepo::new(&state.db)
-        .get(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    let user = body
-        .author_user_id
-        .clone()
-        .or_else(|| {
-            headers
-                .get("x-paperclip-user-id")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .ok_or_else(|| ApiError::BadRequest("author_user_id is required".into()))?;
-    let row = IssueRepo::new(&state.db)
-        .create_feedback_vote(
-            issue.company_id,
-            id,
-            &body.target_type,
-            &body.target_id,
-            &user,
-            &body.vote,
-            body.reason.as_deref(),
-        )
-        .await?;
-    state.realtime.publish(
-        LiveEvent::new("issue.feedback.created", "feedback_vote", row.id)
-            .with_company(row.company_id),
-    );
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::to_value(row).unwrap_or_default()),
-    ))
-}
-
-// ============================================================================
 // Attachments
 // ============================================================================
 
@@ -3051,7 +3421,6 @@ async fn count_company_issues(
     ))
 }
 
-
 // ============================================================================
 // Round 210: company-scoped issue aggregate endpoints
 // ============================================================================
@@ -3129,7 +3498,6 @@ async fn search_issues(
     })))
 }
 
-
 // ============== Checkout / heartbeat-context / search-extract / plans ==============
 
 #[derive(Debug, Deserialize)]
@@ -3171,8 +3539,8 @@ async fn issue_heartbeat_context(
     let row = IssueRepo::new(&state.db)
         .heartbeat_context_inputs(id)
         .await?;
-    let (company_id, assignee_agent_id, project_id, project_workspace_id, status, work_mode) = row
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let (company_id, assignee_agent_id, project_id, project_workspace_id, status, work_mode) =
+        row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let recent_runs = HeartbeatRepo::new(&state.db)
         .recent_runs_for_issue(id, 5)
         .await
@@ -3226,7 +3594,10 @@ async fn create_company_issue(
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("title is required".into()))?;
     let description = body.get("description").and_then(Value::as_str);
-    let priority = body.get("priority").and_then(Value::as_str).unwrap_or("normal");
+    let priority = body
+        .get("priority")
+        .and_then(Value::as_str)
+        .unwrap_or("normal");
     let row = IssueRepo::new(&state.db)
         .create(company_id, title, description, priority, None)
         .await?;
@@ -3234,7 +3605,9 @@ async fn create_company_issue(
     state
         .realtime
         .publish(LiveEvent::new("issue.created", "issue", id).with_company(company_id));
-    Ok(Json(json!({ "id": id, "companyId": company_id, "title": title })))
+    Ok(Json(
+        json!({ "id": id, "companyId": company_id, "title": title }),
+    ))
 }
 
 async fn company_search_extract(
@@ -3270,10 +3643,9 @@ async fn issue_refresh_external_objects(
         .await?
         .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    state
-        .realtime
-        .publish(LiveEvent::new("issue.external_objects.refresh", "issue", id)
-            .with_company(company_id));
+    state.realtime.publish(
+        LiveEvent::new("issue.external_objects.refresh", "issue", id).with_company(company_id),
+    );
     Ok(Json(json!({ "refreshed": true, "issueId": id })))
 }
 
@@ -3288,8 +3660,7 @@ async fn issue_low_trust_promotion(
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     state
         .realtime
-        .publish(LiveEvent::new("issue.low_trust.promotion", "issue", id)
-            .with_company(company_id));
+        .publish(LiveEvent::new("issue.low_trust.promotion", "issue", id).with_company(company_id));
     Ok(Json(json!({ "promoted": true, "issueId": id })))
 }
 
@@ -3429,10 +3800,8 @@ async fn create_accepted_plan_decomposition(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     // 2. 计算 fingerprint
-    let fingerprint = compute_plan_decomposition_fingerprint(
-        body.accepted_plan_revision_id,
-        &body.children,
-    );
+    let fingerprint =
+        compute_plan_decomposition_fingerprint(body.accepted_plan_revision_id, &body.children);
     // 3. 调用 IssueRepo::decompose_accepted_plan 完整循环：
     //    - 查找/创建 claim
     //    - while 循环创建每个 child issue
@@ -3473,7 +3842,12 @@ async fn create_accepted_plan_decomposition(
         })
         .collect();
     let outcome = match IssueRepo::new(&state.db)
-        .decompose_accepted_plan(&source, body.accepted_plan_revision_id, &child_inputs, &fingerprint)
+        .decompose_accepted_plan(
+            &source,
+            body.accepted_plan_revision_id,
+            &child_inputs,
+            &fingerprint,
+        )
         .await
     {
         Ok(o) => o,
@@ -3585,9 +3959,7 @@ async fn delete_feedback_trace(
     State(state): State<AppState>,
     Path(trace_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let deleted = FeedbackTraceRepo::new(&state.db)
-        .delete(trace_id)
-        .await?;
+    let deleted = FeedbackTraceRepo::new(&state.db).delete(trace_id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -3608,49 +3980,6 @@ async fn get_feedback_trace_bundle(
         "issueId": issue_id,
         "bundle": payload.unwrap_or_else(|| json!({})),
     })))
-}
-
-/// Round 219: GET /api/issues/:id/interactions
-///
-/// 与 Node GET /issues/:id/interactions 对齐。
-async fn list_issue_interactions(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let rows = IssueRepo::new(&state.db)
-        .list_interactions(id)
-        .await?;
-    let items: Vec<Value> = rows.into_iter().map(|r| interaction_row_json(&r)).collect();
-    Ok(Json(json!({"items": items, "issueId": id})))
-}
-
-/// Round 219: POST /api/issues/:id/interactions
-///
-/// 与 Node POST /issues/:id/interactions 对齐。
-async fn create_issue_interaction(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Json(body): Json<CreateInteractionBody>,
-) -> ApiResult<Json<Value>> {
-    let issue = IssueRepo::new(&state.db)
-        .get(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    let payload = body.payload.unwrap_or(serde_json::json!({}));
-    let row = IssueRepo::new(&state.db)
-        .create_interaction(
-            issue.company_id,
-            id,
-            &body.kind,
-            &body.continuation_policy,
-            body.title.as_deref(),
-            body.summary.as_deref(),
-            &payload,
-            None,
-            body.created_by_user_id.as_deref(),
-        )
-        .await?;
-    Ok(Json(interaction_row_json(&row)))
 }
 
 /// Round 219: DELETE /api/issues/:id/interactions/:interaction_id
@@ -3722,16 +4051,40 @@ async fn create_issue_feedback_vote(
     Path(id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let target_type = body.get("voterKind").and_then(Value::as_str).unwrap_or("user").to_string();
-    let target_id = body.get("targetId").and_then(Value::as_str)
-        .unwrap_or("anonymous").to_string();
-    let vote = body.get("vote").and_then(Value::as_str).map(str::to_string)
-        .or_else(|| body.get("score").and_then(Value::as_i64).map(|n| n.to_string()))
+    let target_type = body
+        .get("voterKind")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .to_string();
+    let target_id = body
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or("anonymous")
+        .to_string();
+    let vote = body
+        .get("vote")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            body.get("score")
+                .and_then(Value::as_i64)
+                .map(|n| n.to_string())
+        })
         .unwrap_or_else(|| "neutral".to_string());
-    let reason = body.get("reason").and_then(Value::as_str).map(str::to_string);
+    let reason = body
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let repo = FeedbackVoteRepo::new(&state.db);
     let vote_id = match repo
-        .create_for_issue(id, &target_type, &target_id, "system", &vote, reason.as_deref())
+        .create_for_issue(
+            id,
+            &target_type,
+            &target_id,
+            "system",
+            &vote,
+            reason.as_deref(),
+        )
         .await
     {
         Ok(id) => id,
@@ -3778,9 +4131,6 @@ struct IssueListQuery {
     #[serde(default)]
     limit: Option<i64>,
 }
-
-
-
 
 // ============================================================================
 // Patches for /api/issues/* sub-routes (Round 20)
@@ -3870,14 +4220,19 @@ async fn list_issue_cases(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let rows = CaseRepo::new(&state.db).list_issue_cases(id).await?;
-    let items: Vec<Value> = rows.into_iter().map(|r| json!({
-        "linkId": r.link_id,
-        "caseId": r.case_id,
-        "issueId": id,
-        "role": r.role,
-        "caseStatus": r.status,
-        "projectId": r.project_id,
-    })).collect();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "linkId": r.link_id,
+                "caseId": r.case_id,
+                "issueId": id,
+                "role": r.role,
+                "caseStatus": r.status,
+                "projectId": r.project_id,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "issueId": id})))
 }
 
@@ -3886,20 +4241,29 @@ async fn list_issue_runs(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // Round 30: heartbeat_runs 没有 issue_id 列 — 关系走 context_snapshot->>'issueId'
-    let rows = HeartbeatRepo::new(&state.db).list_runs_by_issue(id, 100).await?;
-    let items: Vec<Value> = rows.into_iter().map(|r| json!({
-        "id": r.id,
-        "issueId": id,
-        "companyId": r.company_id,
-        "agentId": r.agent_id,
-        "status": r.status,
-        "invocationSource": r.invocation_source,
-        "startedAt": r.started_at,
-        "finishedAt": r.finished_at,
-        "createdAt": r.created_at,
-        "error": r.error,
-    })).collect();
-    Ok(Json(json!({"items": items, "issueId": id, "count": items.len()})))
+    let rows = HeartbeatRepo::new(&state.db)
+        .list_runs_by_issue(id, 100)
+        .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "issueId": id,
+                "companyId": r.company_id,
+                "agentId": r.agent_id,
+                "status": r.status,
+                "invocationSource": r.invocation_source,
+                "startedAt": r.started_at,
+                "finishedAt": r.finished_at,
+                "createdAt": r.created_at,
+                "error": r.error,
+            })
+        })
+        .collect();
+    Ok(Json(
+        json!({"items": items, "issueId": id, "count": items.len()}),
+    ))
 }
 
 async fn get_issue_run(
@@ -3914,7 +4278,9 @@ async fn get_issue_run(
     // 验证 run 属于该 issue（通过 context_snapshot->>'issueId'）
     let issue_in_ctx = ctx.get("issueId").and_then(|v| v.as_str());
     if issue_in_ctx != Some(&id.to_string()) {
-        return Err(ApiError::NotFound(format!("run {run_id} not associated with issue {id}")));
+        return Err(ApiError::NotFound(format!(
+            "run {run_id} not associated with issue {id}"
+        )));
     }
     Ok(Json(json!({
         "id": rid, "companyId": cid, "agentId": aid, "issueId": id,
@@ -3936,10 +4302,21 @@ async fn cancel_issue_run(
     }
     state.realtime.publish(
         LiveEvent::new("issue.run_cancelled", "heartbeat_run", run_id)
-            .with_company(state.db.pool().acquire().await.ok().map(|_| Uuid::nil()).unwrap_or(Uuid::nil()))
+            .with_company(
+                state
+                    .db
+                    .pool()
+                    .acquire()
+                    .await
+                    .ok()
+                    .map(|_| Uuid::nil())
+                    .unwrap_or(Uuid::nil()),
+            )
             .with_data(json!({"issueId": id, "runId": run_id})),
     );
-    Ok(Json(json!({"cancelled": true, "issueId": id, "runId": run_id})))
+    Ok(Json(
+        json!({"cancelled": true, "issueId": id, "runId": run_id}),
+    ))
 }
 
 async fn restart_issue_run(
@@ -3953,7 +4330,9 @@ async fn restart_issue_run(
         .ok_or_else(|| ApiError::NotFound(format!("run {run_id}")))?;
     let issue_in_ctx = ctx.get("issueId").and_then(|v| v.as_str());
     if issue_in_ctx != Some(&id.to_string()) {
-        return Err(ApiError::NotFound(format!("run {run_id} not associated with issue {id}")));
+        return Err(ApiError::NotFound(format!(
+            "run {run_id} not associated with issue {id}"
+        )));
     }
     if let Some(obj) = ctx.as_object_mut() {
         obj.insert("retryOf".into(), json!(run_id.to_string()));
@@ -3965,13 +4344,16 @@ async fn restart_issue_run(
         .map(|r| r.company_id)
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let new_id = Uuid::new_v4();
-    repo.insert_queued_run(new_id, company_id, agent_id, &ctx).await?;
+    repo.insert_queued_run(new_id, company_id, agent_id, &ctx)
+        .await?;
     state.realtime.publish(
         LiveEvent::new("issue.run_restarted", "heartbeat_run", new_id)
             .with_company(company_id)
             .with_data(json!({"issueId": id, "retryOfRunId": run_id, "newRunId": new_id})),
     );
-    Ok(Json(json!({"restarted": true, "issueId": id, "originalRunId": run_id, "newRunId": new_id})))
+    Ok(Json(
+        json!({"restarted": true, "issueId": id, "originalRunId": run_id, "newRunId": new_id}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -3990,13 +4372,12 @@ async fn start_issue_run(
     Json(body): Json<StartIssueRunBody>,
 ) -> ApiResult<Json<Value>> {
     // Round 30: 手动触发 heartbeat run — 需要 issue 有 assignee_agent_id
-    let issue_row = IssueRepo::new(&state.db)
-        .start_run_inputs(id)
-        .await?;
-    let (company_id, _project_id, assignee_agent_id) = issue_row
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    let agent_id = assignee_agent_id
-        .ok_or_else(|| ApiError::BadRequest("issue has no assignee_agent_id; cannot start run".into()))?;
+    let issue_row = IssueRepo::new(&state.db).start_run_inputs(id).await?;
+    let (company_id, _project_id, assignee_agent_id) =
+        issue_row.ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let agent_id = assignee_agent_id.ok_or_else(|| {
+        ApiError::BadRequest("issue has no assignee_agent_id; cannot start run".into())
+    })?;
     let ctx = json!({
         "issueId": id.to_string(),
         "source": "manual_start",
@@ -4025,8 +4406,8 @@ async fn get_one_comment(
     let row = IssueRepo::new(&state.db)
         .find_one_comment(id, comment_id)
         .await?;
-    let (cid, iid, user, agent, body, ts) = row
-        .ok_or_else(|| ApiError::NotFound(format!("comment {comment_id}")))?;
+    let (cid, iid, user, agent, body, ts) =
+        row.ok_or_else(|| ApiError::NotFound(format!("comment {comment_id}")))?;
     Ok(Json(json!({
         "id": cid, "issueId": iid, "authorUserId": user, "authorAgentId": agent,
         "body": body, "createdAt": ts,
@@ -4088,16 +4469,12 @@ async fn release_tree_hold(
                 ApiError::NotFound(format!("tree hold {hold_id}"))
             }
             pc_repos::issue_tree_hold::ReleaseHoldError::WrongRoot => {
-                ApiError::BadRequest(format!(
-                    "hold {hold_id} does not belong to root issue {id}"
-                ))
+                ApiError::BadRequest(format!("hold {hold_id} does not belong to root issue {id}"))
             }
             pc_repos::issue_tree_hold::ReleaseHoldError::AlreadyReleased => {
                 ApiError::Conflict(format!("hold {hold_id} is already released"))
             }
-            pc_repos::issue_tree_hold::ReleaseHoldError::Db(e) => {
-                ApiError::Internal(e.to_string())
-            }
+            pc_repos::issue_tree_hold::ReleaseHoldError::Db(e) => ApiError::Internal(e.to_string()),
         })?;
     state.realtime.publish(
         LiveEvent::new("issue_tree_hold.released", "issue_tree_hold", hold_id)
@@ -4115,9 +4492,7 @@ async fn release_tree_hold(
 }
 
 /// Round 228: IssueTreeHoldFullRow 序列化为 camelCase JSON
-fn tree_hold_full_row_to_json(
-    r: &pc_repos::issue_tree_hold::IssueTreeHoldFullRow,
-) -> Value {
+fn tree_hold_full_row_to_json(r: &pc_repos::issue_tree_hold::IssueTreeHoldFullRow) -> Value {
     json!({
         "id": r.id,
         "companyId": r.company_id,
@@ -4143,54 +4518,6 @@ fn tree_hold_full_row_to_json(
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct UpsertIssueDocumentBodyV2 {
-    #[serde(default)]
-    content: Option<Value>,
-    #[serde(default)]
-    title: Option<String>,
-}
-
-async fn upsert_issue_document(
-    State(state): State<AppState>,
-    Path((id, key)): Path<(Uuid, String)>,
-    Json(body): Json<UpsertIssueDocumentBodyV2>,
-) -> ApiResult<Json<Value>> {
-    let exists = IssueRepo::new(&state.db)
-        .issue_doc_exists(id, &key)
-        .await?;
-    if exists {
-        IssueRepo::new(&state.db)
-            .update_issue_doc_content(id, &key, body.content.as_ref().unwrap_or(&Value::Null))
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-    } else {
-        IssueRepo::new(&state.db)
-            .insert_issue_doc(id, &key, body.content.as_ref().unwrap_or(&Value::Null), body.title.as_deref())
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-    }
-    state.realtime.publish(
-        LiveEvent::new("issue.document_upserted", "issue", id)
-            .with_data(json!({"key": key})).with_company(id),
-    );
-    Ok(Json(json!({"upserted": true, "issueId": id, "key": key})))
-}
-
-async fn remove_issue_document(
-    State(state): State<AppState>,
-    Path((id, key)): Path<(Uuid, String)>,
-) -> ApiResult<StatusCode> {
-    let n = IssueRepo::new(&state.db)
-        .soft_delete_issue_doc(id, &key)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if !n {
-        return Err(ApiError::NotFound(format!("document {key}")));
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Debug, Deserialize, Default)]
 struct AnnotationCommentBodyV2 {
     body: String,
 }
@@ -4209,7 +4536,9 @@ async fn annotation_comment_route(
     // V2 body shape: { body } (与 Node createDocumentAnnotationCommentSchema 子集)
     // author_type/user 来自 actor context（本轮略 — 默认 'user'）
     if body.body.trim().is_empty() {
-        return Err(ApiError::BadRequest("comment body must not be empty".into()));
+        return Err(ApiError::BadRequest(
+            "comment body must not be empty".into(),
+        ));
     }
     let thread = pc_repos::document::DocumentRepo::new(&state.db)
         .get_annotation_thread(thread_id)
@@ -4230,8 +4559,6 @@ async fn annotation_comment_route(
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
-
-
 async fn restore_doc_revision(
     State(state): State<AppState>,
     Path((id, key, revision_id)): Path<(Uuid, String, Uuid)>,
@@ -4240,7 +4567,9 @@ async fn restore_doc_revision(
         .set_issue_doc_current_revision(id, &key, revision_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()));
-    Ok(Json(json!({"restored": true, "issueId": id, "key": key, "revisionId": revision_id})))
+    Ok(Json(
+        json!({"restored": true, "issueId": id, "key": key, "revisionId": revision_id}),
+    ))
 }
 
 /// Round 216: cancel / withdraw 共用的请求体。
@@ -4420,17 +4749,15 @@ async fn resolve_interaction_status_with_payload(
     // Merge reason into payload if provided
     if let Some(r) = reason {
         if let serde_json::Value::Object(ref mut map) = result_payload {
-            map.insert("reason".to_string(), serde_json::Value::String(r.to_string()));
+            map.insert(
+                "reason".to_string(),
+                serde_json::Value::String(r.to_string()),
+            );
         }
     }
 
     let updated = IssueRepo::new(&state.db)
-        .resolve_interaction(
-            interaction_id,
-            new_status,
-            Some(&result_payload),
-            None,
-        )
+        .resolve_interaction(interaction_id, new_status, Some(&result_payload), None)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("interaction {interaction_id}")))?;
 
@@ -4631,7 +4958,10 @@ async fn list_tree_holds(
         .ok_or_else(|| ApiError::NotFound(format!("issue {issue_id}")))?;
     let status = q.status.as_deref().unwrap_or("active");
     let repo = IssueTreeHoldRepo::new(&state.db);
-    let rows = repo.list_by_root(issue_id, status, 100).await.unwrap_or_default();
+    let rows = repo
+        .list_by_root(issue_id, status, 100)
+        .await
+        .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
         .map(|r| {
@@ -4683,7 +5013,10 @@ async fn create_tree_hold(
         body.mode.as_str(),
         "pause" | "stop" | "throttle" | "isolate" | "resume"
     ) {
-        return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
+        return Err(ApiError::BadRequest(format!(
+            "invalid mode '{}'",
+            body.mode
+        )));
     }
     let company_id = IssueRepo::new(&state.db)
         .get(issue_id)
@@ -4750,26 +5083,37 @@ async fn get_tree_hold(
         .await
         .unwrap_or_default();
     let member_count = members.len() as i64;
-    let members_json: Vec<Value> = members.iter().map(|m| json!({
-        "id": m.id,
-        "holdId": m.hold_id,
-        "issueId": m.issue_id,
-        "parentIssueId": m.parent_issue_id,
-        "depth": m.depth,
-        "issueIdentifier": m.issue_identifier,
-        "issueTitle": m.issue_title,
-        "issueStatus": m.issue_status,
-        "assigneeAgentId": m.assignee_agent_id,
-        "assigneeUserId": m.assignee_user_id,
-        "activeRunId": m.active_run_id,
-        "activeRunStatus": m.active_run_status,
-        "skipped": m.skipped,
-        "skipReason": m.skip_reason,
-        "createdAt": m.created_at,
-    })).collect();
+    let members_json: Vec<Value> = members
+        .iter()
+        .map(|m| {
+            json!({
+                "id": m.id,
+                "holdId": m.hold_id,
+                "issueId": m.issue_id,
+                "parentIssueId": m.parent_issue_id,
+                "depth": m.depth,
+                "issueIdentifier": m.issue_identifier,
+                "issueTitle": m.issue_title,
+                "issueStatus": m.issue_status,
+                "assigneeAgentId": m.assignee_agent_id,
+                "assigneeUserId": m.assignee_user_id,
+                "activeRunId": m.active_run_id,
+                "activeRunStatus": m.active_run_status,
+                "skipped": m.skipped,
+                "skipReason": m.skip_reason,
+                "createdAt": m.created_at,
+            })
+        })
+        .collect();
     let (id, root_issue_id, mode, status, reason, release_policy, released_at, created_at) = (
-        row.id, row.root_issue_id, row.mode, row.status, row.reason, row.release_policy,
-        row.released_at, row.created_at,
+        row.id,
+        row.root_issue_id,
+        row.mode,
+        row.status,
+        row.reason,
+        row.release_policy,
+        row.released_at,
+        row.created_at,
     );
     Ok(Json(json!({
         "id": id,
@@ -4814,7 +5158,10 @@ async fn preview_tree_control(
         body.mode.as_str(),
         "pause" | "stop" | "throttle" | "isolate" | "resume"
     ) {
-        return Err(ApiError::BadRequest(format!("invalid mode '{}'", body.mode)));
+        return Err(ApiError::BadRequest(format!(
+            "invalid mode '{}'",
+            body.mode
+        )));
     }
     // R231: 统计子树 descendants + active descendants
     let (total_descendants, active_descendants) = IssueRepo::new(&state.db)
@@ -4870,7 +5217,6 @@ async fn preview_tree_control(
     })))
 }
 
-
 // ============ Round 30: runs deep / diagnostics / monitor ============
 
 async fn diagnostics_blockers(
@@ -4880,10 +5226,19 @@ async fn diagnostics_blockers(
     let rows = IssueDiagnosticsRepo::new(&state.db)
         .list_blockers(id, 100)
         .await?;
-    let blockers: Vec<Value> = rows.into_iter().map(|r| json!({
-        "id": r.id, "title": r.title, "status": r.status, "createdAt": r.created_at,
-    })).collect();
-    let readiness = if blockers.is_empty() { "ready" } else { "blocked" };
+    let blockers: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id, "title": r.title, "status": r.status, "createdAt": r.created_at,
+            })
+        })
+        .collect();
+    let readiness = if blockers.is_empty() {
+        "ready"
+    } else {
+        "blocked"
+    };
     Ok(Json(json!({
         "issueId": id,
         "blockers": blockers,
@@ -4900,13 +5255,22 @@ async fn diagnostics_wakes(
     let repo = IssueDiagnosticsRepo::new(&state.db);
     let agent_id = match repo.assignee_agent_id(id).await? {
         Some(a) => a,
-        None => return Ok(Json(json!({"issueId": id, "wakeRequests": [], "activityRecords": [], "wakeRequestCount": 0, "activityRecordCount": 0}))),
+        None => {
+            return Ok(Json(
+                json!({"issueId": id, "wakeRequests": [], "activityRecords": [], "wakeRequestCount": 0, "activityRecordCount": 0}),
+            ))
+        }
     };
     let wakes = repo.list_wake_requests_for_agent(id, agent_id, 100).await?;
-    let wake_requests: Vec<Value> = wakes.into_iter().map(|r| json!({
-        "id": r.id, "source": r.source, "reason": r.reason, "status": r.status,
-        "requestedAt": r.requested_at, "claimedAt": r.claimed_at,
-    })).collect();
+    let wake_requests: Vec<Value> = wakes
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id, "source": r.source, "reason": r.reason, "status": r.status,
+                "requestedAt": r.requested_at, "claimedAt": r.claimed_at,
+            })
+        })
+        .collect();
     Ok(Json(json!({
         "issueId": id,
         "agentId": agent_id,
@@ -4925,9 +5289,12 @@ async fn diagnostics_subtree(
         .await?;
     let mut nodes: Vec<Value> = Vec::with_capacity(rows.len());
     let mut edges: Vec<Value> = Vec::new();
-    let mut readiness: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut readiness: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     for r in rows {
-        nodes.push(json!({"id": r.id, "title": r.title, "status": r.status, "createdAt": r.created_at}));
+        nodes.push(
+            json!({"id": r.id, "title": r.title, "status": r.status, "createdAt": r.created_at}),
+        );
         if let Some(st) = r.status.clone() {
             readiness.insert(r.id.to_string(), st);
         }
@@ -4968,7 +5335,8 @@ async fn attachment_content_stub(
         row.ok_or_else(|| ApiError::NotFound(format!("attachment {attachment_id}")))?;
 
     // Cross-tenant check: caller must be a member of the attachment's company.
-    let user_id = crate::require_user_id(&state, &Default::default()).await
+    let user_id = crate::require_user_id(&state, &Default::default())
+        .await
         .unwrap_or_else(|_| "anonymous".to_string());
     let _ = user_id;
     let _ = company_id;
@@ -4988,10 +5356,7 @@ async fn attachment_content_stub(
     })?;
 
     let filename = original_filename.unwrap_or_else(|| "attachment".to_string());
-    let disposition = format!(
-        "inline; filename=\"{}\"",
-        filename.replace('"', "")
-    );
+    let disposition = format!("inline; filename=\"{}\"", filename.replace('"', ""));
 
     Ok((
         StatusCode::OK,
@@ -5026,9 +5391,11 @@ async fn tree_control_state(
         .await
         .ok()
         .flatten();
-    let active_pause_hold_json = active_pause_hold.map(|(id, mode)| json!({
-        "id": id, "mode": mode
-    }));
+    let active_pause_hold_json = active_pause_hold.map(|(id, mode)| {
+        json!({
+            "id": id, "mode": mode
+        })
+    });
     Ok(Json(json!({
         "issueId": issue_id,
         "companyId": issue.company_id,
@@ -5053,18 +5420,22 @@ async fn list_live_runs(
     .fetch_all(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = runs.into_iter().map(|(id, status, error, created_at)| json!({
-        "id": id,
-        "status": status,
-        "error": error,
-        "createdAt": created_at,
-    })).collect();
+    let items: Vec<Value> = runs
+        .into_iter()
+        .map(|(id, status, error, created_at)| {
+            json!({
+                "id": id,
+                "status": status,
+                "error": error,
+                "createdAt": created_at,
+            })
+        })
+        .collect();
     Ok(Json(json!({
         "issueId": issue_id,
         "runs": items,
     })))
 }
-
 
 /// R237: GET /api/issues/:id/active-run — 返回当前 issue 的 active run。
 ///
@@ -5095,7 +5466,9 @@ async fn active_run(
                 .get_active_run_summary_for_agent(issue.company_id, agent_id)
                 .await
             {
-                let candidate_issue = row.context_snapshot.as_ref()
+                let candidate_issue = row
+                    .context_snapshot
+                    .as_ref()
                     .and_then(|v| v.get("issueId"))
                     .and_then(|v| v.as_str())
                     .and_then(|s| Uuid::parse_str(s).ok());
@@ -5140,7 +5513,6 @@ async fn active_run(
         "livenessReason": run.liveness_reason,
     })))
 }
-
 
 #[cfg(test)]
 #[cfg(test)]
@@ -5352,7 +5724,7 @@ mod round250_tests {
     #[test]
     fn watchdog_activity_routes_are_mounted() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("/api/issues/:id/watchdog/activity"));
+        assert!(src.contains("/api/issues/:issue_id/watchdog/activity"));
         assert!(src.contains("get(list_watchdog_activity)"));
         assert!(src.contains("get(watchdog_activity_summary)"));
     }
@@ -5399,17 +5771,18 @@ mod round249_tests {
         assert!(src.contains("pub agent_id: Option<String>"));
         assert!(src.contains("pub run_id: Option<String>"));
         assert!(src.contains("pub company_id: Option<String>"));
-
     }
 
     /// R249: watchdog_actor_from_headers 必须返回本地 WatchdogActor。
     #[test]
     fn watchdog_actor_from_headers_returns_local_actor() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("async fn watchdog_actor_from_headers(
+        assert!(src.contains(
+            "async fn watchdog_actor_from_headers(
     state: &AppState,
     headers: &axum::http::HeaderMap,
-) -> ApiResult<WatchdogActor> {"));
+) -> ApiResult<WatchdogActor> {"
+        ));
         assert!(src.contains("Ok(WatchdogActor {"));
     }
 
@@ -5417,10 +5790,12 @@ mod round249_tests {
     #[test]
     fn reject_task_watchdog_config_mutation_uses_local_actor() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("async fn reject_task_watchdog_config_mutation(
+        assert!(src.contains(
+            "async fn reject_task_watchdog_config_mutation(
     state: &AppState,
     actor: &WatchdogActor,
-) -> ApiResult<()> {"));
+) -> ApiResult<()> {"
+        ));
         assert!(src.contains("actor.as_agent_run_actor()"));
         assert!(src.contains("resolve_task_watchdog_mutation_scope(&state.db, &probe)"));
     }
@@ -5429,10 +5804,12 @@ mod round249_tests {
     #[test]
     fn reject_low_trust_control_plane_uses_local_actor() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("fn reject_low_trust_control_plane(
+        assert!(src.contains(
+            "fn reject_low_trust_control_plane(
     issue: &pc_repos::issue::IssueRow,
     actor: &WatchdogActor,
-) -> ApiResult<()> {"));
+) -> ApiResult<()> {"
+        ));
     }
 
     /// R249: 三个 watchdog handler（upsert / remove / complete evaluation）都必须调用 ActivityRepo::record。
@@ -5440,7 +5817,9 @@ mod round249_tests {
     fn watchdog_handlers_write_activity_log() {
         let src = include_str!("issues.rs");
         // 三个位置都应直接调用 ActivityRepo::new(&state.db).record(...)
-        assert!(src.contains("ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity"));
+        assert!(
+            src.contains("ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity")
+        );
         assert!(src.contains("responsible_user_id: actor.user_id.clone()"));
     }
 
@@ -5459,8 +5838,13 @@ mod round249_tests {
     fn actor_user_id_flows_to_responsible_user_id() {
         let src = include_str!("issues.rs");
         // 三个 handler 各自至少出现一次 responsible_user_id: actor.user_id.clone()
-        let count = src.matches("responsible_user_id: actor.user_id.clone()").count();
-        assert!(count >= 3, "expected at least 3 responsible_user_id bindings, found {count}");
+        let count = src
+            .matches("responsible_user_id: actor.user_id.clone()")
+            .count();
+        assert!(
+            count >= 3,
+            "expected at least 3 responsible_user_id bindings, found {count}"
+        );
     }
 
     /// R249: ActorType::from_node_str 必须存在 —— 将 Node "actor"/"user"/"board" 字符串映射到枚举。
@@ -5555,9 +5939,8 @@ mod round216_tests {
     //! `parse_activity_kind` 是纯函数 — 容易单测。
     //! `InteractionResolveBody` 是 serde 结构 — 验证字段解析。
     use super::{
-        activity_log_row_json, interaction_row_json, parse_activity_kind,
-        AcceptInteractionBody, InteractionResolveBody, RespondInteractionBody,
-        VerdictEntry, VerdictInteractionBody,
+        activity_log_row_json, interaction_row_json, parse_activity_kind, AcceptInteractionBody,
+        InteractionResolveBody, RespondInteractionBody, VerdictEntry, VerdictInteractionBody,
     };
     use pc_activity::kinds::ActivityKind;
 
@@ -5573,7 +5956,10 @@ mod round216_tests {
             parse_activity_kind("issue.thread_interaction_withdrawn"),
             ActivityKind::Other
         ));
-        assert!(matches!(parse_activity_kind("unknown.kind"), ActivityKind::Other));
+        assert!(matches!(
+            parse_activity_kind("unknown.kind"),
+            ActivityKind::Other
+        ));
     }
 
     #[test]
@@ -5591,8 +5977,8 @@ mod round216_tests {
 
     #[test]
     fn interaction_resolve_body_accepts_null_reason() {
-        let body: InteractionResolveBody = serde_json::from_str(r#"{"reason": null}"#)
-            .expect("parse null");
+        let body: InteractionResolveBody =
+            serde_json::from_str(r#"{"reason": null}"#).expect("parse null");
         assert!(body.reason.is_none());
     }
 
@@ -5642,10 +6028,9 @@ mod round216_tests {
 
     #[test]
     fn verdict_body_parses_entries() {
-        let body: VerdictInteractionBody = serde_json::from_str(
-            r#"{"verdicts":[{"id":"v1","verdict":"approve","reason":"ok"}]}"#,
-        )
-        .expect("parse");
+        let body: VerdictInteractionBody =
+            serde_json::from_str(r#"{"verdicts":[{"id":"v1","verdict":"approve","reason":"ok"}]}"#)
+                .expect("parse");
         assert_eq!(body.verdicts.len(), 1);
         assert_eq!(body.verdicts[0].id, "v1");
         assert_eq!(body.verdicts[0].verdict, "approve");
@@ -5654,10 +6039,9 @@ mod round216_tests {
 
     #[test]
     fn verdict_body_reason_optional() {
-        let body: VerdictInteractionBody = serde_json::from_str(
-            r#"{"verdicts":[{"id":"v1","verdict":"reject"}]}"#,
-        )
-        .expect("parse");
+        let body: VerdictInteractionBody =
+            serde_json::from_str(r#"{"verdicts":[{"id":"v1","verdict":"reject"}]}"#)
+                .expect("parse");
         assert!(body.verdicts[0].reason.is_none());
     }
 
@@ -6180,13 +6564,17 @@ mod round216_tests {
         assert_eq!(obj["releasedByActorType"], serde_json::json!("user"));
         assert_eq!(obj["releasedByUserId"], serde_json::json!("u-releaser"));
         assert_eq!(obj["releaseReason"], serde_json::json!("manual release"));
-        assert_eq!(obj["releaseMetadata"], serde_json::json!({"ticketId": "T-123"}));
+        assert_eq!(
+            obj["releaseMetadata"],
+            serde_json::json!({"ticketId": "T-123"})
+        );
     }
 
     #[test]
     fn release_tree_hold_body_parses_minimal() {
         use super::ReleaseTreeHoldBody;
-        let body: ReleaseTreeHoldBody = serde_json::from_value(serde_json::json!({})).expect("parse");
+        let body: ReleaseTreeHoldBody =
+            serde_json::from_value(serde_json::json!({})).expect("parse");
         assert!(body.reason.is_none());
         assert!(body.release_policy.is_none());
         assert!(body.metadata.is_none());
@@ -6471,10 +6859,7 @@ mod round229_tests {
         assert!(body.assignee_adapter_overrides.is_some());
         assert!(body.execution_policy.is_some());
         assert!(body.execution_workspace_id.is_some());
-        assert_eq!(
-            body.acceptance_criteria.as_ref().map(|v| v.len()),
-            Some(2)
-        );
+        assert_eq!(body.acceptance_criteria.as_ref().map(|v| v.len()), Some(2));
         assert_eq!(body.block_parent_until_done, Some(true));
     }
 
@@ -6513,8 +6898,7 @@ mod round229_tests {
                 "status": "blocked",
                 "unblockDescriptor": {"owner": owner, "action": "do X"},
             });
-            let body: CreateIssueFullBody =
-                serde_json::from_value(payload).expect("parse");
+            let body: CreateIssueFullBody = serde_json::from_value(payload).expect("parse");
             assert!(body.unblock_descriptor.is_some());
         }
     }
@@ -6539,13 +6923,27 @@ mod round230_tests {
     use uuid::Uuid;
 
     fn needs_relations_create(body: &CreateIssueFullBody) -> bool {
-        body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-            || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        body.label_ids
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+            || body
+                .blocked_by_issue_ids
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
     }
 
     fn needs_relations_child(body: &ChildIssueFullBody) -> bool {
-        body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-            || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        body.label_ids
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+            || body
+                .blocked_by_issue_ids
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
     }
 
     #[test]
@@ -6644,10 +7042,7 @@ mod round230_tests {
         }))
         .expect("parse");
         assert!(!needs_relations_child(&body));
-        assert_eq!(
-            body.acceptance_criteria.as_ref().map(|v| v.len()),
-            Some(1)
-        );
+        assert_eq!(body.acceptance_criteria.as_ref().map(|v| v.len()), Some(1));
         assert_eq!(body.block_parent_until_done, Some(true));
     }
 
@@ -6663,10 +7058,7 @@ mod round230_tests {
         }))
         .expect("parse");
         assert!(needs_relations_child(&body));
-        assert_eq!(
-            body.acceptance_criteria.as_ref().map(|v| v.len()),
-            Some(2)
-        );
+        assert_eq!(body.acceptance_criteria.as_ref().map(|v| v.len()), Some(2));
     }
 }
 
@@ -6829,8 +7221,7 @@ mod round233_tests {
             "acceptanceCriteria": ["c1", "c2"],
             "blockParentUntilDone": true,
         });
-        let input: PlanDecompositionChildInput =
-            serde_json::from_value(payload).expect("parse");
+        let input: PlanDecompositionChildInput = serde_json::from_value(payload).expect("parse");
         assert_eq!(input.title, "Ship feature X");
         assert_eq!(input.status, "todo");
         assert_eq!(input.work_mode, "standard");
@@ -6854,20 +7245,19 @@ mod round233_tests {
         );
         assert!(input.execution_workspace_settings.is_some());
         assert!(input.unblock_descriptor.is_some());
-        assert_eq!(input.blocked_by_issue_ids.as_ref().map(|v| v.len()), Some(2));
-        assert_eq!(input.label_ids.as_ref().map(|v| v.len()), Some(1));
         assert_eq!(
-            input.acceptance_criteria.as_ref().map(|v| v.len()),
+            input.blocked_by_issue_ids.as_ref().map(|v| v.len()),
             Some(2)
         );
+        assert_eq!(input.label_ids.as_ref().map(|v| v.len()), Some(1));
+        assert_eq!(input.acceptance_criteria.as_ref().map(|v| v.len()), Some(2));
         assert_eq!(input.block_parent_until_done, Some(true));
     }
 
     #[test]
     fn plan_child_input_minimal_required_only() {
         let payload = json!({"title": "minimal"});
-        let input: PlanDecompositionChildInput =
-            serde_json::from_value(payload).expect("parse");
+        let input: PlanDecompositionChildInput = serde_json::from_value(payload).expect("parse");
         assert_eq!(input.title, "minimal");
         // 默认值由 default_* 函数提供
         assert_eq!(input.status, "todo");
@@ -6887,8 +7277,7 @@ mod round233_tests {
             "acceptanceCriteria": ["criterion 1", "criterion 2", "criterion 3"],
             "blockParentUntilDone": true,
         });
-        let input: PlanDecompositionChildInput =
-            serde_json::from_value(payload).expect("parse");
+        let input: PlanDecompositionChildInput = serde_json::from_value(payload).expect("parse");
         let criteria = input.acceptance_criteria.expect("criteria");
         assert_eq!(criteria.len(), 3);
         assert_eq!(criteria[0], "criterion 1");
@@ -6898,8 +7287,7 @@ mod round233_tests {
     #[test]
     fn plan_child_input_accepts_empty_acceptance_criteria() {
         let payload = json!({"title": "x", "acceptanceCriteria": []});
-        let input: PlanDecompositionChildInput =
-            serde_json::from_value(payload).expect("parse");
+        let input: PlanDecompositionChildInput = serde_json::from_value(payload).expect("parse");
         let criteria = input.acceptance_criteria.expect("criteria");
         assert!(criteria.is_empty());
     }
@@ -6965,8 +7353,7 @@ mod round233_tests {
             "work_mode": "standard",       // snake_case — 应被忽略
             "assignee_agent_id": Uuid::new_v4(),
         });
-        let input: PlanDecompositionChildInput =
-            serde_json::from_value(payload).expect("parse");
+        let input: PlanDecompositionChildInput = serde_json::from_value(payload).expect("parse");
         assert_eq!(input.title, "x");
         // snake_case 字段被忽略，使用 default
         assert_eq!(input.work_mode, "standard"); // default
@@ -6989,8 +7376,7 @@ mod round233_tests {
             "executionPolicy": {"maxSteps": 100},
             "executionWorkspacePreference": "isolated",
         });
-        let input: PlanDecompositionChildInput =
-            serde_json::from_value(payload).expect("parse");
+        let input: PlanDecompositionChildInput = serde_json::from_value(payload).expect("parse");
         assert_eq!(input.priority, "high");
         let blockers = input.blocked_by_issue_ids.expect("blockers");
         assert_eq!(blockers.len(), 1);
@@ -7024,7 +7410,7 @@ mod round236_route_tests {
         // 验证路由文件包含 R236 新路由
         let src = include_str!("issues.rs");
         assert!(
-            src.contains("/api/issues/:id/tree-control/state"),
+            src.contains("/api/issues/:issue_id/tree-control/state"),
             "tree-control/state route should be registered"
         );
         assert!(
@@ -7037,7 +7423,7 @@ mod round236_route_tests {
     fn live_runs_route_registered() {
         let src = include_str!("issues.rs");
         assert!(
-            src.contains("/api/issues/:id/live-runs"),
+            src.contains("/api/issues/:issue_id/live-runs"),
             "live-runs route should be registered"
         );
         assert!(

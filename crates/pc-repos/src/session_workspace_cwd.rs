@@ -55,7 +55,11 @@ pub fn normalize_session_workspace_cwd(cwd: &str) -> String {
         without_trailing
     }));
     let s = cleaned.to_string_lossy().into_owned();
-    if s.is_empty() { "/".to_string() } else { s }
+    if s.is_empty() {
+        "/".to_string()
+    } else {
+        s
+    }
 }
 
 /// 是否不安全的 session workspace cwd？返回 true 当 cwd 是空字符串/null/undefined 时为 false。

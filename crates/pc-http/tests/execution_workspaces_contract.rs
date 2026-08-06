@@ -51,10 +51,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -300,7 +297,9 @@ async fn runtime_service_action_enqueues_log_entry() {
     .await;
     assert_eq!(status, 200, "action-log: {body}");
     let items = body["items"].as_array().expect("items array");
-    assert!(items.iter().any(|it| it["kind"] == "service" && it["action"] == "start"));
+    assert!(items
+        .iter()
+        .any(|it| it["kind"] == "service" && it["action"] == "start"));
 }
 
 #[tokio::test(flavor = "current_thread")]

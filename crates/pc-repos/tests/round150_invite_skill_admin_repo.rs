@@ -37,7 +37,12 @@ async fn insert_user(db: &Db, tag: &str) -> String {
     id
 }
 
-async fn insert_invite(db: &Db, company_id: Uuid, token_hash: &str, invited_by: Option<&str>) -> Uuid {
+async fn insert_invite(
+    db: &Db,
+    company_id: Uuid,
+    token_hash: &str,
+    invited_by: Option<&str>,
+) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         r#"INSERT INTO invites (id, company_id, token_hash, defaults_payload, expires_at, invited_by_user_id)
@@ -79,7 +84,10 @@ async fn invite_lookup_revoke_info_hit() {
 async fn invite_lookup_revoke_info_miss() {
     let db = db().await;
     let repo = InviteRepo::new(&db);
-    let row = repo.lookup_revoke_info_by_token_hash("missing").await.expect("ok");
+    let row = repo
+        .lookup_revoke_info_by_token_hash("missing")
+        .await
+        .expect("ok");
     assert!(row.is_none());
 }
 

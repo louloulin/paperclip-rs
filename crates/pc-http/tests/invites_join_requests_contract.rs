@@ -44,10 +44,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test",
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test")),
         realtime,
     )
 }
@@ -129,7 +126,9 @@ async fn invite_create_list_revoke_flow() {
     assert_eq!(status, 200, "list invites: {body}");
     let items = body["items"].as_array().expect("items array");
     assert!(
-        items.iter().any(|it| it["id"] == created.row.id.to_string()),
+        items
+            .iter()
+            .any(|it| it["id"] == created.row.id.to_string()),
         "list should include new invite: {body}"
     );
 
@@ -146,10 +145,7 @@ async fn invite_create_list_revoke_flow() {
     let (status, body) = call(
         &app,
         "DELETE",
-        &format!(
-            "/api/companies/{company_id}/invites/{}",
-            created.row.id
-        ),
+        &format!("/api/companies/{company_id}/invites/{}", created.row.id),
         serde_json::json!({}),
     )
     .await;
@@ -195,10 +191,7 @@ async fn invite_token_active_lookup_rejects_expired_and_revoked() {
     .expect("insert expired");
 
     let repo = invite::InviteRepo::new(&db);
-    let active = repo
-        .find_active_by_token(&token_raw)
-        .await
-        .expect("lookup");
+    let active = repo.find_active_by_token(&token_raw).await.expect("lookup");
     assert!(
         active.is_none(),
         "expired token must NOT show as active (hash lookup)"
@@ -413,10 +406,7 @@ async fn join_request_reject_then_approve_returns_not_pending() {
         .await
         .expect_err("approve rejected request must error");
     assert!(
-        matches!(
-            err,
-            join_request::JoinRequestError::NotPending(_)
-        ),
+        matches!(err, join_request::JoinRequestError::NotPending(_)),
         "expected NotPending, got: {err:?}"
     );
 }

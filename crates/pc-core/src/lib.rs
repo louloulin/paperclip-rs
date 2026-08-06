@@ -8,41 +8,30 @@ pub mod actor;
 pub mod actor_runtime;
 pub mod adapter_registry_bootstrap;
 pub mod agent_eligibility;
+pub mod attention;
 pub mod catalog_provenance;
 pub mod error;
 pub mod execution_allowlist;
-pub mod git_status_paths;
 pub mod execution_policy_bootstrap;
+pub mod execution_workspace_branch_reconcile_assertions;
 pub mod execution_workspace_config;
 pub mod execution_workspace_overview;
-pub mod execution_workspace_branch_reconcile_assertions;
-pub mod execution_workspace_row_to_typed;
 pub mod execution_workspace_policy;
-pub mod workspace_branch_incoherence;
-pub mod workspace_branch_incoherence_explain;
-pub mod workspace_dirty_quarantine_formatter;
-pub mod workspace_file_classify;
-pub mod workspace_file_list_response_builder;
-pub mod workspace_runtime_readiness;
-pub mod workspace_runtime_git_status;
-pub mod workspace_runtime_strings;
-pub mod workspace_runtime_service_state;
-pub mod workspace_runtime_string_utils;
-pub mod workspace_runtime_dev_service_recognition;
-pub mod workspace_runtime_env_builders;
-pub mod workspace_realization;
-pub mod workspace_runtime_ready_presentation;
-pub mod workspace_runtime_service_identity;
-pub mod workspace_runtime_template_render;
+pub mod execution_workspace_row_to_typed;
 pub mod feature_catalog;
+pub mod git_status_paths;
 pub mod hash;
 pub mod id;
+pub mod issue_execution_monitor_state;
+pub mod issue_execution_policy;
+pub mod issue_execution_transitions;
+pub mod issue_execution_validation;
 pub mod managed_config;
 pub mod mcp_http;
 pub mod money;
 pub mod portability_fidelity;
-pub mod project_workspace_runtime_config;
 pub mod portable_path;
+pub mod project_workspace_runtime_config;
 pub mod routable_blocked;
 pub mod runtime_skill_selections;
 pub mod source_trust;
@@ -50,6 +39,22 @@ pub mod stable_string;
 pub mod timestamp;
 pub mod tool_content_guards;
 pub mod tool_profile_binding;
+pub mod workspace_branch_incoherence;
+pub mod workspace_branch_incoherence_explain;
+pub mod workspace_dirty_quarantine_formatter;
+pub mod workspace_file_classify;
+pub mod workspace_file_list_response_builder;
+pub mod workspace_realization;
+pub mod workspace_runtime_dev_service_recognition;
+pub mod workspace_runtime_env_builders;
+pub mod workspace_runtime_git_status;
+pub mod workspace_runtime_readiness;
+pub mod workspace_runtime_ready_presentation;
+pub mod workspace_runtime_service_identity;
+pub mod workspace_runtime_service_state;
+pub mod workspace_runtime_string_utils;
+pub mod workspace_runtime_strings;
+pub mod workspace_runtime_template_render;
 
 pub use actor::Actor;
 pub use actor_runtime::{
@@ -114,14 +119,45 @@ pub use execution_workspace_policy::{
     WORKSPACE_WORKTREE_REQUIRES_PROJECT_CODE, WORKSPACE_WORKTREE_REQUIRES_PROJECT_MESSAGE,
     WORKSPACE_WORKTREE_REQUIRES_PROJECT_REMEDIATION,
 };
-pub use workspace_realization::{
-    build_workspace_realization_record, build_workspace_realization_record_from_driver_input,
-    build_workspace_realization_request, read_additional_sources, read_path_aliases,
-    read_string, read_string_array, read_workspace_realization_request,
-    BuildRecordInput, BuildRequestInput, DriverInput, RealizationRequestError,
-    WorkspaceDriverWorkspace,
-};
 pub use id::Id;
+pub use issue_execution_monitor_state::{
+    blank_execution_state, execution_state_with_monitor, iso_string, iso_string_date,
+    iso_string_str, monitor_metadata_from_policy, monitor_metadata_from_state,
+    monitor_states_equal, normalize_monitor_notes, normalize_monitor_text,
+    redact_issue_monitor_external_ref, IsoStringInput, IssueExecutionMonitorClearReason,
+    IssueExecutionMonitorKind, IssueExecutionMonitorPolicy, IssueExecutionMonitorState,
+    IssueExecutionMonitorStateStatus, IssueExecutionStagePrincipal, IssueExecutionStageType,
+    IssueExecutionState, IssueExecutionStateStatus, IssueMonitorScheduledBy, MonitorMetadata,
+    MonitorRecoveryPolicy, ReviewRequest, REDACTED_ISSUE_MONITOR_EXTERNAL_REF,
+};
+pub use issue_execution_policy::{
+    actor_principal, assignee_principal, build_changes_requested_state,
+    build_cleared_monitor_state, build_completed_state, build_pending_stage_patch,
+    build_pending_state, build_scheduled_monitor_state, build_skipped_stage_completed_state,
+    build_state_with_completed_stages, build_triggered_monitor_state, can_auto_skip_pending_stage,
+    clear_execution_state_patch, derive_persisted_monitor_state, exhausted_monitor_clear_reason,
+    find_stage_by_id, issue_allows_monitor, monitor_clear_reason_for_issue, next_assignee_ids,
+    next_pending_stage, next_pending_stage_after, parse_monitor_date, patch_for_principal,
+    principals_equal, resolve_max_review_rounds, review_escalation_user_id,
+    select_stage_participant, set_issue_execution_policy_monitor_scheduled_by,
+    stage_has_participant, strip_monitor_from_execution_policy, ActorLike, AssigneeLike,
+    BuildClearedMonitorStateInput, BuildPendingStagePatchInput, BuildPendingStateInput,
+    BuildStateWithCompletedStagesInput, BuildTriggeredMonitorStateInput,
+    CanAutoSkipPendingStageInput, ClearExecutionStatePatchInput, DerivePersistedMonitorStateInput,
+    ExhaustedMonitorClearReasonInput, IssueExecutionDecision, IssueExecutionDecisionOutcome,
+    IssueExecutionParticipant, IssueExecutionPolicy, IssueExecutionPolicyMode, IssueExecutionStage,
+    IssueLike, NextAssigneeIdsInput, RequestedAssigneePatch, StageParticipantSelectorOpts,
+    DEFAULT_MAX_REVIEW_ROUNDS, MONITOR_BOUNDS_EXHAUSTED_MESSAGE, MONITOR_INVALID_MESSAGE,
+    STAGE_DECISION_COMMENT_HINT,
+};
+pub use issue_execution_transitions::{
+    apply_issue_execution_policy_transition, apply_issue_execution_stage_transition,
+    apply_issue_monitor_policy_transition, apply_monitor_transition,
+    build_initial_issue_monitor_fields, build_issue_monitor_cleared_patch,
+    build_issue_monitor_triggered_patch, BuildInitialMonitorFieldsInput, ClearedPatchInput,
+    MonitorPatch, PolicyTransitionError, PolicyTransitionResult, TransitionInput, TransitionResult,
+    TriggeredPatchInput,
+};
 pub use mcp_http::{
     looks_like_json_rpc_message, mcp_http_request_headers, parse_mcp_http_response_body,
     McpHttpParseError, MCP_HTTP_ACCEPT,
@@ -153,4 +189,10 @@ pub use timestamp::Timestamp;
 pub use tool_profile_binding::{
     narrowest_scope_bindings, profile_ids_in_binding_order, tool_profile_binding_scope_precedence,
     ToolProfileBinding, ToolProfileBindingTargetType, TOOL_PROFILE_BINDING_SCOPE_PRECEDENCE,
+};
+pub use workspace_realization::{
+    build_workspace_realization_record, build_workspace_realization_record_from_driver_input,
+    build_workspace_realization_request, read_additional_sources, read_path_aliases, read_string,
+    read_string_array, read_workspace_realization_request, BuildRecordInput, BuildRequestInput,
+    DriverInput, RealizationRequestError, WorkspaceDriverWorkspace,
 };

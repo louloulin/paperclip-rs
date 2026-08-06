@@ -14,7 +14,8 @@ pub const TRANSIENT_FAILURE_RETRY_WAKE_REASON: &str = "transient_failure_retry";
 pub const MAX_TURN_CONTINUATION_RETRY_REASON: &str = "max_turns_continuation";
 pub const MAX_TURN_CONTINUATION_WAKE_REASON: &str = "max_turns_continuation_retry";
 
-pub const INTERACTION_CONTINUATION_INFRA_RETRY_REASON: &str = "interaction_continuation_infra_retry";
+pub const INTERACTION_CONTINUATION_INFRA_RETRY_REASON: &str =
+    "interaction_continuation_infra_retry";
 
 pub const EXECUTION_REVIEW_PARTICIPANT_RECOVERY_RETRY_REASON: &str =
     "execution_review_participant_recovery";
@@ -38,11 +39,8 @@ pub const TRANSIENT_FAILURE_DELAYS_MS: [i64; 4] = [
 pub const TRANSIENT_FAILURE_MAX_ATTEMPTS: i32 = TRANSIENT_FAILURE_DELAYS_MS.len() as i32;
 pub const TRANSIENT_FAILURE_JITTER_RATIO: f64 = 0.25;
 
-pub const INTERACTION_CONTINUATION_INFRA_DELAYS_MS: [i64; 3] = [
-    60 * 1_000,
-    5 * 60 * 1_000,
-    15 * 60 * 1_000,
-];
+pub const INTERACTION_CONTINUATION_INFRA_DELAYS_MS: [i64; 3] =
+    [60 * 1_000, 5 * 60 * 1_000, 15 * 60 * 1_000];
 pub const INTERACTION_CONTINUATION_INFRA_MAX_ATTEMPTS: i32 =
     INTERACTION_CONTINUATION_INFRA_DELAYS_MS.len() as i32;
 pub const INTERACTION_CONTINUATION_INFRA_JITTER_RATIO: f64 = 0.20;
@@ -52,34 +50,18 @@ pub const MAX_TURN_CONTINUATION_MAX_DELAY_MS: i64 = 5 * 60 * 1_000;
 pub const MAX_TURN_CONTINUATION_DEFAULT_MAX_ATTEMPTS: i32 = 2;
 pub const MAX_TURN_CONTINUATION_MAX_ATTEMPTS_CAP: i32 = 10;
 
-pub const WORKSPACE_RECOVERY_DELAYS_MS: [i64; 3] = [
-    30 * 1_000,
-    2 * 60 * 1_000,
-    10 * 60 * 1_000,
-];
+pub const WORKSPACE_RECOVERY_DELAYS_MS: [i64; 3] = [30 * 1_000, 2 * 60 * 1_000, 10 * 60 * 1_000];
 pub const WORKSPACE_RECOVERY_MAX_ATTEMPTS: i32 = WORKSPACE_RECOVERY_DELAYS_MS.len() as i32;
 pub const WORKSPACE_RECOVERY_JITTER_RATIO: f64 = 0.15;
 
-pub const DEPENDENCY_UNAVAILABLE_DELAYS_MS: [i64; 4] = [
-    5 * 1_000,
-    30 * 1_000,
-    2 * 60 * 1_000,
-    10 * 60 * 1_000,
-];
+pub const DEPENDENCY_UNAVAILABLE_DELAYS_MS: [i64; 4] =
+    [5 * 1_000, 30 * 1_000, 2 * 60 * 1_000, 10 * 60 * 1_000];
 pub const DEPENDENCY_UNAVAILABLE_MAX_ATTEMPTS: i32 = DEPENDENCY_UNAVAILABLE_DELAYS_MS.len() as i32;
 
-pub const WORKSPACE_LOCKED_DELAYS_MS: [i64; 3] = [
-    10 * 1_000,
-    60 * 1_000,
-    5 * 60 * 1_000,
-];
+pub const WORKSPACE_LOCKED_DELAYS_MS: [i64; 3] = [10 * 1_000, 60 * 1_000, 5 * 60 * 1_000];
 pub const WORKSPACE_LOCKED_MAX_ATTEMPTS: i32 = WORKSPACE_LOCKED_DELAYS_MS.len() as i32;
 
-pub const QUOTA_EXCEEDED_DELAYS_MS: [i64; 3] = [
-    60 * 1_000,
-    10 * 60 * 1_000,
-    30 * 60 * 1_000,
-];
+pub const QUOTA_EXCEEDED_DELAYS_MS: [i64; 3] = [60 * 1_000, 10 * 60 * 1_000, 30 * 60 * 1_000];
 pub const QUOTA_EXCEEDED_MAX_ATTEMPTS: i32 = QUOTA_EXCEEDED_DELAYS_MS.len() as i32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -116,7 +98,10 @@ impl RetryReason {
     }
 
     pub fn is_continuation_retry(&self) -> bool {
-        matches!(self, Self::MaxTurnsContinuation | Self::InteractionContinuationInfra)
+        matches!(
+            self,
+            Self::MaxTurnsContinuation | Self::InteractionContinuationInfra
+        )
     }
 
     pub fn requires_wake_agent(&self) -> bool {
@@ -291,9 +276,7 @@ fn bounded_schedule(
         attempt,
         base_delay_ms,
         delay_ms,
-        due_at: Timestamp::from_dt(
-            now.as_datetime() + chrono::Duration::milliseconds(delay_ms),
-        ),
+        due_at: Timestamp::from_dt(now.as_datetime() + chrono::Duration::milliseconds(delay_ms)),
         max_attempts,
     }
 }
@@ -361,7 +344,10 @@ mod tests {
         assert_eq!(RetryReason::TransientFailure.max_attempts(), 4);
         assert_eq!(RetryReason::MaxTurnsContinuation.max_attempts(), 2);
         assert_eq!(RetryReason::InteractionContinuationInfra.max_attempts(), 3);
-        assert_eq!(RetryReason::ExecutionReviewParticipantRecovery.max_attempts(), 1);
+        assert_eq!(
+            RetryReason::ExecutionReviewParticipantRecovery.max_attempts(),
+            1
+        );
         assert_eq!(RetryReason::WorkspaceValidationFailed.max_attempts(), 3);
         assert_eq!(RetryReason::ConfigurationIncomplete.max_attempts(), 3);
         assert_eq!(RetryReason::DependencyUnavailable.max_attempts(), 4);
@@ -427,7 +413,8 @@ mod tests {
     #[test]
     fn interaction_continuation_infra_has_3_attempts() {
         let n = now();
-        let s = decide_retry_schedule(RetryReason::InteractionContinuationInfra, 1, n, 0.5).unwrap();
+        let s =
+            decide_retry_schedule(RetryReason::InteractionContinuationInfra, 1, n, 0.5).unwrap();
         assert_eq!(s.max_attempts, 3);
         assert_eq!(s.base_delay_ms, 60_000);
     }
@@ -450,25 +437,18 @@ mod tests {
     #[test]
     fn execution_review_participant_recovery_returns_none() {
         let n = now();
-        assert!(decide_retry_schedule(
-            RetryReason::ExecutionReviewParticipantRecovery,
-            1,
-            n,
-            0.5
-        )
-        .is_none());
+        assert!(
+            decide_retry_schedule(RetryReason::ExecutionReviewParticipantRecovery, 1, n, 0.5)
+                .is_none()
+        );
     }
 
     #[test]
     fn unknown_reason_returns_none() {
         let n = now();
-        assert!(decide_retry_schedule(
-            RetryReason::Other("custom".to_string()),
-            1,
-            n,
-            0.5
-        )
-        .is_none());
+        assert!(
+            decide_retry_schedule(RetryReason::Other("custom".to_string()), 1, n, 0.5).is_none()
+        );
     }
 
     #[test]
@@ -501,7 +481,10 @@ mod tests {
     #[test]
     fn retry_reason_string_form_is_stable() {
         assert_eq!(RetryReason::TransientFailure.as_str(), "transient_failure");
-        assert_eq!(RetryReason::MaxTurnsContinuation.as_str(), "max_turns_continuation");
+        assert_eq!(
+            RetryReason::MaxTurnsContinuation.as_str(),
+            "max_turns_continuation"
+        );
         assert_eq!(
             RetryReason::InteractionContinuationInfra.as_str(),
             "interaction_continuation_infra_retry"

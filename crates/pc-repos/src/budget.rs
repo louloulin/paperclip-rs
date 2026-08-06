@@ -170,8 +170,26 @@ impl<'a> BudgetRepo<'a> {
         .await
     }
 
+    /// Attention 队列用：只返回尚未解决的预算事件。
+    pub async fn list_open_attention(&self, company_id: Uuid) -> sqlx::Result<Vec<IncidentRow>> {
+        sqlx::query_as::<_, IncidentRow>(
+            "SELECT id, company_id, policy_id, scope_type, scope_id, metric, window_kind, \
+                    window_start, window_end, threshold_type, amount_limit, amount_observed, \
+                    status, approval_id, resolved_at, created_at, updated_at \
+             FROM budget_incidents WHERE company_id=$1 AND status='open' \
+             ORDER BY updated_at DESC, id DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
     /// Round 194: 获取单个 incident。
-    pub async fn get_incident(&self, company_id: Uuid, id: Uuid) -> sqlx::Result<Option<IncidentRow>> {
+    pub async fn get_incident(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> sqlx::Result<Option<IncidentRow>> {
         sqlx::query_as::<_, IncidentRow>(
             "SELECT id, company_id, policy_id, scope_type, scope_id, metric, window_kind, \
                     window_start, window_end, threshold_type, amount_limit, amount_observed, \

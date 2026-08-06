@@ -225,7 +225,9 @@ pub enum WorkspaceFileError {
 /// - 空字符串 / 全空白 → `PathRequired`
 /// - UTF-8 字节数 > MAX_RELATIVE_PATH_BYTES → `PathTooLong`
 /// - 含 `\` 段 / 非 posix 分隔符 → `InvalidPath("backslash ...")`
-pub fn normalize_workspace_relative_path(input: &str) -> Result<NormalizedPath, WorkspaceFileError> {
+pub fn normalize_workspace_relative_path(
+    input: &str,
+) -> Result<NormalizedPath, WorkspaceFileError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(WorkspaceFileError::PathRequired);
@@ -282,14 +284,23 @@ impl NormalizedPath {
 /// 与 Node `relativePathFromReal(root, target)` 等价：用 `path.relative` 后用 `/` 重接。
 pub fn relative_path_from_real(root_real: &Path, target_real: &Path) -> String {
     let rel = pathdiff_relative(root_real, target_real);
-    rel.to_string_lossy().split(MAIN_SEPARATOR).collect::<Vec<_>>().join("/")
+    rel.to_string_lossy()
+        .split(MAIN_SEPARATOR)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn pathdiff_relative(root: &Path, target: &Path) -> PathBuf {
     let root_clean = clean_path(root);
     let target_clean = clean_path(target);
-    let mut root_parts: Vec<&str> = root_clean.iter().map(|c| c.to_str().unwrap_or("")).collect();
-    let mut target_parts: Vec<&str> = target_clean.iter().map(|c| c.to_str().unwrap_or("")).collect();
+    let mut root_parts: Vec<&str> = root_clean
+        .iter()
+        .map(|c| c.to_str().unwrap_or(""))
+        .collect();
+    let mut target_parts: Vec<&str> = target_clean
+        .iter()
+        .map(|c| c.to_str().unwrap_or(""))
+        .collect();
 
     // 跳过共同前缀
     while !root_parts.is_empty() && !target_parts.is_empty() && root_parts[0] == target_parts[0] {
@@ -315,7 +326,9 @@ pub fn is_inside_root(root_real: &Path, target_real: &Path) -> bool {
         return true;
     }
     let rel_str = rel.to_string_lossy();
-    !rel_str.starts_with("..") && !rel.starts_with(Path::new("/")) && !rel_components_have_parent(&rel)
+    !rel_str.starts_with("..")
+        && !rel.starts_with(Path::new("/"))
+        && !rel_components_have_parent(&rel)
 }
 
 fn rel_components_have_parent(p: &Path) -> bool {
@@ -364,9 +377,21 @@ mod tests {
     #[test]
     fn denied_segments_match_node() {
         for s in [
-            ".git", ".paperclip", "node_modules", ".pnpm-store", ".yarn", ".cache", ".turbo",
-            ".next", ".vite", ".vercel", "dist", "build", "coverage",
-            "runtime-services", ".runtime",
+            ".git",
+            ".paperclip",
+            "node_modules",
+            ".pnpm-store",
+            ".yarn",
+            ".cache",
+            ".turbo",
+            ".next",
+            ".vite",
+            ".vercel",
+            "dist",
+            "build",
+            "coverage",
+            "runtime-services",
+            ".runtime",
         ] {
             assert!(is_denied_segment(s), "missing denied: {s}");
         }
@@ -376,7 +401,9 @@ mod tests {
 
     #[test]
     fn text_extensions_match_node() {
-        for ext in [".ts", ".tsx", ".rs", ".py", ".md", ".json", ".yaml", ".html", ".sql"] {
+        for ext in [
+            ".ts", ".tsx", ".rs", ".py", ".md", ".json", ".yaml", ".html", ".sql",
+        ] {
             assert!(is_text_extension(ext), "missing text ext: {ext}");
         }
         assert!(!is_text_extension(".exe"));
@@ -413,8 +440,14 @@ mod tests {
 
     #[test]
     fn preview_mime_caps_match_node() {
-        assert_eq!(PreviewMime::Image.cap_bytes(), WORKSPACE_FILE_MEDIA_MAX_BYTES);
-        assert_eq!(PreviewMime::Video.cap_bytes(), WORKSPACE_FILE_MEDIA_MAX_BYTES);
+        assert_eq!(
+            PreviewMime::Image.cap_bytes(),
+            WORKSPACE_FILE_MEDIA_MAX_BYTES
+        );
+        assert_eq!(
+            PreviewMime::Video.cap_bytes(),
+            WORKSPACE_FILE_MEDIA_MAX_BYTES
+        );
         assert_eq!(PreviewMime::Text.cap_bytes(), WORKSPACE_FILE_TEXT_MAX_BYTES);
     }
 
@@ -436,8 +469,14 @@ mod tests {
 
     #[test]
     fn normalize_rejects_empty_and_whitespace() {
-        assert_eq!(normalize_workspace_relative_path(""), Err(WorkspaceFileError::PathRequired));
-        assert_eq!(normalize_workspace_relative_path("   "), Err(WorkspaceFileError::PathRequired));
+        assert_eq!(
+            normalize_workspace_relative_path(""),
+            Err(WorkspaceFileError::PathRequired)
+        );
+        assert_eq!(
+            normalize_workspace_relative_path("   "),
+            Err(WorkspaceFileError::PathRequired)
+        );
     }
 
     #[test]
@@ -590,7 +629,12 @@ pub fn deny_reason_for_segments(segments: &[&str]) -> Option<DenyReason> {
         return Some(DenyReason::DeniedSecret);
     }
     const SECRET_FILES: &[&str] = &[
-        "id_rsa", "id_ed25519", ".npmrc", ".pypirc", ".netrc", "kubeconfig",
+        "id_rsa",
+        "id_ed25519",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        "kubeconfig",
     ];
     if SECRET_FILES.contains(&file_name) {
         return Some(DenyReason::DeniedSecret);
@@ -720,34 +764,61 @@ mod extra_tests {
     #[test]
     fn deny_node_modules_is_path_segment() {
         let segs = vec!["src", "node_modules", "foo.js"];
-        assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedPathSegment));
+        assert_eq!(
+            deny_reason_for_segments(&segs),
+            Some(DenyReason::DeniedPathSegment)
+        );
     }
 
     #[test]
     fn deny_dot_env_is_secret() {
         // Node 行为：取最后一个 segment 作为 fileName
         let segs = vec![".env"];
-        assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret));
+        assert_eq!(
+            deny_reason_for_segments(&segs),
+            Some(DenyReason::DeniedSecret)
+        );
         let segs = vec!["home", ".env"];
-        assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret));
+        assert_eq!(
+            deny_reason_for_segments(&segs),
+            Some(DenyReason::DeniedSecret)
+        );
         // 隐藏子目录中的 .env.local / .env.production 也命中
         let segs = vec!["home", ".env.production"];
-        assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret));
+        assert_eq!(
+            deny_reason_for_segments(&segs),
+            Some(DenyReason::DeniedSecret)
+        );
     }
 
     #[test]
     fn deny_pem_and_key_files() {
         for name in ["server.pem", "server.key", "server.p12", "server.pfx"] {
             let segs = vec![name];
-            assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret), "{name}");
+            assert_eq!(
+                deny_reason_for_segments(&segs),
+                Some(DenyReason::DeniedSecret),
+                "{name}"
+            );
         }
     }
 
     #[test]
     fn deny_ssh_key_file_names() {
-        for name in ["id_rsa", "id_ed25519", ".npmrc", ".pypirc", ".netrc", "kubeconfig"] {
+        for name in [
+            "id_rsa",
+            "id_ed25519",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            "kubeconfig",
+        ] {
             let segs = vec![name];
-            assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret), "{name}");
+            assert_eq!(
+                deny_reason_for_segments(&segs),
+                Some(DenyReason::DeniedSecret),
+                "{name}"
+            );
         }
     }
 
@@ -766,9 +837,15 @@ mod extra_tests {
     #[test]
     fn deny_docker_and_kube_config() {
         let segs = vec!["home", ".docker", "config.json"];
-        assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret));
+        assert_eq!(
+            deny_reason_for_segments(&segs),
+            Some(DenyReason::DeniedSecret)
+        );
         let segs = vec!["home", ".kube", "config"];
-        assert_eq!(deny_reason_for_segments(&segs), Some(DenyReason::DeniedSecret));
+        assert_eq!(
+            deny_reason_for_segments(&segs),
+            Some(DenyReason::DeniedSecret)
+        );
     }
 
     #[test]
@@ -780,25 +857,58 @@ mod extra_tests {
 
     #[test]
     fn content_type_for_image_extensions() {
-        assert_eq!(content_type_for_path("a.png"), Some("image/png".to_string()));
-        assert_eq!(content_type_for_path("a.JPG"), Some("image/jpeg".to_string()));
-        assert_eq!(content_type_for_path("a.webp"), Some("image/webp".to_string()));
+        assert_eq!(
+            content_type_for_path("a.png"),
+            Some("image/png".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.JPG"),
+            Some("image/jpeg".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.webp"),
+            Some("image/webp".to_string())
+        );
     }
 
     #[test]
     fn content_type_for_video_extensions() {
-        assert_eq!(content_type_for_path("a.mp4"), Some("video/mp4".to_string()));
-        assert_eq!(content_type_for_path("a.MOV"), Some("video/quicktime".to_string()));
+        assert_eq!(
+            content_type_for_path("a.mp4"),
+            Some("video/mp4".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.MOV"),
+            Some("video/quicktime".to_string())
+        );
     }
 
     #[test]
     fn content_type_for_pdf_svg_html_text() {
-        assert_eq!(content_type_for_path("a.pdf"), Some("application/pdf".to_string()));
-        assert_eq!(content_type_for_path("a.svg"), Some("image/svg+xml".to_string()));
-        assert_eq!(content_type_for_path("a.html"), Some("text/html".to_string()));
-        assert_eq!(content_type_for_path("a.htm"), Some("text/html".to_string()));
-        assert_eq!(content_type_for_path("a.rs"), Some("text/plain; charset=utf-8".to_string()));
-        assert_eq!(content_type_for_path("a.json"), Some("text/plain; charset=utf-8".to_string()));
+        assert_eq!(
+            content_type_for_path("a.pdf"),
+            Some("application/pdf".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.svg"),
+            Some("image/svg+xml".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.html"),
+            Some("text/html".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.htm"),
+            Some("text/html".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.rs"),
+            Some("text/plain; charset=utf-8".to_string())
+        );
+        assert_eq!(
+            content_type_for_path("a.json"),
+            Some("text/plain; charset=utf-8".to_string())
+        );
     }
 
     #[test]
@@ -809,15 +919,42 @@ mod extra_tests {
 
     #[test]
     fn preview_kind_classifies_known_types() {
-        assert_eq!(preview_kind_for_content_type(Some("image/png")), PreviewKind::Image);
-        assert_eq!(preview_kind_for_content_type(Some("image/jpeg")), PreviewKind::Image);
-        assert_eq!(preview_kind_for_content_type(Some("image/svg+xml")), PreviewKind::Text);
-        assert_eq!(preview_kind_for_content_type(Some("video/mp4")), PreviewKind::Video);
-        assert_eq!(preview_kind_for_content_type(Some("application/pdf")), PreviewKind::Pdf);
-        assert_eq!(preview_kind_for_content_type(Some("text/html")), PreviewKind::Unsupported);
-        assert_eq!(preview_kind_for_content_type(Some("text/plain; charset=utf-8")), PreviewKind::Text);
-        assert_eq!(preview_kind_for_content_type(Some("application/octet-stream")), PreviewKind::Unsupported);
-        assert_eq!(preview_kind_for_content_type(None), PreviewKind::Unsupported);
+        assert_eq!(
+            preview_kind_for_content_type(Some("image/png")),
+            PreviewKind::Image
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("image/jpeg")),
+            PreviewKind::Image
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("image/svg+xml")),
+            PreviewKind::Text
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("video/mp4")),
+            PreviewKind::Video
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("application/pdf")),
+            PreviewKind::Pdf
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("text/html")),
+            PreviewKind::Unsupported
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("text/plain; charset=utf-8")),
+            PreviewKind::Text
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("application/octet-stream")),
+            PreviewKind::Unsupported
+        );
+        assert_eq!(
+            preview_kind_for_content_type(None),
+            PreviewKind::Unsupported
+        );
     }
 
     #[test]

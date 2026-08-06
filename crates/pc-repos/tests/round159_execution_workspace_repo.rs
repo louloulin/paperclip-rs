@@ -7,9 +7,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -187,10 +185,7 @@ async fn latest_heartbeat_for_workspace_empty() {
     let cid = insert_company(&db, "lh1").await;
     let id = insert_workspace(&db, cid, "active", "ws-lh").await;
     let repo = ExecutionRepo::new(&db);
-    let none = repo
-        .latest_heartbeat_for_workspace(id)
-        .await
-        .expect("get");
+    let none = repo.latest_heartbeat_for_workspace(id).await.expect("get");
     // 可能为 None（新 workspace 无 heartbeat），也可能命中其他测试残留
     let _ = none;
 }

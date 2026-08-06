@@ -41,14 +41,10 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
-
 
 async fn ensure_team_installs_schema(db: &Db) {
     sqlx::query(
@@ -89,12 +85,7 @@ async fn insert_company(db: &Db) -> Uuid {
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -134,20 +125,17 @@ async fn teams_catalog_list_returns_items_from_embedded_catalog() {
     assert!(!items.is_empty(), "should have at least one bundled team");
     // Each item has key/name/etc
     let first = &items[0];
-    assert!(first["key"].is_string() || first["id"].is_string(), "team must have key/id: {first}");
+    assert!(
+        first["key"].is_string() || first["id"].is_string(),
+        "team must have key/id: {first}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn teams_catalog_detail_404_for_missing_team() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let app = routes::teams_catalog::router().with_state(test_state(db));
-    let (status, _) = call(
-        &app,
-        "GET",
-        "/api/teams/catalog/does-not-exist-xyz",
-        None,
-    )
-    .await;
+    let (status, _) = call(&app, "GET", "/api/teams/catalog/does-not-exist-xyz", None).await;
     assert_eq!(status, 404, "unknown catalog should 404");
 }
 
@@ -166,13 +154,16 @@ async fn teams_install_then_list_installed_lifecycle() {
         .map(str::to_string)
         .expect("catalog key");
     let key = raw_key.clone();
-    let key_enc: String = raw_key.bytes().map(|b| {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-            (b as char).to_string()
-        } else {
-            format!("%{:02X}", b)
-        }
-    }).collect();
+    let key_enc: String = raw_key
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+                (b as char).to_string()
+            } else {
+                format!("%{:02X}", b)
+            }
+        })
+        .collect();
 
     // Install
     let (status, body) = call(
@@ -186,7 +177,12 @@ async fn teams_install_then_list_installed_lifecycle() {
         (200..300).contains(&status),
         "install status={status}: {body}"
     );
-    assert!(body["status"].as_str().unwrap().contains("queued"), "status={}; body={}", body["status"], body);
+    assert!(
+        body["status"].as_str().unwrap().contains("queued"),
+        "status={}; body={}",
+        body["status"],
+        body
+    );
     assert_eq!(body["catalogId"], key);
 
     // List installed
@@ -212,10 +208,7 @@ async fn teams_install_then_list_installed_lifecycle() {
         None,
     )
     .await;
-    assert!(
-        (200..300).contains(&status),
-        "uninstall status={status}"
-    );
+    assert!((200..300).contains(&status), "uninstall status={status}");
 
     // Verify removed / status updated
     let (_, body) = call(

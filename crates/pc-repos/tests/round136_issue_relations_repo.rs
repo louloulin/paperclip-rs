@@ -21,15 +21,20 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r136-{tag}-{id}"))
         .bind(format!("R136{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
 async fn insert_project(db: &Db, company_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO projects (id, company_id, name, key) VALUES ($1, $2, 'p', 'p')")
-        .bind(id).bind(company_id)
-        .execute(db.pool()).await.expect("project");
+        .bind(id)
+        .bind(company_id)
+        .execute(db.pool())
+        .await
+        .expect("project");
     id
 }
 
@@ -49,7 +54,13 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn link_case_to_issue(db: &Db, company_id: Uuid, case_id: Uuid, issue_id: Uuid, role: &str) -> Uuid {
+async fn link_case_to_issue(
+    db: &Db,
+    company_id: Uuid,
+    case_id: Uuid,
+    issue_id: Uuid,
+    role: &str,
+) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO case_issue_links (id, company_id, case_id, issue_id, role) VALUES ($1, $2, $3, $4, $5)")
         .bind(id).bind(company_id).bind(case_id).bind(issue_id).bind(role)
@@ -65,7 +76,10 @@ async fn list_issue_cases_empty() {
     let db = db().await;
     let cid = insert_company(&db, "e").await;
     let iid = insert_issue(&db, cid).await;
-    let list = CaseRepo::new(&db).list_issue_cases(iid).await.expect("list");
+    let list = CaseRepo::new(&db)
+        .list_issue_cases(iid)
+        .await
+        .expect("list");
     assert!(list.is_empty());
 }
 
@@ -80,7 +94,10 @@ async fn list_issue_cases_returns_links() {
     let iid = insert_issue(&db, cid).await;
     link_case_to_issue(&db, cid, c1, iid, "primary").await;
     link_case_to_issue(&db, cid, c2, iid, "secondary").await;
-    let list = CaseRepo::new(&db).list_issue_cases(iid).await.expect("list");
+    let list = CaseRepo::new(&db)
+        .list_issue_cases(iid)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 2);
     let roles: Vec<_> = list.iter().map(|l| l.role.as_str()).collect();
     assert!(roles.contains(&"primary"));
@@ -97,8 +114,22 @@ async fn list_issue_cases_isolates() {
     let i1 = insert_issue(&db, cid).await;
     let i2 = insert_issue(&db, cid).await;
     link_case_to_issue(&db, cid, c, i1, "primary").await;
-    assert_eq!(CaseRepo::new(&db).list_issue_cases(i1).await.expect("i1").len(), 1);
-    assert_eq!(CaseRepo::new(&db).list_issue_cases(i2).await.expect("i2").len(), 0);
+    assert_eq!(
+        CaseRepo::new(&db)
+            .list_issue_cases(i1)
+            .await
+            .expect("i1")
+            .len(),
+        1
+    );
+    assert_eq!(
+        CaseRepo::new(&db)
+            .list_issue_cases(i2)
+            .await
+            .expect("i2")
+            .len(),
+        0
+    );
 }
 
 /// 4. list_issue_cases — 字段投影含 caseStatus / projectId。
@@ -110,7 +141,10 @@ async fn list_issue_cases_full_fields() {
     let c = insert_case(&db, cid, pid).await;
     let iid = insert_issue(&db, cid).await;
     link_case_to_issue(&db, cid, c, iid, "primary").await;
-    let list = CaseRepo::new(&db).list_issue_cases(iid).await.expect("list");
+    let list = CaseRepo::new(&db)
+        .list_issue_cases(iid)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 1);
     let row = &list[0];
     assert_eq!(row.case_id, c);
@@ -129,7 +163,13 @@ async fn insert_agent(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn insert_heartbeat_run(db: &Db, company_id: Uuid, agent_id: Uuid, issue_id: Uuid, status: &str) -> Uuid {
+async fn insert_heartbeat_run(
+    db: &Db,
+    company_id: Uuid,
+    agent_id: Uuid,
+    issue_id: Uuid,
+    status: &str,
+) -> Uuid {
     let id = Uuid::new_v4();
     let ctx = serde_json::json!({"issueId": issue_id.to_string(), "source": "test"});
     sqlx::query("INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot) VALUES ($1, $2, $3, 'on_demand', $4, $5)")
@@ -142,7 +182,10 @@ async fn insert_heartbeat_run(db: &Db, company_id: Uuid, agent_id: Uuid, issue_i
 #[tokio::test(flavor = "current_thread")]
 async fn list_runs_by_issue_empty() {
     let db = db().await;
-    let list = HeartbeatRepo::new(&db).list_runs_by_issue(Uuid::new_v4(), 100).await.expect("list");
+    let list = HeartbeatRepo::new(&db)
+        .list_runs_by_issue(Uuid::new_v4(), 100)
+        .await
+        .expect("list");
     assert!(list.is_empty());
 }
 
@@ -157,8 +200,22 @@ async fn list_runs_by_issue_filters_by_context() {
     insert_heartbeat_run(&db, cid, aid, i1, "queued").await;
     insert_heartbeat_run(&db, cid, aid, i1, "running").await;
     insert_heartbeat_run(&db, cid, aid, i2, "queued").await;
-    assert_eq!(HeartbeatRepo::new(&db).list_runs_by_issue(i1, 100).await.expect("i1").len(), 2);
-    assert_eq!(HeartbeatRepo::new(&db).list_runs_by_issue(i2, 100).await.expect("i2").len(), 1);
+    assert_eq!(
+        HeartbeatRepo::new(&db)
+            .list_runs_by_issue(i1, 100)
+            .await
+            .expect("i1")
+            .len(),
+        2
+    );
+    assert_eq!(
+        HeartbeatRepo::new(&db)
+            .list_runs_by_issue(i2, 100)
+            .await
+            .expect("i2")
+            .len(),
+        1
+    );
 }
 
 /// 7. list_runs_by_issue — limit 生效。
@@ -171,7 +228,10 @@ async fn list_runs_by_issue_respects_limit() {
     for _ in 0..5 {
         insert_heartbeat_run(&db, cid, aid, iid, "queued").await;
     }
-    let list = HeartbeatRepo::new(&db).list_runs_by_issue(iid, 3).await.expect("list");
+    let list = HeartbeatRepo::new(&db)
+        .list_runs_by_issue(iid, 3)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 3);
 }
 
@@ -181,7 +241,13 @@ async fn list_runs_by_issue_clamps_limit() {
     let db = db().await;
     let repo = HeartbeatRepo::new(&db);
     // limit > 500 应被 clamp 到 500（SQL 仍能成功执行）
-    let _ = repo.list_runs_by_issue(Uuid::new_v4(), 1000).await.expect("clamp high");
+    let _ = repo
+        .list_runs_by_issue(Uuid::new_v4(), 1000)
+        .await
+        .expect("clamp high");
     // limit < 1 应被 clamp 到 1
-    let _ = repo.list_runs_by_issue(Uuid::new_v4(), 0).await.expect("clamp low");
+    let _ = repo
+        .list_runs_by_issue(Uuid::new_v4(), 0)
+        .await
+        .expect("clamp low");
 }

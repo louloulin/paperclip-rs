@@ -325,7 +325,8 @@ impl AgentService {
         if input.name.trim().is_empty() {
             return Err(validation("name must not be empty"));
         }
-        let normalized = crate::permissions::normalize_agent_permissions(input.permissions.clone(), &input.role);
+        let normalized =
+            crate::permissions::normalize_agent_permissions(input.permissions.clone(), &input.role);
         let permissions = normalized.to_value();
         AgentRepo::new(&self.db)
             .create_full(CreateAgentRecord {
@@ -368,7 +369,8 @@ impl AgentService {
             "idle".into()
         };
         let id = input.id.unwrap_or_else(Uuid::new_v4);
-        let normalized = crate::permissions::normalize_agent_permissions(input.permissions.clone(), &input.role);
+        let normalized =
+            crate::permissions::normalize_agent_permissions(input.permissions.clone(), &input.role);
         let permissions = normalized.to_value();
         let payload = json!({
             "name": input.name,
@@ -464,7 +466,10 @@ impl AgentService {
         if let Some(value) = input.authorization_policy {
             permissions.insert("authorizationPolicy".into(), value);
         }
-        let normalized = crate::permissions::normalize_agent_permissions(Value::Object(permissions), &existing.role);
+        let normalized = crate::permissions::normalize_agent_permissions(
+            Value::Object(permissions),
+            &existing.role,
+        );
         let permissions = normalized.to_value();
         let effective_can_assign = existing.role.eq_ignore_ascii_case("ceo")
             || input.can_create_agents

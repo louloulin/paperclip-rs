@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -64,12 +61,7 @@ async fn insert_company(db: &Db) -> Uuid {
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -101,9 +93,7 @@ async fn call(
 
 #[tokio::test(flavor = "current_thread")]
 async fn activity_emit_and_list_roundtrip() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::activity::router().with_state(test_state(db.clone()));
 
@@ -144,9 +134,7 @@ async fn activity_emit_and_list_roundtrip() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn activity_emit_rejects_unknown_kind() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let app = routes::activity::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -165,9 +153,7 @@ async fn activity_emit_rejects_unknown_kind() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn attention_list_returns_empty_for_company_with_no_signals() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::attention::router().with_state(test_state(db.clone()));
 
@@ -185,9 +171,7 @@ async fn attention_list_returns_empty_for_company_with_no_signals() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn attention_list_includes_pending_approval() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
 
     // Insert a pending approval
@@ -223,9 +207,7 @@ async fn attention_list_includes_pending_approval() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn company_import_paths_returns_empty_default() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::company_import_paths::router().with_state(test_state(db.clone()));
 

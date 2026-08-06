@@ -9,12 +9,12 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use pc_auth::ApiKeyIssuer;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use uuid::Uuid;
 use pc_core::Timestamp;
 use pc_repos::auth::{AuthRepo, NewSession, NewUser};
 use pc_repos::company_member::CompanyMemberRepo;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -156,11 +156,7 @@ async fn sign_in(
     let user_id = if let Some(uid) = body.user_id {
         // 直接指定 user_id
         AuthRepo::new(&state.db)
-            .ensure_user(
-                &uid,
-                body.name.as_deref().unwrap_or("user"),
-                &body.email,
-            )
+            .ensure_user(&uid, body.name.as_deref().unwrap_or("user"), &body.email)
             .await?;
         uid
     } else if !body.email.is_empty() {
@@ -344,7 +340,6 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-
 #[derive(Debug, Serialize)]
 #[allow(dead_code)]
 struct ProfilePayload {
@@ -425,7 +420,6 @@ async fn patch_profile(
         image: user.image,
     }))
 }
-
 
 // ============ Round 29: Better-Auth wire endpoints ============
 
@@ -666,7 +660,8 @@ async fn refresh_session(
     })
     .await?;
     state.realtime.publish(
-        pc_realtime::LiveEvent::new("auth.session_rotated", "user", Uuid::nil()).with_actor(&user_id),
+        pc_realtime::LiveEvent::new("auth.session_rotated", "user", Uuid::nil())
+            .with_actor(&user_id),
     );
     Ok(Json(RefreshResponse {
         success: true,
@@ -674,7 +669,6 @@ async fn refresh_session(
         expires_at,
     }))
 }
-
 
 // ============================================================================
 // Round 41: legacy short aliases for /api/get-session and /api/profile.

@@ -15,9 +15,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -60,12 +58,7 @@ async fn insert_policy(
     id
 }
 
-async fn insert_incident(
-    db: &Db,
-    company_id: Uuid,
-    policy_id: Uuid,
-    status: &str,
-) -> Uuid {
+async fn insert_incident(db: &Db, company_id: Uuid, policy_id: Uuid, status: &str) -> Uuid {
     let id = Uuid::new_v4();
     let scope_id = Uuid::new_v4();
     sqlx::query(
@@ -93,9 +86,36 @@ async fn list_policies_filters_by_company() {
     let c1 = insert_company(&db, "lp-c1").await;
     let c2 = insert_company(&db, "lp-c2").await;
     let sid = Uuid::new_v4();
-    insert_policy(&db, c1, "company", sid, "billed_cents", "calendar_month_utc", 100_000).await;
-    insert_policy(&db, c1, "company", sid, "billed_cents", "rolling_24h", 10_000).await;
-    insert_policy(&db, c2, "company", sid, "billed_cents", "calendar_month_utc", 200_000).await;
+    insert_policy(
+        &db,
+        c1,
+        "company",
+        sid,
+        "billed_cents",
+        "calendar_month_utc",
+        100_000,
+    )
+    .await;
+    insert_policy(
+        &db,
+        c1,
+        "company",
+        sid,
+        "billed_cents",
+        "rolling_24h",
+        10_000,
+    )
+    .await;
+    insert_policy(
+        &db,
+        c2,
+        "company",
+        sid,
+        "billed_cents",
+        "calendar_month_utc",
+        200_000,
+    )
+    .await;
 
     let repo = BudgetRepo::new(&db);
     let rows = repo.list_policies(c1).await.expect("list c1");
@@ -211,8 +231,26 @@ async fn list_incidents_filters_by_company() {
     let db = db().await;
     let c1 = insert_company(&db, "li-c1").await;
     let c2 = insert_company(&db, "li-c2").await;
-    let p1 = insert_policy(&db, c1, "company", Uuid::new_v4(), "billed_cents", "calendar_month_utc", 100).await;
-    let p2 = insert_policy(&db, c2, "company", Uuid::new_v4(), "billed_cents", "calendar_month_utc", 200).await;
+    let p1 = insert_policy(
+        &db,
+        c1,
+        "company",
+        Uuid::new_v4(),
+        "billed_cents",
+        "calendar_month_utc",
+        100,
+    )
+    .await;
+    let p2 = insert_policy(
+        &db,
+        c2,
+        "company",
+        Uuid::new_v4(),
+        "billed_cents",
+        "calendar_month_utc",
+        200,
+    )
+    .await;
     insert_incident(&db, c1, p1, "open").await;
     insert_incident(&db, c1, p1, "resolved").await;
     insert_incident(&db, c2, p2, "open").await;
@@ -229,11 +267,24 @@ async fn list_incidents_filters_by_company() {
 async fn get_incident_returns_row() {
     let db = db().await;
     let cid = insert_company(&db, "gi").await;
-    let pid = insert_policy(&db, cid, "company", Uuid::new_v4(), "billed_cents", "calendar_month_utc", 100).await;
+    let pid = insert_policy(
+        &db,
+        cid,
+        "company",
+        Uuid::new_v4(),
+        "billed_cents",
+        "calendar_month_utc",
+        100,
+    )
+    .await;
     let iid = insert_incident(&db, cid, pid, "open").await;
     let repo = BudgetRepo::new(&db);
 
-    let row = repo.get_incident(cid, iid).await.expect("get").expect("exists");
+    let row = repo
+        .get_incident(cid, iid)
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(row.id, iid);
     assert_eq!(row.status, "open");
     assert!(row.resolved_at.is_none());
@@ -253,7 +304,16 @@ async fn get_incident_missing_returns_none() {
 async fn resolve_incident_sets_status_resolved() {
     let db = db().await;
     let cid = insert_company(&db, "ri").await;
-    let pid = insert_policy(&db, cid, "company", Uuid::new_v4(), "billed_cents", "calendar_month_utc", 100).await;
+    let pid = insert_policy(
+        &db,
+        cid,
+        "company",
+        Uuid::new_v4(),
+        "billed_cents",
+        "calendar_month_utc",
+        100,
+    )
+    .await;
     let iid = insert_incident(&db, cid, pid, "open").await;
     let repo = BudgetRepo::new(&db);
 
@@ -278,7 +338,16 @@ async fn resolve_incident_sets_status_resolved() {
 async fn resolve_incident_already_resolved_returns_none() {
     let db = db().await;
     let cid = insert_company(&db, "ri-done").await;
-    let pid = insert_policy(&db, cid, "company", Uuid::new_v4(), "billed_cents", "calendar_month_utc", 100).await;
+    let pid = insert_policy(
+        &db,
+        cid,
+        "company",
+        Uuid::new_v4(),
+        "billed_cents",
+        "calendar_month_utc",
+        100,
+    )
+    .await;
     let iid = insert_incident(&db, cid, pid, "resolved").await;
     let repo = BudgetRepo::new(&db);
 
@@ -294,7 +363,8 @@ async fn resolve_incident_already_resolved_returns_none() {
         )
         .await
         .expect("resolve");
-    assert!(row.is_none(), "already-resolved incidents must not re-resolve");
+    assert!(
+        row.is_none(),
+        "already-resolved incidents must not re-resolve"
+    );
 }
-
-

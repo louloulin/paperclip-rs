@@ -16,9 +16,9 @@
 //! - `FilteredSubscriber<F>`：装饰器，按 predicate 过滤事件，循环 `next_event` 直到匹配。
 //! - `ReplayThenLiveSubscriber`：先重放一批历史事件，再切换到 live。
 
+use futures::future::BoxFuture;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use futures::future::BoxFuture;
 
 /// 通用订阅抽象（异步消费 `Arc<LiveEvent>` 流）。
 pub trait Subscriber: Send + Sync + 'static {
@@ -195,10 +195,10 @@ mod tests {
     #[tokio::test]
     async fn filtered_subscriber_drops_non_matching() {
         let h = RealtimeHandle::start(16);
-        let mut sub = FilteredSubscriber::new(
-            Box::new(BroadcastSubscriber::new(h.subscribe())),
-            |e| e.event.starts_with("issue."),
-        );
+        let mut sub =
+            FilteredSubscriber::new(Box::new(BroadcastSubscriber::new(h.subscribe())), |e| {
+                e.event.starts_with("issue.")
+            });
         h.publish(LiveEvent::new("heartbeat.tick", "x", Uuid::new_v4()));
         h.publish(LiveEvent::new("issue.created", "issue", Uuid::new_v4()));
         let evt = sub.next_event().await.expect("filtered event");
@@ -209,10 +209,7 @@ mod tests {
     async fn filtered_subscriber_returns_none_when_inner_closed() {
         let h = RealtimeHandle::start(4);
         let rx = h.subscribe();
-        let mut sub = FilteredSubscriber::new(
-            Box::new(BroadcastSubscriber::new(rx)),
-            |_| true,
-        );
+        let mut sub = FilteredSubscriber::new(Box::new(BroadcastSubscriber::new(rx)), |_| true);
         drop(h);
         assert!(sub.next_event().await.is_none());
     }

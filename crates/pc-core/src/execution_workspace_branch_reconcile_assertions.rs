@@ -227,8 +227,7 @@ pub fn assert_locked_branch_reconcile_workspace_still_matches_inspection(
 
     let inspection_path_canonical = canonicalize_path_lossy(&inspection.worktree_path);
 
-    let source_issue_matches =
-        locked_row.source_issue_id == inspected_row.source_issue_id;
+    let source_issue_matches = locked_row.source_issue_id == inspected_row.source_issue_id;
     let project_workspace_matches =
         locked_row.project_workspace_id == inspected_row.project_workspace_id;
     let branch_matches = locked_branch.as_deref() == Some(inspection.from_branch.as_str());
@@ -309,12 +308,22 @@ mod tests {
     #[test]
     fn runtime_services_active_fails() {
         let s = vec![
-            RuntimeServiceLite { id: "s1".into(), service_name: "web".into(), status: "stopped".into() },
-            RuntimeServiceLite { id: "s2".into(), service_name: "db".into(), status: "running".into() },
+            RuntimeServiceLite {
+                id: "s1".into(),
+                service_name: "web".into(),
+                status: "stopped".into(),
+            },
+            RuntimeServiceLite {
+                id: "s2".into(),
+                service_name: "db".into(),
+                status: "running".into(),
+            },
         ];
         let out = assert_branch_reconcile_runtime_services_stopped(&inspection(), &s);
         match out {
-            Err(BranchReconcileError::RuntimeServicesNotStopped { active_services, .. }) => {
+            Err(BranchReconcileError::RuntimeServicesNotStopped {
+                active_services, ..
+            }) => {
                 assert_eq!(active_services.len(), 1);
                 assert_eq!(active_services[0].id, "s2");
                 assert_eq!(active_services[0].status, "running");
@@ -328,26 +337,20 @@ mod tests {
     #[test]
     fn workspace_safe_default_allows_idle() {
         let s = stopped_services();
-        let out = assert_branch_reconcile_workspace_is_safe(
-            "idle",
-            &inspection(),
-            &s,
-            false,
-        );
+        let out = assert_branch_reconcile_workspace_is_safe("idle", &inspection(), &s, false);
         assert!(out.is_ok());
     }
 
     #[test]
     fn workspace_safe_rejects_active_by_default() {
         let s = stopped_services();
-        let out = assert_branch_reconcile_workspace_is_safe(
-            "active",
-            &inspection(),
-            &s,
-            false,
-        );
+        let out = assert_branch_reconcile_workspace_is_safe("active", &inspection(), &s, false);
         match out {
-            Err(BranchReconcileError::WorkspaceStatusInvalid { workspace_status, allowed_statuses, .. }) => {
+            Err(BranchReconcileError::WorkspaceStatusInvalid {
+                workspace_status,
+                allowed_statuses,
+                ..
+            }) => {
                 assert_eq!(workspace_status, "active");
                 assert_eq!(allowed_statuses, vec!["idle"]);
             }
@@ -358,12 +361,7 @@ mod tests {
     #[test]
     fn workspace_safe_allows_active_with_flag() {
         let s = stopped_services();
-        let out = assert_branch_reconcile_workspace_is_safe(
-            "active",
-            &inspection(),
-            &s,
-            true,
-        );
+        let out = assert_branch_reconcile_workspace_is_safe("active", &inspection(), &s, true);
         assert!(out.is_ok());
     }
 
@@ -372,12 +370,7 @@ mod tests {
         let mut ins = inspection();
         ins.cleanliness = Cleanliness::Dirty;
         let s = stopped_services();
-        let out = assert_branch_reconcile_workspace_is_safe(
-            "idle",
-            &ins,
-            &s,
-            false,
-        );
+        let out = assert_branch_reconcile_workspace_is_safe("idle", &ins, &s, false);
         match out {
             Err(BranchReconcileError::WorktreeNotClean { .. }) => {}
             _ => panic!("expected WorktreeNotClean"),
@@ -386,14 +379,16 @@ mod tests {
 
     #[test]
     fn workspace_safe_propagates_runtime_services_error() {
-        let s = vec![RuntimeServiceLite { id: "s1".into(), service_name: "web".into(), status: "running".into() }];
-        let out = assert_branch_reconcile_workspace_is_safe(
-            "idle",
-            &inspection(),
-            &s,
-            false,
-        );
-        assert!(matches!(out, Err(BranchReconcileError::RuntimeServicesNotStopped { .. })));
+        let s = vec![RuntimeServiceLite {
+            id: "s1".into(),
+            service_name: "web".into(),
+            status: "running".into(),
+        }];
+        let out = assert_branch_reconcile_workspace_is_safe("idle", &inspection(), &s, false);
+        assert!(matches!(
+            out,
+            Err(BranchReconcileError::RuntimeServicesNotStopped { .. })
+        ));
     }
 
     // ----- assertLockedBranchReconcileWorkspaceStillMatchesInspection -----
@@ -443,7 +438,10 @@ mod tests {
             &inspected,
             &inspection(),
         );
-        assert!(matches!(out, Err(BranchReconcileError::WorkspaceChangedDuringReconcile { .. })));
+        assert!(matches!(
+            out,
+            Err(BranchReconcileError::WorkspaceChangedDuringReconcile { .. })
+        ));
     }
 
     #[test]
@@ -467,7 +465,10 @@ mod tests {
             &inspected,
             &inspection(),
         );
-        assert!(matches!(out, Err(BranchReconcileError::WorkspaceChangedDuringReconcile { .. })));
+        assert!(matches!(
+            out,
+            Err(BranchReconcileError::WorkspaceChangedDuringReconcile { .. })
+        ));
     }
 
     #[test]

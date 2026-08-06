@@ -1,7 +1,9 @@
 //! Round 125 集成测试：SkillRepo list_for_company / get / soft_delete / list_categories。
 
 use pc_db::Db;
-use pc_repos::skill::{NewCompanySkill, SkillSharingScope, SkillRepo, SkillSourceType, SkillTrustLevel};
+use pc_repos::skill::{
+    NewCompanySkill, SkillRepo, SkillSharingScope, SkillSourceType, SkillTrustLevel,
+};
 use uuid::Uuid;
 
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
@@ -16,11 +18,19 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r125-{tag}-{id}"))
         .bind(format!("R125{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
-async fn insert_skill(db: &Db, company_id: Uuid, key: &str, slug: &str, categories: Vec<&str>) -> Uuid {
+async fn insert_skill(
+    db: &Db,
+    company_id: Uuid,
+    key: &str,
+    slug: &str,
+    categories: Vec<&str>,
+) -> Uuid {
     let id = Uuid::new_v4();
     let cats: Vec<String> = categories.into_iter().map(String::from).collect();
     sqlx::query(
@@ -40,7 +50,10 @@ async fn list_for_company_returns_active() {
     let cid = insert_company(&db, "list").await;
     insert_skill(&db, cid, "k1", "slug-1", vec!["ops"]).await;
     insert_skill(&db, cid, "k2", "slug-2", vec!["dev"]).await;
-    let rows = SkillRepo::new(&db).list_for_company(cid).await.expect("list");
+    let rows = SkillRepo::new(&db)
+        .list_for_company(cid)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 2);
 }
 
@@ -59,7 +72,10 @@ async fn get_returns_some_for_existing() {
 async fn get_returns_none_for_missing() {
     let db = db().await;
     let cid = insert_company(&db, "miss").await;
-    let row = SkillRepo::new(&db).get(cid, Uuid::new_v4()).await.expect("get");
+    let row = SkillRepo::new(&db)
+        .get(cid, Uuid::new_v4())
+        .await
+        .expect("get");
     assert!(row.is_none());
 }
 
@@ -69,8 +85,14 @@ async fn soft_delete_removes_from_list() {
     let db = db().await;
     let cid = insert_company(&db, "del").await;
     let id = insert_skill(&db, cid, "k1", "slug-1", vec![]).await;
-    SkillRepo::new(&db).soft_delete(cid, id).await.expect("delete");
-    let rows = SkillRepo::new(&db).list_for_company(cid).await.expect("list");
+    SkillRepo::new(&db)
+        .soft_delete(cid, id)
+        .await
+        .expect("delete");
+    let rows = SkillRepo::new(&db)
+        .list_for_company(cid)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 0);
 }
 
@@ -82,7 +104,10 @@ async fn list_categories_aggregates_distinct() {
     insert_skill(&db, cid, "k1", "s1", vec!["ops", "dev"]).await;
     insert_skill(&db, cid, "k2", "s2", vec!["ops", "qa"]).await;
     insert_skill(&db, cid, "k3", "s3", vec!["dev"]).await;
-    let cats = SkillRepo::new(&db).list_categories(cid).await.expect("list cats");
+    let cats = SkillRepo::new(&db)
+        .list_categories(cid)
+        .await
+        .expect("list cats");
     assert_eq!(cats, vec!["dev", "ops", "qa"]);
 }
 
@@ -91,7 +116,10 @@ async fn list_categories_aggregates_distinct() {
 async fn list_categories_empty_when_no_skills() {
     let db = db().await;
     let cid = insert_company(&db, "empty").await;
-    let cats = SkillRepo::new(&db).list_categories(cid).await.expect("list");
+    let cats = SkillRepo::new(&db)
+        .list_categories(cid)
+        .await
+        .expect("list");
     assert!(cats.is_empty());
 }
 

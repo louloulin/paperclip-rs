@@ -22,7 +22,10 @@ fn default_command(config: &Value) -> String {
 }
 
 fn default_model(config: &Value) -> Option<String> {
-    config.get("model").and_then(|v| v.as_str()).map(String::from)
+    config
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(String::from)
 }
 
 pub fn build_grok_exec_args(config: &Value) -> Vec<String> {
@@ -59,7 +62,10 @@ pub fn parse_grok_output(stdout: &str) -> Option<String> {
                 continue;
             }
         };
-        if let Some(text) = event.pointer("/message/content/0/text").and_then(Value::as_str) {
+        if let Some(text) = event
+            .pointer("/message/content/0/text")
+            .and_then(Value::as_str)
+        {
             summary = Some(text.to_owned());
         } else if let Some(text) = event.pointer("/part/text").and_then(Value::as_str) {
             summary = Some(text.to_owned());

@@ -70,6 +70,24 @@ impl<'a> DecisionRepo<'a> {
             .await
     }
 
+    /// 注意力队列用：按最近活动时间列出仍等待处理的 open decisions。
+    pub async fn list_open_attention(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<DecisionRow>> {
+        let sql = format!(
+            "SELECT {COLS} FROM decisions \
+             WHERE company_id = $1 AND status = 'open' \
+             ORDER BY updated_at DESC, id DESC LIMIT $2"
+        );
+        sqlx::query_as::<_, DecisionRow>(&sql)
+            .bind(company_id)
+            .bind(limit.clamp(1, 200))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
     /// 列出全部（跨公司）；limit 默认 200。
     pub async fn list_all(&self, limit: i64) -> sqlx::Result<Vec<DecisionRow>> {
         let sql = format!("SELECT {COLS} FROM decisions ORDER BY created_at DESC LIMIT $1");
@@ -152,7 +170,6 @@ impl<'a> DecisionRepo<'a> {
             .await?;
         Ok(r.rows_affected() > 0)
     }
-
 
     // ============ Round 173: signed fields + status transitions + stats ============
 

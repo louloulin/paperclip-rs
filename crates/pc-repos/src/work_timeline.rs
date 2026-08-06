@@ -182,7 +182,15 @@ pub fn actor_id(kind: &str, id: &str) -> String {
 pub fn parse_usage(source: Option<&serde_json::Value>) -> Option<RunUsage> {
     let value = source?;
     let obj = value.as_object()?;
-    let input = read_tokens(obj, &["inputTokens", "input_tokens", "rawInputTokens", "raw_input_tokens"]);
+    let input = read_tokens(
+        obj,
+        &[
+            "inputTokens",
+            "input_tokens",
+            "rawInputTokens",
+            "raw_input_tokens",
+        ],
+    );
     let cached = read_tokens(
         obj,
         &[
@@ -194,7 +202,12 @@ pub fn parse_usage(source: Option<&serde_json::Value>) -> Option<RunUsage> {
     );
     let output = read_tokens(
         obj,
-        &["outputTokens", "output_tokens", "rawOutputTokens", "raw_output_tokens"],
+        &[
+            "outputTokens",
+            "output_tokens",
+            "rawOutputTokens",
+            "raw_output_tokens",
+        ],
     );
     let total = input + cached + output;
     if total > 0 {

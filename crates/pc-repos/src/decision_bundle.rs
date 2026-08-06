@@ -135,9 +135,7 @@ impl<'a> DecisionBundleRepo<'a> {
         company_id: Uuid,
         filter: &DecisionBundleFilter,
     ) -> RepoResult<Vec<DecisionBundleRow>> {
-        let mut sql = format!(
-            "SELECT {COLS} FROM decision_bundles WHERE company_id = $1"
-        );
+        let mut sql = format!("SELECT {COLS} FROM decision_bundles WHERE company_id = $1");
         let mut idx = 2u32;
         if filter.agent_id.is_some() {
             sql.push_str(&format!(" AND origin_agent_id = ${idx}"));
@@ -184,10 +182,7 @@ impl<'a> DecisionBundleRepo<'a> {
     }
 
     /// 取一个决策束，并附上其下挂载的 decisions（按 created_at ASC）。
-    pub async fn get_with_decisions(
-        &self,
-        id: Uuid,
-    ) -> RepoResult<Option<DecisionBundleDetail>> {
+    pub async fn get_with_decisions(&self, id: Uuid) -> RepoResult<Option<DecisionBundleDetail>> {
         let bundle = match self.get(id).await? {
             Some(b) => b,
             None => return Ok(None),

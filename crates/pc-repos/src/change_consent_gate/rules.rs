@@ -64,7 +64,10 @@ pub(super) fn row_is_eligible(
     target_keys: &[String],
 ) -> bool {
     source_run_id.is_some_and(|value| value != actor_run_id)
-        && payload.get("target").and_then(|target| target.get("type")).and_then(Value::as_str)
+        && payload
+            .get("target")
+            .and_then(|target| target.get("type"))
+            .and_then(Value::as_str)
             == Some("custom")
         && payload
             .get("target")

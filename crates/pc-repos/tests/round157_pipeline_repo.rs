@@ -22,9 +22,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -99,11 +97,7 @@ async fn insert_pipeline_case(
     id
 }
 
-async fn insert_case(
-    db: &Db,
-    company_id: Uuid,
-    status: &str,
-) -> Uuid {
+async fn insert_case(db: &Db, company_id: Uuid, status: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO cases (id, company_id, case_number, identifier, case_type, title, status, fields) \
@@ -131,7 +125,10 @@ async fn count_cases_basic() {
 
     let repo = PipelineRepo::new(&db);
     // 空 → 0
-    let n = repo.count_cases_by_pipeline(pid).await.expect("count empty");
+    let n = repo
+        .count_cases_by_pipeline(pid)
+        .await
+        .expect("count empty");
     assert_eq!(n, 0);
 
     // 加 2 个 case
@@ -248,10 +245,7 @@ async fn list_attention_pipelines_basic() {
     let pid = insert_pipeline(&db, cid).await;
     let repo = PipelineRepo::new(&db);
     // 无 cases 也会被列出（HAVING count(case_all.id) = 0）
-    let rows = repo
-        .list_attention_pipelines(cid, 20)
-        .await
-        .expect("list");
+    let rows = repo.list_attention_pipelines(cid, 20).await.expect("list");
     assert!(rows.iter().any(|(id, _, _, _, _, _)| *id == pid));
 }
 

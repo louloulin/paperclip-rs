@@ -142,7 +142,7 @@ mod tests {
                 config_schema: serde_json::Value::Null,
                 ui_contributions: vec![],
                 metadata: serde_json::Value::Null,
-            local_folders: vec![],
+                local_folders: vec![],
             },
             install_order: 0,
             status: PluginStatus::Installed,

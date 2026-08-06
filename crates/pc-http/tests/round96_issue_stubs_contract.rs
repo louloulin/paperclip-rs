@@ -42,10 +42,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -161,7 +158,10 @@ async fn http_delete_issue_interaction_returns_204() {
         serde_json::json!({}),
     )
     .await;
-    assert_eq!(status, 204, "stub returns 204 even for non-existent interactions");
+    assert_eq!(
+        status, 204,
+        "stub returns 204 even for non-existent interactions"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -182,7 +182,10 @@ async fn http_accept_cancel_reject_interaction_return_deprecated_stubs() {
         )
         .await;
         assert_eq!(status, 200, "{action} must return 200");
-        assert_eq!(body["deprecated"], true, "{action} must be marked deprecated");
+        assert_eq!(
+            body["deprecated"], true,
+            "{action} must be marked deprecated"
+        );
     }
 }
 
@@ -360,5 +363,8 @@ async fn http_real_list_interactions_still_works() {
     .await;
     // 真实路由应返回无 deprecated 标记的 items 数组
     assert_eq!(status, 200);
-    assert!(body["items"].is_array(), "real route must return items array");
+    assert!(
+        body["items"].is_array(),
+        "real route must return items array"
+    );
 }

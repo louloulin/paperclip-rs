@@ -28,11 +28,14 @@ use pc_adapter_pi_local::PiLocalAdapter;
 use pc_config::Config;
 use pc_core::{spawn_system_actor, ActorKey, ActorRegistry};
 use pc_db::{Db, Migrator};
+use pc_heartbeat::recovery::{run_heartbeat_tick, HeartbeatTickerConfig};
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
 use pc_http::AppState;
 use pc_realtime::{RealtimeHandle, WsState};
-use pc_repos::agent::AgentRepo;
+use pc_repos::agent::{
+    AgentRepo, NewAgentWakeupRequest, WakeupActorType, WakeupRequestStatus, WakeupTriggerDetail,
+};
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::settings::SettingsRepo;
 
@@ -273,6 +276,58 @@ async fn main() -> anyhow::Result<()> {
                 Ok(0) => {}
                 Ok(count) => tracing::debug!(count, "status card scheduler claimed updates"),
                 Err(error) => tracing::warn!(error = %error, "status card scheduler failed"),
+            }
+
+            // Round 302: Recovery sweep cycle (reconcile + escalate stranded +
+            // sweep stale issue locks). Runs after all existing dispatchers so it
+            // can clean up issues that fall through to terminal/escalation.
+            // HeartbeatTickerConfig.max_candidates caps how many stranded issues
+            // are processed per tick.
+            if let Ok(companies) =
+                pc_heartbeat::recovery::list_active_companies(&scheduler_state.db).await
+            {
+                if !companies.is_empty() {
+                    let config = HeartbeatTickerConfig::default();
+                    // Wake template is a placeholder; persist_recovery_wake overrides
+                    // company_id/agent_id from the recovery action row, so the initial
+                    // values here never reach the DB.
+                    let template = NewAgentWakeupRequest {
+                        company_id: companies[0],
+                        agent_id: uuid::Uuid::nil(),
+                        source: pc_repos::agent::HeartbeatInvocationSource::OnDemand,
+                        trigger_detail: Some(WakeupTriggerDetail::Manual),
+                        reason: None,
+                        payload: None,
+                        status: WakeupRequestStatus::Queued,
+                        coalesced_count: 0,
+                        requested_by_actor_type: Some(WakeupActorType::System),
+                        requested_by_actor_id: None,
+                        idempotency_key: None,
+                        run_id: None,
+                        error: None,
+                    };
+                    match run_heartbeat_tick(&scheduler_state.db, &config, &template, &companies)
+                        .await
+                    {
+                        Ok(result) => {
+                            if let Some(stranded) = result.stranded {
+                                tracing::debug!(
+                                    dispatched = stranded.dispatched,
+                                    skipped = stranded.skipped,
+                                    failed = stranded.failed,
+                                    "recovery sweep cycle stranded dispatch",
+                                );
+                            }
+                            if result.stale_lock_cleared > 0 {
+                                tracing::debug!(
+                                    cleared = result.stale_lock_cleared,
+                                    "recovery sweep cycle stale lock cleanup",
+                                );
+                            }
+                        }
+                        Err(error) => tracing::warn!(error = %error, "recovery sweep cycle failed"),
+                    }
+                }
             }
         }
     });

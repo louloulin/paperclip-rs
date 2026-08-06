@@ -36,50 +36,52 @@ pub const KUBERNETES_PLUGIN_PATH_ENV_VAR: &str = "PAPERCLIP_KUBERNETES_PLUGIN_PA
 ///
 /// 使用 `LazyLock<Vec<_>>` 而不是 `const` 是因为 Rust stable 的 const 上下文
 /// 不支持 `String::to_string()` / `String::from()`。
-pub static BUNDLED_PLUGIN_CATALOG: LazyLock<Vec<BundledPluginCatalogEntry>> = LazyLock::new(|| vec![
-    BundledPluginCatalogEntry {
-        key: "cloudflare".to_string(),
-        plugin_key: "paperclip.cloudflare-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/cloudflare".to_string(),
-        path_override_env_var: None,
-    },
-    BundledPluginCatalogEntry {
-        key: "daytona".to_string(),
-        plugin_key: "paperclip.daytona-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/daytona".to_string(),
-        path_override_env_var: None,
-    },
-    BundledPluginCatalogEntry {
-        key: "e2b".to_string(),
-        plugin_key: "paperclip.e2b-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/e2b".to_string(),
-        path_override_env_var: None,
-    },
-    BundledPluginCatalogEntry {
-        key: "exe-dev".to_string(),
-        plugin_key: "paperclip.exe-dev-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/exe-dev".to_string(),
-        path_override_env_var: None,
-    },
-    BundledPluginCatalogEntry {
-        key: "kubernetes".to_string(),
-        plugin_key: "paperclip.kubernetes-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/kubernetes".to_string(),
-        path_override_env_var: Some(KUBERNETES_PLUGIN_PATH_ENV_VAR.to_string()),
-    },
-    BundledPluginCatalogEntry {
-        key: "modal".to_string(),
-        plugin_key: "paperclip.modal-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/modal".to_string(),
-        path_override_env_var: None,
-    },
-    BundledPluginCatalogEntry {
-        key: "novita".to_string(),
-        plugin_key: "paperclip.novita-sandbox-provider".to_string(),
-        relative_path: "sandbox-providers/novita".to_string(),
-        path_override_env_var: None,
-    },
-]);
+pub static BUNDLED_PLUGIN_CATALOG: LazyLock<Vec<BundledPluginCatalogEntry>> = LazyLock::new(|| {
+    vec![
+        BundledPluginCatalogEntry {
+            key: "cloudflare".to_string(),
+            plugin_key: "paperclip.cloudflare-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/cloudflare".to_string(),
+            path_override_env_var: None,
+        },
+        BundledPluginCatalogEntry {
+            key: "daytona".to_string(),
+            plugin_key: "paperclip.daytona-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/daytona".to_string(),
+            path_override_env_var: None,
+        },
+        BundledPluginCatalogEntry {
+            key: "e2b".to_string(),
+            plugin_key: "paperclip.e2b-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/e2b".to_string(),
+            path_override_env_var: None,
+        },
+        BundledPluginCatalogEntry {
+            key: "exe-dev".to_string(),
+            plugin_key: "paperclip.exe-dev-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/exe-dev".to_string(),
+            path_override_env_var: None,
+        },
+        BundledPluginCatalogEntry {
+            key: "kubernetes".to_string(),
+            plugin_key: "paperclip.kubernetes-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/kubernetes".to_string(),
+            path_override_env_var: Some(KUBERNETES_PLUGIN_PATH_ENV_VAR.to_string()),
+        },
+        BundledPluginCatalogEntry {
+            key: "modal".to_string(),
+            plugin_key: "paperclip.modal-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/modal".to_string(),
+            path_override_env_var: None,
+        },
+        BundledPluginCatalogEntry {
+            key: "novita".to_string(),
+            plugin_key: "paperclip.novita-sandbox-provider".to_string(),
+            relative_path: "sandbox-providers/novita".to_string(),
+            path_override_env_var: None,
+        },
+    ]
+});
 
 // ============================================================================
 // Self-hosted default keys
@@ -123,7 +125,10 @@ mod tests {
 
     #[test]
     fn env_var_name_matches_node() {
-        assert_eq!(BUNDLED_CATALOG_ROOT_ENV_VAR, "PAPERCLIP_BUNDLED_PLUGIN_ROOT");
+        assert_eq!(
+            BUNDLED_CATALOG_ROOT_ENV_VAR,
+            "PAPERCLIP_BUNDLED_PLUGIN_ROOT"
+        );
         assert_eq!(
             KUBERNETES_PLUGIN_PATH_ENV_VAR,
             "PAPERCLIP_KUBERNETES_PLUGIN_PATH"
@@ -133,7 +138,10 @@ mod tests {
     #[test]
     fn bundled_plugin_catalog_has_seven_entries() {
         assert_eq!(BUNDLED_PLUGIN_CATALOG.len(), 7);
-        let keys: Vec<&str> = BUNDLED_PLUGIN_CATALOG.iter().map(|e| e.key.as_str()).collect();
+        let keys: Vec<&str> = BUNDLED_PLUGIN_CATALOG
+            .iter()
+            .map(|e| e.key.as_str())
+            .collect();
         assert!(keys.contains(&"cloudflare"));
         assert!(keys.contains(&"daytona"));
         assert!(keys.contains(&"e2b"));
@@ -189,10 +197,7 @@ mod tests {
             BUNDLED_CATALOG_ROOT_ENV_VAR.to_string(),
             "/tmp/test-catalog".to_string(),
         );
-        assert_eq!(
-            resolve_bundled_catalog_root(&env),
-            "/tmp/test-catalog"
-        );
+        assert_eq!(resolve_bundled_catalog_root(&env), "/tmp/test-catalog");
     }
 
     #[test]
@@ -208,10 +213,7 @@ mod tests {
     #[test]
     fn resolve_bundled_catalog_root_whitespace_only_falls_back() {
         let mut env = EnvMap::new();
-        env.insert(
-            BUNDLED_CATALOG_ROOT_ENV_VAR.to_string(),
-            "   ".to_string(),
-        );
+        env.insert(BUNDLED_CATALOG_ROOT_ENV_VAR.to_string(), "   ".to_string());
         assert_eq!(resolve_bundled_catalog_root(&env), "/app/packages/plugins");
     }
 }

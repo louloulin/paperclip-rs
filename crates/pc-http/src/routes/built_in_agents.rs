@@ -279,14 +279,9 @@ async fn provision_built_in(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::Conflict("built-in already provisioned".into()))?;
-    state
-        .realtime
-        .publish(LiveEvent::new(
-            "built_in_agent.provisioned",
-            "agent",
-            agent_id,
-        )
-        .with_company(company_id));
+    state.realtime.publish(
+        LiveEvent::new("built_in_agent.provisioned", "agent", agent_id).with_company(company_id),
+    );
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -349,14 +344,14 @@ async fn enable_routine_schedule(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("built-in {key} not installed")))?;
     let result = toggle_routine_trigger(&state, company_id, agent_id, &routine_key, true).await?;
-    state
-        .realtime
-        .publish(LiveEvent::new(
+    state.realtime.publish(
+        LiveEvent::new(
             "built_in_agent.routine_schedule_enabled",
             "routine",
             Uuid::nil(),
         )
-        .with_company(company_id));
+        .with_company(company_id),
+    );
     Ok(Json(result))
 }
 
@@ -370,14 +365,14 @@ async fn disable_routine_schedule(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("built-in {key} not installed")))?;
     let result = toggle_routine_trigger(&state, company_id, agent_id, &routine_key, false).await?;
-    state
-        .realtime
-        .publish(LiveEvent::new(
+    state.realtime.publish(
+        LiveEvent::new(
             "built_in_agent.routine_schedule_disabled",
             "routine",
             Uuid::nil(),
         )
-        .with_company(company_id));
+        .with_company(company_id),
+    );
     Ok(Json(result))
 }
 
@@ -401,7 +396,8 @@ async fn run_routine_now(
     .fetch_optional(state.db.pool())
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (routine_id,) = lookup.ok_or_else(|| ApiError::NotFound(format!("routine {routine_key}")))?;
+    let (routine_id,) =
+        lookup.ok_or_else(|| ApiError::NotFound(format!("routine {routine_key}")))?;
 
     let run_id = Uuid::new_v4();
     sqlx::query(
@@ -414,14 +410,14 @@ async fn run_routine_now(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    state
-        .realtime
-        .publish(LiveEvent::new(
+    state.realtime.publish(
+        LiveEvent::new(
             "built_in_agent.routine_run_triggered",
             "routine_run",
             run_id,
         )
-        .with_company(company_id));
+        .with_company(company_id),
+    );
 
     Ok((
         StatusCode::ACCEPTED,
@@ -435,4 +431,3 @@ async fn run_routine_now(
         })),
     ))
 }
-

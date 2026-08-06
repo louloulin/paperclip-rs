@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -137,7 +134,10 @@ async fn skills_catalog_endpoint() {
     let (status, body) = call(&app, "GET", "/api/skills/catalog", None, None).await;
     // catalog 可能 200（如果 manifest 存在）或 500（manifest 缺失），这两种都允许 ——
     // 主要保证响应格式是 JSON 而不是 panic。
-    assert!(status == 200 || status == 500 || status == 404, "catalog: {body}");
+    assert!(
+        status == 200 || status == 500 || status == 404,
+        "catalog: {body}"
+    );
     if status == 200 {
         // 形状应当含 skills 数组
         assert!(body["skills"].is_array() || body["items"].is_array());

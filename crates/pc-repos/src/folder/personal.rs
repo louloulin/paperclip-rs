@@ -97,9 +97,7 @@ impl<'a> FolderRepo<'a> {
         user_name: Option<&str>,
         requested_slug: Option<&str>,
     ) -> RepoResult<FolderRow> {
-        let parent = self
-            .ensure_container(company_id, "my", "My Skills")
-            .await?;
+        let parent = self.ensure_container(company_id, "my", "My Skills").await?;
         let system_key = format!("my:{user_id}");
         for _attempt in 0..3 {
             // 已存在？

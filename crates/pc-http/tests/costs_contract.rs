@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test",
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test")),
         realtime,
     )
 }
@@ -94,12 +91,7 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -214,7 +206,10 @@ async fn budgets_update_company_budget() {
     )
     .await;
     assert_eq!(status, 200, "overview: {body}");
-    assert!(body["pendingApprovalCount"].is_number(), "overview shape: {body}");
+    assert!(
+        body["pendingApprovalCount"].is_number(),
+        "overview shape: {body}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

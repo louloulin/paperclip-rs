@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -143,11 +140,7 @@ async fn call_with_session(
     (status, payload)
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let response = app
         .clone()
@@ -215,7 +208,10 @@ async fn profile_returns_identity_and_windows_for_existing_membership() {
     // Stats windows: last7 / last30 / all
     let stats = body["stats"].as_array().expect("stats array");
     assert_eq!(stats.len(), 3, "expected 3 windows: {body}");
-    let keys: Vec<&str> = stats.iter().map(|s| s["key"].as_str().unwrap_or("")).collect();
+    let keys: Vec<&str> = stats
+        .iter()
+        .map(|s| s["key"].as_str().unwrap_or(""))
+        .collect();
     assert!(keys.contains(&"last7"));
     assert!(keys.contains(&"last30"));
     assert!(keys.contains(&"all"));
@@ -252,7 +248,13 @@ async fn profile_resolves_by_email_slug_fallback() {
     let company_id = insert_company(&db).await;
     let email_handle = "bobbuilder".to_string();
     let user_id = format!("user-up-{email_handle}");
-    insert_user(&db, &user_id, "Bob Builder", &format!("{email_handle}@example.com")).await;
+    insert_user(
+        &db,
+        &user_id,
+        "Bob Builder",
+        &format!("{email_handle}@example.com"),
+    )
+    .await;
     insert_membership(&db, company_id, &user_id).await;
     let session = insert_session(&db, &user_id).await;
     let app = routes::user_profiles::router().with_state(test_state(db));

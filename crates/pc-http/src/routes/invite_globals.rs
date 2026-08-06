@@ -20,10 +20,7 @@ use crate::{ApiError, ApiResult, AppState};
 use pc_repos::invite::InviteRepo;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/api/invites/:invite_id/revoke",
-        post(revoke_invite_by_id),
-    )
+    Router::new().route("/api/invites/:invite_id/revoke", post(revoke_invite_by_id))
 }
 
 async fn revoke_invite_by_id(

@@ -51,7 +51,9 @@ pub async fn load_issue_summary_with_doc(
     .bind(issue_id)
     .fetch_optional(db.pool())
     .await?;
-    let Some(issue_row) = issue_row else { return Ok(None); };
+    let Some(issue_row) = issue_row else {
+        return Ok(None);
+    };
 
     let issue = IssueSummaryInput {
         id: issue_row.id.to_string(),
@@ -174,7 +176,10 @@ mod tests {
     #[test]
     fn document_key_constant_is_stable() {
         // 文档 key 必须稳定，避免与已有数据冲突
-        assert_eq!(ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY, "issue_continuation_summary");
+        assert_eq!(
+            ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+            "issue_continuation_summary"
+        );
     }
 
     #[test]

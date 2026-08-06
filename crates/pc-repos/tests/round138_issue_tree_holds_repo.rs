@@ -22,7 +22,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r138-{tag}-{id}"))
         .bind(format!("R138{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
@@ -42,7 +44,9 @@ async fn new_hold(repo: &IssueTreeHoldRepo<'_>, cid: Uuid, iid: Uuid, mode: &str
         reason: Some("test reason"),
         release_policy: json!({"auto": false}),
         created_by_user_id: "u1",
-    }).await.expect("create")
+    })
+    .await
+    .expect("create")
 }
 
 // ===== IssueTreeHoldRepo::list_by_root =====
@@ -126,7 +130,11 @@ async fn create_inserts_active_hold() {
     let cid = insert_company(&db, "ca").await;
     let iid = insert_issue(&db, cid).await;
     let id = new_hold(&IssueTreeHoldRepo::new(&db), cid, iid, "isolate").await;
-    let row = IssueTreeHoldRepo::new(&db).get_by_id(id, iid).await.expect("get").expect("row");
+    let row = IssueTreeHoldRepo::new(&db)
+        .get_by_id(id, iid)
+        .await
+        .expect("get")
+        .expect("row");
     assert_eq!(row.status, "active");
 }
 
@@ -137,14 +145,17 @@ async fn create_default_release_policy() {
     let cid = insert_company(&db, "cd").await;
     let iid = insert_issue(&db, cid).await;
     let repo = IssueTreeHoldRepo::new(&db);
-    let id = repo.create(&NewIssueTreeHold {
-        company_id: cid,
-        root_issue_id: iid,
-        mode: "pause",
-        reason: None,
-        release_policy: json!({}),
-        created_by_user_id: "u1",
-    }).await.expect("create");
+    let id = repo
+        .create(&NewIssueTreeHold {
+            company_id: cid,
+            root_issue_id: iid,
+            mode: "pause",
+            reason: None,
+            release_policy: json!({}),
+            created_by_user_id: "u1",
+        })
+        .await
+        .expect("create");
     let row = repo.get_by_id(id, iid).await.expect("get").expect("row");
     assert_eq!(row.release_policy, json!({}));
 }
@@ -188,7 +199,11 @@ async fn find_active_for_root_returns_latest() {
     new_hold(&repo, cid, iid, "pause").await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let h2 = new_hold(&repo, cid, iid, "stop").await;
-    let row = repo.find_active_for_root(iid).await.expect("find").expect("row");
+    let row = repo
+        .find_active_for_root(iid)
+        .await
+        .expect("find")
+        .expect("row");
     assert_eq!(row.0, h2);
     assert_eq!(row.1, "stop");
 }

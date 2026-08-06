@@ -77,7 +77,6 @@ impl<'a> CompanySkillPolicyRepo<'a> {
     }
 }
 
-
 /// Skill 策略动作枚举（与 Node 版 `SkillPolicyAction` 对齐）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -242,14 +241,8 @@ impl<'a> CompanySkillPolicyRepo<'a> {
                 continue;
             }
             // 找到匹配规则
-            let effect = rule
-                .get("effect")
-                .and_then(Value::as_str)
-                .unwrap_or("deny");
-            let rule_id = rule
-                .get("id")
-                .and_then(Value::as_str)
-                .map(str::to_string);
+            let effect = rule.get("effect").and_then(Value::as_str).unwrap_or("deny");
+            let rule_id = rule.get("id").and_then(Value::as_str).map(str::to_string);
             return Ok(PolicyDecision {
                 allowed: effect == "allow",
                 action: action.as_str().to_string(),
@@ -297,7 +290,9 @@ mod tests {
 
     #[test]
     fn resource_serializes_with_skill_id() {
-        let r = PolicyResource { skill_id: Some(Uuid::nil()) };
+        let r = PolicyResource {
+            skill_id: Some(Uuid::nil()),
+        };
         let j = serde_json::to_value(&r).unwrap();
         assert_eq!(j["skillId"], serde_json::Value::Null);
     }
@@ -343,9 +338,11 @@ mod tests {
         // principal=admin：second rule matches
         let admin = sample_principal("u-admin", None);
         let found = rules.as_array().unwrap().iter().find(|r| {
-            r.get("actions").and_then(Value::as_array).map_or(false, |arr| {
-                arr.iter().any(|v| v.as_str() == Some("skills.test"))
-            })
+            r.get("actions")
+                .and_then(Value::as_array)
+                .map_or(false, |arr| {
+                    arr.iter().any(|v| v.as_str() == Some("skills.test"))
+                })
         });
         assert!(found.is_some(), "should find a rule matching the action");
         // principal=viewer with role: first rule denies

@@ -19,7 +19,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/llms", get(configuration_index))
         // ── Round 44: /api/llms/* aliases (node mounts llms under /api) ──
-        .route("/api/llms/agent-configuration.txt", get(configuration_index))
+        .route(
+            "/api/llms/agent-configuration.txt",
+            get(configuration_index),
+        )
         .route("/api/llms/agent-icons.txt", get(agent_icons))
         .route(
             "/api/llms/agent-configuration/:adapter_type.txt",

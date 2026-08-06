@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -63,12 +60,7 @@ async fn insert_company(db: &Db) -> Uuid {
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -130,16 +122,13 @@ async fn document_crud_lifecycle() {
     .await;
     assert_eq!(status, 200, "list: {body}");
     let items = body.as_array().expect("array");
-    assert!(items.iter().any(|d| d["id"] == doc_id), "doc should appear in list: {body}");
+    assert!(
+        items.iter().any(|d| d["id"] == doc_id),
+        "doc should appear in list: {body}"
+    );
 
     // GET
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/api/documents/{doc_id}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/api/documents/{doc_id}"), None).await;
     assert_eq!(status, 200, "get: {body}");
     assert_eq!(body["latest_body"], "# Goal\n\nPlan text.");
 
@@ -157,33 +146,15 @@ async fn document_crud_lifecycle() {
     assert_eq!(status, 200, "update: {body}");
 
     // GET after update
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/api/documents/{doc_id}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/api/documents/{doc_id}"), None).await;
     assert_eq!(status, 200);
     assert_eq!(body["title"].as_str().unwrap_or(""), "My Plan v2");
 
     // DELETE
-    let (status, _) = call(
-        &app,
-        "DELETE",
-        &format!("/api/documents/{doc_id}"),
-        None,
-    )
-    .await;
+    let (status, _) = call(&app, "DELETE", &format!("/api/documents/{doc_id}"), None).await;
     assert!(status == 200 || status == 204, "delete: status={status}");
 
-    let (status, _) = call(
-        &app,
-        "GET",
-        &format!("/api/documents/{doc_id}"),
-        None,
-    )
-    .await;
+    let (status, _) = call(&app, "GET", &format!("/api/documents/{doc_id}"), None).await;
     assert_eq!(status, 404, "after delete should 404");
 }
 

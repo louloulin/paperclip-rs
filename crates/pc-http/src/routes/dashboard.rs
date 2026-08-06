@@ -177,11 +177,12 @@ fn utilization_percent(spend: i64, budget: i64) -> f64 {
 }
 
 async fn load_company(state: &AppState, company_id: Uuid) -> ApiResult<CompanyBudget> {
-    let budget = CompanyRepo::new(&state.db)
-        .get_budget(company_id)
-        .await?;
+    let budget = CompanyRepo::new(&state.db).get_budget(company_id).await?;
     budget
-        .map(|b| CompanyBudget { id: company_id, budget_monthly_cents: b })
+        .map(|b| CompanyBudget {
+            id: company_id,
+            budget_monthly_cents: b,
+        })
         .ok_or_else(|| ApiError::NotFound(format!("company {company_id}")))
 }
 
@@ -192,7 +193,10 @@ async fn load_agent_status_counts(
     let rows = AgentRepo::new(&state.db)
         .count_by_status(company_id)
         .await?;
-    Ok(rows.into_iter().map(|(status, count)| StatusCount { status, count }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(status, count)| StatusCount { status, count })
+        .collect())
 }
 
 async fn load_task_status_counts(
@@ -202,11 +206,17 @@ async fn load_task_status_counts(
     let rows = IssueRepo::new(&state.db)
         .count_visible_by_status(company_id)
         .await?;
-    Ok(rows.into_iter().map(|(status, count)| StatusCount { status, count }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(status, count)| StatusCount { status, count })
+        .collect())
 }
 
 async fn load_pending_approvals(state: &AppState, company_id: Uuid) -> ApiResult<i64> {
-    Ok(ApprovalRepo::new(&state.db).count_pending(company_id).await.map_err(|e| ApiError::Internal(e.to_string()))?)
+    Ok(ApprovalRepo::new(&state.db)
+        .count_pending(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn load_month_spend(
@@ -215,7 +225,10 @@ async fn load_month_spend(
     month_start: chrono::DateTime<Utc>,
 ) -> ApiResult<i64> {
     let ts = pc_core::Timestamp::from_dt(month_start);
-    Ok(CostRepo::new(&state.db).sum_cost_cents_since(company_id, ts).await.map_err(|e| ApiError::Internal(e.to_string()))?)
+    Ok(CostRepo::new(&state.db)
+        .sum_cost_cents_since(company_id, ts)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn load_run_activity(
@@ -227,13 +240,22 @@ async fn load_run_activity(
     let rows = HeartbeatRepo::new(&state.db)
         .group_runs_by_date_status_error(company_id, ts)
         .await?;
-    Ok(rows.into_iter().map(|(date, status, error_code, count)| RunActivityRow {
-        date, status, error_code, count,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(date, status, error_code, count)| RunActivityRow {
+            date,
+            status,
+            error_code,
+            count,
+        })
+        .collect())
 }
 
 async fn load_paused_projects(state: &AppState, company_id: Uuid) -> ApiResult<i64> {
-    Ok(ProjectRepo::new(&state.db).count_paused(company_id).await.map_err(|e| ApiError::Internal(e.to_string()))?)
+    Ok(ProjectRepo::new(&state.db)
+        .count_paused(company_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 async fn summary(

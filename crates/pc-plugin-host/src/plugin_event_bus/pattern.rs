@@ -21,8 +21,7 @@ pub fn matches_pattern(event_type: &str, pattern: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix(".*") {
         // Trailing wildcard: "plugin.foo.*" → prefix is "plugin.foo."
         // 注意保留前缀末尾的 "."
-        event_type.starts_with(&format!("{prefix}."))
-            || event_type == prefix.trim_end_matches('.')
+        event_type.starts_with(&format!("{prefix}.")) || event_type == prefix.trim_end_matches('.')
     } else {
         false
     }

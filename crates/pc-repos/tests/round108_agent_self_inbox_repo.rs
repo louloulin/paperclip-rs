@@ -10,9 +10,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -105,7 +103,13 @@ async fn issue_repo_list_assigned_filtered_by_statuses() {
     assert_eq!(rows.len(), 2, "应排除 done");
     // 限制 responsible_user_id='alice' → 只剩 in_progress 那条
     let rows = repo
-        .list_assigned_filtered(cid, agent_id, "todo,in_progress,blocked", Some("alice"), 100)
+        .list_assigned_filtered(
+            cid,
+            agent_id,
+            "todo,in_progress,blocked",
+            Some("alice"),
+            100,
+        )
         .await
         .expect("list alice");
     assert_eq!(rows.len(), 1);
@@ -208,7 +212,13 @@ async fn workspace_operations_table_real_columns_audit() {
     .await
     .expect("query real");
     let names: std::collections::HashSet<String> = real.into_iter().map(|(s,)| s).collect();
-    for must in ["company_id", "heartbeat_run_id", "stdout_excerpt", "stderr_excerpt", "log_ref"] {
+    for must in [
+        "company_id",
+        "heartbeat_run_id",
+        "stdout_excerpt",
+        "stderr_excerpt",
+        "log_ref",
+    ] {
         assert!(names.contains(must), "missing: {must}");
     }
 }

@@ -61,7 +61,10 @@ async fn tool_stdio_template_repo_list_orders_by_name_asc() {
         .expect("create");
     }
 
-    let rows = repo.list_stdio_templates_by_company(cid).await.expect("list");
+    let rows = repo
+        .list_stdio_templates_by_company(cid)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].name, "Alpha");
     assert_eq!(rows[1].name, "Bravo");
@@ -184,7 +187,10 @@ async fn tool_stdio_template_repo_disable_by_uuid() {
     .fetch_all(db.pool())
     .await
     .expect("query cols");
-    assert!(bad_col.is_empty(), "schema leak: disabled_reason column found");
+    assert!(
+        bad_col.is_empty(),
+        "schema leak: disabled_reason column found"
+    );
 }
 
 /// 5. disable_stdio_template：按 template_key 兜底
@@ -209,7 +215,10 @@ async fn tool_stdio_template_repo_disable_by_template_key() {
         .await
         .expect("create");
 
-    let n = repo.disable_stdio_template(cid, "my-key").await.expect("disable by key");
+    let n = repo
+        .disable_stdio_template(cid, "my-key")
+        .await
+        .expect("disable by key");
     assert!(n);
 
     let after = repo
@@ -313,5 +322,8 @@ async fn tool_stdio_template_repo_disable_idempotent() {
         .disable_stdio_template(cid, &row.id.to_string())
         .await
         .expect("2nd");
-    assert!(!second, "second disable must return false (already disabled)");
+    assert!(
+        !second,
+        "second disable must return false (already disabled)"
+    );
 }

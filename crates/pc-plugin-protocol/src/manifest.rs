@@ -170,7 +170,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
-        local_folders: vec![],
+            local_folders: vec![],
         };
         assert!(m.validate().is_ok());
     }
@@ -189,7 +189,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
-        local_folders: vec![],
+            local_folders: vec![],
         };
         assert!(m.validate().is_err());
     }
@@ -208,7 +208,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
-        local_folders: vec![],
+            local_folders: vec![],
         };
         let err = m.validate().unwrap_err();
         assert!(err.contains("unsupported manifest_version"));
@@ -231,7 +231,7 @@ mod tests {
             config_schema: Value::Null,
             ui_contributions: vec![],
             metadata: Value::Null,
-        local_folders: vec![],
+            local_folders: vec![],
         };
         assert!(m.has_capability(&PluginManifestCapabilityKind::Jobs));
         assert!(!m.has_capability(&PluginManifestCapabilityKind::Tools));

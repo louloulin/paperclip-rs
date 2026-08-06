@@ -43,10 +43,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -105,12 +102,7 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
     id
 }
 
-async fn add_member(
-    db: &Db,
-    company_id: Uuid,
-    user_id: &str,
-    role: &str,
-) -> Uuid {
+async fn add_member(db: &Db, company_id: Uuid, user_id: &str, role: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO company_memberships \
@@ -162,14 +154,24 @@ async fn repo_list_returns_only_active_members_with_principal_user() {
     assert_eq!(rows.len(), 2, "exactly 2 user members expected");
 
     // ORDER BY cm.membership_role ASC；字符串自然顺序（"member" < "owner"）。
-    let owner_row = rows.iter().find(|r| r.id == owner_member).expect("owner present");
-    let viewer_row = rows.iter().find(|r| r.id == viewer_member).expect("viewer present");
+    let owner_row = rows
+        .iter()
+        .find(|r| r.id == owner_member)
+        .expect("owner present");
+    let viewer_row = rows
+        .iter()
+        .find(|r| r.id == viewer_member)
+        .expect("viewer present");
     assert_eq!(owner_row.membership_role, "owner");
     assert_eq!(viewer_row.membership_role, "member");
 
     // 至少一个 row 的 email 被 LEFT JOIN 进来
     assert!(
-        rows.iter().any(|r| r.email.as_deref().unwrap_or_default().contains("@test.local")),
+        rows.iter().any(|r| r
+            .email
+            .as_deref()
+            .unwrap_or_default()
+            .contains("@test.local")),
         "LEFT JOIN 'user' must populate email"
     );
 }
@@ -324,7 +326,10 @@ async fn http_list_members_returns_joined_user_fields() {
     assert_eq!(m["role"], "owner");
     assert_eq!(m["status"], "active");
     assert!(
-        m["email"].as_str().unwrap_or_default().contains("@test.local"),
+        m["email"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("@test.local"),
         "LEFT JOIN 'user'.email should populate"
     );
     assert_eq!(m["companyId"], company_id.to_string());

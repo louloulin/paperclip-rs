@@ -26,12 +26,10 @@ pub fn resolve_path_value(data: &Value, dotted_path: &str) -> String {
     let mut cursor: &Value = data;
     for part in parts {
         match cursor {
-            Value::Object(map) => {
-                match map.get(part) {
-                    Some(v) => cursor = v,
-                    None => return String::new(),
-                }
-            }
+            Value::Object(map) => match map.get(part) {
+                Some(v) => cursor = v,
+                None => return String::new(),
+            },
             _ => return String::new(),
         }
     }
@@ -171,10 +169,7 @@ pub fn build_template_data(input: BuildTemplateDataInput<'_>) -> Value {
         "repoRef".into(),
         Value::String(input.workspace.repo_ref.clone().unwrap_or_default()),
     );
-    ws_obj.insert(
-        "env".into(),
-        Value::Object(input.adapter_env.clone()),
-    );
+    ws_obj.insert("env".into(), Value::Object(input.adapter_env.clone()));
 
     let mut issue_obj = Map::new();
     issue_obj.insert(
@@ -359,19 +354,13 @@ mod tests {
     fn render_template_keeps_invalid_path_literal() {
         let v = json!({});
         // 含空格的路径 → 不合法，保持字面
-        assert_eq!(
-            render_template("{{ a b }} {{name}}", &v),
-            "{{ a b }} "
-        );
+        assert_eq!(render_template("{{ a b }} {{name}}", &v), "{{ a b }} ");
     }
 
     #[test]
     fn render_template_multiple_in_one() {
         let v = json!({"a": "1", "b": "2"});
-        assert_eq!(
-            render_template("{{a}}-{{b}}-{{a}}", &v),
-            "1-2-1"
-        );
+        assert_eq!(render_template("{{a}}-{{b}}-{{a}}", &v), "1-2-1");
     }
 
     // ----- build_template_data -----
@@ -471,7 +460,10 @@ mod tests {
         let mut env_cfg = Map::new();
         env_cfg.insert("URL".into(), Value::String("http://{{port}}".into()));
         env_cfg.insert("NAME".into(), Value::String("{{agent.name}}".into()));
-        env_cfg.insert("NOT_STR".into(), Value::Number(serde_json::Number::from(42)));
+        env_cfg.insert(
+            "NOT_STR".into(),
+            Value::Number(serde_json::Number::from(42)),
+        );
         let env_cfg_view = env_cfg.clone();
         let ws_ref = ws();
         let ag_ref = ag();

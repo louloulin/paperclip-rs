@@ -129,7 +129,9 @@ mod tests {
             watched_issue_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
             watched_issue_identifier: Some("PMA-42"),
             watched_issue_title: Some("Fix login bug"),
-            watchdog_issue_id: Some(Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap()),
+            watchdog_issue_id: Some(
+                Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),
+            ),
             stop_fingerprint: Some("fp-abc"),
             custom_instructions: Some("Don't break tests"),
             capabilities: None,
@@ -146,14 +148,8 @@ mod tests {
         assert_eq!(ctx["source"], "task_watchdog");
         assert_eq!(ctx["wakeReason"], "task_watchdog_stopped_subtree");
         // issueId / taskId 来自 watchdog_issue_id
-        assert_eq!(
-            ctx["issueId"],
-            "33333333-3333-3333-3333-333333333333"
-        );
-        assert_eq!(
-            ctx["taskId"],
-            "33333333-3333-3333-3333-333333333333"
-        );
+        assert_eq!(ctx["issueId"], "33333333-3333-3333-3333-333333333333");
+        assert_eq!(ctx["taskId"], "33333333-3333-3333-3333-333333333333");
     }
 
     #[test]
@@ -219,7 +215,10 @@ mod tests {
         let caps = tw.get("capabilities").expect("must have capabilities");
         // targetScope 必填
         let ts = caps.get("targetScope").expect("must have targetScope");
-        assert_eq!(ts.get("watchedIssueId").unwrap().as_str().unwrap(), watched_id.to_string());
+        assert_eq!(
+            ts.get("watchedIssueId").unwrap().as_str().unwrap(),
+            watched_id.to_string()
+        );
         // operations / deniedOperations 是 array
         assert!(caps.get("operations").unwrap().is_array());
         assert!(caps.get("deniedOperations").unwrap().is_array());
@@ -263,7 +262,9 @@ mod tests {
             capabilities: Some(capability),
         };
         let ctx = build_task_watchdog_wake_context(&input);
-        let denied = ctx["taskWatchdog"]["capabilities"]["deniedOperations"].as_array().unwrap();
+        let denied = ctx["taskWatchdog"]["capabilities"]["deniedOperations"]
+            .as_array()
+            .unwrap();
         let denied_strs: Vec<&str> = denied.iter().filter_map(|v| v.as_str()).collect();
         assert!(denied_strs.contains(&"archive"));
         assert!(denied_strs.contains(&"delete"));

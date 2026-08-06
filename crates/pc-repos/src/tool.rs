@@ -150,7 +150,8 @@ pub mod metadata_keys {
 
 impl ToolApplicationRow {
     pub fn description(&self) -> Option<&str> {
-        self.metadata.get(metadata_keys::DESCRIPTION)
+        self.metadata
+            .get(metadata_keys::DESCRIPTION)
             .and_then(Value::as_str)
     }
     pub fn config(&self) -> Value {
@@ -344,10 +345,7 @@ impl<'a> ToolRepo<'a> {
 
     /// Round 100: list_by_company 对齐真实 schema，去掉 archived_at IS NULL 过滤。
     /// 返回的 row 是已 1:1 投影 DB 行的 ToolApplicationRow。
-    pub async fn list_by_company(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<ToolApplicationRow>> {
+    pub async fn list_by_company(&self, company_id: Uuid) -> RepoResult<Vec<ToolApplicationRow>> {
         let sql = format!(
             "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1              ORDER BY created_at DESC LIMIT 200"
         );
@@ -371,27 +369,18 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-/// Round 100: 按 id 全局查（不限定 company_id）。
+    /// Round 100: 按 id 全局查（不限定 company_id）。
     /// 用于纯 id-based 端点（如 `GET /api/tool-applications/:id`），调用方可用返回的
     /// `company_id` 决定是否允许后续跨公司操作。
-    pub async fn get_by_id(
-        &self,
-        id: Uuid,
-    ) -> RepoResult<Option<ToolApplicationRow>> {
-        let sql = format!(
-            "SELECT {APP_COLS} FROM tool_applications WHERE id=$1"
-        );
+    pub async fn get_by_id(&self, id: Uuid) -> RepoResult<Option<ToolApplicationRow>> {
+        let sql = format!("SELECT {APP_COLS} FROM tool_applications WHERE id=$1");
         Ok(sqlx::query_as::<_, ToolApplicationRow>(&sql)
             .bind(id)
             .fetch_optional(self.db.pool())
             .await?)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<ToolApplicationRow>> {
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<ToolApplicationRow>> {
         let sql = format!(
             "SELECT {APP_COLS} FROM tool_applications              WHERE company_id=$1 AND id=$2"
         );
@@ -463,19 +452,13 @@ impl<'a> ToolRepo<'a> {
     }
 
     /// Round 100: 已删除 archived_at 列。patch_application 才是真正的"删除"语义。
-    pub async fn delete_application(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "DELETE FROM tool_applications WHERE company_id=$1 AND id=$2",
-        )
-        .bind(company_id)
-        .bind(id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn delete_application(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM tool_applications WHERE company_id=$1 AND id=$2")
+            .bind(company_id)
+            .bind(id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
 
@@ -577,14 +560,11 @@ impl<'a> ToolRepo<'a> {
     }
 
     /// Round 142: 设置 connection 为 connected（status='connected', enabled=true, healthy）。
-    pub async fn mark_connection_connected(
-        &self,
-        connection_id: Uuid,
-    ) -> RepoResult<bool> {
+    pub async fn mark_connection_connected(&self, connection_id: Uuid) -> RepoResult<bool> {
         let n = sqlx::query(
             "UPDATE tool_connections SET status = 'connected', enabled = true, \
                 health_status = 'healthy', last_health_at = now(), updated_at = now() \
-             WHERE id = $1"
+             WHERE id = $1",
         )
         .bind(connection_id)
         .execute(self.db.pool())
@@ -609,10 +589,12 @@ impl<'a> ToolRepo<'a> {
 
     /// Round 142: 清理过期的 oauth state。
     pub async fn prune_expired_oauth_states(&self) -> RepoResult<u64> {
-        Ok(sqlx::query("DELETE FROM tool_oauth_states WHERE expires_at < now()")
-            .execute(self.db.pool())
-            .await?
-            .rows_affected())
+        Ok(
+            sqlx::query("DELETE FROM tool_oauth_states WHERE expires_at < now()")
+                .execute(self.db.pool())
+                .await?
+                .rows_affected(),
+        )
     }
 
     /// Round 142: 完成 oauth（复合事务）：UPDATE connection status + INSERT connection_grants + INSERT oauth state。
@@ -703,12 +685,10 @@ impl<'a> ToolRepo<'a> {
         .bind(details)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(
-            "UPDATE tool_connections SET last_health_at=now() WHERE id=$1",
-        )
-        .bind(connection_id)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("UPDATE tool_connections SET last_health_at=now() WHERE id=$1")
+            .bind(connection_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -727,12 +707,10 @@ impl<'a> ToolRepo<'a> {
     }
 
     pub async fn touch_used(&self, connection_id: Uuid) -> RepoResult<()> {
-        sqlx::query(
-            "UPDATE tool_connections SET last_used_at=now(), updated_at=now() WHERE id=$1",
-        )
-        .bind(connection_id)
-        .execute(self.db.pool())
-        .await?;
+        sqlx::query("UPDATE tool_connections SET last_used_at=now(), updated_at=now() WHERE id=$1")
+            .bind(connection_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(())
     }
 
@@ -751,10 +729,7 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn upsert_catalog(
-        &self,
-        e: &CatalogEntryRow,
-    ) -> RepoResult<CatalogEntryRow> {
+    pub async fn upsert_catalog(&self, e: &CatalogEntryRow) -> RepoResult<CatalogEntryRow> {
         let sql = format!(
             "INSERT INTO tool_catalog_entries (company_id, slug, name, description, kind, status,                 application_id, distribution_visibility, metadata)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)              ON CONFLICT (company_id, slug) DO UPDATE SET                 name=EXCLUDED.name, description=EXCLUDED.description, status=EXCLUDED.status,                 application_id=EXCLUDED.application_id, metadata=EXCLUDED.metadata,                 updated_at=now()              RETURNING {CATALOG_COLS}"
         );
@@ -840,7 +815,11 @@ impl<'a> ToolRepo<'a> {
         error_code: Option<&str>,
         error_message: Option<&str>,
     ) -> RepoResult<()> {
-        let status = if error_code.is_some() { "failed" } else { "executed" };
+        let status = if error_code.is_some() {
+            "failed"
+        } else {
+            "executed"
+        };
         sqlx::query(
             "UPDATE tool_action_requests SET status=$2, executed_at=now(), result_summary=$3,              error_code=$4, error_message=$5, updated_at=now() WHERE id=$1",
         )
@@ -1004,20 +983,16 @@ impl<'a> ToolRepo<'a> {
         company_id: Uuid,
         profile_key: &str,
     ) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM tool_profiles WHERE company_id=$1 AND profile_key=$2",
-        )
-        .bind(company_id)
-        .bind(profile_key)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM tool_profiles WHERE company_id=$1 AND profile_key=$2")
+                .bind(company_id)
+                .bind(profile_key)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(id,)| id))
     }
 
-    pub async fn create_profile(
-        &self,
-        p: &NewToolProfile,
-    ) -> RepoResult<ToolProfileRow> {
+    pub async fn create_profile(&self, p: &NewToolProfile) -> RepoResult<ToolProfileRow> {
         if p.name.trim().is_empty() {
             return Err(RepoError::Invalid("profile name must not be empty".into()));
         }
@@ -1039,19 +1014,13 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn delete_profile(
-        &self,
-        company_id: Uuid,
-        profile_id: Uuid,
-    ) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "DELETE FROM tool_profiles WHERE company_id=$1 AND id=$2",
-        )
-        .bind(company_id)
-        .bind(profile_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn delete_profile(&self, company_id: Uuid, profile_id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM tool_profiles WHERE company_id=$1 AND id=$2")
+            .bind(company_id)
+            .bind(profile_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
 
@@ -1077,7 +1046,10 @@ impl<'a> ToolRepo<'a> {
         if e.selector_type.trim().is_empty() {
             return Err(RepoError::Invalid("selector_type must not be empty".into()));
         }
-        let conditions = e.conditions.clone().unwrap_or_else(|| serde_json::json!({}));
+        let conditions = e
+            .conditions
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({}));
         let sql = format!(
             "INSERT INTO tool_profile_entries                 (company_id, profile_id, selector_type, effect, application_id, connection_id,                  catalog_entry_id, tool_name, risk_level, conditions)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)              RETURNING {PROFILE_ENTRY_COLS}",
         );
@@ -1098,20 +1070,17 @@ impl<'a> ToolRepo<'a> {
 
     /// Round 141: 通过 profile_id 查找 company_id（仅取 company_id 字段）。
     pub async fn find_profile_company_id(&self, profile_id: Uuid) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM tool_profiles WHERE id=$1",
-        )
-        .bind(profile_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM tool_profiles WHERE id=$1")
+                .bind(profile_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(c,)| c))
     }
 
     /// Round 141: 通过 profile_id 取完整 profile（不限 company）。
     pub async fn find_profile_by_id(&self, profile_id: Uuid) -> RepoResult<Option<ToolProfileRow>> {
-        let sql = format!(
-            "SELECT {PROFILE_COLS} FROM tool_profiles WHERE id=$1"
-        );
+        let sql = format!("SELECT {PROFILE_COLS} FROM tool_profiles WHERE id=$1");
         Ok(sqlx::query_as::<_, ToolProfileRow>(&sql)
             .bind(profile_id)
             .fetch_optional(self.db.pool())
@@ -1206,12 +1175,11 @@ impl<'a> ToolRepo<'a> {
 
     /// Round 141: 通过 entry_id 查找 company_id。
     pub async fn find_profile_entry_company_id(&self, entry_id: Uuid) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM tool_profile_entries WHERE id=$1",
-        )
-        .bind(entry_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM tool_profile_entries WHERE id=$1")
+                .bind(entry_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(c,)| c))
     }
 
@@ -1220,9 +1188,7 @@ impl<'a> ToolRepo<'a> {
         &self,
         entry_id: Uuid,
     ) -> RepoResult<Option<ToolProfileEntryRow>> {
-        let sql = format!(
-            "SELECT {PROFILE_ENTRY_COLS} FROM tool_profile_entries WHERE id=$1"
-        );
+        let sql = format!("SELECT {PROFILE_ENTRY_COLS} FROM tool_profile_entries WHERE id=$1");
         Ok(sqlx::query_as::<_, ToolProfileEntryRow>(&sql)
             .bind(entry_id)
             .fetch_optional(self.db.pool())
@@ -1335,13 +1301,12 @@ impl<'a> ToolRepo<'a> {
         company_id: Uuid,
         profile_id: Uuid,
     ) -> RepoResult<bool> {
-        let exists: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM tool_profiles WHERE company_id = $1 AND id = $2",
-        )
-        .bind(company_id)
-        .bind(profile_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let exists: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM tool_profiles WHERE company_id = $1 AND id = $2")
+                .bind(company_id)
+                .bind(profile_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(exists.is_some())
     }
 
@@ -1407,7 +1372,6 @@ pub struct ToolProfileEntryInput {
 
 const PROFILE_COLS: &str = "id, company_id, profile_key, name, description, status, default_action, metadata, created_at, updated_at";
 const PROFILE_ENTRY_COLS: &str = "id, company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions, created_at, updated_at";
-
 
 // ============================================================
 // Round 102: ToolRuntimeSlot 仓储层
@@ -1487,10 +1451,7 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn runtime_health(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<ToolRuntimeHealth> {
+    pub async fn runtime_health(&self, company_id: Uuid) -> RepoResult<ToolRuntimeHealth> {
         let row: (i64, Option<Timestamp>) = sqlx::query_as(
             "SELECT COUNT(*)::bigint, MAX(last_used_at)               FROM tool_runtime_slots              WHERE company_id=$1 AND status='active'",
         )
@@ -1533,9 +1494,9 @@ pub struct ToolStdioTemplateRow {
     pub description: Option<String>,
     pub status: String,
     pub command: String,
-    pub args: Value,        // jsonb '[]'
-    pub env_keys: Value,    // jsonb '[]'
-    pub tools: Value,       // jsonb '[]'
+    pub args: Value,     // jsonb '[]'
+    pub env_keys: Value, // jsonb '[]'
+    pub tools: Value,    // jsonb '[]'
     pub created_by_agent_id: Option<Uuid>,
     pub created_by_user_id: Option<String>,
     pub disabled_at: Option<Timestamp>,
@@ -1564,9 +1525,15 @@ pub struct NewToolStdioTemplate {
     pub created_by_user_id: Option<String>,
 }
 
-fn default_stdio_args() -> Value { serde_json::json!([]) }
-fn default_stdio_env_keys() -> Value { serde_json::json!([]) }
-fn default_stdio_tools() -> Value { serde_json::json!([]) }
+fn default_stdio_args() -> Value {
+    serde_json::json!([])
+}
+fn default_stdio_env_keys() -> Value {
+    serde_json::json!([])
+}
+fn default_stdio_tools() -> Value {
+    serde_json::json!([])
+}
 
 impl<'a> ToolRepo<'a> {
     pub async fn list_stdio_templates_by_company(
@@ -1734,14 +1701,38 @@ impl<'a> ToolRepo<'a> {
         config: &Value,
         uid: &str,
     ) -> RepoResult<(
-        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-        Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
-        pc_core::Timestamp, pc_core::Timestamp,
+        Uuid,
+        Uuid,
+        Uuid,
+        String,
+        String,
+        String,
+        bool,
+        Value,
+        Value,
+        String,
+        Option<String>,
+        Option<pc_core::Timestamp>,
+        Option<pc_core::Timestamp>,
+        pc_core::Timestamp,
+        pc_core::Timestamp,
     )> {
         let row: (
-            Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-            Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
-            pc_core::Timestamp, pc_core::Timestamp,
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            bool,
+            Value,
+            Value,
+            String,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            pc_core::Timestamp,
+            pc_core::Timestamp,
         ) = sqlx::query_as(
             "INSERT INTO tool_connections \
                 (company_id, application_id, name, transport, config, uid) \
@@ -1765,15 +1756,41 @@ impl<'a> ToolRepo<'a> {
     pub async fn list_connections_v1(
         &self,
         company_id: Uuid,
-    ) -> RepoResult<Vec<(
-        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-        Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
-        pc_core::Timestamp, pc_core::Timestamp,
-    )>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            bool,
+            Value,
+            Value,
+            String,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            pc_core::Timestamp,
+            pc_core::Timestamp,
+        )>,
+    > {
         let rows: Vec<(
-            Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-            Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
-            pc_core::Timestamp, pc_core::Timestamp,
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            bool,
+            Value,
+            Value,
+            String,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            pc_core::Timestamp,
+            pc_core::Timestamp,
         )> = sqlx::query_as(
             "SELECT id, company_id, application_id, name, transport, status, enabled, config, \
                     credential_refs, health_status, health_message, last_health_at, \
@@ -1791,15 +1808,41 @@ impl<'a> ToolRepo<'a> {
         &self,
         company_id: Uuid,
         id: Uuid,
-    ) -> RepoResult<Option<(
-        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-        Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
-        pc_core::Timestamp, pc_core::Timestamp,
-    )>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            bool,
+            Value,
+            Value,
+            String,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            pc_core::Timestamp,
+            pc_core::Timestamp,
+        )>,
+    > {
         let row: Option<(
-            Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-            Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>,
-            pc_core::Timestamp, pc_core::Timestamp,
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            bool,
+            Value,
+            Value,
+            String,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            Option<pc_core::Timestamp>,
+            pc_core::Timestamp,
+            pc_core::Timestamp,
         )> = sqlx::query_as(
             "SELECT id, company_id, application_id, name, transport, status, enabled, config, \
                     credential_refs, health_status, health_message, last_health_at, \
@@ -1874,9 +1917,15 @@ pub struct NewToolPolicy {
     pub created_by_user_id: Option<String>,
 }
 
-fn default_policy_priority() -> i32 { 100 }
-fn default_policy_enabled() -> bool { true }
-fn default_policy_selectors() -> Value { serde_json::json!({}) }
+fn default_policy_priority() -> i32 {
+    100
+}
+fn default_policy_enabled() -> bool {
+    true
+}
+fn default_policy_selectors() -> Value {
+    serde_json::json!({})
+}
 
 impl<'a> ToolRepo<'a> {
     pub async fn list_policies_by_company(
@@ -1925,20 +1974,16 @@ impl<'a> ToolRepo<'a> {
         company_id: Uuid,
         name: &str,
     ) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM tool_policies WHERE company_id=$1 AND name=$2",
-        )
-        .bind(company_id)
-        .bind(name)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM tool_policies WHERE company_id=$1 AND name=$2")
+                .bind(company_id)
+                .bind(name)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(id,)| id))
     }
 
-    pub async fn create_policy(
-        &self,
-        p: &NewToolPolicy,
-    ) -> RepoResult<ToolPolicyRow> {
+    pub async fn create_policy(&self, p: &NewToolPolicy) -> RepoResult<ToolPolicyRow> {
         if p.name.trim().is_empty() {
             return Err(RepoError::Invalid("policy name must not be empty".into()));
         }
@@ -1964,19 +2009,13 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn delete_policy(
-        &self,
-        company_id: Uuid,
-        policy_id: Uuid,
-    ) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "DELETE FROM tool_policies WHERE company_id=$1 AND id=$2",
-        )
-        .bind(company_id)
-        .bind(policy_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn delete_policy(&self, company_id: Uuid, policy_id: Uuid) -> RepoResult<bool> {
+        let n = sqlx::query("DELETE FROM tool_policies WHERE company_id=$1 AND id=$2")
+            .bind(company_id)
+            .bind(policy_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
 
@@ -2069,10 +2108,7 @@ impl<'a> ToolRepo<'a> {
     }
 
     /// Round 141: 列出 trust 类型规则（policy_type='trust' OR 包含 trustRuleKey 选择器）。
-    pub async fn list_trust_rules(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<ToolPolicyRow>> {
+    pub async fn list_trust_rules(&self, company_id: Uuid) -> RepoResult<Vec<ToolPolicyRow>> {
         let sql = format!(
             "SELECT {POLICY_COLS} FROM tool_policies \
              WHERE company_id=$1 \
@@ -2086,11 +2122,7 @@ impl<'a> ToolRepo<'a> {
     }
 
     /// Round 141: 检查 policy 是否属于 trust 规则类型。
-    pub async fn is_trust_rule(
-        &self,
-        company_id: Uuid,
-        policy_id: Uuid,
-    ) -> RepoResult<bool> {
+    pub async fn is_trust_rule(&self, company_id: Uuid, policy_id: Uuid) -> RepoResult<bool> {
         let exists: Option<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM tool_policies \
              WHERE company_id = $1 AND id = $2 \
@@ -2139,14 +2171,16 @@ impl<'a> ToolRepo<'a> {
         .bind(action_request_id)
         .fetch_optional(self.db.pool())
         .await?;
-        Ok(row.map(|(summary, application_id, connection_id, tool_name)| {
-            ActionRequestTrustFields {
-                summary,
-                application_id,
-                connection_id,
-                tool_name,
-            }
-        }))
+        Ok(
+            row.map(|(summary, application_id, connection_id, tool_name)| {
+                ActionRequestTrustFields {
+                    summary,
+                    application_id,
+                    connection_id,
+                    tool_name,
+                }
+            }),
+        )
     }
 }
 
@@ -2241,10 +2275,7 @@ pub struct InvocationSummaryRow {
 
 impl<'a> ToolRepo<'a> {
     /// Round 144: 列出某 company 的 active tool categories（distinct risk_level）。
-    pub async fn list_tool_categories(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<String>> {
+    pub async fn list_tool_categories(&self, company_id: Uuid) -> RepoResult<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT risk_level FROM tool_catalog_entries \
              WHERE company_id = $1 AND status = 'active' ORDER BY risk_level",
@@ -2299,10 +2330,20 @@ impl<'a> ToolRepo<'a> {
         q: Option<&str>,
         risk_level: Option<&str>,
         connection_id: Option<Uuid>,
-    ) -> RepoResult<Vec<(
-        Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
-        Value, String, String, Timestamp,
-    )>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Value,
+            String,
+            String,
+            Timestamp,
+        )>,
+    > {
         let has_q = q.map(|s| !s.is_empty()).unwrap_or(false);
         let has_risk = risk_level.is_some();
         let has_cid = connection_id.is_some();
@@ -2311,7 +2352,10 @@ impl<'a> ToolRepo<'a> {
              input_schema, risk_level, status, created_at \
              FROM tool_catalog_entries WHERE company_id = $1 AND status = 'active'",
         );
-        let like_pat = q.filter(|s| !s.is_empty()).map(|s| format!("%{s}%")).unwrap_or_default();
+        let like_pat = q
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{s}%"))
+            .unwrap_or_default();
         let risk_val = risk_level.unwrap_or("");
         let cid = connection_id.unwrap_or_else(Uuid::nil);
         if has_q {
@@ -2328,8 +2372,16 @@ impl<'a> ToolRepo<'a> {
         }
         sql.push_str(" ORDER BY name LIMIT 100");
         let rows: Vec<(
-            Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
-            Value, String, String, Timestamp,
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Value,
+            String,
+            String,
+            Timestamp,
         )> = sqlx::query_as(&sql)
             .bind(company_id)
             .bind(&like_pat)
@@ -2344,13 +2396,31 @@ impl<'a> ToolRepo<'a> {
     pub async fn get_active_catalog_entry(
         &self,
         entry_id: Uuid,
-    ) -> RepoResult<Option<(
-        Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
-        Value, String, String, Timestamp,
-    )>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Value,
+            String,
+            String,
+            Timestamp,
+        )>,
+    > {
         let row: Option<(
-            Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
-            Value, String, String, Timestamp,
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Value,
+            String,
+            String,
+            Timestamp,
         )> = sqlx::query_as(
             "SELECT id, company_id, connection_id, name, title, description, \
              input_schema, risk_level, status, created_at \
@@ -2367,13 +2437,31 @@ impl<'a> ToolRepo<'a> {
         &self,
         company_id: Uuid,
         entry_id: Uuid,
-    ) -> RepoResult<Option<(
-        Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
-        Value, String, String, Timestamp,
-    )>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Value,
+            String,
+            String,
+            Timestamp,
+        )>,
+    > {
         let row: Option<(
-            Uuid, Uuid, Uuid, String, Option<String>, Option<String>,
-            Value, String, String, Timestamp,
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Value,
+            String,
+            String,
+            Timestamp,
         )> = sqlx::query_as(
             "SELECT id, company_id, connection_id, name, title, description, \
              input_schema, risk_level, status, created_at \
@@ -2553,13 +2641,14 @@ impl<'a> ToolRepo<'a> {
         &self,
         connection_id: Uuid,
     ) -> RepoResult<Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)>> {
-        let rows: Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-            "SELECT id, connection_id, kind, subject_user_id, status, created_at::text \
+        let rows: Vec<(Uuid, Uuid, String, Option<String>, Option<String>, String)> =
+            sqlx::query_as(
+                "SELECT id, connection_id, kind, subject_user_id, status, created_at::text \
              FROM connection_grants WHERE connection_id = $1 ORDER BY created_at DESC LIMIT 50",
-        )
-        .bind(connection_id)
-        .fetch_all(self.db.pool())
-        .await?;
+            )
+            .bind(connection_id)
+            .fetch_all(self.db.pool())
+            .await?;
         Ok(rows)
     }
 
@@ -2644,10 +2733,18 @@ impl<'a> ToolRepo<'a> {
         &self,
         company_id: Uuid,
         run_id: Uuid,
-    ) -> RepoResult<Vec<(
-        Uuid, String, Option<String>, Option<String>, Option<String>,
-        Option<Value>, Value, Option<Timestamp>,
-    )>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<Value>,
+            Value,
+            Option<Timestamp>,
+        )>,
+    > {
         let rows: Vec<(
             Uuid, String, Option<String>, Option<String>, Option<String>,
             Option<Value>, Value, Option<Timestamp>,
@@ -2934,13 +3031,26 @@ mod tests {
             .split(|c: char| c == ',' || c.is_whitespace())
             .filter(|s| !s.is_empty())
             .collect();
-        let wrong = ["action_kind", "requested_by", "payload", "application_id", "connection_id", "action_name"];
+        let wrong = [
+            "action_kind",
+            "requested_by",
+            "payload",
+            "application_id",
+            "connection_id",
+            "action_name",
+        ];
         for c in &cols {
             assert!(!wrong.contains(c), "schema leak: forbidden col {c}");
         }
         // 必须包含真实列
-        for must in ["invocation_id", "canonical_arguments_hash", "canonical_arguments_summary",
-                     "requested_by_agent_id", "requested_by_user_id", "decided_at"] {
+        for must in [
+            "invocation_id",
+            "canonical_arguments_hash",
+            "canonical_arguments_summary",
+            "requested_by_agent_id",
+            "requested_by_user_id",
+            "decided_at",
+        ] {
             assert!(cols.contains(&must), "missing col: {must}");
         }
     }

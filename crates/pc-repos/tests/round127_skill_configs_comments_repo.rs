@@ -17,7 +17,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r127-{tag}-{id}"))
         .bind(format!("R127{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -36,8 +38,12 @@ async fn insert_config(db: &Db, company_id: Uuid, skill_id: Uuid, value: serde_j
     sqlx::query(
         "INSERT INTO company_skill_configs (company_id, skill_id, value) VALUES ($1, $2, $3)",
     )
-    .bind(company_id).bind(skill_id).bind(value)
-    .execute(db.pool()).await.expect("insert config");
+    .bind(company_id)
+    .bind(skill_id)
+    .bind(value)
+    .execute(db.pool())
+    .await
+    .expect("insert config");
 }
 
 async fn insert_comment(db: &Db, company_id: Uuid, skill_id: Uuid, body: &str) -> Uuid {
@@ -46,8 +52,13 @@ async fn insert_comment(db: &Db, company_id: Uuid, skill_id: Uuid, body: &str) -
         "INSERT INTO company_skill_comments (id, company_id, company_skill_id, author_type, body) \
          VALUES ($1, $2, $3, 'user', $4)",
     )
-    .bind(id).bind(company_id).bind(skill_id).bind(body)
-    .execute(db.pool()).await.expect("insert comment");
+    .bind(id)
+    .bind(company_id)
+    .bind(skill_id)
+    .bind(body)
+    .execute(db.pool())
+    .await
+    .expect("insert comment");
     id
 }
 
@@ -92,7 +103,10 @@ async fn delete_comment_soft_deletes() {
     let cid = insert_company(&db, "del-comment").await;
     let sid = insert_skill(&db, cid, "k1").await;
     let cid_comment = insert_comment(&db, cid, sid, "to-delete").await;
-    let deleted = SkillRepo::new(&db).delete_comment(cid_comment).await.expect("delete");
+    let deleted = SkillRepo::new(&db)
+        .delete_comment(cid_comment)
+        .await
+        .expect("delete");
     assert!(deleted);
     let comments = SkillRepo::new(&db).list_comments(sid).await.expect("list");
     assert_eq!(comments.len(), 0);
@@ -102,7 +116,10 @@ async fn delete_comment_soft_deletes() {
 #[tokio::test(flavor = "current_thread")]
 async fn delete_comment_missing_returns_false() {
     let db = db().await;
-    let deleted = SkillRepo::new(&db).delete_comment(Uuid::new_v4()).await.expect("delete");
+    let deleted = SkillRepo::new(&db)
+        .delete_comment(Uuid::new_v4())
+        .await
+        .expect("delete");
     assert!(!deleted);
 }
 
@@ -112,7 +129,10 @@ async fn update_status_returns_some() {
     let db = db().await;
     let cid = insert_company(&db, "status").await;
     let sid = insert_skill(&db, cid, "k1").await;
-    let row = SkillRepo::new(&db).update_status(cid, sid).await.expect("status");
+    let row = SkillRepo::new(&db)
+        .update_status(cid, sid)
+        .await
+        .expect("status");
     assert!(row.is_some());
 }
 
@@ -121,6 +141,9 @@ async fn update_status_returns_some() {
 async fn update_status_missing_returns_none() {
     let db = db().await;
     let cid = insert_company(&db, "status-miss").await;
-    let row = SkillRepo::new(&db).update_status(cid, Uuid::new_v4()).await.expect("status");
+    let row = SkillRepo::new(&db)
+        .update_status(cid, Uuid::new_v4())
+        .await
+        .expect("status");
     assert!(row.is_none());
 }

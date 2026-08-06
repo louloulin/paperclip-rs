@@ -120,10 +120,16 @@ fn redact_sensitive_text(input: &str) -> String {
                 let after = idx + pattern_eq.len();
                 if let Some(stripped) = out.get(after..) {
                     // 跳过可能的引号
-                    let trimmed = stripped.trim_start_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace());
+                    let trimmed = stripped
+                        .trim_start_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace());
                     if let Some(end_idx) = find_token_end(trimmed) {
                         let token = &trimmed[..end_idx];
-                        let replaced = format!("{}{}{}***", &out[..after], &trimmed[..trimmed.len() - token.len() - (trimmed.len() - token.len())], "");
+                        let replaced = format!(
+                            "{}{}{}***",
+                            &out[..after],
+                            &trimmed[..trimmed.len() - token.len() - (trimmed.len() - token.len())],
+                            ""
+                        );
                         // 用更简单的拼接方式
                         let prefix_len = after + (trimmed.len() - token.len());
                         let mut s = out[..prefix_len].to_string();
@@ -215,15 +221,25 @@ impl InMemoryRuntimeStatusStore {
 
 impl RuntimeStatusStore for InMemoryRuntimeStatusStore {
     fn set(&self, status: HeartbeatRunRuntimeStatus) {
-        self.inner.write().expect("runtime status lock poisoned").insert(status.run_id.clone(), status);
+        self.inner
+            .write()
+            .expect("runtime status lock poisoned")
+            .insert(status.run_id.clone(), status);
     }
 
     fn get(&self, run_id: &str) -> Option<HeartbeatRunRuntimeStatus> {
-        self.inner.read().expect("runtime status lock poisoned").get(run_id).cloned()
+        self.inner
+            .read()
+            .expect("runtime status lock poisoned")
+            .get(run_id)
+            .cloned()
     }
 
     fn clear(&self, run_id: &str) {
-        self.inner.write().expect("runtime status lock poisoned").remove(run_id);
+        self.inner
+            .write()
+            .expect("runtime status lock poisoned")
+            .remove(run_id);
     }
 
     fn list(&self) -> Vec<HeartbeatRunRuntimeStatus> {
@@ -309,8 +325,7 @@ pub fn touch_heartbeat_run_runtime_status<S: RuntimeStatusStore>(
     let at = input.at.unwrap_or_else(Utc::now);
     let existing = store.get(&input.run_id);
     if let Some(ref ex) = existing {
-        let same_owner =
-            ex.company_id == input.company_id && ex.agent_id == input.agent_id;
+        let same_owner = ex.company_id == input.company_id && ex.agent_id == input.agent_id;
         if same_owner && !is_expired(ex, at, HEARTBEAT_RUN_RUNTIME_STATUS_TTL_MS) {
             // 在原地更新时间戳
             let mut updated = ex.clone();
@@ -333,7 +348,9 @@ pub fn touch_heartbeat_run_runtime_status<S: RuntimeStatusStore>(
             issue_id: input.issue_id,
             agent_id: input.agent_id,
             run_id: input.run_id,
-            phase: input.fallback_phase.unwrap_or(HeartbeatRunStatusPhase::RunActivity),
+            phase: input
+                .fallback_phase
+                .unwrap_or(HeartbeatRunStatusPhase::RunActivity),
             message: input
                 .fallback_message
                 .unwrap_or_else(|| "Receiving agent output".to_string()),
@@ -458,7 +475,7 @@ mod tests {
 
     #[test]
     fn sanitize_tool_name_respects_limit() {
-        let long = "tool." .to_string() + &"x".repeat(200);
+        let long = "tool.".to_string() + &"x".repeat(200);
         let out = sanitize_heartbeat_run_runtime_tool_name(&long);
         assert!(out.len() <= MAX_HEARTBEAT_RUN_RUNTIME_TOOL_NAME_CHARS);
     }

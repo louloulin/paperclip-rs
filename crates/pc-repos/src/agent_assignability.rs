@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use pc_core::agent_eligibility::{
     get_agent_work_eligibility, AgentEligibilityAgent, AgentEligibilityLifecycleReason,
-    AgentInvalidOrgChainAncestor, AgentOrgChainHealth, AgentOrgChainHealthStatus,
-    AgentOrgChainInvalidReason, AgentOrgChainRelation, AgentOrgChainEntry, AgentWorkEligibility,
+    AgentInvalidOrgChainAncestor, AgentOrgChainEntry, AgentOrgChainHealth,
+    AgentOrgChainHealthStatus, AgentOrgChainInvalidReason, AgentOrgChainRelation,
+    AgentWorkEligibility,
 };
 
 use crate::agent::AgentRepo;
@@ -190,10 +191,7 @@ pub async fn assert_assignable_agent(
     }
     if eligibility.assignability_reason == AgentEligibilityLifecycleReason::UnknownStatus {
         return Err(AgentAssignabilityError::Conflict {
-            message: assignment_message(
-                kind,
-                AgentAssignmentConflictReason::AssigneeUnknownStatus,
-            ),
+            message: assignment_message(kind, AgentAssignmentConflictReason::AssigneeUnknownStatus),
             details: make_conflict_details(
                 company_id,
                 agent_id,
@@ -282,7 +280,10 @@ pub fn chain_to_conflict_entries(
         .iter()
         .map(|entry| {
             let company_uuid = Uuid::parse_str(&entry.company_id).unwrap_or(expected_company_id);
-            let reports_to = entry.reports_to.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+            let reports_to = entry
+                .reports_to
+                .as_ref()
+                .and_then(|s| Uuid::parse_str(s).ok());
             ConflictChainEntry {
                 id: Uuid::parse_str(&entry.id).unwrap_or_else(|_| Uuid::nil()),
                 company_id: company_uuid,
@@ -314,28 +315,31 @@ pub fn make_conflict_details(
 }
 
 /// 业务文案（与 Node `assignmentMessage(kind, reason)` 1:1 对齐）。
-pub fn assignment_message(kind: AgentAssignmentKind, reason: AgentAssignmentConflictReason) -> String {
+pub fn assignment_message(
+    kind: AgentAssignmentKind,
+    reason: AgentAssignmentConflictReason,
+) -> String {
     let subject = match kind {
         AgentAssignmentKind::Work => "work",
         AgentAssignmentKind::Routine => "routines",
     };
     match reason {
-        AgentAssignmentConflictReason::PendingApproval => format!(
-            "Cannot assign {subject} to pending approval agents"
-        ),
-        AgentAssignmentConflictReason::AssigneeTerminated => format!(
-            "Cannot assign {subject} to terminated agents"
-        ),
-        AgentAssignmentConflictReason::AssigneeUnknownStatus => format!(
-            "Cannot assign {subject} to agents with an unsupported lifecycle status"
-        ),
+        AgentAssignmentConflictReason::PendingApproval => {
+            format!("Cannot assign {subject} to pending approval agents")
+        }
+        AgentAssignmentConflictReason::AssigneeTerminated => {
+            format!("Cannot assign {subject} to terminated agents")
+        }
+        AgentAssignmentConflictReason::AssigneeUnknownStatus => {
+            format!("Cannot assign {subject} to agents with an unsupported lifecycle status")
+        }
         AgentAssignmentConflictReason::AncestorTerminated
         | AgentAssignmentConflictReason::AncestorMissing
         | AgentAssignmentConflictReason::AncestorCrossCompany
         | AgentAssignmentConflictReason::AncestorCycle
-        | AgentAssignmentConflictReason::AncestorDepthExceeded => format!(
-            "Cannot assign {subject} to agents with an invalid org chain"
-        ),
+        | AgentAssignmentConflictReason::AncestorDepthExceeded => {
+            format!("Cannot assign {subject} to agents with an invalid org chain")
+        }
     }
 }
 
@@ -343,13 +347,19 @@ pub fn assignment_message(kind: AgentAssignmentKind, reason: AgentAssignmentConf
 ///
 /// 注：Node `assignmentReasonFromHealth` 的缺省值是 `ancestor_missing`（fallback case），
 /// Rust 用 `match` 的最后一支显式表达同样语义。
-pub fn assignment_reason_from_health(eligibility: &AgentWorkEligibility) -> AgentAssignmentConflictReason {
+pub fn assignment_reason_from_health(
+    eligibility: &AgentWorkEligibility,
+) -> AgentAssignmentConflictReason {
     if eligibility.org_chain_health.status != AgentOrgChainHealthStatus::InvalidOrgChain {
         return AgentAssignmentConflictReason::AncestorMissing;
     }
     match eligibility.org_chain_health.reason {
-        AgentOrgChainInvalidReason::TerminatedAncestor => AgentAssignmentConflictReason::AncestorTerminated,
-        AgentOrgChainInvalidReason::MissingManager => AgentAssignmentConflictReason::AncestorMissing,
+        AgentOrgChainInvalidReason::TerminatedAncestor => {
+            AgentAssignmentConflictReason::AncestorTerminated
+        }
+        AgentOrgChainInvalidReason::MissingManager => {
+            AgentAssignmentConflictReason::AncestorMissing
+        }
         AgentOrgChainInvalidReason::Cycle => AgentAssignmentConflictReason::AncestorCycle,
         AgentOrgChainInvalidReason::Healthy => AgentAssignmentConflictReason::AncestorMissing,
     }
@@ -364,7 +374,10 @@ fn first_invalid_ancestor_uuid(
     eligibility: &AgentWorkEligibility,
     fallback_company_id: Uuid,
 ) -> Option<Uuid> {
-    let first = eligibility.org_chain_health.first_invalid_ancestor.as_ref()?;
+    let first = eligibility
+        .org_chain_health
+        .first_invalid_ancestor
+        .as_ref()?;
     let parsed = Uuid::parse_str(&first.id).ok()?;
     Some(parsed)
 }
@@ -403,19 +416,31 @@ mod tests {
     #[test]
     fn assignment_message_uses_kind_in_subject() {
         assert_eq!(
-            assignment_message(AgentAssignmentKind::Work, AgentAssignmentConflictReason::PendingApproval),
+            assignment_message(
+                AgentAssignmentKind::Work,
+                AgentAssignmentConflictReason::PendingApproval
+            ),
             "Cannot assign work to pending approval agents"
         );
         assert_eq!(
-            assignment_message(AgentAssignmentKind::Routine, AgentAssignmentConflictReason::PendingApproval),
+            assignment_message(
+                AgentAssignmentKind::Routine,
+                AgentAssignmentConflictReason::PendingApproval
+            ),
             "Cannot assign routines to pending approval agents"
         );
         assert_eq!(
-            assignment_message(AgentAssignmentKind::Work, AgentAssignmentConflictReason::AssigneeTerminated),
+            assignment_message(
+                AgentAssignmentKind::Work,
+                AgentAssignmentConflictReason::AssigneeTerminated
+            ),
             "Cannot assign work to terminated agents"
         );
         assert_eq!(
-            assignment_message(AgentAssignmentKind::Routine, AgentAssignmentConflictReason::AncestorCycle),
+            assignment_message(
+                AgentAssignmentKind::Routine,
+                AgentAssignmentConflictReason::AncestorCycle
+            ),
             "Cannot assign routines to agents with an invalid org chain"
         );
     }
@@ -423,11 +448,17 @@ mod tests {
     #[test]
     fn assignment_message_for_unknown_status_distinguishes_subject() {
         assert_eq!(
-            assignment_message(AgentAssignmentKind::Work, AgentAssignmentConflictReason::AssigneeUnknownStatus),
+            assignment_message(
+                AgentAssignmentKind::Work,
+                AgentAssignmentConflictReason::AssigneeUnknownStatus
+            ),
             "Cannot assign work to agents with an unsupported lifecycle status"
         );
         assert_eq!(
-            assignment_message(AgentAssignmentKind::Routine, AgentAssignmentConflictReason::AssigneeUnknownStatus),
+            assignment_message(
+                AgentAssignmentKind::Routine,
+                AgentAssignmentConflictReason::AssigneeUnknownStatus
+            ),
             "Cannot assign routines to agents with an unsupported lifecycle status"
         );
     }
@@ -445,7 +476,10 @@ mod tests {
             None,
         );
         assert_eq!(details.code, "agent_not_assignable");
-        assert_eq!(details.reason, AgentAssignmentConflictReason::AncestorTerminated);
+        assert_eq!(
+            details.reason,
+            AgentAssignmentConflictReason::AncestorTerminated
+        );
         assert_eq!(details.company_id, company);
         assert_eq!(details.assignee_agent_id, agent);
         assert_eq!(details.invalid_ancestor_agent_id, None);
@@ -502,17 +536,15 @@ mod tests {
             org_chain_health: pc_core::agent_eligibility::AgentOrgChainHealth {
                 status: AgentOrgChainHealthStatus::Healthy,
                 reason: AgentOrgChainInvalidReason::Healthy,
-                full_chain: vec![
-                    pc_core::agent_eligibility::AgentOrgChainEntry {
-                        id: manager.to_string(),
-                        company_id: company.to_string(),
-                        name: "CTO".to_string(),
-                        status: "active".to_string(),
-                        reports_to: None,
-                        depth: 0,
-                        relation: AgentOrgChainRelation::Self_,
-                    },
-                ],
+                full_chain: vec![pc_core::agent_eligibility::AgentOrgChainEntry {
+                    id: manager.to_string(),
+                    company_id: company.to_string(),
+                    name: "CTO".to_string(),
+                    status: "active".to_string(),
+                    reports_to: None,
+                    depth: 0,
+                    relation: AgentOrgChainRelation::Self_,
+                }],
                 first_invalid_ancestor: None,
                 invalid_ancestors: vec![],
                 repair_guidance: None,
@@ -543,13 +575,37 @@ mod tests {
 
     #[test]
     fn conflict_reason_as_str() {
-        assert_eq!(AgentAssignmentConflictReason::PendingApproval.as_str(), "pending_approval");
-        assert_eq!(AgentAssignmentConflictReason::AssigneeTerminated.as_str(), "assignee_terminated");
-        assert_eq!(AgentAssignmentConflictReason::AssigneeUnknownStatus.as_str(), "assignee_unknown_status");
-        assert_eq!(AgentAssignmentConflictReason::AncestorTerminated.as_str(), "ancestor_terminated");
-        assert_eq!(AgentAssignmentConflictReason::AncestorMissing.as_str(), "ancestor_missing");
-        assert_eq!(AgentAssignmentConflictReason::AncestorCrossCompany.as_str(), "ancestor_cross_company");
-        assert_eq!(AgentAssignmentConflictReason::AncestorCycle.as_str(), "ancestor_cycle");
-        assert_eq!(AgentAssignmentConflictReason::AncestorDepthExceeded.as_str(), "ancestor_depth_exceeded");
+        assert_eq!(
+            AgentAssignmentConflictReason::PendingApproval.as_str(),
+            "pending_approval"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AssigneeTerminated.as_str(),
+            "assignee_terminated"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AssigneeUnknownStatus.as_str(),
+            "assignee_unknown_status"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AncestorTerminated.as_str(),
+            "ancestor_terminated"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AncestorMissing.as_str(),
+            "ancestor_missing"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AncestorCrossCompany.as_str(),
+            "ancestor_cross_company"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AncestorCycle.as_str(),
+            "ancestor_cycle"
+        );
+        assert_eq!(
+            AgentAssignmentConflictReason::AncestorDepthExceeded.as_str(),
+            "ancestor_depth_exceeded"
+        );
     }
 }

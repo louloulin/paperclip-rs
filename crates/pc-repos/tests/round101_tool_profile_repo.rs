@@ -97,13 +97,20 @@ async fn tool_profile_repo_get_by_company_and_id() {
         .await
         .expect("create");
 
-    let got = repo.get_profile(cid, row.id).await.expect("get").expect("present");
+    let got = repo
+        .get_profile(cid, row.id)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(got.profile_key, "k");
     assert_eq!(got.name, "n");
 
     // 跨 company 查不到
     let other_cid = insert_company(&db, "other").await;
-    let none = repo.get_profile(other_cid, row.id).await.expect("get-other");
+    let none = repo
+        .get_profile(other_cid, row.id)
+        .await
+        .expect("get-other");
     assert!(none.is_none());
 }
 
@@ -179,10 +186,7 @@ async fn tool_profile_repo_delete_cascades_entries() {
         .expect("entry");
     }
 
-    let entries_before = repo
-        .list_profile_entries(profile.id)
-        .await
-        .expect("list");
+    let entries_before = repo.list_profile_entries(profile.id).await.expect("list");
     assert_eq!(entries_before.len(), 2);
 
     // 删除 profile

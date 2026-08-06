@@ -21,7 +21,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r129-{tag}-{id}"))
         .bind(format!("R129{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -83,20 +85,26 @@ async fn patch_updates_fields() {
         .await
         .expect("create");
     let updated = repo
-        .patch(row.id, &LabelPatch {
-            color: Some("#3b82f6".into()),
-            ..Default::default()
-        })
+        .patch(
+            row.id,
+            &LabelPatch {
+                color: Some("#3b82f6".into()),
+                ..Default::default()
+            },
+        )
         .await
         .expect("patch")
         .expect("row");
     assert_eq!(updated.color, "#3b82f6");
     assert_eq!(updated.name, "feature");
     let only_name = repo
-        .patch(row.id, &LabelPatch {
-            name: Some("enhancement".into()),
-            ..Default::default()
-        })
+        .patch(
+            row.id,
+            &LabelPatch {
+                name: Some("enhancement".into()),
+                ..Default::default()
+            },
+        )
         .await
         .expect("patch")
         .expect("row");
@@ -131,11 +139,21 @@ async fn count_by_company_isolates_tenants() {
     let b = insert_company(&db, "b").await;
     let repo = LabelRepo::new(&db);
     for n in ["x", "y", "z"] {
-        repo.create(&NewLabel { company_id: a, name: n.into(), color: "#000".into() })
-            .await.expect("create a");
+        repo.create(&NewLabel {
+            company_id: a,
+            name: n.into(),
+            color: "#000".into(),
+        })
+        .await
+        .expect("create a");
     }
-    repo.create(&NewLabel { company_id: b, name: "only".into(), color: "#000".into() })
-        .await.expect("create b");
+    repo.create(&NewLabel {
+        company_id: b,
+        name: "only".into(),
+        color: "#000".into(),
+    })
+    .await
+    .expect("create b");
     assert_eq!(repo.count_by_company(a).await.expect("cnt"), 3);
     assert_eq!(repo.count_by_company(b).await.expect("cnt"), 1);
 }
@@ -147,10 +165,27 @@ async fn filter_to_company_drops_cross_tenant_ids() {
     let a = insert_company(&db, "fa").await;
     let b = insert_company(&db, "fb").await;
     let repo = LabelRepo::new(&db);
-    let la = repo.create(&NewLabel { company_id: a, name: "la".into(), color: "#000".into() }).await.expect("ca");
-    let lb = repo.create(&NewLabel { company_id: b, name: "lb".into(), color: "#000".into() }).await.expect("cb");
+    let la = repo
+        .create(&NewLabel {
+            company_id: a,
+            name: "la".into(),
+            color: "#000".into(),
+        })
+        .await
+        .expect("ca");
+    let lb = repo
+        .create(&NewLabel {
+            company_id: b,
+            name: "lb".into(),
+            color: "#000".into(),
+        })
+        .await
+        .expect("cb");
     let unknown = Uuid::new_v4();
-    let kept = repo.filter_to_company(a, &[la.id, lb.id, unknown]).await.expect("filter");
+    let kept = repo
+        .filter_to_company(a, &[la.id, lb.id, unknown])
+        .await
+        .expect("filter");
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0], la.id);
 }
@@ -162,12 +197,24 @@ async fn find_by_name_locates_row() {
     let cid = insert_company(&db, "find").await;
     let repo = LabelRepo::new(&db);
     let row = repo
-        .create(&NewLabel { company_id: cid, name: "docs".into(), color: "#0ea5e9".into() })
+        .create(&NewLabel {
+            company_id: cid,
+            name: "docs".into(),
+            color: "#0ea5e9".into(),
+        })
         .await
         .expect("create");
-    let found = repo.find_by_name(cid, "docs").await.expect("find").expect("row");
+    let found = repo
+        .find_by_name(cid, "docs")
+        .await
+        .expect("find")
+        .expect("row");
     assert_eq!(found.id, row.id);
-    assert!(repo.find_by_name(cid, "missing").await.expect("find").is_none());
+    assert!(repo
+        .find_by_name(cid, "missing")
+        .await
+        .expect("find")
+        .is_none());
 }
 
 /// 8. create — 颜色空白自动回退默认值；name 前后空白被 trim。
@@ -177,7 +224,11 @@ async fn create_normalizes_color_and_trims_name() {
     let cid = insert_company(&db, "norm").await;
     let repo = LabelRepo::new(&db);
     let row = repo
-        .create(&NewLabel { company_id: cid, name: "  spaced  ".into(), color: "   ".into() })
+        .create(&NewLabel {
+            company_id: cid,
+            name: "  spaced  ".into(),
+            color: "   ".into(),
+        })
         .await
         .expect("create");
     assert_eq!(row.name, "spaced");

@@ -10,7 +10,8 @@ use pc_core::Timestamp;
 use crate::approval::ApprovalRow;
 use crate::Db;
 
-const AGENT_COLUMNS: &str = "id, company_id, name, role, title, icon, status, reports_to, capabilities, \
+const AGENT_COLUMNS: &str =
+    "id, company_id, name, role, title, icon, status, reports_to, capabilities, \
 adapter_type, adapter_config, runtime_config, default_environment_id, budget_monthly_cents, \
 spent_monthly_cents, pause_reason, paused_at, error_reason, permissions, last_heartbeat_at, \
 metadata, created_at, updated_at";
@@ -321,11 +322,9 @@ impl WakeupRequestStatus {
                 target,
                 Self::Skipped | Self::Completed | Self::Failed | Self::Cancelled
             ),
-            Self::Coalesced
-            | Self::Skipped
-            | Self::Completed
-            | Self::Failed
-            | Self::Cancelled => false,
+            Self::Coalesced | Self::Skipped | Self::Completed | Self::Failed | Self::Cancelled => {
+                false
+            }
         }
     }
 
@@ -338,12 +337,7 @@ impl WakeupRequestStatus {
             Self::Skipped => &["queued", "deferred_issue_execution", "claimed", "skipped"],
             Self::Completed => &["claimed", "completed"],
             Self::Failed => &["claimed", "failed"],
-            Self::Cancelled => &[
-                "queued",
-                "deferred_issue_execution",
-                "claimed",
-                "cancelled",
-            ],
+            Self::Cancelled => &["queued", "deferred_issue_execution", "claimed", "cancelled"],
         }
     }
 }
@@ -498,6 +492,20 @@ impl<'a> AgentRepo<'a> {
         .await
     }
 
+    /// Attention 队列用：列出处于 error 状态的 agent。
+    pub async fn list_error_attention(&self, company_id: Uuid) -> sqlx::Result<Vec<AgentRow>> {
+        sqlx::query_as::<_, AgentRow>(
+            "SELECT id, company_id, name, role, title, icon, status, reports_to, capabilities, \
+                    adapter_type, adapter_config, runtime_config, default_environment_id, \
+                    budget_monthly_cents, spent_monthly_cents, pause_reason, paused_at, \
+                    error_reason, permissions, last_heartbeat_at, metadata, created_at, updated_at \
+             FROM agents WHERE company_id=$1 AND status='error' ORDER BY updated_at DESC, id DESC",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
     /// 公司组织架构用的最小列投影：仅返回 (id, name, role, title, reports_to, status)。
     /// 路由层 (`GET /api/companies/:id/org` + `/org.svg`) 用此构造节点 / 边 / SVG。
     pub async fn list_for_org_chart(
@@ -554,12 +562,11 @@ impl<'a> AgentRepo<'a> {
         &self,
         limit: i64,
     ) -> sqlx::Result<Vec<(Uuid, String, String)>> {
-        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-            "SELECT id, name, role FROM agents ORDER BY name LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(self.db.pool())
-        .await?;
+        let rows: Vec<(Uuid, String, String)> =
+            sqlx::query_as("SELECT id, name, role FROM agents ORDER BY name LIMIT $1")
+                .bind(limit)
+                .fetch_all(self.db.pool())
+                .await?;
         Ok(rows)
     }
 
@@ -573,7 +580,7 @@ impl<'a> AgentRepo<'a> {
         )
         .bind(id)
         .fetch_optional(self.db.pool())
-            .await
+        .await
     }
 
     pub async fn claim_due_timer_heartbeat(
@@ -1209,15 +1216,12 @@ impl<'a> AgentRepo<'a> {
             .await
     }
 
-
     /// Round 174: 实例统计用 —— 统计某公司的 agent 数。
     pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM agents WHERE company_id=$1",
-        )
-        .bind(company_id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let n: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM agents WHERE company_id=$1")
+            .bind(company_id)
+            .fetch_one(self.db.pool())
+            .await?;
         Ok(n)
     }
 
@@ -1227,13 +1231,12 @@ impl<'a> AgentRepo<'a> {
         agent_id: Uuid,
         company_id: Uuid,
     ) -> sqlx::Result<Option<serde_json::Value>> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
-            "SELECT adapter_config FROM agents WHERE id = $1 AND company_id = $2",
-        )
-        .bind(agent_id)
-        .bind(company_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(serde_json::Value,)> =
+            sqlx::query_as("SELECT adapter_config FROM agents WHERE id = $1 AND company_id = $2")
+                .bind(agent_id)
+                .bind(company_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(v,)| v))
     }
 
@@ -1506,11 +1509,7 @@ impl<'a> AgentRepo<'a> {
     }
 
     /// Round 169: 触摸 built-in agent 的 updated_at。
-    pub async fn touch_built_in(
-        &self,
-        company_id: Uuid,
-        key: &str,
-    ) -> sqlx::Result<u64> {
+    pub async fn touch_built_in(&self, company_id: Uuid, key: &str) -> sqlx::Result<u64> {
         let n = sqlx::query(
             "UPDATE agents SET updated_at = now() \
              WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
@@ -1546,11 +1545,7 @@ impl<'a> AgentRepo<'a> {
     }
 
     /// Round 169: 重置 built-in agent（status=idle, 清空 pause 字段）。
-    pub async fn reset_built_in(
-        &self,
-        company_id: Uuid,
-        key: &str,
-    ) -> sqlx::Result<u64> {
+    pub async fn reset_built_in(&self, company_id: Uuid, key: &str) -> sqlx::Result<u64> {
         let n = sqlx::query(
             "UPDATE agents SET status = 'idle', pause_reason = NULL, paused_at = NULL, updated_at = now() \
              WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
@@ -1564,11 +1559,7 @@ impl<'a> AgentRepo<'a> {
     }
 
     /// Round 169: 归档 built-in agent。
-    pub async fn archive_built_in(
-        &self,
-        company_id: Uuid,
-        key: &str,
-    ) -> sqlx::Result<u64> {
+    pub async fn archive_built_in(&self, company_id: Uuid, key: &str) -> sqlx::Result<u64> {
         let n = sqlx::query(
             "UPDATE agents SET status = 'archived', archived_at = now(), updated_at = now() \
              WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
@@ -1582,11 +1573,7 @@ impl<'a> AgentRepo<'a> {
     }
 
     /// Round 169: 恢复 built-in agent。
-    pub async fn restore_built_in(
-        &self,
-        company_id: Uuid,
-        key: &str,
-    ) -> sqlx::Result<u64> {
+    pub async fn restore_built_in(&self, company_id: Uuid, key: &str) -> sqlx::Result<u64> {
         let n = sqlx::query(
             "UPDATE agents SET status = 'idle', archived_at = NULL, updated_at = now() \
              WHERE company_id = $1 AND metadata->>'builtInKey' = $2",
@@ -1640,7 +1627,6 @@ impl<'a> AgentRepo<'a> {
         .fetch_all(self.db.pool())
         .await
     }
-
 }
 
 #[cfg(test)]
@@ -1729,7 +1715,9 @@ mod round215_tests {
     fn token_hex_part_is_lowercase_hex() {
         let token = generate_agent_api_token();
         let hex_part = &token[4..];
-        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(hex_part
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]

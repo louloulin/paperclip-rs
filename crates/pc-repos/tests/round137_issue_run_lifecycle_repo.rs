@@ -19,7 +19,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r137-{tag}-{id}"))
         .bind(format!("R137{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
@@ -39,7 +41,13 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn insert_run(db: &Db, company_id: Uuid, agent_id: Uuid, issue_id: Uuid, status: &str) -> Uuid {
+async fn insert_run(
+    db: &Db,
+    company_id: Uuid,
+    agent_id: Uuid,
+    issue_id: Uuid,
+    status: &str,
+) -> Uuid {
     let id = Uuid::new_v4();
     let ctx = json!({"issueId": issue_id.to_string(), "source": "test"});
     sqlx::query("INSERT INTO heartbeat_runs (id, company_id, agent_id, invocation_source, status, context_snapshot) VALUES ($1, $2, $3, 'on_demand', $4, $5)")
@@ -58,7 +66,11 @@ async fn get_run_with_context_returns_full_tuple() {
     let aid = insert_agent(&db, cid).await;
     let iid = insert_issue(&db, cid).await;
     let run_id = insert_run(&db, cid, aid, iid, "queued").await;
-    let row = HeartbeatRepo::new(&db).get_run_with_context(run_id).await.expect("get").expect("row");
+    let row = HeartbeatRepo::new(&db)
+        .get_run_with_context(run_id)
+        .await
+        .expect("get")
+        .expect("row");
     assert_eq!(row.0, run_id);
     assert_eq!(row.1, cid);
     assert_eq!(row.2, aid);
@@ -71,7 +83,10 @@ async fn get_run_with_context_returns_full_tuple() {
 #[tokio::test(flavor = "current_thread")]
 async fn get_run_with_context_unknown_returns_none() {
     let db = db().await;
-    let row = HeartbeatRepo::new(&db).get_run_with_context(Uuid::new_v4()).await.expect("ok");
+    let row = HeartbeatRepo::new(&db)
+        .get_run_with_context(Uuid::new_v4())
+        .await
+        .expect("ok");
     assert!(row.is_none());
 }
 
@@ -85,8 +100,15 @@ async fn cancel_queued_run() {
     let aid = insert_agent(&db, cid).await;
     let iid = insert_issue(&db, cid).await;
     let run_id = insert_run(&db, cid, aid, iid, "queued").await;
-    assert!(HeartbeatRepo::new(&db).cancel_run_for_issue(run_id, iid).await.expect("cancel"));
-    let row = HeartbeatRepo::new(&db).get_run_with_context(run_id).await.expect("get").expect("row");
+    assert!(HeartbeatRepo::new(&db)
+        .cancel_run_for_issue(run_id, iid)
+        .await
+        .expect("cancel"));
+    let row = HeartbeatRepo::new(&db)
+        .get_run_with_context(run_id)
+        .await
+        .expect("get")
+        .expect("row");
     assert_eq!(row.3, "cancelled");
 }
 
@@ -98,7 +120,10 @@ async fn cancel_running_run() {
     let aid = insert_agent(&db, cid).await;
     let iid = insert_issue(&db, cid).await;
     let run_id = insert_run(&db, cid, aid, iid, "running").await;
-    assert!(HeartbeatRepo::new(&db).cancel_run_for_issue(run_id, iid).await.expect("cancel"));
+    assert!(HeartbeatRepo::new(&db)
+        .cancel_run_for_issue(run_id, iid)
+        .await
+        .expect("cancel"));
 }
 
 /// 5. cancel_run_for_issue — 已 cancelled 不再取消（幂等返回 false）。
@@ -123,7 +148,10 @@ async fn cancel_rejects_wrong_issue() {
     let i1 = insert_issue(&db, cid).await;
     let i2 = insert_issue(&db, cid).await;
     let run_id = insert_run(&db, cid, aid, i1, "queued").await;
-    assert!(!HeartbeatRepo::new(&db).cancel_run_for_issue(run_id, i2).await.expect("cancel"));
+    assert!(!HeartbeatRepo::new(&db)
+        .cancel_run_for_issue(run_id, i2)
+        .await
+        .expect("cancel"));
 }
 
 // ===== HeartbeatRepo::get_agent_and_context =====
@@ -142,14 +170,20 @@ async fn get_agent_and_context_returns_pair() {
         .expect("get")
         .expect("row");
     assert_eq!(agent_id, aid);
-    assert_eq!(ctx.get("issueId").and_then(|v| v.as_str()), Some(iid.to_string().as_str()));
+    assert_eq!(
+        ctx.get("issueId").and_then(|v| v.as_str()),
+        Some(iid.to_string().as_str())
+    );
 }
 
 /// 8. get_agent_and_context — 不存在返回 None。
 #[tokio::test(flavor = "current_thread")]
 async fn get_agent_and_context_unknown_returns_none() {
     let db = db().await;
-    let row = HeartbeatRepo::new(&db).get_agent_and_context(Uuid::new_v4()).await.expect("ok");
+    let row = HeartbeatRepo::new(&db)
+        .get_agent_and_context(Uuid::new_v4())
+        .await
+        .expect("ok");
     assert!(row.is_none());
 }
 
@@ -164,8 +198,15 @@ async fn insert_queued_run_creates_new() {
     let iid = insert_issue(&db, cid).await;
     let ctx = json!({"issueId": iid.to_string(), "source": "manual_start"});
     let new_id = Uuid::new_v4();
-    HeartbeatRepo::new(&db).insert_queued_run(new_id, cid, aid, &ctx).await.expect("insert");
-    let row = HeartbeatRepo::new(&db).get_run_with_context(new_id).await.expect("get").expect("row");
+    HeartbeatRepo::new(&db)
+        .insert_queued_run(new_id, cid, aid, &ctx)
+        .await
+        .expect("insert");
+    let row = HeartbeatRepo::new(&db)
+        .get_run_with_context(new_id)
+        .await
+        .expect("get")
+        .expect("row");
     assert_eq!(row.3, "queued");
     assert_eq!(row.4, "on_demand");
 }
@@ -184,8 +225,21 @@ async fn insert_queued_run_preserves_context() {
         "wakeReason": "manual_restart",
     });
     let new_id = Uuid::new_v4();
-    HeartbeatRepo::new(&db).insert_queued_run(new_id, cid, aid, &ctx).await.expect("insert");
-    let (_, stored) = HeartbeatRepo::new(&db).get_agent_and_context(new_id).await.expect("get").expect("row");
-    assert_eq!(stored.get("retryOf").and_then(|v| v.as_str()), Some(iid.to_string().as_str()));
-    assert_eq!(stored.get("wakeReason").and_then(|v| v.as_str()), Some("manual_restart"));
+    HeartbeatRepo::new(&db)
+        .insert_queued_run(new_id, cid, aid, &ctx)
+        .await
+        .expect("insert");
+    let (_, stored) = HeartbeatRepo::new(&db)
+        .get_agent_and_context(new_id)
+        .await
+        .expect("get")
+        .expect("row");
+    assert_eq!(
+        stored.get("retryOf").and_then(|v| v.as_str()),
+        Some(iid.to_string().as_str())
+    );
+    assert_eq!(
+        stored.get("wakeReason").and_then(|v| v.as_str()),
+        Some("manual_restart")
+    );
 }

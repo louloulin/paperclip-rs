@@ -136,12 +136,10 @@ impl<'a> FeedbackVoteRepo<'a> {
     }
 
     pub async fn count_by_issue(&self, issue_id: Uuid) -> sqlx::Result<i64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM feedback_votes WHERE issue_id = $1",
-        )
-        .bind(issue_id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM feedback_votes WHERE issue_id = $1")
+            .bind(issue_id)
+            .fetch_one(self.db.pool())
+            .await?;
         Ok(n)
     }
 }

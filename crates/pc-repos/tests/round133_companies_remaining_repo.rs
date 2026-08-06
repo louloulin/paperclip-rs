@@ -23,7 +23,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r133-{tag}-{id}"))
         .bind(format!("R133{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -103,7 +105,9 @@ async fn create_with_kind_str_rejects_empty_name() {
     let db = db().await;
     let cid = insert_company(&db, "cke").await;
     let repo = FolderRepo::new(&db);
-    let res = repo.create_with_kind_str(cid, "personal", "   ", None, 0).await;
+    let res = repo
+        .create_with_kind_str(cid, "personal", "   ", None, 0)
+        .await;
     assert!(res.is_err());
 }
 
@@ -115,7 +119,10 @@ async fn next_position_for_kind_empty_returns_one() {
     let db = db().await;
     let cid = insert_company(&db, "npe").await;
     let repo = FolderRepo::new(&db);
-    let p = repo.next_position_for_kind(cid, "personal").await.expect("p");
+    let p = repo
+        .next_position_for_kind(cid, "personal")
+        .await
+        .expect("p");
     assert_eq!(p, 1);
 }
 
@@ -125,9 +132,16 @@ async fn next_position_for_kind_increments() {
     let db = db().await;
     let cid = insert_company(&db, "npi").await;
     let repo = FolderRepo::new(&db);
-    repo.create_with_kind_str(cid, "personal", "a", None, 10).await.expect("a");
-    repo.create_with_kind_str(cid, "personal", "b", None, 11).await.expect("b");
-    let p = repo.next_position_for_kind(cid, "personal").await.expect("p");
+    repo.create_with_kind_str(cid, "personal", "a", None, 10)
+        .await
+        .expect("a");
+    repo.create_with_kind_str(cid, "personal", "b", None, 11)
+        .await
+        .expect("b");
+    let p = repo
+        .next_position_for_kind(cid, "personal")
+        .await
+        .expect("p");
     assert_eq!(p, 12);
 }
 
@@ -139,7 +153,10 @@ async fn create_owner_membership_inserts_new() {
     let db = db().await;
     let cid = insert_company(&db, "omi").await;
     let user = format!("u-{}", Uuid::new_v4());
-    CompanyRepo::new(&db).create_owner_membership(cid, &user).await.expect("create");
+    CompanyRepo::new(&db)
+        .create_owner_membership(cid, &user)
+        .await
+        .expect("create");
     let row: (String, String) = sqlx::query_as(
         "SELECT status, membership_role FROM company_memberships WHERE company_id=$1 AND principal_id=$2",
     )
@@ -158,7 +175,10 @@ async fn create_owner_membership_upgrades_existing() {
     sqlx::query("INSERT INTO company_memberships (company_id, principal_type, principal_id, status, membership_role) VALUES ($1,'user',$2,'inactive','viewer')")
         .bind(cid).bind(&user)
         .execute(db.pool()).await.expect("seed");
-    CompanyRepo::new(&db).create_owner_membership(cid, &user).await.expect("upgrade");
+    CompanyRepo::new(&db)
+        .create_owner_membership(cid, &user)
+        .await
+        .expect("upgrade");
     let row: (String, String) = sqlx::query_as(
         "SELECT status, membership_role FROM company_memberships WHERE company_id=$1 AND principal_id=$2",
     )
@@ -177,7 +197,10 @@ async fn create_owner_membership_preserves_existing_owner() {
     sqlx::query("INSERT INTO company_memberships (company_id, principal_type, principal_id, status, membership_role) VALUES ($1,'user',$2,'active','owner')")
         .bind(cid).bind(&user)
         .execute(db.pool()).await.expect("seed");
-    CompanyRepo::new(&db).create_owner_membership(cid, &user).await.expect("noop");
+    CompanyRepo::new(&db)
+        .create_owner_membership(cid, &user)
+        .await
+        .expect("noop");
     let row: (String, String) = sqlx::query_as(
         "SELECT status, membership_role FROM company_memberships WHERE company_id=$1 AND principal_id=$2",
     )

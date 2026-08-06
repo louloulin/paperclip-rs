@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test",
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test")),
         realtime,
     )
 }
@@ -64,12 +61,7 @@ async fn insert_company(db: &Db) -> Uuid {
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -101,9 +93,7 @@ async fn call(
 
 #[tokio::test(flavor = "current_thread")]
 async fn cases_create_get_patch_delete_lifecycle() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::cases::router().with_state(test_state(db.clone()));
 
@@ -149,9 +139,7 @@ async fn cases_create_get_patch_delete_lifecycle() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn cases_list_filters_by_company() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::cases::router().with_state(test_state(db.clone()));
 
@@ -183,9 +171,7 @@ async fn cases_list_filters_by_company() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn projects_create_list_get_update_archive() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::projects::router().with_state(test_state(db.clone()));
 
@@ -230,21 +216,13 @@ async fn projects_create_list_get_update_archive() {
     assert_eq!(body["name"], "Renamed project");
     assert_eq!(body["status"], "active");
 
-    let (status, _) = call(
-        &app,
-        "DELETE",
-        &format!("/api/projects/{project_id}"),
-        None,
-    )
-    .await;
+    let (status, _) = call(&app, "DELETE", &format!("/api/projects/{project_id}"), None).await;
     assert_eq!(status, 204, "project delete: {status}");
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn goals_create_get_update_delete() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::goals::router().with_state(test_state(db.clone()));
 
@@ -283,9 +261,7 @@ async fn goals_create_get_update_delete() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn environments_create_and_list() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let app = routes::environments::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -312,9 +288,7 @@ async fn environments_create_and_list() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn environments_create_rejects_empty_name() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let app = routes::environments::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -329,9 +303,7 @@ async fn environments_create_rejects_empty_name() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn folders_create_list_delete_lifecycle() {
-    let db = Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect");
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let app = routes::folders::router().with_state(test_state(db.clone()));
 

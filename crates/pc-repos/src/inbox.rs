@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+use crate::{RepoError, RepoResult};
 use pc_core::Timestamp;
 use pc_db::Db;
-use crate::{RepoError, RepoResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -170,7 +170,9 @@ impl<'a> InboxRepo<'a> {
 
     pub async fn upsert(&self, n: &NewDismissal) -> RepoResult<InboxDismissalRow> {
         if n.user_id.trim().is_empty() || n.item_key.trim().is_empty() {
-            return Err(RepoError::Invalid("user_id/item_key must not be empty".into()));
+            return Err(RepoError::Invalid(
+                "user_id/item_key must not be empty".into(),
+            ));
         }
         match n.kind {
             DismissKind::Dismiss => {
@@ -182,9 +184,7 @@ impl<'a> InboxRepo<'a> {
             }
             DismissKind::Snooze => match n.snoozed_until {
                 None => {
-                    return Err(RepoError::Invalid(
-                        "snooze requires snoozed_until".into(),
-                    ));
+                    return Err(RepoError::Invalid("snooze requires snoozed_until".into()));
                 }
                 Some(until) if until.as_datetime() <= chrono::Utc::now() => {
                     return Err(RepoError::Invalid(
@@ -261,22 +261,17 @@ impl<'a> InboxRepo<'a> {
 
     /// 自动恢复过期 snooze 的项（返回受影响行数）
     pub async fn expire_snoozes(&self, now: Timestamp) -> RepoResult<u64> {
-        let n = sqlx::query(
-            "DELETE FROM inbox_dismissals WHERE kind='snooze' AND snoozed_until <= $1",
-        )
-        .bind(now)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+        let n =
+            sqlx::query("DELETE FROM inbox_dismissals WHERE kind='snooze' AND snoozed_until <= $1")
+                .bind(now)
+                .execute(self.db.pool())
+                .await?
+                .rows_affected();
         Ok(n)
     }
 
     /// 按公司聚合：每个 user 的 dismiss 数量（用于 dashboard）
-    pub async fn count_active(
-        &self,
-        company_id: Uuid,
-        now: Timestamp,
-    ) -> RepoResult<i64> {
+    pub async fn count_active(&self, company_id: Uuid, now: Timestamp) -> RepoResult<i64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM inbox_dismissals              WHERE company_id=$1                AND (kind='dismiss' OR (kind='snooze' AND snoozed_until > $2))",
         )

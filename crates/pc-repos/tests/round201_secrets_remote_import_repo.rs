@@ -11,9 +11,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -35,10 +33,7 @@ async fn find_existing_names_empty() {
     let cid = insert_company(&db, "fempty").await;
     let repo = SecretRepo::new(&db);
     let names: Vec<String> = vec![];
-    let existing = repo
-        .find_existing_names(cid, &names)
-        .await
-        .expect("query");
+    let existing = repo.find_existing_names(cid, &names).await.expect("query");
     assert!(existing.is_empty());
 }
 
@@ -55,10 +50,7 @@ async fn find_existing_names_partial() {
         .expect("create");
 
     let names = vec!["EXISTING".to_owned(), "MISSING".to_owned()];
-    let existing = repo
-        .find_existing_names(cid, &names)
-        .await
-        .expect("query");
+    let existing = repo.find_existing_names(cid, &names).await.expect("query");
     assert!(existing.contains("EXISTING"));
     assert!(!existing.contains("MISSING"));
     assert_eq!(existing.len(), 1);
@@ -156,20 +148,18 @@ async fn bulk_create_conflict_rolls_back() {
     assert!(result.is_err(), "conflict must abort tx");
 
     // 验证 FRESH_A 与 FRESH_B 没被插入（整体回滚）
-    let fresh_a: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM company_secrets WHERE company_id = $1 AND name = 'FRESH_A'",
-    )
-    .bind(cid)
-    .fetch_optional(db.pool())
-    .await
-    .expect("qa");
-    let fresh_b: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM company_secrets WHERE company_id = $1 AND name = 'FRESH_B'",
-    )
-    .bind(cid)
-    .fetch_optional(db.pool())
-    .await
-    .expect("qb");
+    let fresh_a: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM company_secrets WHERE company_id = $1 AND name = 'FRESH_A'")
+            .bind(cid)
+            .fetch_optional(db.pool())
+            .await
+            .expect("qa");
+    let fresh_b: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM company_secrets WHERE company_id = $1 AND name = 'FRESH_B'")
+            .bind(cid)
+            .fetch_optional(db.pool())
+            .await
+            .expect("qb");
     assert!(fresh_a.is_none(), "FRESH_A should be rolled back");
     assert!(fresh_b.is_none(), "FRESH_B should be rolled back");
 }

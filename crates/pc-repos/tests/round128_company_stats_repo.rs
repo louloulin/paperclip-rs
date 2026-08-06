@@ -16,7 +16,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r128-{tag}-{id}"))
         .bind(format!("R128{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -25,14 +27,20 @@ async fn insert_agent(db: &Db, company_id: Uuid) {
         "INSERT INTO agents (id, company_id, name, kind, status, owner_user_id) \
          VALUES ($1, $2, 'agent', 'assistant', 'active', 'tester')",
     )
-    .bind(Uuid::new_v4()).bind(company_id)
-    .execute(db.pool()).await.expect("insert agent");
+    .bind(Uuid::new_v4())
+    .bind(company_id)
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
 }
 
 async fn insert_project(db: &Db, company_id: Uuid) {
     sqlx::query("INSERT INTO projects (id, company_id, name, key) VALUES ($1, $2, 'proj', 'p')")
-        .bind(Uuid::new_v4()).bind(company_id)
-        .execute(db.pool()).await.expect("insert project");
+        .bind(Uuid::new_v4())
+        .bind(company_id)
+        .execute(db.pool())
+        .await
+        .expect("insert project");
 }
 
 async fn insert_goal(db: &Db, company_id: Uuid) {
@@ -52,8 +60,13 @@ async fn insert_issue(db: &Db, company_id: Uuid, status: &str) {
         "INSERT INTO issues (id, company_id, identifier, title, kind, status, priority) \
          VALUES ($1, $2, $3, 'i', 'task', $4, 'normal')",
     )
-    .bind(Uuid::new_v4()).bind(company_id).bind(format!("ISS-{}", &Uuid::new_v4().simple().to_string()[..6])).bind(status)
-    .execute(db.pool()).await.expect("insert issue");
+    .bind(Uuid::new_v4())
+    .bind(company_id)
+    .bind(format!("ISS-{}", &Uuid::new_v4().simple().to_string()[..6]))
+    .bind(status)
+    .execute(db.pool())
+    .await
+    .expect("insert issue");
 }
 
 /// 1. stats — 空 company
@@ -98,7 +111,9 @@ async fn stats_excludes_archived_pipelines() {
     assert_eq!(s.pipeline_count, 1);
 }
 
-fn company_id_safe(_cid: Uuid) -> Uuid { _cid } // just for clarity
+fn company_id_safe(_cid: Uuid) -> Uuid {
+    _cid
+} // just for clarity
 
 /// 4. stats — issue 区分 open vs done
 #[tokio::test(flavor = "current_thread")]
@@ -132,7 +147,10 @@ async fn stats_excludes_hidden_issues() {
 #[tokio::test(flavor = "current_thread")]
 async fn stats_unknown_company_returns_zeros() {
     let db = db().await;
-    let s = CompanyRepo::new(&db).stats(Uuid::new_v4()).await.expect("stats");
+    let s = CompanyRepo::new(&db)
+        .stats(Uuid::new_v4())
+        .await
+        .expect("stats");
     assert_eq!(s.issue_count, 0);
     assert_eq!(s.agent_count, 0);
     assert_eq!(s.company_id, Uuid::nil()); // wait, we passed Uuid::new_v4()

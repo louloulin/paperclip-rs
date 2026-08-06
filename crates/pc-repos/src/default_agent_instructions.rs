@@ -10,8 +10,7 @@
 
 use std::collections::BTreeMap;
 
-const DEFAULT_AGENTS_MD: &str =
-    include_str!("../assets/onboarding-assets/default/AGENTS.md");
+const DEFAULT_AGENTS_MD: &str = include_str!("../assets/onboarding-assets/default/AGENTS.md");
 const CEO_AGENTS_MD: &str = include_str!("../assets/onboarding-assets/ceo/AGENTS.md");
 const CEO_HEARTBEAT_MD: &str = include_str!("../assets/onboarding-assets/ceo/HEARTBEAT.md");
 const CEO_SOUL_MD: &str = include_str!("../assets/onboarding-assets/ceo/SOUL.md");

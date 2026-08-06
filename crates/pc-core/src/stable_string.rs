@@ -83,16 +83,13 @@ mod tests {
     #[test]
     fn object_nested() {
         let v = json!({"z": {"y": 1, "x": 2}, "a": [3, 2, 1]});
-        assert_eq!(
-            stable_stringify(&v),
-            r#"{"a":[3,2,1],"z":{"x":2,"y":1}}"#
-        );
+        assert_eq!(stable_stringify(&v), r#"{"a":[3,2,1],"z":{"x":2,"y":1}}"#);
     }
 
     #[test]
     fn object_keys_are_json_stringified() {
         let v = json!({"a\"b": 1}); // 双引号需转义
-        // Node: JSON.stringify(`a"b`) => `"a\"b"` → 字段 key 在稳定序列化中也是 JSON 字符串
+                                    // Node: JSON.stringify(`a"b`) => `"a\"b"` → 字段 key 在稳定序列化中也是 JSON 字符串
         let expected = r#"{"a\"b":1}"#;
         assert_eq!(stable_stringify(&v), expected);
     }

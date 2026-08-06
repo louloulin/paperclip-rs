@@ -70,8 +70,10 @@ pub fn parse_adapter_models_env(
     }
 
     // 步骤 2：JSON 解析
-    let parsed: serde_json::Value = serde_json::from_str(raw)
-        .map_err(|e| AdapterModelsEnvError::InvalidJson { message: e.to_string() })?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| AdapterModelsEnvError::InvalidJson {
+            message: e.to_string(),
+        })?;
 
     // 步骤 3：必须是 plain object（不是数组）
     let Some(obj) = parsed.as_object() else {
@@ -89,11 +91,12 @@ pub fn parse_adapter_models_env(
         let entries: Vec<AdapterModelEntry> = list
             .iter()
             .map(|entry| {
-                let entry_obj = entry.as_object().ok_or_else(|| {
-                    AdapterModelsEnvError::InvalidEntry {
-                        adapter_type: adapter_type.clone(),
-                    }
-                })?;
+                let entry_obj =
+                    entry
+                        .as_object()
+                        .ok_or_else(|| AdapterModelsEnvError::InvalidEntry {
+                            adapter_type: adapter_type.clone(),
+                        })?;
                 let id = entry_obj
                     .get("id")
                     .and_then(|v| v.as_str())

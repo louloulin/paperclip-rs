@@ -39,7 +39,9 @@ pub struct TaskWatchdogContext {
 }
 
 #[must_use]
-pub fn read_task_watchdog_context(context_snapshot: Option<&JsonValue>) -> Option<TaskWatchdogContext> {
+pub fn read_task_watchdog_context(
+    context_snapshot: Option<&JsonValue>,
+) -> Option<TaskWatchdogContext> {
     let context = as_plain_record(context_snapshot?)?;
     let task_watchdog = context.get("taskWatchdog").and_then(as_plain_record);
     if task_watchdog.is_none() && context.get("taskWatchdog") != Some(&JsonValue::Bool(true)) {
@@ -80,7 +82,10 @@ mod tests {
         assert_eq!(read_string(None), None);
         assert_eq!(read_string(Some(&json!(""))), None);
         assert_eq!(read_string(Some(&json!("  "))), None);
-        assert_eq!(read_string(Some(&json!("  hello  "))), Some("hello".to_string()));
+        assert_eq!(
+            read_string(Some(&json!("  hello  "))),
+            Some("hello".to_string())
+        );
     }
 
     #[test]

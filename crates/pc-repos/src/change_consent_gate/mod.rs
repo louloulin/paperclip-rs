@@ -5,8 +5,8 @@ mod repository;
 mod rules;
 
 pub use keys::{
-    agent_instructions_change_target_key, agent_profile_change_target_key,
-    skill_change_target_key, skill_import_change_target_key, skill_slug_change_target_key,
+    agent_instructions_change_target_key, agent_profile_change_target_key, skill_change_target_key,
+    skill_import_change_target_key, skill_slug_change_target_key,
     skills_scan_projects_change_target_key, touches_agent_profile_change_consent_fields,
 };
 pub use repository::ChangeConsentGateRepo;

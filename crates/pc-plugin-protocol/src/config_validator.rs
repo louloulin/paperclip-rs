@@ -34,11 +34,17 @@ pub struct ConfigValidationResult {
 
 impl ConfigValidationResult {
     pub fn ok() -> Self {
-        Self { valid: true, errors: None }
+        Self {
+            valid: true,
+            errors: None,
+        }
     }
 
     pub fn invalid(errors: Vec<ConfigValidationError>) -> Self {
-        Self { valid: false, errors: Some(errors) }
+        Self {
+            valid: false,
+            errors: Some(errors),
+        }
     }
 }
 
@@ -78,7 +84,11 @@ pub fn validate_instance_config(config_json: &Value, schema: &Value) -> ConfigVa
         .iter_errors(config_json)
         .map(|err| {
             let field = err.instance_path.to_string();
-            let field = if field.is_empty() { "/".to_string() } else { field };
+            let field = if field.is_empty() {
+                "/".to_string()
+            } else {
+                field
+            };
             let message = err.to_string();
             // jsonschema 0.30 ValidationError Display 是完整 sentence；
             // Node 端 `err.message` 短一些；这里保留完整 message 以便上层识别

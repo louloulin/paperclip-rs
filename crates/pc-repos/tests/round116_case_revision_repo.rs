@@ -19,7 +19,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r116-{tag}-{id}"))
         .bind(format!("R116{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -40,18 +42,16 @@ async fn insert_document(db: &Db, company_id: Uuid, body: &str) -> Uuid {
         "INSERT INTO documents (id, company_id, format, latest_body) \
          VALUES ($1, $2, 'markdown', $3)",
     )
-    .bind(id).bind(company_id).bind(body)
-    .execute(db.pool()).await.expect("insert document");
+    .bind(id)
+    .bind(company_id)
+    .bind(body)
+    .execute(db.pool())
+    .await
+    .expect("insert document");
     id
 }
 
-async fn insert_revision(
-    db: &Db,
-    company_id: Uuid,
-    document_id: Uuid,
-    n: i32,
-    body: &str,
-) -> Uuid {
+async fn insert_revision(db: &Db, company_id: Uuid, document_id: Uuid, n: i32, body: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO document_revisions (id, company_id, document_id, revision_number, body, change_summary) \
@@ -75,7 +75,10 @@ async fn list_document_revisions_orders_desc() {
     insert_revision(&db, cid, did, 3, "v3").await;
     let _ = case_id;
     let repo = CaseRepo::new(&db);
-    let rows = repo.list_document_revisions(cid, did, 200).await.expect("list");
+    let rows = repo
+        .list_document_revisions(cid, did, 200)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].revision_number, 3);
     assert_eq!(rows[1].revision_number, 2);
@@ -93,8 +96,14 @@ async fn list_document_revisions_isolates() {
     insert_revision(&db, cid, d1, 2, "y").await;
     insert_revision(&db, cid, d2, 1, "z").await;
     let repo = CaseRepo::new(&db);
-    let d1_rows = repo.list_document_revisions(cid, d1, 200).await.expect("d1");
-    let d2_rows = repo.list_document_revisions(cid, d2, 200).await.expect("d2");
+    let d1_rows = repo
+        .list_document_revisions(cid, d1, 200)
+        .await
+        .expect("d1");
+    let d2_rows = repo
+        .list_document_revisions(cid, d2, 200)
+        .await
+        .expect("d2");
     assert_eq!(d1_rows.len(), 2);
     assert_eq!(d2_rows.len(), 1);
 }
@@ -109,7 +118,10 @@ async fn list_document_revisions_limit() {
     insert_revision(&db, cid, did, 2, "b").await;
     insert_revision(&db, cid, did, 3, "c").await;
     let repo = CaseRepo::new(&db);
-    let rows = repo.list_document_revisions(cid, did, 2).await.expect("list");
+    let rows = repo
+        .list_document_revisions(cid, did, 2)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].revision_number, 3);
     assert_eq!(rows[1].revision_number, 2);
@@ -130,7 +142,10 @@ async fn get_document_revision_body_round_trip() {
         .expect("present");
     assert_eq!(body, "hello body");
     assert!(title.is_none());
-    let none = repo.get_document_revision_body(cid, did, Uuid::new_v4()).await.expect("get");
+    let none = repo
+        .get_document_revision_body(cid, did, Uuid::new_v4())
+        .await
+        .expect("get");
     assert!(none.is_none());
 }
 
@@ -144,10 +159,16 @@ async fn get_document_revision_body_cross_company() {
     let rid = insert_revision(&db, cid1, did, 1, "y").await;
     let repo = CaseRepo::new(&db);
     // 用错 company 查返 None
-    let none = repo.get_document_revision_body(cid2, did, rid).await.expect("get");
+    let none = repo
+        .get_document_revision_body(cid2, did, rid)
+        .await
+        .expect("get");
     assert!(none.is_none());
     // 正确 company 能查
-    let some = repo.get_document_revision_body(cid1, did, rid).await.expect("get");
+    let some = repo
+        .get_document_revision_body(cid1, did, rid)
+        .await
+        .expect("get");
     assert!(some.is_some());
 }
 
@@ -174,32 +195,36 @@ async fn restore_document_revision_creates_new_revision() {
     let repo = CaseRepo::new(&db);
     let (new_rid, next_no) = repo
         .restore_document_revision(
-            cid, case_id, "design", did, "original body", Some("orig title"),
-            "restored from rev 1", src_rid,
+            cid,
+            case_id,
+            "design",
+            did,
+            "original body",
+            Some("orig title"),
+            "restored from rev 1",
+            src_rid,
         )
         .await
         .expect("restore");
     assert_eq!(next_no, 3);
 
     // 验证新 revision 存在
-    let (body, title): (String, Option<String>) = sqlx::query_as(
-        "SELECT body, title FROM document_revisions WHERE id = $1",
-    )
-    .bind(new_rid)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (body, title): (String, Option<String>) =
+        sqlx::query_as("SELECT body, title FROM document_revisions WHERE id = $1")
+            .bind(new_rid)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(body, "original body");
     assert_eq!(title, Some("orig title".to_owned()));
 
     // 验证 documents 指针更新
-    let (latest_body, latest_num): (String, i32) = sqlx::query_as(
-        "SELECT latest_body, latest_revision_number FROM documents WHERE id = $1",
-    )
-    .bind(did)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (latest_body, latest_num): (String, i32) =
+        sqlx::query_as("SELECT latest_body, latest_revision_number FROM documents WHERE id = $1")
+            .bind(did)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(latest_body, "original body");
     assert_eq!(latest_num, 3);
 
@@ -213,6 +238,12 @@ async fn restore_document_revision_creates_new_revision() {
     .expect("query");
     assert_eq!(kind, "document_revised");
     assert_eq!(payload["key"], serde_json::json!("design"));
-    assert_eq!(payload["restoredFromRevisionId"], serde_json::json!(src_rid.to_string()));
-    assert_eq!(payload["newRevisionId"], serde_json::json!(new_rid.to_string()));
+    assert_eq!(
+        payload["restoredFromRevisionId"],
+        serde_json::json!(src_rid.to_string())
+    );
+    assert_eq!(
+        payload["newRevisionId"],
+        serde_json::json!(new_rid.to_string())
+    );
 }

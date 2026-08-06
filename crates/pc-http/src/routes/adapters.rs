@@ -6,9 +6,9 @@ use axum::{
     Json, Router,
 };
 use pc_adapter_api::{AdapterDescriptor, AdapterSource};
-use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
 use pc_repos::agent::AgentRepo;
@@ -17,12 +17,27 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/adapters", get(list))
         .route("/api/adapters/install", post(install_adapter))
-        .route("/api/adapters/:adapter_type", get(get_one).patch(patch_adapter).delete(remove_adapter))
+        .route(
+            "/api/adapters/:adapter_type",
+            get(get_one).patch(patch_adapter).delete(remove_adapter),
+        )
         .route("/api/adapters/:adapter_type/reload", post(reload_adapter))
-        .route("/api/adapters/:adapter_type/reinstall", post(reinstall_adapter))
-        .route("/api/adapters/:adapter_type/config-schema", get(get_config_schema))
-        .route("/api/adapters/:adapter_type/override", patch(override_adapter))
-        .route("/api/adapters/:adapter_type/ui-parser.js", get(ui_parser_js))
+        .route(
+            "/api/adapters/:adapter_type/reinstall",
+            post(reinstall_adapter),
+        )
+        .route(
+            "/api/adapters/:adapter_type/config-schema",
+            get(get_config_schema),
+        )
+        .route(
+            "/api/adapters/:adapter_type/override",
+            patch(override_adapter),
+        )
+        .route(
+            "/api/adapters/:adapter_type/ui-parser.js",
+            get(ui_parser_js),
+        )
         // ── Round 24: per-company adapter sub-resources (models / detect / profiles / test-env) ──
         .route(
             "/api/companies/:company_id/adapters/:adapter_type/models",
@@ -124,7 +139,6 @@ mod tests {
     }
 }
 
-
 // ============== Lifecycle / config-schema handlers ==============
 
 #[derive(Debug, Deserialize)]
@@ -213,7 +227,10 @@ async fn patch_adapter(
     Path(adapter_type): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let disabled = body.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+    let disabled = body
+        .get("disabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     // Round 175: 原 SELECT 1 stub 已移除（语义保留：仅广播 live event）。
     state.realtime.publish(
         pc_realtime::LiveEvent::new("adapter.disabled", "adapter", uuid::Uuid::nil())
@@ -232,7 +249,9 @@ async fn remove_adapter(
         pc_realtime::LiveEvent::new("adapter.removed", "adapter", uuid::Uuid::nil())
             .with_data(json!({ "type": adapter_type })),
     );
-    Ok(Json(json!({ "type": adapter_type, "removed": affected > 0 })))
+    Ok(Json(
+        json!({ "type": adapter_type, "removed": affected > 0 }),
+    ))
 }
 
 async fn override_adapter(
@@ -301,15 +320,9 @@ fn adapter_model_catalog(adapter_type: &str) -> Vec<Value> {
             json!({ "id": "grok-4", "label": "Grok 4" }),
             json!({ "id": "grok-3", "label": "Grok 3" }),
         ],
-        "opencode_local" => vec![
-            json!({ "id": "opencode-default", "label": "OpenCode Default" }),
-        ],
-        "pi_local" => vec![
-            json!({ "id": "pi-default", "label": "Pi Default" }),
-        ],
-        _ => vec![
-            json!({ "id": "default", "label": "Default" }),
-        ],
+        "opencode_local" => vec![json!({ "id": "opencode-default", "label": "OpenCode Default" })],
+        "pi_local" => vec![json!({ "id": "pi-default", "label": "Pi Default" })],
+        _ => vec![json!({ "id": "default", "label": "Default" })],
     }
 }
 
@@ -495,9 +508,7 @@ async fn adapter_test_environment(
         _ => None,
     };
     if let Some(bin) = probe_binary {
-        let which = std::process::Command::new("which")
-            .arg(bin)
-            .output();
+        let which = std::process::Command::new("which").arg(bin).output();
         let ok = which.as_ref().map(|o| o.status.success()).unwrap_or(false);
         let path = which
             .ok()
@@ -526,7 +537,9 @@ async fn adapter_test_environment(
             "note": if ok { "dns_resolved" } else { "dns_failed" },
         }));
     }
-    let all_ok = checks.iter().all(|c| c.get("ok").and_then(Value::as_bool).unwrap_or(false));
+    let all_ok = checks
+        .iter()
+        .all(|c| c.get("ok").and_then(Value::as_bool).unwrap_or(false));
     Ok(Json(json!({
         "companyId": company_id,
         "adapterType": adapter_type,

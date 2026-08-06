@@ -266,7 +266,6 @@ pub struct CostEventRow {
     pub created_at: Timestamp,
 }
 
-
 #[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct IssueCostSummaryRow {
     pub cost_cents: i64,
@@ -485,7 +484,6 @@ impl<'a> CostRepo<'a> {
         Ok(rows)
     }
 
-
     /// Round 176: 统计单个 issue 的成本/输入/输出/运行数/运行时间（聚合 issues+cost_events+heartbeat_runs）。
     pub async fn issue_summary(&self, issue_id: Uuid) -> sqlx::Result<Option<IssueCostSummaryRow>> {
         sqlx::query_as::<_, IssueCostSummaryRow>(
@@ -502,9 +500,6 @@ impl<'a> CostRepo<'a> {
         .fetch_optional(self.db.pool())
         .await
     }
-
-
-
 
     pub async fn window_spend(&self, company_id: Uuid) -> sqlx::Result<Vec<CostWindowSpendRow>> {
         sqlx::query_as::<_, CostWindowSpendRow>(
@@ -624,26 +619,14 @@ impl<'a> CostRepo<'a> {
         input: &NewFinanceEvent,
     ) -> Result<FinanceEventRow, FinanceCreateError> {
         if let Some(id) = input.agent_id {
-            Self::assert_fk_belongs_to_company(
-                self.db.pool(),
-                "agents",
-                id,
-                company_id,
-                "Agent",
-            )
-            .await
-            .map_err(FinanceCreateError::Fk)?;
+            Self::assert_fk_belongs_to_company(self.db.pool(), "agents", id, company_id, "Agent")
+                .await
+                .map_err(FinanceCreateError::Fk)?;
         }
         if let Some(id) = input.issue_id {
-            Self::assert_fk_belongs_to_company(
-                self.db.pool(),
-                "issues",
-                id,
-                company_id,
-                "Issue",
-            )
-            .await
-            .map_err(FinanceCreateError::Fk)?;
+            Self::assert_fk_belongs_to_company(self.db.pool(), "issues", id, company_id, "Issue")
+                .await
+                .map_err(FinanceCreateError::Fk)?;
         }
         if let Some(id) = input.project_id {
             Self::assert_fk_belongs_to_company(
@@ -657,15 +640,9 @@ impl<'a> CostRepo<'a> {
             .map_err(FinanceCreateError::Fk)?;
         }
         if let Some(id) = input.goal_id {
-            Self::assert_fk_belongs_to_company(
-                self.db.pool(),
-                "goals",
-                id,
-                company_id,
-                "Goal",
-            )
-            .await
-            .map_err(FinanceCreateError::Fk)?;
+            Self::assert_fk_belongs_to_company(self.db.pool(), "goals", id, company_id, "Goal")
+                .await
+                .map_err(FinanceCreateError::Fk)?;
         }
         if let Some(id) = input.heartbeat_run_id {
             Self::assert_fk_belongs_to_company(
@@ -762,9 +739,7 @@ impl<'a> CostRepo<'a> {
             "issues" => "SELECT company_id FROM issues WHERE id = $1",
             "projects" => "SELECT company_id FROM projects WHERE id = $1",
             "goals" => "SELECT company_id FROM goals WHERE id = $1",
-            "heartbeat_runs" => {
-                "SELECT company_id FROM heartbeat_runs WHERE id = $1"
-            }
+            "heartbeat_runs" => "SELECT company_id FROM heartbeat_runs WHERE id = $1",
             "cost_events" => "SELECT company_id FROM cost_events WHERE id = $1",
             _ => return Err(FkError::Internal(format!("unknown table: {table}"))),
         };
@@ -775,9 +750,7 @@ impl<'a> CostRepo<'a> {
             .map_err(FkError::Db)?;
         match row {
             None => Err(FkError::NotFound(label.to_string())),
-            Some((owner,)) if owner != company_id => {
-                Err(FkError::WrongCompany(label.to_string()))
-            }
+            Some((owner,)) if owner != company_id => Err(FkError::WrongCompany(label.to_string())),
             Some(_) => Ok(()),
         }
     }
@@ -797,10 +770,7 @@ pub struct AgentCostWindow {
 impl<'a> CostRepo<'a> {
     /// Sum of `cost_cents` for one agent in `[window_start, window_end)`.
     /// Used by the heartbeat scheduler to enforce the per-agent daily cost cap.
-    pub async fn sum_agent_window_cost_cents(
-        &self,
-        window: AgentCostWindow,
-    ) -> sqlx::Result<i64> {
+    pub async fn sum_agent_window_cost_cents(&self, window: AgentCostWindow) -> sqlx::Result<i64> {
         let row: (Option<i64>,) = sqlx::query_as(
             "SELECT COALESCE(SUM(cost_cents), 0)::bigint FROM cost_events \
              WHERE company_id = $1 AND agent_id = $2 \
@@ -942,11 +912,13 @@ mod finance_create_tests {
 
     #[test]
     fn fk_error_display_is_user_facing() {
-        assert_eq!(FkError::NotFound("Agent".into()).to_string(), "Agent not found");
+        assert_eq!(
+            FkError::NotFound("Agent".into()).to_string(),
+            "Agent not found"
+        );
         assert_eq!(
             FkError::WrongCompany("Issue".into()).to_string(),
             "Issue does not belong to company"
         );
     }
-
 }

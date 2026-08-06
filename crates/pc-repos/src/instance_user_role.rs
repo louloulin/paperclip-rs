@@ -27,17 +27,13 @@ pub struct InstanceUserRoleRow {
 
 /// Round 151: 列出给定用户集合中拥有任意 instance role 的 user_id。
 /// 用于 `list_admin_users` 路由批量标记 isInstanceAdmin。
-pub async fn list_user_ids_with_any_role(
-    db: &Db,
-    user_ids: &[String],
-) -> RepoResult<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT user_id FROM instance_user_roles WHERE user_id = ANY($1::text[])",
-    )
-    .bind(user_ids)
-    .fetch_all(db.pool())
-    .await
-    .unwrap_or_default();
+pub async fn list_user_ids_with_any_role(db: &Db, user_ids: &[String]) -> RepoResult<Vec<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT user_id FROM instance_user_roles WHERE user_id = ANY($1::text[])")
+            .bind(user_ids)
+            .fetch_all(db.pool())
+            .await
+            .unwrap_or_default();
     Ok(rows.into_iter().map(|(u,)| u).collect())
 }
 
@@ -76,7 +72,10 @@ impl<'a> InstanceUserRoleRepo<'a> {
         Self { db }
     }
 
-    pub async fn list_user_ids_with_any_role(&self, user_ids: &[String]) -> RepoResult<Vec<String>> {
+    pub async fn list_user_ids_with_any_role(
+        &self,
+        user_ids: &[String],
+    ) -> RepoResult<Vec<String>> {
         list_user_ids_with_any_role(self.db, user_ids).await
     }
 

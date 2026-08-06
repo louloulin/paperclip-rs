@@ -23,7 +23,7 @@ pub mod types;
 // ============================================================================
 
 pub use catalog::{
-    resolve_bundled_catalog_root, BUNDLED_PLUGIN_CATALOG, BUNDLED_CATALOG_ROOT_ENV_VAR,
+    resolve_bundled_catalog_root, BUNDLED_CATALOG_ROOT_ENV_VAR, BUNDLED_PLUGIN_CATALOG,
     DEFAULT_BUNDLED_CATALOG_ROOT, KUBERNETES_PLUGIN_PATH_ENV_VAR, SELF_HOSTED_AUTO_INSTALL_KEYS,
 };
 pub use provision::{ensure_bundled_plugins, EnsureBundledPluginsOptions, ProvisionError};

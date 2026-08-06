@@ -28,25 +28,26 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/labels",
             get(list_labels).post(create_label),
         )
-        .route(
-            "/api/labels/:label_id",
-            patch(patch_label).delete(delete_label),
-        )
+        // Round 282 修复：`DELETE /api/labels/:label_id` 已移除，避免在
+        // company 上下文之外删除 label。删除只能走
+        // `/api/companies/:company_id/labels/:label_id`（在 companies.rs）。
+        // 这是 paperclip API 的强制安全约束：必须携带 company context。
+        .route("/api/labels/:label_id", patch(patch_label))
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateBody {
+pub struct CreateBody {
     name: String,
     color: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct PatchBody {
+pub struct PatchBody {
     name: Option<String>,
     color: Option<String>,
 }
 
-async fn list_labels(
+pub async fn list_labels(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
@@ -57,7 +58,7 @@ async fn list_labels(
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
-async fn create_label(
+pub async fn create_label(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateBody>,
@@ -82,7 +83,7 @@ async fn create_label(
     ))
 }
 
-async fn patch_label(
+pub async fn patch_label(
     State(state): State<AppState>,
     Path(label_id): Path<Uuid>,
     Json(body): Json<PatchBody>,
@@ -101,7 +102,7 @@ async fn patch_label(
     }
 }
 
-async fn delete_label(
+pub async fn delete_label(
     State(state): State<AppState>,
     Path(label_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {

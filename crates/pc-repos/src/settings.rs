@@ -43,7 +43,8 @@ impl WorktreeRunExecutionActivation {
 }
 
 const SINGLETON_KEY: &str = "default";
-const COLS: &str = "id, singleton_key, default_environment_id, general, experimental,      created_at, updated_at";
+const COLS: &str =
+    "id, singleton_key, default_environment_id, general, experimental,      created_at, updated_at";
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,22 +131,22 @@ impl<'a> SettingsRepo<'a> {
 
     /// 读取某个 feature flag（带实验开关）
     pub async fn is_experimental_enabled(&self, flag: &str) -> RepoResult<bool> {
-        let v: Option<Value> = sqlx::query_scalar(
-            "SELECT experimental FROM instance_settings WHERE singleton_key=$1",
-        )
-        .bind(SINGLETON_KEY)
-        .fetch_optional(self.db.pool())
-        .await?;
-        Ok(v.and_then(|m| m.get(flag).cloned()).and_then(|x| x.as_bool()).unwrap_or(false))
+        let v: Option<Value> =
+            sqlx::query_scalar("SELECT experimental FROM instance_settings WHERE singleton_key=$1")
+                .bind(SINGLETON_KEY)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(v.and_then(|m| m.get(flag).cloned())
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false))
     }
 
     pub async fn read_general(&self, key: &str) -> RepoResult<Option<Value>> {
-        let v: Option<Value> = sqlx::query_scalar(
-            "SELECT general FROM instance_settings WHERE singleton_key=$1",
-        )
-        .bind(SINGLETON_KEY)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let v: Option<Value> =
+            sqlx::query_scalar("SELECT general FROM instance_settings WHERE singleton_key=$1")
+                .bind(SINGLETON_KEY)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(v.and_then(|m| m.get(key).cloned()))
     }
 
@@ -377,7 +378,10 @@ mod tests {
         }));
         assert!(activation.armed);
         assert!(activation.cutoff.is_some());
-        assert_eq!(activation.activation_instance_id, Some("instance-1".to_owned()));
+        assert_eq!(
+            activation.activation_instance_id,
+            Some("instance-1".to_owned())
+        );
         assert!(activation.reason.is_none());
     }
 }

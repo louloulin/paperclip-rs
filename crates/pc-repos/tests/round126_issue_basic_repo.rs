@@ -16,7 +16,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r126-{tag}-{id}"))
         .bind(format!("R126{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -26,8 +28,13 @@ async fn insert_issue(db: &Db, company_id: Uuid, title: &str) -> Uuid {
         "INSERT INTO issues (id, company_id, identifier, title, kind, status, priority) \
          VALUES ($1, $2, $3, $4, 'task', 'todo', 'normal')",
     )
-    .bind(id).bind(company_id).bind(format!("ISS-{}", &id.simple().to_string()[..6])).bind(title)
-    .execute(db.pool()).await.expect("insert issue");
+    .bind(id)
+    .bind(company_id)
+    .bind(format!("ISS-{}", &id.simple().to_string()[..6]))
+    .bind(title)
+    .execute(db.pool())
+    .await
+    .expect("insert issue");
     id
 }
 
@@ -92,7 +99,10 @@ async fn count_for_company_returns_count() {
     insert_issue(&db, cid, "i1").await;
     insert_issue(&db, cid, "i2").await;
     insert_issue(&db, cid, "i3").await;
-    let count = IssueRepo::new(&db).count_for_company(cid).await.expect("count");
+    let count = IssueRepo::new(&db)
+        .count_for_company(cid)
+        .await
+        .expect("count");
     assert_eq!(count, 3);
 }
 
@@ -101,6 +111,9 @@ async fn count_for_company_returns_count() {
 async fn count_for_company_empty_returns_zero() {
     let db = db().await;
     let cid = insert_company(&db, "count-empty").await;
-    let count = IssueRepo::new(&db).count_for_company(cid).await.expect("count");
+    let count = IssueRepo::new(&db)
+        .count_for_company(cid)
+        .await
+        .expect("count");
     assert_eq!(count, 0);
 }

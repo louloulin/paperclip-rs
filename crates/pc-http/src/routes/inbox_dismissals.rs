@@ -147,7 +147,9 @@ fn compute_snooze_until(body: &SnoozeBody) -> Option<Timestamp> {
         return Some(Timestamp::from_dt(until));
     }
     if body.hours > 0 {
-        return Some(Timestamp::from_dt(Utc::now() + chrono::Duration::hours(body.hours)));
+        return Some(Timestamp::from_dt(
+            Utc::now() + chrono::Duration::hours(body.hours),
+        ));
     }
     None
 }
@@ -175,17 +177,15 @@ async fn explicit_dismiss(
             expires_at,
         )
         .await?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("inbox.item.dismissed", "inbox_dismissal", row.id)
-                .with_company(company_id)
-                .with_data(serde_json::json!({
-                    "itemKey": row.item_key,
-                    "reason": body.reason,
-                    "expiresAt": row.snoozed_until,
-                })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("inbox.item.dismissed", "inbox_dismissal", row.id)
+            .with_company(company_id)
+            .with_data(serde_json::json!({
+                "itemKey": row.item_key,
+                "reason": body.reason,
+                "expiresAt": row.snoozed_until,
+            })),
+    );
     Ok(Json(row))
 }
 
@@ -202,18 +202,22 @@ async fn explicit_snooze(
     let until = compute_snooze_until(&body)
         .ok_or_else(|| ApiError::BadRequest("must provide hours>0 or snoozedUntil".into()))?;
     let row = InboxRepo::new(&state.db)
-        .upsert_simple(company_id, &user_id, body.item_key.trim(), "snooze", Some(until))
+        .upsert_simple(
+            company_id,
+            &user_id,
+            body.item_key.trim(),
+            "snooze",
+            Some(until),
+        )
         .await?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("inbox.item.snoozed", "inbox_dismissal", row.id)
-                .with_company(company_id)
-                .with_data(serde_json::json!({
-                    "itemKey": row.item_key,
-                    "snoozedUntil": row.snoozed_until,
-                })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("inbox.item.snoozed", "inbox_dismissal", row.id)
+            .with_company(company_id)
+            .with_data(serde_json::json!({
+                "itemKey": row.item_key,
+                "snoozedUntil": row.snoozed_until,
+            })),
+    );
     Ok(Json(row))
 }
 

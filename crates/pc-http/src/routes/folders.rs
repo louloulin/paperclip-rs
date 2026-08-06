@@ -27,8 +27,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use pc_repos::folder::{
-    CountsQuery, FolderKind, FolderPatch, FolderRepo, MoveFolderItem, MoveFolderItemKind,
-    NewFolder,
+    CountsQuery, FolderKind, FolderPatch, FolderRepo, MoveFolderItem, MoveFolderItemKind, NewFolder,
 };
 
 use crate::{ApiError, ApiResult, AppState};
@@ -132,7 +131,9 @@ async fn list_by_company(
     let kind_str = q.kind.as_deref().unwrap_or("skill");
     let kind = FolderKind::parse(kind_str)
         .ok_or_else(|| ApiError::BadRequest(format!("unknown folder kind '{kind_str}'")))?;
-    let result = CountsQuery::new(&state.db).list_with_counts(company_id, kind).await?;
+    let result = CountsQuery::new(&state.db)
+        .list_with_counts(company_id, kind)
+        .await?;
     Ok(Json(serde_json::to_value(result).unwrap_or_default()))
 }
 
@@ -247,7 +248,9 @@ async fn move_folder_item(
         .await
         .map_err(|e| match e.to_string().as_str() {
             s if s.contains("not found") => ApiError::NotFound(e.to_string()),
-            s if s.contains("read-only") || s.contains("kind") => ApiError::Forbidden(e.to_string()),
+            s if s.contains("read-only") || s.contains("kind") => {
+                ApiError::Forbidden(e.to_string())
+            }
             _ => ApiError::Internal(e.to_string()),
         })?;
     Ok(Json(serde_json::to_value(result).unwrap_or_default()))

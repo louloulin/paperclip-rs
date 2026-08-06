@@ -14,10 +14,10 @@ use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::routine::{
-    CreateRoutineRecord, CreateRoutineTriggerRecord, CreateWebhookSecretInput,
-    FireTriggerInput, NewRoutineAnnotationComment, NewRoutineAnnotationThread,
-    RoutineAnnotationCommentRow, RoutineAnnotationPatch, RoutineAnnotationThreadRow,
-    RoutineRepo, RunRoutineRecord, UpdateRoutineRecord, UpdateRoutineTriggerRecord,
+    CreateRoutineRecord, CreateRoutineTriggerRecord, CreateWebhookSecretInput, FireTriggerInput,
+    NewRoutineAnnotationComment, NewRoutineAnnotationThread, RoutineAnnotationCommentRow,
+    RoutineAnnotationPatch, RoutineAnnotationThreadRow, RoutineRepo, RunRoutineRecord,
+    UpdateRoutineRecord, UpdateRoutineTriggerRecord,
 };
 use pc_secrets::local_encrypted::LocalEncryptedProvider;
 use pc_secrets::SecretProvider;
@@ -104,9 +104,11 @@ async fn list(
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = match q.company_id {
-        Some(cid) => RoutineRepo::new(&state.db)
-            .list_by_company_filtered(cid, q.project_id)
-            .await?,
+        Some(cid) => {
+            RoutineRepo::new(&state.db)
+                .list_by_company_filtered(cid, q.project_id)
+                .await?
+        }
         None => RoutineRepo::new(&state.db).list_all(200).await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
@@ -727,9 +729,8 @@ async fn create_trigger(
     if body.kind == "webhook" {
         let provider = LocalEncryptedProvider::load()
             .map_err(|error| ApiError::Internal(format!("load secrets provider: {error}")))?;
-        let api_base_url = std::env::var("PAPERCLIP_PUBLIC_URL").unwrap_or_else(|_| {
-            format!("http://{}:{}", state.config.host, state.config.port)
-        });
+        let api_base_url = std::env::var("PAPERCLIP_PUBLIC_URL")
+            .unwrap_or_else(|_| format!("http://{}:{}", state.config.host, state.config.port));
         let input = CreateWebhookSecretInput {
             kind: body.kind.clone(),
             label: body.label.clone(),
@@ -976,9 +977,11 @@ async fn fire_public_trigger(
     let payload = if raw_body.is_empty() {
         None
     } else {
-        Some(serde_json::from_slice::<serde_json::Value>(&raw_body).unwrap_or(
-            serde_json::Value::String(String::from_utf8_lossy(&raw_body).into_owned()),
-        ))
+        Some(
+            serde_json::from_slice::<serde_json::Value>(&raw_body).unwrap_or(
+                serde_json::Value::String(String::from_utf8_lossy(&raw_body).into_owned()),
+            ),
+        )
     };
     let provider = LocalEncryptedProvider::load()
         .map_err(|error| ApiError::Internal(format!("load secrets provider: {error}")))?;
@@ -1035,10 +1038,13 @@ async fn list_routine_description_annotations(
         .get_company_id(routine_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("routine {routine_id}")))?;
-    let status_filter = q
-        .status
-        .as_deref()
-        .and_then(|s| if s == "open" || s == "resolved" { Some(s) } else { None });
+    let status_filter = q.status.as_deref().and_then(|s| {
+        if s == "open" || s == "resolved" {
+            Some(s)
+        } else {
+            None
+        }
+    });
     let rows = repo
         .list_annotation_threads(routine_id, status_filter, 200)
         .await?;
@@ -1076,7 +1082,11 @@ async fn list_routine_description_annotations(
     if include_comments {
         let thread_ids: Vec<Uuid> = items
             .iter()
-            .filter_map(|v| v.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()))
+            .filter_map(|v| {
+                v.get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+            })
             .collect();
         if !thread_ids.is_empty() {
             let comments = repo.list_thread_comments_bulk(&thread_ids).await?;
@@ -1148,10 +1158,15 @@ async fn create_routine_description_annotation(
         .document_id
         .ok_or_else(|| ApiError::BadRequest("documentId is required".into()))?;
     let norm_start = body.normalized_start.unwrap_or(0);
-    let norm_end = body.normalized_end.unwrap_or(body.selected_text.len() as i32);
+    let norm_end = body
+        .normalized_end
+        .unwrap_or(body.selected_text.len() as i32);
     let md_start = body.markdown_start.unwrap_or(0);
     let md_end = body.markdown_end.unwrap_or(body.selected_text.len() as i32);
-    let confidence = body.anchor_confidence.clone().unwrap_or_else(|| "exact".to_owned());
+    let confidence = body
+        .anchor_confidence
+        .clone()
+        .unwrap_or_else(|| "exact".to_owned());
     let selector = body.anchor_selector.clone().unwrap_or_else(|| json!({}));
     let revision_number = body.revision_number.unwrap_or(1);
     let input = NewRoutineAnnotationThread {
@@ -1188,9 +1203,13 @@ async fn create_routine_description_annotation(
         }
     }
     state.realtime.publish(
-        LiveEvent::new("routine.annotation.created", "routine_annotation", thread_id)
-            .with_company(company_id)
-            .with_data(json!({"routineId": routine_id})),
+        LiveEvent::new(
+            "routine.annotation.created",
+            "routine_annotation",
+            thread_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"routineId": routine_id})),
     );
     Ok((
         StatusCode::CREATED,
@@ -1293,9 +1312,13 @@ async fn patch_routine_description_annotation(
         return Err(ApiError::NotFound(format!("annotation thread {thread_id}")));
     }
     state.realtime.publish(
-        LiveEvent::new("routine.annotation.updated", "routine_annotation", thread_id)
-            .with_company(company_id)
-            .with_data(json!({"routineId": routine_id, "status": body.status})),
+        LiveEvent::new(
+            "routine.annotation.updated",
+            "routine_annotation",
+            thread_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"routineId": routine_id, "status": body.status})),
     );
     Ok(Json(json!({
         "id": thread_id,
@@ -1332,7 +1355,10 @@ async fn add_routine_description_annotation_comment(
         .get_thread_document_id(routine_id, thread_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
-    let author_type = body.author_type.clone().unwrap_or_else(|| "user".to_owned());
+    let author_type = body
+        .author_type
+        .clone()
+        .unwrap_or_else(|| "user".to_owned());
     let input = NewRoutineAnnotationComment {
         company_id,
         routine_id,
@@ -1345,9 +1371,13 @@ async fn add_routine_description_annotation_comment(
     };
     let id = repo.create_thread_comment(&input).await?;
     state.realtime.publish(
-        LiveEvent::new("routine.annotation.comment_added", "routine_annotation_comment", id)
-            .with_company(company_id)
-            .with_data(json!({"threadId": thread_id, "routineId": routine_id})),
+        LiveEvent::new(
+            "routine.annotation.comment_added",
+            "routine_annotation_comment",
+            id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"threadId": thread_id, "routineId": routine_id})),
     );
     Ok((
         StatusCode::CREATED,
@@ -1395,8 +1425,13 @@ async fn rotate_trigger_secret_route(
         secret_name: format!("rotated_{}", trigger_id.simple()),
         version: 1,
     };
-    let secret_ref = match provider.create_secret(new_secret_value.clone(), &write_ctx).await {
-        Ok(prepared) => prepared.external_ref.unwrap_or_else(|| format!("local://rotated/{}", Uuid::new_v4().simple())),
+    let secret_ref = match provider
+        .create_secret(new_secret_value.clone(), &write_ctx)
+        .await
+    {
+        Ok(prepared) => prepared
+            .external_ref
+            .unwrap_or_else(|| format!("local://rotated/{}", Uuid::new_v4().simple())),
         Err(_) => format!("local://rotated/{}", Uuid::new_v4().simple()),
     };
     // Round 112: 仓储化。RoutineRepo::set_trigger_secret_ref。
@@ -1407,9 +1442,13 @@ async fn rotate_trigger_secret_route(
         return Err(ApiError::NotFound(format!("routine trigger {trigger_id}")));
     }
     state.realtime.publish(
-        LiveEvent::new("routine_trigger.secret_rotated", "routine_trigger", trigger_id)
-            .with_company(company_id)
-            .with_data(json!({"reason": body.reason})),
+        LiveEvent::new(
+            "routine_trigger.secret_rotated",
+            "routine_trigger",
+            trigger_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"reason": body.reason})),
     );
     Ok(Json(json!({
         "id": trigger_id,

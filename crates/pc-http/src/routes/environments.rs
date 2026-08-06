@@ -22,7 +22,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/environments", get(list).post(create))
         .route(
-            "/api/environments/:id",
+            "/api/environments/:environment_id",
             get(get_one).patch(update).delete(remove),
         )
         .route(
@@ -34,28 +34,34 @@ pub fn router() -> Router<AppState> {
             get(environment_capabilities),
         )
         .route(
-            "/api/environments/:id/leases",
+            "/api/environments/:environment_id/leases",
             get(list_environment_leases),
         )
-        .route("/api/environments/:id/secret-refs", get(get_environment_secret_refs))
         .route(
-            "/api/environments/:id/delete-blast-radius",
+            "/api/environments/:environment_id/secret-refs",
+            get(get_environment_secret_refs),
+        )
+        .route(
+            "/api/environments/:environment_id/delete-blast-radius",
             get(environment_delete_blast_radius),
         )
-        .route("/api/environments/:id/probe", post(probe_environment))
+        .route(
+            "/api/environments/:environment_id/probe",
+            post(probe_environment),
+        )
         // ── Round 202: bulk config probe ──
         .route(
             "/api/companies/:company_id/environments/probe-config",
             post(probe_company_environments_config),
         )
         .route(
-            "/api/environments/:id/custom-image-template",
+            "/api/environments/:environment_id/custom-image-template",
             get(get_custom_image_template).delete(delete_custom_image_template),
         )
-        .route(
-            "/api/environments/:environment_id/custom-image-template",
-            get(get_custom_image_template_envid),
-        )
+        // NOTE: `/api/environments/:environment_id/custom-image-template` is
+        // registered above as GET + DELETE (Round 36). The Round 39 GET-only duplicate
+        // was removed in Round 282 because two GETs of the same path produced axum
+        // "Overlapping method route" panics during integration tests.
         .route(
             "/api/environments/:environment_id/custom-image-template/rollback",
             post(rollback_custom_image_template),
@@ -156,7 +162,12 @@ async fn update(
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     let row = EnvironmentRepo::new(&state.db)
-        .update(id, body.name.as_deref(), body.status.as_deref(), body.config)
+        .update(
+            id,
+            body.name.as_deref(),
+            body.status.as_deref(),
+            body.config,
+        )
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("environment {id}")))?;
     state
@@ -173,7 +184,6 @@ async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
         Err(ApiError::NotFound(format!("environment {id}")))
     }
 }
-
 
 // ============== Sub-resource handlers ==============
 
@@ -201,9 +211,9 @@ async fn create_company_environment(
     let row = EnvironmentRepo::new(&state.db)
         .create_simple(&body.name, &body.driver, body.config.clone())
         .await?;
-    state.realtime.publish(
-        LiveEvent::new("environment.created", "environment", row.id),
-    );
+    state
+        .realtime
+        .publish(LiveEvent::new("environment.created", "environment", row.id));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -243,16 +253,18 @@ async fn list_environment_leases(
         .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(lease_id, env_id, run_id, acquired_at, expires_at, status)| {
-            json!({
-                "id": lease_id,
-                "environmentId": env_id,
-                "runId": run_id,
-                "acquiredAt": acquired_at,
-                "expiresAt": expires_at,
-                "status": status,
-            })
-        })
+        .map(
+            |(lease_id, env_id, run_id, acquired_at, expires_at, status)| {
+                json!({
+                    "id": lease_id,
+                    "environmentId": env_id,
+                    "runId": run_id,
+                    "acquiredAt": acquired_at,
+                    "expiresAt": expires_at,
+                    "status": status,
+                })
+            },
+        )
         .collect();
     Ok(Json(json!({ "items": items })))
 }
@@ -361,10 +373,14 @@ async fn delete_custom_image_template(
     let affected = EnvironmentRepo::new(&state.db)
         .delete_custom_image_template(id)
         .await?;
-    state.realtime.publish(
-        LiveEvent::new("environment.custom_image.deleted", "environment", id),
-    );
-    Ok(Json(json!({ "deleted": affected > 0, "environmentId": id })))
+    state.realtime.publish(LiveEvent::new(
+        "environment.custom_image.deleted",
+        "environment",
+        id,
+    ));
+    Ok(Json(
+        json!({ "deleted": affected > 0, "environmentId": id }),
+    ))
 }
 
 async fn rollback_custom_image_template(
@@ -380,8 +396,12 @@ async fn rollback_custom_image_template(
         .touch_custom_image_template(environment_id)
         .await;
     state.realtime.publish(
-        LiveEvent::new("environment.custom_image.rollback", "environment", environment_id)
-            .with_data(json!({"targetVersion": target_version})),
+        LiveEvent::new(
+            "environment.custom_image.rollback",
+            "environment",
+            environment_id,
+        )
+        .with_data(json!({"targetVersion": target_version})),
     );
     Ok(Json(json!({
         "environmentId": environment_id,
@@ -397,7 +417,8 @@ async fn get_custom_image_setup_session(
     let row = EnvironmentRepo::new(&state.db)
         .get_custom_image_setup_session(session_id)
         .await?;
-    let (id, status, created_at) = row.ok_or_else(|| ApiError::NotFound(format!("setup session {session_id}")))?;
+    let (id, status, created_at) =
+        row.ok_or_else(|| ApiError::NotFound(format!("setup session {session_id}")))?;
     Ok(Json(json!({
         "id": id,
         "status": status,
@@ -412,7 +433,8 @@ async fn get_environment_lease(
     let row = EnvironmentRepo::new(&state.db)
         .get_environment_lease(lease_id)
         .await?;
-    let (id, env_id, run_id, acquired_at, expires_at, status) = row.ok_or_else(|| ApiError::NotFound(format!("lease {lease_id}")))?;
+    let (id, env_id, run_id, acquired_at, expires_at, status) =
+        row.ok_or_else(|| ApiError::NotFound(format!("lease {lease_id}")))?;
     Ok(Json(json!({
         "id": id,
         "environmentId": env_id,
@@ -464,10 +486,7 @@ async fn probe_company_environments_config(
 
     // 2) 若指定 environmentIds，进一步过滤（保证属于该公司）
     let filtered: Vec<EnvironmentRow> = match body.environment_ids.as_ref() {
-        Some(ids) if !ids.is_empty() => all
-            .into_iter()
-            .filter(|e| ids.contains(&e.id))
-            .collect(),
+        Some(ids) if !ids.is_empty() => all.into_iter().filter(|e| ids.contains(&e.id)).collect(),
         _ => all,
     };
 
@@ -487,16 +506,8 @@ async fn probe_company_environments_config(
             warnings.push("env_vars is not a JSON object".to_owned());
         }
         let secret_refs = secret_ref_keys(&e.config);
-        let config_keys = e
-            .config
-            .as_object()
-            .map(|o| o.len())
-            .unwrap_or(0);
-        let env_vars_count = e
-            .env_vars
-            .as_object()
-            .map(|o| o.len())
-            .unwrap_or(0);
+        let config_keys = e.config.as_object().map(|o| o.len()).unwrap_or(0);
+        let env_vars_count = e.env_vars.as_object().map(|o| o.len()).unwrap_or(0);
         let config_valid = warnings.is_empty();
         if config_valid {
             valid_count += 1;
@@ -585,13 +596,11 @@ async fn create_custom_image_setup_session(
         .ok_or_else(|| ApiError::NotFound(format!("environment {environment_id}")))?;
     let provider = body.provider.clone().unwrap_or_else(|| env.driver.clone());
     // EnvironmentRow 不含 company_id，单独查询一次
-    let company_id: Uuid = sqlx::query_scalar(
-        "SELECT company_id FROM environments WHERE id = $1",
-    )
-    .bind(environment_id)
-    .fetch_one(state.db.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let company_id: Uuid = sqlx::query_scalar("SELECT company_id FROM environments WHERE id = $1")
+        .bind(environment_id)
+        .fetch_one(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let (session_id, status) = env_repo
         .create_custom_image_setup_session(
             company_id,
@@ -629,9 +638,11 @@ async fn cancel_custom_image_setup_session(
     if !ok {
         return Err(ApiError::NotFound(format!("session {id}")));
     }
-    state.realtime.publish(
-        LiveEvent::new("custom_image_setup_session.cancelled", "session", id),
-    );
+    state.realtime.publish(LiveEvent::new(
+        "custom_image_setup_session.cancelled",
+        "session",
+        id,
+    ));
     Ok(Json(json!({
         "sessionId": id,
         "status": "cancelled",
@@ -650,9 +661,11 @@ async fn finish_custom_image_setup_session(
     if !ok {
         return Err(ApiError::NotFound(format!("session {id}")));
     }
-    state.realtime.publish(
-        LiveEvent::new("custom_image_setup_session.finished", "session", id),
-    );
+    state.realtime.publish(LiveEvent::new(
+        "custom_image_setup_session.finished",
+        "session",
+        id,
+    ));
     Ok(Json(json!({
         "sessionId": id,
         "status": "finished",

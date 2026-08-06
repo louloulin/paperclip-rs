@@ -30,7 +30,8 @@ pub const MAX_TURN_CONTINUATION_WAKE_REASON: &str = "max_turns_continuation_retr
 
 /// Retry reason for infrastructure-bound interaction continuation. Mirrors
 /// Node `INTERACTION_CONTINUATION_INFRA_RETRY_REASON`.
-pub const INTERACTION_CONTINUATION_INFRA_RETRY_REASON: &str = "interaction_continuation_infra_retry";
+pub const INTERACTION_CONTINUATION_INFRA_RETRY_REASON: &str =
+    "interaction_continuation_infra_retry";
 
 /// Helper to check whether the given retry reason should enforce the issue
 /// execution lock. Mirrors Node's `enforceIssueExecutionLock` checks.
@@ -59,10 +60,10 @@ pub fn compute_bounded_transient_retry_schedule(
     if attempt <= 0 {
         return None;
     }
-    let base_delay_ms = *BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS
-        .get((attempt - 1) as usize)?;
+    let base_delay_ms = *BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.get((attempt - 1) as usize)?;
     let sample = sample.clamp(0.0, 1.0);
-    let jitter_multiplier = 1.0 + (((sample * 2.0) - 1.0) * BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO);
+    let jitter_multiplier =
+        1.0 + (((sample * 2.0) - 1.0) * BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO);
     let delay_ms = ((base_delay_ms as f64 * jitter_multiplier).round() as i64).max(1_000);
     Some(RetrySchedule {
         attempt,
@@ -670,7 +671,6 @@ pub async fn start_heartbeat_with_lock(
     .await
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,7 +688,10 @@ mod tests {
         assert_eq!(midpoint.delay_ms, 120_000);
         assert_eq!(high.delay_ms, 150_000);
         assert_eq!(high.max_attempts, 4);
-        assert_eq!(high.due_at.as_datetime() - now.as_datetime(), chrono::Duration::milliseconds(150_000));
+        assert_eq!(
+            high.due_at.as_datetime() - now.as_datetime(),
+            chrono::Duration::milliseconds(150_000)
+        );
     }
 
     #[test]
@@ -750,9 +753,9 @@ mod tests {
         assert!(enforce_issue_execution_lock_for(Some(
             INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
         )));
-        assert!(!enforce_issue_execution_lock_for(Some(
-            "transient_failure",
-        )));
+        assert!(!enforce_issue_execution_lock_for(
+            Some("transient_failure",)
+        ));
         assert!(!enforce_issue_execution_lock_for(Some(
             "max_turns_continuation_retry",
         )));
@@ -762,7 +765,10 @@ mod tests {
     #[test]
     fn retry_reason_constants_match_node_strings() {
         assert_eq!(MAX_TURN_CONTINUATION_RETRY_REASON, "max_turns_continuation");
-        assert_eq!(MAX_TURN_CONTINUATION_WAKE_REASON, "max_turns_continuation_retry");
+        assert_eq!(
+            MAX_TURN_CONTINUATION_WAKE_REASON,
+            "max_turns_continuation_retry"
+        );
         assert_eq!(
             INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
             "interaction_continuation_infra_retry",
@@ -833,9 +839,16 @@ mod tests {
 
     #[test]
     fn utc_day_window_covers_a_single_utc_day() {
-        let (start, end) = utc_day_window(chrono::Utc.with_ymd_and_hms(2026, 8, 4, 12, 0, 0).unwrap());
-        assert_eq!(start, chrono::Utc.with_ymd_and_hms(2026, 8, 4, 0, 0, 0).unwrap());
-        assert_eq!(end, chrono::Utc.with_ymd_and_hms(2026, 8, 5, 0, 0, 0).unwrap());
+        let (start, end) =
+            utc_day_window(chrono::Utc.with_ymd_and_hms(2026, 8, 4, 12, 0, 0).unwrap());
+        assert_eq!(
+            start,
+            chrono::Utc.with_ymd_and_hms(2026, 8, 4, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            end,
+            chrono::Utc.with_ymd_and_hms(2026, 8, 5, 0, 0, 0).unwrap()
+        );
         // Always UTC, regardless of local time
         assert_eq!(start.timezone(), chrono::Utc);
     }
@@ -852,10 +865,7 @@ mod tests {
             max_daily_cost_cents: None,
         };
         let block = evaluate_daily_cap(&policy, 10, 0).unwrap();
-        assert_eq!(
-            block.error_code(),
-            "heartbeat.daily_run_limit",
-        );
+        assert_eq!(block.error_code(), "heartbeat.daily_run_limit",);
         assert_eq!(block.observed(), 10);
         assert_eq!(block.limit(), 10);
     }
@@ -905,7 +915,6 @@ mod tests {
         let block = evaluate_daily_cap(&policy, 100, 100).unwrap();
         assert_eq!(block.error_code(), "heartbeat.daily_run_limit");
     }
-
 
     #[tokio::test]
     async fn heartbeat_actor_serializes_run_lifecycle() {
@@ -1249,7 +1258,9 @@ fn normalize_non_negative(value: &serde_json::Value) -> Option<i64> {
     if value.is_null() {
         return None;
     }
-    let n = value.as_i64().unwrap_or_else(|| value.as_f64().unwrap_or(-1.0) as i64);
+    let n = value
+        .as_i64()
+        .unwrap_or_else(|| value.as_f64().unwrap_or(-1.0) as i64);
     if n >= 0 {
         Some(n)
     } else {
@@ -1259,7 +1270,9 @@ fn normalize_non_negative(value: &serde_json::Value) -> Option<i64> {
 
 /// UTC day window for the daily run/cost cap. Returns `[start, end)` where
 /// `end` is the next UTC midnight. Mirrors Node `currentUtcDayWindow`.
-pub fn utc_day_window(now: chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+pub fn utc_day_window(
+    now: chrono::DateTime<chrono::Utc>,
+) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
     let start = now
         .date_naive()
         .and_hms_opt(0, 0, 0)
@@ -1354,16 +1367,13 @@ pub mod wake_dispatch;
 // - `resolve_suppression`         DB+env joint suppression decision
 // - `build_*_wake_key`            idempotency key constructors for various wake types
 pub use wake_dedup::{
-    build_decision_continuation_wake_key, build_issue_assignment_wake_key,
-    decide_wake_action, is_active_wakeup_status, merge_wake_comment_ids,
-    merge_wake_payloads, resolve_suppression, SuppressionDecision, SuppressionInputs,
-    SuppressionReason, WAKE_COMMENT_IDS_KEY, WAKE_CONTEXT_KEYS, WakeAction, WakeInput,
-    WakeSnapshot,
+    build_decision_continuation_wake_key, build_issue_assignment_wake_key, decide_wake_action,
+    is_active_wakeup_status, merge_wake_comment_ids, merge_wake_payloads, resolve_suppression,
+    SuppressionDecision, SuppressionInputs, SuppressionReason, WakeAction, WakeInput, WakeSnapshot,
+    WAKE_COMMENT_IDS_KEY, WAKE_CONTEXT_KEYS,
 };
 
-pub use wake_dispatch::{
-    apply_wakeup_plan, plan_wakeup_dispatch, WakeDispatchOutcome, WakePlan,
-};
+pub use wake_dispatch::{apply_wakeup_plan, plan_wakeup_dispatch, WakeDispatchOutcome, WakePlan};
 
 pub use retry_policy::{
     classify_retry_reason, decide_retry_schedule, RetryPolicySchedule, RetryReason,
@@ -1387,11 +1397,9 @@ pub use retry_policy::{
 // - abandoned threshold: 24 小时无响应
 pub use readiness::{
     build_stale_run_recovery_idempotency_key, evaluate_readiness, evaluate_staleness,
-    plan_stale_run_recovery, AgentSnapshot, BudgetSnapshot, IssueLockSnapshot,
-    ReadinessCheck, ReadinessCheckResult, ReadinessInput, ReadinessReport, RecoveryAction,
-    StaleRunRecoveryInput, StalenessDecision, StalenessInput, StalenessLevel,
-    SuppressionOverride, SuppressionScope, SuppressionSnapshot,
-    DEFAULT_ACTIVE_RUN_ABANDONED_THRESHOLD_MS, DEFAULT_ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
-    DEFAULT_CRITICAL_THRESHOLD_MULTIPLIER,
+    plan_stale_run_recovery, AgentSnapshot, BudgetSnapshot, IssueLockSnapshot, ReadinessCheck,
+    ReadinessCheckResult, ReadinessInput, ReadinessReport, RecoveryAction, StaleRunRecoveryInput,
+    StalenessDecision, StalenessInput, StalenessLevel, SuppressionOverride, SuppressionScope,
+    SuppressionSnapshot, DEFAULT_ACTIVE_RUN_ABANDONED_THRESHOLD_MS,
+    DEFAULT_ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS, DEFAULT_CRITICAL_THRESHOLD_MULTIPLIER,
 };
-

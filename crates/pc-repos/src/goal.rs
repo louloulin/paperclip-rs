@@ -127,13 +127,9 @@ impl<'a> GoalRepo<'a> {
         Self { db }
     }
 
-    pub async fn list_by_company(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<GoalRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM goals WHERE company_id=$1 ORDER BY level, created_at DESC"
-        );
+    pub async fn list_by_company(&self, company_id: Uuid) -> RepoResult<Vec<GoalRow>> {
+        let sql =
+            format!("SELECT {COLS} FROM goals WHERE company_id=$1 ORDER BY level, created_at DESC");
         Ok(sqlx::query_as::<_, GoalRow>(&sql)
             .bind(company_id)
             .fetch_all(self.db.pool())
@@ -141,9 +137,7 @@ impl<'a> GoalRepo<'a> {
     }
 
     pub async fn list_all(&self, limit: i64) -> RepoResult<Vec<GoalRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM goals ORDER BY created_at DESC LIMIT $1"
-        );
+        let sql = format!("SELECT {COLS} FROM goals ORDER BY created_at DESC LIMIT $1");
         Ok(sqlx::query_as::<_, GoalRow>(&sql)
             .bind(limit)
             .fetch_all(self.db.pool())
@@ -161,23 +155,15 @@ impl<'a> GoalRepo<'a> {
     }
 
     pub async fn list_children(&self, parent_id: Uuid) -> RepoResult<Vec<GoalRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM goals WHERE parent_id=$1 ORDER BY created_at DESC"
-        );
+        let sql = format!("SELECT {COLS} FROM goals WHERE parent_id=$1 ORDER BY created_at DESC");
         Ok(sqlx::query_as::<_, GoalRow>(&sql)
             .bind(parent_id)
             .fetch_all(self.db.pool())
             .await?)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<GoalRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM goals WHERE company_id=$1 AND id=$2"
-        );
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<GoalRow>> {
+        let sql = format!("SELECT {COLS} FROM goals WHERE company_id=$1 AND id=$2");
         Ok(sqlx::query_as::<_, GoalRow>(&sql)
             .bind(company_id)
             .bind(id)
@@ -242,11 +228,7 @@ impl<'a> GoalRepo<'a> {
             .await?)
     }
 
-    async fn would_create_cycle(
-        &self,
-        id: Uuid,
-        new_parent: Uuid,
-    ) -> RepoResult<bool> {
+    async fn would_create_cycle(&self, id: Uuid, new_parent: Uuid) -> RepoResult<bool> {
         let mut cur: Option<Uuid> = Some(new_parent);
         for _ in 0..512 {
             match cur {
@@ -288,8 +270,16 @@ impl<'a> GoalRepo<'a> {
             title: title.map(String::from),
             description: description.map(String::from),
             status: status.and_then(|s| GoalStatus::parse(s)),
-            parent_id: if parent_id.is_some() { Some(parent_id) } else { None },
-            owner_agent_id: if owner_agent_id.is_some() { Some(owner_agent_id) } else { None },
+            parent_id: if parent_id.is_some() {
+                Some(parent_id)
+            } else {
+                None
+            },
+            owner_agent_id: if owner_agent_id.is_some() {
+                Some(owner_agent_id)
+            } else {
+                None
+            },
             ..Default::default()
         };
         self.patch(cid, id, &p).await
@@ -318,12 +308,10 @@ impl<'a> GoalRepo<'a> {
 
     pub async fn delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
         // FK 不强制 ON DELETE CASCADE：将子级变孤儿 → 拒绝
-        let cnt: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM goals WHERE parent_id=$1",
-        )
-        .bind(id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM goals WHERE parent_id=$1")
+            .bind(id)
+            .fetch_one(self.db.pool())
+            .await?;
         if cnt > 0 {
             return Err(RepoError::Invalid(
                 "goal has children; re-parent or delete children first".into(),
@@ -338,18 +326,13 @@ impl<'a> GoalRepo<'a> {
         Ok(n > 0)
     }
 
-    pub async fn count_by_status(
-        &self,
-        company_id: Uuid,
-        status: GoalStatus,
-    ) -> RepoResult<i64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM goals WHERE company_id=$1 AND status=$2",
-        )
-        .bind(company_id)
-        .bind(status.as_str())
-        .fetch_one(self.db.pool())
-        .await?;
+    pub async fn count_by_status(&self, company_id: Uuid, status: GoalStatus) -> RepoResult<i64> {
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM goals WHERE company_id=$1 AND status=$2")
+                .bind(company_id)
+                .bind(status.as_str())
+                .fetch_one(self.db.pool())
+                .await?;
         Ok(n)
     }
 

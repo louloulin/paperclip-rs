@@ -175,10 +175,9 @@ pub(super) async fn authorize_ws(
                 Ok(true)
             } else {
                 // Fall back to session token
-                if let Some((user_id, _)) =
-                    pc_auth::resolve_session(&state.db, token)
-                        .await
-                        .map_err(|err| err.to_string())?
+                if let Some((user_id, _)) = pc_auth::resolve_session(&state.db, token)
+                    .await
+                    .map_err(|err| err.to_string())?
                 {
                     if let Some(requested) = company_id {
                         Ok(CompanyMemberRepo::new(&state.db)
@@ -255,7 +254,8 @@ async fn handle_socket(
                 count += 1;
             }
             // 通知客户端 resume 边界（实际回放数 = 经过时间窗口过滤后）
-            let ack = json!({"type":"resumed","last_event_id": last_id,"replayed":count}).to_string();
+            let ack =
+                json!({"type":"resumed","last_event_id": last_id,"replayed":count}).to_string();
             if sender.send(Message::Text(ack)).await.is_err() {
                 return;
             }

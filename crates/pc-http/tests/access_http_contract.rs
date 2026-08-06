@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test",
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test")),
         realtime,
     )
 }
@@ -136,10 +133,7 @@ async fn board_key_create_persists_real_sha256_hash_and_returns_one_time_token()
     assert_eq!(status, 201, "board key create: {body}");
     let key_id = body["id"].as_str().expect("id");
     let token = body["token"].as_str().expect("one-time token");
-    assert!(
-        token.starts_with("pcp_board_"),
-        "token format: {token}"
-    );
+    assert!(token.starts_with("pcp_board_"), "token format: {token}");
     assert_ne!(token, "key-hash-stub");
 
     // DB-stored hash is SHA-256(token) hex
@@ -158,14 +152,8 @@ async fn board_key_create_persists_real_sha256_hash_and_returns_one_time_token()
     assert_eq!(stored.len(), 64);
 
     // Listing returns same key with no plaintext token
-    let (list_status, list_body) = call_with_session(
-        &app,
-        "GET",
-        "/api/board-api-keys",
-        None,
-        &session,
-    )
-    .await;
+    let (list_status, list_body) =
+        call_with_session(&app, "GET", "/api/board-api-keys", None, &session).await;
     assert_eq!(list_status, 200);
     let arr = list_body["items"].as_array().expect("list items is array");
     assert!(arr.iter().any(|k| k["id"] == key_id));

@@ -364,8 +364,14 @@ mod tests {
     #[test]
     fn combine_metadata_handles_none_inputs() {
         assert_eq!(combine_metadata(None, None), None);
-        assert_eq!(combine_metadata(Some(&json!({"a": 1})), None), Some(json!({"a": 1})));
-        assert_eq!(combine_metadata(None, Some(&json!({"b": 2}))), Some(json!({"b": 2})));
+        assert_eq!(
+            combine_metadata(Some(&json!({"a": 1})), None),
+            Some(json!({"a": 1}))
+        );
+        assert_eq!(
+            combine_metadata(None, Some(&json!({"b": 2}))),
+            Some(json!({"b": 2}))
+        );
     }
 
     #[test]

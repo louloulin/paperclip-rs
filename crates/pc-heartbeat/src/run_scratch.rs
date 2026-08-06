@@ -81,7 +81,9 @@ pub struct HeartbeatRunScratchEnvResult {
 /// Cleanup 结果（与 Node `HeartbeatRunScratchCleanupResult` 1:1 对齐）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeartbeatRunScratchCleanupResult {
-    Removed { dir: String },
+    Removed {
+        dir: String,
+    },
     NotRemoved {
         dir: String,
         reason: CleanupFailureReason,
@@ -111,7 +113,10 @@ fn sanitize_path_segment(value: Option<&str>, fallback: &str) -> String {
         .unwrap_or("")
         .trim()
         .to_lowercase()
-        .replace(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-', "-")
+        .replace(
+            |c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-',
+            "-",
+        )
         .replace(|c: char| c == '.', ".")
         // collapse multiple `-` to single `-`
         .split('-')
@@ -141,11 +146,9 @@ fn is_path_inside(parent: &str, child: &str) -> bool {
         Ok(rel) => {
             let rel_str = rel.to_string_lossy();
             let result = rel_str.is_empty() || !rel_str.starts_with("..");
-                    result
+            result
         }
-        Err(e) => {
-            false
-        }
+        Err(e) => false,
     }
 }
 
@@ -206,7 +209,9 @@ async fn read_marker(marker_path: &str) -> Option<HeartbeatRunScratchMetadata> {
 /// - 返回 dir + marker_path + metadata
 ///
 /// `now` 用于测试可注入时间戳；默认 `chrono::Utc::now()`。
-pub async fn prepare_heartbeat_run_scratch(input: PrepareInput<'_>) -> std::io::Result<HeartbeatRunScratch> {
+pub async fn prepare_heartbeat_run_scratch(
+    input: PrepareInput<'_>,
+) -> std::io::Result<HeartbeatRunScratch> {
     let issue_segment = sanitize_path_segment(input.issue_identifier, "unassigned");
     let run_id_segment: &str = if input.run_id.len() > 12 {
         &input.run_id[..12]
@@ -221,14 +226,16 @@ pub async fn prepare_heartbeat_run_scratch(input: PrepareInput<'_>) -> std::io::
     let dir_buf = std::env::temp_dir().join(dir_name);
     tokio::fs::create_dir_all(&dir_buf).await?;
     let dir = dir_buf.to_string_lossy().into_owned();
-    let marker_path = format!("{}/{}", dir.trim_end_matches('/'), HEARTBEAT_RUN_SCRATCH_MARKER);
+    let marker_path = format!(
+        "{}/{}",
+        dir.trim_end_matches('/'),
+        HEARTBEAT_RUN_SCRATCH_MARKER
+    );
 
     let now = input
         .now
         .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .unwrap_or_else(|| {
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        });
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     let metadata = HeartbeatRunScratchMetadata {
         version: 1,
         company_id: input.company_id.to_string(),
@@ -337,8 +344,7 @@ pub async fn cleanup_heartbeat_run_scratch(
         .and_then(|n| n.to_str())
         .map(|n| n.starts_with(SCRATCH_DIR_PREFIX))
         .unwrap_or(false);
-    if !path_inside || !prefix_ok
-    {
+    if !path_inside || !prefix_ok {
         return HeartbeatRunScratchCleanupResult::NotRemoved {
             dir,
             reason: CleanupFailureReason::Unmarked,
@@ -387,7 +393,11 @@ pub async fn cleanup_heartbeat_run_scratch(
         };
     }
 
-    if input.is_process_group_alive.map(|f| f(input.process_group_id)) == Some(true) {
+    if input
+        .is_process_group_alive
+        .map(|f| f(input.process_group_id))
+        == Some(true)
+    {
         return HeartbeatRunScratchCleanupResult::NotRemoved {
             dir,
             reason: CleanupFailureReason::ProcessGroupAlive,
@@ -432,7 +442,10 @@ mod tests {
 
     #[test]
     fn sanitize_lowercases_and_replaces() {
-        assert_eq!(sanitize_path_segment(Some("MyFeature.Branch"), "fb"), "myfeature.branch");
+        assert_eq!(
+            sanitize_path_segment(Some("MyFeature.Branch"), "fb"),
+            "myfeature.branch"
+        );
     }
 
     #[test]
@@ -466,8 +479,14 @@ mod tests {
 
     #[test]
     fn sanitize_replaces_special_chars_with_dash() {
-        assert_eq!(sanitize_path_segment(Some("foo bar/baz"), "fb"), "foo-bar-baz");
-        assert_eq!(sanitize_path_segment(Some("foo@bar#baz"), "fb"), "foo-bar-baz");
+        assert_eq!(
+            sanitize_path_segment(Some("foo bar/baz"), "fb"),
+            "foo-bar-baz"
+        );
+        assert_eq!(
+            sanitize_path_segment(Some("foo@bar#baz"), "fb"),
+            "foo-bar-baz"
+        );
     }
 
     // ----- is_path_inside -----
@@ -509,7 +528,10 @@ mod tests {
         existing.insert("OTHER".to_string(), "value".to_string());
         let result = build_heartbeat_run_scratch_env(&existing, &scratch);
         assert_eq!(result.env.len(), 4 + 3); // 4 Paperclip + 3 TMP vars
-        assert_eq!(result.env.get("PAPERCLIP_RUN_SCRATCH_DIR"), Some(&scratch.dir));
+        assert_eq!(
+            result.env.get("PAPERCLIP_RUN_SCRATCH_DIR"),
+            Some(&scratch.dir)
+        );
         assert_eq!(result.env.get("TMPDIR"), Some(&scratch.dir));
         assert_eq!(result.temp_keys_applied.len(), 3);
     }
@@ -555,7 +577,11 @@ mod tests {
         .await
         .expect("prepare should succeed");
 
-        assert!(scratch.dir.contains("paperclip-run-proj-1-run-abc12345"), "got: {}", scratch.dir);
+        assert!(
+            scratch.dir.contains("paperclip-run-proj-1-run-abc12345"),
+            "got: {}",
+            scratch.dir
+        );
         assert!(tokio::fs::metadata(&scratch.dir).await.is_ok());
         assert!(tokio::fs::metadata(&scratch.marker_path).await.is_ok());
 
@@ -705,9 +731,12 @@ mod tests {
             issue_identifier: None,
             created_at: "2026-01-01T00:00:00.000Z".to_string(),
         };
-        tokio::fs::write(&marker_path, serde_json::to_string_pretty(&metadata).unwrap())
-            .await
-            .unwrap();
+        tokio::fs::write(
+            &marker_path,
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .await
+        .unwrap();
 
         let scratch = HeartbeatRunScratch {
             dir: dir.to_string_lossy().into_owned(),

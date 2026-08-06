@@ -91,12 +91,10 @@ impl<'a> FeedbackTraceRepo<'a> {
         &self,
         id: Uuid,
     ) -> sqlx::Result<Option<(Uuid, Option<serde_json::Value>)>> {
-        sqlx::query_as(
-            "SELECT issue_id, payload FROM issue_feedback_traces WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await
+        sqlx::query_as("SELECT issue_id, payload FROM issue_feedback_traces WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
     }
 
     /// 按 id 删除，返回 rows_affected > 0 表示实际删除。

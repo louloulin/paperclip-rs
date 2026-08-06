@@ -21,16 +21,17 @@ mod types;
 
 // Public facade: 重导出稳定 API
 pub use markdown::{
-    build_continuation_summary_markdown, bullet_list, continuation_summary_parks_executor,
-    extract_continuation_summary_next_action, extract_markdown_section,
-    extract_path_candidates, extract_previous_next_action, infer_mode, infer_next_action,
-    read_result_summary, truncate_text, as_non_empty_string, SummaryMode,
+    as_non_empty_string, build_continuation_summary_markdown, bullet_list,
+    continuation_summary_parks_executor, extract_continuation_summary_next_action,
+    extract_markdown_section, extract_path_candidates, extract_previous_next_action, infer_mode,
+    infer_next_action, read_result_summary, truncate_text, SummaryMode,
 };
 pub use queries::{
     load_issue_summary_with_doc, refresh_issue_continuation_summary, RefreshSummaryInput,
 };
 pub use types::{
     AgentSummaryInput, BuildSummaryInput, IssueContinuationSummaryDocument, IssueSummaryInput,
-    RunSummaryInput, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY, ISSUE_CONTINUATION_SUMMARY_TITLE,
-    ISSUE_CONTINUATION_SUMMARY_MAX_BODY_CHARS, SUMMARY_SECTION_MAX_CHARS,
+    RunSummaryInput, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+    ISSUE_CONTINUATION_SUMMARY_MAX_BODY_CHARS, ISSUE_CONTINUATION_SUMMARY_TITLE,
+    SUMMARY_SECTION_MAX_CHARS,
 };

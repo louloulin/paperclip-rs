@@ -70,7 +70,9 @@ pub async fn validate_parent<'a>(
     }
     if parent.parent_id.is_none() && parent.kind == FolderKind::Skill.as_str() {
         let sys = parent.system_key.as_deref().unwrap_or("");
-        if RESERVED_CHILD_ROOT_SYSTEM_KEYS.contains(&sys) || RESERVED_CHILD_ROOT_SYSTEM_KEYS.contains(&parent.slug.as_str()) {
+        if RESERVED_CHILD_ROOT_SYSTEM_KEYS.contains(&sys)
+            || RESERVED_CHILD_ROOT_SYSTEM_KEYS.contains(&parent.slug.as_str())
+        {
             return Err(RepoError::Invalid(
                 "Reserved skill folders are system-managed".into(),
             ));

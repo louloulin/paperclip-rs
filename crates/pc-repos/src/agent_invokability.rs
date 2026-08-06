@@ -94,7 +94,10 @@ pub struct AgentInvokabilityDetails {
     pub manager_id: Option<String>,
     #[serde(rename = "managerStatus", skip_serializing_if = "Option::is_none")]
     pub manager_status: Option<String>,
-    #[serde(rename = "reportingChainAgentIds", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "reportingChainAgentIds",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub reporting_chain_agent_ids: Option<Vec<String>>,
     #[serde(rename = "orgChainHealth", skip_serializing_if = "Option::is_none")]
     pub org_chain_health: Option<Json<AgentOrgChainHealth>>,
@@ -268,10 +271,7 @@ pub fn list_invalid_org_chain_descendant_ids(
     let mut by_manager: std::collections::HashMap<Option<Uuid>, Vec<Uuid>> =
         std::collections::HashMap::new();
     for row in company_agents {
-        by_manager
-            .entry(row.reports_to)
-            .or_default()
-            .push(row.id);
+        by_manager.entry(row.reports_to).or_default().push(row.id);
     }
 
     let mut invalid_descendant_ids: Vec<Uuid> = Vec::new();
@@ -351,7 +351,9 @@ fn invalid_chain_reason(health: &AgentOrgChainHealth) -> AgentInvokabilityBlockR
         return AgentInvokabilityBlockReason::ManagerMissing;
     }
     match health.reason {
-        AgentOrgChainInvalidReason::TerminatedAncestor => AgentInvokabilityBlockReason::ManagerTerminated,
+        AgentOrgChainInvalidReason::TerminatedAncestor => {
+            AgentInvokabilityBlockReason::ManagerTerminated
+        }
         AgentOrgChainInvalidReason::Cycle => AgentInvokabilityBlockReason::ReportingCycle,
         AgentOrgChainInvalidReason::MissingManager | AgentOrgChainInvalidReason::Healthy => {
             AgentInvokabilityBlockReason::ManagerMissing
@@ -392,8 +394,16 @@ mod tests {
     fn blocked_terminated_descendants_are_invalid_org_chain() {
         let rows = vec![
             agent("00000000-0000-0000-0000-000000000001", "terminated", None),
-            agent("00000000-0000-0000-0000-000000000002", "active", Some("00000000-0000-0000-0000-000000000001")),
-            agent("00000000-0000-0000-0000-000000000003", "active", Some("00000000-0000-0000-0000-000000000002")),
+            agent(
+                "00000000-0000-0000-0000-000000000002",
+                "active",
+                Some("00000000-0000-0000-0000-000000000001"),
+            ),
+            agent(
+                "00000000-0000-0000-0000-000000000003",
+                "active",
+                Some("00000000-0000-0000-0000-000000000002"),
+            ),
         ];
         let coder = rows[2].clone();
         let result = evaluate_agent_invokability(Some(&coder), &rows);
@@ -422,15 +432,13 @@ mod tests {
     #[test]
     fn missing_manager_and_cycle_report_invalid_org_chain() {
         // missing manager
-        let rows = vec![
-            AgentOrgRow {
-                id: Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap(),
-                company_id: Uuid::nil(),
-                name: "agent".to_string(),
-                reports_to: Some(Uuid::new_v4()),
-                status: "active".to_string(),
-            }
-        ];
+        let rows = vec![AgentOrgRow {
+            id: Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap(),
+            company_id: Uuid::nil(),
+            name: "agent".to_string(),
+            reports_to: Some(Uuid::new_v4()),
+            status: "active".to_string(),
+        }];
         let result = evaluate_agent_invokability(Some(&rows[0]), &rows);
         match result {
             AgentInvokability::Blocked {
@@ -446,8 +454,16 @@ mod tests {
 
         // cycle
         let rows = vec![
-            agent("00000000-0000-0000-0000-000000000020", "active", Some("00000000-0000-0000-0000-000000000021")),
-            agent("00000000-0000-0000-0000-000000000021", "active", Some("00000000-0000-0000-0000-000000000020")),
+            agent(
+                "00000000-0000-0000-0000-000000000020",
+                "active",
+                Some("00000000-0000-0000-0000-000000000021"),
+            ),
+            agent(
+                "00000000-0000-0000-0000-000000000021",
+                "active",
+                Some("00000000-0000-0000-0000-000000000020"),
+            ),
         ];
         let result = evaluate_agent_invokability(Some(&rows[0]), &rows);
         match result {
@@ -467,10 +483,22 @@ mod tests {
     fn list_invalid_org_chain_descendant_ids_skips_terminated_and_other_roots() {
         let rows = vec![
             agent("00000000-0000-0000-0000-000000000030", "terminated", None), // ceo
-            agent("00000000-0000-0000-0000-000000000031", "active", Some("00000000-0000-0000-0000-000000000030")), // cto
-            agent("00000000-0000-0000-0000-000000000032", "active", Some("00000000-0000-0000-0000-000000000031")), // coder
-            agent("00000000-0000-0000-0000-000000000033", "terminated", Some("00000000-0000-0000-0000-000000000031")), // old-coder
-            agent("00000000-0000-0000-0000-000000000034", "active", None), // other-root
+            agent(
+                "00000000-0000-0000-0000-000000000031",
+                "active",
+                Some("00000000-0000-0000-0000-000000000030"),
+            ), // cto
+            agent(
+                "00000000-0000-0000-0000-000000000032",
+                "active",
+                Some("00000000-0000-0000-0000-000000000031"),
+            ), // coder
+            agent(
+                "00000000-0000-0000-0000-000000000033",
+                "terminated",
+                Some("00000000-0000-0000-0000-000000000031"),
+            ), // old-coder
+            agent("00000000-0000-0000-0000-000000000034", "active", None),     // other-root
         ];
         let mut result = list_invalid_org_chain_descendant_ids(Uuid::nil(), &rows);
         // Use the real id instead
@@ -489,7 +517,11 @@ mod tests {
 
     #[test]
     fn list_invalid_org_chain_descendant_ids_handles_no_descendants() {
-        let rows = vec![agent("00000000-0000-0000-0000-000000000040", "active", None)];
+        let rows = vec![agent(
+            "00000000-0000-0000-0000-000000000040",
+            "active",
+            None,
+        )];
         let id = Uuid::parse_str("00000000-0000-0000-0000-000000000040").unwrap();
         assert!(list_invalid_org_chain_descendant_ids(id, &rows).is_empty());
     }
@@ -498,8 +530,16 @@ mod tests {
     fn list_invalid_org_chain_descendant_ids_protects_against_cycles() {
         // a -> b -> a
         let rows = vec![
-            agent("00000000-0000-0000-0000-000000000050", "active", Some("00000000-0000-0000-0000-000000000051")),
-            agent("00000000-0000-0000-0000-000000000051", "active", Some("00000000-0000-0000-0000-000000000050")),
+            agent(
+                "00000000-0000-0000-0000-000000000050",
+                "active",
+                Some("00000000-0000-0000-0000-000000000051"),
+            ),
+            agent(
+                "00000000-0000-0000-0000-000000000051",
+                "active",
+                Some("00000000-0000-0000-0000-000000000050"),
+            ),
         ];
         let start = Uuid::parse_str("00000000-0000-0000-0000-000000000050").unwrap();
         // Should not infinite-loop. Returns b (non-terminated) at most once.
@@ -565,7 +605,11 @@ mod tests {
     fn healthy_active_agent_is_invokable() {
         let rows = vec![
             agent("00000000-0000-0000-0000-000000000060", "active", None),
-            agent("00000000-0000-0000-0000-000000000061", "active", Some("00000000-0000-0000-0000-000000000060")),
+            agent(
+                "00000000-0000-0000-0000-000000000061",
+                "active",
+                Some("00000000-0000-0000-0000-000000000060"),
+            ),
         ];
         let target = rows[1].clone();
         assert!(matches!(
@@ -578,7 +622,11 @@ mod tests {
     fn paused_agent_blocked_with_paused_reason() {
         let rows = vec![
             agent("00000000-0000-0000-0000-000000000070", "active", None),
-            agent("00000000-0000-0000-0000-000000000071", "paused", Some("00000000-0000-0000-0000-000000000070")),
+            agent(
+                "00000000-0000-0000-0000-000000000071",
+                "paused",
+                Some("00000000-0000-0000-0000-000000000070"),
+            ),
         ];
         let target = rows[1].clone();
         let result = evaluate_agent_invokability(Some(&target), &rows);
@@ -599,7 +647,11 @@ mod tests {
     fn unknown_status_blocked_with_unknown_status_reason() {
         let rows = vec![
             agent("00000000-0000-0000-0000-000000000080", "active", None),
-            agent("00000000-0000-0000-0000-000000000081", "sabbatical", Some("00000000-0000-0000-0000-000000000080")),
+            agent(
+                "00000000-0000-0000-0000-000000000081",
+                "sabbatical",
+                Some("00000000-0000-0000-0000-000000000080"),
+            ),
         ];
         let target = rows[1].clone();
         let result = evaluate_agent_invokability(Some(&target), &rows);
@@ -718,7 +770,10 @@ mod tests {
             AgentInvokabilityBlockReason::ReportingCycle,
             AgentInvokabilityBlockReason::ReportingChainTooDeep,
         ] {
-            assert_eq!(r.as_str(), serde_json::to_value(r).unwrap().as_str().unwrap());
+            assert_eq!(
+                r.as_str(),
+                serde_json::to_value(r).unwrap().as_str().unwrap()
+            );
         }
     }
 }

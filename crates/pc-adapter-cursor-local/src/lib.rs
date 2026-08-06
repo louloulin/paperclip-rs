@@ -265,10 +265,7 @@ impl Adapter for CursorLocalAdapter {
         let mut result = execution.result;
         result.session_id = parsed.session_id.clone();
         result.provider = Some("cursor_local".into());
-        result.model = parsed
-            .model
-            .clone()
-            .or_else(|| built.model.clone());
+        result.model = parsed.model.clone().or_else(|| built.model.clone());
         result.billing_type = Some("subscription".into());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
         result.usage = Some(UsageSummary {
@@ -360,14 +357,16 @@ mod tests {
             json!({
                 "type":"assistant",
                 "message":{"content":[{"type":"text","text":"partial"}]}
-            }).to_string(),
+            })
+            .to_string(),
             json!({
                 "type":"result",
                 "is_error": false,
                 "result": "final reply",
                 "session_id": "sess_a",
                 "usage": {"input_tokens": 12, "output_tokens": 8, "cache_read_input_tokens": 3}
-            }).to_string(),
+            })
+            .to_string(),
         ]
         .join("\n");
         let p = parse_cursor_jsonl(&stdout);

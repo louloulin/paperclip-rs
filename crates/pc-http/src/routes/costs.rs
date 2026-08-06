@@ -8,7 +8,9 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use pc_repos::budget::{BudgetRepo, IncidentRow, PolicyRow, ResolveIncidentInput, UpsertPolicyInput};
+use pc_repos::budget::{
+    BudgetRepo, IncidentRow, PolicyRow, ResolveIncidentInput, UpsertPolicyInput,
+};
 use pc_repos::cost::{CostEventRow, CostRange, CostRepo, CreateCostEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -187,7 +189,6 @@ async fn list_cost_events(
     })))
 }
 
-
 async fn summary(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -326,10 +327,7 @@ async fn budget_overview(
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let repo = ApprovalRepo::new(&state.db);
-    let pending_approvals = repo
-        .count_pending(company_id)
-        .await
-        .unwrap_or(0);
+    let pending_approvals = repo.count_pending(company_id).await.unwrap_or(0);
     let paused_agents = AgentRepo::new(&state.db)
         .count_paused_for_company(company_id)
         .await
@@ -383,11 +381,10 @@ async fn update_agent_budget(
             "budgetMonthlyCents must be non-negative".to_owned(),
         ));
     }
-    let (id, company_id_ret, budget_monthly_cents, spent_monthly_cents) =
-        AgentRepo::new(&state.db)
-            .set_budget(agent_id, body.budget_monthly_cents)
-            .await?
-            .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    let (id, company_id_ret, budget_monthly_cents, spent_monthly_cents) = AgentRepo::new(&state.db)
+        .set_budget(agent_id, body.budget_monthly_cents)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
     Ok(Json(json!({
         "id": id,
         "companyId": company_id_ret,
@@ -511,7 +508,9 @@ async fn create_finance_event(
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }
     if body.amount_cents < 0 {
-        return Err(ApiError::BadRequest("amount_cents must be non-negative".into()));
+        return Err(ApiError::BadRequest(
+            "amount_cents must be non-negative".into(),
+        ));
     }
     let id = Uuid::new_v4();
     let occurred = body.occurred_at.unwrap_or_else(Utc::now);
@@ -541,4 +540,3 @@ async fn create_finance_event(
     });
     Ok((StatusCode::CREATED, Json(row)))
 }
-

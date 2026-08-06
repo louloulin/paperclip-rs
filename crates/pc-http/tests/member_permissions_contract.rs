@@ -46,10 +46,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -213,13 +210,7 @@ async fn repo_replace_all_clears_old_then_inserts_new() {
         },
     ];
     let written = repo
-        .replace_all_for_principal(
-            &mut tx,
-            company_id,
-            "user",
-            &user_id,
-            &new_grants,
-        )
+        .replace_all_for_principal(&mut tx, company_id, "user", &user_id, &new_grants)
         .await
         .expect("replace");
     tx.commit().await.expect("commit");

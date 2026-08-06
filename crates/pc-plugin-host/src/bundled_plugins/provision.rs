@@ -14,8 +14,7 @@
 use super::resolve::canonicalize;
 use super::types::{
     BundledPluginProvisionerDeps, LifecycleError, LogFields, LogValue, PluginInstallError,
-    PluginLifecycle, PluginLoader, PluginRegistryReader, RegistryError,
-    ResolvedBundledPlugin,
+    PluginLifecycle, PluginLoader, PluginRegistryReader, RegistryError, ResolvedBundledPlugin,
 };
 
 // ============================================================================
@@ -373,7 +372,9 @@ mod tests {
             status: "ready".to_string(),
         });
         let loader = FakeLoader::default();
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_with_bundle(registry, loader, lifecycle, logger.clone());
@@ -399,7 +400,9 @@ mod tests {
             status: "uninstalled".to_string(),
         });
         let loader = FakeLoader::default();
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_with_bundle(registry, loader, lifecycle, logger.clone());
@@ -423,7 +426,9 @@ mod tests {
             status: "uninstalled".to_string(),
         });
         let loader = FakeLoader::default();
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_with_bundle(registry, loader, lifecycle, logger.clone());
@@ -439,7 +444,10 @@ mod tests {
         // 这是预期行为：uninstalled + reinstall_flag → 进入安装流程
         let info_count = logger.info_calls.try_lock().unwrap().len();
         let error_count = logger.error_calls.try_lock().unwrap().len();
-        assert!(info_count > 0 || error_count > 0, "should have logged something during reinstall flow");
+        assert!(
+            info_count > 0 || error_count > 0,
+            "should have logged something during reinstall flow"
+        );
     }
 
     // 直接验证 loader/lifecycle 调用
@@ -453,7 +461,9 @@ mod tests {
             status: "installed".to_string(),
         });
         let loader = FakeLoader::default();
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_with_bundle(registry, loader, lifecycle, logger.clone());
@@ -472,7 +482,9 @@ mod tests {
     async fn skips_silently_when_bundle_not_on_disk() {
         let registry = FakeRegistry::default();
         let loader = FakeLoader::default();
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_without_bundle(registry, loader, lifecycle, logger.clone());
@@ -492,7 +504,9 @@ mod tests {
         let registry = FakeRegistry::default();
         let loader = FakeLoader::default();
         *loader.should_fail.lock().await = true;
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_with_bundle(registry, loader, lifecycle, logger.clone());
@@ -512,7 +526,9 @@ mod tests {
     async fn empty_installs_list_does_nothing() {
         let registry = FakeRegistry::default();
         let loader = FakeLoader::default();
-        let lifecycle = FakeLifecycle { loads: Mutex::new(vec![]) };
+        let lifecycle = FakeLifecycle {
+            loads: Mutex::new(vec![]),
+        };
         let logger = Arc::new(CapturingLogger::default());
 
         let deps = deps_with_bundle(registry, loader, lifecycle, logger.clone());
@@ -528,7 +544,7 @@ mod tests {
         assert_eq!(logger.error_calls.try_lock().unwrap().len(), 0);
     }
 
-#[test]
+    #[test]
     fn default_bundle_manifest_path_format() {
         let path = default_bundle_manifest_exists("/app/packages/plugins/kubernetes");
         assert_eq!(path, "/app/packages/plugins/kubernetes/dist/manifest.js");

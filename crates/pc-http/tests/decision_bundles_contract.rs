@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -207,10 +204,7 @@ async fn repo_create_rejects_empty_title() {
     let run_id = insert_heartbeat_run(&db, company_id, agent_id).await;
 
     let res = DecisionBundleRepo::new(&db)
-        .create(
-            company_id,
-            sample_input("   ", agent_id, issue_id, run_id),
-        )
+        .create(company_id, sample_input("   ", agent_id, issue_id, run_id))
         .await;
     assert!(matches!(
         res.err().expect("must error"),
@@ -300,8 +294,26 @@ async fn repo_get_with_decisions_returns_mounted_decisions() {
         )
         .await
         .unwrap();
-    let d1 = insert_decision(&db, bundle.id, company_id, agent_id, issue_id, run_id, "decision-1").await;
-    let d2 = insert_decision(&db, bundle.id, company_id, agent_id, issue_id, run_id, "decision-2").await;
+    let d1 = insert_decision(
+        &db,
+        bundle.id,
+        company_id,
+        agent_id,
+        issue_id,
+        run_id,
+        "decision-1",
+    )
+    .await;
+    let d2 = insert_decision(
+        &db,
+        bundle.id,
+        company_id,
+        agent_id,
+        issue_id,
+        run_id,
+        "decision-2",
+    )
+    .await;
 
     let detail = DecisionBundleRepo::new(&db)
         .get_with_decisions(bundle.id)
@@ -325,22 +337,18 @@ async fn repo_exists_for_origin_detects_duplicates() {
     let issue_id = insert_issue(&db, company_id, "x").await;
     let run_id = insert_heartbeat_run(&db, company_id, agent_id).await;
 
-    assert!(
-        !DecisionBundleRepo::new(&db)
-            .exists_for_origin(company_id, agent_id, issue_id, run_id)
-            .await
-            .unwrap()
-    );
+    assert!(!DecisionBundleRepo::new(&db)
+        .exists_for_origin(company_id, agent_id, issue_id, run_id)
+        .await
+        .unwrap());
     DecisionBundleRepo::new(&db)
         .create(company_id, sample_input("X", agent_id, issue_id, run_id))
         .await
         .unwrap();
-    assert!(
-        DecisionBundleRepo::new(&db)
-            .exists_for_origin(company_id, agent_id, issue_id, run_id)
-            .await
-            .unwrap()
-    );
+    assert!(DecisionBundleRepo::new(&db)
+        .exists_for_origin(company_id, agent_id, issue_id, run_id)
+        .await
+        .unwrap());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -352,21 +360,20 @@ async fn repo_delete_returns_true_only_when_row_existed() {
     let run_id = insert_heartbeat_run(&db, company_id, agent_id).await;
 
     let bundle = DecisionBundleRepo::new(&db)
-        .create(company_id, sample_input("to delete", agent_id, issue_id, run_id))
+        .create(
+            company_id,
+            sample_input("to delete", agent_id, issue_id, run_id),
+        )
         .await
         .unwrap();
-    assert!(
-        DecisionBundleRepo::new(&db)
-            .delete(bundle.id)
-            .await
-            .unwrap()
-    );
-    assert!(
-        !DecisionBundleRepo::new(&db)
-            .delete(bundle.id)
-            .await
-            .unwrap()
-    );
+    assert!(DecisionBundleRepo::new(&db)
+        .delete(bundle.id)
+        .await
+        .unwrap());
+    assert!(!DecisionBundleRepo::new(&db)
+        .delete(bundle.id)
+        .await
+        .unwrap());
 }
 
 // =====================================================================
@@ -459,9 +466,7 @@ async fn http_list_decision_bundles_filters_by_agent() {
     let (status, body) = call(
         &app,
         "GET",
-        &format!(
-            "/api/companies/{company_id}/decision-bundles?agentId={agent_a}"
-        ),
+        &format!("/api/companies/{company_id}/decision-bundles?agentId={agent_a}"),
         serde_json::json!({}),
     )
     .await;
@@ -504,7 +509,10 @@ async fn http_get_decision_bundle_includes_decisions() {
     let run_id = insert_heartbeat_run(&db, company_id, agent_id).await;
 
     let bundle = DecisionBundleRepo::new(&db)
-        .create(company_id, sample_input("with decisions", agent_id, issue_id, run_id))
+        .create(
+            company_id,
+            sample_input("with decisions", agent_id, issue_id, run_id),
+        )
         .await
         .unwrap();
     insert_decision(

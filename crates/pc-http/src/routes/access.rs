@@ -39,24 +39,48 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/board-api-keys/:key_id", delete(delete_board_key))
         .route("/api/cli-auth/revoke-current", post(cli_revoke_current))
-        .route("/api/invites/:token", get(invites_get))
-        .route("/api/invites/:token/accept", post(invites_accept))
-        .route("/api/invites/:token/onboarding", get(invite_onboarding))
+        .route("/api/invites/:invite_id", get(invites_get))
+        .route("/api/invites/:invite_id/accept", post(invites_accept))
+        .route("/api/invites/:invite_id/onboarding", get(invite_onboarding))
         // ── Round 43: plain-text onboarding doc + logo asset stub ──
-        .route("/api/invites/:token/onboarding.txt", get(invite_onboarding_txt))
-        .route("/api/invites/:token/logo", get(invite_logo))
-        .route("/api/invites/:token/skills/index", get(invite_skills_index))
-        .route("/api/invites/:token/skills/:skill_name", get(invite_skill_get))
-        .route("/api/invites/:token/test-resolution", get(invite_test_resolution))
-        .route("/api/invites/:token/revoke", post(revoke_invite_by_token))
+        .route(
+            "/api/invites/:invite_id/onboarding.txt",
+            get(invite_onboarding_txt),
+        )
+        .route("/api/invites/:invite_id/logo", get(invite_logo))
+        .route(
+            "/api/invites/:invite_id/skills/index",
+            get(invite_skills_index),
+        )
+        .route(
+            "/api/invites/:invite_id/skills/:skill_name",
+            get(invite_skill_get),
+        )
+        .route(
+            "/api/invites/:invite_id/test-resolution",
+            get(invite_test_resolution),
+        )
+        // NOTE: POST `/api/invites/:invite_id/revoke` is registered by invite_globals.rs.
+        // The duplicate registration here was removed in Round 282 because it produced
+        // axum "Overlapping method route" panics during integration tests. The local
+        // `revoke_invite_by_token` handler remains as dead code (kept for reference).
         .route("/api/skills/available", get(skills_available))
         .route("/api/skills/index", get(skills_index))
         .route("/api/skills/:skill_name", get(skill_get))
         // ---- Round 42: admin endpoints ----
         .route("/api/admin/users", get(list_admin_users))
-        .route("/api/admin/users/:user_id/company-access", get(get_user_company_access).put(put_user_company_access))
-        .route("/api/admin/users/:user_id/promote-instance-admin", post(promote_instance_admin))
-        .route("/api/admin/users/:user_id/demote-instance-admin", post(demote_instance_admin))
+        .route(
+            "/api/admin/users/:user_id/company-access",
+            get(get_user_company_access).put(put_user_company_access),
+        )
+        .route(
+            "/api/admin/users/:user_id/promote-instance-admin",
+            post(promote_instance_admin),
+        )
+        .route(
+            "/api/admin/users/:user_id/demote-instance-admin",
+            post(demote_instance_admin),
+        )
         // ── Round 215: join-requests claim API key ──
         .route(
             "/api/join-requests/:request_id/claim-api-key",
@@ -205,9 +229,7 @@ async fn cli_challenge_create(
     let pending_board_token = random_cli_token("pcp_board_");
     let pending_key_hash = pc_auth::hash_token(&pending_board_token);
     let secret_hash = pc_auth::hash_token(&challenge_secret);
-    let expires_at = pc_core::Timestamp::from_dt(
-        chrono::Utc::now() + chrono::Duration::minutes(5),
-    );
+    let expires_at = pc_core::Timestamp::from_dt(chrono::Utc::now() + chrono::Duration::minutes(5));
     let row = pc_repos::cli_challenge::ChallengeRepo::new(&state.db)
         .create(
             &secret_hash,
@@ -366,9 +388,8 @@ async fn invites_get(
         ));
     };
     let now = chrono::Utc::now();
-    let valid = inv.revoked_at.is_none()
-        && inv.accepted_at.is_none()
-        && inv.expires_at.as_datetime() > now;
+    let valid =
+        inv.revoked_at.is_none() && inv.accepted_at.is_none() && inv.expires_at.as_datetime() > now;
     // role 从 defaults_payload 提取（与 Round 28 audit 一致）
     let role = inv
         .defaults_payload
@@ -415,8 +436,8 @@ async fn invites_accept(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
         StatusCode::OK,
-        Json(json!({"accepted": true, "userId": user_id}),
-    )))
+        Json(json!({"accepted": true, "userId": user_id})),
+    ))
 }
 
 async fn skills_available(State(state): State<AppState>) -> ApiResult<Json<Value>> {
@@ -480,7 +501,6 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-
 // ============================================================================
 // Round 38: invite public endpoints (onboarding / skills / test-resolution / revoke)
 // ============================================================================
@@ -490,7 +510,16 @@ fn hex_encode(bytes: &[u8]) -> String {
 async fn lookup_invite_by_token(
     state: &AppState,
     token: &str,
-) -> ApiResult<Option<(Uuid, Uuid, Option<String>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>, Option<pc_core::Timestamp>)>> {
+) -> ApiResult<
+    Option<(
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<pc_core::Timestamp>,
+        Option<pc_core::Timestamp>,
+        Option<pc_core::Timestamp>,
+    )>,
+> {
     let token_hash = pc_repos::invite::hash_token_hex(token);
     pc_repos::invite::InviteRepo::new(&state.db)
         .lookup_by_token_hash(&token_hash)
@@ -597,8 +626,8 @@ async fn invite_logo(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let (provider_name, object_key, content_type, byte_size, original_filename) = row
-        .ok_or_else(|| ApiError::NotFound("Invite logo not found".into()))?;
+    let (provider_name, object_key, content_type, byte_size, original_filename) =
+        row.ok_or_else(|| ApiError::NotFound("Invite logo not found".into()))?;
 
     let provider = state.storage.resolve(&provider_name).map_err(|e| {
         ApiError::Internal(format!("storage provider {provider_name} unavailable: {e}"))
@@ -632,7 +661,9 @@ async fn invite_logo(
             "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
         );
     }
-    Ok(response.body(axum::body::Body::from(bytes)).map_err(|e| ApiError::Internal(e.to_string()))?)
+    Ok(response
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| ApiError::Internal(e.to_string()))?)
 }
 
 /// `GET /api/invites/:token/skills/index` — public skill catalog reachable
@@ -762,7 +793,6 @@ async fn revoke_invite_by_token(
     })))
 }
 
-
 // ============================================================================
 // Round 42: instance admin endpoints (list users / company-access / promote / demote)
 // ============================================================================
@@ -790,7 +820,10 @@ async fn list_admin_users(
             })
         })
         .collect();
-    let user_ids: Vec<String> = items.iter().filter_map(|i| i.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())).collect();
+    let user_ids: Vec<String> = items
+        .iter()
+        .filter_map(|i| i.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
     let admin_rows = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
         .list_user_ids_with_any_role(&user_ids)
         .await
@@ -912,7 +945,9 @@ async fn demote_instance_admin(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
-        return Err(ApiError::NotFound(format!("instance admin role for {user_id}")));
+        return Err(ApiError::NotFound(format!(
+            "instance admin role for {user_id}"
+        )));
     }
     state.realtime.publish(
         LiveEvent::new("user.demoted_instance_admin", "user", Uuid::nil())

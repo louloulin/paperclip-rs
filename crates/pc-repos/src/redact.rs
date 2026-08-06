@@ -48,9 +48,7 @@ fn is_user_secret_ref(value: &Value) -> bool {
 fn is_plain_binding(value: &Value) -> bool {
     value
         .as_object()
-        .map(|o| {
-            o.get("type").and_then(|t| t.as_str()) == Some("plain") && o.contains_key("value")
-        })
+        .map(|o| o.get("type").and_then(|t| t.as_str()) == Some("plain") && o.contains_key("value"))
         .unwrap_or(false)
 }
 
@@ -92,9 +90,7 @@ fn redact_sensitive_text(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
     let jwt_re = regex_lite_jwt();
-    let secret_prefixes = [
-        "sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_",
-    ];
+    let secret_prefixes = ["sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_"];
     while i < chars.len() {
         let slice: String = chars[i..].iter().collect();
         let mut matched = false;
@@ -332,7 +328,7 @@ mod tests {
         assert_eq!(out["summary"], input["summary"]);
     }
 
-#[test]
+    #[test]
     fn non_object_passthrough() {
         assert_eq!(sanitize_record(&json!(42)), json!(42));
         assert_eq!(sanitize_record(&json!("x")), json!("x"));

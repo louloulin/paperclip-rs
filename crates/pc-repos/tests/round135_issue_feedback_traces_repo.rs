@@ -20,7 +20,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r135-{tag}-{id}"))
         .bind(format!("R135{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
@@ -40,8 +42,13 @@ async fn try_insert_trace(db: &Db, issue_id: Uuid, kind: &str) -> Option<Uuid> {
         "INSERT INTO issue_feedback_traces (id, issue_id, kind, payload, created_at) \
          VALUES ($1, $2, $3, '{}'::jsonb, now()) RETURNING id",
     )
-    .bind(Uuid::new_v4()).bind(issue_id).bind(kind)
-    .fetch_optional(db.pool()).await.ok().flatten()
+    .bind(Uuid::new_v4())
+    .bind(issue_id)
+    .bind(kind)
+    .fetch_optional(db.pool())
+    .await
+    .ok()
+    .flatten()
 }
 
 // ===== FeedbackTraceRepo::list_by_issue =====
@@ -52,7 +59,10 @@ async fn list_by_issue_returns_empty_when_table_missing() {
     let db = db().await;
     let cid = insert_company(&db, "lbi").await;
     let iid = insert_issue(&db, cid).await;
-    let list = FeedbackTraceRepo::new(&db).list_by_issue(iid, 100).await.unwrap_or_default();
+    let list = FeedbackTraceRepo::new(&db)
+        .list_by_issue(iid, 100)
+        .await
+        .unwrap_or_default();
     assert!(list.is_empty());
 }
 
@@ -62,7 +72,10 @@ async fn list_by_issue_limit_parameter_passes_through() {
     let db = db().await;
     let cid = insert_company(&db, "lim").await;
     let iid = insert_issue(&db, cid).await;
-    let list = FeedbackTraceRepo::new(&db).list_by_issue(iid, 50).await.unwrap_or_default();
+    let list = FeedbackTraceRepo::new(&db)
+        .list_by_issue(iid, 50)
+        .await
+        .unwrap_or_default();
     assert!(list.len() <= 50);
 }
 
@@ -72,7 +85,9 @@ async fn list_by_issue_limit_parameter_passes_through() {
 #[tokio::test(flavor = "current_thread")]
 async fn get_by_id_full_returns_none() {
     let db = db().await;
-    let row = FeedbackTraceRepo::new(&db).get_by_id_full(Uuid::new_v4()).await;
+    let row = FeedbackTraceRepo::new(&db)
+        .get_by_id_full(Uuid::new_v4())
+        .await;
     // 表不存在 / 行不存在都返回 Ok(None) 或 Err
     match row {
         Ok(opt) => assert!(opt.is_none()),
@@ -122,11 +137,19 @@ async fn full_crud_when_table_exists() {
         let list = repo.list_by_issue(iid, 100).await.expect("list");
         assert!(!list.is_empty(), "table exists, list should return rows");
         // get_by_id_full
-        let full = repo.get_by_id_full(trace_id).await.expect("get").expect("row");
+        let full = repo
+            .get_by_id_full(trace_id)
+            .await
+            .expect("get")
+            .expect("row");
         assert_eq!(full.0, iid, "issue_id");
         assert_eq!(full.1, "user_feedback", "kind");
         // get_bundle
-        let bundle = repo.get_bundle(trace_id).await.expect("bundle").expect("row");
+        let bundle = repo
+            .get_bundle(trace_id)
+            .await
+            .expect("bundle")
+            .expect("row");
         assert_eq!(bundle.0, iid);
         // delete
         assert!(repo.delete(trace_id).await.expect("delete"));

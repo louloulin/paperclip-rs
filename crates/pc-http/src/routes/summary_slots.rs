@@ -104,7 +104,12 @@ async fn find_slot(
     SummaryRepo::new(&state.db)
         .find_by_scope_str(company_id, scope_kind, slot_key, scope_id)
         .await
-        .map_err(|e| sqlx::Error::Decode(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))
+        .map_err(|e| {
+            sqlx::Error::Decode(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })
 }
 
 async fn get_slot(
@@ -226,7 +231,13 @@ async fn upsert_document(
     let doc_repo = DocumentRepo::new(&state.db);
     if let Some(document_id) = slot.document_id {
         Ok(doc_repo
-            .write_body(company_id, document_id, body.title.as_deref(), &body.markdown, now)
+            .write_body(
+                company_id,
+                document_id,
+                body.title.as_deref(),
+                &body.markdown,
+                now,
+            )
             .await?)
     } else {
         Ok(doc_repo

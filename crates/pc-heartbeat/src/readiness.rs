@@ -206,7 +206,10 @@ pub struct StalenessDecision {
 
 impl StalenessDecision {
     pub fn is_actionable(&self) -> bool {
-        matches!(self.level, StalenessLevel::Suspicious | StalenessLevel::Critical)
+        matches!(
+            self.level,
+            StalenessLevel::Suspicious | StalenessLevel::Critical
+        )
     }
 
     pub fn should_force_wake(&self) -> bool {
@@ -675,7 +678,9 @@ mod test_helpers {
             adapter_already_in_use: false,
         });
         assert!(!report.passed);
-        assert!(report.failed_kinds().contains(&ReadinessCheck::IssueLockFree));
+        assert!(report
+            .failed_kinds()
+            .contains(&ReadinessCheck::IssueLockFree));
     }
 
     #[test]
@@ -695,7 +700,9 @@ mod test_helpers {
             adapter_already_in_use: false,
         });
         assert!(!report.passed);
-        assert!(report.failed_kinds().contains(&ReadinessCheck::SuppressionCleared));
+        assert!(report
+            .failed_kinds()
+            .contains(&ReadinessCheck::SuppressionCleared));
     }
 
     #[test]
@@ -704,7 +711,9 @@ mod test_helpers {
         let sup = SuppressionSnapshot {
             env_suppressed: false,
             db_overrides: vec![SuppressionOverride {
-                scope: SuppressionScope::Company { company_id: "co-1".into() },
+                scope: SuppressionScope::Company {
+                    company_id: "co-1".into(),
+                },
                 reason: "manual hold".into(),
             }],
         };
@@ -755,7 +764,9 @@ mod test_helpers {
             adapter_already_in_use: false,
         });
         assert!(!report.passed);
-        assert!(report.failed_kinds().contains(&ReadinessCheck::AdapterReady));
+        assert!(report
+            .failed_kinds()
+            .contains(&ReadinessCheck::AdapterReady));
     }
 
     #[test]
@@ -776,7 +787,9 @@ mod test_helpers {
             adapter_already_in_use: false,
         });
         assert!(!report.passed);
-        assert!(report.failed_kinds().contains(&ReadinessCheck::BudgetAvailable));
+        assert!(report
+            .failed_kinds()
+            .contains(&ReadinessCheck::BudgetAvailable));
     }
 
     #[test]
@@ -792,7 +805,10 @@ mod test_helpers {
             adapter_already_in_use: false,
         });
         assert!(!report.passed);
-        assert_eq!(report.first_failure().unwrap().check, ReadinessCheck::AgentAvailable);
+        assert_eq!(
+            report.first_failure().unwrap().check,
+            ReadinessCheck::AgentAvailable
+        );
     }
 
     // ---- recovery plan ----
@@ -839,7 +855,12 @@ mod test_helpers {
         });
         assert_eq!(plan.len(), 1);
         match &plan[0] {
-            RecoveryAction::CreateEvaluationIssue { title, priority, level, .. } => {
+            RecoveryAction::CreateEvaluationIssue {
+                title,
+                priority,
+                level,
+                ..
+            } => {
                 assert!(title.contains("Alice"));
                 assert_eq!(priority, "medium");
                 assert_eq!(*level, StalenessLevel::Suspicious);
@@ -868,14 +889,18 @@ mod test_helpers {
         });
         assert_eq!(plan.len(), 2);
         match &plan[0] {
-            RecoveryAction::CreateEvaluationIssue { priority, level, .. } => {
+            RecoveryAction::CreateEvaluationIssue {
+                priority, level, ..
+            } => {
                 assert_eq!(priority, "high");
                 assert_eq!(*level, StalenessLevel::Critical);
             }
             other => panic!("expected CreateEvaluationIssue, got {other:?}"),
         }
         match &plan[1] {
-            RecoveryAction::EnqueueWakeup { agent_id, reason, .. } => {
+            RecoveryAction::EnqueueWakeup {
+                agent_id, reason, ..
+            } => {
                 assert_eq!(agent_id, "agent-1");
                 assert_eq!(reason, "issue_assigned");
             }
@@ -940,7 +965,10 @@ mod test_helpers {
             adapter_already_in_use: false,
         });
         assert_eq!(report.failed.len(), 2);
-        assert_eq!(report.first_failure().unwrap().check, ReadinessCheck::AgentAvailable);
+        assert_eq!(
+            report.first_failure().unwrap().check,
+            ReadinessCheck::AgentAvailable
+        );
     }
 }
 
@@ -980,7 +1008,9 @@ mod integration_tests {
         });
         assert_eq!(plan.len(), 1);
         match &plan[0] {
-            RecoveryAction::CreateEvaluationIssue { title, priority, .. } => {
+            RecoveryAction::CreateEvaluationIssue {
+                title, priority, ..
+            } => {
                 assert!(title.contains("Alice"));
                 assert_eq!(priority, "medium");
             }
@@ -1020,7 +1050,9 @@ mod integration_tests {
             _ => panic!("expected CreateEvaluationIssue"),
         }
         match &plan[1] {
-            RecoveryAction::EnqueueWakeup { agent_id, reason, .. } => {
+            RecoveryAction::EnqueueWakeup {
+                agent_id, reason, ..
+            } => {
                 assert_eq!(agent_id, "a-1");
                 assert_eq!(reason, "issue_assigned");
             }
@@ -1047,7 +1079,9 @@ mod integration_tests {
             adapter_already_in_use: false,
         });
         assert!(!report.passed);
-        assert!(report.failed_kinds().contains(&ReadinessCheck::SuppressionCleared));
+        assert!(report
+            .failed_kinds()
+            .contains(&ReadinessCheck::SuppressionCleared));
         // 即使 freshness 正常，readiness 失败 → scheduler 跳过 claim
         let staleness = evaluate_staleness(&StalenessInput {
             last_output_at: Some(ts(30_000, n.as_datetime().timestamp_millis())),

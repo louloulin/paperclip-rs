@@ -289,10 +289,13 @@ pub fn list_item_from_stat(input: ListItemFromStatInput) -> Option<ListItem> {
         crate::workspace_file_classify::PreviewKind::Video => WorkspaceFilePreviewKind::Video,
         crate::workspace_file_classify::PreviewKind::Pdf => WorkspaceFilePreviewKind::Pdf,
         crate::workspace_file_classify::PreviewKind::Text => WorkspaceFilePreviewKind::Text,
-        crate::workspace_file_classify::PreviewKind::Unsupported => WorkspaceFilePreviewKind::Unsupported,
+        crate::workspace_file_classify::PreviewKind::Unsupported => {
+            WorkspaceFilePreviewKind::Unsupported
+        }
     };
     let cap = preview_cap_for_kind(preview_kind);
-    let previewable = preview_kind != WorkspaceFilePreviewKind::Unsupported && input.stat.size <= cap;
+    let previewable =
+        preview_kind != WorkspaceFilePreviewKind::Unsupported && input.stat.size <= cap;
 
     let final_content_type = if let Some(ct) = content_type {
         Some(ct)
@@ -320,7 +323,12 @@ pub fn list_item_from_stat(input: ListItemFromStatInput) -> Option<ListItem> {
         project_name: input.candidate.project_name.clone(),
         content_type: final_content_type,
         byte_size: Some(input.stat.size),
-        modified_at: Some(input.stat.mtime.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        modified_at: Some(
+            input
+                .stat
+                .mtime
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        ),
         preview_kind,
         capabilities: ListItemCapabilities {
             preview: previewable,
@@ -388,7 +396,9 @@ pub fn list_item_from_directory(input: ListItemFromDirectoryInput) -> ListItem {
         project_name: input.candidate.project_name.clone(),
         content_type: None,
         byte_size: None,
-        modified_at: input.stat.map(|s| s.mtime.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        modified_at: input
+            .stat
+            .map(|s| s.mtime.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         preview_kind: WorkspaceFilePreviewKind::Unsupported,
         capabilities: ListItemCapabilities {
             preview: false,
@@ -554,27 +564,15 @@ mod tests {
     #[test]
     fn preview_cap_image_video_pdf_use_media() {
         let media = crate::workspace_file_classify::WORKSPACE_FILE_MEDIA_MAX_BYTES as i64;
-        assert_eq!(
-            preview_cap_for_kind(WorkspaceFilePreviewKind::Image),
-            media
-        );
-        assert_eq!(
-            preview_cap_for_kind(WorkspaceFilePreviewKind::Video),
-            media
-        );
-        assert_eq!(
-            preview_cap_for_kind(WorkspaceFilePreviewKind::Pdf),
-            media
-        );
+        assert_eq!(preview_cap_for_kind(WorkspaceFilePreviewKind::Image), media);
+        assert_eq!(preview_cap_for_kind(WorkspaceFilePreviewKind::Video), media);
+        assert_eq!(preview_cap_for_kind(WorkspaceFilePreviewKind::Pdf), media);
     }
 
     #[test]
     fn preview_cap_text_unsupported_use_text() {
         let text = crate::workspace_file_classify::WORKSPACE_FILE_TEXT_MAX_BYTES as i64;
-        assert_eq!(
-            preview_cap_for_kind(WorkspaceFilePreviewKind::Text),
-            text
-        );
+        assert_eq!(preview_cap_for_kind(WorkspaceFilePreviewKind::Text), text);
         assert_eq!(
             preview_cap_for_kind(WorkspaceFilePreviewKind::Unsupported),
             text
@@ -791,10 +789,7 @@ mod tests {
             WorkspaceFilePreviewKind::Pdf,
             WorkspaceFilePreviewKind::Unsupported,
         ] {
-            assert_eq!(
-                WorkspaceFilePreviewKind::from_str(k.as_str()),
-                Some(k)
-            );
+            assert_eq!(WorkspaceFilePreviewKind::from_str(k.as_str()), Some(k));
         }
     }
 
@@ -803,11 +798,29 @@ mod tests {
     #[test]
     fn workspace_file_classify_preview_kind_compat() {
         use crate::workspace_file_classify::PreviewKind;
-        assert_eq!(preview_kind_for_content_type(Some("text/plain")), PreviewKind::Text);
-        assert_eq!(preview_kind_for_content_type(Some("image/png")), PreviewKind::Image);
-        assert_eq!(preview_kind_for_content_type(Some("video/mp4")), PreviewKind::Video);
-        assert_eq!(preview_kind_for_content_type(Some("application/pdf")), PreviewKind::Pdf);
-        assert_eq!(preview_kind_for_content_type(Some("image/svg+xml")), PreviewKind::Text);
-        assert_eq!(preview_kind_for_content_type(None), PreviewKind::Unsupported);
+        assert_eq!(
+            preview_kind_for_content_type(Some("text/plain")),
+            PreviewKind::Text
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("image/png")),
+            PreviewKind::Image
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("video/mp4")),
+            PreviewKind::Video
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("application/pdf")),
+            PreviewKind::Pdf
+        );
+        assert_eq!(
+            preview_kind_for_content_type(Some("image/svg+xml")),
+            PreviewKind::Text
+        );
+        assert_eq!(
+            preview_kind_for_content_type(None),
+            PreviewKind::Unsupported
+        );
     }
 }

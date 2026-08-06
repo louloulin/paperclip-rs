@@ -79,9 +79,7 @@ async fn get_general(
     headers: HeaderMap,
 ) -> ApiResult<Json<serde_json::Value>> {
     require_user_id(&state, &headers).await?;
-    Ok(Json(
-        SettingsRepo::new(&state.db).get().await?.general,
-    ))
+    Ok(Json(SettingsRepo::new(&state.db).get().await?.general))
 }
 async fn patch_general(
     State(state): State<AppState>,
@@ -101,12 +99,7 @@ async fn get_experimental(
     headers: HeaderMap,
 ) -> ApiResult<Json<serde_json::Value>> {
     require_user_id(&state, &headers).await?;
-    Ok(Json(
-        SettingsRepo::new(&state.db)
-            .get()
-            .await?
-            .experimental,
-    ))
+    Ok(Json(SettingsRepo::new(&state.db).get().await?.experimental))
 }
 async fn patch_experimental(
     State(state): State<AppState>,
@@ -121,7 +114,6 @@ async fn patch_experimental(
             .experimental,
     ))
 }
-
 
 // ============================================================================
 // Round 41: instance-level stats + dev-server restart sentinel.
@@ -144,29 +136,26 @@ async fn get_instance_stats(
     let members_repo = CompanyMemberRepo::new(&state.db);
     let mut out = serde_json::Map::new();
     for company_id in company_ids {
-        let agents = agents_repo
-            .count_for_company(company_id)
-            .await
-            .unwrap_or(0);
+        let agents = agents_repo.count_for_company(company_id).await.unwrap_or(0);
         let issues = issues_repo
             .count_visible_for_company(company_id)
             .await
             .unwrap_or(0);
-        let cases = cases_repo
-            .count_for_company(company_id)
-            .await
-            .unwrap_or(0);
+        let cases = cases_repo.count_for_company(company_id).await.unwrap_or(0);
         let users = members_repo
             .count_for_company(company_id)
             .await
             .unwrap_or(0);
-        out.insert(company_id.to_string(), json!({
-            "companyId": company_id,
-            "agentCount": agents,
-            "issueCount": issues,
-            "caseCount": cases,
-            "userCount": users,
-        }));
+        out.insert(
+            company_id.to_string(),
+            json!({
+                "companyId": company_id,
+                "agentCount": agents,
+                "issueCount": issues,
+                "caseCount": cases,
+                "userCount": users,
+            }),
+        );
     }
     Ok(Json(json!({
         "perCompany": out,
@@ -186,11 +175,10 @@ async fn restart_dev_server(
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
     state.realtime.publish(
-        LiveEvent::new("dev_server.restart_requested", "instance", Uuid::nil())
-            .with_data(json!({
-                "requestedAt": chrono::Utc::now(),
-                "reason": "manual_restart_now",
-            })),
+        LiveEvent::new("dev_server.restart_requested", "instance", Uuid::nil()).with_data(json!({
+            "requestedAt": chrono::Utc::now(),
+            "reason": "manual_restart_now",
+        })),
     );
     Ok(Json(json!({
         "status": "restart_requested",
@@ -269,7 +257,8 @@ async fn auto_recovery_preview(
     Json(body): Json<AutoRecoveryBody>,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let (total, sample) = scan_recovery_candidates(&state.db, body.min_age_seconds, body.sample_size).await?;
+    let (total, sample) =
+        scan_recovery_candidates(&state.db, body.min_age_seconds, body.sample_size).await?;
     let sampled: Vec<Value> = sample
         .iter()
         .map(|(id, cid, title)| {
@@ -309,7 +298,8 @@ async fn auto_recovery_run(
     Json(body): Json<AutoRecoveryBody>,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let (total, sample) = scan_recovery_candidates(&state.db, body.min_age_seconds, body.sample_size).await?;
+    let (total, sample) =
+        scan_recovery_candidates(&state.db, body.min_age_seconds, body.sample_size).await?;
     let run_id = Uuid::new_v4();
     let mut attempts: Vec<Value> = Vec::with_capacity(sample.len());
     for (id, cid, title) in &sample {

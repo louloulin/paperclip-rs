@@ -11,7 +11,9 @@ use super::{FolderRow, FolderView};
 /// 遇到：
 /// - 环（parent 链出现重复）→ 抛 `RepoError::Invalid`
 /// - 悬空 parent（parent_id 指向不存在的行）→ 抛 `RepoError::Invalid`
-pub fn build_folder_views(rows: &[FolderRow]) -> crate::RepoResult<std::collections::HashMap<Uuid, FolderView>> {
+pub fn build_folder_views(
+    rows: &[FolderRow],
+) -> crate::RepoResult<std::collections::HashMap<Uuid, FolderView>> {
     use std::collections::HashMap;
 
     let by_id: HashMap<Uuid, &FolderRow> = rows.iter().map(|row| (row.id, row)).collect();

@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -100,19 +97,18 @@ async fn sign_in_creates_new_user_and_session() {
     assert_eq!(status, 200, "sign-in: {body}");
     assert!(body["user_id"].is_string(), "user_id: {body}");
     let token = body["session_token"].as_str().expect("session_token");
-    assert!(token.starts_with("tok_"), "token should start with tok_: {token}");
+    assert!(
+        token.starts_with("tok_"),
+        "token should start with tok_: {token}"
+    );
 
     // Use the session token to fetch session
-    let (status, body) = call(
-        &app,
-        "GET",
-        "/api/auth/get-session",
-        None,
-        Some(token),
-    )
-    .await;
+    let (status, body) = call(&app, "GET", "/api/auth/get-session", None, Some(token)).await;
     assert_eq!(status, 200, "get-session: {body}");
-    assert!(body["user_id"].as_str().unwrap_or("").len() > 0, "user_id: {body}");
+    assert!(
+        body["user_id"].as_str().unwrap_or("").len() > 0,
+        "user_id: {body}"
+    );
     assert_eq!(body["method"], "session");
 }
 
@@ -155,8 +151,18 @@ async fn sign_in_rejects_request_without_email_or_user_id() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let app = routes::auth::router().with_state(test_state(db));
     // Empty email, no user_id → 400
-    let (status, _) = call(&app, "POST", "/api/auth/sign-in", Some(json!({"email": ""})), None).await;
-    assert_eq!(status, 400, "expected 400 for empty email+no user_id: got {status}");
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/auth/sign-in",
+        Some(json!({"email": ""})),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status, 400,
+        "expected 400 for empty email+no user_id: got {status}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -183,30 +189,10 @@ async fn sign_out_returns_2xx_and_invalidates_session() {
     let token = body["session_token"].as_str().expect("token");
 
     // sign-out
-    let (status, _) = call(
-        &app,
-        "POST",
-        "/api/auth/sign-out",
-        None,
-        Some(token),
-    )
-    .await;
-    assert!(
-        status == 200 || status == 204,
-        "sign-out status={status}"
-    );
+    let (status, _) = call(&app, "POST", "/api/auth/sign-out", None, Some(token)).await;
+    assert!(status == 200 || status == 204, "sign-out status={status}");
 
     // After sign-out, session lookup should fail
-    let (status, _) = call(
-        &app,
-        "GET",
-        "/api/auth/get-session",
-        None,
-        Some(token),
-    )
-    .await;
-    assert!(
-        status == 401,
-        "expected 401 after sign-out: got {status}"
-    );
+    let (status, _) = call(&app, "GET", "/api/auth/get-session", None, Some(token)).await;
+    assert!(status == 401, "expected 401 after sign-out: got {status}");
 }

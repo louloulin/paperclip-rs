@@ -25,10 +25,7 @@ impl<'a> TeamInstallRepo<'a> {
     }
 
     /// Round 179: 列出某公司所有 team 安装（按 installed_at 倒序）。
-    pub async fn list_for_company(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<Vec<TeamInstallRow>> {
+    pub async fn list_for_company(&self, company_id: Uuid) -> sqlx::Result<Vec<TeamInstallRow>> {
         sqlx::query_as::<_, TeamInstallRow>(
             "SELECT catalog_id, status, snapshot, installed_at FROM team_installs \\
              WHERE company_id = $1 ORDER BY installed_at DESC",
@@ -61,11 +58,7 @@ impl<'a> TeamInstallRepo<'a> {
     }
 
     /// Round 179: 卸载团队（删除一行）。
-    pub async fn delete(
-        &self,
-        company_id: Uuid,
-        catalog_id: &str,
-    ) -> sqlx::Result<bool> {
+    pub async fn delete(&self, company_id: Uuid, catalog_id: &str) -> sqlx::Result<bool> {
         let n = sqlx::query("DELETE FROM team_installs WHERE company_id = $1 AND catalog_id = $2")
             .bind(company_id)
             .bind(catalog_id)

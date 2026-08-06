@@ -254,13 +254,9 @@ impl<'a> ActivityRepo<'a> {
             .await?)
     }
 
-    pub async fn list_for_run(
-        &self,
-        run_id: Uuid,
-    ) -> RepoResult<Vec<ActivityRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM activity_log WHERE run_id=$1 ORDER BY created_at ASC"
-        );
+    pub async fn list_for_run(&self, run_id: Uuid) -> RepoResult<Vec<ActivityRow>> {
+        let sql =
+            format!("SELECT {COLS} FROM activity_log WHERE run_id=$1 ORDER BY created_at ASC");
         Ok(sqlx::query_as::<_, ActivityRow>(&sql)
             .bind(run_id)
             .fetch_all(self.db.pool())

@@ -41,10 +41,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -95,11 +92,7 @@ async fn insert_agent(db: &Db, company_id: Uuid, status: &str) {
     .expect("insert agent");
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let response = app
         .clone()
@@ -130,7 +123,12 @@ async fn dashboard_summary_returns_zero_counts_for_empty_company() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db, 100_000).await;
     let app = routes::dashboard::router().with_state(test_state(db));
-    let (status, body) = call(&app, "GET", &format!("/api/companies/{company_id}/dashboard")).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/companies/{company_id}/dashboard"),
+    )
+    .await;
     assert_eq!(status, 200, "dashboard: {body}");
     assert_eq!(body["companyId"], company_id.to_string());
     assert_eq!(body["agents"]["running"], 0);
@@ -155,11 +153,19 @@ async fn dashboard_summary_aggregates_agents_and_issues() {
     insert_issue(&db, company_id, "in_progress").await;
     insert_issue(&db, company_id, "done").await;
     let app = routes::dashboard::router().with_state(test_state(db));
-    let (status, body) = call(&app, "GET", &format!("/api/companies/{company_id}/dashboard")).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/companies/{company_id}/dashboard"),
+    )
+    .await;
     assert_eq!(status, 200, "dashboard with data: {body}");
     assert_eq!(body["agents"]["running"], 2);
     assert_eq!(body["agents"]["paused"], 1);
-    assert!(body["tasks"]["open"].as_i64().unwrap_or(0) >= 1, "open tasks ≥ 1");
+    assert!(
+        body["tasks"]["open"].as_i64().unwrap_or(0) >= 1,
+        "open tasks ≥ 1"
+    );
     assert!(body["tasks"]["inProgress"].as_i64().unwrap_or(0) >= 1);
     assert!(body["tasks"]["done"].as_i64().unwrap_or(0) >= 1);
 }

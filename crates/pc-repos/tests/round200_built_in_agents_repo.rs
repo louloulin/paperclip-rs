@@ -13,9 +13,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -45,7 +43,10 @@ async fn install_built_in_first_returns_some() {
     assert!(id.is_some(), "first install must return Some(agent_id)");
 
     // Verify row exists
-    let row = repo.find_built_in_agent_id(cid, "code-reviewer").await.expect("find");
+    let row = repo
+        .find_built_in_agent_id(cid, "code-reviewer")
+        .await
+        .expect("find");
     assert_eq!(row, id);
 }
 
@@ -65,7 +66,10 @@ async fn install_built_in_idempotent() {
         .install_built_in(cid, "Doc Writer", "writer", &metadata)
         .await
         .expect("install 2");
-    assert_eq!(id1, id2, "second install must return Some(first_id) for idempotency");
+    assert_eq!(
+        id1, id2,
+        "second install must return Some(first_id) for idempotency"
+    );
 }
 
 // ===== 3) install_built_in: 不同 key → 不同 agent =====
@@ -77,8 +81,14 @@ async fn install_built_in_distinct_keys() {
 
     let m1 = json!({"builtInKey": "code-reviewer"});
     let m2 = json!({"builtInKey": "issue-triager"});
-    let id1 = repo.install_built_in(cid, "Reviewer", "reviewer", &m1).await.expect("i1");
-    let id2 = repo.install_built_in(cid, "Triager", "triager", &m2).await.expect("i2");
+    let id1 = repo
+        .install_built_in(cid, "Reviewer", "reviewer", &m1)
+        .await
+        .expect("i1");
+    let id2 = repo
+        .install_built_in(cid, "Triager", "triager", &m2)
+        .await
+        .expect("i2");
     assert_ne!(id1, id2);
 }
 
@@ -88,7 +98,10 @@ async fn find_built_in_agent_id_missing() {
     let db = db().await;
     let cid = insert_company(&db, "find-mis").await;
     let repo = AgentRepo::new(&db);
-    let row = repo.find_built_in_agent_id(cid, "nope").await.expect("find");
+    let row = repo
+        .find_built_in_agent_id(cid, "nope")
+        .await
+        .expect("find");
     assert!(row.is_none());
 }
 
@@ -101,12 +114,26 @@ async fn install_isolation_between_companies() {
     let repo = AgentRepo::new(&db);
     let m = json!({"builtInKey": "code-reviewer"});
 
-    let id1 = repo.install_built_in(c1, "Reviewer", "reviewer", &m).await.expect("i1").expect("must insert");
-    let id2 = repo.install_built_in(c2, "Reviewer", "reviewer", &m).await.expect("i2").expect("must insert");
+    let id1 = repo
+        .install_built_in(c1, "Reviewer", "reviewer", &m)
+        .await
+        .expect("i1")
+        .expect("must insert");
+    let id2 = repo
+        .install_built_in(c2, "Reviewer", "reviewer", &m)
+        .await
+        .expect("i2")
+        .expect("must insert");
     assert_ne!(id1, id2);
 
-    let f1 = repo.find_built_in_agent_id(c1, "code-reviewer").await.expect("f1");
-    let f2 = repo.find_built_in_agent_id(c2, "code-reviewer").await.expect("f2");
+    let f1 = repo
+        .find_built_in_agent_id(c1, "code-reviewer")
+        .await
+        .expect("f1");
+    let f2 = repo
+        .find_built_in_agent_id(c2, "code-reviewer")
+        .await
+        .expect("f2");
     assert_eq!(f1, Some(id1));
     assert_eq!(f2, Some(id2));
 }
@@ -151,13 +178,11 @@ async fn routine_trigger_enable_disable() {
     .expect("trigger");
 
     // Verify default enabled
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT enabled FROM routine_triggers WHERE id = $1",
-    )
-    .bind(trigger_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM routine_triggers WHERE id = $1")
+        .bind(trigger_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("query");
     assert!(enabled);
 
     // Disable
@@ -171,12 +196,10 @@ async fn routine_trigger_enable_disable() {
     .rows_affected();
     assert_eq!(updated, 1);
 
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT enabled FROM routine_triggers WHERE id = $1",
-    )
-    .bind(trigger_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM routine_triggers WHERE id = $1")
+        .bind(trigger_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("query");
     assert!(!enabled);
 }

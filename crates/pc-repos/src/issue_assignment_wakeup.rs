@@ -194,10 +194,7 @@ pub async fn queue_issue_assignment_wakeup(
     // 构造 contextSnapshot
     let mut context_snapshot = Map::new();
     context_snapshot.insert("issueId".into(), Value::String(input.issue.id.clone()));
-    context_snapshot.insert(
-        "source".into(),
-        Value::String(input.context_source.clone()),
-    );
+    context_snapshot.insert("source".into(), Value::String(input.context_source.clone()));
     if let Some(ref tk) = input.task_key {
         context_snapshot.insert("taskKey".into(), Value::String(tk.clone()));
     }

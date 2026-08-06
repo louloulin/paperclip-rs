@@ -135,7 +135,10 @@ async fn upload_logo(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     CompanyRepo::new(&state.db)
-        .set_logo_url(company_id, &format!("/api/companies/{company_id}/logo/content"))
+        .set_logo_url(
+            company_id,
+            &format!("/api/companies/{company_id}/logo/content"),
+        )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((
@@ -275,9 +278,9 @@ async fn delete_asset(
     if !deleted {
         return Err(ApiError::NotFound(format!("asset {asset_id}")));
     }
-    state.realtime.publish(
-        LiveEvent::new("asset.deleted", "asset", asset_id),
-    );
+    state
+        .realtime
+        .publish(LiveEvent::new("asset.deleted", "asset", asset_id));
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -303,7 +306,10 @@ async fn asset_usage(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let attachment_count = attachments.len();
-    let mut issues: Vec<Uuid> = attachments.iter().map(|(_, issue_id, _)| *issue_id).collect();
+    let mut issues: Vec<Uuid> = attachments
+        .iter()
+        .map(|(_, issue_id, _)| *issue_id)
+        .collect();
     issues.sort();
     issues.dedup();
     Ok(Json(json!({

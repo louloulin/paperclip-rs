@@ -248,7 +248,11 @@ mod tests {
         };
         let payload = b"hello world".to_vec();
         let meta = store
-            .put_object(&target, bytes::Bytes::from(payload.clone()), Some("image/png"))
+            .put_object(
+                &target,
+                bytes::Bytes::from(payload.clone()),
+                Some("image/png"),
+            )
             .await
             .unwrap();
         assert_eq!(meta.size, payload.len() as u64);

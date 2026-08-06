@@ -18,7 +18,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r119-{tag}-{id}"))
         .bind(format!("R119{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -46,8 +48,14 @@ async fn link_case_document(db: &Db, company_id: Uuid, case_id: Uuid, doc_id: Uu
         "INSERT INTO case_documents (id, company_id, case_id, document_id, key) \
          VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(Uuid::new_v4()).bind(company_id).bind(case_id).bind(doc_id).bind(key)
-    .execute(db.pool()).await.expect("link");
+    .bind(Uuid::new_v4())
+    .bind(company_id)
+    .bind(case_id)
+    .bind(doc_id)
+    .bind(key)
+    .execute(db.pool())
+    .await
+    .expect("link");
 }
 
 async fn insert_doc_annotation(db: &Db, doc_id: Uuid, kind: &str, payload: serde_json::Value) {
@@ -55,8 +63,13 @@ async fn insert_doc_annotation(db: &Db, doc_id: Uuid, kind: &str, payload: serde
         "INSERT INTO document_annotations (id, document_id, kind, payload) \
          VALUES ($1, $2, $3, $4::jsonb)",
     )
-    .bind(Uuid::new_v4()).bind(doc_id).bind(kind).bind(payload)
-    .execute(db.pool()).await.expect("insert doc_annotation");
+    .bind(Uuid::new_v4())
+    .bind(doc_id)
+    .bind(kind)
+    .bind(payload)
+    .execute(db.pool())
+    .await
+    .expect("insert doc_annotation");
 }
 
 async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
@@ -65,9 +78,12 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
         "INSERT INTO issues (id, company_id, identifier, title, status, kind) \
          VALUES ($1, $2, $3, 'issue', 'open', 'task')",
     )
-    .bind(id).bind(company_id)
+    .bind(id)
+    .bind(company_id)
     .bind(format!("ISS-{}", &id.simple().to_string()[..6]))
-    .execute(db.pool()).await.expect("insert issue");
+    .execute(db.pool())
+    .await
+    .expect("insert issue");
     id
 }
 
@@ -76,8 +92,13 @@ async fn link_issue_case(db: &Db, company_id: Uuid, case_id: Uuid, issue_id: Uui
         "INSERT INTO case_issue_links (id, company_id, case_id, issue_id, role) \
          VALUES ($1, $2, $3, $4, 'reference')",
     )
-    .bind(Uuid::new_v4()).bind(company_id).bind(case_id).bind(issue_id)
-    .execute(db.pool()).await.expect("link");
+    .bind(Uuid::new_v4())
+    .bind(company_id)
+    .bind(case_id)
+    .bind(issue_id)
+    .execute(db.pool())
+    .await
+    .expect("link");
 }
 
 /// 1. list_children — 直系子 case
@@ -89,7 +110,10 @@ async fn list_children_returns_direct_children() {
     let child1 = insert_case(&db, cid, Some(root), "in_progress").await;
     let child2 = insert_case(&db, cid, Some(root), "draft").await;
     let grand = insert_case(&db, cid, Some(child1), "draft").await;
-    let rows = CaseRepo::new(&db).list_children(cid, root).await.expect("list children");
+    let rows = CaseRepo::new(&db)
+        .list_children(cid, root)
+        .await
+        .expect("list children");
     assert_eq!(rows.len(), 2);
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     assert!(ids.contains(&child1));
@@ -104,7 +128,10 @@ async fn list_all_for_tree_returns_all_cases() {
     let cid = insert_company(&db, "tree").await;
     let root = insert_case(&db, cid, None, "draft").await;
     let _child = insert_case(&db, cid, Some(root), "in_progress").await;
-    let rows = CaseRepo::new(&db).list_all_for_tree(cid).await.expect("list all for tree");
+    let rows = CaseRepo::new(&db)
+        .list_all_for_tree(cid)
+        .await
+        .expect("list all for tree");
     assert!(rows.len() >= 2);
 }
 
@@ -171,6 +198,9 @@ async fn list_children_empty_when_no_children() {
     let db = db().await;
     let cid = insert_company(&db, "empty-children").await;
     let root = insert_case(&db, cid, None, "draft").await;
-    let rows = CaseRepo::new(&db).list_children(cid, root).await.expect("list");
+    let rows = CaseRepo::new(&db)
+        .list_children(cid, root)
+        .await
+        .expect("list");
     assert!(rows.is_empty());
 }

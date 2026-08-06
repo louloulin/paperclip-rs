@@ -110,13 +110,12 @@ impl<'a> FolderRepo<'a> {
         input: &MoveFolderItem,
     ) -> RepoResult<MoveFolderItemResult> {
         // 先取出 skill 的当前 folder_id，若当前 folder 是 bundled 则禁止移出。
-        let current: Option<(Option<Uuid>,)> = sqlx::query_as(
-            "SELECT folder_id FROM company_skills WHERE company_id=$1 AND id=$2",
-        )
-        .bind(company_id)
-        .bind(input.item_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let current: Option<(Option<Uuid>,)> =
+            sqlx::query_as("SELECT folder_id FROM company_skills WHERE company_id=$1 AND id=$2")
+                .bind(company_id)
+                .bind(input.item_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         let Some((current_folder,)) = current else {
             return Err(RepoError::Invalid("Skill not found".into()));
         };

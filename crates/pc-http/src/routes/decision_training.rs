@@ -12,7 +12,9 @@ use serde_json::{json, Value};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use pc_repos::decision_training::{CreateInput, DecisionTrainingExampleRow, DecisionTrainingService};
+use pc_repos::decision_training::{
+    CreateInput, DecisionTrainingExampleRow, DecisionTrainingService,
+};
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 
@@ -113,7 +115,9 @@ async fn list_training(
         )
         .await?;
     let items: Vec<Value> = rows.iter().map(row_json).collect();
-    Ok(Json(json!({ "companyId": company_id, "items": items, "count": items.len() })))
+    Ok(Json(
+        json!({ "companyId": company_id, "items": items, "count": items.len() }),
+    ))
 }
 
 async fn preview_training_v2(
@@ -121,14 +125,20 @@ async fn preview_training_v2(
     Path(company_id): Path<Uuid>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult<Json<Value>> {
-    let source_kind = body.get("sourceKind").and_then(|v| v.as_str())
+    let source_kind = body
+        .get("sourceKind")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::BadRequest("sourceKind required".into()))?;
     validate_source_kind(source_kind)?;
-    let source_id_str = body.get("sourceId").and_then(|v| v.as_str())
+    let source_id_str = body
+        .get("sourceId")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::BadRequest("sourceId required".into()))?;
     let source_id = uuid::Uuid::parse_str(source_id_str)
         .map_err(|_| ApiError::BadRequest("sourceId must be uuid".into()))?;
-    let issue_id = body.get("issueId").and_then(|v| v.as_str())
+    let issue_id = body
+        .get("issueId")
+        .and_then(|v| v.as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
     let mut snapshot = json!({});
     let mut decision_outcome: Option<String> = None;
@@ -224,7 +234,8 @@ async fn create_training(
     let notes = body.notes.clone().unwrap_or_default();
     let outcome = body.decision_outcome.clone();
     let snapshot = body.snapshot.clone().unwrap_or(json!({}));
-    let user_id = require_user_id(&state, &headers).await
+    let user_id = require_user_id(&state, &headers)
+        .await
         .unwrap_or_else(|_| "system".to_string());
     let sk = pc_repos::decision_training::DecisionTrainingSourceKind::parse(&source_kind)
         .ok_or_else(|| ApiError::BadRequest(format!("invalid source_kind: {source_kind}")))?;
@@ -252,10 +263,13 @@ async fn patch_training(
         .owner_for_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("training example {id}")))?;
-    let user_id = require_user_id(&state, &headers).await
+    let user_id = require_user_id(&state, &headers)
+        .await
         .map_err(|_| ApiError::Unauthorized("auth required to modify training example".into()))?;
     if owner != user_id && owner != "system" {
-        return Err(ApiError::Forbidden("only the example author can modify this training example".into()));
+        return Err(ApiError::Forbidden(
+            "only the example author can modify this training example".into(),
+        ));
     }
     let notes = body.notes.clone();
     let outcome = body.decision_outcome.clone();
@@ -275,13 +289,14 @@ async fn delete_training(
         .owner_for_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("training example {id}")))?;
-    let user_id = require_user_id(&state, &headers).await
+    let user_id = require_user_id(&state, &headers)
+        .await
         .map_err(|_| ApiError::Unauthorized("auth required to delete training example".into()))?;
     if owner != user_id && owner != "system" {
-        return Err(ApiError::Forbidden("only the example author can delete this training example".into()));
+        return Err(ApiError::Forbidden(
+            "only the example author can delete this training example".into(),
+        ));
     }
-    DecisionTrainingService::new(&state.db)
-        .delete(id)
-        .await?;
+    DecisionTrainingService::new(&state.db).delete(id).await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({}))))
 }

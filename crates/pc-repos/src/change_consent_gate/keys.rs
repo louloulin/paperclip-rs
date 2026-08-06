@@ -52,7 +52,10 @@ pub(super) fn legacy_target_keys(target_key: &str) -> Vec<String> {
         ("skill:", "reflection-coach:company-skill:"),
         ("skill-slug:", "reflection-coach:company-skill-slug:"),
     ] {
-        if let Some(value) = target_key.strip_prefix(prefix).filter(|value| !value.is_empty()) {
+        if let Some(value) = target_key
+            .strip_prefix(prefix)
+            .filter(|value| !value.is_empty())
+        {
             return vec![format!("{legacy}{value}")];
         }
     }

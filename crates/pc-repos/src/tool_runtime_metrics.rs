@@ -119,7 +119,10 @@ mod tests {
 
     #[test]
     fn audit_write_failure_metric_constant_matches_node() {
-        assert_eq!(TOOL_RUNTIME_AUDIT_WRITE_FAILURE_METRIC, "audit_write_failed");
+        assert_eq!(
+            TOOL_RUNTIME_AUDIT_WRITE_FAILURE_METRIC,
+            "audit_write_failed"
+        );
     }
 
     // ---- minute_bucket ----
@@ -188,5 +191,4 @@ mod tests {
         };
         assert_eq!(input.at, Some(at));
     }
-
 }

@@ -88,7 +88,10 @@ async fn tool_policy_repo_list_enabled_only() {
     create_policy_row(&repo, cid, "B", 2, false).await;
     create_policy_row(&repo, cid, "C", 3, true).await;
 
-    let rows = repo.list_enabled_policies_by_company(cid).await.expect("list");
+    let rows = repo
+        .list_enabled_policies_by_company(cid)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].name, "A"); // priority=1
     assert_eq!(rows[1].name, "C"); // priority=3
@@ -176,7 +179,10 @@ async fn tool_policy_repo_reorder_assigns_stepped_priorities() {
     assert_eq!(n, 3, "should affect 3 rows");
 
     // 按 priority ASC 拉回：p3=0, p1=50, p2=100
-    let rows = repo.list_enabled_policies_by_company(cid).await.expect("list");
+    let rows = repo
+        .list_enabled_policies_by_company(cid)
+        .await
+        .expect("list");
     let order: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(order, vec!["P3", "P1", "P2"]);
 
@@ -210,7 +216,14 @@ async fn tool_policies_table_real_column_audit() {
     .await
     .expect("query real cols");
     let real_names: std::collections::HashSet<String> = real.into_iter().map(|(s,)| s).collect();
-    for must in ["policy_type", "priority", "enabled", "selectors", "conditions", "config"] {
+    for must in [
+        "policy_type",
+        "priority",
+        "enabled",
+        "selectors",
+        "conditions",
+        "config",
+    ] {
         assert!(real_names.contains(must), "missing column: {must}");
     }
 }

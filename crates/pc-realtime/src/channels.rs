@@ -28,10 +28,7 @@ pub enum ChannelFilter {
     /// 资源 ID 匹配：仅匹配 `LiveEvent.resource_id == id` 的事件。
     /// - `resource`：可选的 resource 类型过滤（如 `"issue"` / `"issue_watchdog"`）；
     ///   传 `None` 表示匹配任意 resource 类型。
-    ResourceId {
-        id: Uuid,
-        resource: Option<String>,
-    },
+    ResourceId { id: Uuid, resource: Option<String> },
 }
 
 impl ChannelFilter {
@@ -82,9 +79,7 @@ impl ChannelFilter {
 
 /// 把 `"issue.*,heartbeat.tick"` 解析为 `Vec<ChannelFilter>`。
 pub fn parse_channels(s: &str) -> Vec<ChannelFilter> {
-    s.split(',')
-        .filter_map(ChannelFilter::parse)
-        .collect()
+    s.split(',').filter_map(ChannelFilter::parse).collect()
 }
 
 /// 判定 LiveEvent 是否匹配任一 filter（filter 列表 OR 语义）。
@@ -183,20 +178,44 @@ mod tests {
         use crate::LiveEvent;
         // 第一个 filter 是 prefix（issue.*），第二个是 exact（heartbeat.tick）。
         let filters = parse_channels("issue.*,heartbeat.tick");
-        assert!(matches_any(&filters, &LiveEvent::new("issue.created", "issue", Uuid::new_v4())));
-        assert!(matches_any(&filters, &LiveEvent::new("issue.tick", "issue", Uuid::new_v4())));
-        assert!(matches_any(&filters, &LiveEvent::new("heartbeat.tick", "heartbeat", Uuid::new_v4())));
-        assert!(!matches_any(&filters, &LiveEvent::new("heartbeat.other", "heartbeat", Uuid::new_v4())));
-        assert!(!matches_any(&filters, &LiveEvent::new("watchdog.tick", "watchdog", Uuid::new_v4())));
+        assert!(matches_any(
+            &filters,
+            &LiveEvent::new("issue.created", "issue", Uuid::new_v4())
+        ));
+        assert!(matches_any(
+            &filters,
+            &LiveEvent::new("issue.tick", "issue", Uuid::new_v4())
+        ));
+        assert!(matches_any(
+            &filters,
+            &LiveEvent::new("heartbeat.tick", "heartbeat", Uuid::new_v4())
+        ));
+        assert!(!matches_any(
+            &filters,
+            &LiveEvent::new("heartbeat.other", "heartbeat", Uuid::new_v4())
+        ));
+        assert!(!matches_any(
+            &filters,
+            &LiveEvent::new("watchdog.tick", "watchdog", Uuid::new_v4())
+        ));
     }
 
     #[test]
     fn matches_any_with_only_prefixes_uses_or_semantics() {
         use crate::LiveEvent;
         let filters = parse_channels("issue.*,heartbeat.*");
-        assert!(matches_any(&filters, &LiveEvent::new("issue.created", "issue", Uuid::new_v4())));
-        assert!(matches_any(&filters, &LiveEvent::new("heartbeat.other", "heartbeat", Uuid::new_v4())));
-        assert!(!matches_any(&filters, &LiveEvent::new("watchdog.tick", "watchdog", Uuid::new_v4())));
+        assert!(matches_any(
+            &filters,
+            &LiveEvent::new("issue.created", "issue", Uuid::new_v4())
+        ));
+        assert!(matches_any(
+            &filters,
+            &LiveEvent::new("heartbeat.other", "heartbeat", Uuid::new_v4())
+        ));
+        assert!(!matches_any(
+            &filters,
+            &LiveEvent::new("watchdog.tick", "watchdog", Uuid::new_v4())
+        ));
     }
 
     #[test]
@@ -266,7 +285,10 @@ mod tests {
     #[test]
     fn parse_invalid_uuid_falls_back_to_exact() {
         let filter = ChannelFilter::parse("issue_id:not-a-uuid").unwrap();
-        assert_eq!(filter, ChannelFilter::Exact("issue_id:not-a-uuid".to_string()));
+        assert_eq!(
+            filter,
+            ChannelFilter::Exact("issue_id:not-a-uuid".to_string())
+        );
     }
 
     /// R254: matches_any 在 LiveEvent 上同时检查 event name + resource_id。
@@ -283,7 +305,7 @@ mod tests {
             resource: Some("issue".to_string()),
         }];
         assert!(matches_any(&filters, &evt_match));
-        assert!(!matches_any(&filters, &evt_other));    // resource_id 不同
+        assert!(!matches_any(&filters, &evt_other)); // resource_id 不同
         assert!(!matches_any(&filters, &evt_wrong_resource)); // resource 类型不同
     }
 

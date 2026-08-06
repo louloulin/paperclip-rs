@@ -12,9 +12,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -88,9 +86,11 @@ async fn delete_interaction_removes_record() {
             issue_id,
             "ask_user_questions",
             "wake_assignee",
-            None, None,
+            None,
+            None,
             &serde_json::json!({}),
-            None, None,
+            None,
+            None,
         )
         .await
         .expect("create");

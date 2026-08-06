@@ -115,9 +115,18 @@ pub fn with_built_in_agent_marker(
     marker_obj.insert("key".into(), Value::String(marker.key.clone()));
     marker_obj.insert(
         "featureKeys".into(),
-        Value::Array(marker.feature_keys.iter().map(|s| Value::String(s.clone())).collect()),
+        Value::Array(
+            marker
+                .feature_keys
+                .iter()
+                .map(|s| Value::String(s.clone()))
+                .collect(),
+        ),
     );
-    out.insert(BUILT_IN_AGENT_METADATA_KEY.into(), Value::Object(marker_obj));
+    out.insert(
+        BUILT_IN_AGENT_METADATA_KEY.into(),
+        Value::Object(marker_obj),
+    );
     out
 }
 
@@ -136,8 +145,9 @@ pub fn built_in_agent_markers_equal(
         (None, None) => true,
         (None, Some(_)) | (Some(_), None) => false,
         (Some(l), Some(r)) => {
-            l.key == r.key && serde_json::to_string(&l.feature_keys).ok()
-                == serde_json::to_string(&r.feature_keys).ok()
+            l.key == r.key
+                && serde_json::to_string(&l.feature_keys).ok()
+                    == serde_json::to_string(&r.feature_keys).ok()
         }
     }
 }
@@ -285,7 +295,10 @@ mod tests {
         let mut prev_marker = Map::new();
         prev_marker.insert("key".into(), json!("old"));
         prev_marker.insert("featureKeys".into(), json!([]));
-        existing.insert(BUILT_IN_AGENT_METADATA_KEY.into(), Value::Object(prev_marker));
+        existing.insert(
+            BUILT_IN_AGENT_METADATA_KEY.into(),
+            Value::Object(prev_marker),
+        );
 
         let marker = BuiltInAgentMarker::new("new", vec!["f".into()]);
         let out = with_built_in_agent_marker(Some(&existing), &marker);
@@ -303,17 +316,23 @@ mod tests {
         let mut marker2 = BuiltInAgentMarker::new("k", vec!["c".into()]);
         let out2 = with_built_in_agent_marker(Some(&existing), &marker2);
         assert_eq!(
-            out.get(BUILT_IN_AGENT_METADATA_KEY).unwrap().get("featureKeys"),
+            out.get(BUILT_IN_AGENT_METADATA_KEY)
+                .unwrap()
+                .get("featureKeys"),
             Some(&json!(["a", "b"]))
         );
         assert_eq!(
-            out2.get(BUILT_IN_AGENT_METADATA_KEY).unwrap().get("featureKeys"),
+            out2.get(BUILT_IN_AGENT_METADATA_KEY)
+                .unwrap()
+                .get("featureKeys"),
             Some(&json!(["c"]))
         );
         // 修改 marker.feature_keys 不会影响已生成的 out
         marker2.feature_keys.push("d".into());
         assert_eq!(
-            out2.get(BUILT_IN_AGENT_METADATA_KEY).unwrap().get("featureKeys"),
+            out2.get(BUILT_IN_AGENT_METADATA_KEY)
+                .unwrap()
+                .get("featureKeys"),
             Some(&json!(["c"]))
         );
     }
@@ -363,6 +382,9 @@ mod tests {
         let metadata = with_built_in_agent_marker(None, &original);
         let value = Value::Object(metadata);
         let recovered = read_built_in_agent_marker(&value).unwrap();
-        assert!(built_in_agent_markers_equal(Some(&original), Some(&recovered)));
+        assert!(built_in_agent_markers_equal(
+            Some(&original),
+            Some(&recovered)
+        ));
     }
 }

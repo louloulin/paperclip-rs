@@ -65,14 +65,19 @@ async fn list(
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = match q.company_id {
-        Some(cid) => ProjectRepo::new(&state.db).list_by_company_no_filter(cid).await?,
+        Some(cid) => {
+            ProjectRepo::new(&state.db)
+                .list_by_company_no_filter(cid)
+                .await?
+        }
         None => ProjectRepo::new(&state.db).list_all(200).await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = ProjectRepo::new(&state.db).get_id_only(id)
+    let row = ProjectRepo::new(&state.db)
+        .get_id_only(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("project {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -94,7 +99,8 @@ async fn create(
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".into()));
     }
-    let row = ProjectRepo::new(&state.db).create_simple(body.company_id, &body.name, body.description.as_deref())
+    let row = ProjectRepo::new(&state.db)
+        .create_simple(body.company_id, &body.name, body.description.as_deref())
         .await?;
     state
         .realtime
@@ -147,7 +153,6 @@ async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResul
     }
 }
 
-
 // ============== Sub-resource handlers ==============
 
 async fn list_company_projects(
@@ -168,10 +173,9 @@ async fn create_company_project(
     let row = ProjectRepo::new(&state.db)
         .create_simple(company_id, &body.name, body.description.as_deref())
         .await?;
-    state.realtime.publish(
-        LiveEvent::new("project.created", "project", row.id)
-            .with_company(row.company_id),
-    );
+    state
+        .realtime
+        .publish(LiveEvent::new("project.created", "project", row.id).with_company(row.company_id));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -179,9 +183,7 @@ async fn list_project_workspaces(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = ProjectRepo::new(&state.db)
-        .list_workspaces(id)
-        .await?;
+    let rows = ProjectRepo::new(&state.db).list_workspaces(id).await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -189,9 +191,7 @@ async fn list_project_goals(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = ProjectRepo::new(&state.db)
-        .goals_for_project(id)
-        .await?;
+    let rows = ProjectRepo::new(&state.db).goals_for_project(id).await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -330,7 +330,9 @@ async fn patch_project_workspace(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
-        return Err(ApiError::NotFound(format!("project workspace {workspace_id}")));
+        return Err(ApiError::NotFound(format!(
+            "project workspace {workspace_id}"
+        )));
     }
     let cid = ProjectRepo::new(&state.db)
         .company_id_for_workspace_any(workspace_id)
@@ -338,8 +340,12 @@ async fn patch_project_workspace(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if let Some(cid) = cid {
         state.realtime.publish(
-            LiveEvent::new("project_workspace.updated", "project_workspace", workspace_id)
-                .with_company(cid),
+            LiveEvent::new(
+                "project_workspace.updated",
+                "project_workspace",
+                workspace_id,
+            )
+            .with_company(cid),
         );
     }
     Ok(Json(json!({
@@ -363,11 +369,17 @@ async fn delete_project_workspace(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
-        return Err(ApiError::NotFound(format!("project workspace {workspace_id}")));
+        return Err(ApiError::NotFound(format!(
+            "project workspace {workspace_id}"
+        )));
     }
     state.realtime.publish(
-        LiveEvent::new("project_workspace.deleted", "project_workspace", workspace_id)
-            .with_company(company_id),
+        LiveEvent::new(
+            "project_workspace.deleted",
+            "project_workspace",
+            workspace_id,
+        )
+        .with_company(company_id),
     );
     Ok(Json(json!({
         "id": workspace_id,
@@ -383,7 +395,9 @@ async fn workspace_runtime_action(
 ) -> ApiResult<Json<Value>> {
     let allowed = ["start", "stop", "restart", "pause", "resume", "status"];
     if !allowed.contains(&action.as_str()) {
-        return Err(ApiError::BadRequest(format!("invalid action '{action}', must be one of {allowed:?}")));
+        return Err(ApiError::BadRequest(format!(
+            "invalid action '{action}', must be one of {allowed:?}"
+        )));
     }
     let company_id = ProjectRepo::new(&state.db)
         .company_id_for_workspace(workspace_id, project_id)
@@ -396,9 +410,13 @@ async fn workspace_runtime_action(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()));
     state.realtime.publish(
-        LiveEvent::new(format!("project_workspace.runtime_{action}"), "project_workspace", workspace_id)
-            .with_company(company_id)
-            .with_data(json!({"projectId": project_id, "action": action, "body": body})),
+        LiveEvent::new(
+            format!("project_workspace.runtime_{action}"),
+            "project_workspace",
+            workspace_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"projectId": project_id, "action": action, "body": body})),
     );
     Ok(Json(json!({
         "projectId": project_id,

@@ -5,16 +5,16 @@
 //! - 不同 status 下探测行为（active 视为 valid）
 
 use pc_db::Db;
-use pc_repos::environment::{EnvironmentDriver, EnvironmentRepo, EnvironmentStatus, NewEnvironment};
+use pc_repos::environment::{
+    EnvironmentDriver, EnvironmentRepo, EnvironmentStatus, NewEnvironment,
+};
 use serde_json::json;
 use uuid::Uuid;
 
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {

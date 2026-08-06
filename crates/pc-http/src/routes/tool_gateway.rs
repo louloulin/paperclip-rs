@@ -34,15 +34,15 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/tool-gateway/tools", get(list_gateway_tools))
         .route("/api/tool-gateway/tools/call", post(call_gateway_tool))
-        .route("/api/tool-gateway/sessions", get(list_sessions).post(create_session))
+        .route(
+            "/api/tool-gateway/sessions",
+            get(list_sessions).post(create_session),
+        )
         .route(
             "/api/tool-gateway/sessions/:session_id/revoke",
             post(revoke_session),
         )
-        .route(
-            "/api/tool-gateway/runtime-slots",
-            get(list_runtime_slots),
-        )
+        .route("/api/tool-gateway/runtime-slots", get(list_runtime_slots))
         .route(
             "/api/tool-gateway/runtime-slots/:slot_id/restart",
             post(restart_runtime_slot),
@@ -172,7 +172,8 @@ async fn authorize_gateway(
         .find_active_token(gateway_id, &token_hash)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(ok)}
+    Ok(ok)
+}
 
 async fn post_gateway(
     State(state): State<AppState>,
@@ -217,13 +218,11 @@ async fn post_gateway(
             }
         }),
         "notifications/initialized" => {
-            state.realtime.publish(
-                pc_realtime::LiveEvent::new(
-                    "tool_gateway.initialized",
-                    "tool_gateway",
-                    gateway_id,
-                ),
-            );
+            state.realtime.publish(pc_realtime::LiveEvent::new(
+                "tool_gateway.initialized",
+                "tool_gateway",
+                gateway_id,
+            ));
             return Ok(Json(json!({ "status": "accepted" })));
         }
         "tools/list" => json!({
@@ -292,12 +291,10 @@ async fn patch_gateway(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if let Some(s) = status {
-        state
-            .realtime
-            .publish(
-                pc_realtime::LiveEvent::new("tool_gateway.status_changed", "tool_gateway", gateway_id)
-                    .with_data(json!({ "status": s })),
-            );
+        state.realtime.publish(
+            pc_realtime::LiveEvent::new("tool_gateway.status_changed", "tool_gateway", gateway_id)
+                .with_data(json!({ "status": s })),
+        );
     }
     Ok(Json(json!({ "id": gateway_id, "updated": true })))
 }
@@ -334,15 +331,13 @@ async fn gateway_mcp_post(
     // MCP JSON-RPC 2.0 request and dispatches it through the gateway. The
     // full MCP executor lives in `pc-tool-gateway-executor`; this route is
     // the HTTP bridge.
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.call_requested", "tool_gateway", gateway_id)
-                .with_data(json!({
-                    "method": body.get("method").and_then(Value::as_str),
-                    "id": body.get("id"),
-                })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("tool_gateway.call_requested", "tool_gateway", gateway_id)
+            .with_data(json!({
+                "method": body.get("method").and_then(Value::as_str),
+                "id": body.get("id"),
+            })),
+    );
     Ok(Json(json!({
         "jsonrpc": "2.0",
         "id": body.get("id").cloned().unwrap_or(json!(null)),
@@ -364,7 +359,8 @@ async fn mcp_public_get(
         .find_id_and_name_by_public_id(&gateway_public_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (id, name) = row.ok_or_else(|| ApiError::NotFound(format!("gateway {gateway_public_id}")))?;
+    let (id, name) =
+        row.ok_or_else(|| ApiError::NotFound(format!("gateway {gateway_public_id}")))?;
     Ok(Json(json!({
         "id": id,
         "publicId": gateway_public_id,
@@ -384,16 +380,14 @@ async fn mcp_public_post(
     // Mirrors Node `POST /mcp/gateways/:gatewayPublicId`. Public MCP endpoint
     // that accepts JSON-RPC 2.0 calls (initialize / tools/list / tools/call)
     // and routes them through the gateway.
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.public_call", "tool_gateway", Uuid::nil())
-                .with_data(json!({
-                    "publicId": gateway_public_id,
-                    "method": body.get("method").and_then(Value::as_str),
-                    "id": body.get("id"),
-                })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("tool_gateway.public_call", "tool_gateway", Uuid::nil())
+            .with_data(json!({
+                "publicId": gateway_public_id,
+                "method": body.get("method").and_then(Value::as_str),
+                "id": body.get("id"),
+            })),
+    );
     let method = body.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
         "initialize" => json!({
@@ -419,9 +413,7 @@ async fn mcp_public_post(
     })))
 }
 
-async fn list_gateway_tools(
-    State(state): State<AppState>,
-) -> ApiResult<Json<Value>> {
+async fn list_gateway_tools(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     // Round 223 真实实现：列出所有活跃 gateway 的"能力"列表。
     //
     // 原 Round 97 stub 引用不存在的表 `tool_mcp_gateway_tools`。
@@ -467,16 +459,18 @@ async fn call_gateway_tool(
         .get("toolName")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("toolName is required".into()))?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.tool_call_requested", "tool_gateway", gateway_id)
-                .with_data(json!({
-                    "gatewayId": gateway_id,
-                    "toolName": tool_name,
-                    "arguments": body.get("arguments").cloned().unwrap_or(json!({})),
-                })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new(
+            "tool_gateway.tool_call_requested",
+            "tool_gateway",
+            gateway_id,
+        )
+        .with_data(json!({
+            "gatewayId": gateway_id,
+            "toolName": tool_name,
+            "arguments": body.get("arguments").cloned().unwrap_or(json!({})),
+        })),
+    );
     Ok(Json(json!({
         "status": "queued",
         "gatewayId": gateway_id,
@@ -484,9 +478,7 @@ async fn call_gateway_tool(
     })))
 }
 
-async fn list_sessions(
-    State(_state): State<AppState>,
-) -> ApiResult<Json<Value>> {
+async fn list_sessions(State(_state): State<AppState>) -> ApiResult<Json<Value>> {
     let rows = pc_repos::mcp_gateway::McpGatewayRepo::new(&_state.db)
         .list_sessions(100)
         .await
@@ -523,12 +515,10 @@ async fn create_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))
         .unwrap_or_else(|_| Uuid::new_v4());
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.session_created", "tool_gateway", gateway_id)
-                .with_data(json!({ "tokenId": id })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("tool_gateway.session_created", "tool_gateway", gateway_id)
+            .with_data(json!({ "tokenId": id })),
+    );
     Ok(Json(json!({
         "id": id,
         "gatewayId": gateway_id,
@@ -544,17 +534,16 @@ async fn revoke_session(
     pc_repos::mcp_gateway::McpGatewayRepo::new(&state.db)
         .revoke_token(session_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.session_revoked", "tool_gateway", session_id),
-        );
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.realtime.publish(pc_realtime::LiveEvent::new(
+        "tool_gateway.session_revoked",
+        "tool_gateway",
+        session_id,
+    ));
     Ok(Json(json!({ "id": session_id, "revoked": true })))
 }
 
-async fn list_runtime_slots(
-    State(state): State<AppState>,
-) -> ApiResult<Json<Value>> {
+async fn list_runtime_slots(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     // Round 223 真实实现：通过 active mcp_gateway 数 + tool_runtime_health 派生
     //
     // 原 Round 97 stub 引用不存在的表 `tool_gateway_runtime_slots`。
@@ -600,16 +589,14 @@ async fn restart_runtime_slot(
         return Err(ApiError::NotFound(format!("runtime slot {slot_id}")));
     }
     // 发布 live event 通知 runtime 重启请求（Node runtimeSupervisor 可订阅）
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new(
-                "tool_gateway.runtime_slot.restart_requested",
-                "tool_gateway",
-                slot_id,
-            )
-            .with_data(json!({ "slotId": slot_id })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new(
+            "tool_gateway.runtime_slot.restart_requested",
+            "tool_gateway",
+            slot_id,
+        )
+        .with_data(json!({ "slotId": slot_id })),
+    );
     Ok(Json(json!({
         "id": slot_id,
         "status": "restart_requested",
@@ -633,16 +620,14 @@ async fn stop_runtime_slot(
     if gateway.is_none() {
         return Err(ApiError::NotFound(format!("runtime slot {slot_id}")));
     }
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new(
-                "tool_gateway.runtime_slot.stop_requested",
-                "tool_gateway",
-                slot_id,
-            )
-            .with_data(json!({ "slotId": slot_id })),
-        );
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new(
+            "tool_gateway.runtime_slot.stop_requested",
+            "tool_gateway",
+            slot_id,
+        )
+        .with_data(json!({ "slotId": slot_id })),
+    );
     Ok(Json(json!({
         "id": slot_id,
         "status": "stop_requested",
@@ -650,9 +635,7 @@ async fn stop_runtime_slot(
     })))
 }
 
-async fn list_audit_events(
-    State(_state): State<AppState>,
-) -> ApiResult<Json<Value>> {
+async fn list_audit_events(State(_state): State<AppState>) -> ApiResult<Json<Value>> {
     let rows = pc_repos::mcp_gateway::McpGatewayRepo::new(&_state.db)
         .list_audit_events(100)
         .await
@@ -682,11 +665,11 @@ async fn approve_action_request(
         .approve_action_request(request_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.action_request.approved", "tool_gateway", request_id),
-        );
+    state.realtime.publish(pc_realtime::LiveEvent::new(
+        "tool_gateway.action_request.approved",
+        "tool_gateway",
+        request_id,
+    ));
     Ok(Json(json!({ "id": request_id, "status": "approved" })))
 }
 
@@ -698,16 +681,16 @@ async fn decline_action_request(
         .decline_action_request(request_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.action_request.declined", "tool_gateway", request_id),
-        );
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.action_request.declined", "tool_gateway", request_id),
-        );
+    state.realtime.publish(pc_realtime::LiveEvent::new(
+        "tool_gateway.action_request.declined",
+        "tool_gateway",
+        request_id,
+    ));
+    state.realtime.publish(pc_realtime::LiveEvent::new(
+        "tool_gateway.action_request.declined",
+        "tool_gateway",
+        request_id,
+    ));
     Ok(Json(json!({ "id": request_id, "status": "declined" })))
 }
 
@@ -739,11 +722,11 @@ async fn revoke_gateway_token(
         .revoke_token(token_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    state
-        .realtime
-        .publish(
-            pc_realtime::LiveEvent::new("tool_gateway.token_revoked", "tool_gateway", token_id),
-        );
+    state.realtime.publish(pc_realtime::LiveEvent::new(
+        "tool_gateway.token_revoked",
+        "tool_gateway",
+        token_id,
+    ));
     Ok(Json(json!({ "id": token_id, "revoked": true })))
 }
 
@@ -799,7 +782,12 @@ mod round223_tests {
     fn runtime_slot_excludes_inactive_gateways() {
         // 验证过滤逻辑：非 active 状态不应当出现在 slots 中
         for status in &["disabled", "deleted", "error", "pending"] {
-            let row = make_row(uuid::Uuid::new_v4(), "inactive", status, serde_json::json!({}));
+            let row = make_row(
+                uuid::Uuid::new_v4(),
+                "inactive",
+                status,
+                serde_json::json!({}),
+            );
             assert_ne!(row.status, "active", "{status} 不应被视为 active slot");
         }
     }
@@ -823,7 +811,12 @@ mod round223_tests {
         // 验证 list_gateway_tools 派生：metadata.tools 存在时保留原值
         let id = uuid::Uuid::new_v4();
         let tools_array = serde_json::json!([{"name": "search"}, {"name": "fetch"}]);
-        let row = make_row(id, "gw2", "active", serde_json::json!({"tools": tools_array.clone()}));
+        let row = make_row(
+            id,
+            "gw2",
+            "active",
+            serde_json::json!({"tools": tools_array.clone()}),
+        );
         let tools = row
             .metadata
             .as_object()

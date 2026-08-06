@@ -135,7 +135,14 @@ fn as_record(value: &Value) -> Option<&serde_json::Map<String, Value>> {
 /// 内部：尝试把任意 JSON 值解析为 secret_ref binding。
 /// 与 Node 端 `envBindingSchema` 对齐：必须含 `type === "secret_ref"` 且
 /// `secretId` 是非空字符串。
-fn try_parse_secret_ref(value: &Value) -> Option<(String, Option<SecretVersionSelector>, Option<String>, Option<String>)> {
+fn try_parse_secret_ref(
+    value: &Value,
+) -> Option<(
+    String,
+    Option<SecretVersionSelector>,
+    Option<String>,
+    Option<String>,
+)> {
     let obj = value.as_object()?;
     if obj.get("type")?.as_str()? != "secret_ref" {
         return None;
@@ -164,7 +171,12 @@ fn try_parse_secret_ref(value: &Value) -> Option<(String, Option<SecretVersionSe
 
 fn try_parse_user_secret_ref(
     value: &Value,
-) -> Option<(String, Option<SecretVersionSelector>, Option<bool>, Option<bool>)> {
+) -> Option<(
+    String,
+    Option<SecretVersionSelector>,
+    Option<bool>,
+    Option<bool>,
+)> {
     let obj = value.as_object()?;
     if obj.get("type")?.as_str()? != "user_secret_ref" {
         return None;
@@ -179,7 +191,12 @@ fn try_parse_user_secret_ref(
     };
     let required = obj.get("required").and_then(|v| v.as_bool());
     let allow_missing_override = obj.get("allowMissingOverride").and_then(|v| v.as_bool());
-    Some((key, Some(version_selector), required, allow_missing_override))
+    Some((
+        key,
+        Some(version_selector),
+        required,
+        allow_missing_override,
+    ))
 }
 
 pub fn is_env_binding(value: &Value) -> bool {
@@ -334,11 +351,7 @@ pub async fn sync_agent_env_value_only<S: AgentSecretBindingSync>(
     secrets_svc
         .sync_env_bindings_for_target(
             company_id,
-            (
-                SecretBindingTargetType::Agent,
-                agent_id.to_string(),
-                None,
-            ),
+            (SecretBindingTargetType::Agent, agent_id.to_string(), None),
             env_value,
         )
         .await
@@ -371,10 +384,7 @@ mod tests {
         let refs = collect_secret_refs(&cfg);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].config_path, "apiKey");
-        assert_eq!(
-            refs[0].version_selector,
-            SecretVersionSelector::Number(3)
-        );
+        assert_eq!(refs[0].version_selector, SecretVersionSelector::Number(3));
     }
 
     #[test]
@@ -472,8 +482,12 @@ mod tests {
 
     #[test]
     fn matches_env_binding_recognizes_known_types() {
-        assert!(is_env_binding(&json!({"type": "secret_ref", "secretId": "x"})));
-        assert!(is_env_binding(&json!({"type": "user_secret_ref", "key": "x"})));
+        assert!(is_env_binding(
+            &json!({"type": "secret_ref", "secretId": "x"})
+        ));
+        assert!(is_env_binding(
+            &json!({"type": "user_secret_ref", "key": "x"})
+        ));
         assert!(is_env_binding(&json!({"type": "plain", "value": "x"})));
         assert!(!is_env_binding(&json!({"type": "unknown", "value": "x"})));
         assert!(!is_env_binding(&json!("legacy-string")));

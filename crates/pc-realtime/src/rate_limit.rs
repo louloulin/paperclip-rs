@@ -19,8 +19,8 @@
 //! - 所有结构都是 `Send + Sync + 'static`，可直接放进 `AppState`。
 
 use std::net::IpAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::Arc;
 #[allow(unused_imports)]
 use std::time::{Duration, Instant};
 
@@ -83,7 +83,9 @@ impl TokenBucket {
         let add = (elapsed.as_millis() as u64).saturating_mul(self.refill_per_second);
         let mut current = self.tokens_milli.load(Ordering::Relaxed);
         loop {
-            let new = current.saturating_add(add).min(self.capacity.saturating_mul(1000));
+            let new = current
+                .saturating_add(add)
+                .min(self.capacity.saturating_mul(1000));
             if new == current && add > 0 {
                 // 推进 last_refill 一次（避免重复累加）
                 *last = now;
@@ -124,7 +126,12 @@ impl TokenBucket {
                     false
                 } else {
                     self.tokens_milli
-                        .compare_exchange_weak(cur2, cur2 - need, Ordering::Relaxed, Ordering::Relaxed)
+                        .compare_exchange_weak(
+                            cur2,
+                            cur2 - need,
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        )
                         .is_ok()
                 }
             }

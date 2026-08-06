@@ -171,10 +171,14 @@ impl Actor {
     }
     pub fn has_company_access(&self, company_id: Uuid) -> bool {
         match self {
-            Actor::User { company_ids, is_instance_admin, .. } => {
-                *is_instance_admin || company_ids.contains(&company_id)
-            }
-            Actor::Agent { company_id: cid, .. } => *cid == company_id,
+            Actor::User {
+                company_ids,
+                is_instance_admin,
+                ..
+            } => *is_instance_admin || company_ids.contains(&company_id),
+            Actor::Agent {
+                company_id: cid, ..
+            } => *cid == company_id,
             Actor::System => true,
             Actor::Anonymous => false,
         }
@@ -186,7 +190,13 @@ impl Actor {
         }
     }
     pub fn is_instance_admin(&self) -> bool {
-        matches!(self, Actor::User { is_instance_admin: true, .. })
+        matches!(
+            self,
+            Actor::User {
+                is_instance_admin: true,
+                ..
+            }
+        )
     }
     pub fn key_id(&self) -> Option<Uuid> {
         if let Actor::Agent { key_id, .. } = self {
@@ -231,16 +241,29 @@ impl AuthContext {
     }
     pub fn for_actor(actor: Actor, source: ActorSource, method: &'static str) -> Self {
         let api_key_id = actor.key_id();
-        Self { actor, source, method, api_key_id }
+        Self {
+            actor,
+            source,
+            method,
+            api_key_id,
+        }
     }
     pub fn require_user(&self) -> Result<&str, AuthError> {
         self.actor.user_id().ok_or(AuthError::InvalidToken)
     }
     pub fn require_authenticated(&self) -> Result<(), AuthError> {
-        if self.actor.is_authenticated() { Ok(()) } else { Err(AuthError::MissingCredentials) }
+        if self.actor.is_authenticated() {
+            Ok(())
+        } else {
+            Err(AuthError::MissingCredentials)
+        }
     }
     pub fn require_company_access(&self, company_id: Uuid) -> Result<(), AuthError> {
-        if self.actor.has_company_access(company_id) { Ok(()) } else { Err(AuthError::InvalidToken) }
+        if self.actor.has_company_access(company_id) {
+            Ok(())
+        } else {
+            Err(AuthError::InvalidToken)
+        }
     }
 }
 
@@ -248,12 +271,11 @@ impl AuthContext {
 /// returned string is the standard PHC-formatted hash including parameters
 /// and salt, suitable for storage in the `account.password` column.
 pub fn hash_password(password: &str) -> Result<String, AuthError> {
+    use argon2::password_hash::{rand_core::OsRng, PasswordHash, SaltString};
     use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
-    use argon2::password_hash::{PasswordHash, SaltString, rand_core::OsRng};
     let salt = SaltString::generate(&mut OsRng);
-    let params = Params::new(19_456, 2, 1, None).map_err(|err| {
-        AuthError::Hash(format!("argon2 params invalid: {err}"))
-    })?;
+    let params = Params::new(19_456, 2, 1, None)
+        .map_err(|err| AuthError::Hash(format!("argon2 params invalid: {err}")))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let hash = argon
         .hash_password(password.as_bytes(), &salt)
@@ -264,15 +286,13 @@ pub fn hash_password(password: &str) -> Result<String, AuthError> {
 /// Verify a plaintext password against a stored argon2 PHC-formatted hash.
 /// Returns `true` when the password matches, `false` otherwise.
 pub fn verify_password(password: &str, stored_hash: &str) -> bool {
-    use argon2::{Argon2, PasswordVerifier};
     use argon2::password_hash::PasswordHash;
+    use argon2::{Argon2, PasswordVerifier};
     let Ok(parsed) = PasswordHash::new(stored_hash) else {
         return false;
     };
     let argon = Argon2::default();
-    argon
-        .verify_password(password.as_bytes(), &parsed)
-        .is_ok()
+    argon.verify_password(password.as_bytes(), &parsed).is_ok()
 }
 
 /// Generate a new opaque session token suitable for storing in the
@@ -328,14 +348,13 @@ pub async fn resolve_session(
 /// 解析请求的 auth 上下文（不依赖 axum extractor，方便从任意地方调用）。
 /// 从 user_id 加载 actor 详细信息（company_ids / memberships / isInstanceAdmin）
 async fn load_user_actor(db: &Db, user_id: &str) -> Actor {
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        r#"SELECT id, name FROM "user" WHERE id = $1"#,
-    )
-    .bind(user_id)
-    .fetch_optional(db.pool())
-    .await
-    .ok()
-    .flatten();
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as(r#"SELECT id, name FROM "user" WHERE id = $1"#)
+            .bind(user_id)
+            .fetch_optional(db.pool())
+            .await
+            .ok()
+            .flatten();
     let (id, name) = row.unwrap_or_else(|| (user_id.to_string(), None));
     let email: Option<String> = sqlx::query_scalar(
         "SELECT email FROM account WHERE user_id = $1 AND provider = 'credential' LIMIT 1",
@@ -367,16 +386,27 @@ async fn load_user_actor(db: &Db, user_id: &str) -> Actor {
         email,
         is_instance_admin,
         company_ids,
-        memberships: memberships.into_iter().map(|(company_id, role, status)| CompanyMembership {
-            company_id, role, status,
-        }).collect(),
+        memberships: memberships
+            .into_iter()
+            .map(|(company_id, role, status)| CompanyMembership {
+                company_id,
+                role,
+                status,
+            })
+            .collect(),
         run_id: None,
     }
 }
 
 /// 从 axum `Parts` 解析认证上下文（向后兼容）。
 pub async fn resolve_auth(db: &Db, parts: &Parts) -> Result<AuthContext, AuthError> {
-    resolve_auth_from_headers(db, parts.headers.clone(), &parts.method.to_string(), &parts.uri.to_string()).await
+    resolve_auth_from_headers(
+        db,
+        parts.headers.clone(),
+        &parts.method.to_string(),
+        &parts.uri.to_string(),
+    )
+    .await
 }
 
 /// 从 HTTP 头解析认证上下文（与 Node 版 `actorMiddleware` 等价）。
@@ -414,10 +444,7 @@ pub async fn resolve_auth_from_headers(
             return Err(AuthError::InvalidToken);
         }
     }
-    if let Some(cookie) = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
         for kv in cookie.split(';') {
             if let Some(v) = kv.trim().strip_prefix("paperclip_session=") {
                 if let Some((user_id, _)) = resolve_session(db, v).await? {
@@ -437,14 +464,13 @@ pub async fn resolve_auth_from_headers(
         .and_then(|v| v.to_str().ok())
     {
         if let Ok(uuid) = Uuid::parse_str(agent_id) {
-            let company_id: Option<Uuid> = sqlx::query_scalar(
-                "SELECT company_id FROM agents WHERE id = $1",
-            )
-            .bind(uuid)
-            .fetch_optional(db.pool())
-            .await
-            .ok()
-            .flatten();
+            let company_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT company_id FROM agents WHERE id = $1")
+                    .bind(uuid)
+                    .fetch_optional(db.pool())
+                    .await
+                    .ok()
+                    .flatten();
             let actor = match company_id {
                 Some(cid) => Actor::Agent {
                     id: uuid,

@@ -70,7 +70,10 @@ pub fn parse_git_status_paths(stdout: &str) -> GitStatusPaths {
             break;
         }
     }
-    GitStatusPaths { paths, hit_scan_cap }
+    GitStatusPaths {
+        paths,
+        hit_scan_cap,
+    }
 }
 
 #[cfg(test)]
@@ -109,7 +112,11 @@ mod tests {
         let out = parse(" M src/a.rs\0 M src/b.rs\0?? new.txt\0");
         assert_eq!(
             out.paths,
-            vec!["src/a.rs".to_string(), "src/b.rs".to_string(), "new.txt".to_string()]
+            vec![
+                "src/a.rs".to_string(),
+                "src/b.rs".to_string(),
+                "new.txt".to_string()
+            ]
         );
     }
 

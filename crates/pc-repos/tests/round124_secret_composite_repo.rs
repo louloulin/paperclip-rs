@@ -2,7 +2,7 @@
 //! patch_provider_config + rotate_company_secret。
 
 use pc_db::Db;
-use pc_repos::secret::{SecretRepo};
+use pc_repos::secret::SecretRepo;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -18,7 +18,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r124-{tag}-{id}"))
         .bind(format!("R124{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 

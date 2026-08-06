@@ -241,18 +241,15 @@ impl<'a> SmokeRepo<'a> {
         }
         qb.push(" ORDER BY started_at DESC LIMIT ");
         qb.push_bind(filter.limit.unwrap_or(50));
-        let rows = qb.build_query_as::<RunRow>().fetch_all(self.db.pool()).await?;
+        let rows = qb
+            .build_query_as::<RunRow>()
+            .fetch_all(self.db.pool())
+            .await?;
         Ok(rows)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<RunRow>> {
-        let sql = format!(
-            "SELECT {RUN_COLS} FROM smoke_runs WHERE company_id=$1 AND id=$2"
-        );
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<RunRow>> {
+        let sql = format!("SELECT {RUN_COLS} FROM smoke_runs WHERE company_id=$1 AND id=$2");
         Ok(sqlx::query_as::<_, RunRow>(&sql)
             .bind(company_id)
             .bind(id)
@@ -361,11 +358,7 @@ impl<'a> SmokeRepo<'a> {
     // ============================================================================
 
     /// 插入一条 smoke lab oauth code（authorize 路径）。
-    pub async fn insert_oauth_code(
-        &self,
-        code: &str,
-        company_id: Uuid,
-    ) -> sqlx::Result<()> {
+    pub async fn insert_oauth_code(&self, code: &str, company_id: Uuid) -> sqlx::Result<()> {
         sqlx::query(
             "INSERT INTO smoke_lab_oauth_codes (code, company_id, used, created_at) \
              VALUES ($1, $2, false, now())",
@@ -379,11 +372,7 @@ impl<'a> SmokeRepo<'a> {
 
     /// 消费（标记 used）一个 oauth code；返回 None 表示无效或已用。
     /// 返回 `Some(())` 即兑换成功。
-    pub async fn claim_oauth_code(
-        &self,
-        code: &str,
-        company_id: Uuid,
-    ) -> sqlx::Result<bool> {
+    pub async fn claim_oauth_code(&self, code: &str, company_id: Uuid) -> sqlx::Result<bool> {
         let row: Option<(Uuid,)> = sqlx::query_as(
             "UPDATE smoke_lab_oauth_codes SET used = true, used_at = now() \
              WHERE code = $1 AND company_id = $2 AND used = false \
@@ -397,11 +386,7 @@ impl<'a> SmokeRepo<'a> {
     }
 
     /// 插入一条 smoke lab oauth token（token 路径）。
-    pub async fn insert_oauth_token(
-        &self,
-        token: &str,
-        company_id: Uuid,
-    ) -> sqlx::Result<()> {
+    pub async fn insert_oauth_token(&self, token: &str, company_id: Uuid) -> sqlx::Result<()> {
         sqlx::query(
             "INSERT INTO smoke_lab_oauth_tokens (token, company_id, expires_at) \
              VALUES ($1, $2, now() + interval '1 hour')",
@@ -455,11 +440,7 @@ impl<'a> SmokeRepo<'a> {
     }
 
     /// 标记 service 为 stopped（按 company_id + service_key）。
-    pub async fn stop_service(
-        &self,
-        company_id: Uuid,
-        service_key: &str,
-    ) -> sqlx::Result<u64> {
+    pub async fn stop_service(&self, company_id: Uuid, service_key: &str) -> sqlx::Result<u64> {
         let r = sqlx::query(
             "UPDATE smoke_lab_services SET status = 'stopped', updated_at = now() \
              WHERE company_id = $1 AND service_key = $2",
@@ -473,12 +454,10 @@ impl<'a> SmokeRepo<'a> {
 
     /// 探测某公司是否已存在。
     pub async fn company_exists(&self, company_id: Uuid) -> sqlx::Result<bool> {
-        let v: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM companies WHERE id = $1)",
-        )
-        .bind(company_id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let v: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM companies WHERE id = $1)")
+            .bind(company_id)
+            .fetch_one(self.db.pool())
+            .await?;
         Ok(v)
     }
 
@@ -499,11 +478,7 @@ impl<'a> SmokeRepo<'a> {
     }
 
     /// 探测某公司下某名称 agent 的数量。
-    pub async fn count_agents_with_name(
-        &self,
-        company_id: Uuid,
-        name: &str,
-    ) -> sqlx::Result<i64> {
+    pub async fn count_agents_with_name(&self, company_id: Uuid, name: &str) -> sqlx::Result<i64> {
         let v: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM agents WHERE company_id = $1 AND name = $2",
         )
@@ -516,21 +491,16 @@ impl<'a> SmokeRepo<'a> {
 
     /// 探测某公司下项目数量。
     pub async fn count_projects(&self, company_id: Uuid) -> sqlx::Result<i64> {
-        let v: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1",
-        )
-        .bind(company_id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let v: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM projects WHERE company_id = $1")
+                .bind(company_id)
+                .fetch_one(self.db.pool())
+                .await?;
         Ok(v)
     }
 
     /// 插入一个 smoke project 占位。
-    pub async fn insert_smoke_project(
-        &self,
-        company_id: Uuid,
-        name: &str,
-    ) -> sqlx::Result<()> {
+    pub async fn insert_smoke_project(&self, company_id: Uuid, name: &str) -> sqlx::Result<()> {
         sqlx::query(
             "INSERT INTO projects (company_id, name, status) \
              VALUES ($1, $2, 'active')",
@@ -664,7 +634,12 @@ mod tests {
 
     #[test]
     fn run_status_round_trip() {
-        for s in [SmokeRunStatus::Running, SmokeRunStatus::Passed, SmokeRunStatus::Failed, SmokeRunStatus::Cancelled] {
+        for s in [
+            SmokeRunStatus::Running,
+            SmokeRunStatus::Passed,
+            SmokeRunStatus::Failed,
+            SmokeRunStatus::Cancelled,
+        ] {
             assert_eq!(SmokeRunStatus::parse(s.as_str()), Some(s));
         }
         assert_eq!(SmokeRunStatus::parse("unknown"), None);

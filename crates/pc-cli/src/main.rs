@@ -283,7 +283,12 @@ async fn pipelines_command(client: CliClient, action: PipelinesAction) -> Result
             println!("{}", serde_json::to_string_pretty(&data)?);
             Ok(())
         }
-        PipelinesAction::Create { company, key, name, description } => {
+        PipelinesAction::Create {
+            company,
+            key,
+            name,
+            description,
+        } => {
             let body = serde_json::json!({
                 "companyId": company,
                 "key": key,
@@ -294,7 +299,12 @@ async fn pipelines_command(client: CliClient, action: PipelinesAction) -> Result
             println!("{}", serde_json::to_string_pretty(&data)?);
             Ok(())
         }
-        PipelinesAction::CaseList { pipeline, company, stage, limit } => {
+        PipelinesAction::CaseList {
+            pipeline,
+            company,
+            stage,
+            limit,
+        } => {
             let mut q = format!("limit={}", limit);
             if let Some(p) = pipeline {
                 q.push_str(&format!("&pipelineId={}", p));
@@ -339,19 +349,25 @@ async fn routines_command(client: CliClient, action: RoutinesAction) -> Result<(
                 Some(r) => serde_json::json!({"status": "paused", "reason": r}),
                 None => serde_json::json!({"status": "paused"}),
             };
-            let data = client.post(&format!("/api/routines/{}/pause", id), body).await?;
+            let data = client
+                .post(&format!("/api/routines/{}/pause", id), body)
+                .await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
             Ok(())
         }
         RoutinesAction::Resume { id } => {
             let body = serde_json::json!({"status": "active"});
-            let data = client.post(&format!("/api/routines/{}/resume", id), body).await?;
+            let data = client
+                .post(&format!("/api/routines/{}/resume", id), body)
+                .await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
             Ok(())
         }
         RoutinesAction::Trigger { id } => {
             let body = serde_json::json!({});
-            let data = client.post(&format!("/api/routines/{}/trigger", id), body).await?;
+            let data = client
+                .post(&format!("/api/routines/{}/trigger", id), body)
+                .await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
             Ok(())
         }
@@ -402,7 +418,6 @@ enum ClientCommand {
         #[arg(long)]
         body: Option<String>,
     },
-
 }
 
 #[tokio::main]

@@ -17,9 +17,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -111,10 +109,7 @@ async fn heartbeat_repo_find_active_returns_none_when_no_active_runs() {
     insert_heartbeat_run_for_issue(&db, cid, agent_id, issue_id, "completed").await;
     insert_heartbeat_run_for_issue(&db, cid, agent_id, issue_id, "failed").await;
 
-    let found = repo
-        .find_active_run_by_issue(issue_id)
-        .await
-        .expect("find");
+    let found = repo.find_active_run_by_issue(issue_id).await.expect("find");
     assert!(found.is_none());
 }
 
@@ -136,10 +131,7 @@ async fn heartbeat_repo_list_runs_by_issue_orders_recent_first() {
     let r3 = insert_heartbeat_run_for_issue(&db, cid, agent_id, issue_id, "completed").await;
     insert_heartbeat_run_for_issue(&db, cid, agent_id, other_issue, "queued").await;
 
-    let rows = repo
-        .list_runs_by_issue(issue_id, 50)
-        .await
-        .expect("list");
+    let rows = repo.list_runs_by_issue(issue_id, 50).await.expect("list");
     assert_eq!(rows.len(), 3, "only matches this issue");
     // 最近在前：r3 → r2 → r1
     assert_eq!(rows[0].id, r3);

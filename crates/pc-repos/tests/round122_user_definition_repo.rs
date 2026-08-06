@@ -16,7 +16,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r122-{tag}-{id}"))
         .bind(format!("R122{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -40,7 +42,10 @@ async fn list_user_definitions_excludes_archived() {
     insert_def(&db, cid, "k1", "n1").await;
     insert_def(&db, cid, "k2", "n2").await;
     insert_def(&db, cid, "k3", "n3").await;
-    let rows = SecretRepo::new(&db).list_user_definitions(cid).await.expect("list");
+    let rows = SecretRepo::new(&db)
+        .list_user_definitions(cid)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 3);
 }
 
@@ -63,7 +68,10 @@ async fn create_user_definition_inserts() {
         created_by_agent_id: None,
         created_by_user_id: Some("tester".to_owned()),
     };
-    let row = SecretRepo::new(&db).create_user_definition(&input).await.expect("create");
+    let row = SecretRepo::new(&db)
+        .create_user_definition(&input)
+        .await
+        .expect("create");
     assert_eq!(row.key, "my-key");
     assert_eq!(row.status, "active");
 }
@@ -74,8 +82,14 @@ async fn archive_user_definition_marks_deleted() {
     let db = db().await;
     let cid = insert_company(&db, "archive").await;
     let id = insert_def(&db, cid, "k1", "n1").await;
-    SecretRepo::new(&db).archive_user_definition(id).await.expect("archive");
-    let rows = SecretRepo::new(&db).list_user_definitions(cid).await.expect("list");
+    SecretRepo::new(&db)
+        .archive_user_definition(id)
+        .await
+        .expect("archive");
+    let rows = SecretRepo::new(&db)
+        .list_user_definitions(cid)
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 0);
 }
 

@@ -21,9 +21,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Query, State};
-use axum::routing::get;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::routing::get;
 use futures_util::stream::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
@@ -225,7 +225,11 @@ async fn handler(
         query.since,
         query.until,
     ))
-    .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive"));
+    .keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    );
     sse.into_response()
 }
 
@@ -393,16 +397,19 @@ mod round257_tests {
         let src = include_str!("live_events.rs");
         // resume 阶段 for 循环中应同时检查 since_ts 和 until_ts
         assert!(
-            src.contains("if let Some(since_ts) = since") && src.contains("if arc_evt.at < since_ts { continue; }"),
+            src.contains("if let Some(since_ts) = since")
+                && src.contains("if arc_evt.at < since_ts { continue; }"),
             "WS resume must check since_ts"
         );
         assert!(
-            src.contains("if let Some(until_ts) = until") && src.contains("if arc_evt.at > until_ts { continue; }"),
+            src.contains("if let Some(until_ts) = until")
+                && src.contains("if arc_evt.at > until_ts { continue; }"),
             "WS resume must check until_ts"
         );
         // 同时检查 company_id（已有逻辑未被破坏）
         assert!(
-            src.contains("if let Some(cid) = initial_company_id") && src.contains("if arc_evt.company_id != Some(cid) { continue; }"),
+            src.contains("if let Some(cid) = initial_company_id")
+                && src.contains("if arc_evt.company_id != Some(cid) { continue; }"),
             "WS resume must still check company_id"
         );
     }
@@ -426,15 +433,42 @@ mod round257_tests {
     #[test]
     fn stats_handler_exposes_realtime_and_rate_limit() {
         let src = include_str!("realtime_stream.rs");
-        assert!(src.contains("async fn stats_handler"), "stats_handler must be defined");
-        assert!(src.contains("\"subscriber_count\""), "stats must include subscriber_count");
-        assert!(src.contains("\"next_event_id\""), "stats must include next_event_id");
-        assert!(src.contains("\"replay_buffer_size\""), "stats must include replay_buffer_size");
-        assert!(src.contains("\"rate_limit\""), "stats must include rate_limit section");
-        assert!(src.contains("\"bucket_capacity\""), "stats must include bucket_capacity");
-        assert!(src.contains("\"bucket_refill_per_second\""), "stats must include bucket_refill_per_second");
-        assert!(src.contains("\"tracked_ip_count\""), "stats must include tracked_ip_count");
-        assert!(src.contains("\"max_connections_per_company\""), "stats must include max_connections_per_company");
+        assert!(
+            src.contains("async fn stats_handler"),
+            "stats_handler must be defined"
+        );
+        assert!(
+            src.contains("\"subscriber_count\""),
+            "stats must include subscriber_count"
+        );
+        assert!(
+            src.contains("\"next_event_id\""),
+            "stats must include next_event_id"
+        );
+        assert!(
+            src.contains("\"replay_buffer_size\""),
+            "stats must include replay_buffer_size"
+        );
+        assert!(
+            src.contains("\"rate_limit\""),
+            "stats must include rate_limit section"
+        );
+        assert!(
+            src.contains("\"bucket_capacity\""),
+            "stats must include bucket_capacity"
+        );
+        assert!(
+            src.contains("\"bucket_refill_per_second\""),
+            "stats must include bucket_refill_per_second"
+        );
+        assert!(
+            src.contains("\"tracked_ip_count\""),
+            "stats must include tracked_ip_count"
+        );
+        assert!(
+            src.contains("\"max_connections_per_company\""),
+            "stats must include max_connections_per_company"
+        );
     }
 
     /// R257: stats_handler 调用 RealtimeHandle::subscriber_count / next_event_id / replay_len。
@@ -497,8 +531,14 @@ mod round256_tests {
     #[test]
     fn passes_filter_checks_time_range() {
         let src = include_str!("realtime_stream.rs");
-        assert!(src.contains("if evt.at < since_ts"), "passes_filter must compare evt.at with since_ts");
-        assert!(src.contains("if evt.at > until_ts"), "passes_filter must compare evt.at with until_ts");
+        assert!(
+            src.contains("if evt.at < since_ts"),
+            "passes_filter must compare evt.at with since_ts"
+        );
+        assert!(
+            src.contains("if evt.at > until_ts"),
+            "passes_filter must compare evt.at with until_ts"
+        );
     }
 
     /// R256: build_event_stream 函数签名扩展为接受 since / until。
@@ -516,7 +556,10 @@ mod round256_tests {
     fn sse_handler_passes_since_until_to_build_event_stream() {
         let src = include_str!("realtime_stream.rs");
         // 找 build_event_stream 调用点
-        assert!(src.contains("query.since,\n        query.until,"), "SSE handler must forward query.since / query.until to build_event_stream");
+        assert!(
+            src.contains("query.since,\n        query.until,"),
+            "SSE handler must forward query.since / query.until to build_event_stream"
+        );
     }
 
     /// R256: WS handler AuthQuery 增加 since / until 字段。
@@ -547,8 +590,14 @@ mod round256_tests {
     #[test]
     fn ws_handle_socket_filters_by_time_range() {
         let src = include_str!("live_events.rs");
-        assert!(src.contains("if arc_evt.at < since_ts { continue; }"), "WS handler must skip events before since_ts");
-        assert!(src.contains("if arc_evt.at > until_ts { continue; }"), "WS handler must skip events after until_ts");
+        assert!(
+            src.contains("if arc_evt.at < since_ts { continue; }"),
+            "WS handler must skip events before since_ts"
+        );
+        assert!(
+            src.contains("if arc_evt.at > until_ts { continue; }"),
+            "WS handler must skip events after until_ts"
+        );
     }
 }
 
@@ -570,70 +619,133 @@ mod round255_tests {
     fn token_bucket_uses_atomic_milli_storage() {
         let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
         assert!(src.contains("AtomicU64"), "TokenBucket must use AtomicU64");
-        assert!(src.contains("tokens_milli"), "TokenBucket must have tokens_milli field");
-        assert!(src.contains("capacity"), "TokenBucket must have capacity field");
-        assert!(src.contains("refill_per_second"), "TokenBucket must have refill_per_second field");
+        assert!(
+            src.contains("tokens_milli"),
+            "TokenBucket must have tokens_milli field"
+        );
+        assert!(
+            src.contains("capacity"),
+            "TokenBucket must have capacity field"
+        );
+        assert!(
+            src.contains("refill_per_second"),
+            "TokenBucket must have refill_per_second field"
+        );
     }
 
     /// R255: ConnectionLimiter 使用 DashMap + AtomicI64。
     #[test]
     fn connection_limiter_uses_dashmap_atomic() {
         let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
-        assert!(src.contains("DashMap<Uuid, Arc<AtomicI64>>"), "ConnectionLimiter must use DashMap<Uuid, Arc<AtomicI64>>");
+        assert!(
+            src.contains("DashMap<Uuid, Arc<AtomicI64>>"),
+            "ConnectionLimiter must use DashMap<Uuid, Arc<AtomicI64>>"
+        );
     }
 
     /// R255: IpRateLimiter 使用 DashMap<IpAddr, Arc<TokenBucket>>。
     #[test]
     fn ip_rate_limiter_uses_dashmap() {
         let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
-        assert!(src.contains("DashMap<IpAddr, Arc<TokenBucket>>"), "IpRateLimiter must use DashMap<IpAddr, Arc<TokenBucket>>");
+        assert!(
+            src.contains("DashMap<IpAddr, Arc<TokenBucket>>"),
+            "IpRateLimiter must use DashMap<IpAddr, Arc<TokenBucket>>"
+        );
     }
 
     /// R255: ConnectionGuard 是 'static（不依赖 lifetime），便于 move 进 'static closure。
     #[test]
     fn connection_guard_is_static() {
         let src = include_str!("../../../pc-realtime/src/rate_limit.rs");
-        assert!(src.contains("pub struct ConnectionGuard"), "ConnectionGuard must be defined");
+        assert!(
+            src.contains("pub struct ConnectionGuard"),
+            "ConnectionGuard must be defined"
+        );
         // 不应有 lifetime 参数
-        assert!(!src.contains("pub struct ConnectionGuard<'"), "ConnectionGuard must NOT have lifetime parameter");
+        assert!(
+            !src.contains("pub struct ConnectionGuard<'"),
+            "ConnectionGuard must NOT have lifetime parameter"
+        );
     }
 
     /// R255: WsState 增加 ip_rate_limiter + connection_limiter 字段。
     #[test]
     fn ws_state_carries_rate_limiters() {
         let src = include_str!("../../../pc-realtime/src/lib.rs");
-        assert!(src.contains("pub ip_rate_limiter"), "WsState must have ip_rate_limiter field");
-        assert!(src.contains("pub connection_limiter"), "WsState must have connection_limiter field");
-        assert!(src.contains("pub fn new"), "WsState must have new() constructor");
-        assert!(src.contains("pub fn with_limiters"), "WsState must have with_limiters() constructor");
+        assert!(
+            src.contains("pub ip_rate_limiter"),
+            "WsState must have ip_rate_limiter field"
+        );
+        assert!(
+            src.contains("pub connection_limiter"),
+            "WsState must have connection_limiter field"
+        );
+        assert!(
+            src.contains("pub fn new"),
+            "WsState must have new() constructor"
+        );
+        assert!(
+            src.contains("pub fn with_limiters"),
+            "WsState must have with_limiters() constructor"
+        );
     }
 
     /// R255: SSE handler 调用 ip_rate_limiter + connection_limiter 并返回 429。
     #[test]
     fn sse_handler_invokes_rate_limiters_and_returns_429() {
         let src = include_str!("realtime_stream.rs");
-        assert!(src.contains("ip_rate_limiter.try_acquire"), "SSE handler must call ip_rate_limiter.try_acquire");
-        assert!(src.contains("connection_limiter.try_acquire"), "SSE handler must call connection_limiter.try_acquire");
-        assert!(src.contains("StatusCode::TOO_MANY_REQUESTS"), "SSE handler must return 429");
-        assert!(src.contains("rate_limited"), "SSE handler must return error rate_limited");
-        assert!(src.contains("connection_limit"), "SSE handler must return error connection_limit");
+        assert!(
+            src.contains("ip_rate_limiter.try_acquire"),
+            "SSE handler must call ip_rate_limiter.try_acquire"
+        );
+        assert!(
+            src.contains("connection_limiter.try_acquire"),
+            "SSE handler must call connection_limiter.try_acquire"
+        );
+        assert!(
+            src.contains("StatusCode::TOO_MANY_REQUESTS"),
+            "SSE handler must return 429"
+        );
+        assert!(
+            src.contains("rate_limited"),
+            "SSE handler must return error rate_limited"
+        );
+        assert!(
+            src.contains("connection_limit"),
+            "SSE handler must return error connection_limit"
+        );
     }
 
     /// R255: WS handler 调用 rate_limiters 并把 connection_guard move 进 on_upgrade closure。
     #[test]
     fn ws_handler_invokes_rate_limiters_and_moves_guard_into_closure() {
         let src = include_str!("live_events.rs");
-        assert!(src.contains("ip_rate_limiter.try_acquire"), "WS handler must call ip_rate_limiter.try_acquire");
-        assert!(src.contains("connection_limiter.try_acquire"), "WS handler must call connection_limiter.try_acquire");
-        assert!(src.contains("StatusCode::TOO_MANY_REQUESTS"), "WS handler must return 429");
-        assert!(src.contains("let _guard = connection_guard"), "WS handler must move connection_guard into closure");
+        assert!(
+            src.contains("ip_rate_limiter.try_acquire"),
+            "WS handler must call ip_rate_limiter.try_acquire"
+        );
+        assert!(
+            src.contains("connection_limiter.try_acquire"),
+            "WS handler must call connection_limiter.try_acquire"
+        );
+        assert!(
+            src.contains("StatusCode::TOO_MANY_REQUESTS"),
+            "WS handler must return 429"
+        );
+        assert!(
+            src.contains("let _guard = connection_guard"),
+            "WS handler must move connection_guard into closure"
+        );
     }
 
     /// R255: extract_client_ip 从 x-forwarded-for / x-real-ip 提取 IP。
     #[test]
     fn extract_client_ip_reads_xff_and_xri() {
         let src = include_str!("realtime_stream.rs");
-        assert!(src.contains("pub(super) fn extract_client_ip"), "extract_client_ip must be pub(super)");
+        assert!(
+            src.contains("pub(super) fn extract_client_ip"),
+            "extract_client_ip must be pub(super)"
+        );
         assert!(src.contains("x-forwarded-for"), "must read x-forwarded-for");
         assert!(src.contains("x-real-ip"), "must read x-real-ip");
     }
@@ -686,11 +798,26 @@ mod round254_tests {
     #[test]
     fn stream_query_supports_per_resource_fields() {
         let src = include_str!("realtime_stream.rs");
-        assert!(src.contains("issue_id: Option<Uuid>"), "StreamQuery must have issue_id");
-        assert!(src.contains("watchdog_id: Option<Uuid>"), "StreamQuery must have watchdog_id");
-        assert!(src.contains("agent_id: Option<Uuid>"), "StreamQuery must have agent_id");
-        assert!(src.contains("run_id: Option<Uuid>"), "StreamQuery must have run_id");
-        assert!(src.contains("resource_id: Option<Uuid>"), "StreamQuery must have resource_id");
+        assert!(
+            src.contains("issue_id: Option<Uuid>"),
+            "StreamQuery must have issue_id"
+        );
+        assert!(
+            src.contains("watchdog_id: Option<Uuid>"),
+            "StreamQuery must have watchdog_id"
+        );
+        assert!(
+            src.contains("agent_id: Option<Uuid>"),
+            "StreamQuery must have agent_id"
+        );
+        assert!(
+            src.contains("run_id: Option<Uuid>"),
+            "StreamQuery must have run_id"
+        );
+        assert!(
+            src.contains("resource_id: Option<Uuid>"),
+            "StreamQuery must have resource_id"
+        );
     }
 
     /// R254: handler 把 per-resource query 字段转换为 ChannelFilter::ResourceId。
@@ -702,11 +829,26 @@ mod round254_tests {
             count >= 5,
             "handler must push at least 5 ChannelFilter::ResourceId (issue_id/watchdog_id/agent_id/run_id/resource_id), found {count}"
         );
-        assert!(src.contains("if let Some(id) = query.issue_id"), "handler must process query.issue_id");
-        assert!(src.contains("if let Some(id) = query.watchdog_id"), "handler must process query.watchdog_id");
-        assert!(src.contains("if let Some(id) = query.agent_id"), "handler must process query.agent_id");
-        assert!(src.contains("if let Some(id) = query.run_id"), "handler must process query.run_id");
-        assert!(src.contains("if let Some(id) = query.resource_id"), "handler must process query.resource_id");
+        assert!(
+            src.contains("if let Some(id) = query.issue_id"),
+            "handler must process query.issue_id"
+        );
+        assert!(
+            src.contains("if let Some(id) = query.watchdog_id"),
+            "handler must process query.watchdog_id"
+        );
+        assert!(
+            src.contains("if let Some(id) = query.agent_id"),
+            "handler must process query.agent_id"
+        );
+        assert!(
+            src.contains("if let Some(id) = query.run_id"),
+            "handler must process query.run_id"
+        );
+        assert!(
+            src.contains("if let Some(id) = query.resource_id"),
+            "handler must process query.resource_id"
+        );
     }
 
     /// R254: handler 把 issue_id 映射到 resource = Some("issue")。
@@ -829,7 +971,7 @@ mod round252_tests {
         let src = include_str!("realtime_stream.rs");
         assert!(src.contains("resume: Option<u64>"));
         assert!(src.contains("channels: Option<String>"));
-                assert!(src.contains(".event(\"resumed\")"));
+        assert!(src.contains(".event(\"resumed\")"));
         assert!(src.contains("replayed"));
     }
 
@@ -940,6 +1082,12 @@ mod tests {
         // 窗口完全在过去：now-60s ~ now-30s
         let since_past = now - Duration::seconds(60);
         let until_past = now - Duration::seconds(30);
-        assert!(!passes_filter(&evt, None, &[], Some(since_past), Some(until_past)));
+        assert!(!passes_filter(
+            &evt,
+            None,
+            &[],
+            Some(since_past),
+            Some(until_past)
+        ));
     }
 }

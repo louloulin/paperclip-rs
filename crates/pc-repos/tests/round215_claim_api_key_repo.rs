@@ -19,9 +19,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -79,11 +77,7 @@ async fn insert_approved_agent_join_request(
     id
 }
 
-async fn insert_pending_agent_join_request(
-    db: &Db,
-    company_id: Uuid,
-    invite_id: Uuid,
-) -> Uuid {
+async fn insert_pending_agent_join_request(db: &Db, company_id: Uuid, invite_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO join_requests (id, invite_id, company_id, request_type, status, request_ip) \
@@ -121,15 +115,8 @@ async fn claim_api_key_succeeds_with_correct_hash() {
     let agent_id = insert_agent(&db, company_id, "claim-agent").await;
     let raw_secret = "my-secret-123";
     let hash = pc_core::hash::sha256_hex(raw_secret);
-    let jr_id = insert_approved_agent_join_request(
-        &db,
-        company_id,
-        invite_id,
-        &hash,
-        3600,
-        agent_id,
-    )
-    .await;
+    let jr_id =
+        insert_approved_agent_join_request(&db, company_id, invite_id, &hash, 3600, agent_id).await;
 
     let claimed = JoinRequestRepo::new(&db)
         .claim_api_key(jr_id, &hash)
@@ -187,24 +174,15 @@ async fn claim_api_key_second_call_fails_after_consumed() {
     let agent_id = insert_agent(&db, company_id, "twice-agent").await;
     let raw_secret = "secret-twice";
     let hash = pc_core::hash::sha256_hex(raw_secret);
-    let jr_id = insert_approved_agent_join_request(
-        &db,
-        company_id,
-        invite_id,
-        &hash,
-        3600,
-        agent_id,
-    )
-    .await;
+    let jr_id =
+        insert_approved_agent_join_request(&db, company_id, invite_id, &hash, 3600, agent_id).await;
 
     let _ = JoinRequestRepo::new(&db)
         .claim_api_key(jr_id, &hash)
         .await
         .expect("first claim");
 
-    let second = JoinRequestRepo::new(&db)
-        .claim_api_key(jr_id, &hash)
-        .await;
+    let second = JoinRequestRepo::new(&db).claim_api_key(jr_id, &hash).await;
     assert!(second.is_err());
 }
 

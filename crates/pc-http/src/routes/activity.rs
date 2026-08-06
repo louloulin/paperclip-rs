@@ -24,7 +24,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/activity/emit", post(emit_event))
         .route("/api/activity/list", get(query_events))
         // ── Round 43: heartbeat-runs/issues 关联 ──
-        .route("/api/heartbeat-runs/:run_id/issues", get(heartbeat_run_issues))
+        .route(
+            "/api/heartbeat-runs/:run_id/issues",
+            get(heartbeat_run_issues),
+        )
         // ── Round 209: batch emit + run-scoped list ──
         .route("/api/activity/emit/batch", post(emit_events_batch))
         .route("/api/activity/runs/:run_id", get(list_run_activity))
@@ -339,9 +342,7 @@ async fn emit_events_batch(
     Json(items): Json<Vec<BatchEmitItem>>,
 ) -> ApiResult<Json<Value>> {
     if items.len() > 500 {
-        return Err(ApiError::BadRequest(
-            "batch size must be <= 500".into(),
-        ));
+        return Err(ApiError::BadRequest("batch size must be <= 500".into()));
     }
     let new_items: Vec<NewActivity> = items
         .into_iter()
@@ -378,9 +379,7 @@ async fn list_run_activity(
     State(state): State<AppState>,
     Path(run_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = ActivityRepo::new(&state.db)
-        .list_for_run(run_id)
-        .await?;
+    let rows = ActivityRepo::new(&state.db).list_for_run(run_id).await?;
     let items: Vec<Value> = rows.iter().map(activity_row_json).collect();
     Ok(Json(json!({
         "runId": run_id,

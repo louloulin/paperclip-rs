@@ -18,8 +18,8 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::redact::sanitize_record;
-use pc_core::Timestamp;
 use crate::{Db, RepoError, RepoResult};
+use pc_core::Timestamp;
 
 const LINK_COLS: &str = "company_id, issue_id, approval_id, linked_by_agent_id, \
      linked_by_user_id, created_at";
@@ -168,25 +168,18 @@ impl IssueApprovalRepo {
     }
 
     async fn get_issue_company(&self, issue_id: Uuid) -> IssueApprovalResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM issues WHERE id = $1",
-        )
-        .bind(issue_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM issues WHERE id = $1")
+            .bind(issue_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 
-    async fn get_approval_company(
-        &self,
-        approval_id: Uuid,
-    ) -> IssueApprovalResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM approvals WHERE id = $1",
-        )
-        .bind(approval_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    async fn get_approval_company(&self, approval_id: Uuid) -> IssueApprovalResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM approvals WHERE id = $1")
+            .bind(approval_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 
@@ -338,11 +331,7 @@ impl IssueApprovalRepo {
     }
 
     /// 解除关联。
-    pub async fn unlink(
-        &self,
-        issue_id: Uuid,
-        approval_id: Uuid,
-    ) -> IssueApprovalResult<()> {
+    pub async fn unlink(&self, issue_id: Uuid, approval_id: Uuid) -> IssueApprovalResult<()> {
         let issue_company = self
             .get_issue_company(issue_id)
             .await?
@@ -354,13 +343,11 @@ impl IssueApprovalRepo {
         if issue_company != approval_company {
             return Err(IssueApprovalError::CrossCompany);
         }
-        sqlx::query(
-            "DELETE FROM issue_approvals WHERE issue_id = $1 AND approval_id = $2",
-        )
-        .bind(issue_id)
-        .bind(approval_id)
-        .execute(self.db.pool())
-        .await?;
+        sqlx::query("DELETE FROM issue_approvals WHERE issue_id = $1 AND approval_id = $2")
+            .bind(issue_id)
+            .bind(approval_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(())
     }
 
@@ -388,12 +375,11 @@ impl IssueApprovalRepo {
             .collect();
 
         // 校验所有 issue 存在 + 同 company
-        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
-            "SELECT id, company_id FROM issues WHERE id = ANY($1::uuid[])",
-        )
-        .bind(&unique)
-        .fetch_all(self.db.pool())
-        .await?;
+        let rows: Vec<(Uuid, Uuid)> =
+            sqlx::query_as("SELECT id, company_id FROM issues WHERE id = ANY($1::uuid[])")
+                .bind(&unique)
+                .fetch_all(self.db.pool())
+                .await?;
         if rows.len() != unique.len() {
             return Err(IssueApprovalError::IssuesNotFound);
         }
@@ -502,7 +488,10 @@ mod tests {
 
     #[test]
     fn issue_approval_error_display_is_user_facing() {
-        assert_eq!(IssueApprovalError::IssueNotFound.to_string(), "issue not found");
+        assert_eq!(
+            IssueApprovalError::IssueNotFound.to_string(),
+            "issue not found"
+        );
         assert_eq!(
             IssueApprovalError::ApprovalNotFound.to_string(),
             "approval not found"

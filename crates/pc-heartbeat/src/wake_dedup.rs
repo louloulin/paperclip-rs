@@ -175,9 +175,7 @@ pub fn merge_wake_payloads(existing: Option<&Value>, incoming: Option<&Value>) -
                 a.insert(WAKE_COMMENT_IDS_KEY.to_string(), Value::Array(merged));
             }
             for (key, val) in b {
-                if WAKE_CONTEXT_KEYS.contains(&key.as_str())
-                    || key == WAKE_COMMENT_IDS_KEY
-                {
+                if WAKE_CONTEXT_KEYS.contains(&key.as_str()) || key == WAKE_COMMENT_IDS_KEY {
                     continue;
                 }
                 a.insert(key, val);
@@ -278,10 +276,7 @@ pub struct SuppressionInputs {
 impl SuppressionInputs {
     pub fn from_env(env: &std::collections::HashMap<String, String>) -> Self {
         fn truthy(v: Option<&String>) -> bool {
-            matches!(
-                v.map(|s| s.as_str()),
-                Some("true" | "1" | "yes" | "on")
-            )
+            matches!(v.map(|s| s.as_str()), Some("true" | "1" | "yes" | "on"))
         }
         Self {
             in_worktree: truthy(env.get("PAPERCLIP_IN_WORKTREE")),
@@ -408,19 +403,13 @@ mod tests {
 
     #[test]
     fn decide_create_when_existing_is_terminal() {
-        let action = decide_wake_action(
-            Some(&existing("w-1", "completed", 0)),
-            &incoming(),
-        );
+        let action = decide_wake_action(Some(&existing("w-1", "completed", 0)), &incoming());
         assert!(action.is_create());
     }
 
     #[test]
     fn decide_coalesce_into_existing_queued() {
-        let action = decide_wake_action(
-            Some(&existing("w-1", "queued", 0)),
-            &incoming(),
-        );
+        let action = decide_wake_action(Some(&existing("w-1", "queued", 0)), &incoming());
         match action {
             WakeAction::Coalesce { into_id, increment } => {
                 assert_eq!(into_id, "w-1");
@@ -432,10 +421,7 @@ mod tests {
 
     #[test]
     fn decide_coalesce_into_existing_requested() {
-        let action = decide_wake_action(
-            Some(&existing("w-1", "requested", 2)),
-            &incoming(),
-        );
+        let action = decide_wake_action(Some(&existing("w-1", "requested", 2)), &incoming());
         assert!(action.is_coalesce());
     }
 
@@ -443,10 +429,7 @@ mod tests {
     fn decide_skip_when_agent_mismatch() {
         let mut inc = incoming();
         inc.agent_id = "a-2".to_string();
-        let action = decide_wake_action(
-            Some(&existing("w-1", "queued", 0)),
-            &inc,
-        );
+        let action = decide_wake_action(Some(&existing("w-1", "queued", 0)), &inc);
         match action {
             WakeAction::Skip { reason } => {
                 assert!(reason.contains("agent mismatch"), "reason: {reason}");
@@ -459,10 +442,7 @@ mod tests {
     fn decide_skip_when_company_mismatch() {
         let mut inc = incoming();
         inc.company_id = "co-2".to_string();
-        let action = decide_wake_action(
-            Some(&existing("w-1", "queued", 0)),
-            &inc,
-        );
+        let action = decide_wake_action(Some(&existing("w-1", "queued", 0)), &inc);
         match action {
             WakeAction::Skip { reason } => {
                 assert!(reason.contains("company mismatch"), "reason: {reason}");
@@ -568,7 +548,10 @@ mod tests {
         };
         let decision = resolve_suppression(&inputs);
         assert!(decision.suppressed);
-        assert_eq!(decision.reason, SuppressionReason::DatabaseRestoreInProgress);
+        assert_eq!(
+            decision.reason,
+            SuppressionReason::DatabaseRestoreInProgress
+        );
     }
 
     #[test]
@@ -604,7 +587,10 @@ mod tests {
         };
         let decision = resolve_suppression(&inputs);
         assert!(decision.suppressed);
-        assert_eq!(decision.reason, SuppressionReason::DatabaseRestoreInProgress);
+        assert_eq!(
+            decision.reason,
+            SuppressionReason::DatabaseRestoreInProgress
+        );
     }
 
     #[test]
@@ -666,10 +652,7 @@ mod tests {
         let action1 = decide_wake_action(None, &incoming());
         assert!(action1.is_create());
 
-        let action2 = decide_wake_action(
-            Some(&existing("w-1", "queued", 0)),
-            &incoming(),
-        );
+        let action2 = decide_wake_action(Some(&existing("w-1", "queued", 0)), &incoming());
         assert!(action2.is_coalesce());
 
         let existing_payload = json!({"wakeCommentIds": ["c-1"]});
@@ -687,10 +670,7 @@ mod tests {
 
     #[test]
     fn end_to_end_skip_when_recovering_stale_claim() {
-        let action = decide_wake_action(
-            Some(&existing("w-1", "completed", 5)),
-            &incoming(),
-        );
+        let action = decide_wake_action(Some(&existing("w-1", "completed", 5)), &incoming());
         assert!(action.is_create());
     }
 }

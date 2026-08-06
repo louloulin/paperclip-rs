@@ -76,7 +76,10 @@ impl ApprovalStatus {
         }
     }
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Approved | Self::Rejected | Self::Cancelled | Self::Expired)
+        matches!(
+            self,
+            Self::Approved | Self::Rejected | Self::Cancelled | Self::Expired
+        )
     }
 }
 
@@ -175,7 +178,8 @@ impl<'a> ApprovalRepo<'a> {
         if let Some(u) = &filter.requested_by_user_id {
             qb.push(" AND requested_by_user_id = ").push_bind(u);
         }
-        qb.push(" ORDER BY created_at DESC LIMIT ").push_bind(filter.limit.unwrap_or(200));
+        qb.push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(filter.limit.unwrap_or(200));
         let rows = qb
             .build_query_as::<ApprovalRow>()
             .fetch_all(self.db.pool())
@@ -184,23 +188,15 @@ impl<'a> ApprovalRepo<'a> {
     }
 
     pub async fn list_all(&self, limit: i64) -> RepoResult<Vec<ApprovalRow>> {
-        let sql = format!(
-            "SELECT {APP_COLS} FROM approvals ORDER BY created_at DESC LIMIT $1"
-        );
+        let sql = format!("SELECT {APP_COLS} FROM approvals ORDER BY created_at DESC LIMIT $1");
         Ok(sqlx::query_as::<_, ApprovalRow>(&sql)
             .bind(limit)
             .fetch_all(self.db.pool())
             .await?)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<ApprovalRow>> {
-        let sql = format!(
-            "SELECT {APP_COLS} FROM approvals WHERE company_id=$1 AND id=$2"
-        );
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<ApprovalRow>> {
+        let sql = format!("SELECT {APP_COLS} FROM approvals WHERE company_id=$1 AND id=$2");
         Ok(sqlx::query_as::<_, ApprovalRow>(&sql)
             .bind(company_id)
             .bind(id)
@@ -246,9 +242,7 @@ impl<'a> ApprovalRepo<'a> {
                 }
             }
             if to == ApprovalStatus::Pending {
-                return Err(RepoError::Invalid(
-                    "cannot decide back to pending".into(),
-                ));
+                return Err(RepoError::Invalid("cannot decide back to pending".into()));
             }
         }
         let sql = format!(
@@ -271,8 +265,14 @@ impl<'a> ApprovalRepo<'a> {
         cancelled_by_user_id: &str,
         reason: Option<&str>,
     ) -> RepoResult<Option<ApprovalRow>> {
-        self.decide(company_id, id, ApprovalStatus::Cancelled, cancelled_by_user_id, reason)
-            .await
+        self.decide(
+            company_id,
+            id,
+            ApprovalStatus::Cancelled,
+            cancelled_by_user_id,
+            reason,
+        )
+        .await
     }
 
     pub async fn mark_expired(&self, id: Uuid) -> RepoResult<()> {
@@ -312,10 +312,7 @@ impl<'a> ApprovalRepo<'a> {
     }
 
     /// Round 177: 注意力队列用 —— 列出某公司的 pending approvals（id/approval_type/payload/updated_at）。
-    pub async fn list_pending_attention(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<ApprovalRow>> {
+    pub async fn list_pending_attention(&self, company_id: Uuid) -> RepoResult<Vec<ApprovalRow>> {
         sqlx::query_as::<_, ApprovalRow>(
             "SELECT id, company_id, type AS approval_type, requested_by_agent_id, \
                     requested_by_user_id, status, payload, decision_note, \
@@ -331,10 +328,7 @@ impl<'a> ApprovalRepo<'a> {
 
     // ---- comments ----
 
-    pub async fn list_comments(
-        &self,
-        approval_id: Uuid,
-    ) -> RepoResult<Vec<ApprovalCommentRow>> {
+    pub async fn list_comments(&self, approval_id: Uuid) -> RepoResult<Vec<ApprovalCommentRow>> {
         let sql = format!(
             "SELECT {COMMENT_COLS} FROM approval_comments              WHERE approval_id=$1 ORDER BY created_at ASC"
         );
@@ -344,10 +338,7 @@ impl<'a> ApprovalRepo<'a> {
             .await?)
     }
 
-    pub async fn add_comment(
-        &self,
-        c: &NewApprovalComment,
-    ) -> RepoResult<ApprovalCommentRow> {
+    pub async fn add_comment(&self, c: &NewApprovalComment) -> RepoResult<ApprovalCommentRow> {
         if c.author_agent_id.is_none() && c.author_user_id.is_none() {
             return Err(RepoError::Invalid(
                 "comment must be authored by agent or user".into(),
@@ -464,23 +455,21 @@ impl<'a> ApprovalRepo<'a> {
 
     /// Back-compat: list_by_company with default filter.
     #[allow(dead_code)]
-    pub async fn list_by_company_simple(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<ApprovalRow>> {
-        self.list_by_company(company_id, &ApprovalFilter::default()).await
+    pub async fn list_by_company_simple(&self, company_id: Uuid) -> RepoResult<Vec<ApprovalRow>> {
+        self.list_by_company(company_id, &ApprovalFilter::default())
+            .await
     }
 
     /// Back-compat: get by id only.
     #[allow(dead_code)]
     pub async fn get_id(&self, id: Uuid) -> RepoResult<Option<ApprovalRow>> {
         {
-        let sql = format!("SELECT {APP_COLS} FROM approvals WHERE id=$1");
-        Ok(sqlx::query_as::<_, ApprovalRow>(&sql)
-            .bind(id)
-            .fetch_optional(self.db.pool())
-            .await?)
-    }
+            let sql = format!("SELECT {APP_COLS} FROM approvals WHERE id=$1");
+            Ok(sqlx::query_as::<_, ApprovalRow>(&sql)
+                .bind(id)
+                .fetch_optional(self.db.pool())
+                .await?)
+        }
     }
 
     /// Back-compat: simple create with positional args.
@@ -491,7 +480,8 @@ impl<'a> ApprovalRepo<'a> {
         approval_type: &str,
         payload: Value,
     ) -> RepoResult<ApprovalRow> {
-        self.create_positional(company_id, approval_type, payload).await
+        self.create_positional(company_id, approval_type, payload)
+            .await
     }
 
     /// Back-compat: simple decide with positional args.
@@ -555,11 +545,10 @@ impl<'a> ApprovalRepo<'a> {
         note: Option<&str>,
         decided_by: &str,
     ) -> RepoResult<Option<ApprovalRow>> {
-        let cid: Option<Uuid> =
-            sqlx::query_scalar("SELECT company_id FROM approvals WHERE id=$1")
-                .bind(id)
-                .fetch_optional(self.db.pool())
-                .await?;
+        let cid: Option<Uuid> = sqlx::query_scalar("SELECT company_id FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?;
         let cid = cid.ok_or_else(|| RepoError::NotFound {
             entity: "approval",
             id: id.to_string(),
@@ -636,23 +625,20 @@ impl<'a> ApprovalRepo<'a> {
 
     /// Round 170: 取 approval 的 (id, company_id)。
     pub async fn get_id_company(&self, id: Uuid) -> RepoResult<Option<(Uuid, Uuid)>> {
-        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-            "SELECT id, company_id FROM approvals WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid, Uuid)> =
+            sqlx::query_as("SELECT id, company_id FROM approvals WHERE id = $1")
+                .bind(id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row)
     }
 
     /// Round 170: 取 approval 的 company_id。
     pub async fn get_company_id(&self, id: Uuid) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM approvals WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM approvals WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 
@@ -684,17 +670,17 @@ impl<'a> ApprovalRepo<'a> {
         &self,
         approval_id: Uuid,
     ) -> RepoResult<Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, Timestamp)>> {
-        let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, Timestamp)> = sqlx::query_as(
-            "SELECT id, company_id, author_agent_id, author_user_id, body, created_at \
+        let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<String>, String, Timestamp)> =
+            sqlx::query_as(
+                "SELECT id, company_id, author_agent_id, author_user_id, body, created_at \
              FROM approval_comments WHERE approval_id = $1 ORDER BY created_at ASC LIMIT 200",
-        )
-        .bind(approval_id)
-        .fetch_all(self.db.pool())
-        .await?;
+            )
+            .bind(approval_id)
+            .fetch_all(self.db.pool())
+            .await?;
         Ok(rows)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -707,7 +693,10 @@ mod tests {
         assert!(ApprovalStatus::Rejected.is_terminal());
         assert!(ApprovalStatus::Cancelled.is_terminal());
         assert!(ApprovalStatus::Expired.is_terminal());
-        assert_eq!(ApprovalStatus::parse("approved"), Some(ApprovalStatus::Approved));
+        assert_eq!(
+            ApprovalStatus::parse("approved"),
+            Some(ApprovalStatus::Approved)
+        );
         assert_eq!(ApprovalStatus::parse("nope"), None);
     }
 

@@ -14,14 +14,20 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
-use pc_repos::case::{CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseLinkRole, CaseRepo, CaseRow, DocumentRevisionRow, NewCaseAnnotationComment, NewCaseAnnotationThread};
+use pc_repos::case::{
+    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseLinkRole, CaseRepo,
+    CaseRow, DocumentRevisionRow, NewCaseAnnotationComment, NewCaseAnnotationThread,
+};
 
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/cases", get(list).post(create))
-        .route("/api/cases/:case_id", get(get_one).patch(update).delete(remove))
+        .route(
+            "/api/cases/:case_id",
+            get(get_one).patch(update).delete(remove),
+        )
         .route(
             "/api/companies/:company_id/cases",
             get(list_company_cases).post(create_company_case),
@@ -92,14 +98,17 @@ pub fn router() -> Router<AppState> {
             "/api/cases/:case_id/attachments",
             post(create_case_attachment),
         )
-        .route(
-            "/api/issues/:issue_id/cases",
-            get(list_issue_cases),
-        )
+        .route("/api/issues/:issue_id/cases", get(list_issue_cases))
         // ---- Round 36: case sub-resources (children / tree / issue-links / rollup / review) ----
         .route("/api/cases/:case_id/children", get(list_case_children))
-        .route("/api/cases/:case_id/children/tree", get(list_case_children_tree))
-        .route("/api/cases/:case_id/issue-links", get(list_case_issue_links_route))
+        .route(
+            "/api/cases/:case_id/children/tree",
+            get(list_case_children_tree),
+        )
+        .route(
+            "/api/cases/:case_id/issue-links",
+            get(list_case_issue_links_route),
+        )
         .route(
             "/api/cases/:case_id/issue-links/:link_id",
             delete(delete_case_issue_link),
@@ -108,12 +117,30 @@ pub fn router() -> Router<AppState> {
         .route("/api/cases/:case_id/review", post(review_case_route))
         // ---- Round 40: case automation lifecycle (breakdown / suggest-transition / resolve-suggestion / acknowledge-drift / blockers / open-conversation / context-pack / outputs) ----
         .route("/api/cases/:case_id/breakdown", post(breakdown_case_route))
-        .route("/api/cases/:case_id/suggest-transition", post(suggest_transition_route))
-        .route("/api/cases/:case_id/resolve-suggestion", post(resolve_suggestion_route))
-        .route("/api/cases/:case_id/acknowledge-drift", post(acknowledge_drift_route))
-        .route("/api/cases/:case_id/blockers", put(replace_case_blockers_route))
-        .route("/api/cases/:case_id/open-conversation", post(open_conversation_route))
-        .route("/api/cases/:case_id/context-pack", get(get_case_context_pack))
+        .route(
+            "/api/cases/:case_id/suggest-transition",
+            post(suggest_transition_route),
+        )
+        .route(
+            "/api/cases/:case_id/resolve-suggestion",
+            post(resolve_suggestion_route),
+        )
+        .route(
+            "/api/cases/:case_id/acknowledge-drift",
+            post(acknowledge_drift_route),
+        )
+        .route(
+            "/api/cases/:case_id/blockers",
+            put(replace_case_blockers_route),
+        )
+        .route(
+            "/api/cases/:case_id/open-conversation",
+            post(open_conversation_route),
+        )
+        .route(
+            "/api/cases/:case_id/context-pack",
+            get(get_case_context_pack),
+        )
         .route("/api/cases/:case_id/outputs", get(get_case_outputs))
 }
 
@@ -135,7 +162,10 @@ async fn list(
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
-async fn get_one(State(state): State<AppState>, Path(case_id): Path<Uuid>) -> ApiResult<Json<Value>> {
+async fn get_one(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
     let row = CaseRepo::new(&state.db)
         .get(case_id)
         .await?
@@ -175,9 +205,9 @@ async fn create(
         .realtime
         .publish(LiveEvent::new("case.created", "case", row.id).with_company(row.company_id));
     let response = serde_json::json!({
-            "id": row.id, "company_id": row.company_id, "title": row.title,
-            "case_type": row.case_type, "status": row.status, "identifier": row.identifier
-        });
+        "id": row.id, "company_id": row.company_id, "title": row.title,
+        "case_type": row.case_type, "status": row.status, "identifier": row.identifier
+    });
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -221,16 +251,13 @@ async fn remove(State(state): State<AppState>, Path(case_id): Path<Uuid>) -> Api
     }
 }
 
-
 // ============== Sub-resource handlers ==============
 
 async fn list_company_cases(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = CaseRepo::new(&state.db)
-        .list_by_company(company_id)
-        .await?;
+    let rows = CaseRepo::new(&state.db).list_by_company(company_id).await?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -360,10 +387,11 @@ async fn upsert_case_document(
         .link_document(case_row.company_id, case_id, body.document_id, &body.key)
         .await?;
     state.realtime.publish(
-        LiveEvent::new("case.document.upserted", "case", case_id)
-            .with_company(case_row.company_id),
+        LiveEvent::new("case.document.upserted", "case", case_id).with_company(case_row.company_id),
     );
-    Ok(Json(json!({"id": row.id, "caseId": case_id, "key": body.key, "documentId": body.document_id})))
+    Ok(Json(
+        json!({"id": row.id, "caseId": case_id, "key": body.key, "documentId": body.document_id}),
+    ))
 }
 
 // Round 109: 仓储化。CaseRepo::get_document(company_id, case_id, key) 返回 CaseDocumentRow。
@@ -397,7 +425,9 @@ async fn lock_case_document(
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
     let repo = CaseRepo::new(&state.db);
-    let case_row = repo.get(case_id).await?
+    let case_row = repo
+        .get(case_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let n = repo
         .lock_document(case_row.company_id, case_id, &key)
@@ -419,7 +449,9 @@ async fn unlock_case_document(
     Path((case_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
     let repo = CaseRepo::new(&state.db);
-    let case_row = repo.get(case_id).await?
+    let case_row = repo
+        .get(case_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let n = repo
         .unlock_document(case_row.company_id, case_id, &key)
@@ -432,7 +464,9 @@ async fn unlock_case_document(
             .with_company(case_row.company_id)
             .with_data(json!({"key": key})),
     );
-    Ok(Json(json!({"unlocked": true, "caseId": case_id, "key": key})))
+    Ok(Json(
+        json!({"unlocked": true, "caseId": case_id, "key": key}),
+    ))
 }
 
 async fn list_case_annotations(
@@ -503,10 +537,13 @@ async fn list_case_annotation_threads(
         .get_case_company_id(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let status_filter = q
-        .status
-        .as_deref()
-        .and_then(|s| if s == "open" || s == "resolved" { Some(s) } else { None });
+    let status_filter = q.status.as_deref().and_then(|s| {
+        if s == "open" || s == "resolved" {
+            Some(s)
+        } else {
+            None
+        }
+    });
     let include_comments = q.include_comments.unwrap_or(false);
     let rows = CaseRepo::new(&state.db)
         .list_case_annotation_threads(case_id, &key, status_filter, 200)
@@ -545,7 +582,11 @@ async fn list_case_annotation_threads(
     if include_comments {
         let thread_ids: Vec<Uuid> = items
             .iter()
-            .filter_map(|v| v.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok()))
+            .filter_map(|v| {
+                v.get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+            })
             .collect();
         if !thread_ids.is_empty() {
             let comments = CaseRepo::new(&state.db)
@@ -620,13 +661,20 @@ async fn create_case_annotation_thread(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case document {case_id}:{key}")))?;
     if doc_company_id != company_id {
-        return Err(ApiError::BadRequest("case/document company mismatch".into()));
+        return Err(ApiError::BadRequest(
+            "case/document company mismatch".into(),
+        ));
     }
     let norm_start = body.normalized_start.unwrap_or(0);
-    let norm_end = body.normalized_end.unwrap_or(body.selected_text.len() as i32);
+    let norm_end = body
+        .normalized_end
+        .unwrap_or(body.selected_text.len() as i32);
     let md_start = body.markdown_start.unwrap_or(0);
     let md_end = body.markdown_end.unwrap_or(body.selected_text.len() as i32);
-    let confidence = body.anchor_confidence.clone().unwrap_or_else(|| "exact".to_owned());
+    let confidence = body
+        .anchor_confidence
+        .clone()
+        .unwrap_or_else(|| "exact".to_owned());
     let selector = body.anchor_selector.clone().unwrap_or_else(|| json!({}));
     let revision_number = body.revision_number.unwrap_or(1);
     let input = NewCaseAnnotationThread {
@@ -812,7 +860,10 @@ async fn add_case_annotation_comment(
         .get_case_thread_document_id(case_id, thread_id, &key)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("annotation thread {thread_id}")))?;
-    let author_type = body.author_type.clone().unwrap_or_else(|| "user".to_owned());
+    let author_type = body
+        .author_type
+        .clone()
+        .unwrap_or_else(|| "user".to_owned());
     let input = NewCaseAnnotationComment {
         company_id,
         case_id,
@@ -825,9 +876,13 @@ async fn add_case_annotation_comment(
     };
     let id = repo.create_case_thread_comment(&input).await?;
     state.realtime.publish(
-        LiveEvent::new("case.annotation.comment_added", "case_annotation_comment", id)
-            .with_company(company_id)
-            .with_data(json!({"threadId": thread_id, "caseId": case_id})),
+        LiveEvent::new(
+            "case.annotation.comment_added",
+            "case_annotation_comment",
+            id,
+        )
+        .with_company(company_id)
+        .with_data(json!({"threadId": thread_id, "caseId": case_id})),
     );
     Ok((
         StatusCode::CREATED,
@@ -1055,7 +1110,6 @@ async fn list_issue_cases(
     })))
 }
 
-
 // ============================================================================
 // Round 36: case children / tree / issue-links list+delete / rollup / review
 // ============================================================================
@@ -1281,13 +1335,7 @@ async fn review_case_route(
         "expectedVersion": body.expected_version,
     });
     let _ = CaseRepo::new(&state.db)
-        .record_case_event(
-            case.company_id,
-            case_id,
-            "status_changed",
-            "user",
-            payload,
-        )
+        .record_case_event(case.company_id, case_id, "status_changed", "user", payload)
         .await;
     state.realtime.publish(
         LiveEvent::new("case.reviewed", "case", case_id)
@@ -1300,7 +1348,6 @@ async fn review_case_route(
     );
     Ok(Json(serde_json::to_value(updated).unwrap_or_default()))
 }
-
 
 // ============================================================================
 // Round 40: case automation lifecycle
@@ -1458,7 +1505,9 @@ async fn resolve_suggestion_route(
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let decision = body.decision.to_lowercase();
     if !matches!(decision.as_str(), "accepted" | "rejected") {
-        return Err(ApiError::BadRequest("decision must be 'accepted' or 'rejected'".into()));
+        return Err(ApiError::BadRequest(
+            "decision must be 'accepted' or 'rejected'".into(),
+        ));
     }
     let payload = json!({
         "suggestionId": body.suggestion_id,
@@ -1466,13 +1515,7 @@ async fn resolve_suggestion_route(
         "reason": body.reason,
     });
     let _ = CaseRepo::new(&state.db)
-        .record_case_event(
-            case.company_id,
-            case_id,
-            "fields_changed",
-            "user",
-            payload,
-        )
+        .record_case_event(case.company_id, case_id, "fields_changed", "user", payload)
         .await;
     state.realtime.publish(
         LiveEvent::new("case.suggestion_resolved", "case", case_id)
@@ -1510,8 +1553,7 @@ async fn acknowledge_drift_route(
         )
         .await;
     state.realtime.publish(
-        LiveEvent::new("case.drift_acknowledged", "case", case_id)
-            .with_company(case.company_id),
+        LiveEvent::new("case.drift_acknowledged", "case", case_id).with_company(case.company_id),
     );
     Ok(Json(json!({
         "caseId": case_id,
@@ -1628,9 +1670,7 @@ async fn get_case_context_pack(
         .list_context_issues(case.company_id, case_id)
         .await
         .unwrap_or_default();
-    let children_count = repo
-        .count_children(case.company_id, case_id)
-        .await?;
+    let children_count = repo.count_children(case.company_id, case_id).await?;
     let event_items: Vec<Value> = events
         .into_iter()
         .map(|e| {

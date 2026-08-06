@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{types::Json, FromRow};
 use uuid::Uuid;
 
+use crate::{Db, RepoError, RepoResult};
 use pc_core::Timestamp;
-use crate::{RepoError, RepoResult, Db};
 
 // ============================================================================
 // Types
@@ -123,11 +123,7 @@ impl<'a> InboxAgentPolicyRepo<'a> {
     /// 行为（与 Node `get` 1:1 对齐）：
     /// - 行存在 → 返回 `{...row, materialized: true}`
     /// - 行不存在 → 返回默认 `{ company_id, user_id, mode: "open", allowedAgentIds: [], materialized: false, created_at: null, updated_at: null }`
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        user_id: &str,
-    ) -> sqlx::Result<InboxAgentPolicy> {
+    pub async fn get(&self, company_id: Uuid, user_id: &str) -> sqlx::Result<InboxAgentPolicy> {
         let row: Option<InboxAgentPolicyRow> = sqlx::query_as::<_, InboxAgentPolicyRow>(
             "SELECT id, company_id, user_id, mode, allowed_agent_ids, created_at, updated_at \
              FROM user_inbox_agent_policies \
@@ -140,8 +136,8 @@ impl<'a> InboxAgentPolicyRepo<'a> {
 
         Ok(match row {
             Some(r) => {
-                let mode = InboxAgentPolicyMode::parse(&r.mode)
-                    .unwrap_or(InboxAgentPolicyMode::Open);
+                let mode =
+                    InboxAgentPolicyMode::parse(&r.mode).unwrap_or(InboxAgentPolicyMode::Open);
                 InboxAgentPolicy {
                     company_id: r.company_id,
                     user_id: r.user_id,
@@ -235,15 +231,15 @@ impl<'a> InboxAgentPolicyRepo<'a> {
         agent_ids: &[Uuid],
     ) -> RepoResult<()> {
         // 一次性查同公司的所有 agent id
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM agents WHERE company_id = $1 AND id = ANY($2)",
-        )
-        .bind(company_id)
-        .bind(agent_ids)
-        .fetch_all(self.db.pool())
-        .await?;
+        let rows: Vec<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM agents WHERE company_id = $1 AND id = ANY($2)")
+                .bind(company_id)
+                .bind(agent_ids)
+                .fetch_all(self.db.pool())
+                .await?;
 
-        let company_set: std::collections::HashSet<Uuid> = rows.into_iter().map(|(id,)| id).collect();
+        let company_set: std::collections::HashSet<Uuid> =
+            rows.into_iter().map(|(id,)| id).collect();
         let invalid: Vec<Uuid> = agent_ids
             .iter()
             .copied()

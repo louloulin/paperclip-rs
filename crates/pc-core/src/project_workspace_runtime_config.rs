@@ -37,9 +37,21 @@ pub struct ProjectWorkspaceRuntimeConfig {
 impl ProjectWorkspaceRuntimeConfig {
     pub fn is_empty(&self) -> bool {
         // 用于判断"清理所有字段后为空"的情况
-        let wr = self.workspace_runtime.as_ref().map(|x| x.is_none()).unwrap_or(true);
-        let ds = self.desired_state.as_ref().map(|x| x.is_none()).unwrap_or(true);
-        let ss = self.service_states.as_ref().map(|x| x.is_none()).unwrap_or(true);
+        let wr = self
+            .workspace_runtime
+            .as_ref()
+            .map(|x| x.is_none())
+            .unwrap_or(true);
+        let ds = self
+            .desired_state
+            .as_ref()
+            .map(|x| x.is_none())
+            .unwrap_or(true);
+        let ss = self
+            .service_states
+            .as_ref()
+            .map(|x| x.is_none())
+            .unwrap_or(true);
         wr && ds && ss
     }
 }
@@ -94,7 +106,9 @@ pub fn read_project_workspace_runtime_config(
 }
 
 /// 读取"已存在"配置的内部使用版本（无 sentinel）。
-pub(crate) fn read_flat(metadata: Option<&Map<String, Value>>) -> FlatProjectWorkspaceRuntimeConfig {
+pub(crate) fn read_flat(
+    metadata: Option<&Map<String, Value>>,
+) -> FlatProjectWorkspaceRuntimeConfig {
     match read_project_workspace_runtime_config(metadata) {
         Some(cfg) => FlatProjectWorkspaceRuntimeConfig {
             workspace_runtime: cfg.workspace_runtime.unwrap_or(None),
@@ -122,7 +136,11 @@ pub fn merge_project_workspace_runtime_config(
 
     if patch.is_none() {
         next_metadata.remove("runtimeConfig");
-        return if next_metadata.is_empty() { None } else { Some(next_metadata) };
+        return if next_metadata.is_empty() {
+            None
+        } else {
+            Some(next_metadata)
+        };
     }
 
     let current = read_project_workspace_runtime_config(metadata);
@@ -158,13 +176,14 @@ pub fn merge_project_workspace_runtime_config(
             runtime_config_obj.insert("desiredState".to_string(), Value::String(ds));
         }
         if let Some(Some(ss)) = next_config.service_states {
-            let obj: Map<String, Value> = ss
-                .into_iter()
-                .map(|(k, v)| (k, Value::String(v)))
-                .collect();
+            let obj: Map<String, Value> =
+                ss.into_iter().map(|(k, v)| (k, Value::String(v))).collect();
             runtime_config_obj.insert("serviceStates".to_string(), Value::Object(obj));
         }
-        next_metadata.insert("runtimeConfig".to_string(), Value::Object(runtime_config_obj));
+        next_metadata.insert(
+            "runtimeConfig".to_string(),
+            Value::Object(runtime_config_obj),
+        );
     }
 
     if next_metadata.is_empty() {
@@ -195,7 +214,10 @@ fn read_service_states(value: Option<&Value>) -> Option<ServiceStateMap> {
     let mut out = ServiceStateMap::new();
     for (k, v) in obj {
         if let Some(s) = v.as_str() {
-            if matches!(s, DESIRED_STATE_RUNNING | DESIRED_STATE_STOPPED | DESIRED_STATE_MANUAL) {
+            if matches!(
+                s,
+                DESIRED_STATE_RUNNING | DESIRED_STATE_STOPPED | DESIRED_STATE_MANUAL
+            ) {
                 out.insert(k.clone(), s.to_string());
             }
         }
@@ -270,13 +292,25 @@ mod tests {
         )]);
         let cfg = read_project_workspace_runtime_config(Some(&m)).unwrap();
         assert!(cfg.workspace_runtime.is_some());
-        assert_eq!(cfg.desired_state.as_ref().map(|x| x.as_deref()), Some(Some("running")));
-        assert_eq!(cfg.service_states.as_ref().and_then(|x| x.as_ref()).map(|m| m.len()), Some(2));
+        assert_eq!(
+            cfg.desired_state.as_ref().map(|x| x.as_deref()),
+            Some(Some("running"))
+        );
+        assert_eq!(
+            cfg.service_states
+                .as_ref()
+                .and_then(|x| x.as_ref())
+                .map(|m| m.len()),
+            Some(2)
+        );
     }
 
     #[test]
     fn merge_with_null_patch_drops_runtime_config() {
-        let m = map_from(&[("runtimeConfig", json!({"desiredState": "running"})), ("extra", json!("keep"))]);
+        let m = map_from(&[
+            ("runtimeConfig", json!({"desiredState": "running"})),
+            ("extra", json!("keep")),
+        ]);
         let next = merge_project_workspace_runtime_config(Some(&m), None).unwrap();
         assert!(!next.contains_key("runtimeConfig"));
         assert_eq!(next.get("extra").and_then(|v| v.as_str()), Some("keep"));
@@ -301,8 +335,14 @@ mod tests {
             service_states: None,
         };
         let next = merge_project_workspace_runtime_config(Some(&m), Some(&patch)).unwrap();
-        let rc = next.get("runtimeConfig").and_then(|v| v.as_object()).unwrap();
-        assert_eq!(rc.get("desiredState").and_then(|v| v.as_str()), Some("running"));
+        let rc = next
+            .get("runtimeConfig")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            rc.get("desiredState").and_then(|v| v.as_str()),
+            Some("running")
+        );
         // workspaceRuntime 保留旧值（因为 patch.workspace_runtime == None 表示不改）
         assert!(rc.get("workspaceRuntime").is_some());
     }

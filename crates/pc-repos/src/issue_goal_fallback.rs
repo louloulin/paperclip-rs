@@ -74,7 +74,10 @@ pub struct ResolveNextIssueGoalIdInput {
 /// 5. 否则返回 `currentGoalId`
 #[must_use]
 pub fn resolve_next_issue_goal_id(input: ResolveNextIssueGoalIdInput) -> Option<String> {
-    let project_id = input.project_id.clone().or_else(|| input.current_project_id.clone());
+    let project_id = input
+        .project_id
+        .clone()
+        .or_else(|| input.current_project_id.clone());
     let project_goal_id = if input.project_goal_id.is_some() {
         input.project_goal_id.clone()
     } else if project_id.is_some() {

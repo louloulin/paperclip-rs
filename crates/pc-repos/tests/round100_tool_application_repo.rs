@@ -125,13 +125,12 @@ async fn tool_repo_create_embeds_description_into_metadata() {
         .expect("create");
 
     // 反查 DB：metadata 必须已经含 description
-    let (meta,): (serde_json::Value,) = sqlx::query_as(
-        "SELECT metadata FROM tool_applications WHERE id = $1",
-    )
-    .bind(row.id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (meta,): (serde_json::Value,) =
+        sqlx::query_as("SELECT metadata FROM tool_applications WHERE id = $1")
+            .bind(row.id)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(meta["description"], "hello");
     assert_eq!(meta["config"]["url"], "https://x");
 }

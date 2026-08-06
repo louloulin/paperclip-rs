@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -105,7 +102,6 @@ async fn insert_simple_issue(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-
 async fn insert_project_with_artifact(db: &Db, company_id: Uuid) -> Uuid {
     let project_id = Uuid::new_v4();
     sqlx::query(
@@ -148,12 +144,7 @@ async fn insert_issue_with_project(db: &Db, company_id: Uuid, project_id: Uuid) 
     id
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    token: Option<&str>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, token: Option<&str>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let mut req = Request::builder()
         .method(method)
@@ -216,7 +207,10 @@ async fn file_resources_list_returns_artifact_when_project_exists() {
     assert_eq!(status, 200, "list: {body}");
     assert_eq!(body["issueId"], issue_id.to_string());
     let files = body["files"].as_array().expect("files array");
-    assert!(files.iter().any(|f| f["path"] == "/output/build.log"), "should contain artifact: {body}");
+    assert!(
+        files.iter().any(|f| f["path"] == "/output/build.log"),
+        "should contain artifact: {body}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

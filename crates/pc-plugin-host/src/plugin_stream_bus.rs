@@ -334,17 +334,8 @@ mod tests {
             }),
         );
 
-        bus.publish(
-            "p1",
-            "c1",
-            "co1",
-            json!({}),
-            Some(StreamEventType::Error),
-        );
-        assert_eq!(
-            *received_type.lock().unwrap(),
-            Some(StreamEventType::Error)
-        );
+        bus.publish("p1", "c1", "co1", json!({}), Some(StreamEventType::Error));
+        assert_eq!(*received_type.lock().unwrap(), Some(StreamEventType::Error));
     }
 
     #[test]
@@ -362,13 +353,7 @@ mod tests {
             }),
         );
 
-        bus.publish(
-            "p1",
-            "c1",
-            "co1",
-            json!({"msg": "hello", "code": 42}),
-            None,
-        );
+        bus.publish("p1", "c1", "co1", json!({"msg": "hello", "code": 42}), None);
 
         let payload = received.lock().unwrap().clone().unwrap();
         assert_eq!(payload["msg"], "hello");
@@ -437,21 +422,12 @@ mod tests {
     #[test]
     fn unsubscribe_removes_empty_key() {
         let bus = InMemoryPluginStreamBus::new();
-        let unsub = bus.subscribe(
-            "p1",
-            "c1",
-            "co1",
-            Box::new(|_, _| {}),
-        );
+        let unsub = bus.subscribe("p1", "c1", "co1", Box::new(|_, _| {}));
 
         unsub();
 
         // key 已清空，publish 应该是 noop
-        let key_count = bus
-            .subscribers
-            .lock()
-            .unwrap()
-            .contains_key("p1:c1:co1");
+        let key_count = bus.subscribers.lock().unwrap().contains_key("p1:c1:co1");
         assert!(!key_count);
     }
 
@@ -488,11 +464,7 @@ mod tests {
         assert_eq!(counter_b.load(Ordering::SeqCst), 1);
 
         // key 仍存在（因为还有 b）
-        let key_count = bus
-            .subscribers
-            .lock()
-            .unwrap()
-            .contains_key("p1:c1:co1");
+        let key_count = bus.subscribers.lock().unwrap().contains_key("p1:c1:co1");
         assert!(key_count);
     }
 

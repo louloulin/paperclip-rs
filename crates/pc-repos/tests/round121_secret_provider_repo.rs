@@ -17,16 +17,13 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r121-{tag}-{id}"))
         .bind(format!("R121{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
-async fn insert_provider(
-    db: &Db,
-    company_id: Uuid,
-    provider: &str,
-    is_default: bool,
-) -> Uuid {
+async fn insert_provider(db: &Db, company_id: Uuid, provider: &str, is_default: bool) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO company_secret_provider_configs \
@@ -45,7 +42,10 @@ async fn list_providers_returns_company_providers() {
     let cid = insert_company(&db, "listprov").await;
     insert_provider(&db, cid, "aws", false).await;
     insert_provider(&db, cid, "vault", true).await;
-    let rows = SecretRepo::new(&db).list_providers(cid).await.expect("list providers");
+    let rows = SecretRepo::new(&db)
+        .list_providers(cid)
+        .await
+        .expect("list providers");
     assert_eq!(rows.len(), 2);
 }
 
@@ -64,7 +64,10 @@ async fn get_provider_returns_some_for_existing() {
 #[tokio::test(flavor = "current_thread")]
 async fn get_provider_returns_none_for_missing() {
     let db = db().await;
-    let row = SecretRepo::new(&db).get_provider(Uuid::new_v4()).await.expect("get");
+    let row = SecretRepo::new(&db)
+        .get_provider(Uuid::new_v4())
+        .await
+        .expect("get");
     assert!(row.is_none());
 }
 
@@ -74,9 +77,15 @@ async fn delete_provider_removes_row() {
     let db = db().await;
     let cid = insert_company(&db, "delprov").await;
     let pid = insert_provider(&db, cid, "aws", false).await;
-    let deleted = SecretRepo::new(&db).delete_provider(pid).await.expect("delete");
+    let deleted = SecretRepo::new(&db)
+        .delete_provider(pid)
+        .await
+        .expect("delete");
     assert!(deleted);
-    let row = SecretRepo::new(&db).get_provider(pid).await.expect("get after delete");
+    let row = SecretRepo::new(&db)
+        .get_provider(pid)
+        .await
+        .expect("get after delete");
     assert!(row.is_none());
 }
 
@@ -86,7 +95,11 @@ async fn mark_default_provider_updates_flag() {
     let db = db().await;
     let cid = insert_company(&db, "mkdefault").await;
     let pid = insert_provider(&db, cid, "aws", false).await;
-    let row = SecretRepo::new(&db).mark_default_provider(pid).await.expect("mark").unwrap();
+    let row = SecretRepo::new(&db)
+        .mark_default_provider(pid)
+        .await
+        .expect("mark")
+        .unwrap();
     assert!(row.is_default);
 }
 
@@ -94,7 +107,10 @@ async fn mark_default_provider_updates_flag() {
 #[tokio::test(flavor = "current_thread")]
 async fn mark_default_provider_missing_returns_none() {
     let db = db().await;
-    let row = SecretRepo::new(&db).mark_default_provider(Uuid::new_v4()).await.expect("mark");
+    let row = SecretRepo::new(&db)
+        .mark_default_provider(Uuid::new_v4())
+        .await
+        .expect("mark");
     assert!(row.is_none());
 }
 
@@ -104,7 +120,10 @@ async fn mark_provider_healthy_updates_health() {
     let db = db().await;
     let cid = insert_company(&db, "healthy").await;
     let pid = insert_provider(&db, cid, "aws", false).await;
-    let row = SecretRepo::new(&db).mark_provider_healthy(pid).await.expect("healthy");
+    let row = SecretRepo::new(&db)
+        .mark_provider_healthy(pid)
+        .await
+        .expect("healthy");
     assert_eq!(row.health_status, Some("ok".to_owned()));
     assert!(row.health_checked_at.is_some());
 }
@@ -124,8 +143,14 @@ async fn list_for_company_with_upsert_provider() {
         created_by_agent_id: None,
         created_by_user_id: Some("tester".to_owned()),
     };
-    let _row = SecretRepo::new(&db).upsert_provider(&input).await.expect("upsert");
-    let list = SecretRepo::new(&db).list_providers(cid).await.expect("list");
+    let _row = SecretRepo::new(&db)
+        .upsert_provider(&input)
+        .await
+        .expect("upsert");
+    let list = SecretRepo::new(&db)
+        .list_providers(cid)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 1);
     assert!(list[0].is_default);
 }

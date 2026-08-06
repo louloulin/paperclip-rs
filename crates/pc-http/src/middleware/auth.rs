@@ -19,11 +19,7 @@ use crate::AppState;
 ///
 /// 始终注入一个 `AuthContext`（即使是 Anonymous），方便 handler 决策。
 /// 必须通过 `axum::middleware::from_fn_with_state(state, auth_layer)` 调用。
-pub async fn auth_layer(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn auth_layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let (mut parts, body) = req.into_parts();
     let ctx = match pc_auth::resolve_auth(&state.db, &parts).await {
         Ok(ctx) => ctx,
@@ -151,7 +147,6 @@ mod tests {
         assert!(require_company_access(&ctx, company).is_ok());
     }
 }
-
 
 // =====================================================================
 // AuthContext extractor：handler 通过 Extension<AuthContext> 访问

@@ -222,7 +222,8 @@ mod tests {
 
     #[test]
     fn with_normal_model_just_scrubs() {
-        let out = with_recovery_model_profile_hint(&sample(), RecoveryModelProfileWorkClass::NormalModel);
+        let out =
+            with_recovery_model_profile_hint(&sample(), RecoveryModelProfileWorkClass::NormalModel);
         // 不应注入 modelProfile / guard 字段
         assert!(!out.contains_key("modelProfile"));
         assert!(!out.contains_key("recoveryIntent"));
@@ -233,7 +234,8 @@ mod tests {
 
     #[test]
     fn with_status_only_injects_guards_and_profile() {
-        let out = with_recovery_model_profile_hint(&sample(), RecoveryModelProfileWorkClass::StatusOnly);
+        let out =
+            with_recovery_model_profile_hint(&sample(), RecoveryModelProfileWorkClass::StatusOnly);
         // guard context
         assert_eq!(out.get("recoveryIntent"), Some(&json!("status_only")));
         assert_eq!(out.get("allowDeliverableWork"), Some(&json!(false)));
@@ -250,7 +252,8 @@ mod tests {
     fn with_status_only_overrides_existing_hints() {
         let mut input = sample();
         input.insert("allowDeliverableWork".to_string(), json!(true));
-        let out = with_recovery_model_profile_hint(&input, RecoveryModelProfileWorkClass::StatusOnly);
+        let out =
+            with_recovery_model_profile_hint(&input, RecoveryModelProfileWorkClass::StatusOnly);
         // 被 status_only guard 覆盖为 false
         assert_eq!(out.get("allowDeliverableWork"), Some(&json!(false)));
     }
@@ -260,7 +263,8 @@ mod tests {
         let mut input = empty();
         input.insert("recoveryIntent".to_string(), json!("status_only"));
         input.insert("allowDeliverableWork".to_string(), json!(false));
-        let out = with_recovery_model_profile_hint(&input, RecoveryModelProfileWorkClass::NormalModel);
+        let out =
+            with_recovery_model_profile_hint(&input, RecoveryModelProfileWorkClass::NormalModel);
         assert!(!out.contains_key("recoveryIntent"));
         assert!(!out.contains_key("allowDeliverableWork"));
     }

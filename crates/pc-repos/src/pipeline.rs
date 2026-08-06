@@ -614,7 +614,7 @@ impl<'a> PipelineRepo<'a> {
         .await
     }
 
-/// Round 110: 最小化 INSERT pipeline_cases 用于批量创建。
+    /// Round 110: 最小化 INSERT pipeline_cases 用于批量创建。
     /// 真实 schema 要求 stage_id NOT NULL，所以 caller 必须提供。
     #[allow(clippy::too_many_arguments)]
     pub async fn create_case_minimal(
@@ -645,34 +645,24 @@ impl<'a> PipelineRepo<'a> {
     // ---- Round 110 仓储化补丁 ----
 
     /// Round 110: 读 pipeline_stage.config (jsonb) 用于合并更新 automation_env。
-    pub async fn get_stage_config(
-        &self,
-        stage_id: Uuid,
-    ) -> sqlx::Result<Option<Value>> {
-        let row: Option<(Value,)> = sqlx::query_as(
-            "SELECT config FROM pipeline_stages WHERE id=$1",
-        )
-        .bind(stage_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn get_stage_config(&self, stage_id: Uuid) -> sqlx::Result<Option<Value>> {
+        let row: Option<(Value,)> =
+            sqlx::query_as("SELECT config FROM pipeline_stages WHERE id=$1")
+                .bind(stage_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(v,)| v))
     }
 
     /// Round 110: 写 pipeline_stage.config (整体覆盖)。
     /// 返回受影响行数（0 = 找不到 stage）。
-    pub async fn set_stage_config(
-        &self,
-        stage_id: Uuid,
-        config: &Value,
-    ) -> sqlx::Result<bool> {
-        let n = sqlx::query(
-            "UPDATE pipeline_stages SET config=$1, updated_at=now() WHERE id=$2",
-        )
-        .bind(config)
-        .bind(stage_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn set_stage_config(&self, stage_id: Uuid, config: &Value) -> sqlx::Result<bool> {
+        let n = sqlx::query("UPDATE pipeline_stages SET config=$1, updated_at=now() WHERE id=$2")
+            .bind(config)
+            .bind(stage_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
 
@@ -749,16 +739,11 @@ impl<'a> PipelineRepo<'a> {
     }
 
     /// Round 110: pipeline 反查 company_id（generate_cases_batch 用）。
-    pub async fn company_id_for_pipeline(
-        &self,
-        pipeline_id: Uuid,
-    ) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM pipelines WHERE id=$1",
-        )
-        .bind(pipeline_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn company_id_for_pipeline(&self, pipeline_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM pipelines WHERE id=$1")
+            .bind(pipeline_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 
@@ -767,16 +752,12 @@ impl<'a> PipelineRepo<'a> {
     // ============================================================================
 
     /// Round 157: 统计某 pipeline 的 case 总数。
-    pub async fn count_cases_by_pipeline(
-        &self,
-        pipeline_id: Uuid,
-    ) -> sqlx::Result<i64> {
-        let v: Option<i64> = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pipeline_cases WHERE pipeline_id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn count_cases_by_pipeline(&self, pipeline_id: Uuid) -> sqlx::Result<i64> {
+        let v: Option<i64> =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pipeline_cases WHERE pipeline_id = $1")
+                .bind(pipeline_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(v.unwrap_or(0))
     }
 
@@ -800,12 +781,11 @@ impl<'a> PipelineRepo<'a> {
         &self,
         pipeline_id: Uuid,
     ) -> sqlx::Result<Option<serde_json::Value>> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
-            "SELECT config FROM pipelines WHERE id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(serde_json::Value,)> =
+            sqlx::query_as("SELECT config FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(v,)| v))
     }
 
@@ -840,7 +820,16 @@ impl<'a> PipelineRepo<'a> {
         &self,
         company_id: Uuid,
         limit: i64,
-    ) -> sqlx::Result<Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)>> {
+    ) -> sqlx::Result<
+        Vec<(
+            Uuid,
+            String,
+            Option<String>,
+            i64,
+            i64,
+            chrono::DateTime<chrono::Utc>,
+        )>,
+    > {
         let rows: Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
             "SELECT p.id, p.name, p.description, \
                     count(case_review.id) FILTER (WHERE case_review.status = 'in_review') AS review_count, \
@@ -901,10 +890,7 @@ impl<'a> PipelineRepo<'a> {
     }
 
     /// Round 157: 取 case 的 (company_id, pipeline_id, version)。
-    pub async fn get_case_triple(
-        &self,
-        case_id: Uuid,
-    ) -> sqlx::Result<Option<(Uuid, Uuid, i32)>> {
+    pub async fn get_case_triple(&self, case_id: Uuid) -> sqlx::Result<Option<(Uuid, Uuid, i32)>> {
         let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
             "SELECT company_id, pipeline_id, version FROM pipeline_cases WHERE id = $1",
         )
@@ -915,10 +901,7 @@ impl<'a> PipelineRepo<'a> {
     }
 
     /// Round 157: 自增 case version 并返回新值。
-    pub async fn increment_case_version(
-        &self,
-        case_id: Uuid,
-    ) -> sqlx::Result<i32> {
+    pub async fn increment_case_version(&self, case_id: Uuid) -> sqlx::Result<i32> {
         let v: i32 = sqlx::query_scalar(
             "UPDATE pipeline_cases SET version = version + 1, updated_at = now() \
              WHERE id = $1 RETURNING version",
@@ -949,16 +932,12 @@ impl<'a> PipelineRepo<'a> {
     }
 
     /// Round 157: 取 case 的 company_id。
-    pub async fn get_case_company_id(
-        &self,
-        case_id: Uuid,
-    ) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM pipeline_cases WHERE id = $1",
-        )
-        .bind(case_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn get_case_company_id(&self, case_id: Uuid) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM pipeline_cases WHERE id = $1")
+                .bind(case_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(c,)| c))
     }
 

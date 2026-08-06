@@ -9,9 +9,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -178,7 +176,10 @@ async fn find_one_comment_basic() {
     assert!(hit.is_some());
 
     // miss
-    let miss = repo.find_one_comment(iid, Uuid::new_v4()).await.expect("miss");
+    let miss = repo
+        .find_one_comment(iid, Uuid::new_v4())
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 
@@ -189,7 +190,10 @@ async fn issue_doc_exists_basic() {
     let cid = insert_company(&db, "ide1").await;
     let iid = insert_issue(&db, cid, "open", "medium").await;
     let repo = IssueRepo::new(&db);
-    let miss = repo.issue_doc_exists(iid, "missing-key").await.expect("miss");
+    let miss = repo
+        .issue_doc_exists(iid, "missing-key")
+        .await
+        .expect("miss");
     assert!(!miss);
 
     sqlx::query(
@@ -201,7 +205,10 @@ async fn issue_doc_exists_basic() {
     .await
     .expect("doc");
 
-    let hit = repo.issue_doc_exists(iid, "existing-key").await.expect("hit");
+    let hit = repo
+        .issue_doc_exists(iid, "existing-key")
+        .await
+        .expect("hit");
     assert!(hit);
 }
 
@@ -214,11 +221,17 @@ async fn issue_doc_lifecycle() {
     let repo = IssueRepo::new(&db);
 
     // insert
-    let ok = repo.insert_issue_doc(iid, "k1", &json!("v1"), Some("title-1")).await.expect("insert");
+    let ok = repo
+        .insert_issue_doc(iid, "k1", &json!("v1"), Some("title-1"))
+        .await
+        .expect("insert");
     assert!(ok);
 
     // update
-    let upd = repo.update_issue_doc_content(iid, "k1", &json!("v2")).await.expect("update");
+    let upd = repo
+        .update_issue_doc_content(iid, "k1", &json!("v2"))
+        .await
+        .expect("update");
     assert!(upd);
 
     // exists
@@ -226,7 +239,10 @@ async fn issue_doc_lifecycle() {
 
     // set_revision
     let rid = Uuid::new_v4();
-    let n = repo.set_issue_doc_current_revision(iid, "k1", rid).await.expect("set_rev");
+    let n = repo
+        .set_issue_doc_current_revision(iid, "k1", rid)
+        .await
+        .expect("set_rev");
     assert!(n > 0);
 
     // soft delete
@@ -270,7 +286,10 @@ async fn attachment_content_meta_basic() {
     assert_eq!(row.0, cid);
     assert_eq!(row.1, "local_fs");
 
-    let miss = repo.attachment_content_meta(Uuid::new_v4()).await.expect("miss");
+    let miss = repo
+        .attachment_content_meta(Uuid::new_v4())
+        .await
+        .expect("miss");
     assert!(miss.is_none());
 }
 
@@ -282,7 +301,10 @@ async fn recent_runs_for_issue_basic() {
     let db = db().await;
     let _cid = insert_company(&db, "rrfi1").await;
     let repo = HeartbeatRepo::new(&db);
-    let rows = repo.recent_runs_for_issue(Uuid::new_v4(), 5).await.expect("get");
+    let rows = repo
+        .recent_runs_for_issue(Uuid::new_v4(), 5)
+        .await
+        .expect("get");
     let _ = rows;
 }
 
@@ -292,6 +314,9 @@ async fn count_active_runs_for_issue_basic() {
     let db = db().await;
     let _cid = insert_company(&db, "carfi1").await;
     let repo = HeartbeatRepo::new(&db);
-    let n = repo.count_active_runs_for_issue(Uuid::new_v4()).await.expect("count");
+    let n = repo
+        .count_active_runs_for_issue(Uuid::new_v4())
+        .await
+        .expect("count");
     assert_eq!(n, 0);
 }

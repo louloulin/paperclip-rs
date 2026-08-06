@@ -2,11 +2,11 @@
 
 use super::*;
 use crate::folder::hierarchy::descendant_ids_from_rows;
-use crate::RepoError;
 use crate::folder::slug::{
     is_reserved_root_slug, normalize_folder_slug, MAX_FOLDER_DEPTH, RESERVED_CHILD_ROOT_SYSTEM_KEYS,
 };
 use crate::folder::view::build_folder_views;
+use crate::RepoError;
 
 fn row(id: &str, parent: Option<&str>, slug: &str, name: &str) -> FolderRow {
     FolderRow {
@@ -125,12 +125,7 @@ fn descendant_ids_returns_self_and_children() {
 
 #[test]
 fn descendant_ids_returns_error_for_missing_root() {
-    let rows = vec![row(
-        "11111111-1111-1111-1111-111111111111",
-        None,
-        "a",
-        "A",
-    )];
+    let rows = vec![row("11111111-1111-1111-1111-111111111111", None, "a", "A")];
     let err = descendant_ids_from_rows(&rows, Uuid::new_v4());
     assert!(matches!(err, Err(RepoError::Invalid(_))));
 }
@@ -157,7 +152,12 @@ fn descendant_ids_returns_error_for_cycle() {
 
 #[test]
 fn build_folder_views_computes_path_and_depth() {
-    let a = row("11111111-1111-1111-1111-111111111111", None, "alpha", "Alpha");
+    let a = row(
+        "11111111-1111-1111-1111-111111111111",
+        None,
+        "alpha",
+        "Alpha",
+    );
     let b = row(
         "22222222-2222-2222-2222-222222222222",
         Some("11111111-1111-1111-1111-111111111111"),

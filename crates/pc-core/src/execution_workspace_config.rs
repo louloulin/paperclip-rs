@@ -45,16 +45,36 @@ pub struct ExecutionWorkspaceConfig {
 impl ExecutionWorkspaceConfig {
     /// 是否至少有一个字段是"非空"值（用于决定是否要写入 metadata）。
     pub fn has_any_value(&self) -> bool {
-        let eid = self.environment_id.as_ref().map(|x| x.is_some()).unwrap_or(false);
-        let prov = self.provision_command.as_ref().map(|x| x.is_some()).unwrap_or(false);
-        let td = self.teardown_command.as_ref().map(|x| x.is_some()).unwrap_or(false);
-        let cl = self.cleanup_command.as_ref().map(|x| x.is_some()).unwrap_or(false);
+        let eid = self
+            .environment_id
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false);
+        let prov = self
+            .provision_command
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false);
+        let td = self
+            .teardown_command
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false);
+        let cl = self
+            .cleanup_command
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false);
         let wr = self
             .workspace_runtime
             .as_ref()
             .map(|x| x.as_ref().map(|m| !m.is_empty()).unwrap_or(false))
             .unwrap_or(false);
-        let ds = self.desired_state.as_ref().map(|x| x.is_some()).unwrap_or(false);
+        let ds = self
+            .desired_state
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false);
         let ss = self
             .service_states
             .as_ref()
@@ -93,7 +113,10 @@ fn read_service_states(value: Option<&Value>) -> Option<ServiceStateMap> {
     let mut out = ServiceStateMap::new();
     for (k, v) in obj {
         if let Some(s) = v.as_str() {
-            if matches!(s, DESIRED_STATE_RUNNING | DESIRED_STATE_STOPPED | DESIRED_STATE_MANUAL) {
+            if matches!(
+                s,
+                DESIRED_STATE_RUNNING | DESIRED_STATE_STOPPED | DESIRED_STATE_MANUAL
+            ) {
                 out.insert(k.clone(), s.to_string());
             }
         }
@@ -139,7 +162,9 @@ impl FlatExecutionWorkspaceConfig {
 pub fn read_execution_workspace_config(
     metadata: Option<&Map<String, Value>>,
 ) -> Option<ExecutionWorkspaceConfig> {
-    let raw = metadata.and_then(|m| m.get("config")).and_then(|v| v.as_object())?;
+    let raw = metadata
+        .and_then(|m| m.get("config"))
+        .and_then(|v| v.as_object())?;
     let flat = FlatExecutionWorkspaceConfig {
         environment_id: read_nullable_string(raw.get("environmentId")),
         provision_command: read_nullable_string(raw.get("provisionCommand")),
@@ -174,7 +199,11 @@ pub fn merge_execution_workspace_config(
 
     if patch.is_none() {
         next_metadata.remove("config");
-        return if next_metadata.is_empty() { None } else { Some(next_metadata) };
+        return if next_metadata.is_empty() {
+            None
+        } else {
+            Some(next_metadata)
+        };
     }
 
     let current_flat = read_flat(metadata);
@@ -358,9 +387,17 @@ mod tests {
         assert_eq!(s.provision_command, Some(Some("pnpm i".to_string())));
         assert_eq!(s.teardown_command, Some(None));
         assert_eq!(s.cleanup_command, Some(Some("rm".to_string())));
-        assert!(s.workspace_runtime.as_ref().map(|x| x.is_some()).unwrap_or(false));
+        assert!(s
+            .workspace_runtime
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false));
         assert_eq!(s.desired_state, Some(Some("running".to_string())));
-        assert!(s.service_states.as_ref().map(|x| x.is_some()).unwrap_or(false));
+        assert!(s
+            .service_states
+            .as_ref()
+            .map(|x| x.is_some())
+            .unwrap_or(false));
     }
 
     #[test]
@@ -410,8 +447,14 @@ mod tests {
         let next = merge_execution_workspace_config(Some(&m), Some(&patch)).unwrap();
         let c = next.get("config").and_then(|v| v.as_object()).unwrap();
         // Node 合并后所有 7 个字段都在
-        assert_eq!(c.get("provisionCommand").and_then(|v| v.as_str()), Some("npm i"));
-        assert_eq!(c.get("teardownCommand").and_then(|v| v.as_str()), Some("rm"));
+        assert_eq!(
+            c.get("provisionCommand").and_then(|v| v.as_str()),
+            Some("npm i")
+        );
+        assert_eq!(
+            c.get("teardownCommand").and_then(|v| v.as_str()),
+            Some("rm")
+        );
         assert!(c.get("environmentId").map(|v| v.is_null()).unwrap_or(false));
     }
 
@@ -458,6 +501,9 @@ mod tests {
         let s = read_execution_workspace_config(Some(&next)).unwrap();
         assert_eq!(s.environment_id, Some(Some("env-1".to_string())));
         assert_eq!(s.provision_command, Some(Some("pnpm i".to_string())));
-        assert_eq!(s.desired_state, Some(Some(DESIRED_STATE_RUNNING.to_string())));
+        assert_eq!(
+            s.desired_state,
+            Some(Some(DESIRED_STATE_RUNNING.to_string()))
+        );
     }
 }

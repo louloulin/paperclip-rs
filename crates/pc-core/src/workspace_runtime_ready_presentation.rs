@@ -98,7 +98,10 @@ pub fn workspace_ready_service_label(service_name: &str) -> String {
     let label = if label.is_empty() { "Service" } else { label };
     if label.chars().count() > COMMENT_METADATA_LABEL_MAX_LENGTH {
         // 截断时按字符计数（Node slice 按 UTF-16 code unit，但我们用 chars 更稳）
-        let mut s: String = label.chars().take(COMMENT_METADATA_LABEL_MAX_LENGTH - 1).collect();
+        let mut s: String = label
+            .chars()
+            .take(COMMENT_METADATA_LABEL_MAX_LENGTH - 1)
+            .collect();
         s.push('…');
         s
     } else {
@@ -138,7 +141,11 @@ pub fn build_workspace_ready_presentation(
 
     IssueCommentPresentation {
         kind: "system_notice".to_string(),
-        tone: if has_warnings { "warning".to_string() } else { "info".to_string() },
+        tone: if has_warnings {
+            "warning".to_string()
+        } else {
+            "info".to_string()
+        },
         title: final_title,
         density: "compact".to_string(),
         details_default_open: has_warnings,
@@ -155,9 +162,7 @@ pub fn build_workspace_ready_presentation(
 /// - sections[0] = Workspace (Strategy/Branch/CWD/Worktree)
 /// - 可选 Services section
 /// - 可选 Warnings section
-pub fn build_workspace_ready_metadata(
-    input: &WorkspaceReadyCommentInput,
-) -> IssueCommentMetadata {
+pub fn build_workspace_ready_metadata(input: &WorkspaceReadyCommentInput) -> IssueCommentMetadata {
     let mut workspace_rows: Vec<MetadataRow> = Vec::new();
     workspace_rows.push(MetadataRow::KeyValue {
         label: "Strategy".to_string(),
@@ -341,7 +346,10 @@ pub fn stable_runtime_service_id(input: &StableRuntimeServiceIdInput) -> String 
         }
     }
     let mut obj: Map<String, Value> = Map::new();
-    obj.insert("adapterType".into(), Value::String(input.adapter_type.clone()));
+    obj.insert(
+        "adapterType".into(),
+        Value::String(input.adapter_type.clone()),
+    );
     obj.insert("runId".into(), Value::String(input.run_id.clone()));
     obj.insert(
         "scopeType".into(),
@@ -352,7 +360,10 @@ pub fn stable_runtime_service_id(input: &StableRuntimeServiceIdInput) -> String 
     } else {
         obj.insert("scopeId".into(), Value::Null);
     }
-    obj.insert("serviceName".into(), Value::String(input.service_name.clone()));
+    obj.insert(
+        "serviceName".into(),
+        Value::String(input.service_name.clone()),
+    );
     if let Some(pr) = &input.provider_ref {
         obj.insert("providerRef".into(), Value::String(pr.clone()));
     } else {
@@ -662,8 +673,14 @@ mod tests {
     #[test]
     fn scope_type_as_str_matches_node() {
         assert_eq!(RuntimeServiceScopeType::Project.as_str(), "project");
-        assert_eq!(RuntimeServiceScopeType::ProjectWorkspace.as_str(), "project_workspace");
-        assert_eq!(RuntimeServiceScopeType::ExecutionWorkspace.as_str(), "execution_workspace");
+        assert_eq!(
+            RuntimeServiceScopeType::ProjectWorkspace.as_str(),
+            "project_workspace"
+        );
+        assert_eq!(
+            RuntimeServiceScopeType::ExecutionWorkspace.as_str(),
+            "execution_workspace"
+        );
         assert_eq!(RuntimeServiceScopeType::Issue.as_str(), "issue");
     }
 }

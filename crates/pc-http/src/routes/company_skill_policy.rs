@@ -63,7 +63,10 @@ fn default_policy(company_id: Uuid) -> Value {
 }
 
 async fn read(state: &AppState, company_id: Uuid) -> ApiResult<Value> {
-    match CompanySkillPolicyRepo::new(&state.db).fetch(company_id).await? {
+    match CompanySkillPolicyRepo::new(&state.db)
+        .fetch(company_id)
+        .await?
+    {
         Some(row) => Ok(policy_json(&row)),
         None => Ok(default_policy(company_id)),
     }
@@ -104,7 +107,9 @@ async fn delete_skill_policy(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    CompanySkillPolicyRepo::new(&state.db).delete(company_id).await?;
+    CompanySkillPolicyRepo::new(&state.db)
+        .delete(company_id)
+        .await?;
     Ok((
         StatusCode::OK,
         Json(json!({ "deleted": true, "companyId": company_id })),
@@ -191,7 +196,10 @@ async fn evaluate_skill_policy(
         if !resource_matches(rule, &resource) {
             continue;
         }
-        let effect = rule.get("effect").and_then(|v| v.as_str()).unwrap_or("allow");
+        let effect = rule
+            .get("effect")
+            .and_then(|v| v.as_str())
+            .unwrap_or("allow");
         let rule_id = rule.get("id").and_then(|v| v.as_str()).map(String::from);
         return Ok(Json(json!({
             "allowed": effect == "allow",
@@ -331,23 +339,41 @@ mod round214_tests {
     #[test]
     fn subject_matches_agent_id_specific() {
         let r = json!({ "subject": { "kind": "agent", "agentId": "abc" } });
-        assert!(subject_matches(&r, &json!({ "kind": "agent", "agentId": "abc" })));
-        assert!(!subject_matches(&r, &json!({ "kind": "agent", "agentId": "xyz" })));
-        assert!(!subject_matches(&r, &json!({ "kind": "role", "role": "agent" })));
+        assert!(subject_matches(
+            &r,
+            &json!({ "kind": "agent", "agentId": "abc" })
+        ));
+        assert!(!subject_matches(
+            &r,
+            &json!({ "kind": "agent", "agentId": "xyz" })
+        ));
+        assert!(!subject_matches(
+            &r,
+            &json!({ "kind": "role", "role": "agent" })
+        ));
     }
 
     #[test]
     fn subject_matches_role_specific() {
         let r = json!({ "subject": { "kind": "role", "role": "admin" } });
-        assert!(subject_matches(&r, &json!({ "kind": "role", "role": "admin" })));
-        assert!(!subject_matches(&r, &json!({ "kind": "role", "role": "member" })));
+        assert!(subject_matches(
+            &r,
+            &json!({ "kind": "role", "role": "admin" })
+        ));
+        assert!(!subject_matches(
+            &r,
+            &json!({ "kind": "role", "role": "member" })
+        ));
     }
 
     #[test]
     fn subject_matches_no_subject_field_means_match_all() {
         // 规则没有 subject → 匹配任何 principal
         let r = json!({ "actions": ["x"] });
-        assert!(subject_matches(&r, &json!({ "kind": "agent", "agentId": "any" })));
+        assert!(subject_matches(
+            &r,
+            &json!({ "kind": "agent", "agentId": "any" })
+        ));
     }
 
     #[test]
@@ -374,9 +400,18 @@ mod round214_tests {
     #[test]
     fn resource_matches_multiple_selectors_and_logic() {
         let r = json!({ "resources": { "skillKey": "k1", "sourceType": "bundled" } });
-        assert!(resource_matches(&r, &json!({ "skillKey": "k1", "sourceType": "bundled" })));
-        assert!(!resource_matches(&r, &json!({ "skillKey": "k1", "sourceType": "external" })));
-        assert!(!resource_matches(&r, &json!({ "skillKey": "k2", "sourceType": "bundled" })));
+        assert!(resource_matches(
+            &r,
+            &json!({ "skillKey": "k1", "sourceType": "bundled" })
+        ));
+        assert!(!resource_matches(
+            &r,
+            &json!({ "skillKey": "k1", "sourceType": "external" })
+        ));
+        assert!(!resource_matches(
+            &r,
+            &json!({ "skillKey": "k2", "sourceType": "bundled" })
+        ));
     }
 
     #[test]

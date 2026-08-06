@@ -15,8 +15,8 @@ use serde_json::Value;
 use super::filter::passes_filter;
 use super::pattern::{matches_pattern, namespaced_event_type, validate_event_name};
 use super::types::{
-    AsyncHandler, EventFilter, PluginEvent, PluginEventBusDeliveryError,
-    PluginEventBusEmitResult, ScopedBusError, Subscription,
+    AsyncHandler, EventFilter, PluginEvent, PluginEventBusDeliveryError, PluginEventBusEmitResult,
+    ScopedBusError, Subscription,
 };
 
 // ============================================================================
@@ -96,7 +96,10 @@ impl PluginEventBus {
 
     /// 清除某个 plugin 的所有订阅（worker 关闭 / 卸载时调用）。
     pub fn clear_plugin(&self, plugin_id: &str) {
-        self.registry.lock().expect("registry poisoned").remove(plugin_id);
+        self.registry
+            .lock()
+            .expect("registry poisoned")
+            .remove(plugin_id);
     }
 
     /// 返回某个 plugin 的订阅数量（用于测试 / 诊断；与 Node `subscriptionCount` 1:1 对齐）。
@@ -221,4 +224,3 @@ pub enum FilterOrHandler<H> {
 // ============================================================================
 // Convenience: namespace constant re-export
 // ============================================================================
-

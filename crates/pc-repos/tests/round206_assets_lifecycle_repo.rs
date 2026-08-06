@@ -12,9 +12,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -44,12 +42,7 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn make_asset(
-    db: &Db,
-    company_id: Uuid,
-    provider: &str,
-    key: &str,
-) -> Uuid {
+async fn make_asset(db: &Db, company_id: Uuid, provider: &str, key: &str) -> Uuid {
     let rec = CreateAssetRecord::new(
         provider.to_owned(),
         key.to_owned(),

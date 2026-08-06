@@ -12,7 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::workspace_branch_incoherence::{BranchIncoherenceInput, fingerprint_workspace_branch_incoherence};
+use crate::workspace_branch_incoherence::{
+    fingerprint_workspace_branch_incoherence, BranchIncoherenceInput,
+};
 
 /// 与 Node `ExecutionWorkspaceBranchRefResolution` 1:1 对齐。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -263,7 +265,10 @@ mod tests {
     fn reconcile_mode_strings_match_node() {
         assert_eq!(ReconcileMode::Forward.as_str(), "forward");
         assert_eq!(ReconcileMode::Override.as_str(), "override");
-        assert_eq!(ReconcileMode::QuarantineRestore.as_str(), "quarantine_restore");
+        assert_eq!(
+            ReconcileMode::QuarantineRestore.as_str(),
+            "quarantine_restore"
+        );
     }
 
     #[test]

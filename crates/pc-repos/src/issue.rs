@@ -219,7 +219,6 @@ pub struct DecomposeAcceptedPlanOutcome {
     pub created_child_ids: Vec<Uuid>,
 }
 
-
 /// Round 229: 完整 create issue 输入结构（对应 Node `createIssueBaseSchema`）。
 ///
 /// 与 `IssuePlanChildInput` 不同 — 此结构覆盖所有 20+ Node 字段，
@@ -277,6 +276,17 @@ pub struct UpdateIssuePatch<'a> {
     pub execution_workspace_settings: Option<Option<&'a Value>>,
     pub unblock_descriptor: Option<Option<&'a Value>>,
     pub hidden_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    // ── Round 281: execution policy / monitor write-through ──
+    // 与 Node `applyIssueExecutionPolicyTransition` 输出对齐：
+    // - `execution_state` 来自 transition 派生
+    // - `monitor_*` 来自 transition 派生（policy.monitor 状态机）
+    pub execution_state: Option<Option<&'a Value>>,
+    pub monitor_next_check_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    pub monitor_wake_requested_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    pub monitor_last_triggered_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    pub monitor_attempt_count: Option<i32>,
+    pub monitor_notes: Option<Option<&'a str>>,
+    pub monitor_scheduled_by: Option<Option<&'a str>>,
     pub reopen: bool,
     pub resume: bool,
     pub interrupt: bool,
@@ -315,7 +325,6 @@ pub struct CreateChildIssueInput<'a> {
     /// blockParentUntilDone — child 子 schema 扩展字段。
     pub block_parent_until_done: bool,
 }
-
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct FeedbackVoteRow {
@@ -471,6 +480,35 @@ pub struct IssueRecoveryActionRow {
     pub updated_at: Timestamp,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct ProductivityReviewAttentionRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub origin_id: Option<Uuid>,
+    pub origin_fingerprint: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct ReviewAttentionRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub assignee_user_id: Option<String>,
+    pub execution_state: Option<serde_json::Value>,
+    pub has_pending_approval: bool,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
 /// `upsert_recovery_action` 的输入。
 ///
 /// 字段语义与 Node `UpsertIssueRecoveryActionInput` 对齐：
@@ -534,7 +572,13 @@ const ISSUE_COLS: &str = "id, company_id, project_id, project_workspace_id, goal
     started_at, completed_at, cancelled_at, hidden_at, created_at, updated_at";
 
 const ISSUE_STATUSES: [&str; 7] = [
-    "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
+    "backlog",
+    "todo",
+    "in_progress",
+    "in_review",
+    "done",
+    "blocked",
+    "cancelled",
 ];
 
 fn valid_issue_status(status: &str) -> bool {
@@ -548,6 +592,7 @@ pub struct BlockedAttentionRow {
     pub title: String,
     pub priority: String,
     pub updated_at: pc_core::Timestamp,
+    pub sample_blocker_identifier: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
@@ -673,7 +718,7 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
-/// Round 107: 列出指派给 agent 的活跃 issues (status in todo/in_progress/blocked
+    /// Round 107: 列出指派给 agent 的活跃 issues (status in todo/in_progress/blocked
     /// 且未被 hidden)。专门用于 `GET /agents/me/inbox/lite` 这种轻量自查询端点。
     pub async fn list_assigned_active(
         &self,
@@ -691,7 +736,7 @@ impl<'a> IssueRepo<'a> {
             .fetch_all(self.db.pool())
             .await
     }
-/// Round 108: 列某个 agent 被指派的 issues，按 status 多值 + responsible_user_id 过滤。
+    /// Round 108: 列某个 agent 被指派的 issues，按 status 多值 + responsible_user_id 过滤。
     /// `statuses_csv` 例如 "todo,in_progress,blocked"，会被 `string_to_array` 拆分。
     /// `responsible_user_id` 为 Some("") 时不过滤；为 None 时也不过滤；为 Some(other) 时按精确匹配。
     pub async fn list_assigned_filtered(
@@ -715,14 +760,91 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
-
-
-        /// Round 126: 统计 company 的 issue 总数。
-    pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM issues WHERE company_id=$1")
+    /// Round 292: 列出某 company 中状态在 (todo/in_progress/in_review) 且
+    /// 未隐藏的 issues，用于 recovery sweep 候选扫描。
+    pub async fn list_stranded_candidates(
+        &self,
+        company_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<IssueRow>> {
+        let sql = format!(
+            "SELECT {ISSUE_COLS} FROM issues              WHERE company_id=$1              AND status IN ('todo','in_progress','in_review')              AND hidden_at IS NULL              AND (assignee_agent_id IS NOT NULL OR status = 'in_review')              ORDER BY updated_at DESC LIMIT $2"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
             .bind(company_id)
-            .fetch_one(self.db.pool())
-            .await?;
+            .bind(limit.clamp(1, 1000))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// Round 292: 列出某 company 的所有 stranded candidates（不带 limit 过滤），用于批量 sweep。
+    pub async fn list_all_stranded_candidates(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueRow>> {
+        let sql = format!(
+            "SELECT {ISSUE_COLS} FROM issues              WHERE company_id=$1              AND status IN ('todo','in_progress','in_review')              AND hidden_at IS NULL              AND (assignee_agent_id IS NOT NULL OR status = 'in_review')              ORDER BY updated_at ASC"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// Round 292: 检测 issue 是否仍有 active heartbeat run 占用执行路径。
+    pub async fn has_active_execution_path(&self, issue_id: Uuid) -> sqlx::Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM heartbeat_runs              WHERE context_snapshot->>'issueId' = $1              AND status::text IN ('queued','claimed','running','paused')",
+        )
+        .bind(issue_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c > 0).unwrap_or(false))
+    }
+
+    /// Round 306: 检测 issue 是否仍有 queued wakeup 等待（payload.issueId = issue_id）。
+    /// 与 Node `hasQueuedIssueWake` 对齐。
+    pub async fn has_queued_issue_wake(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        agent_id: Option<Uuid>,
+    ) -> sqlx::Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM agent_wakeup_requests              WHERE company_id = $1 AND status::text = 'queued'              AND payload->>'issueId' = $2              AND ($3::uuid IS NULL OR agent_id = $3)",
+        )
+        .bind(company_id)
+        .bind(issue_id.to_string())
+        .bind(agent_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c > 0).unwrap_or(false))
+    }
+
+    /// Round 306: 检测 issue 是否有待处理的 wake interaction（pending 状态 + wake_assignee / wake_assignee_on_accept 策略）。
+    /// 与 Node `hasPendingWakeInteraction` 对齐。
+    pub async fn has_pending_wake_interaction_for_issue(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM issue_thread_interactions              WHERE company_id = $1 AND issue_id = $2              AND status::text = 'pending'              AND continuation_policy IN ('wake_assignee', 'wake_assignee_on_accept')",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(c,)| c > 0).unwrap_or(false))
+    }
+
+    /// Round 126: 统计 company 的 issue 总数。
+    pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM issues WHERE company_id=$1")
+                .bind(company_id)
+                .fetch_one(self.db.pool())
+                .await?;
         Ok(count)
     }
 
@@ -743,10 +865,13 @@ impl<'a> IssueRepo<'a> {
         company_id: Uuid,
     ) -> sqlx::Result<Vec<BlockedAttentionRow>> {
         sqlx::query_as::<_, BlockedAttentionRow>(
-            "SELECT id, identifier, title, priority, updated_at FROM issues \
-             WHERE company_id = $1 AND status = 'blocked' AND hidden_at IS NULL \
+            "SELECT i.id, i.identifier, i.title, i.priority, i.updated_at, blocker.identifier AS sample_blocker_identifier FROM issues i \
+             LEFT JOIN LATERAL (SELECT b.identifier FROM issue_relations ir JOIN issues b ON b.id=ir.issue_id AND b.company_id=ir.company_id \
+               WHERE ir.company_id=i.company_id AND ir.related_issue_id=i.id AND ir.type='blocks' AND b.hidden_at IS NULL \
+               ORDER BY b.updated_at DESC LIMIT 1) blocker ON true \
+             WHERE i.company_id = $1 AND i.status = 'blocked' AND i.hidden_at IS NULL \
                AND harness_kind IS NULL \
-             ORDER BY updated_at DESC LIMIT 100",
+             ORDER BY i.updated_at DESC LIMIT 100",
         )
         .bind(company_id)
         .fetch_all(self.db.pool())
@@ -808,11 +933,10 @@ impl<'a> IssueRepo<'a> {
 
     /// Round 180: file_resources resolve —— 仅用于检查 issue 是否存在（接口语义保留：返回 unresolved 占位）。
     pub async fn exists_for_resolution(&self, issue_id: Uuid) -> sqlx::Result<bool> {
-        let row: Option<(Uuid,)> =
-            sqlx::query_as("SELECT id FROM issues WHERE id = $1 LIMIT 1")
-                .bind(issue_id)
-                .fetch_optional(self.db.pool())
-                .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM issues WHERE id = $1 LIMIT 1")
+            .bind(issue_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.is_some())
     }
 
@@ -870,8 +994,6 @@ impl<'a> IssueRepo<'a> {
         Ok(n > 0)
     }
 
-
-
     pub async fn get(&self, id: Uuid) -> sqlx::Result<Option<IssueRow>> {
         let sql = format!("SELECT {ISSUE_COLS} FROM issues WHERE id = $1");
         sqlx::query_as::<_, IssueRow>(&sql)
@@ -883,11 +1005,7 @@ impl<'a> IssueRepo<'a> {
     // ---------- create / update / delete ----------
 
     /// Round 163: 给 skill test run 创建 harness issue（专用 status='todo'，固定 title）。
-    pub async fn create_harness_issue(
-        &self,
-        company_id: Uuid,
-        issue_id: Uuid,
-    ) -> sqlx::Result<()> {
+    pub async fn create_harness_issue(&self, company_id: Uuid, issue_id: Uuid) -> sqlx::Result<()> {
         let now = chrono::Utc::now();
         sqlx::query(
             "INSERT INTO issues (id, company_id, title, status, created_at, updated_at)
@@ -952,10 +1070,7 @@ impl<'a> IssueRepo<'a> {
 
     /// 与 Node 版 cleanupCreatedHarnessIssue 对齐：当 test run INSERT 失败时，
     /// 隐藏对应 harness issue 并标 cancelled。失败时不抛错（best-effort）。
-    pub async fn hide_issue_as_skill_test_cleanup(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<()> {
+    pub async fn hide_issue_as_skill_test_cleanup(&self, issue_id: Uuid) -> sqlx::Result<()> {
         sqlx::query(
             "UPDATE issues SET status='cancelled', hidden_at=now(), updated_at=now() \
              WHERE id=$1 AND hidden_at IS NULL",
@@ -1015,16 +1130,23 @@ impl<'a> IssueRepo<'a> {
 
         if let Some(status) = status {
             if !valid_issue_status(status) {
-                return Err(sqlx::Error::Protocol(format!("unknown issue status: {status}")));
+                return Err(sqlx::Error::Protocol(format!(
+                    "unknown issue status: {status}"
+                )));
             }
             let next_assignee = assignee_agent_id.unwrap_or(existing.assignee_agent_id);
-            if status == "in_progress" && next_assignee.is_none() && existing.assignee_user_id.is_none() {
+            if status == "in_progress"
+                && next_assignee.is_none()
+                && existing.assignee_user_id.is_none()
+            {
                 return Err(sqlx::Error::Protocol(
                     "in_progress issues require an assignee".into(),
                 ));
             }
             if status == "in_progress" {
-                let unresolved_count: i64 = if let Some(blocker_ids) = relations.blocked_by_issue_ids.as_deref() {
+                let unresolved_count: i64 = if let Some(blocker_ids) =
+                    relations.blocked_by_issue_ids.as_deref()
+                {
                     sqlx::query_scalar(
                         "SELECT COUNT(*) FROM issues WHERE company_id=$1 AND id=ANY($2) AND status NOT IN ('done','cancelled') AND hidden_at IS NULL",
                     )
@@ -1224,13 +1346,24 @@ impl<'a> IssueRepo<'a> {
         let mut effective_relations = relation_changes.clone();
         if relations.label_ids.is_some() {
             effective_relations.label_ids = Some((
-                previous_label_ids.iter().map(|(value,)| value.to_string()).collect(),
-                relations.label_ids.unwrap_or_default().iter().map(Uuid::to_string).collect(),
+                previous_label_ids
+                    .iter()
+                    .map(|(value,)| value.to_string())
+                    .collect(),
+                relations
+                    .label_ids
+                    .unwrap_or_default()
+                    .iter()
+                    .map(Uuid::to_string)
+                    .collect(),
             ));
         }
         if relations.blocked_by_issue_ids.is_some() {
             effective_relations.blocked_by_issue_ids = Some((
-                previous_blocker_ids.iter().map(|(value,)| value.to_string()).collect(),
+                previous_blocker_ids
+                    .iter()
+                    .map(|(value,)| value.to_string())
+                    .collect(),
                 relations
                     .blocked_by_issue_ids
                     .unwrap_or_default()
@@ -1320,10 +1453,7 @@ impl<'a> IssueRepo<'a> {
     /// - `active`: status IN ('todo','in_progress','in_review','blocked') 的 descendants
     ///
     /// 与 Node `issueTreeControlSvc.preview` 的 totals.totalIssues / activeIssues 对齐。
-    pub async fn count_descendants(
-        &self,
-        root_issue_id: Uuid,
-    ) -> sqlx::Result<(i64, i64)> {
+    pub async fn count_descendants(&self, root_issue_id: Uuid) -> sqlx::Result<(i64, i64)> {
         let row: (i64, i64) = sqlx::query_as(
             "WITH RECURSIVE subtree AS (                 SELECT id, status, hidden_at FROM issues WHERE parent_id = $1                 UNION ALL                 SELECT i.id, i.status, i.hidden_at                 FROM issues i INNER JOIN subtree s ON i.parent_id = s.id              )              SELECT                 COUNT(*)::bigint AS total,                 COUNT(*) FILTER (WHERE status IN ('todo','in_progress','in_review','blocked') AND hidden_at IS NULL)::bigint AS active              FROM subtree"
         )
@@ -1332,7 +1462,6 @@ impl<'a> IssueRepo<'a> {
         .await?;
         Ok(row)
     }
-
 
     /// 创建子 issue：自动填充 parent_id。
     pub async fn create_child(
@@ -1427,10 +1556,7 @@ impl<'a> IssueRepo<'a> {
     /// execution_workspace_id（Node 端语义）。当前实现简化：仅作为 hint 字段存储。
     /// `blocked_by_issue_ids`/`label_ids`: 暂不在 create 路径上写入（由调用方在事务内后续处理），
     /// 因为 Node 端也是先创建 issue 再插入 relations。
-    pub async fn create_full(
-        &self,
-        input: &CreateIssueInput<'_>,
-    ) -> sqlx::Result<IssueRow> {
+    pub async fn create_full(&self, input: &CreateIssueInput<'_>) -> sqlx::Result<IssueRow> {
         let status = input.status.unwrap_or("todo");
         let work_mode = input.work_mode.unwrap_or("standard");
         let priority = input.priority.unwrap_or("medium");
@@ -1493,15 +1619,14 @@ impl<'a> IssueRepo<'a> {
         // R234: reopen / resume 状态机触发 — 仅当 current status IN ('done','cancelled') 时
         // 强制 status='todo'（SQL 中的 completed_at / cancelled_at CASE 自动清空时间戳）
         let reopen_or_resume = patch.reopen || patch.resume;
-        let effective_status: Option<&str> = if reopen_or_resume
-            && matches!(existing.status.as_str(), "done" | "cancelled")
-        {
-            Some("todo")
-        } else {
-            patch.status
-        };
+        let effective_status: Option<&str> =
+            if reopen_or_resume && matches!(existing.status.as_str(), "done" | "cancelled") {
+                Some("todo")
+            } else {
+                patch.status
+            };
         let sql = format!(
-            "UPDATE issues SET                 title=COALESCE($2,title),                 description=CASE WHEN $3::boolean THEN $4 ELSE description END,                 status=COALESCE($5,status),                 work_mode=COALESCE($6,work_mode),                 harness_kind=CASE WHEN $7::boolean THEN $8 ELSE harness_kind END,                 priority=COALESCE($9,priority),                 assignee_agent_id=COALESCE($10,assignee_agent_id),                 assignee_user_id=CASE WHEN $11::boolean THEN $12 ELSE assignee_user_id END,                 responsible_user_id=CASE WHEN $13::boolean THEN $14 ELSE responsible_user_id END,                 billing_code=CASE WHEN $15::boolean THEN $16 ELSE billing_code END,                 execution_policy=CASE WHEN $17::boolean THEN $18 ELSE execution_policy END,                 execution_workspace_id=CASE WHEN $19::boolean THEN $20 ELSE execution_workspace_id END,                 execution_workspace_preference=CASE WHEN $21::boolean THEN $22 ELSE execution_workspace_preference END,                 execution_workspace_settings=CASE WHEN $23::boolean THEN $24 ELSE execution_workspace_settings END,                 unblock_descriptor=CASE WHEN $25::boolean THEN $26 ELSE unblock_descriptor END,                 hidden_at=CASE WHEN $27::boolean THEN $28 ELSE hidden_at END,                 completed_at=CASE WHEN $5='todo' AND completed_at IS NOT NULL THEN NULL ELSE completed_at END,                 cancelled_at=CASE WHEN $5='todo' AND cancelled_at IS NOT NULL THEN NULL ELSE cancelled_at END,                 updated_at=now()              WHERE id=$1 RETURNING {ISSUE_COLS}"
+            "UPDATE issues SET                 title=COALESCE($2,title),                 description=CASE WHEN $3::boolean THEN $4 ELSE description END,                 status=COALESCE($5,status),                 work_mode=COALESCE($6,work_mode),                 harness_kind=CASE WHEN $7::boolean THEN $8 ELSE harness_kind END,                 priority=COALESCE($9,priority),                 assignee_agent_id=COALESCE($10,assignee_agent_id),                 assignee_user_id=CASE WHEN $11::boolean THEN $12 ELSE assignee_user_id END,                 responsible_user_id=CASE WHEN $13::boolean THEN $14 ELSE responsible_user_id END,                 billing_code=CASE WHEN $15::boolean THEN $16 ELSE billing_code END,                 execution_policy=CASE WHEN $17::boolean THEN $18 ELSE execution_policy END,                 execution_workspace_id=CASE WHEN $19::boolean THEN $20 ELSE execution_workspace_id END,                 execution_workspace_preference=CASE WHEN $21::boolean THEN $22 ELSE execution_workspace_preference END,                 execution_workspace_settings=CASE WHEN $23::boolean THEN $24 ELSE execution_workspace_settings END,                 unblock_descriptor=CASE WHEN $25::boolean THEN $26 ELSE unblock_descriptor END,                 execution_state=CASE WHEN $27::boolean THEN $28 ELSE execution_state END,                 monitor_next_check_at=CASE WHEN $29::boolean THEN $30 ELSE monitor_next_check_at END,                 monitor_wake_requested_at=CASE WHEN $31::boolean THEN $32 ELSE monitor_wake_requested_at END,                 monitor_last_triggered_at=CASE WHEN $33::boolean THEN $34 ELSE monitor_last_triggered_at END,                 monitor_attempt_count=COALESCE($35,monitor_attempt_count),                 monitor_notes=CASE WHEN $36::boolean THEN $37 ELSE monitor_notes END,                 monitor_scheduled_by=CASE WHEN $38::boolean THEN $39 ELSE monitor_scheduled_by END,                 hidden_at=CASE WHEN $40::boolean THEN $41 ELSE hidden_at END,                 completed_at=CASE WHEN $5='todo' AND completed_at IS NOT NULL THEN NULL ELSE completed_at END,                 cancelled_at=CASE WHEN $5='todo' AND cancelled_at IS NOT NULL THEN NULL ELSE cancelled_at END,                 updated_at=now()              WHERE id=$1 RETURNING {ISSUE_COLS}"
         );
         sqlx::query_as::<_, IssueRow>(&sql)
             .bind(id)
@@ -1544,6 +1669,26 @@ impl<'a> IssueRepo<'a> {
             // unblock_descriptor
             .bind(patch.unblock_descriptor.is_some())
             .bind(patch.unblock_descriptor.flatten())
+            // execution_state (Round 281)
+            .bind(patch.execution_state.is_some())
+            .bind(patch.execution_state.flatten())
+            // monitor_next_check_at (Round 281)
+            .bind(patch.monitor_next_check_at.is_some())
+            .bind(patch.monitor_next_check_at.flatten())
+            // monitor_wake_requested_at (Round 281)
+            .bind(patch.monitor_wake_requested_at.is_some())
+            .bind(patch.monitor_wake_requested_at.flatten())
+            // monitor_last_triggered_at (Round 281)
+            .bind(patch.monitor_last_triggered_at.is_some())
+            .bind(patch.monitor_last_triggered_at.flatten())
+            // monitor_attempt_count (Round 281)
+            .bind(patch.monitor_attempt_count)
+            // monitor_notes (Round 281)
+            .bind(patch.monitor_notes.is_some())
+            .bind(patch.monitor_notes.flatten())
+            // monitor_scheduled_by (Round 281)
+            .bind(patch.monitor_scheduled_by.is_some())
+            .bind(patch.monitor_scheduled_by.flatten())
             // hidden_at
             .bind(patch.hidden_at.is_some())
             .bind(patch.hidden_at.flatten())
@@ -1604,7 +1749,6 @@ impl<'a> IssueRepo<'a> {
             .fetch_one(self.db.pool())
             .await
     }
-
 
     /// Round 230: 完整 create issue 并在事务内同步处理 relations
     /// (label_ids / blocked_by_issue_ids)。
@@ -2114,18 +2258,13 @@ impl<'a> IssueRepo<'a> {
     ///
     /// 与 Node `svc.markUnread` 对齐 — 用于撤销标记未读。
     /// 返回是否实际删除（false 表示原本就不存在）。
-    pub async fn delete_read_state(
-        &self,
-        issue_id: Uuid,
-        user_id: &str,
-    ) -> sqlx::Result<bool> {
-        let result = sqlx::query(
-            "DELETE FROM issue_read_states WHERE issue_id = $1 AND user_id = $2",
-        )
-        .bind(issue_id)
-        .bind(user_id)
-        .execute(self.db.pool())
-        .await?;
+    pub async fn delete_read_state(&self, issue_id: Uuid, user_id: &str) -> sqlx::Result<bool> {
+        let result =
+            sqlx::query("DELETE FROM issue_read_states WHERE issue_id = $1 AND user_id = $2")
+                .bind(issue_id)
+                .bind(user_id)
+                .execute(self.db.pool())
+                .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -2374,10 +2513,11 @@ impl<'a> IssueRepo<'a> {
         .execute(self.db.pool())
         .await?
         .rows_affected();
-        if n == 0 { return Ok(Vec::new()); }
+        if n == 0 {
+            return Ok(Vec::new());
+        }
         Ok(targets)
     }
-
 
     pub async fn disable_watchdog(&self, issue_id: Uuid) -> sqlx::Result<Option<IssueWatchdogRow>> {
         sqlx::query_as::<_, IssueWatchdogRow>(
@@ -2466,7 +2606,6 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-
     /// 原子完成 recovery action，并按 Node 语义同步 source issue。
     pub async fn resolve_recovery_with_issue(
         &self,
@@ -2485,7 +2624,10 @@ impl<'a> IssueRepo<'a> {
         ))
         .bind(source_issue_id)
         .fetch_optional(&mut *tx)
-        .await? else { return Ok(None); };
+        .await?
+        else {
+            return Ok(None);
+        };
         let Some(action) = sqlx::query_as::<_, IssueRecoveryActionRow>(
             "SELECT id, company_id, source_issue_id, recovery_issue_id, kind, status,
                 owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id,
@@ -2496,7 +2638,11 @@ impl<'a> IssueRepo<'a> {
              WHERE id=$1 AND source_issue_id=$2 AND status IN ('active','escalated')
              FOR UPDATE",
         )
-        .bind(action_id).bind(source_issue_id).fetch_optional(&mut *tx).await? else {
+        .bind(action_id)
+        .bind(source_issue_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
             return Ok(None);
         };
         if let Some(status) = source_status {
@@ -2508,18 +2654,27 @@ impl<'a> IssueRepo<'a> {
                        AND blocker.status NOT IN ('done','cancelled') AND blocker.hidden_at IS NULL",
                 ).bind(issue.company_id).bind(issue.id).fetch_one(&mut *tx).await?;
                 if unresolved == 0 {
-                    return Err(sqlx::Error::Protocol("blocked recovery resolution requires an unresolved blocker".into()));
+                    return Err(sqlx::Error::Protocol(
+                        "blocked recovery resolution requires an unresolved blocker".into(),
+                    ));
                 }
             }
             let assignee = if outcome == "restored" && status == "todo" {
                 hand_back_agent_id.or(issue.assignee_agent_id)
-            } else { issue.assignee_agent_id };
+            } else {
+                issue.assignee_agent_id
+            };
             sqlx::query(
                 "UPDATE issues SET status=$2, assignee_agent_id=$3,
                  completed_at=CASE WHEN $2='todo' THEN NULL ELSE completed_at END,
                  cancelled_at=CASE WHEN $2='todo' THEN NULL ELSE cancelled_at END,
                  updated_at=now() WHERE id=$1",
-            ).bind(issue.id).bind(status).bind(assignee).execute(&mut *tx).await?;
+            )
+            .bind(issue.id)
+            .bind(status)
+            .bind(assignee)
+            .execute(&mut *tx)
+            .await?;
         }
         let updated = sqlx::query_as::<_, IssueRecoveryActionRow>(
             "UPDATE issue_recovery_actions SET status=$3, resolution_note=$4, outcome=$5,
@@ -2529,14 +2684,22 @@ impl<'a> IssueRepo<'a> {
                 return_owner_agent_id, cause, fingerprint, evidence, next_action,
                 wake_policy, monitor_policy, attempt_count, max_attempts, timeout_at,
                 last_attempt_at, outcome, resolution_note, resolved_at, created_at, updated_at",
-        ).bind(action.id).bind(source_issue_id).bind(action_status).bind(resolution_note)
-         .bind(outcome).fetch_one(&mut *tx).await?;
+        )
+        .bind(action.id)
+        .bind(source_issue_id)
+        .bind(action_status)
+        .bind(resolution_note)
+        .bind(outcome)
+        .fetch_one(&mut *tx)
+        .await?;
         if let Some(actor) = actor {
             let (actor_type, actor_id) = if let Some(agent_id) = actor.agent_id {
                 ("agent", agent_id.to_string())
             } else if let Some(user_id) = actor.user_id.as_deref() {
                 ("user", user_id.to_owned())
-            } else { ("system", "issue_service".to_owned()) };
+            } else {
+                ("system", "issue_service".to_owned())
+            };
             sqlx::query(
                 "INSERT INTO activity_log (company_id, actor_type, actor_id, action, entity_type, entity_id, agent_id, run_id, details)
                  VALUES ($1,$2,$3,'issue.recovery_action_resolved','issue',$4,$5,$6,$7)",
@@ -2548,10 +2711,14 @@ impl<'a> IssueRepo<'a> {
         let final_issue = if let Some(status) = source_status {
             let mut result = issue;
             result.status = status.to_owned();
-            if outcome == "restored" && status == "todo" { result.assignee_agent_id = hand_back_agent_id.or(result.assignee_agent_id); }
+            if outcome == "restored" && status == "todo" {
+                result.assignee_agent_id = hand_back_agent_id.or(result.assignee_agent_id);
+            }
             result.updated_at = pc_core::Timestamp::now();
             result
-        } else { issue };
+        } else {
+            issue
+        };
         Ok(Some((final_issue, updated)))
     }
 
@@ -2669,7 +2836,9 @@ impl<'a> IssueRepo<'a> {
             .await;
             match inserted {
                 Ok(row) => return Ok(row),
-                Err(sqlx::Error::Database(db_err)) if is_unique_recovery_conflict(db_err.as_ref()) => {
+                Err(sqlx::Error::Database(db_err))
+                    if is_unique_recovery_conflict(db_err.as_ref()) =>
+                {
                     // 并发竞争：另一个事务抢先插入 → 下次循环走 update 路径
                     last_err = Some(sqlx::Error::Database(db_err));
                     continue;
@@ -2717,6 +2886,58 @@ impl<'a> IssueRepo<'a> {
             out.entry(row.source_issue_id).or_insert(row);
         }
         Ok(out)
+    }
+
+    /// Attention 队列用：列出分配给人工 owner 的开放恢复动作。
+    pub async fn list_open_human_recovery_actions(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueRecoveryActionRow>> {
+        sqlx::query_as(
+            "SELECT id, company_id, source_issue_id, recovery_issue_id, kind, status, \
+                    owner_type, owner_agent_id, owner_user_id, previous_owner_agent_id, \
+                    return_owner_agent_id, cause, fingerprint, evidence, next_action, \
+                    wake_policy, monitor_policy, attempt_count, max_attempts, timeout_at, \
+                    last_attempt_at, outcome, resolution_note, resolved_at, created_at, updated_at \
+             FROM issue_recovery_actions WHERE company_id=$1 \
+               AND status IN ('active','escalated') AND owner_type IN ('user','board') \
+             ORDER BY updated_at DESC, id DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    pub async fn list_productivity_review_attention(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<ProductivityReviewAttentionRow>> {
+        sqlx::query_as::<_, ProductivityReviewAttentionRow>(
+            "SELECT id, company_id, identifier, title, status, priority, origin_id, \
+                    origin_fingerprint, created_at, updated_at \
+             FROM issues WHERE company_id=$1 AND origin_kind='issue_productivity_review' \
+               AND hidden_at IS NULL AND assignee_user_id IS NOT NULL \
+               AND status NOT IN ('done','cancelled') \
+             ORDER BY updated_at DESC, id DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    pub async fn list_review_attention(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<ReviewAttentionRow>> {
+        sqlx::query_as::<_, ReviewAttentionRow>(
+            "SELECT i.id, i.company_id, i.identifier, i.title, i.status, i.priority, \
+                    i.assignee_user_id, i.execution_state, \
+                    EXISTS (SELECT 1 FROM issue_approvals ia JOIN approvals a ON a.id=ia.approval_id \
+                            WHERE ia.company_id=$1 AND ia.issue_id=i.id AND a.company_id=$1 AND a.status='pending') AS has_pending_approval, \
+                    i.created_at, i.updated_at \
+             FROM issues i WHERE i.company_id=$1 AND i.status='in_review' AND i.hidden_at IS NULL \
+             ORDER BY i.updated_at DESC, i.id DESC LIMIT 200",
+        ).bind(company_id).fetch_all(self.db.pool()).await
     }
 
     /// 按 source_issue_id + 可选过滤条件 resolve active recovery action。
@@ -2788,8 +3009,7 @@ impl<'a> IssueRepo<'a> {
         if let Some(f) = fingerprint {
             q = q.bind(f);
         }
-        q.fetch_optional(self.db.pool())
-            .await
+        q.fetch_optional(self.db.pool()).await
     }
 
     /// 把超时未结的 active / escalated recovery action 标记为 cancelled。
@@ -2827,8 +3047,6 @@ impl<'a> IssueRepo<'a> {
         };
         Ok(result.rows_affected())
     }
-
-
 
     pub async fn list_work_products(
         &self,
@@ -3091,6 +3309,24 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+    /// 注意力队列用：列出公司中仍等待人工处理的 thread interactions。
+    pub async fn list_pending_interactions_attention(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueThreadInteractionRow>> {
+        sqlx::query_as::<_, IssueThreadInteractionRow>(
+            "SELECT id, company_id, issue_id, kind, status, continuation_policy, \
+                    source_comment_id, source_run_id, title, summary, \
+                    created_by_agent_id, created_by_user_id, resolved_by_agent_id, \
+                    resolved_by_user_id, payload, result, resolved_at, created_at, updated_at \
+             FROM issue_thread_interactions WHERE company_id=$1 AND status='pending' \
+             ORDER BY updated_at DESC, id DESC LIMIT 200",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
     pub async fn get_interaction(
         &self,
         id: Uuid,
@@ -3176,16 +3412,11 @@ impl<'a> IssueRepo<'a> {
     ///
     /// 与 Node DELETE /issues/:id/interactions/:interactionId 对齐。
     /// 返回是否实际删除（false 表示原本就不存在）。
-    pub async fn delete_interaction(
-        &self,
-        interaction_id: Uuid,
-    ) -> sqlx::Result<bool> {
-        let result = sqlx::query(
-            "DELETE FROM issue_thread_interactions WHERE id = $1",
-        )
-        .bind(interaction_id)
-        .execute(self.db.pool())
-        .await?;
+    pub async fn delete_interaction(&self, interaction_id: Uuid) -> sqlx::Result<bool> {
+        let result = sqlx::query("DELETE FROM issue_thread_interactions WHERE id = $1")
+            .bind(interaction_id)
+            .execute(self.db.pool())
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -3370,8 +3601,8 @@ impl<'a> IssueRepo<'a> {
             .await?
         };
         // 2. 解析已存在的 child issue ids
-        let mut existing_child_ids: Vec<Uuid> = serde_json::from_value(claim.child_issue_ids.clone())
-            .unwrap_or_default();
+        let mut existing_child_ids: Vec<Uuid> =
+            serde_json::from_value(claim.child_issue_ids.clone()).unwrap_or_default();
         let mut created_child_ids: Vec<Uuid> = Vec::new();
         // 3. while 循环：创建剩余 child
         while existing_child_ids.len() < children.len() {
@@ -3464,7 +3695,6 @@ impl<'a> IssueRepo<'a> {
         .fetch_optional(self.db.pool())
         .await
     }
-
 
     // =========================================================================
     // Feedback votes
@@ -3873,15 +4103,13 @@ impl<'a> IssueRepo<'a> {
     /// Convenience helper for dependency readiness: returns the list of
     /// unresolved blocker IDs for an issue, or an empty list when the issue
     /// has no blockers or the issue itself is missing.
-    pub async fn unresolved_blockers_for(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Vec<Uuid>> {
+    pub async fn unresolved_blockers_for(&self, issue_id: Uuid) -> sqlx::Result<Vec<Uuid>> {
         let issue = match self.get(issue_id).await? {
             Some(issue) => issue,
             None => return Ok(Vec::new()),
         };
-        self.unresolved_blocker_ids(issue.company_id, issue_id).await
+        self.unresolved_blocker_ids(issue.company_id, issue_id)
+            .await
     }
 
     // =========================================================================
@@ -3892,7 +4120,16 @@ impl<'a> IssueRepo<'a> {
     pub async fn heartbeat_context_inputs(
         &self,
         issue_id: Uuid,
-    ) -> sqlx::Result<Option<(Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, String, String)>> {
+    ) -> sqlx::Result<
+        Option<(
+            Uuid,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<Uuid>,
+            String,
+            String,
+        )>,
+    > {
         let row: Option<(Uuid, Option<Uuid>, Option<Uuid>, Option<Uuid>, String, String)> = sqlx::query_as(
             "SELECT company_id, assignee_agent_id, project_id, project_workspace_id, status, work_mode              FROM issues WHERE id = $1",
         )
@@ -3939,7 +4176,14 @@ impl<'a> IssueRepo<'a> {
         issue_id: Uuid,
         comment_id: Uuid,
     ) -> sqlx::Result<
-        Option<(Uuid, Uuid, Option<String>, Option<Uuid>, String, pc_core::Timestamp)>,
+        Option<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            pc_core::Timestamp,
+        )>,
     > {
         let row: Option<(Uuid, Uuid, Option<String>, Option<Uuid>, String, pc_core::Timestamp)> = sqlx::query_as(
             "SELECT id, issue_id, author_user_id, author_agent_id, body, created_at              FROM issue_comments WHERE issue_id=$1 AND id=$2 AND deleted_at IS NULL",
@@ -4004,11 +4248,7 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// Round 161: 软删除 issue_document (UPDATE deleted_at)。
-    pub async fn soft_delete_issue_doc(
-        &self,
-        issue_id: Uuid,
-        key: &str,
-    ) -> sqlx::Result<bool> {
+    pub async fn soft_delete_issue_doc(&self, issue_id: Uuid, key: &str) -> sqlx::Result<bool> {
         let n = sqlx::query(
             "UPDATE issue_documents SET deleted_at=now()              WHERE issue_id=$1 AND key=$2 AND deleted_at IS NULL",
         )
@@ -4043,9 +4283,7 @@ impl<'a> IssueRepo<'a> {
     pub async fn attachment_content_meta(
         &self,
         attachment_id: Uuid,
-    ) -> sqlx::Result<
-        Option<(Uuid, String, String, String, i32, Option<String>)>,
-    > {
+    ) -> sqlx::Result<Option<(Uuid, String, String, String, i32, Option<String>)>> {
         let row: Option<(Uuid, String, String, String, i32, Option<String>)> = sqlx::query_as(
             "SELECT a.company_id, a.provider, a.object_key, a.content_type, a.byte_size, a.original_filename              FROM issue_attachments ia              INNER JOIN assets a ON a.id = ia.asset_id              WHERE ia.id = $1",
         )
@@ -4070,7 +4308,10 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// Round 168: 统计 company 的 visible issues（hidden_at IS NULL AND harness_kind IS NULL）按 status 分组。
-    pub async fn count_visible_by_status(&self, company_id: Uuid) -> sqlx::Result<Vec<(String, i64)>> {
+    pub async fn count_visible_by_status(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<Vec<(String, i64)>> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT status, COUNT(*)::bigint FROM issues \
              WHERE company_id = $1 AND hidden_at IS NULL AND harness_kind IS NULL \
@@ -4083,7 +4324,10 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// Round 171: 按 status 拆分 issues 计数（blocked/in_progress/needs_review）。
-    pub async fn status_breakdown_visible(&self, company_id: Uuid) -> sqlx::Result<(i64, i64, i64)> {
+    pub async fn status_breakdown_visible(
+        &self,
+        company_id: Uuid,
+    ) -> sqlx::Result<(i64, i64, i64)> {
         let row: (i64, i64, i64) = sqlx::query_as(
             "SELECT \
                 COUNT(*) FILTER (WHERE status = 'blocked')::bigint, \
@@ -4113,7 +4357,10 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// Round 172: 取 issue 的 checkout 摘要（assignee + prev run）。
-    pub async fn get_checkout_snapshot(&self, issue_id: Uuid) -> sqlx::Result<Option<(Uuid, Option<Uuid>, Option<Uuid>)>> {
+    pub async fn get_checkout_snapshot(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Option<Uuid>, Option<Uuid>)>> {
         let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
             "SELECT id, assignee_agent_id, checkout_run_id FROM issues WHERE id = $1",
         )
@@ -4164,13 +4411,15 @@ impl<'a> IssueRepo<'a> {
     }
 
     /// Round 172: 取 issue 的 (id, assignee_agent_id)。
-    pub async fn get_id_and_assignee(&self, issue_id: Uuid) -> sqlx::Result<Option<(Uuid, Option<Uuid>)>> {
-        let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
-            "SELECT id, assignee_agent_id FROM issues WHERE id = $1",
-        )
-        .bind(issue_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn get_id_and_assignee(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Option<(Uuid, Option<Uuid>)>> {
+        let row: Option<(Uuid, Option<Uuid>)> =
+            sqlx::query_as("SELECT id, assignee_agent_id FROM issues WHERE id = $1")
+                .bind(issue_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row)
     }
 
@@ -4205,12 +4454,10 @@ impl<'a> IssueRepo<'a> {
 
     /// Round 172: 取 agent 的 company_id。
     pub async fn get_agent_company_id(&self, agent_id: Uuid) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM agents WHERE id = $1",
-        )
-        .bind(agent_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM agents WHERE id = $1")
+            .bind(agent_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 }
@@ -4263,7 +4510,6 @@ mod issue_update_tests {
         assert!(!valid_issue_status(""));
     }
 }
-
 
 #[cfg(test)]
 mod round229_input_struct_tests {
@@ -4360,9 +4606,9 @@ mod round229_input_struct_tests {
         // Some(None) = 显式置空
         let overrides = json!({"maxSteps": 10});
         let patch = UpdateIssuePatch {
-            title: None,                                   // 不更新
-            description: Some(Some("new")),                // 设置
-            status: Some("done"),                          // 设置
+            title: None,                    // 不更新
+            description: Some(Some("new")), // 设置
+            status: Some("done"),           // 设置
             work_mode: None,
             harness_kind: Some(Some("plan")),              // 设置
             priority: Some("high"),                        // 设置
@@ -4371,17 +4617,25 @@ mod round229_input_struct_tests {
             responsible_user_id: Some(None),               // 显式置空
             billing_code: Some(None),                      // 显式置空
             execution_policy: Some(Some(&overrides)),
-            execution_workspace_id: Some(None),            // 显式置空
+            execution_workspace_id: Some(None), // 显式置空
             execution_workspace_preference: Some(Some("shared")),
             execution_workspace_settings: Some(Some(&overrides)),
-            unblock_descriptor: Some(None),                // 显式置空
+            unblock_descriptor: Some(None), // 显式置空
+            execution_state: None,
+            monitor_next_check_at: None,
+            monitor_wake_requested_at: None,
+            monitor_last_triggered_at: None,
+            monitor_attempt_count: None,
+            monitor_notes: None,
+            monitor_scheduled_by: None,
+
             hidden_at: None,
             reopen: true,
             resume: false,
             interrupt: false,
         };
         // 验证三态
-        assert!(patch.title.is_none());                   // 不更新
+        assert!(patch.title.is_none()); // 不更新
         assert!(matches!(patch.description, Some(Some(_))));
         assert!(matches!(patch.assignee_user_id, Some(Some(_))));
         assert!(matches!(patch.responsible_user_id, Some(None))); // 置空
@@ -4473,7 +4727,6 @@ mod round229_input_struct_tests {
         assert!(input.block_parent_until_done);
     }
 }
-
 
 /// Detect Postgres unique constraint conflict on the active-recovery indexes.
 /// 对齐 Node `isUniqueRecoveryActionConflict`。
@@ -4572,7 +4825,7 @@ mod round234_state_machine_tests {
         // 由于无法直接测试 update_full (需要 DB)，这里通过解析 SQL 中的 CASE WHEN 验证语义
         // 单元测试仅覆盖结构体字段，集成测试应覆盖状态转换
         let patch = UpdateIssuePatch {
-            status: Some("done"),  // 用户传入 status='done'
+            status: Some("done"), // 用户传入 status='done'
             reopen: true,
             ..Default::default()
         };
@@ -4763,7 +5016,6 @@ impl<'a> IssueRepo<'a> {
     }
 }
 
-
 // ============================================================================
 // Round 235: idempotency key 重放机制 单元测试
 // ============================================================================
@@ -4850,7 +5102,10 @@ mod round235_idempotency_tests {
             "createdAt": "2026-08-06T10:00:00Z",
         });
         let row: IssueCreateIdempotencyKeyRow = serde_json::from_value(value).expect("parse");
-        assert_eq!(row.idempotency_key, "confirmation:issue:plan:revision-2026-08-06");
+        assert_eq!(
+            row.idempotency_key,
+            "confirmation:issue:plan:revision-2026-08-06"
+        );
     }
 
     #[test]

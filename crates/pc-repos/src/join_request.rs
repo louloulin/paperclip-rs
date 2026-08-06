@@ -158,11 +158,30 @@ impl<'a> JoinRequestRepo<'a> {
         Ok(rows)
     }
 
-    /// 通过 id 锁定单条 request；用于状态机校验。
-    pub async fn find_by_id(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<JoinRequestRow>> {
+    /// Attention 队列用：只返回等待公司管理员审批的请求。
+    pub async fn list_pending_attention(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<Vec<JoinRequestRow>> {
         let sql = format!(
-            "SELECT {COLS} FROM join_requests WHERE company_id = $1 AND id = $2 LIMIT 1"
+            "SELECT {COLS} FROM join_requests \
+             WHERE company_id = $1 AND status = 'pending_approval' \
+             ORDER BY updated_at DESC, id DESC LIMIT 100"
         );
+        Ok(sqlx::query_as(&sql)
+            .bind(company_id)
+            .fetch_all(self.db.pool())
+            .await?)
+    }
+
+    /// 通过 id 锁定单条 request；用于状态机校验。
+    pub async fn find_by_id(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> RepoResult<Option<JoinRequestRow>> {
+        let sql =
+            format!("SELECT {COLS} FROM join_requests WHERE company_id = $1 AND id = $2 LIMIT 1");
         let row: Option<JoinRequestRow> = sqlx::query_as(&sql)
             .bind(company_id)
             .bind(id)
@@ -173,8 +192,14 @@ impl<'a> JoinRequestRepo<'a> {
 
     /// 创建新请求。`request_type` 必须是 `human | agent | company_join`。
     pub async fn create(&self, input: NewJoinRequest) -> RepoResult<JoinRequestRow> {
-        if !matches!(input.request_type.as_str(), "human" | "agent" | "company_join" | "user") {
-            return Err(RepoError::Invalid(format!("unknown request_type '{}'", input.request_type)));
+        if !matches!(
+            input.request_type.as_str(),
+            "human" | "agent" | "company_join" | "user"
+        ) {
+            return Err(RepoError::Invalid(format!(
+                "unknown request_type '{}'",
+                input.request_type
+            )));
         }
         let id = Uuid::new_v4();
         let sql = format!(
@@ -198,12 +223,11 @@ impl<'a> JoinRequestRepo<'a> {
             .bind(&input.agent_defaults_payload)
             .execute(self.db.pool())
             .await?;
-        let row: JoinRequestRow = sqlx::query_as(&format!(
-            "SELECT {COLS} FROM join_requests WHERE id = $1"
-        ))
-        .bind(id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let row: JoinRequestRow =
+            sqlx::query_as(&format!("SELECT {COLS} FROM join_requests WHERE id = $1"))
+                .bind(id)
+                .fetch_one(self.db.pool())
+                .await?;
         Ok(row)
     }
 
@@ -389,9 +413,8 @@ impl<'a> JoinRequestRepo<'a> {
         .fetch_optional(&mut *tx)
         .await?;
 
-        let updated = updated.ok_or_else(|| {
-            RepoError::Invalid("Claim secret already used".into())
-        })?;
+        let updated =
+            updated.ok_or_else(|| RepoError::Invalid("Claim secret already used".into()))?;
 
         tx.commit().await?;
         Ok(updated)
@@ -429,7 +452,10 @@ mod tests {
         // 单元测试里没有真实 DB，只测类名匹配与错误描述。
         // 真实路径测在 pc-http/tests/ 集成测试里。
         let unknown = "robot";
-        assert!(!matches!(unknown, "human" | "agent" | "company_join" | "user"));
+        assert!(!matches!(
+            unknown,
+            "human" | "agent" | "company_join" | "user"
+        ));
     }
 
     #[test]

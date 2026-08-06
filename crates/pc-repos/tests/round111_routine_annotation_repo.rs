@@ -3,8 +3,7 @@
 
 use pc_db::Db;
 use pc_repos::routine::{
-    NewRoutineAnnotationComment, NewRoutineAnnotationThread, RoutineAnnotationPatch,
-    RoutineRepo,
+    NewRoutineAnnotationComment, NewRoutineAnnotationThread, RoutineAnnotationPatch, RoutineRepo,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -21,7 +20,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r111-{tag}-{id}"))
         .bind(format!("R111{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -34,7 +35,9 @@ async fn insert_routine(db: &Db, company_id: Uuid) -> Uuid {
     .bind(id)
     .bind(company_id)
     .bind(format!("r-{id}"))
-    .execute(db.pool()).await.expect("insert routine");
+    .execute(db.pool())
+    .await
+    .expect("insert routine");
     id
 }
 
@@ -46,7 +49,9 @@ async fn insert_document(db: &Db, company_id: Uuid) -> Uuid {
     )
     .bind(id)
     .bind(company_id)
-    .execute(db.pool()).await.expect("insert document");
+    .execute(db.pool())
+    .await
+    .expect("insert document");
     id
 }
 
@@ -95,7 +100,9 @@ async fn insert_comment(
     .bind(thread_id)
     .bind(document_id)
     .bind(body)
-    .execute(db.pool()).await.expect("insert comment");
+    .execute(db.pool())
+    .await
+    .expect("insert comment");
     id
 }
 
@@ -107,7 +114,11 @@ async fn routine_get_company_id_round_trip() {
     let rid = insert_routine(&db, cid).await;
 
     let repo = RoutineRepo::new(&db);
-    let back = repo.get_company_id(rid).await.expect("get").expect("present");
+    let back = repo
+        .get_company_id(rid)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(back, cid);
 
     let none = repo.get_company_id(Uuid::new_v4()).await.expect("get");
@@ -141,7 +152,11 @@ async fn annotation_thread_create_get_round_trip() {
         anchor_selector: Some(json!({"type": "text"})),
     };
     let thread_id = repo.create_annotation_thread(&input).await.expect("create");
-    let row = repo.get_annotation_thread(rid, thread_id).await.expect("get").expect("present");
+    let row = repo
+        .get_annotation_thread(rid, thread_id)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(row.id, thread_id);
     assert_eq!(row.company_id, cid);
     assert_eq!(row.routine_id, rid);
@@ -163,11 +178,20 @@ async fn annotation_threads_list_filters_by_status() {
     insert_thread(&db, cid, rid, did, "resolved").await;
 
     let repo = RoutineRepo::new(&db);
-    let all = repo.list_annotation_threads(rid, None, 200).await.expect("all");
+    let all = repo
+        .list_annotation_threads(rid, None, 200)
+        .await
+        .expect("all");
     assert_eq!(all.len(), 3);
-    let open = repo.list_annotation_threads(rid, Some("open"), 200).await.expect("open");
+    let open = repo
+        .list_annotation_threads(rid, Some("open"), 200)
+        .await
+        .expect("open");
     assert_eq!(open.len(), 2);
-    let resolved = repo.list_annotation_threads(rid, Some("resolved"), 200).await.expect("resolved");
+    let resolved = repo
+        .list_annotation_threads(rid, Some("resolved"), 200)
+        .await
+        .expect("resolved");
     assert_eq!(resolved.len(), 1);
 }
 
@@ -190,7 +214,10 @@ async fn annotation_thread_comments_list_single_and_bulk() {
     assert_eq!(t1_comments[0].body, "c1");
     assert_eq!(t1_comments[1].body, "c2");
 
-    let bulk = repo.list_thread_comments_bulk(&[t1, t2]).await.expect("bulk");
+    let bulk = repo
+        .list_thread_comments_bulk(&[t1, t2])
+        .await
+        .expect("bulk");
     assert_eq!(bulk.len(), 3);
 }
 
@@ -215,13 +242,12 @@ async fn annotation_thread_create_comment_writes() {
         author_agent_id: None,
     };
     let cid_new = repo.create_thread_comment(&input).await.expect("create");
-    let row: (String, String) = sqlx::query_as(
-        "SELECT body, author_type FROM document_annotation_comments WHERE id=$1",
-    )
-    .bind(cid_new)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let row: (String, String) =
+        sqlx::query_as("SELECT body, author_type FROM document_annotation_comments WHERE id=$1")
+            .bind(cid_new)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(row.0, "first comment");
     assert_eq!(row.1, "user");
 }
@@ -240,17 +266,18 @@ async fn annotation_thread_update_resolved_sets_timestamp() {
         status: Some("resolved".to_owned()),
         ..Default::default()
     };
-    let n = repo.update_annotation_thread(rid, tid, &patch).await.expect("upd");
+    let n = repo
+        .update_annotation_thread(rid, tid, &patch)
+        .await
+        .expect("upd");
     assert_eq!(n, 1);
 
     let (status, resolved_at): (String, Option<chrono::DateTime<chrono::Utc>>) =
-        sqlx::query_as(
-            "SELECT status, resolved_at FROM document_annotation_threads WHERE id=$1",
-        )
-        .bind(tid)
-        .fetch_one(db.pool())
-        .await
-        .expect("query");
+        sqlx::query_as("SELECT status, resolved_at FROM document_annotation_threads WHERE id=$1")
+            .bind(tid)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(status, "resolved");
     assert!(resolved_at.is_some());
 }
@@ -269,15 +296,17 @@ async fn annotation_thread_update_open_clears_timestamp() {
         status: Some("open".to_owned()),
         ..Default::default()
     };
-    let n = repo.update_annotation_thread(rid, tid, &patch).await.expect("upd");
+    let n = repo
+        .update_annotation_thread(rid, tid, &patch)
+        .await
+        .expect("upd");
     assert_eq!(n, 1);
-    let resolved_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT resolved_at FROM document_annotation_threads WHERE id=$1",
-    )
-    .bind(tid)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let resolved_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT resolved_at FROM document_annotation_threads WHERE id=$1")
+            .bind(tid)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert!(resolved_at.is_none());
 }
 
@@ -293,7 +322,10 @@ async fn annotation_thread_update_missing_returns_zero() {
         status: Some("open".to_owned()),
         ..Default::default()
     };
-    let n = repo.update_annotation_thread(rid, Uuid::new_v4(), &patch).await.expect("upd");
+    let n = repo
+        .update_annotation_thread(rid, Uuid::new_v4(), &patch)
+        .await
+        .expect("upd");
     assert_eq!(n, 0);
 }
 
@@ -307,9 +339,16 @@ async fn annotation_thread_document_id_round_trip() {
     let tid = insert_thread(&db, cid, rid, did, "open").await;
     let repo = RoutineRepo::new(&db);
 
-    let back = repo.get_thread_document_id(rid, tid).await.expect("get").expect("present");
+    let back = repo
+        .get_thread_document_id(rid, tid)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(back, did);
 
-    let none = repo.get_thread_document_id(rid, Uuid::new_v4()).await.expect("get");
+    let none = repo
+        .get_thread_document_id(rid, Uuid::new_v4())
+        .await
+        .expect("get");
     assert!(none.is_none());
 }

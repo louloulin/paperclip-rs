@@ -186,10 +186,7 @@ impl<'a> ExecutionRepo<'a> {
 
     // ---- workspaces ----
 
-    pub async fn list_by_company(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<WorkspaceRow>> {
+    pub async fn list_by_company(&self, company_id: Uuid) -> RepoResult<Vec<WorkspaceRow>> {
         let sql = format!(
             "SELECT {WS_COLS} FROM execution_workspaces              WHERE company_id=$1 ORDER BY last_used_at DESC",
         );
@@ -214,11 +211,7 @@ impl<'a> ExecutionRepo<'a> {
             .await?)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<WorkspaceRow>> {
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<WorkspaceRow>> {
         let sql = format!(
             "SELECT {WS_COLS} FROM execution_workspaces              WHERE company_id=$1 AND id=$2",
         );
@@ -245,7 +238,9 @@ impl<'a> ExecutionRepo<'a> {
 
     pub async fn create(&self, w: &NewWorkspace) -> RepoResult<WorkspaceRow> {
         if w.name.trim().is_empty() {
-            return Err(RepoError::Invalid("workspace name must not be empty".into()));
+            return Err(RepoError::Invalid(
+                "workspace name must not be empty".into(),
+            ));
         }
         let sql = format!(
             "INSERT INTO execution_workspaces (company_id, project_id, project_workspace_id,                 source_issue_id, mode, strategy_type, name, cwd, repo_url, base_ref, branch_name,                 provider_type, provider_ref, derived_from_execution_workspace_id, metadata)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)              RETURNING {WS_COLS}",
@@ -333,10 +328,7 @@ impl<'a> ExecutionRepo<'a> {
         Ok(row)
     }
 
-    pub async fn list_cleanup_eligible(
-        &self,
-        before: Timestamp,
-    ) -> RepoResult<Vec<WorkspaceRow>> {
+    pub async fn list_cleanup_eligible(&self, before: Timestamp) -> RepoResult<Vec<WorkspaceRow>> {
         let sql = format!(
             "SELECT {WS_COLS} FROM execution_workspaces              WHERE status='closed' AND cleanup_eligible_at IS NOT NULL                AND cleanup_eligible_at < $1 ORDER BY cleanup_eligible_at ASC LIMIT 200",
         );
@@ -422,11 +414,7 @@ impl<'a> ExecutionRepo<'a> {
             .await?)
     }
 
-    pub async fn release_lease(
-        &self,
-        lease_id: Uuid,
-        token: &str,
-    ) -> RepoResult<bool> {
+    pub async fn release_lease(&self, lease_id: Uuid, token: &str) -> RepoResult<bool> {
         let n = sqlx::query(
             "UPDATE execution_lease SET state='released', released_at=now()              WHERE id=$1 AND token=$2 AND state='holding'",
         )
@@ -438,11 +426,7 @@ impl<'a> ExecutionRepo<'a> {
         Ok(n > 0)
     }
 
-    pub async fn revoke_lease(
-        &self,
-        lease_id: Uuid,
-        reason: &str,
-    ) -> RepoResult<()> {
+    pub async fn revoke_lease(&self, lease_id: Uuid, reason: &str) -> RepoResult<()> {
         sqlx::query(
             "UPDATE execution_lease SET state='revoked', released_at=now(), revocation_reason=$2              WHERE id=$1",
         )
@@ -476,7 +460,6 @@ impl<'a> ExecutionRepo<'a> {
             .await?)
     }
 }
-
 
 // ---- workspace action log ----
 
@@ -762,10 +745,7 @@ impl<'a> ExecutionRepo<'a> {
     // =========================================================================
 
     /// Round 159: workspace_overview — (active_workspaces, recent_runs_24h, failed_runs_24h)。
-    pub async fn overview_stats(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<(i64, i64, i64)> {
+    pub async fn overview_stats(&self, company_id: Uuid) -> sqlx::Result<(i64, i64, i64)> {
         let row: (i64, i64, i64) = sqlx::query_as(
             "SELECT \
                 (SELECT COUNT(*)::bigint FROM execution_workspaces WHERE company_id = $1 AND status = 'active'), \
@@ -789,21 +769,16 @@ impl<'a> ExecutionRepo<'a> {
 
     /// Round 159: 按 id 取 company_id（acquire_lease_route 用）。
     pub async fn company_id_for_id(&self, id: Uuid) -> RepoResult<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM execution_workspaces WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM execution_workspaces WHERE id = $1")
+                .bind(id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(c,)| c))
     }
 
     /// Round 159: UPDATE name (COALESCE) + 触 updated_at，返回 rows_affected > 0。
-    pub async fn update_name(
-        &self,
-        id: Uuid,
-        name: Option<&str>,
-    ) -> RepoResult<bool> {
+    pub async fn update_name(&self, id: Uuid, name: Option<&str>) -> RepoResult<bool> {
         let n = sqlx::query(
             "UPDATE execution_workspaces SET name = COALESCE($2, name), updated_at = now() WHERE id = $1",
         )
@@ -884,14 +859,11 @@ impl<'a> ExecutionRepo<'a> {
         &self,
         workspace_id: Uuid,
     ) -> sqlx::Result<Option<(String, Option<String>)>> {
-        sqlx::query_as(
-            "SELECT id::text, kind FROM execution_workspaces WHERE id = $1",
-        )
-        .bind(workspace_id)
-        .fetch_optional(self.db.pool())
-        .await
+        sqlx::query_as("SELECT id::text, kind FROM execution_workspaces WHERE id = $1")
+            .bind(workspace_id)
+            .fetch_optional(self.db.pool())
+            .await
     }
-
 }
 
 impl WorkspaceStatus {

@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -112,7 +109,10 @@ async fn provider_descriptors_lists_all_four() {
     assert_eq!(status, 200, "providers: {body}");
     // /secret-providers 直接返回数组（每个 provider 一项）
     let items = body.as_array().expect("providers is top-level array");
-    let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap_or("")).collect();
+    let ids: Vec<&str> = items
+        .iter()
+        .map(|i| i["id"].as_str().unwrap_or(""))
+        .collect();
     assert!(ids.contains(&"local_encrypted"));
     assert!(ids.contains(&"aws_secrets_manager"));
     assert!(ids.contains(&"gcp_secret_manager"));
@@ -149,19 +149,24 @@ async fn provider_health_reports_gcp_and_vault_warn() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn pc_secrets_registry_can_register_all_four() {
-    use std::sync::Arc;
     use pc_secrets::{
         AwsSecretsManagerProvider, GcpSecretManagerProvider, LocalEncryptedProvider,
         SecretProviderRegistry, VaultProvider,
     };
+    use std::sync::Arc;
     let mut reg = SecretProviderRegistry::new();
     let key = [0x11u8; 32];
     reg.register(Arc::new(LocalEncryptedProvider::from_bytes(key)));
     reg.register(Arc::new(AwsSecretsManagerProvider::new(
-        "us-east-1", "AKIA", "secret",
+        "us-east-1",
+        "AKIA",
+        "secret",
     )));
     reg.register(Arc::new(GcpSecretManagerProvider::new("p", "tok")));
-    reg.register(Arc::new(VaultProvider::new("https://vault.example.com", "tok")));
+    reg.register(Arc::new(VaultProvider::new(
+        "https://vault.example.com",
+        "tok",
+    )));
     assert_eq!(reg.len(), 4);
     assert_eq!(reg.provider_ids().len(), 4);
     assert!(reg.get("local_encrypted").is_some());

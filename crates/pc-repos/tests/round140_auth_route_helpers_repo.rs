@@ -30,8 +30,12 @@ async fn insert_user(db: &Db, tag: &str) -> String {
 async fn insert_company(db: &Db) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
-        .bind(id).bind(format!("r140-c-{id}")).bind(format!("R140{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .bind(id)
+        .bind(format!("r140-c-{id}"))
+        .bind(format!("R140{}", &id.simple().to_string()[..4]))
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
@@ -56,7 +60,10 @@ async fn insert_api_key(db: &Db, user_id: &str) -> Uuid {
 async fn find_user_id_by_email_found() {
     let db = db().await;
     let uid = insert_user(&db, "fid").await;
-    let id = AuthRepo::new(&db).find_user_id_by_email("r140-fid@test").await.expect("ok");
+    let id = AuthRepo::new(&db)
+        .find_user_id_by_email("r140-fid@test")
+        .await
+        .expect("ok");
     assert_eq!(id, Some(uid));
 }
 
@@ -64,7 +71,10 @@ async fn find_user_id_by_email_found() {
 #[tokio::test(flavor = "current_thread")]
 async fn find_user_id_by_email_missing() {
     let db = db().await;
-    let id = AuthRepo::new(&db).find_user_id_by_email("nope@test").await.expect("ok");
+    let id = AuthRepo::new(&db)
+        .find_user_id_by_email("nope@test")
+        .await
+        .expect("ok");
     assert!(id.is_none());
 }
 
@@ -82,7 +92,10 @@ async fn user_exists_true() {
 #[tokio::test(flavor = "current_thread")]
 async fn user_exists_false() {
     let db = db().await;
-    assert!(!AuthRepo::new(&db).user_exists("u_nope_xyz").await.expect("ok"));
+    assert!(!AuthRepo::new(&db)
+        .user_exists("u_nope_xyz")
+        .await
+        .expect("ok"));
 }
 
 // ===== AuthRepo::ensure_user =====
@@ -111,7 +124,11 @@ async fn ensure_user_idempotent() {
         .expect("ok");
     assert!(row.is_none(), "second ensure_user should be no-op");
     // 验证原数据未被覆盖
-    let fetched = AuthRepo::new(&db).find_by_id(&uid).await.expect("ok").unwrap();
+    let fetched = AuthRepo::new(&db)
+        .find_by_id(&uid)
+        .await
+        .expect("ok")
+        .unwrap();
     assert_eq!(fetched.name, "r140-eui", "name should NOT be overwritten");
 }
 
@@ -139,10 +156,18 @@ async fn revoke_api_key_basic() {
     let db = db().await;
     let uid = insert_user(&db, "rak").await;
     let kid = insert_api_key(&db, &uid).await;
-    let revoked = AuthRepo::new(&db).revoke_api_key(kid, &uid).await.expect("ok");
+    let revoked = AuthRepo::new(&db)
+        .revoke_api_key(kid, &uid)
+        .await
+        .expect("ok");
     assert!(revoked, "first revoke should succeed");
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM board_api_keys WHERE id=$1 AND revoked_at IS NOT NULL")
-        .bind(kid).fetch_one(db.pool()).await.expect("q");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM board_api_keys WHERE id=$1 AND revoked_at IS NOT NULL",
+    )
+    .bind(kid)
+    .fetch_one(db.pool())
+    .await
+    .expect("q");
     assert_eq!(n, 1);
 }
 
@@ -152,8 +177,14 @@ async fn revoke_api_key_idempotent() {
     let db = db().await;
     let uid = insert_user(&db, "raki").await;
     let kid = insert_api_key(&db, &uid).await;
-    let r1 = AuthRepo::new(&db).revoke_api_key(kid, &uid).await.expect("ok");
-    let r2 = AuthRepo::new(&db).revoke_api_key(kid, &uid).await.expect("ok");
+    let r1 = AuthRepo::new(&db)
+        .revoke_api_key(kid, &uid)
+        .await
+        .expect("ok");
+    let r2 = AuthRepo::new(&db)
+        .revoke_api_key(kid, &uid)
+        .await
+        .expect("ok");
     assert!(r1);
     assert!(!r2, "second revoke should return false");
 }
@@ -174,7 +205,10 @@ async fn revoke_session_by_token_basic() {
     let db = db().await;
     let uid = insert_user(&db, "rst").await;
     insert_session(&db, &uid, "tk_rst_1").await;
-    let revoked = AuthRepo::new(&db).revoke_session_by_token("tk_rst_1").await.expect("ok");
+    let revoked = AuthRepo::new(&db)
+        .revoke_session_by_token("tk_rst_1")
+        .await
+        .expect("ok");
     assert!(revoked);
 }
 
@@ -185,7 +219,10 @@ async fn revoke_all_sessions_for_user_basic() {
     let uid = insert_user(&db, "ras").await;
     insert_session(&db, &uid, "tk_ras_1").await;
     insert_session(&db, &uid, "tk_ras_2").await;
-    let n = AuthRepo::new(&db).revoke_all_sessions_for_user(&uid).await.expect("ok");
+    let n = AuthRepo::new(&db)
+        .revoke_all_sessions_for_user(&uid)
+        .await
+        .expect("ok");
     assert!(n >= 2);
 }
 
@@ -196,9 +233,16 @@ async fn revoke_all_sessions_for_user_basic() {
 async fn update_user_name_basic() {
     let db = db().await;
     let uid = insert_user(&db, "uun").await;
-    let updated = AuthRepo::new(&db).update_user_name(&uid, "New Name").await.expect("ok");
+    let updated = AuthRepo::new(&db)
+        .update_user_name(&uid, "New Name")
+        .await
+        .expect("ok");
     assert!(updated);
-    let row = AuthRepo::new(&db).find_by_id(&uid).await.expect("ok").unwrap();
+    let row = AuthRepo::new(&db)
+        .find_by_id(&uid)
+        .await
+        .expect("ok")
+        .unwrap();
     assert_eq!(row.name, "New Name");
 }
 
@@ -207,9 +251,16 @@ async fn update_user_name_basic() {
 async fn update_user_image_basic() {
     let db = db().await;
     let uid = insert_user(&db, "uui").await;
-    let updated = AuthRepo::new(&db).update_user_image(&uid, "https://img.test/me.png").await.expect("ok");
+    let updated = AuthRepo::new(&db)
+        .update_user_image(&uid, "https://img.test/me.png")
+        .await
+        .expect("ok");
     assert!(updated);
-    let row = AuthRepo::new(&db).find_by_id(&uid).await.expect("ok").unwrap();
+    let row = AuthRepo::new(&db)
+        .find_by_id(&uid)
+        .await
+        .expect("ok")
+        .unwrap();
     assert_eq!(row.image.as_deref(), Some("https://img.test/me.png"));
 }
 
@@ -224,7 +275,10 @@ async fn list_company_ids_for_user_basic() {
     let c2 = insert_company(&db).await;
     insert_membership(&db, &uid, c1).await;
     insert_membership(&db, &uid, c2).await;
-    let mut ids = CompanyMemberRepo::new(&db).list_company_ids_for_user(&uid).await.expect("ok");
+    let mut ids = CompanyMemberRepo::new(&db)
+        .list_company_ids_for_user(&uid)
+        .await
+        .expect("ok");
     ids.sort();
     let mut want = vec![c1, c2];
     want.sort();
@@ -236,7 +290,10 @@ async fn list_company_ids_for_user_basic() {
 async fn list_company_ids_for_user_empty() {
     let db = db().await;
     let uid = insert_user(&db, "lce").await;
-    let ids = CompanyMemberRepo::new(&db).list_company_ids_for_user(&uid).await.expect("ok");
+    let ids = CompanyMemberRepo::new(&db)
+        .list_company_ids_for_user(&uid)
+        .await
+        .expect("ok");
     assert!(ids.is_empty());
 }
 

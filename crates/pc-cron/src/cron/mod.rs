@@ -40,11 +40,31 @@ pub struct FieldSpec {
 
 /// 标准 5 字段 cron 各字段的边界规格（minute / hour / day-of-month / month / day-of-week）。
 pub const FIELD_SPECS: [FieldSpec; 5] = [
-    FieldSpec { min: 0, max: 59, name: "minute" },
-    FieldSpec { min: 0, max: 23, name: "hour" },
-    FieldSpec { min: 1, max: 31, name: "day of month" },
-    FieldSpec { min: 1, max: 12, name: "month" },
-    FieldSpec { min: 0, max: 6, name: "day of week" },
+    FieldSpec {
+        min: 0,
+        max: 59,
+        name: "minute",
+    },
+    FieldSpec {
+        min: 0,
+        max: 23,
+        name: "hour",
+    },
+    FieldSpec {
+        min: 1,
+        max: 31,
+        name: "day of month",
+    },
+    FieldSpec {
+        min: 1,
+        max: 12,
+        name: "month",
+    },
+    FieldSpec {
+        min: 0,
+        max: 6,
+        name: "day of week",
+    },
 ];
 
 // ============================================================================
@@ -56,9 +76,7 @@ pub const FIELD_SPECS: [FieldSpec; 5] = [
 pub enum CronError {
     #[error("Cron expression must not be empty")]
     Empty,
-    #[error(
-        "Cron expression must have exactly 5 fields, got {got}: \"{expression}\""
-    )]
+    #[error("Cron expression must have exactly 5 fields, got {got}: \"{expression}\"")]
     WrongFieldCount { expression: String, got: usize },
     #[error("Empty element in cron {field} field")]
     EmptyElement { field: &'static str },
@@ -68,14 +86,21 @@ pub enum CronError {
     InvalidRange { field: &'static str, base: String },
     #[error("Invalid start \"{start}\" in cron {field} field")]
     InvalidStart { field: &'static str, start: String },
-    #[error(
-        "Invalid range {start}-{end} in cron {field} field (start > end)"
-    )]
-    InvertedRange { field: &'static str, start: i64, end: i64 },
+    #[error("Invalid range {start}-{end} in cron {field} field (start > end)")]
+    InvertedRange {
+        field: &'static str,
+        start: i64,
+        end: i64,
+    },
     #[error("Invalid value \"{value}\" in cron {field} field")]
     InvalidValue { field: &'static str, value: String },
     #[error("Value {value} out of range [{min}-{max}] for cron {field} field")]
-    OutOfRange { field: &'static str, value: i64, min: i64, max: i64 },
+    OutOfRange {
+        field: &'static str,
+        value: i64,
+        min: i64,
+        max: i64,
+    },
     #[error("Empty result for cron {field} field")]
     EmptyResult { field: &'static str },
 }

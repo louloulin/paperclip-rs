@@ -18,7 +18,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r115-{tag}-{id}"))
         .bind(format!("R115{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("insert company");
+        .execute(db.pool())
+        .await
+        .expect("insert company");
     id
 }
 
@@ -48,13 +50,12 @@ async fn upsert_case_attachment_inserts_new() {
         .expect("upsert");
     assert!(!id.is_nil());
 
-    let (back_company, back_case, back_asset): (Uuid, Uuid, Uuid) = sqlx::query_as(
-        "SELECT company_id, case_id, asset_id FROM case_attachments WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (back_company, back_case, back_asset): (Uuid, Uuid, Uuid) =
+        sqlx::query_as("SELECT company_id, case_id, asset_id FROM case_attachments WHERE id = $1")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(back_company, cid);
     assert_eq!(back_case, case_id);
     assert_eq!(back_asset, asset_id);
@@ -69,8 +70,14 @@ async fn upsert_case_attachment_idempotent() {
     let asset_id = Uuid::new_v4();
 
     let repo = CaseRepo::new(&db);
-    let id1 = repo.upsert_case_attachment(cid, case_id, asset_id).await.expect("1");
-    let id2 = repo.upsert_case_attachment(cid, case_id, asset_id).await.expect("2");
+    let id1 = repo
+        .upsert_case_attachment(cid, case_id, asset_id)
+        .await
+        .expect("1");
+    let id2 = repo
+        .upsert_case_attachment(cid, case_id, asset_id)
+        .await
+        .expect("2");
     assert_eq!(id1, id2);
 }
 
@@ -84,8 +91,14 @@ async fn upsert_case_attachment_cross_case() {
     let asset_id = Uuid::new_v4();
 
     let repo = CaseRepo::new(&db);
-    let id_a = repo.upsert_case_attachment(cid, case_a, asset_id).await.expect("a");
-    let id_b = repo.upsert_case_attachment(cid, case_b, asset_id).await.expect("b");
+    let id_a = repo
+        .upsert_case_attachment(cid, case_a, asset_id)
+        .await
+        .expect("a");
+    let id_b = repo
+        .upsert_case_attachment(cid, case_b, asset_id)
+        .await
+        .expect("b");
     assert_ne!(id_a, id_b);
 }
 
@@ -102,13 +115,12 @@ async fn record_attachment_added_event_writes() {
         .record_attachment_added_event(cid, case_id, asset_id)
         .await
         .expect("record");
-    let (kind, payload): (String, serde_json::Value) = sqlx::query_as(
-        "SELECT kind, payload FROM case_events WHERE id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("query");
+    let (kind, payload): (String, serde_json::Value) =
+        sqlx::query_as("SELECT kind, payload FROM case_events WHERE id = $1")
+            .bind(event_id)
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
     assert_eq!(kind, "attachment_added");
     assert_eq!(payload["assetId"], serde_json::json!(asset_id.to_string()));
 }
@@ -122,8 +134,14 @@ async fn upsert_then_record_event_end_to_end() {
     let asset_id = Uuid::new_v4();
 
     let repo = CaseRepo::new(&db);
-    let attachment_id = repo.upsert_case_attachment(cid, case_id, asset_id).await.expect("up");
-    let event_id = repo.record_attachment_added_event(cid, case_id, asset_id).await.expect("ev");
+    let attachment_id = repo
+        .upsert_case_attachment(cid, case_id, asset_id)
+        .await
+        .expect("up");
+    let event_id = repo
+        .record_attachment_added_event(cid, case_id, asset_id)
+        .await
+        .expect("ev");
 
     // 验证 attachment + event 都存在
     let (a_count, e_count): (i64, i64) = sqlx::query_as(

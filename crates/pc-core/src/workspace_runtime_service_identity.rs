@@ -101,7 +101,9 @@ pub struct ResolveServiceScopeIdOutput {
 /// - 隐式：lifecycle=ephemeral → "run" / 否则 "project_workspace"
 /// - scopeId：project_workspace → projectWorkspaceId；execution_workspace → executionWorkspaceId；
 ///   run → runId；agent → agent.id
-pub fn resolve_service_scope_id(input: ResolveServiceScopeIdInput<'_>) -> ResolveServiceScopeIdOutput {
+pub fn resolve_service_scope_id(
+    input: ResolveServiceScopeIdInput<'_>,
+) -> ResolveServiceScopeIdOutput {
     let lifecycle = lifecycle_from_service(input.service);
     let explicit = input
         .service
@@ -213,11 +215,18 @@ pub fn resolve_runtime_service_reuse_identity(
 
     // port 解析
     let port_obj = input.service.get("port").and_then(|v| v.as_object());
-    let explicit_port = match port_obj.and_then(|o| o.get("value")).and_then(|v| v.as_i64()) {
+    let explicit_port = match port_obj
+        .and_then(|o| o.get("value"))
+        .and_then(|v| v.as_i64())
+    {
         Some(v) => v,
         None => as_number_from_map(input.service, "port", 0),
     };
-    let identity_port = if explicit_port > 0 { Some(explicit_port) } else { None };
+    let identity_port = if explicit_port > 0 {
+        Some(explicit_port)
+    } else {
+        None
+    };
 
     let template_data = build_template_data(BuildTemplateDataInput {
         workspace: input.workspace,
@@ -244,10 +253,12 @@ pub fn resolve_runtime_service_reuse_identity(
         .unwrap_or_default();
 
     // rendered env (string -> string)
-    let rendered_env = render_runtime_service_env(crate::workspace_runtime_template_render::RenderRuntimeServiceEnvInput {
-        env_config: &env_config,
-        template_data: &template_data,
-    });
+    let rendered_env = render_runtime_service_env(
+        crate::workspace_runtime_template_render::RenderRuntimeServiceEnvInput {
+            env_config: &env_config,
+            template_data: &template_data,
+        },
+    );
 
     let env_fingerprint = stable_fingerprint(&rendered_env);
 
@@ -348,10 +359,8 @@ pub fn resolve_workspace_command_execution(
     });
 
     let cwd_template = as_string_from_map(input.command, "cwd", ".");
-    let cwd_rendered = crate::workspace_runtime_template_render::render_template(
-        &cwd_template,
-        &template_data,
-    );
+    let cwd_rendered =
+        crate::workspace_runtime_template_render::render_template(&cwd_template, &template_data);
     let cwd = resolve_configured_path(&cwd_rendered, &input.workspace.cwd)
         .to_string_lossy()
         .to_string();
@@ -370,10 +379,12 @@ pub fn resolve_workspace_command_execution(
         .and_then(|v| v.as_object())
         .cloned()
         .unwrap_or_default();
-    let rendered_env = render_runtime_service_env(crate::workspace_runtime_template_render::RenderRuntimeServiceEnvInput {
-        env_config: &command_env,
-        template_data: &template_data,
-    });
+    let rendered_env = render_runtime_service_env(
+        crate::workspace_runtime_template_render::RenderRuntimeServiceEnvInput {
+            env_config: &command_env,
+            template_data: &template_data,
+        },
+    );
     for (k, v) in rendered_env.iter() {
         env.insert(k.clone(), v.clone());
     }
@@ -469,7 +480,10 @@ mod tests {
     #[test]
     fn scope_id_explicit_execution_workspace() {
         let mut s = Map::new();
-        s.insert("reuseScope".into(), Value::String("execution_workspace".into()));
+        s.insert(
+            "reuseScope".into(),
+            Value::String("execution_workspace".into()),
+        );
         let out = resolve_service_scope_id(ResolveServiceScopeIdInput {
             service: &s,
             workspace: &ws(),
@@ -522,20 +536,21 @@ mod tests {
         s.insert("name".into(), Value::String("web".into()));
         s.insert("command".into(), Value::String("pnpm dev".into()));
         let mut port = Map::new();
-        port.insert("value".into(), Value::Number(serde_json::Number::from(3000)));
+        port.insert(
+            "value".into(),
+            Value::Number(serde_json::Number::from(3000)),
+        );
         s.insert("port".into(), Value::Object(port));
         let adapter_env = Map::new();
-        let out = resolve_runtime_service_reuse_identity(
-            ResolveRuntimeServiceReuseIdentityInput {
-                service: &s,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                scope_type: ReuseScopeType::ProjectWorkspace,
-                scope_id: Some("feat/x"),
-            },
-        );
+        let out = resolve_runtime_service_reuse_identity(ResolveRuntimeServiceReuseIdentityInput {
+            service: &s,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            scope_type: ReuseScopeType::ProjectWorkspace,
+            scope_id: Some("feat/x"),
+        });
         assert_eq!(out.service_name, "web");
         assert_eq!(out.lifecycle, RuntimeServiceLifecycle::Shared);
         assert_eq!(out.command, "pnpm dev");
@@ -550,17 +565,15 @@ mod tests {
         let mut s = Map::new();
         s.insert("lifecycle".into(), Value::String("ephemeral".into()));
         let adapter_env = Map::new();
-        let out = resolve_runtime_service_reuse_identity(
-            ResolveRuntimeServiceReuseIdentityInput {
-                service: &s,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                scope_type: ReuseScopeType::Run,
-                scope_id: Some("run-1"),
-            },
-        );
+        let out = resolve_runtime_service_reuse_identity(ResolveRuntimeServiceReuseIdentityInput {
+            service: &s,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            scope_type: ReuseScopeType::Run,
+            scope_id: Some("run-1"),
+        });
         assert_eq!(out.lifecycle, RuntimeServiceLifecycle::Ephemeral);
         assert!(out.reuse_key.is_none());
     }
@@ -569,17 +582,15 @@ mod tests {
     fn reuse_identity_zero_port_no_identity_port() {
         let s: Map<String, Value> = Map::new();
         let adapter_env = Map::new();
-        let out = resolve_runtime_service_reuse_identity(
-            ResolveRuntimeServiceReuseIdentityInput {
-                service: &s,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                scope_type: ReuseScopeType::ProjectWorkspace,
-                scope_id: None,
-            },
-        );
+        let out = resolve_runtime_service_reuse_identity(ResolveRuntimeServiceReuseIdentityInput {
+            service: &s,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            scope_type: ReuseScopeType::ProjectWorkspace,
+            scope_id: None,
+        });
         assert_eq!(out.identity_port, None);
         assert_eq!(out.explicit_port, 0);
     }
@@ -588,17 +599,15 @@ mod tests {
     fn reuse_identity_service_name_default() {
         let s: Map<String, Value> = Map::new();
         let adapter_env = Map::new();
-        let out = resolve_runtime_service_reuse_identity(
-            ResolveRuntimeServiceReuseIdentityInput {
-                service: &s,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                scope_type: ReuseScopeType::ProjectWorkspace,
-                scope_id: None,
-            },
-        );
+        let out = resolve_runtime_service_reuse_identity(ResolveRuntimeServiceReuseIdentityInput {
+            service: &s,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            scope_type: ReuseScopeType::ProjectWorkspace,
+            scope_id: None,
+        });
         assert_eq!(out.service_name, "service");
     }
 
@@ -607,8 +616,8 @@ mod tests {
         let mut s = Map::new();
         s.insert("name".into(), Value::String("web".into()));
         let adapter_env = Map::new();
-        let mk = |scope_id: Option<&str>| resolve_runtime_service_reuse_identity(
-            ResolveRuntimeServiceReuseIdentityInput {
+        let mk = |scope_id: Option<&str>| {
+            resolve_runtime_service_reuse_identity(ResolveRuntimeServiceReuseIdentityInput {
                 service: &s,
                 workspace: &ws(),
                 agent: &ag(),
@@ -616,8 +625,8 @@ mod tests {
                 adapter_env: &adapter_env,
                 scope_type: ReuseScopeType::ProjectWorkspace,
                 scope_id,
-            },
-        );
+            })
+        };
         let a = mk(Some("feat/x"));
         let b = mk(Some("feat/x"));
         let c = mk(Some("feat/y"));
@@ -635,16 +644,14 @@ mod tests {
         cmd.insert("cwd".into(), Value::String("{{workspace.cwd}}".into()));
         let base_env = Map::new();
         let adapter_env = Map::new();
-        let out = resolve_workspace_command_execution(
-            ResolveWorkspaceCommandExecutionInput {
-                command: &cmd,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                base_env: &base_env,
-            },
-        );
+        let out = resolve_workspace_command_execution(ResolveWorkspaceCommandExecutionInput {
+            command: &cmd,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            base_env: &base_env,
+        });
         assert_eq!(out.name, "install");
         assert_eq!(out.command, "pnpm install");
         assert_eq!(out.cwd, "/repo");
@@ -655,16 +662,14 @@ mod tests {
         let cmd: Map<String, Value> = Map::new();
         let base_env = Map::new();
         let adapter_env = Map::new();
-        let out = resolve_workspace_command_execution(
-            ResolveWorkspaceCommandExecutionInput {
-                command: &cmd,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                base_env: &base_env,
-            },
-        );
+        let out = resolve_workspace_command_execution(ResolveWorkspaceCommandExecutionInput {
+            command: &cmd,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            base_env: &base_env,
+        });
         assert_eq!(out.name, "workspace command");
         assert_eq!(out.command, "");
     }
@@ -675,16 +680,14 @@ mod tests {
         cmd.insert("title".into(), Value::String("from-title".into()));
         let base_env = Map::new();
         let adapter_env = Map::new();
-        let out = resolve_workspace_command_execution(
-            ResolveWorkspaceCommandExecutionInput {
-                command: &cmd,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                base_env: &base_env,
-            },
-        );
+        let out = resolve_workspace_command_execution(ResolveWorkspaceCommandExecutionInput {
+            command: &cmd,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            base_env: &base_env,
+        });
         assert_eq!(out.name, "from-title");
     }
 
@@ -700,16 +703,14 @@ mod tests {
         let mut adapter_env = Map::new();
         adapter_env.insert("ADAPTER".into(), Value::String("a".into()));
 
-        let out = resolve_workspace_command_execution(
-            ResolveWorkspaceCommandExecutionInput {
-                command: &cmd,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                base_env: &base_env,
-            },
-        );
+        let out = resolve_workspace_command_execution(ResolveWorkspaceCommandExecutionInput {
+            command: &cmd,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            base_env: &base_env,
+        });
         assert_eq!(out.env.get("BASE").unwrap(), &json!("b"));
         assert_eq!(out.env.get("ADAPTER").unwrap(), &json!("a"));
         assert_eq!(out.env.get("RENDERED").unwrap(), &json!("agent-1"));
@@ -721,16 +722,14 @@ mod tests {
         cmd.insert("cwd".into(), Value::String("./subdir".into()));
         let base_env = Map::new();
         let adapter_env = Map::new();
-        let out = resolve_workspace_command_execution(
-            ResolveWorkspaceCommandExecutionInput {
-                command: &cmd,
-                workspace: &ws(),
-                agent: &ag(),
-                issue: None,
-                adapter_env: &adapter_env,
-                base_env: &base_env,
-            },
-        );
+        let out = resolve_workspace_command_execution(ResolveWorkspaceCommandExecutionInput {
+            command: &cmd,
+            workspace: &ws(),
+            agent: &ag(),
+            issue: None,
+            adapter_env: &adapter_env,
+            base_env: &base_env,
+        });
         assert!(out.cwd.starts_with("/repo"));
         assert!(out.cwd.ends_with("subdir"));
     }

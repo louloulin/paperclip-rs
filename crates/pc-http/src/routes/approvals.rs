@@ -29,8 +29,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/approvals/:id/reject", post(reject_approval))
         .route("/api/approvals/:id/resubmit", post(resubmit_approval))
         // ── Round 195: request revision ──
-        .route("/api/approvals/:id/request-revision", post(request_approval_revision))
-        .route("/api/approvals/:id/comments", get(list_approval_comments).post(add_approval_comment))
+        .route(
+            "/api/approvals/:id/request-revision",
+            post(request_approval_revision),
+        )
+        .route(
+            "/api/approvals/:id/comments",
+            get(list_approval_comments).post(add_approval_comment),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,14 +51,19 @@ async fn list(
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = match q.company_id {
-        Some(cid) => ApprovalRepo::new(&state.db).list_by_company_simple(cid).await?,
+        Some(cid) => {
+            ApprovalRepo::new(&state.db)
+                .list_by_company_simple(cid)
+                .await?
+        }
         None => ApprovalRepo::new(&state.db).list_all(200).await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = ApprovalRepo::new(&state.db).get_id(id)
+    let row = ApprovalRepo::new(&state.db)
+        .get_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -81,7 +92,8 @@ async fn create(
     } else {
         body.payload
     };
-    let row = ApprovalRepo::new(&state.db).create_three_args(body.company_id, &body.approval_type, payload)
+    let row = ApprovalRepo::new(&state.db)
+        .create_three_args(body.company_id, &body.approval_type, payload)
         .await?;
     state.realtime.publish(
         LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id),
@@ -113,7 +125,8 @@ async fn decide(
             "status must be approved|rejected|cancelled".into(),
         ));
     }
-    let row = ApprovalRepo::new(&state.db).decide_four_args(id, &body.status, body.note.as_deref(), &body.decided_by)
+    let row = ApprovalRepo::new(&state.db)
+        .decide_four_args(id, &body.status, body.note.as_deref(), &body.decided_by)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {id}")))?;
     state.realtime.publish(
@@ -228,9 +241,9 @@ async fn resubmit_approval(
         .get_id_company(approval_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
-    state.realtime.publish(
-        LiveEvent::new("approval.resubmitted", "approval", id).with_company(company_id),
-    );
+    state
+        .realtime
+        .publish(LiveEvent::new("approval.resubmitted", "approval", id).with_company(company_id));
     Ok(Json(json!({
         "id": id,
         "companyId": company_id,
@@ -238,7 +251,6 @@ async fn resubmit_approval(
         "resubmitted": true,
     })))
 }
-
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -258,11 +270,7 @@ async fn request_approval_revision(
     let row = ApprovalRepo::new(&state.db)
         .request_revision(approval_id, decided_by, body.decision_note.as_deref())
         .await?
-        .ok_or_else(|| {
-            ApiError::Conflict(
-                "Only pending approvals can request revision".into(),
-            )
-        })?;
+        .ok_or_else(|| ApiError::Conflict("Only pending approvals can request revision".into()))?;
     state.realtime.publish(
         LiveEvent::new("approval.revision_requested", "approval", row.id)
             .with_company(row.company_id),
@@ -280,16 +288,18 @@ async fn list_approval_comments(
         .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, company_id, author_agent_id, author_user_id, body, created_at)| {
-            json!({
-                "id": id,
-                "companyId": company_id,
-                "authorAgentId": author_agent_id,
-                "authorUserId": author_user_id,
-                "body": body,
-                "createdAt": created_at,
-            })
-        })
+        .map(
+            |(id, company_id, author_agent_id, author_user_id, body, created_at)| {
+                json!({
+                    "id": id,
+                    "companyId": company_id,
+                    "authorAgentId": author_agent_id,
+                    "authorUserId": author_user_id,
+                    "body": body,
+                    "createdAt": created_at,
+                })
+            },
+        )
         .collect();
     Ok(Json(json!({
         "approvalId": approval_id,
@@ -319,7 +329,13 @@ async fn add_approval_comment(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
     let id = ApprovalRepo::new(&state.db)
-        .add_comment_raw(company_id, approval_id, body.author_agent_id, body.author_user_id.as_deref(), &body.body)
+        .add_comment_raw(
+            company_id,
+            approval_id,
+            body.author_agent_id,
+            body.author_user_id.as_deref(),
+            &body.body,
+        )
         .await?;
     state.realtime.publish(
         LiveEvent::new("approval.comment_added", "approval_comment", id)

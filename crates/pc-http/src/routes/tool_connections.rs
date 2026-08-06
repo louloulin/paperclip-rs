@@ -19,25 +19,69 @@ use pc_realtime::LiveEvent;
 pub fn router() -> Router<AppState> {
     Router::new()
         // 顶层 tool-connections 管理
-        .route("/api/tool-connections/:connection_id", get(get_connection).patch(patch_connection).delete(delete_connection))
+        .route(
+            "/api/tool-connections/:connection_id",
+            get(get_connection)
+                .patch(patch_connection)
+                .delete(delete_connection),
+        )
         // catalog (从 MCP 拿到的工具清单)
-        .route("/api/tool-connections/:connection_id/catalog", get(get_connection_catalog))
-        .route("/api/tool-connections/:connection_id/catalog/refresh", post(refresh_connection_catalog))
+        .route(
+            "/api/tool-connections/:connection_id/catalog",
+            get(get_connection_catalog),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/catalog/refresh",
+            post(refresh_connection_catalog),
+        )
         // installs (向 agent 装机)
-        .route("/api/tool-connections/:connection_id/installs", get(list_installs).put(upsert_installs))
+        .route(
+            "/api/tool-connections/:connection_id/installs",
+            get(list_installs).put(upsert_installs),
+        )
         // grants (tool 授权)
-        .route("/api/tool-connections/:connection_id/grants", get(list_grants))
-        .route("/api/tool-connections/:connection_id/grants/:grant_id", delete(delete_grant))
-        .route("/api/tool-connections/:connection_id/grants/installations", post(grant_installations))
+        .route(
+            "/api/tool-connections/:connection_id/grants",
+            get(list_grants),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/grants/:grant_id",
+            delete(delete_grant),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/grants/installations",
+            post(grant_installations),
+        )
         // test-agents / test-calls
-        .route("/api/tool-connections/:connection_id/test-agents", get(list_test_agents))
-        .route("/api/tool-connections/:connection_id/test-calls", post(create_test_call))
-        .route("/api/tool-connections/:connection_id/test-calls/:call_id", get(get_test_call))
+        .route(
+            "/api/tool-connections/:connection_id/test-agents",
+            get(list_test_agents),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/test-calls",
+            post(create_test_call),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/test-calls/:call_id",
+            get(get_test_call),
+        )
         // health / activity / usage / reconnect
-        .route("/api/tool-connections/:connection_id/health-check", post(run_health_check))
-        .route("/api/tool-connections/:connection_id/reconnect", post(reconnect_connection))
-        .route("/api/tool-connections/:connection_id/activity", get(get_connection_activity))
-        .route("/api/tool-connections/:connection_id/usage", get(get_connection_usage))
+        .route(
+            "/api/tool-connections/:connection_id/health-check",
+            post(run_health_check),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/reconnect",
+            post(reconnect_connection),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/activity",
+            get(get_connection_activity),
+        )
+        .route(
+            "/api/tool-connections/:connection_id/usage",
+            get(get_connection_usage),
+        )
 }
 
 // Round 154: `ToolConnectionRow` 已迁到 `pc_repos::tool_connection::ToolConnectionRow`。
@@ -141,9 +185,8 @@ async fn patch_connection(
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
     state.realtime.publish(
-    LiveEvent::new("tool_connection.updated", "tool_connection", connection_id)
-        .with_data(json!({"fields": updated}))
-        
+        LiveEvent::new("tool_connection.updated", "tool_connection", connection_id)
+            .with_data(json!({"fields": updated})),
     );
     get_connection(State(state), Path(connection_id)).await
 }
@@ -157,12 +200,15 @@ async fn delete_connection(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if affected == 0 {
-        return Err(ApiError::NotFound(format!("tool connection {connection_id}")));
+        return Err(ApiError::NotFound(format!(
+            "tool connection {connection_id}"
+        )));
     }
-    state.realtime.publish(
-    LiveEvent::new("tool_connection.deleted", "tool_connection", connection_id)
-        
-    );
+    state.realtime.publish(LiveEvent::new(
+        "tool_connection.deleted",
+        "tool_connection",
+        connection_id,
+    ));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -174,10 +220,15 @@ async fn get_connection_catalog(
         .list_catalog(connection_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, name, title, desc, schema, ann, risk)| json!({
-        "id": id, "companyId": cid, "name": name, "title": title,
-        "description": desc, "inputSchema": schema, "annotations": ann, "riskLevel": risk,
-    })).collect();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, cid, name, title, desc, schema, ann, risk)| {
+            json!({
+                "id": id, "companyId": cid, "name": name, "title": title,
+                "description": desc, "inputSchema": schema, "annotations": ann, "riskLevel": risk,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "connectionId": connection_id})))
 }
 
@@ -189,11 +240,14 @@ async fn refresh_connection_catalog(
         .touch_catalog_refresh(connection_id)
         .await
         .ok();
-    state.realtime.publish(
-    LiveEvent::new("tool_connection.catalog_refresh", "tool_connection", connection_id)
-        
-    );
-    Ok(Json(json!({"refreshed": true, "connectionId": connection_id})))
+    state.realtime.publish(LiveEvent::new(
+        "tool_connection.catalog_refresh",
+        "tool_connection",
+        connection_id,
+    ));
+    Ok(Json(
+        json!({"refreshed": true, "connectionId": connection_id}),
+    ))
 }
 
 async fn list_installs(
@@ -205,9 +259,14 @@ async fn list_installs(
         .list_installs(connection_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, ag, name, ver)| json!({
-        "id": id, "agentId": ag, "name": name, "version": ver,
-    })).collect();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, ag, name, ver)| {
+            json!({
+                "id": id, "agentId": ag, "name": name, "version": ver,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "connectionId": connection_id})))
 }
 
@@ -233,21 +292,33 @@ async fn upsert_installs(
 ) -> ApiResult<Json<Value>> {
     let repo = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db);
     // Note: 实际 schema 列 target_type/target_id（route 用 agent_id 作为 target_id）。
-    let company_id = match repo.find_by_id(connection_id).await.map_err(|e| ApiError::Internal(e.to_string()))? {
+    let company_id = match repo
+        .find_by_id(connection_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
         Some(c) => c.company_id,
-        None => return Err(ApiError::NotFound(format!("tool connection {connection_id}"))),
+        None => {
+            return Err(ApiError::NotFound(format!(
+                "tool connection {connection_id}"
+            )))
+        }
     };
     let mut count = 0;
     for entry in body.installs {
         let ag = entry.agent_id.unwrap_or_else(Uuid::nil);
         let target_id = ag.to_string();
-        if target_id.is_empty() { continue; }
+        if target_id.is_empty() {
+            continue;
+        }
         repo.upsert_install(connection_id, company_id, "agent", &target_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         count += 1;
     }
-    Ok(Json(json!({"upserted": count, "connectionId": connection_id})))
+    Ok(Json(
+        json!({"upserted": count, "connectionId": connection_id}),
+    ))
 }
 
 async fn list_grants(
@@ -267,10 +338,7 @@ async fn list_grants(
     )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = grants
-        .iter()
-        .map(grant_row_to_json)
-        .collect();
+    let items: Vec<Value> = grants.iter().map(grant_row_to_json).collect();
     Ok(Json(json!({
         "connectionId": connection_id,
         "items": items,
@@ -354,7 +422,11 @@ async fn grant_installations(
     let creds_refs = serde_json::Value::Array(
         body.credential_secret_refs
             .as_ref()
-            .map(|refs| refs.iter().map(|s| serde_json::Value::String(s.clone())).collect())
+            .map(|refs| {
+                refs.iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect()
+            })
             .unwrap_or_default(),
     );
     let is_default = body.is_default.unwrap_or(false);
@@ -397,9 +469,14 @@ async fn list_test_agents(
         .list_recent_lightweight(20)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, n, r)| json!({
-        "id": id, "name": n, "role": r,
-    })).collect();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, n, r)| {
+            json!({
+                "id": id, "name": n, "role": r,
+            })
+        })
+        .collect();
     Ok(Json(json!({"items": items, "connectionId": connection_id})))
 }
 
@@ -421,9 +498,12 @@ async fn create_test_call(
     let tool_name = body.tool_name.unwrap_or_else(|| "unknown".to_string());
     let call_id: Uuid = Uuid::new_v4();
     state.realtime.publish(
-    LiveEvent::new("tool_connection.test_call_created", "tool_test_call", call_id)
-        .with_data(json!({"connectionId": connection_id, "toolName": tool_name}))
-        
+        LiveEvent::new(
+            "tool_connection.test_call_created",
+            "tool_test_call",
+            call_id,
+        )
+        .with_data(json!({"connectionId": connection_id, "toolName": tool_name})),
     );
     Ok(Json(json!({
         "id": call_id,
@@ -455,11 +535,14 @@ async fn run_health_check(
         .update_health_check(connection_id, "ok", None)
         .await
         .ok();
-    state.realtime.publish(
-    LiveEvent::new("tool_connection.health_check", "tool_connection", connection_id)
-        
-    );
-    Ok(Json(json!({"healthy": true, "connectionId": connection_id, "checkedAt": chrono::Utc::now()})))
+    state.realtime.publish(LiveEvent::new(
+        "tool_connection.health_check",
+        "tool_connection",
+        connection_id,
+    ));
+    Ok(Json(
+        json!({"healthy": true, "connectionId": connection_id, "checkedAt": chrono::Utc::now()}),
+    ))
 }
 
 async fn reconnect_connection(
@@ -470,11 +553,14 @@ async fn reconnect_connection(
         .update_status(connection_id, "connected")
         .await
         .ok();
-    state.realtime.publish(
-    LiveEvent::new("tool_connection.reconnected", "tool_connection", connection_id)
-        
-    );
-    Ok(Json(json!({"reconnected": true, "connectionId": connection_id})))
+    state.realtime.publish(LiveEvent::new(
+        "tool_connection.reconnected",
+        "tool_connection",
+        connection_id,
+    ));
+    Ok(Json(
+        json!({"reconnected": true, "connectionId": connection_id}),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -490,15 +576,29 @@ async fn get_connection_activity(
 ) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let repo = pc_repos::tool_connection::ToolConnectionRepo::new(&state.db);
-    if !repo.activity_table_exists().await.map_err(|e| ApiError::Internal(e.to_string()))? {
+    if !repo
+        .activity_table_exists()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
         return Ok(Json(json!({"items": [], "connectionId": connection_id})));
     }
-    let rows = repo.list_activity(connection_id, limit).await.map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = rows.into_iter().map(|(id, cid, name, req, ts)| json!({
-        "id": id, "connectionId": cid, "toolName": name,
-        "request": req, "createdAt": ts,
-    })).collect();
-    Ok(Json(json!({"items": items, "connectionId": connection_id, "limit": limit})))
+    let rows = repo
+        .list_activity(connection_id, limit)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, cid, name, req, ts)| {
+            json!({
+                "id": id, "connectionId": cid, "toolName": name,
+                "request": req, "createdAt": ts,
+            })
+        })
+        .collect();
+    Ok(Json(
+        json!({"items": items, "connectionId": connection_id, "limit": limit}),
+    ))
 }
 
 async fn get_connection_usage(
@@ -520,9 +620,7 @@ async fn get_connection_usage(
 // ============================================================================
 
 /// 将 `ConnectionGrantRow` 序列化为 camelCase JSON（与 Node schema 对齐）
-fn grant_row_to_json(
-    r: &pc_repos::tool_connection::ConnectionGrantRow,
-) -> Value {
+fn grant_row_to_json(r: &pc_repos::tool_connection::ConnectionGrantRow) -> Value {
     json!({
         "id": r.id,
         "companyId": r.company_id,

@@ -41,7 +41,11 @@ pub fn resolve_shell<F>(exists_check: F) -> String
 where
     F: Fn(&str) -> bool,
 {
-    let fallback = if cfg!(windows) { "sh".to_string() } else { "/bin/sh".to_string() };
+    let fallback = if cfg!(windows) {
+        "sh".to_string()
+    } else {
+        "/bin/sh".to_string()
+    };
     if let Ok(shell_raw) = std::env::var("SHELL") {
         let shell = shell_raw.trim();
         if !shell.is_empty() {
@@ -105,9 +109,7 @@ fn parse_readiness(service: &HashMap<String, Value>) -> HashMap<String, Value> {
 /// - `readiness.timeoutSec > 0` → max(1, timeoutSec)
 /// - 否则若 command 是 dev server 启发式 → 90
 /// - 否则 → 30
-pub fn resolve_workspace_runtime_readiness_timeout_sec(
-    service: &HashMap<String, Value>,
-) -> u64 {
+pub fn resolve_workspace_runtime_readiness_timeout_sec(service: &HashMap<String, Value>) -> u64 {
     let readiness = parse_readiness(service);
     let explicit = as_number(readiness.get("timeoutSec"), 0);
     if explicit > 0 {
@@ -154,7 +156,7 @@ struct MiniUrl {
     full: String,
     protocol_end: usize,
     path_start: usize,
-    query_start: Option<usize>, // '?' 位置
+    query_start: Option<usize>,    // '?' 位置
     fragment_start: Option<usize>, // '#' 位置
 }
 
@@ -200,7 +202,7 @@ fn replace_root_path_with_api_health(s: &str) -> String {
         .or(parsed.fragment_start)
         .unwrap_or(parsed.full.len());
     let before = &parsed.full[..parsed.path_start];
-    format!("{before}/api/health")  // 丢弃 query+fragment
+    format!("{before}/api/health") // 丢弃 query+fragment
 }
 
 pub fn resolve_runtime_service_health_url(
@@ -338,7 +340,10 @@ mod tests {
 
     #[test]
     fn is_paperclip_dev_matches_name() {
-        assert!(is_paperclip_dev_runtime_service(Some("paperclip-dev"), None));
+        assert!(is_paperclip_dev_runtime_service(
+            Some("paperclip-dev"),
+            None
+        ));
         assert!(is_paperclip_dev_runtime_service(
             Some("PAPERCLIP-DEV-ONCE"),
             None
@@ -353,14 +358,8 @@ mod tests {
             None,
             Some("pnpm dev:once && tailscale-auth")
         ));
-        assert!(!is_paperclip_dev_runtime_service(
-            None,
-            Some("pnpm dev")
-        ));
-        assert!(!is_paperclip_dev_runtime_service(
-            None,
-            Some("tsc --watch")
-        ));
+        assert!(!is_paperclip_dev_runtime_service(None, Some("pnpm dev")));
+        assert!(!is_paperclip_dev_runtime_service(None, Some("tsc --watch")));
     }
 
     #[test]

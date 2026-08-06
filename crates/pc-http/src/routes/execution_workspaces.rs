@@ -21,9 +21,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use pc_repos::execution::{NewLease,
-    ActionKind, ActionStatus, ExecutionRepo, RuntimeLifecycle, RuntimeServiceRow, WorkspaceRow,
-    WorkspaceStatus,
+use pc_repos::execution::{
+    ActionKind, ActionStatus, ExecutionRepo, NewLease, RuntimeLifecycle, RuntimeServiceRow,
+    WorkspaceRow, WorkspaceStatus,
 };
 
 use crate::{ApiError, ApiResult, AppState};
@@ -271,7 +271,9 @@ async fn workspace_operations(
         json!({ "key": "archive", "label": "Archive", "enabled": status == "active" || status == "cleaning" }),
     ];
     if mode == "execution" {
-        operations.push(json!({ "key": "switch_strategy", "label": "Switch Strategy", "enabled": false }));
+        operations.push(
+            json!({ "key": "switch_strategy", "label": "Switch Strategy", "enabled": false }),
+        );
     }
     Ok(Json(json!({
         "id": id,
@@ -456,7 +458,6 @@ async fn set_runtime_service_lifecycle(
     }
 }
 
-
 fn lease_json(row: &pc_repos::execution::LeaseRow) -> Value {
     json!({
         "id": row.id,
@@ -486,7 +487,9 @@ async fn active_lease(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     match row {
         Some(r) => Ok(Json(lease_json(&r))),
-        None => Err(ApiError::NotFound(format!("active lease for workspace {id}"))),
+        None => Err(ApiError::NotFound(format!(
+            "active lease for workspace {id}"
+        ))),
     }
 }
 
@@ -557,7 +560,10 @@ async fn renew_lease_route(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     match row {
         Some(r) => Ok(Json(lease_json(&r))),
-        None => Err(ApiError::NotFound(format!("lease {} not held", body.lease_id))),
+        None => Err(ApiError::NotFound(format!(
+            "lease {} not held",
+            body.lease_id
+        ))),
     }
 }
 
@@ -579,9 +585,14 @@ async fn release_lease_route(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if released {
-        Ok(Json(json!({ "leaseId": body.lease_id, "status": "released" })))
+        Ok(Json(
+            json!({ "leaseId": body.lease_id, "status": "released" }),
+        ))
     } else {
-        Err(ApiError::NotFound(format!("lease {} not held", body.lease_id)))
+        Err(ApiError::NotFound(format!(
+            "lease {} not held",
+            body.lease_id
+        )))
     }
 }
 
@@ -602,7 +613,9 @@ async fn revoke_lease_route(
                 .map_err(|e| ApiError::Internal(e.to_string()))?;
             Ok(Json(json!({ "leaseId": r.id, "status": "revoked" })))
         }
-        None => Err(ApiError::NotFound(format!("active lease for workspace {_id}"))),
+        None => Err(ApiError::NotFound(format!(
+            "active lease for workspace {_id}"
+        ))),
     }
 }
 #[allow(dead_code)]
@@ -614,7 +627,6 @@ fn status_from_str(s: &str) -> Option<WorkspaceStatus> {
 fn action_status_from_str(s: &str) -> Option<ActionStatus> {
     ActionStatus::parse(s)
 }
-
 
 // ============ Round 32: workspace validation + git worktree ============
 
@@ -646,7 +658,10 @@ async fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
     cmd.args(args).current_dir(cwd);
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     cmd.env("GIT_OPTIONAL_LOCKS", "0");
-    let out = cmd.output().await.map_err(|e| format!("spawn git failed: {e}"))?;
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| format!("spawn git failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
         return Err(stderr.trim().to_string());
@@ -695,7 +710,10 @@ async fn validate_workspace_route(
     // git rev-parse --show-toplevel
     match run_git(path, &["rev-parse", "--show-toplevel"]).await {
         Ok(root) => report.repo_root = Some(root),
-        Err(e) => { report.error = Some(format!("rev-parse: {e}")); return Ok(Json(report)); }
+        Err(e) => {
+            report.error = Some(format!("rev-parse: {e}"));
+            return Ok(Json(report));
+        }
     }
     // git symbolic-ref --quiet --short HEAD (branch)
     match run_git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).await {
@@ -705,11 +723,18 @@ async fn validate_workspace_route(
     // git status --porcelain --untracked-files=all
     match run_git(path, &["status", "--porcelain", "--untracked-files=all"]).await {
         Ok(out) => {
-            let files: Vec<String> = out.lines().filter(|l| !l.trim().is_empty()).map(|s| s.to_string()).collect();
+            let files: Vec<String> = out
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|s| s.to_string())
+                .collect();
             report.cleanliness = if files.is_empty() { "clean" } else { "dirty" };
             report.dirty_files = files;
         }
-        Err(e) => { report.error = Some(format!("status: {e}")); return Ok(Json(report)); }
+        Err(e) => {
+            report.error = Some(format!("status: {e}"));
+            return Ok(Json(report));
+        }
     }
     report.valid = report.error.is_none();
     // optional fetch
@@ -753,11 +778,15 @@ async fn create_worktree_route(
     let company_id = ws.company_id;
     let cwd = ws.cwd.clone();
     let provider_ref = ws.provider_ref.clone();
-    let main_repo = cwd.ok_or_else(||
+    let main_repo = cwd.ok_or_else(|| {
         ApiError::BadRequest("workspace has no cwd (main repo path); cannot create worktree".into())
-    )?;
+    })?;
     let worktree_path = body.worktree_path.clone().unwrap_or_else(|| {
-        format!("{}/.worktrees/{}", main_repo.trim_end_matches('/'), body.branch)
+        format!(
+            "{}/.worktrees/{}",
+            main_repo.trim_end_matches('/'),
+            body.branch
+        )
     });
     // optional fetch
     if body.fetch_remote.unwrap_or(false) {
@@ -775,9 +804,9 @@ async fn create_worktree_route(
     }
     args.push(worktree_path.clone());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_git(&main_repo, &arg_refs).await.map_err(|e|
-        ApiError::Conflict(format!("git worktree add failed: {e}"))
-    )?;
+    run_git(&main_repo, &arg_refs)
+        .await
+        .map_err(|e| ApiError::Conflict(format!("git worktree add failed: {e}")))?;
     // Persist new branch + provider_ref on the workspace
     ExecutionRepo::new(&state.db)
         .set_branch_provider_ref(id, &body.branch, &worktree_path)
@@ -815,13 +844,15 @@ async fn cleanup_worktree_route(
     let company_id = ws.company_id;
     let cwd = ws.cwd.clone();
     let provider_ref = ws.provider_ref.clone();
-    let worktree_path = provider_ref.clone().ok_or_else(||
+    let worktree_path = provider_ref.clone().ok_or_else(|| {
         ApiError::BadRequest("workspace has no provider_ref; nothing to clean up".into())
-    )?;
+    })?;
     let main_repo = cwd.clone().unwrap_or_else(|| worktree_path.clone());
     let force_flag = body.force.unwrap_or(false);
     let mut args: Vec<String> = vec!["worktree".into(), "remove".into()];
-    if force_flag { args.push("--force".into()); }
+    if force_flag {
+        args.push("--force".into());
+    }
     args.push(worktree_path.clone());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let removed = run_git(&main_repo, &arg_refs).await.is_ok();

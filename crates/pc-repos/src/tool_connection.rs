@@ -102,46 +102,62 @@ pub async fn update_name(db: &Db, id: Uuid, name: &str) -> RepoResult<u64> {
     Ok(r.rows_affected())
 }
 pub async fn update_enabled(db: &Db, id: Uuid, enabled: bool) -> RepoResult<u64> {
-    let r = sqlx::query("UPDATE tool_connections SET enabled = $1, updated_at = now() WHERE id = $2")
-        .bind(enabled)
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+    let r =
+        sqlx::query("UPDATE tool_connections SET enabled = $1, updated_at = now() WHERE id = $2")
+            .bind(enabled)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
     Ok(r.rows_affected())
 }
 pub async fn update_status(db: &Db, id: Uuid, status: &str) -> RepoResult<u64> {
-    let r = sqlx::query("UPDATE tool_connections SET status = $1, updated_at = now() WHERE id = $2")
-        .bind(status)
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+    let r =
+        sqlx::query("UPDATE tool_connections SET status = $1, updated_at = now() WHERE id = $2")
+            .bind(status)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
     Ok(r.rows_affected())
 }
 pub async fn update_config(db: &Db, id: Uuid, config: &serde_json::Value) -> RepoResult<u64> {
-    let r = sqlx::query("UPDATE tool_connections SET config = $1, updated_at = now() WHERE id = $2")
-        .bind(config)
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+    let r =
+        sqlx::query("UPDATE tool_connections SET config = $1, updated_at = now() WHERE id = $2")
+            .bind(config)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
     Ok(r.rows_affected())
 }
-pub async fn update_credential_refs(db: &Db, id: Uuid, refs: &serde_json::Value) -> RepoResult<u64> {
-    let r = sqlx::query("UPDATE tool_connections SET credential_refs = $1, updated_at = now() WHERE id = $2")
-        .bind(refs)
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+pub async fn update_credential_refs(
+    db: &Db,
+    id: Uuid,
+    refs: &serde_json::Value,
+) -> RepoResult<u64> {
+    let r = sqlx::query(
+        "UPDATE tool_connections SET credential_refs = $1, updated_at = now() WHERE id = $2",
+    )
+    .bind(refs)
+    .bind(id)
+    .execute(db.pool())
+    .await?;
     Ok(r.rows_affected())
 }
 pub async fn update_application_id(db: &Db, id: Uuid, application_id: Uuid) -> RepoResult<u64> {
-    let r = sqlx::query("UPDATE tool_connections SET application_id = $1, updated_at = now() WHERE id = $2")
-        .bind(application_id)
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+    let r = sqlx::query(
+        "UPDATE tool_connections SET application_id = $1, updated_at = now() WHERE id = $2",
+    )
+    .bind(application_id)
+    .bind(id)
+    .execute(db.pool())
+    .await?;
     Ok(r.rows_affected())
 }
-pub async fn update_health_check(db: &Db, id: Uuid, status: &str, message: Option<&str>) -> RepoResult<u64> {
+pub async fn update_health_check(
+    db: &Db,
+    id: Uuid,
+    status: &str,
+    message: Option<&str>,
+) -> RepoResult<u64> {
     let r = sqlx::query("UPDATE tool_connections SET health_status = $1, health_message = $2, last_health_at = now(), updated_at = now() WHERE id = $3")
         .bind(status)
         .bind(message)
@@ -151,10 +167,12 @@ pub async fn update_health_check(db: &Db, id: Uuid, status: &str, message: Optio
     Ok(r.rows_affected())
 }
 pub async fn update_status_to_reconnecting(db: &Db, id: Uuid) -> RepoResult<u64> {
-    let r = sqlx::query("UPDATE tool_connections SET status = 'reconnecting', updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+    let r = sqlx::query(
+        "UPDATE tool_connections SET status = 'reconnecting', updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(db.pool())
+    .await?;
     Ok(r.rows_affected())
 }
 
@@ -165,8 +183,28 @@ pub async fn update_status_to_reconnecting(db: &Db, id: Uuid) -> RepoResult<u64>
 pub async fn list_catalog(
     db: &Db,
     connection_id: Uuid,
-) -> RepoResult<Vec<(Uuid, Uuid, String, Option<String>, Option<String>, serde_json::Value, serde_json::Value, String)>> {
-    let rows: Vec<(Uuid, Uuid, String, Option<String>, Option<String>, serde_json::Value, serde_json::Value, String)> = sqlx::query_as(
+) -> RepoResult<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        serde_json::Value,
+        String,
+    )>,
+> {
+    let rows: Vec<(
+        Uuid,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        serde_json::Value,
+        String,
+    )> = sqlx::query_as(
         "SELECT id, company_id, name, title, description, input_schema, annotations, risk_level
          FROM tool_catalog_entries WHERE connection_id = $1 ORDER BY name",
     )
@@ -457,8 +495,22 @@ pub async fn list_activity(
     db: &Db,
     connection_id: Uuid,
     limit: i64,
-) -> RepoResult<Vec<(Uuid, Uuid, String, serde_json::Value, chrono::DateTime<chrono::Utc>)>> {
-    let rows: Vec<(Uuid, Uuid, String, serde_json::Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+) -> RepoResult<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        serde_json::Value,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+> {
+    let rows: Vec<(
+        Uuid,
+        Uuid,
+        String,
+        serde_json::Value,
+        chrono::DateTime<chrono::Utc>,
+    )> = sqlx::query_as(
         "SELECT id, connection_id, tool_name, request, created_at
          FROM tool_invocations WHERE connection_id = $1 ORDER BY created_at DESC LIMIT $2",
     )
@@ -470,12 +522,11 @@ pub async fn list_activity(
 }
 
 pub async fn usage_install_count(db: &Db, connection_id: Uuid) -> RepoResult<Option<i64>> {
-    let row: (Option<i64>,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM tool_connection_installs WHERE connection_id = $1",
-    )
-    .bind(connection_id)
-    .fetch_one(db.pool())
-    .await?;
+    let row: (Option<i64>,) =
+        sqlx::query_as("SELECT COUNT(*) FROM tool_connection_installs WHERE connection_id = $1")
+            .bind(connection_id)
+            .fetch_one(db.pool())
+            .await?;
     Ok(row.0)
 }
 
@@ -510,13 +561,22 @@ impl<'a> ToolConnectionRepo<'a> {
     pub async fn update_config(&self, id: Uuid, config: &serde_json::Value) -> RepoResult<u64> {
         update_config(self.db, id, config).await
     }
-    pub async fn update_credential_refs(&self, id: Uuid, refs: &serde_json::Value) -> RepoResult<u64> {
+    pub async fn update_credential_refs(
+        &self,
+        id: Uuid,
+        refs: &serde_json::Value,
+    ) -> RepoResult<u64> {
         update_credential_refs(self.db, id, refs).await
     }
     pub async fn update_application_id(&self, id: Uuid, application_id: Uuid) -> RepoResult<u64> {
         update_application_id(self.db, id, application_id).await
     }
-    pub async fn update_health_check(&self, id: Uuid, status: &str, message: Option<&str>) -> RepoResult<u64> {
+    pub async fn update_health_check(
+        &self,
+        id: Uuid,
+        status: &str,
+        message: Option<&str>,
+    ) -> RepoResult<u64> {
         update_health_check(self.db, id, status, message).await
     }
     pub async fn update_status_to_reconnecting(&self, id: Uuid) -> RepoResult<u64> {
@@ -525,13 +585,27 @@ impl<'a> ToolConnectionRepo<'a> {
     pub async fn list_catalog(
         &self,
         connection_id: Uuid,
-    ) -> RepoResult<Vec<(Uuid, Uuid, String, Option<String>, Option<String>, serde_json::Value, serde_json::Value, String)>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+            String,
+        )>,
+    > {
         list_catalog(self.db, connection_id).await
     }
     pub async fn touch_catalog_refresh(&self, connection_id: Uuid) -> RepoResult<u64> {
         touch_catalog_refresh(self.db, connection_id).await
     }
-    pub async fn list_installs(&self, connection_id: Uuid) -> RepoResult<Vec<(Uuid, Uuid, String, String)>> {
+    pub async fn list_installs(
+        &self,
+        connection_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, Uuid, String, String)>> {
         list_installs(self.db, connection_id).await
     }
     pub async fn upsert_install(
@@ -546,13 +620,19 @@ impl<'a> ToolConnectionRepo<'a> {
     pub async fn grants_table_exists(&self, company_id: Uuid) -> RepoResult<bool> {
         grants_table_exists(self.db, company_id).await
     }
-    pub async fn list_grants(&self, connection_id: Uuid) -> RepoResult<Vec<(Uuid, Uuid, String, serde_json::Value)>> {
+    pub async fn list_grants(
+        &self,
+        connection_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, Uuid, String, serde_json::Value)>> {
         list_grants(self.db, connection_id).await
     }
     pub async fn delete_grant(&self, grant_id: Uuid) -> RepoResult<u64> {
         delete_grant(self.db, grant_id).await
     }
-    pub async fn list_test_agents(&self, connection_id: Uuid) -> RepoResult<Vec<(Uuid, String, String)>> {
+    pub async fn list_test_agents(
+        &self,
+        connection_id: Uuid,
+    ) -> RepoResult<Vec<(Uuid, String, String)>> {
         list_test_agents(self.db, connection_id).await
     }
     pub async fn activity_table_exists(&self) -> RepoResult<bool> {
@@ -562,7 +642,15 @@ impl<'a> ToolConnectionRepo<'a> {
         &self,
         connection_id: Uuid,
         limit: i64,
-    ) -> RepoResult<Vec<(Uuid, Uuid, String, serde_json::Value, chrono::DateTime<chrono::Utc>)>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            Uuid,
+            String,
+            serde_json::Value,
+            chrono::DateTime<chrono::Utc>,
+        )>,
+    > {
         list_activity(self.db, connection_id, limit).await
     }
     pub async fn usage_install_count(&self, connection_id: Uuid) -> RepoResult<Option<i64>> {

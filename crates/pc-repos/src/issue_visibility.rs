@@ -10,8 +10,7 @@
 /// 默认可见谓词 SQL（无别名），与 Node `visibleIssueCondition()` 1:1 对齐。
 ///
 /// 用于不带表别名的简单查询（默认引用 `issues` 表）。
-pub const VISIBLE_ISSUE_CONDITION_SQL: &str =
-    "\"hidden_at\" IS NULL AND \"harness_kind\" IS NULL";
+pub const VISIBLE_ISSUE_CONDITION_SQL: &str = "\"hidden_at\" IS NULL AND \"harness_kind\" IS NULL";
 
 /// 带表别名的可见谓词 SQL，与 Node `visibleIssueSql(alias)` 1:1 对齐。
 ///

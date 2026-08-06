@@ -225,7 +225,10 @@ fn collect_non_overlapping_matches(input: &str) -> Vec<(usize, usize, usize)> {
 /// 返回 `(redacted_text, state)`：
 /// - `redacted_text`：替换后的文本
 /// - `state`：本次调用累计的 redacted 模式 / counts
-pub fn redact_free_text(input: &str, state: Option<&mut RedactionState>) -> (String, RedactionState) {
+pub fn redact_free_text(
+    input: &str,
+    state: Option<&mut RedactionState>,
+) -> (String, RedactionState) {
     // 累积语义：传入 Some(&mut s) 时，从 s 的克隆开始，最后写回 s；
     // 传入 None 时使用全新的本地 state。
     let mut owned = match state {
@@ -298,7 +301,9 @@ pub fn truncate_string_fields(
             serde_json::Value::String(new_s)
         }
         serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.iter().map(|v| truncate_string_fields(v, max_chars, state)).collect(),
+            arr.iter()
+                .map(|v| truncate_string_fields(v, max_chars, state))
+                .collect(),
         ),
         serde_json::Value::Object(obj) => {
             let mut out = serde_json::Map::new();
@@ -343,9 +348,9 @@ fn redact_value_strings(
             let (new_s, _) = redact_free_text(s, Some(state));
             serde_json::Value::String(new_s)
         }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.iter().map(|v| redact_value_strings(v, state)).collect(),
-        ),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(|v| redact_value_strings(v, state)).collect())
+        }
         serde_json::Value::Object(obj) => {
             let mut out = serde_json::Map::new();
             for (k, v) in obj {
@@ -579,5 +584,3 @@ mod tests {
         assert!(!was);
     }
 }
-
-

@@ -387,9 +387,7 @@ fn decision_bundle_to_json(row: DecisionBundleRow) -> Value {
 }
 
 /// 把仓储层错误转换成 HTTP 层错误；保留与原路由一致的状态码语义。
-fn map_decision_bundle_error(
-    error: pc_repos::decision_bundle::DecisionBundleError,
-) -> ApiError {
+fn map_decision_bundle_error(error: pc_repos::decision_bundle::DecisionBundleError) -> ApiError {
     use pc_repos::decision_bundle::DecisionBundleError as E;
     match error {
         E::EmptyTitle => ApiError::BadRequest("title required".into()),

@@ -30,11 +30,21 @@ pub async fn resolve_task_watchdog_mutation_scope(
     if actor.actor_type != "agent" {
         return Ok(TaskWatchdogMutationScope::None);
     }
-    let agent_id = match actor.agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let agent_id = match actor
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(s) => s.to_string(),
         None => return Ok(TaskWatchdogMutationScope::None),
     };
-    let run_id = match actor.run_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let run_id = match actor
+        .run_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(s) => s.to_string(),
         None => return Ok(TaskWatchdogMutationScope::None),
     };
@@ -66,7 +76,8 @@ pub async fn resolve_task_watchdog_mutation_scope(
     };
     let run_agent_id_str = run_agent_id.map(|u| u.to_string()).unwrap_or_default();
     if run_agent_id_str != agent_id
-        || (actor_company_id.is_some() && actor_company_id.as_deref() != Some(&run_company_id.to_string()))
+        || (actor_company_id.is_some()
+            && actor_company_id.as_deref() != Some(&run_company_id.to_string()))
     {
         return Ok(TaskWatchdogMutationScope::Invalid {
             detail: "Task-watchdog run context does not belong to this agent.".to_string(),
@@ -202,7 +213,11 @@ pub async fn task_watchdog_scope_allows_issue_mutation(
             watchdog_issue_id,
             watched_issue_id,
             ..
-        } => (company_id.clone(), watchdog_issue_id.clone(), watched_issue_id.clone()),
+        } => (
+            company_id.clone(),
+            watchdog_issue_id.clone(),
+            watched_issue_id.clone(),
+        ),
         _ => unreachable!(),
     };
     let (scope_company_id, watchdog_issue_id, watched_issue_id) = scope;
@@ -236,7 +251,11 @@ pub async fn task_watchdog_scope_allows_issue_mutation(
     };
     if issue_is_in_task_watchdog_subtree(db, issue.company_id, issue.id, watched_uuid).await? {
         // Preserve original scope by reconstructing it
-        return Ok(scope_to_watchdog(&scope_company_id, &watchdog_issue_id, &watched_issue_id));
+        return Ok(scope_to_watchdog(
+            &scope_company_id,
+            &watchdog_issue_id,
+            &watched_issue_id,
+        ));
     }
     Ok(TaskWatchdogMutationScope::Invalid {
         detail: "Task-watchdog runs can only mutate the watched issue subtree.".to_string(),

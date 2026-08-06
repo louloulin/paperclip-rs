@@ -254,9 +254,8 @@ pub use channels::{default_channels, matches_any, parse_channels, ChannelFilter}
 /// Round 255: Rate limit + connection count limit（防滥用）。
 pub mod rate_limit;
 pub use rate_limit::{
-    ConnectionGuard, ConnectionLimiter, IpRateLimiter, TokenBucket,
-    DEFAULT_BUCKET_CAPACITY, DEFAULT_BUCKET_REFILL_PER_SECOND,
-    DEFAULT_MAX_CONNECTIONS_PER_COMPANY,
+    ConnectionGuard, ConnectionLimiter, IpRateLimiter, TokenBucket, DEFAULT_BUCKET_CAPACITY,
+    DEFAULT_BUCKET_REFILL_PER_SECOND, DEFAULT_MAX_CONNECTIONS_PER_COMPANY,
 };
 
 /// WebSocket state（server 名 + realtime handle）。

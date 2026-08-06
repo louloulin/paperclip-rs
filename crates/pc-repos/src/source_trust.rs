@@ -66,7 +66,10 @@ pub enum TrustPresetResolution {
 /// 本 trait 在 `source_trust` 适配层先定义，避免「trust-preset-resolver 未 port 时本模块也无法用」。
 #[async_trait::async_trait]
 pub trait TrustPresetResolver: Send + Sync {
-    async fn resolve_core_trust_preset(&self, input: ResolveCoreTrustPresetInput) -> TrustPresetResolution;
+    async fn resolve_core_trust_preset(
+        &self,
+        input: ResolveCoreTrustPresetInput,
+    ) -> TrustPresetResolution;
 }
 
 /// `resolveCoreTrustPreset` 输入（与 Node `ResolveCoreTrustPresetInput` 1:1 对齐）。
@@ -212,13 +215,13 @@ pub async fn resolve_actor_source_trust_for_issue(
     match resolution {
         TrustPresetResolution::Denied { detail, .. } => Err(SourceTrustError::Denied { detail }),
         TrustPresetResolution::Standard => Ok(None),
-        TrustPresetResolution::LowTrustReview { .. } => Ok(Some(
-            build_low_trust_source_trust(BuildLowTrustSourceTrustInput {
+        TrustPresetResolution::LowTrustReview { .. } => Ok(Some(build_low_trust_source_trust(
+            BuildLowTrustSourceTrustInput {
                 issue_id: issue.id.to_string(),
                 run_id: actor.run_id.map(|r| r.to_string()),
                 agent_id: actor.agent_id.map(|a| a.to_string()),
-            }),
-        )),
+            },
+        ))),
     }
 }
 
@@ -276,11 +279,7 @@ async fn fetch_project(
     }))
 }
 
-async fn fetch_run(
-    db: &Db,
-    run_id: Uuid,
-    company_id: Uuid,
-) -> Result<Option<RunRow>, sqlx::Error> {
+async fn fetch_run(db: &Db, run_id: Uuid, company_id: Uuid) -> Result<Option<RunRow>, sqlx::Error> {
     let row: Option<(Uuid, Option<Uuid>, Option<Json<JsonValue>>)> = sqlx::query_as(
         "SELECT company_id, agent_id, context_snapshot FROM heartbeat_runs WHERE id = $1 AND company_id = $2",
     )
@@ -404,12 +403,15 @@ mod tests {
             project_id: None,
             execution_policy: None,
         };
-        let result =
-            source_trust_user_actor_guard(&actor, &issue, &FakeResolver {
+        let result = source_trust_user_actor_guard(
+            &actor,
+            &issue,
+            &FakeResolver {
                 result: TrustPresetResolution::Standard,
                 calls: Arc::new(Mutex::new(Vec::new())),
-            })
-            .await;
+            },
+        )
+        .await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }

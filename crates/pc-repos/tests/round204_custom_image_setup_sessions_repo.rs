@@ -12,9 +12,7 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -148,6 +146,9 @@ async fn terminal_token_persisted() {
     assert!(expires_at.as_datetime() > now);
 
     // 落库后能取到
-    let stored = fetch_token(&db, session_id).await.unwrap().expect("present");
+    let stored = fetch_token(&db, session_id)
+        .await
+        .unwrap()
+        .expect("present");
     assert_eq!(stored, token);
 }

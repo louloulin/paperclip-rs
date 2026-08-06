@@ -5,7 +5,7 @@
 use uuid::Uuid;
 
 use crate::folder::slug::is_reserved_root_slug;
-use crate::folder::{COLS, FolderKind, FolderPatch, FolderRepo, FolderRow, NewFolder};
+use crate::folder::{FolderKind, FolderPatch, FolderRepo, FolderRow, NewFolder, COLS};
 use crate::{Db, RepoError, RepoResult};
 
 impl<'a> FolderRepo<'a> {
@@ -23,7 +23,11 @@ impl<'a> FolderRepo<'a> {
             .await?)
     }
 
-    pub async fn list_by_kind(&self, company_id: Uuid, kind: FolderKind) -> RepoResult<Vec<FolderRow>> {
+    pub async fn list_by_kind(
+        &self,
+        company_id: Uuid,
+        kind: FolderKind,
+    ) -> RepoResult<Vec<FolderRow>> {
         let sql = format!(
             "SELECT {COLS} FROM folders WHERE company_id=$1 AND kind=$2 ORDER BY COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'), position, name"
         );
@@ -49,9 +53,8 @@ impl<'a> FolderRepo<'a> {
         kind: FolderKind,
         system_key: &str,
     ) -> RepoResult<Option<FolderRow>> {
-        let sql = format!(
-            "SELECT {COLS} FROM folders WHERE company_id=$1 AND kind=$2 AND system_key=$3"
-        );
+        let sql =
+            format!("SELECT {COLS} FROM folders WHERE company_id=$1 AND kind=$2 AND system_key=$3");
         Ok(sqlx::query_as::<_, FolderRow>(&sql)
             .bind(company_id)
             .bind(kind.as_str())
@@ -79,7 +82,9 @@ impl<'a> FolderRepo<'a> {
 
     pub async fn create(&self, f: &NewFolder) -> RepoResult<FolderRow> {
         if f.name.trim().is_empty() || f.slug.trim().is_empty() {
-            return Err(RepoError::Invalid("folder name/slug must not be empty".into()));
+            return Err(RepoError::Invalid(
+                "folder name/slug must not be empty".into(),
+            ));
         }
         if is_reserved_root_slug(f.kind, f.parent_id, &f.slug) {
             return Err(RepoError::Invalid(
@@ -103,13 +108,20 @@ impl<'a> FolderRepo<'a> {
     }
 
     /// 改字段，且如果请求改 parent_id，做循环检测。
-    pub async fn patch(&self, company_id: Uuid, id: Uuid, p: &FolderPatch) -> RepoResult<Option<FolderRow>> {
+    pub async fn patch(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+        p: &FolderPatch,
+    ) -> RepoResult<Option<FolderRow>> {
         if let Some(Some(new_parent)) = p.parent_id {
             if new_parent == id {
                 return Err(RepoError::Invalid("folder cannot be its own parent".into()));
             }
             if self.would_create_cycle(id, new_parent).await? {
-                return Err(RepoError::Invalid("moving folder would create a cycle".into()));
+                return Err(RepoError::Invalid(
+                    "moving folder would create a cycle".into(),
+                ));
             }
         }
         let sql = format!(
@@ -165,12 +177,11 @@ impl<'a> FolderRepo<'a> {
     }
 
     pub async fn delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
-        let has_children: Option<i64> = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM folders WHERE parent_id=$1",
-        )
-        .bind(id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let has_children: Option<i64> =
+            sqlx::query_scalar("SELECT COUNT(*) FROM folders WHERE parent_id=$1")
+                .bind(id)
+                .fetch_one(self.db.pool())
+                .await?;
         if has_children.unwrap_or(0) > 0 {
             return Err(RepoError::Invalid(
                 "folder has children; archive or move first".into(),
@@ -186,13 +197,12 @@ impl<'a> FolderRepo<'a> {
     }
 
     pub async fn count_by_kind(&self, company_id: Uuid, kind: FolderKind) -> RepoResult<i64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM folders WHERE company_id=$1 AND kind=$2",
-        )
-        .bind(company_id)
-        .bind(kind.as_str())
-        .fetch_one(self.db.pool())
-        .await?;
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM folders WHERE company_id=$1 AND kind=$2")
+                .bind(company_id)
+                .bind(kind.as_str())
+                .fetch_one(self.db.pool())
+                .await?;
         Ok(n)
     }
 
@@ -230,11 +240,7 @@ impl<'a> FolderRepo<'a> {
 
     /// 计算下一个可用 position（兼容任意 kind 字符串）。
     /// 替代 routes 中 legacy kind 的 inline `COALESCE(MAX(position),0)+1`。
-    pub async fn next_position_for_kind(
-        &self,
-        company_id: Uuid,
-        kind: &str,
-    ) -> RepoResult<i32> {
+    pub async fn next_position_for_kind(&self, company_id: Uuid, kind: &str) -> RepoResult<i32> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(position),0)+1 FROM folders WHERE company_id=$1 AND kind=$2",
         )
@@ -254,10 +260,7 @@ impl<'a> FolderRepo<'a> {
     ///
     /// 注：与 `ensure_container` 区别在于 kind 字符串（'personal' vs 'skill'）以及
     /// 不通过 system_key 标识。
-    pub async fn ensure_personal_root(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<(FolderRow, bool)> {
+    pub async fn ensure_personal_root(&self, company_id: Uuid) -> RepoResult<(FolderRow, bool)> {
         let existing: Option<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM folders WHERE company_id=$1 AND kind='personal' LIMIT 1",
         )

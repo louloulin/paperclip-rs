@@ -47,10 +47,7 @@ fn test_state_with_storage(db: Db, storage_root: std::path::PathBuf) -> AppState
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     );
     state.storage = Arc::new(storage);
@@ -76,12 +73,7 @@ fn b64(s: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(s)
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -134,7 +126,10 @@ async fn upload_image_to_real_company_succeeds() {
     let asset_id = body["id"].as_str().expect("asset id");
     assert_eq!(body["companyId"], company_id.to_string());
     assert_eq!(body["kind"], "image");
-    assert!(body["key"].as_str().unwrap().contains(&company_id.to_string()));
+    assert!(body["key"]
+        .as_str()
+        .unwrap()
+        .contains(&company_id.to_string()));
     assert!(body["url"].as_str().unwrap().contains(asset_id));
 
     // Asset content retrieval

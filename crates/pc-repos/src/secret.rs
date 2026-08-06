@@ -433,10 +433,7 @@ impl<'a> SecretRepo<'a> {
 
     // -------- company_secrets --------
 
-    pub async fn list_for_company(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<CompanySecretRow>> {
+    pub async fn list_for_company(&self, company_id: Uuid) -> RepoResult<Vec<CompanySecretRow>> {
         let sql = format!(
             "SELECT {SECRET_COLS} FROM company_secrets \
              WHERE company_id=$1 AND deleted_at IS NULL \
@@ -702,7 +699,10 @@ impl<'a> SecretRepo<'a> {
             .await?)
     }
 
-    pub async fn upsert_binding(&self, b: &NewSecretBinding) -> RepoResult<CompanySecretBindingRow> {
+    pub async fn upsert_binding(
+        &self,
+        b: &NewSecretBinding,
+    ) -> RepoResult<CompanySecretBindingRow> {
         let sql = format!(
             "INSERT INTO company_secret_bindings (company_id, secret_id, target_type, target_id, \
                 config_path, version_selector, required, label, projection_class, \
@@ -838,9 +838,8 @@ impl<'a> SecretRepo<'a> {
 
     /// Round 121: 按 id 查 provider 配置。
     pub async fn get_provider(&self, id: Uuid) -> RepoResult<Option<ProviderConfigRow>> {
-        let sql = format!(
-            "SELECT {PROVIDER_COLS} FROM company_secret_provider_configs WHERE id=$1"
-        );
+        let sql =
+            format!("SELECT {PROVIDER_COLS} FROM company_secret_provider_configs WHERE id=$1");
         Ok(sqlx::query_as::<_, ProviderConfigRow>(&sql)
             .bind(id)
             .fetch_optional(self.db.pool())
@@ -858,10 +857,7 @@ impl<'a> SecretRepo<'a> {
     }
 
     /// Round 121: 标记 provider 为 default（UPDATE ... RETURNING）。
-    pub async fn mark_default_provider(
-        &self,
-        id: Uuid,
-    ) -> RepoResult<Option<ProviderConfigRow>> {
+    pub async fn mark_default_provider(&self, id: Uuid) -> RepoResult<Option<ProviderConfigRow>> {
         let sql = format!(
             "UPDATE company_secret_provider_configs SET is_default=true, updated_at=now() \
              WHERE id=$1 RETURNING {PROVIDER_COLS}"
@@ -873,10 +869,7 @@ impl<'a> SecretRepo<'a> {
     }
 
     /// Round 121: 标记 provider 健康检查 ok（UPDATE + 重新 SELECT）。
-    pub async fn mark_provider_healthy(
-        &self,
-        id: Uuid,
-    ) -> RepoResult<ProviderConfigRow> {
+    pub async fn mark_provider_healthy(&self, id: Uuid) -> RepoResult<ProviderConfigRow> {
         sqlx::query(
             "UPDATE company_secret_provider_configs SET health_status='ok', health_checked_at=now(), \
                     health_message=NULL, updated_at=now() WHERE id=$1",
@@ -884,9 +877,8 @@ impl<'a> SecretRepo<'a> {
         .bind(id)
         .execute(self.db.pool())
         .await?;
-        let sql = format!(
-            "SELECT {PROVIDER_COLS} FROM company_secret_provider_configs WHERE id=$1"
-        );
+        let sql =
+            format!("SELECT {PROVIDER_COLS} FROM company_secret_provider_configs WHERE id=$1");
         Ok(sqlx::query_as::<_, ProviderConfigRow>(&sql)
             .bind(id)
             .fetch_one(self.db.pool())
@@ -992,9 +984,7 @@ impl<'a> SecretRepo<'a> {
         .bind(company_id)
         .execute(&mut *tx)
         .await?;
-        let sql = format!(
-            "SELECT {USER_DEF_COLS} FROM user_secret_definitions WHERE id=$1"
-        );
+        let sql = format!("SELECT {USER_DEF_COLS} FROM user_secret_definitions WHERE id=$1");
         let row = sqlx::query_as::<_, UserSecretDefinitionRow>(&sql)
             .bind(definition_id)
             .fetch_optional(&mut *tx)
@@ -1195,14 +1185,14 @@ impl<'a> SecretRepo<'a> {
         .bind(created_by_agent_id)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE company_secrets SET latest_version = $1, updated_at = now() WHERE id = $2")
-            .bind(new_version)
-            .bind(secret_id)
-            .execute(&mut *tx)
-            .await?;
-        let sql = format!(
-            "SELECT {SECRET_COLS} FROM company_secrets WHERE id = $1"
-        );
+        sqlx::query(
+            "UPDATE company_secrets SET latest_version = $1, updated_at = now() WHERE id = $2",
+        )
+        .bind(new_version)
+        .bind(secret_id)
+        .execute(&mut *tx)
+        .await?;
+        let sql = format!("SELECT {SECRET_COLS} FROM company_secrets WHERE id = $1");
         let row = sqlx::query_as::<_, CompanySecretRow>(&sql)
             .bind(secret_id)
             .fetch_optional(&mut *tx)
@@ -1221,10 +1211,28 @@ impl<'a> SecretRepo<'a> {
         &self,
         company_id: Uuid,
         _user_id: &str,
-    ) -> sqlx::Result<Vec<(Uuid, Uuid, Uuid, String, String, serde_json::Value, pc_core::Timestamp)>> {
+    ) -> sqlx::Result<
+        Vec<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            serde_json::Value,
+            pc_core::Timestamp,
+        )>,
+    > {
         // 实际 schema：表 user_secret_declarations (company_id, user_id, definition_id, ...)
         // 当前 route 不传 user_id 过滤；先按 company_id 列出（route 端用 require_user_id 过滤）。
-        let rows: Vec<(Uuid, Uuid, Uuid, String, String, serde_json::Value, pc_core::Timestamp)> = sqlx::query_as(
+        let rows: Vec<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            serde_json::Value,
+            pc_core::Timestamp,
+        )> = sqlx::query_as(
             "SELECT id, company_id, definition_id, value_ciphertext, status, metadata, updated_at \
              FROM user_secret_declarations WHERE company_id = $1",
         )
@@ -1263,14 +1271,17 @@ impl<'a> SecretRepo<'a> {
     }
 
     /// Round 156: 探测某公司下某 name 的 secret 是否已存在。
-    pub async fn find_id_by_name(&self, company_id: Uuid, name: &str) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM company_secrets WHERE company_id = $1 AND name = $2",
-        )
-        .bind(company_id)
-        .bind(name)
-        .fetch_optional(self.db.pool())
-        .await?;
+    pub async fn find_id_by_name(
+        &self,
+        company_id: Uuid,
+        name: &str,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM company_secrets WHERE company_id = $1 AND name = $2")
+                .bind(company_id)
+                .bind(name)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(id,)| id))
     }
 
@@ -1575,4 +1586,3 @@ mod tests {
         assert!(ok.owner_user_id.is_none());
     }
 }
-

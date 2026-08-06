@@ -193,7 +193,10 @@ pub fn create_feedback_trace_share_client_from_config(
 ///
 /// 格式：`feedback-traces/{companyId}/{YYYY}/{MM}/{DD}/{exportId ?? traceId}.json`，
 /// 月、日采用 UTC 且两位补零。
-pub fn build_feedback_share_object_key(bundle: &FeedbackTraceBundle, exported_at: DateTime<Utc>) -> String {
+pub fn build_feedback_share_object_key(
+    bundle: &FeedbackTraceBundle,
+    exported_at: DateTime<Utc>,
+) -> String {
     let year = exported_at.format("%Y").to_string();
     let month = exported_at.format("%m").to_string();
     let day = exported_at.format("%d").to_string();
@@ -202,7 +205,10 @@ pub fn build_feedback_share_object_key(bundle: &FeedbackTraceBundle, exported_at
         .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or(&bundle.trace_id);
-    format!("feedback-traces/{}/{}/{}/{}/{}.json", bundle.company_id, year, month, day, id)
+    format!(
+        "feedback-traces/{}/{}/{}/{}/{}.json",
+        bundle.company_id, year, month, day, id
+    )
 }
 
 /// 对 `{objectKey, exportedAt, bundle}` 做 gzip+base64 编码（与 Node `gzipSync(...).toString("base64")` 1:1 对齐）。
@@ -221,18 +227,19 @@ pub fn encode_feedback_share_payload(
     let inner_bytes = serde_json::to_vec(&inner).map_err(FeedbackTraceShareError::Serialize)?;
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    std::io::Write::write_all(&mut encoder, &inner_bytes)
-        .map_err(FeedbackTraceShareError::Gzip)?;
+    std::io::Write::write_all(&mut encoder, &inner_bytes).map_err(FeedbackTraceShareError::Gzip)?;
     let gz = encoder.finish().map_err(FeedbackTraceShareError::Gzip)?;
 
     let mut buf = String::with_capacity(gz.len() * 2);
-    base64::engine::general_purpose::STANDARD
-        .encode_string(&gz, &mut buf);
+    base64::engine::general_purpose::STANDARD.encode_string(&gz, &mut buf);
     Ok((FEEDBACK_SHARE_ENCODING.to_string(), buf))
 }
 
 /// 解码（用于测试：gunzipSync + base64）。
-pub fn decode_feedback_share_payload(encoding: &str, payload: &str) -> Result<Vec<u8>, FeedbackTraceShareError> {
+pub fn decode_feedback_share_payload(
+    encoding: &str,
+    payload: &str,
+) -> Result<Vec<u8>, FeedbackTraceShareError> {
     if encoding != FEEDBACK_SHARE_ENCODING {
         return Err(FeedbackTraceShareError::Http {
             status: 0,
@@ -265,8 +272,7 @@ impl FeedbackTraceShareClient for HttpFeedbackTraceShareClient {
     ) -> Result<UploadTraceBundleResponse, FeedbackTraceShareError> {
         let exported_at = Utc::now();
         let object_key = build_feedback_share_object_key(bundle, exported_at);
-        let (_encoding, payload) =
-            encode_feedback_share_payload(&object_key, exported_at, bundle)?;
+        let (_encoding, payload) = encode_feedback_share_payload(&object_key, exported_at, bundle)?;
         let body = serde_json::json!({
             "encoding": FEEDBACK_SHARE_ENCODING,
             "payload": payload,
@@ -305,7 +311,9 @@ impl FeedbackTraceShareClient for HttpFeedbackTraceShareClient {
             .map(str::to_owned)
             .unwrap_or(object_key);
 
-        Ok(UploadTraceBundleResponse { object_key: final_key })
+        Ok(UploadTraceBundleResponse {
+            object_key: final_key,
+        })
     }
 }
 
@@ -315,8 +323,7 @@ mod tests {
     use chrono::TimeZone;
 
     fn sample_bundle() -> FeedbackTraceBundle {
-        FeedbackTraceBundle::minimal("trace-1", "company-1")
-            .with_export_id("export-1")
+        FeedbackTraceBundle::minimal("trace-1", "company-1").with_export_id("export-1")
     }
 
     trait BundleExt {
@@ -380,7 +387,10 @@ mod tests {
     #[test]
     fn client_uses_default_url_when_unset() {
         let client = HttpFeedbackTraceShareClient::new(&FeedbackShareConfig::default());
-        assert_eq!(client.endpoint(), "https://telemetry.paperclip.ing/feedback-traces");
+        assert_eq!(
+            client.endpoint(),
+            "https://telemetry.paperclip.ing/feedback-traces"
+        );
         assert_eq!(client.bearer_token(), None);
     }
 
@@ -391,7 +401,10 @@ mod tests {
             Some(" secret-token ".to_string()),
         );
         let client = HttpFeedbackTraceShareClient::new(&cfg);
-        assert_eq!(client.endpoint(), "https://telemetry.example.com/feedback-traces");
+        assert_eq!(
+            client.endpoint(),
+            "https://telemetry.example.com/feedback-traces"
+        );
         assert_eq!(client.bearer_token(), Some("secret-token"));
     }
 
@@ -427,8 +440,12 @@ mod tests {
 
     #[test]
     fn factory_returns_http_client() {
-        let client = create_feedback_trace_share_client_from_config(&FeedbackShareConfig::default());
-        assert_eq!(client.endpoint(), "https://telemetry.paperclip.ing/feedback-traces");
+        let client =
+            create_feedback_trace_share_client_from_config(&FeedbackShareConfig::default());
+        assert_eq!(
+            client.endpoint(),
+            "https://telemetry.paperclip.ing/feedback-traces"
+        );
     }
 
     // 异步集成测试：本地起一个 TCP echo 服务器，校验 POST body / headers / 响应解析。
@@ -506,7 +523,10 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("/export-1.json"));
-        assert_eq!(inner["bundle"]["envelope"], JsonValue::Object(Default::default()));
+        assert_eq!(
+            inner["bundle"]["envelope"],
+            JsonValue::Object(Default::default())
+        );
 
         let _ = server.await;
     }

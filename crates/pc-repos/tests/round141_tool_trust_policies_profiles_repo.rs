@@ -22,12 +22,22 @@ async fn db() -> Db {
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
-        .bind(id).bind(format!("r141-c-{tag}-{id}")).bind(format!("R141{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .bind(id)
+        .bind(format!("r141-c-{tag}-{id}"))
+        .bind(format!("R141{}", &id.simple().to_string()[..4]))
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
-async fn insert_policy(db: &Db, company_id: Uuid, name: &str, policy_type: &str, enabled: bool) -> Uuid {
+async fn insert_policy(
+    db: &Db,
+    company_id: Uuid,
+    name: &str,
+    policy_type: &str,
+    enabled: bool,
+) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO tool_policies (id, company_id, name, policy_type, priority, enabled, selectors, conditions, config)                  VALUES ($1,$2,$3,$4,100,$5,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb)")
         .bind(id).bind(company_id).bind(name).bind(policy_type).bind(enabled)
@@ -97,7 +107,17 @@ async fn patch_policy_updates_fields() {
     let cid = insert_company(&db, "pp1").await;
     let pid = insert_policy(&db, cid, "p1", "trust", true).await;
     let updated = ToolRepo::new(&db)
-        .patch_policy(cid, pid, None, Some("new desc"), None, Some(false), None, None, None)
+        .patch_policy(
+            cid,
+            pid,
+            None,
+            Some("new desc"),
+            None,
+            Some(false),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("ok");
     assert!(updated);
@@ -109,7 +129,17 @@ async fn patch_policy_missing() {
     let db = db().await;
     let cid = insert_company(&db, "pp2").await;
     let updated = ToolRepo::new(&db)
-        .patch_policy(cid, Uuid::new_v4(), None, Some("x"), None, None, None, None, None)
+        .patch_policy(
+            cid,
+            Uuid::new_v4(),
+            None,
+            Some("x"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .expect("ok");
     assert!(!updated);
@@ -138,7 +168,10 @@ async fn is_trust_rule_true() {
     let db = db().await;
     let cid = insert_company(&db, "itr1").await;
     let pid = insert_policy(&db, cid, "trust-x", "trust", true).await;
-    assert!(ToolRepo::new(&db).is_trust_rule(cid, pid).await.expect("ok"));
+    assert!(ToolRepo::new(&db)
+        .is_trust_rule(cid, pid)
+        .await
+        .expect("ok"));
 }
 
 /// 7. is_trust_rule — 普通 deny 规则返回 false。
@@ -147,7 +180,10 @@ async fn is_trust_rule_false() {
     let db = db().await;
     let cid = insert_company(&db, "itr2").await;
     let pid = insert_policy(&db, cid, "deny-x", "deny", true).await;
-    assert!(!ToolRepo::new(&db).is_trust_rule(cid, pid).await.expect("ok"));
+    assert!(!ToolRepo::new(&db)
+        .is_trust_rule(cid, pid)
+        .await
+        .expect("ok"));
 }
 
 /// 8. revoke_trust_rule — 设置 enabled=false + 写入 config。
@@ -189,7 +225,10 @@ async fn find_profile_company_id_basic() {
     let db = db().await;
     let cid = insert_company(&db, "fpc1").await;
     let pid = insert_profile(&db, cid, "p-key", "P").await;
-    let found = ToolRepo::new(&db).find_profile_company_id(pid).await.expect("ok");
+    let found = ToolRepo::new(&db)
+        .find_profile_company_id(pid)
+        .await
+        .expect("ok");
     assert_eq!(found, Some(cid));
 }
 
@@ -199,7 +238,10 @@ async fn find_profile_by_id_basic() {
     let db = db().await;
     let cid = insert_company(&db, "fpb1").await;
     let pid = insert_profile(&db, cid, "p-key-2", "P2").await;
-    let p = ToolRepo::new(&db).find_profile_by_id(pid).await.expect("ok");
+    let p = ToolRepo::new(&db)
+        .find_profile_by_id(pid)
+        .await
+        .expect("ok");
     let p = p.expect("found");
     assert_eq!(p.id, pid);
     assert_eq!(p.profile_key, "p-key-2");
@@ -216,11 +258,18 @@ async fn clone_profile_basic() {
     // Add entry
     sqlx::query("INSERT INTO tool_profile_entries (company_id, profile_id, selector_type, effect, tool_name)                  VALUES ($1, $2, 'tool_name', 'include', 'a-tool')")
         .bind(cid).bind(src).execute(db.pool()).await.expect("entry");
-    let new_id = ToolRepo::new(&db).clone_profile(src, "new-key", "New").await.expect("ok");
+    let new_id = ToolRepo::new(&db)
+        .clone_profile(src, "new-key", "New")
+        .await
+        .expect("ok");
     assert_ne!(new_id, src);
     // Verify entry copied
-    let entries = sqlx::query_as::<_, (Uuid,)>("SELECT id FROM tool_profile_entries WHERE profile_id=$1")
-        .bind(new_id).fetch_all(db.pool()).await.expect("q");
+    let entries =
+        sqlx::query_as::<_, (Uuid,)>("SELECT id FROM tool_profile_entries WHERE profile_id=$1")
+            .bind(new_id)
+            .fetch_all(db.pool())
+            .await
+            .expect("q");
     assert_eq!(entries.len(), 1);
 }
 
@@ -264,7 +313,10 @@ async fn find_profile_entry_company_id_basic() {
     let cid = insert_company(&db, "fec1").await;
     let pid = insert_profile(&db, cid, "fec-key", "F").await;
     let eid = insert_entry(&db, cid, pid).await;
-    let found = ToolRepo::new(&db).find_profile_entry_company_id(eid).await.expect("ok");
+    let found = ToolRepo::new(&db)
+        .find_profile_entry_company_id(eid)
+        .await
+        .expect("ok");
     assert_eq!(found, Some(cid));
 }
 
@@ -275,7 +327,10 @@ async fn get_profile_entry_by_id_basic() {
     let cid = insert_company(&db, "geb1").await;
     let pid = insert_profile(&db, cid, "geb-key", "G").await;
     let eid = insert_entry(&db, cid, pid).await;
-    let entry = ToolRepo::new(&db).get_profile_entry_by_id(eid).await.expect("ok");
+    let entry = ToolRepo::new(&db)
+        .get_profile_entry_by_id(eid)
+        .await
+        .expect("ok");
     let entry = entry.expect("found");
     assert_eq!(entry.id, eid);
     assert_eq!(entry.selector_type, "tool_name");
@@ -294,7 +349,11 @@ async fn patch_profile_entry_basic() {
         .await
         .expect("ok");
     assert!(updated);
-    let entry = ToolRepo::new(&db).get_profile_entry_by_id(eid).await.expect("ok").unwrap();
+    let entry = ToolRepo::new(&db)
+        .get_profile_entry_by_id(eid)
+        .await
+        .expect("ok")
+        .unwrap();
     assert_eq!(entry.effect, "exclude");
 }
 
@@ -305,9 +364,15 @@ async fn delete_profile_entry_by_id_basic() {
     let cid = insert_company(&db, "dpe1").await;
     let pid = insert_profile(&db, cid, "dpe-key", "D").await;
     let eid = insert_entry(&db, cid, pid).await;
-    let deleted = ToolRepo::new(&db).delete_profile_entry_by_id(eid).await.expect("ok");
+    let deleted = ToolRepo::new(&db)
+        .delete_profile_entry_by_id(eid)
+        .await
+        .expect("ok");
     assert!(deleted);
-    let found = ToolRepo::new(&db).get_profile_entry_by_id(eid).await.expect("ok");
+    let found = ToolRepo::new(&db)
+        .get_profile_entry_by_id(eid)
+        .await
+        .expect("ok");
     assert!(found.is_none());
 }
 
@@ -315,7 +380,10 @@ async fn delete_profile_entry_by_id_basic() {
 #[tokio::test(flavor = "current_thread")]
 async fn delete_profile_entry_by_id_missing() {
     let db = db().await;
-    let deleted = ToolRepo::new(&db).delete_profile_entry_by_id(Uuid::new_v4()).await.expect("ok");
+    let deleted = ToolRepo::new(&db)
+        .delete_profile_entry_by_id(Uuid::new_v4())
+        .await
+        .expect("ok");
     assert!(!deleted);
 }
 

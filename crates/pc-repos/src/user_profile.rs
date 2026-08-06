@@ -428,7 +428,15 @@ impl<'a> UserProfileRepo<'a> {
     pub async fn list_recent(
         &self,
         limit: i64,
-    ) -> sqlx::Result<Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)>> {
+    ) -> sqlx::Result<
+        Vec<(
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        )>,
+    > {
         let rows: Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
             r#"SELECT id, name, email, image, updated_at FROM "user" ORDER BY updated_at DESC LIMIT $1"#,
         )

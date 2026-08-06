@@ -40,7 +40,20 @@ pub async fn load_source_decision(
 ) -> sqlx::Result<Option<LoadedSourceDecision>> {
     match input.source_kind {
         DecisionTrainingSourceKind::Interaction => {
-            let row: Option<(Uuid, Option<DateTime<Utc>>, String, Option<DateTime<Utc>>, String, Option<String>, Option<Uuid>, Option<Uuid>, Option<String>, Option<Uuid>, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+            let row: Option<(
+                Uuid,
+                Option<DateTime<Utc>>,
+                String,
+                Option<DateTime<Utc>>,
+                String,
+                Option<String>,
+                Option<Uuid>,
+                Option<Uuid>,
+                Option<String>,
+                Option<Uuid>,
+                Option<Uuid>,
+                Option<Uuid>,
+            )> = sqlx::query_as(
                 "SELECT id, resolved_at, status, kind, title, summary, payload, result, \
                         source_run_id, created_by_user_id, created_by_agent_id, \
                         resolved_by_user_id, resolved_by_agent_id \
@@ -172,7 +185,9 @@ pub fn build_snapshot(
         .find(|r| find_commit_sha(r).is_some())
         .cloned();
     let exact_commit = exact_run.as_ref().and_then(|r| find_commit_sha(r));
-    let nearest_commit = latest_run_with_commit.as_ref().and_then(|r| find_commit_sha(r));
+    let nearest_commit = latest_run_with_commit
+        .as_ref()
+        .and_then(|r| find_commit_sha(r));
     // workspace metadata 中的 commit 在更上层调用方提供（executionWorkspace?.metadata ?? projectWorkspace?.metadata）
     let commit_sha = exact_commit.as_ref().or(nearest_commit.as_ref()).cloned();
     let resolution = if exact_commit.is_some() {
@@ -283,7 +298,10 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(snap.code.as_ref().unwrap().commit_sha, Some("abc1234".into()));
+        assert_eq!(
+            snap.code.as_ref().unwrap().commit_sha,
+            Some("abc1234".into())
+        );
         assert_eq!(snap.code.as_ref().unwrap().resolution, "exact");
     }
 
@@ -352,17 +370,17 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(
-            snap.decision.as_ref().unwrap().kind,
-            "approval"
-        );
+        assert_eq!(snap.decision.as_ref().unwrap().kind, "approval");
     }
 
     // ---- DECISION_TRAINING_RETENTION_POLICY ----
 
     #[test]
     fn retention_policy_constant_matches_db_default() {
-        assert_eq!(DECISION_TRAINING_RETENTION_POLICY, "scrub_deleted_comments_v1");
+        assert_eq!(
+            DECISION_TRAINING_RETENTION_POLICY,
+            "scrub_deleted_comments_v1"
+        );
     }
 
     #[test]

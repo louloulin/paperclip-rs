@@ -243,9 +243,18 @@ mod tests {
 
     #[test]
     fn slug_basic() {
-        assert_eq!(sanitize_slug_part(Some("Hello World"), "fallback"), "hello-world");
-        assert_eq!(sanitize_slug_part(Some("hello_world"), "fallback"), "hello_world");
-        assert_eq!(sanitize_slug_part(Some("  Foo--Bar!!  "), "fallback"), "foo-bar");
+        assert_eq!(
+            sanitize_slug_part(Some("Hello World"), "fallback"),
+            "hello-world"
+        );
+        assert_eq!(
+            sanitize_slug_part(Some("hello_world"), "fallback"),
+            "hello_world"
+        );
+        assert_eq!(
+            sanitize_slug_part(Some("  Foo--Bar!!  "), "fallback"),
+            "foo-bar"
+        );
         assert_eq!(sanitize_slug_part(Some("---"), "fallback"), "fallback");
         assert_eq!(sanitize_slug_part(None, "fallback"), "fallback");
         assert_eq!(sanitize_slug_part(Some(""), "fallback"), "fallback");
@@ -267,7 +276,10 @@ mod tests {
 
     #[test]
     fn branch_trims_leading_trailing_dots_dashes() {
-        assert_eq!(sanitize_branch_name("...---branch-name---..."), "branch-name");
+        assert_eq!(
+            sanitize_branch_name("...---branch-name---..."),
+            "branch-name"
+        );
         assert_eq!(sanitize_branch_name(".../..."), "paperclip-work"); // 全 stripped → fallback
     }
 
@@ -292,11 +304,11 @@ mod tests {
         assert!(is_safe_shell_token("a:b"));
         assert!(is_safe_shell_token("a-b"));
         assert!(!is_safe_shell_token(""));
-        assert!(!is_safe_shell_token("a b"));   // 空格
-        assert!(!is_safe_shell_token("a\"b"));  // 双引号
-        assert!(!is_safe_shell_token("a'b"));   // 单引号
-        assert!(!is_safe_shell_token("a;b"));   // 分号
-        assert!(!is_safe_shell_token("a$b"));   // $
+        assert!(!is_safe_shell_token("a b")); // 空格
+        assert!(!is_safe_shell_token("a\"b")); // 双引号
+        assert!(!is_safe_shell_token("a'b")); // 单引号
+        assert!(!is_safe_shell_token("a;b")); // 分号
+        assert!(!is_safe_shell_token("a$b")); // $
     }
 
     #[test]
@@ -369,7 +381,10 @@ mod tests {
             format_branch_for_message(Some("refs/heads/main")),
             Some("main".to_string())
         );
-        assert_eq!(format_branch_for_message(Some("main")), Some("main".to_string()));
+        assert_eq!(
+            format_branch_for_message(Some("main")),
+            Some("main".to_string())
+        );
         assert_eq!(format_branch_for_message(None), None);
         assert_eq!(format_branch_for_message(Some("")), None);
     }

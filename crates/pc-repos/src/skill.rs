@@ -400,8 +400,22 @@ impl<'a> SkillRepo<'a> {
     pub async fn find_skill_by_key_or_name(
         &self,
         skill_name: &str,
-    ) -> RepoResult<Option<(String, String, Option<String>, Option<String>, Option<String>)>> {
-        let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+    ) -> RepoResult<
+        Option<(
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )>,
+    > {
+        let row: Option<(
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
             "SELECT skill_key, display_name, description, content_md, manifest \
              FROM skills WHERE skill_key = $1 OR display_name = $1 LIMIT 1",
         )
@@ -417,21 +431,17 @@ impl<'a> SkillRepo<'a> {
         &self,
         skill_key: &str,
     ) -> RepoResult<Option<(String, Option<String>)>> {
-        let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT content_md, manifest FROM skills WHERE skill_key = $1 LIMIT 1",
-        )
-        .bind(skill_key)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT content_md, manifest FROM skills WHERE skill_key = $1 LIMIT 1")
+                .bind(skill_key)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row)
     }
 
     // ---- company_skills CRUD ----
 
-    pub async fn list_for_company(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<CompanySkillRow>> {
+    pub async fn list_for_company(&self, company_id: Uuid) -> RepoResult<Vec<CompanySkillRow>> {
         let sql = format!(
             "SELECT {SKILL_COLS} FROM company_skills \
              WHERE company_id=$1 AND deleted_at IS NULL \
@@ -444,10 +454,7 @@ impl<'a> SkillRepo<'a> {
     }
 
     /// Round 125: 列出 company 全部 distinct categories（unwind + collect）。
-    pub async fn list_categories(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Vec<String>> {
+    pub async fn list_categories(&self, company_id: Uuid) -> RepoResult<Vec<String>> {
         let rows: Vec<(Vec<String>,)> = sqlx::query_as(
             "SELECT categories FROM company_skills WHERE company_id=$1 AND deleted_at IS NULL",
         )
@@ -463,11 +470,7 @@ impl<'a> SkillRepo<'a> {
         Ok(seen.into_iter().collect())
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> RepoResult<Option<CompanySkillRow>> {
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<CompanySkillRow>> {
         let sql = format!(
             "SELECT {SKILL_COLS} FROM company_skills \
              WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
@@ -546,8 +549,20 @@ impl<'a> SkillRepo<'a> {
         &self,
         company_id: Uuid,
         skill_id: Uuid,
-    ) -> RepoResult<Option<(Option<Uuid>, Option<String>, Option<pc_core::Timestamp>, i32)>> {
-        let row: Option<(Option<Uuid>, Option<String>, Option<pc_core::Timestamp>, i32)> = sqlx::query_as(
+    ) -> RepoResult<
+        Option<(
+            Option<Uuid>,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            i32,
+        )>,
+    > {
+        let row: Option<(
+            Option<Uuid>,
+            Option<String>,
+            Option<pc_core::Timestamp>,
+            i32,
+        )> = sqlx::query_as(
             "SELECT current_version_id, source_ref, updated_at, install_count \
              FROM company_skills WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
         )
@@ -593,10 +608,7 @@ impl<'a> SkillRepo<'a> {
 
     // ---- versions ----
 
-    pub async fn list_versions(
-        &self,
-        skill_id: Uuid,
-    ) -> RepoResult<Vec<CompanySkillVersionRow>> {
+    pub async fn list_versions(&self, skill_id: Uuid) -> RepoResult<Vec<CompanySkillVersionRow>> {
         let sql = format!(
             "SELECT {VERSION_COLS} FROM company_skill_versions \
              WHERE skill_id=$1 ORDER BY version DESC",
@@ -671,13 +683,11 @@ impl<'a> SkillRepo<'a> {
         .await?;
         // 把旧 version 标 superseded
         if let Some((_, prev_id)) = prev {
-            sqlx::query(
-                "UPDATE company_skill_versions SET superseded_by_id=$2 WHERE id=$1",
-            )
-            .bind(prev_id)
-            .bind(row.id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("UPDATE company_skill_versions SET superseded_by_id=$2 WHERE id=$1")
+                .bind(prev_id)
+                .bind(row.id)
+                .execute(&mut *tx)
+                .await?;
         }
         // 更新 skill.current_version_id
         let updated: CompanySkillRow = sqlx::query_as::<_, CompanySkillRow>(&format!(
@@ -707,10 +717,7 @@ impl<'a> SkillRepo<'a> {
 
     // ---- comments ----
 
-    pub async fn list_comments(
-        &self,
-        skill_id: Uuid,
-    ) -> RepoResult<Vec<CompanySkillCommentRow>> {
+    pub async fn list_comments(&self, skill_id: Uuid) -> RepoResult<Vec<CompanySkillCommentRow>> {
         let sql = format!(
             "SELECT {COMMENT_COLS} FROM company_skill_comments \
              WHERE company_skill_id=$1 AND deleted_at IS NULL \
@@ -917,18 +924,13 @@ impl<'a> SkillRepo<'a> {
     }
 
     /// 删除配置（un-config 路径）。
-    pub async fn delete_config(
-        &self,
-        company_id: Uuid,
-        skill_id: Uuid,
-    ) -> RepoResult<bool> {
-        let r = sqlx::query(
-            "DELETE FROM company_skill_configs WHERE company_id=$1 AND skill_id=$2",
-        )
-        .bind(company_id)
-        .bind(skill_id)
-        .execute(self.db.pool())
-        .await?;
+    pub async fn delete_config(&self, company_id: Uuid, skill_id: Uuid) -> RepoResult<bool> {
+        let r =
+            sqlx::query("DELETE FROM company_skill_configs WHERE company_id=$1 AND skill_id=$2")
+                .bind(company_id)
+                .bind(skill_id)
+                .execute(self.db.pool())
+                .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -1017,10 +1019,7 @@ impl<'a> SkillRepo<'a> {
 
     // ---- test runs ----
 
-    pub async fn list_test_runs(
-        &self,
-        skill_id: Uuid,
-    ) -> RepoResult<Vec<CompanySkillTestRunRow>> {
+    pub async fn list_test_runs(&self, skill_id: Uuid) -> RepoResult<Vec<CompanySkillTestRunRow>> {
         let sql = format!(
             "SELECT {TEST_RUN_COLS} FROM company_skill_test_runs \
              WHERE skill_id=$1 AND deleted_at IS NULL \
@@ -1107,10 +1106,7 @@ impl<'a> SkillRepo<'a> {
 
     // ---- policies ----
 
-    pub async fn get_policy(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<Option<CompanySkillPolicyRow>> {
+    pub async fn get_policy(&self, company_id: Uuid) -> RepoResult<Option<CompanySkillPolicyRow>> {
         Ok(sqlx::query_as::<_, CompanySkillPolicyRow>(
             "SELECT company_id, schema_version, revision, default_effect, rules, created_at, updated_at \
              FROM company_skill_policies WHERE company_id=$1",
@@ -1203,7 +1199,17 @@ impl<'a> SkillRepo<'a> {
         skill_id: Uuid,
         limit: i64,
         offset: i64,
-    ) -> RepoResult<Vec<(Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            i32,
+            Option<String>,
+            Value,
+            Option<Uuid>,
+            Option<String>,
+            Timestamp,
+        )>,
+    > {
         let rows: Vec<(Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)> =
             sqlx::query_as(
                 "SELECT id, revision_number, label, file_inventory, author_agent_id, author_user_id, created_at                  FROM company_skill_versions WHERE company_id=$1 AND company_skill_id=$2                  ORDER BY revision_number DESC LIMIT $3 OFFSET $4",
@@ -1297,7 +1303,8 @@ impl<'a> SkillRepo<'a> {
             ));
         }
         // 查找 current version
-        let current_version_row: Option<(Uuid, Value)> = if let Some(vid) = skill.current_version_id {
+        let current_version_row: Option<(Uuid, Value)> = if let Some(vid) = skill.current_version_id
+        {
             sqlx::query_as(
                 "SELECT id, file_inventory FROM company_skill_versions \
                  WHERE company_id=$1 AND id=$2",
@@ -1325,7 +1332,12 @@ impl<'a> SkillRepo<'a> {
         }
         // 否则创建新 version 并更新 current
         self.create_version_and_update_current(
-            company_id, skill_id, label, &snapshot, author_agent_id, author_user_id,
+            company_id,
+            skill_id,
+            label,
+            &snapshot,
+            author_agent_id,
+            author_user_id,
         )
         .await
     }
@@ -1336,7 +1348,19 @@ impl<'a> SkillRepo<'a> {
         company_id: Uuid,
         skill_id: Uuid,
         version_id: Uuid,
-    ) -> RepoResult<Option<(Uuid, Uuid, Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            Uuid,
+            Uuid,
+            i32,
+            Option<String>,
+            Value,
+            Option<Uuid>,
+            Option<String>,
+            Timestamp,
+        )>,
+    > {
         let row: Option<(Uuid, Uuid, Uuid, i32, Option<String>, Value, Option<Uuid>, Option<String>, Timestamp)> =
             sqlx::query_as(
                 "SELECT id, company_id, company_skill_id, revision_number, label, file_inventory,                  author_agent_id, author_user_id, created_at                  FROM company_skill_versions                  WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
@@ -1354,7 +1378,17 @@ impl<'a> SkillRepo<'a> {
         &self,
         company_id: Uuid,
         skill_id: Uuid,
-    ) -> RepoResult<Vec<(Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Timestamp)>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<String>,
+            String,
+            Timestamp,
+        )>,
+    > {
         let rows: Vec<(Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Timestamp)> =
             sqlx::query_as(
                 "SELECT id, company_skill_id, parent_comment_id, author_agent_id, author_user_id, body, created_at                  FROM company_skill_comments                  WHERE company_id=$1 AND company_skill_id=$2 AND deleted_at IS NULL                  ORDER BY created_at ASC",
@@ -1438,7 +1472,20 @@ impl<'a> SkillRepo<'a> {
         company_id: Uuid,
         skill_id: Uuid,
         comment_id: Uuid,
-    ) -> RepoResult<Option<(Uuid, Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Option<Timestamp>, Timestamp, Timestamp)>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<String>,
+            String,
+            Option<Timestamp>,
+            Timestamp,
+            Timestamp,
+        )>,
+    > {
         let row: Option<(Uuid, Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, String, Option<Timestamp>, Timestamp, Timestamp)> =
             sqlx::query_as(
                 "SELECT id, company_id, company_skill_id, parent_comment_id, author_agent_id, author_user_id,                         body, deleted_at, created_at, updated_at                  FROM company_skill_comments                  WHERE company_id=$1 AND company_skill_id=$2 AND id=$3",
@@ -1487,11 +1534,7 @@ impl<'a> SkillRepo<'a> {
     }
 
     /// 重置 install/star/fork 计数器。
-    pub async fn reset_skill_counters(
-        &self,
-        company_id: Uuid,
-        skill_id: Uuid,
-    ) -> RepoResult<()> {
+    pub async fn reset_skill_counters(&self, company_id: Uuid, skill_id: Uuid) -> RepoResult<()> {
         sqlx::query(
             "UPDATE company_skills SET install_count=0, star_count=0, fork_count=0, updated_at=now()              WHERE company_id=$1 AND id=$2",
         )
@@ -1569,7 +1612,11 @@ impl<'a> SkillRepo<'a> {
         skill_id: Uuid,
         include_deleted: bool,
     ) -> RepoResult<Vec<(Uuid, String, String, Option<String>, Timestamp, Timestamp)>> {
-        let filter = if include_deleted { "" } else { "AND deleted_at IS NULL" };
+        let filter = if include_deleted {
+            ""
+        } else {
+            "AND deleted_at IS NULL"
+        };
         let sql = format!(
             "SELECT id, name, content, created_by, created_at, updated_at              FROM company_skill_test_inputs              WHERE company_id=$1 AND skill_id=$2 {filter}              ORDER BY name ASC"
         );
@@ -1672,7 +1719,17 @@ impl<'a> SkillRepo<'a> {
         skill_id: Uuid,
         status: Option<&str>,
         limit: i64,
-    ) -> RepoResult<Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Timestamp, Timestamp)>> {
+    ) -> RepoResult<
+        Vec<(
+            Uuid,
+            String,
+            Option<Uuid>,
+            Option<Uuid>,
+            Uuid,
+            Timestamp,
+            Timestamp,
+        )>,
+    > {
         let status_filter = match status {
             Some(s) if !s.is_empty() => {
                 let safe = s.replace('\'', "");
@@ -1683,13 +1740,20 @@ impl<'a> SkillRepo<'a> {
         let sql = format!(
             "SELECT id, status, input_id, agent_id, issue_id, created_at, updated_at              FROM company_skill_test_runs WHERE company_id=$1 AND skill_id=$2 {status_filter}              ORDER BY created_at DESC LIMIT $3"
         );
-        let rows: Vec<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Timestamp, Timestamp)> =
-            sqlx::query_as(&sql)
-                .bind(company_id)
-                .bind(skill_id)
-                .bind(limit)
-                .fetch_all(self.db.pool())
-                .await?;
+        let rows: Vec<(
+            Uuid,
+            String,
+            Option<Uuid>,
+            Option<Uuid>,
+            Uuid,
+            Timestamp,
+            Timestamp,
+        )> = sqlx::query_as(&sql)
+            .bind(company_id)
+            .bind(skill_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await?;
         Ok(rows)
     }
 
@@ -1771,7 +1835,21 @@ impl<'a> SkillRepo<'a> {
         company_id: Uuid,
         skill_id: Uuid,
         run_id: Uuid,
-    ) -> RepoResult<Option<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Option<String>, String, String, Option<String>, Timestamp, Timestamp)>> {
+    ) -> RepoResult<
+        Option<(
+            Uuid,
+            String,
+            Option<Uuid>,
+            Option<Uuid>,
+            Uuid,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Timestamp,
+            Timestamp,
+        )>,
+    > {
         let row: Option<(Uuid, String, Option<Uuid>, Option<Uuid>, Uuid, Option<String>, String, String, Option<String>, Timestamp, Timestamp)> =
             sqlx::query_as(
                 "SELECT id, status, input_id, agent_id, issue_id, template_id, input_snapshot,                  output_snapshot, error, created_at, updated_at                  FROM company_skill_test_runs                  WHERE company_id=$1 AND skill_id=$2 AND id=$3",
@@ -1827,10 +1905,7 @@ impl<'a> SkillRepo<'a> {
     /// 与 Node 版 pruneExpiredTestHarnessIssues 对齐：
     /// 扫描 `harness_issue_expires_at < now()` 且 `harness_issue_deleted_at IS NULL` 的 run，
     /// 隐藏对应 issue 并标记 harness_issue_deleted_at。返回处理的 run 数。
-    pub async fn prune_expired_test_harness_issues(
-        &self,
-        company_id: Uuid,
-    ) -> RepoResult<u64> {
+    pub async fn prune_expired_test_harness_issues(&self, company_id: Uuid) -> RepoResult<u64> {
         // 先查询所有过期但未删除的 (run_id, issue_id)
         let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
             "SELECT id, issue_id FROM company_skill_test_runs \
@@ -2017,7 +2092,6 @@ impl<'a> SkillRepo<'a> {
         .rows_affected();
         Ok(n > 0)
     }
-
 }
 
 #[cfg(test)]
@@ -2087,9 +2161,7 @@ mod tests {
         assert!(first);
         assert!(!second);
     }
-
 }
-
 
 /// 内部比较函数：按 path 排序后逐元素比对。
 fn version_inventory_snapshot_equal_inner(a: &Value, b: &Value) -> bool {
@@ -2099,9 +2171,21 @@ fn version_inventory_snapshot_equal_inner(a: &Value, b: &Value) -> bool {
                 let mut entries: Vec<(String, String, String)> = arr
                     .iter()
                     .map(|item| {
-                        let path = item.get("path").and_then(Value::as_str).unwrap_or("").to_string();
-                        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("file").to_string();
-                        let content = item.get("content").and_then(Value::as_str).unwrap_or("").to_string();
+                        let path = item
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let kind = item
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("file")
+                            .to_string();
+                        let content = item
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
                         (path, kind, content)
                     })
                     .collect();

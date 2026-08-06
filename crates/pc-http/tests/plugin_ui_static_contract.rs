@@ -40,10 +40,7 @@ fn test_state(db: Db) -> AppState {
             csrf_header: "x-paperclip-csrf".into(),
         },
         pc_telemetry::TelemetryOptions::default(),
-        Arc::new(WsState::new(
-            realtime.clone(),
-            "test".to_string(),
-        )),
+        Arc::new(WsState::new(realtime.clone(), "test".to_string())),
         realtime,
     )
 }
@@ -74,12 +71,7 @@ async fn plugin_ui_404_for_unknown_plugin() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let app = routes::plugin_ui_static::router().with_state(test_state(db));
     let unknown = Uuid::new_v4();
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/_plugins/{unknown}/ui/index.html"),
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/_plugins/{unknown}/ui/index.html")).await;
     assert_eq!(status, 404, "should 404 for unknown plugin: {body}");
 }
 

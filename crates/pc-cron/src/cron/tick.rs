@@ -37,8 +37,7 @@ pub fn next_tick(cron: &ParsedCron, after: DateTime<Utc>) -> Option<DateTime<Utc
         }
 
         // 2. day of month AND day of week (both must match)
-        if !cron.days_of_month.contains(&day_of_month)
-            || !cron.days_of_week.contains(&day_of_week)
+        if !cron.days_of_month.contains(&day_of_month) || !cron.days_of_week.contains(&day_of_week)
         {
             // 后退到当日 00:00:00，再 +1 天
             d = floor_to_midnight(d) + chrono::Duration::days(1);
@@ -145,7 +144,14 @@ fn set_hour_minute_second(
             .unwrap_or(d)
             + chrono::Duration::days(1);
         return Utc
-            .with_ymd_and_hms(next.year(), next.month(), next.day(), hour - 24, minute, second)
+            .with_ymd_and_hms(
+                next.year(),
+                next.month(),
+                next.day(),
+                hour - 24,
+                minute,
+                second,
+            )
             .single()
             .unwrap_or(next);
     }
@@ -231,7 +237,10 @@ mod tests {
     fn next_tick_from_expression_invalid() {
         let after = at(2025, 6, 15, 10, 30);
         let err = super::super::next_tick_from_expression("bad", after).unwrap_err();
-        assert!(matches!(err, super::super::CronError::WrongFieldCount { .. }));
+        assert!(matches!(
+            err,
+            super::super::CronError::WrongFieldCount { .. }
+        ));
     }
 
     #[test]

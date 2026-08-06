@@ -21,7 +21,9 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
         .bind(id)
         .bind(format!("r134-{tag}-{id}"))
         .bind(format!("R134{}", &id.simple().to_string()[..4]))
-        .execute(db.pool()).await.expect("company");
+        .execute(db.pool())
+        .await
+        .expect("company");
     id
 }
 
@@ -34,15 +36,18 @@ async fn insert_issue(db: &Db, company_id: Uuid) -> Uuid {
 }
 
 async fn insert_vote(db: &Db, issue_id: Uuid, company_id: Uuid, vote: &str) -> Uuid {
-    FeedbackVoteRepo::new(db).create(&NewFeedbackVote {
-        company_id,
-        issue_id,
-        target_type: "user".into(),
-        target_id: "u1".into(),
-        author_user_id: "system".into(),
-        vote: vote.into(),
-        reason: None,
-    }).await.expect("create vote")
+    FeedbackVoteRepo::new(db)
+        .create(&NewFeedbackVote {
+            company_id,
+            issue_id,
+            target_type: "user".into(),
+            target_id: "u1".into(),
+            author_user_id: "system".into(),
+            vote: vote.into(),
+            reason: None,
+        })
+        .await
+        .expect("create vote")
 }
 
 // ===== FeedbackVoteRepo::create / list_by_issue / get_by_id / count_by_issue =====
@@ -72,7 +77,10 @@ async fn list_by_issue_orders_by_created_desc() {
     let a = insert_vote(&db, iid, cid, "up").await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let b = insert_vote(&db, iid, cid, "down").await;
-    let list = FeedbackVoteRepo::new(&db).list_by_issue(iid, 10).await.expect("list");
+    let list = FeedbackVoteRepo::new(&db)
+        .list_by_issue(iid, 10)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].id, b, "newer first");
     assert_eq!(list[1].id, a);
@@ -87,7 +95,10 @@ async fn list_by_issue_respects_limit() {
     for i in 0..5 {
         insert_vote(&db, iid, cid, &format!("v{i}")).await;
     }
-    let list = FeedbackVoteRepo::new(&db).list_by_issue(iid, 3).await.expect("list");
+    let list = FeedbackVoteRepo::new(&db)
+        .list_by_issue(iid, 3)
+        .await
+        .expect("list");
     assert_eq!(list.len(), 3);
 }
 
@@ -101,8 +112,22 @@ async fn list_by_issue_isolates() {
     insert_vote(&db, i1, cid, "up").await;
     insert_vote(&db, i2, cid, "down").await;
     insert_vote(&db, i2, cid, "neutral").await;
-    assert_eq!(FeedbackVoteRepo::new(&db).list_by_issue(i1, 100).await.expect("a").len(), 1);
-    assert_eq!(FeedbackVoteRepo::new(&db).list_by_issue(i2, 100).await.expect("b").len(), 2);
+    assert_eq!(
+        FeedbackVoteRepo::new(&db)
+            .list_by_issue(i1, 100)
+            .await
+            .expect("a")
+            .len(),
+        1
+    );
+    assert_eq!(
+        FeedbackVoteRepo::new(&db)
+            .list_by_issue(i2, 100)
+            .await
+            .expect("b")
+            .len(),
+        2
+    );
 }
 
 /// 5. count_by_issue。
@@ -114,7 +139,10 @@ async fn count_by_issue() {
     for _ in 0..4 {
         insert_vote(&db, iid, cid, "up").await;
     }
-    let n = FeedbackVoteRepo::new(&db).count_by_issue(iid).await.expect("n");
+    let n = FeedbackVoteRepo::new(&db)
+        .count_by_issue(iid)
+        .await
+        .expect("n");
     assert_eq!(n, 4);
 }
 
@@ -157,7 +185,11 @@ async fn issue_company_id_returns_option() {
     let iid = insert_issue(&db, cid).await;
     let repo = FeedbackVoteRepo::new(&db);
     assert_eq!(repo.issue_company_id(iid).await.expect("ok"), Some(cid));
-    assert!(repo.issue_company_id(Uuid::new_v4()).await.expect("ok").is_none());
+    assert!(repo
+        .issue_company_id(Uuid::new_v4())
+        .await
+        .expect("ok")
+        .is_none());
 }
 
 /// 9. create — 必填字段校验（text 非空由 DB 约束保证）。

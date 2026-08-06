@@ -21,7 +21,7 @@ pub fn router() -> Router<AppState> {
             "/api/issues/:id/heartbeat-context",
             get(issue_heartbeat_context),
         )
-        // 注: /api/companies/:company_id/issues/count 由 routes/issues.rs 注册
+    // 注: /api/companies/:company_id/issues/count 由 routes/issues.rs 注册
 }
 
 async fn issue_heartbeat_context(

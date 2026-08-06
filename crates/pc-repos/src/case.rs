@@ -1,8 +1,8 @@
 //! `cases` 聚合及其链接、事件、文档、标签与附件。
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use serde_json::{json, Value};
+use sqlx::FromRow;
 use uuid::Uuid;
 
 use pc_core::Timestamp;
@@ -515,10 +515,10 @@ const CASE_COLS: &str = "id, company_id, project_id, case_number, identifier, ca
                          created_by_user_id, completed_at, created_at, updated_at";
 const ISSUE_LINK_COLS: &str = "id, company_id, case_id, issue_id, role, created_by_run_id, \
                               created_at, updated_at";
-const EVENT_COLS: &str = "id, company_id, case_id, kind, actor_type, actor_user_id, actor_agent_id, \
+const EVENT_COLS: &str =
+    "id, company_id, case_id, kind, actor_type, actor_user_id, actor_agent_id, \
                           run_id, payload, created_at, updated_at";
-const DOCUMENT_COLS: &str =
-    "id, company_id, case_id, document_id, key, created_at, updated_at";
+const DOCUMENT_COLS: &str = "id, company_id, case_id, document_id, key, created_at, updated_at";
 const LABEL_COLS: &str = "id, company_id, case_id, label_id, created_at, updated_at";
 const ATTACHMENT_COLS: &str = "id, company_id, case_id, asset_id, created_at, updated_at";
 
@@ -586,7 +586,12 @@ impl<'a> CaseRepo<'a> {
                 .push(" AND c.parent_case_id=")
                 .push_bind(parent_case_id);
         }
-        if let Some(search) = filter.search.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        if let Some(search) = filter
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
             let pattern = format!("%{search}%");
             query
                 .push(" AND (c.title ILIKE ")
@@ -692,10 +697,7 @@ impl<'a> CaseRepo<'a> {
         Ok(row)
     }
 
-    pub async fn create_or_update(
-        &self,
-        input: NewCaseRecord,
-    ) -> sqlx::Result<CaseUpsertResult> {
+    pub async fn create_or_update(&self, input: NewCaseRecord) -> sqlx::Result<CaseUpsertResult> {
         let mut transaction = self.db.pool().begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(format!(
@@ -887,12 +889,10 @@ impl<'a> CaseRepo<'a> {
 
     /// Round 174: 实例统计用 —— 统计某公司的 case 数。
     pub async fn count_for_company(&self, company_id: Uuid) -> sqlx::Result<i64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM cases WHERE company_id=$1",
-        )
-        .bind(company_id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let n: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM cases WHERE company_id=$1")
+            .bind(company_id)
+            .fetch_one(self.db.pool())
+            .await?;
         Ok(n)
     }
 
@@ -1048,11 +1048,10 @@ impl<'a> CaseRepo<'a> {
 
     /// Round 114: 查 case 的 company_id（auth 辅助）。
     pub async fn get_case_company_id(&self, case_id: Uuid) -> sqlx::Result<Option<Uuid>> {
-        let row: Option<(Uuid,)> =
-            sqlx::query_as("SELECT company_id FROM cases WHERE id = $1")
-                .bind(case_id)
-                .fetch_optional(self.db.pool())
-                .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM cases WHERE id = $1")
+            .bind(case_id)
+            .fetch_optional(self.db.pool())
+            .await?;
         Ok(row.map(|(c,)| c))
     }
 
@@ -1471,7 +1470,7 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
-/// Round 106: 按 case_id 单查（不需 company_id），用于 `GET /api/cases/:id/events`
+    /// Round 106: 按 case_id 单查（不需 company_id），用于 `GET /api/cases/:id/events`
     /// 这种纯 id-based 端点。
     pub async fn list_events_by_case_id(
         &self,
@@ -1489,7 +1488,7 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
-        /// 跨 case 列出公司在指定 kind 下的事件（company-level feed）。
+    /// 跨 case 列出公司在指定 kind 下的事件（company-level feed）。
     /// `kind_filter` 为 `None` 时返回所有 kind；为 `Some("")` 时同样返回所有（与原路由兼容）。
     pub async fn list_events_by_company(
         &self,
@@ -1498,7 +1497,11 @@ impl<'a> CaseRepo<'a> {
         limit: i64,
     ) -> sqlx::Result<Vec<CaseEventRow>> {
         let limit = limit.clamp(1, 500);
-        let sql = if kind_filter.map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        let sql = if kind_filter
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
             format!(
                 "SELECT {EVENT_COLS} FROM case_events \
                  WHERE company_id=$1 AND kind=$2 \
@@ -1568,7 +1571,7 @@ impl<'a> CaseRepo<'a> {
             .await
     }
 
-/// Round 109: 锁定 case_document (touch updated_at) 并发 case_event。
+    /// Round 109: 锁定 case_document (touch updated_at) 并发 case_event。
     /// 合并为单事务返回 OK 是否成功。
     pub async fn lock_document(
         &self,
@@ -1724,10 +1727,7 @@ impl<'a> CaseRepo<'a> {
     }
 
     /// Round 119: 列出 issue 关联的所有 cases（case_issue_links JOIN cases）。
-    pub async fn list_issue_cases(
-        &self,
-        issue_id: Uuid,
-    ) -> sqlx::Result<Vec<IssueCaseLinkRow>> {
+    pub async fn list_issue_cases(&self, issue_id: Uuid) -> sqlx::Result<Vec<IssueCaseLinkRow>> {
         sqlx::query_as::<_, IssueCaseLinkRow>(
             "SELECT cil.id AS link_id, cil.case_id, cil.role, c.project_id, c.parent_case_id, c.status, cil.created_at AS linked_at             FROM case_issue_links cil JOIN cases c ON c.id = cil.case_id             WHERE cil.issue_id = $1 ORDER BY cil.created_at DESC LIMIT 200",
         )
@@ -1753,11 +1753,7 @@ impl<'a> CaseRepo<'a> {
     }
 
     /// Round 120: 统计 case 的直接子 case 数（用于 context_pack 的 childCount）。
-    pub async fn count_children(
-        &self,
-        company_id: Uuid,
-        case_id: Uuid,
-    ) -> sqlx::Result<i64> {
+    pub async fn count_children(&self, company_id: Uuid, case_id: Uuid) -> sqlx::Result<i64> {
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*)::bigint FROM cases WHERE company_id=$1 AND parent_case_id=$2",
         )
@@ -1769,10 +1765,7 @@ impl<'a> CaseRepo<'a> {
     }
 
     /// Round 119: 列出 company 全部 cases（用于构建 children tree，limit 5000）。
-    pub async fn list_all_for_tree(
-        &self,
-        company_id: Uuid,
-    ) -> sqlx::Result<Vec<CaseRow>> {
+    pub async fn list_all_for_tree(&self, company_id: Uuid) -> sqlx::Result<Vec<CaseRow>> {
         let sql = format!(
             "SELECT {CASE_COLS} FROM cases WHERE company_id=$1             ORDER BY parent_case_id NULLS FIRST, created_at ASC LIMIT 5000"
         );

@@ -96,7 +96,10 @@ pub struct LifecycleError(pub String);
 /// Registry 句柄 trait（与 Node `registry.getByKey(pluginKey)` 1:1 对齐）。
 #[async_trait::async_trait]
 pub trait PluginRegistryReader: Send + Sync {
-    async fn get_by_key(&self, plugin_key: &str) -> Result<Option<RegistryPluginRow>, RegistryError>;
+    async fn get_by_key(
+        &self,
+        plugin_key: &str,
+    ) -> Result<Option<RegistryPluginRow>, RegistryError>;
 }
 
 #[derive(Debug, thiserror::Error)]

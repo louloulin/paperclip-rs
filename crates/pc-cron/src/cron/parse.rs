@@ -52,12 +52,10 @@ pub fn parse_field(token: &str, spec: FieldSpec) -> Result<Vec<u32>, CronError> 
         if let Some(slash_idx) = trimmed.find('/') {
             let base = &trimmed[..slash_idx];
             let step_str = &trimmed[slash_idx + 1..];
-            let step: u32 = step_str
-                .parse()
-                .map_err(|_| CronError::InvalidStep {
-                    field: spec.name,
-                    step: step_str.to_string(),
-                })?;
+            let step: u32 = step_str.parse().map_err(|_| CronError::InvalidStep {
+                field: spec.name,
+                step: step_str.to_string(),
+            })?;
             if step == 0 {
                 return Err(CronError::InvalidStep {
                     field: spec.name,
@@ -72,18 +70,14 @@ pub fn parse_field(token: &str, spec: FieldSpec) -> Result<Vec<u32>, CronError> 
                 // N-M/S — 范围内每 S 一值
                 let a_str = &base[..dash_idx];
                 let b_str = &base[dash_idx + 1..];
-                let a: u32 = a_str
-                    .parse()
-                    .map_err(|_| CronError::InvalidRange {
-                        field: spec.name,
-                        base: base.to_string(),
-                    })?;
-                let b: u32 = b_str
-                    .parse()
-                    .map_err(|_| CronError::InvalidRange {
-                        field: spec.name,
-                        base: base.to_string(),
-                    })?;
+                let a: u32 = a_str.parse().map_err(|_| CronError::InvalidRange {
+                    field: spec.name,
+                    base: base.to_string(),
+                })?;
+                let b: u32 = b_str.parse().map_err(|_| CronError::InvalidRange {
+                    field: spec.name,
+                    base: base.to_string(),
+                })?;
                 (a, b)
             } else {
                 // N/S — 从 N 起每 S 一值
@@ -202,13 +196,19 @@ mod tests {
     #[test]
     fn parse_range() {
         assert_eq!(parse_field("1-3", FIELD_SPECS[0]).unwrap(), vec![1, 2, 3]);
-        assert_eq!(parse_field("0-5", FIELD_SPECS[1]).unwrap(), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            parse_field("0-5", FIELD_SPECS[1]).unwrap(),
+            vec![0, 1, 2, 3, 4, 5]
+        );
     }
 
     #[test]
     fn parse_step_from_min() {
         // */15 on minute field → 0, 15, 30, 45
-        assert_eq!(parse_field("*/15", FIELD_SPECS[0]).unwrap(), vec![0, 15, 30, 45]);
+        assert_eq!(
+            parse_field("*/15", FIELD_SPECS[0]).unwrap(),
+            vec![0, 15, 30, 45]
+        );
     }
 
     #[test]
@@ -231,10 +231,7 @@ mod tests {
 
     #[test]
     fn parse_list() {
-        assert_eq!(
-            parse_field("1,3,5", FIELD_SPECS[0]).unwrap(),
-            vec![1, 3, 5]
-        );
+        assert_eq!(parse_field("1,3,5", FIELD_SPECS[0]).unwrap(), vec![1, 3, 5]);
     }
 
     #[test]
@@ -317,7 +314,13 @@ mod tests {
 
     #[test]
     fn validate_cron_returns_err_for_invalid() {
-        assert!(matches!(validate_cron("bad"), Some(CronError::WrongFieldCount { .. })));
-        assert!(matches!(validate_cron("60 * * * *"), Some(CronError::OutOfRange { .. })));
+        assert!(matches!(
+            validate_cron("bad"),
+            Some(CronError::WrongFieldCount { .. })
+        ));
+        assert!(matches!(
+            validate_cron("60 * * * *"),
+            Some(CronError::OutOfRange { .. })
+        ));
     }
 }

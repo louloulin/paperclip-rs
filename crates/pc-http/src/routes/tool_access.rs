@@ -15,9 +15,8 @@ use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
-    NewToolApplication, NewToolPolicy,
-    NewToolStdioTemplate, PatchToolApplication, ToolActionRequestRow,
-    ToolApplicationRow, ToolPolicyRow, ToolProfileEntryRow, ToolProfileRow,
+    NewToolApplication, NewToolPolicy, NewToolStdioTemplate, PatchToolApplication,
+    ToolActionRequestRow, ToolApplicationRow, ToolPolicyRow, ToolProfileEntryRow, ToolProfileRow,
     ToolRepo, ToolRuntimeSlotRow, ToolStdioTemplateRow,
 };
 
@@ -55,7 +54,9 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/tool-applications/:application_id",
-            get(get_tool_application).patch(patch_tool_application_by_id).delete(delete_tool_application_by_id),
+            get(get_tool_application)
+                .patch(patch_tool_application_by_id)
+                .delete(delete_tool_application_by_id),
         )
         .route(
             "/api/companies/:company_id/tools/profiles",
@@ -85,10 +86,10 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/tools/stdio-templates",
             get(list_tool_stdio_templates),
         )
-        .route(
-            "/api/tool-connections/:connection_id/grants",
-            get(list_connection_grants),
-        )
+        // NOTE: `/api/tool-connections/:connection_id/grants` is registered by
+        // tool_connections.rs (the canonical tool-connections module). The duplicate
+        // registration here was removed in Round 282 because it produced axum
+        // "Overlapping method route" panics during integration tests.
         .route(
             "/api/companies/:company_id/tools/action-requests",
             get(list_tool_action_requests),
@@ -222,7 +223,9 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/tool-profile-entries/:entry_id",
-            get(get_tool_profile_entry).patch(patch_tool_profile_entry).delete(delete_tool_profile_entry),
+            get(get_tool_profile_entry)
+                .patch(patch_tool_profile_entry)
+                .delete(delete_tool_profile_entry),
         )
         // ---- Round 42: runtime-slot lifecycle ----
         .route(
@@ -257,20 +260,58 @@ struct ConnectionRow {
 }
 
 impl ConnectionRow {
-    fn from_tuple(t: (
-        Uuid, Uuid, Uuid, String, String, String, bool, Value, Value, String,
-        Option<String>, Option<Timestamp>, Option<Timestamp>,
-        Timestamp, Timestamp,
-    )) -> Self {
+    fn from_tuple(
+        t: (
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            bool,
+            Value,
+            Value,
+            String,
+            Option<String>,
+            Option<Timestamp>,
+            Option<Timestamp>,
+            Timestamp,
+            Timestamp,
+        ),
+    ) -> Self {
         let (
-            id, company_id, application_id, name, transport, status, enabled, config,
-            credential_refs, health_status, health_message, last_health_at,
-            last_catalog_refresh_at, created_at, updated_at,
+            id,
+            company_id,
+            application_id,
+            name,
+            transport,
+            status,
+            enabled,
+            config,
+            credential_refs,
+            health_status,
+            health_message,
+            last_health_at,
+            last_catalog_refresh_at,
+            created_at,
+            updated_at,
         ) = t;
         Self {
-            id, company_id, application_id, name, transport, status, enabled, config,
-            credential_refs, health_status, health_message, last_health_at,
-            last_catalog_refresh_at, created_at, updated_at,
+            id,
+            company_id,
+            application_id,
+            name,
+            transport,
+            status,
+            enabled,
+            config,
+            credential_refs,
+            health_status,
+            health_message,
+            last_health_at,
+            last_catalog_refresh_at,
+            created_at,
+            updated_at,
         }
     }
 }
@@ -319,7 +360,6 @@ fn application_json(row: &ApplicationRow) -> Value {
         "updatedAt": row.updated_at,
     })
 }
-
 
 /// Round 144: `tool_application_json` — 取 ToolApplicationRow（repo 类型）→ JSON。
 /// 用于 list_by_company / create_application / get_by_id / patch_application 等纯 repo 路径。
@@ -409,7 +449,6 @@ fn invocation_json(row: &InvocationRow) -> Value {
         "createdAt": row.created_at,
     })
 }
-
 
 /// Round 145: 从 repo 的 InvocationSummaryRow → JSON（与 InvocationRow 输出兼容）。
 fn invocation_json_from_summary(row: &pc_repos::tool::InvocationSummaryRow) -> Value {
@@ -625,7 +664,10 @@ async fn list_connections(
     let rows_tuple = ToolRepo::new(&state.db)
         .list_connections_v1(company_id)
         .await?;
-    let rows: Vec<ConnectionRow> = rows_tuple.into_iter().map(ConnectionRow::from_tuple).collect();
+    let rows: Vec<ConnectionRow> = rows_tuple
+        .into_iter()
+        .map(ConnectionRow::from_tuple)
+        .collect();
     let items: Vec<Value> = rows.iter().map(connection_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
 }
@@ -741,20 +783,33 @@ async fn tool_lookup(
         .await?;
     let tools: Vec<Value> = rows
         .into_iter()
-        .map(|(id, company_id, connection_id, name, title, description, input_schema, risk_level, status, created_at)| {
-            json!({
-                "id": id,
-                "companyId": company_id,
-                "connectionId": connection_id,
-                "name": name,
-                "title": title,
-                "description": description,
-                "inputSchema": input_schema,
-                "riskLevel": risk_level,
-                "status": status,
-                "createdAt": created_at,
-            })
-        })
+        .map(
+            |(
+                id,
+                company_id,
+                connection_id,
+                name,
+                title,
+                description,
+                input_schema,
+                risk_level,
+                status,
+                created_at,
+            )| {
+                json!({
+                    "id": id,
+                    "companyId": company_id,
+                    "connectionId": connection_id,
+                    "name": name,
+                    "title": title,
+                    "description": description,
+                    "inputSchema": input_schema,
+                    "riskLevel": risk_level,
+                    "status": status,
+                    "createdAt": created_at,
+                })
+            },
+        )
         .collect();
     Ok(Json(json!({ "companyId": company_id, "tools": tools })))
 }
@@ -783,7 +838,9 @@ async fn delete_tool(
     State(state): State<AppState>,
     Path((_company_id, tool_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    let _ = ToolRepo::new(&state.db).quarantine_catalog_entry(tool_id).await?;
+    let _ = ToolRepo::new(&state.db)
+        .quarantine_catalog_entry(tool_id)
+        .await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
 
@@ -803,14 +860,17 @@ async fn invoke_tool(
     let row = repo
         .create_invocation(
             company_id,
-            entry.2,                // connection_id
-            entry.0,                // catalog_entry_id
-            &entry.3,               // tool_name
+            entry.2,  // connection_id
+            entry.0,  // catalog_entry_id
+            &entry.3, // tool_name
             arguments_summary.as_ref(),
         )
         .await?;
     // For now: invocation is queued; actual execution requires runtime slots / MCP bridge
-    Ok((StatusCode::ACCEPTED, Json(invocation_json_from_summary(&row))))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(invocation_json_from_summary(&row)),
+    ))
 }
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -997,11 +1057,6 @@ fn tool_action_request_json(row: ToolActionRequestRow) -> Value {
     })
 }
 
-
-
-
-
-
 // ============== Tool applications / profiles / policies / runtime ==============
 
 // Round 100: 仓储化。直接用 ToolRepo.list_by_company()。
@@ -1025,16 +1080,13 @@ async fn create_tool_application(
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("name is required".into()))?;
-    let kind = body
-        .get("kind")
+    let kind = body.get("kind").and_then(Value::as_str).unwrap_or("mcp");
+    let description = body
+        .get("description")
         .and_then(Value::as_str)
-        .unwrap_or("mcp");
-    let description = body.get("description").and_then(Value::as_str).map(String::from);
+        .map(String::from);
     // config 走 metadata.json['config'] 子键
-    let mut metadata = body
-        .get("config")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let mut metadata = body.get("config").cloned().unwrap_or_else(|| json!({}));
     if !metadata.is_object() {
         metadata = json!({});
     }
@@ -1087,7 +1139,10 @@ async fn patch_tool_application(
 ) -> ApiResult<Json<Value>> {
     let patch = PatchToolApplication {
         name: body.get("name").and_then(Value::as_str).map(String::from),
-        description: body.get("description").and_then(Value::as_str).map(String::from),
+        description: body
+            .get("description")
+            .and_then(Value::as_str)
+            .map(String::from),
         config: body.get("config").cloned(),
         status: body.get("status").and_then(Value::as_str).map(String::from),
         metadata_merge: body
@@ -1100,11 +1155,17 @@ async fn patch_tool_application(
         .patch_application(company_id, application_id, &patch)
         .await?;
     if !n {
-        return Err(ApiError::NotFound(format!("tool application {application_id}")));
+        return Err(ApiError::NotFound(format!(
+            "tool application {application_id}"
+        )));
     }
     state.realtime.publish(
-        LiveEvent::new("tool.application.updated", "tool_application", application_id)
-            .with_company(company_id),
+        LiveEvent::new(
+            "tool.application.updated",
+            "tool_application",
+            application_id,
+        )
+        .with_company(company_id),
     );
     Ok(Json(json!({ "id": application_id, "updated": true })))
 }
@@ -1133,12 +1194,18 @@ async fn delete_tool_application(
         .await?;
     if n {
         state.realtime.publish(
-            LiveEvent::new("tool.application.deleted", "tool_application", application_id)
-                .with_company(company_id),
+            LiveEvent::new(
+                "tool.application.deleted",
+                "tool_application",
+                application_id,
+            )
+            .with_company(company_id),
         );
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::NotFound(format!("tool application {application_id}")))
+        Err(ApiError::NotFound(format!(
+            "tool application {application_id}"
+        )))
     }
 }
 
@@ -1183,8 +1250,7 @@ async fn delete_tool_profile(
         return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
     }
     state.realtime.publish(
-        LiveEvent::new("tool_profile.deleted", "tool_profile", profile_id)
-            .with_company(company_id),
+        LiveEvent::new("tool_profile.deleted", "tool_profile", profile_id).with_company(company_id),
     );
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1269,16 +1335,18 @@ async fn list_connection_grants(
         .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, connection_id, kind, subject_user_id, status, created_at)| {
-            json!({
-                "id": id,
-                "connectionId": connection_id,
-                "kind": kind,
-                "subjectUserId": subject_user_id,
-                "status": status,
-                "createdAt": created_at,
-            })
-        })
+        .map(
+            |(id, connection_id, kind, subject_user_id, status, created_at)| {
+                json!({
+                    "id": id,
+                    "connectionId": connection_id,
+                    "kind": kind,
+                    "subjectUserId": subject_user_id,
+                    "status": status,
+                    "createdAt": created_at,
+                })
+            },
+        )
         .collect();
     Ok(Json(json!({ "items": items })))
 }
@@ -1322,7 +1390,10 @@ async fn create_tool_policy_v2(
         .await?
         .is_some()
     {
-        return Err(ApiError::Conflict(format!("tool policy {} already exists", body.name)));
+        return Err(ApiError::Conflict(format!(
+            "tool policy {} already exists",
+            body.name
+        )));
     }
     let input = NewToolPolicy {
         company_id,
@@ -1402,7 +1473,9 @@ async fn duplicate_tool_policy_route(
         .await?
         .is_some()
     {
-        return Err(ApiError::Conflict(format!("tool policy {new_name} already exists")));
+        return Err(ApiError::Conflict(format!(
+            "tool policy {new_name} already exists"
+        )));
     }
 
     let new_enabled = body.enabled.unwrap_or(false); // duplicates default to disabled
@@ -1422,7 +1495,8 @@ async fn duplicate_tool_policy_route(
         })
         .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.policy.duplicated", "tool_policy", new_row.id).with_company(company_id),
+        LiveEvent::new("tool.policy.duplicated", "tool_policy", new_row.id)
+            .with_company(company_id),
     );
     Ok((
         StatusCode::CREATED,
@@ -1466,7 +1540,9 @@ async fn patch_tool_policy_route(
             .await?
             .is_some()
         {
-            return Err(ApiError::Conflict(format!("tool policy {name} already exists")));
+            return Err(ApiError::Conflict(format!(
+                "tool policy {name} already exists"
+            )));
         }
     }
     let updated = repo
@@ -1505,8 +1581,7 @@ async fn delete_tool_policy_route(
         return Err(ApiError::NotFound(format!("tool policy {policy_id}")));
     }
     state.realtime.publish(
-        LiveEvent::new("tool.policy.deleted", "tool_policy", policy_id)
-            .with_company(company_id),
+        LiveEvent::new("tool.policy.deleted", "tool_policy", policy_id).with_company(company_id),
     );
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }
@@ -1610,21 +1685,30 @@ async fn create_trust_rule_from_action_request_route(
         selectors["toolName"] = json!(name);
     }
     if let Some(obj) = selectors.as_object_mut() {
-        obj.entry("trustRuleKey").or_insert(json!(action_request_id.to_string()));
+        obj.entry("trustRuleKey")
+            .or_insert(json!(action_request_id.to_string()));
     }
 
     let name = body
         .name
         .clone()
         .unwrap_or_else(|| format!("Trust rule from {action_request_id}"));
-    if repo.find_policy_id_by_name(company_id, &name).await?.is_some() {
-        return Err(ApiError::Conflict(format!("tool policy {name} already exists")));
+    if repo
+        .find_policy_id_by_name(company_id, &name)
+        .await?
+        .is_some()
+    {
+        return Err(ApiError::Conflict(format!(
+            "tool policy {name} already exists"
+        )));
     }
 
-    let config = body.config.clone().unwrap_or_else(|| json!({
-        "sourceActionRequestId": action_request_id,
-        "sourceSummary": ar.summary,
-    }));
+    let config = body.config.clone().unwrap_or_else(|| {
+        json!({
+            "sourceActionRequestId": action_request_id,
+            "sourceSummary": ar.summary,
+        })
+    });
     let new_row = repo
         .create_policy(&pc_repos::tool::NewToolPolicy {
             company_id,
@@ -1700,12 +1784,17 @@ async fn create_tool_profile_v2(
         .clone()
         .unwrap_or_else(|| format!("prof_{}", Uuid::now_v7().simple()));
     let status = body.status.clone().unwrap_or_else(|| "active".to_owned());
-    let default_action = body.default_action.clone().unwrap_or_else(|| "deny".to_owned());
+    let default_action = body
+        .default_action
+        .clone()
+        .unwrap_or_else(|| "deny".to_owned());
     let metadata = body.metadata.clone().unwrap_or_else(|| json!({}));
 
     let repo = ToolRepo::new(&state.db);
     if repo.profile_key_exists(company_id, &profile_key).await? {
-        return Err(ApiError::Conflict(format!("tool profile {profile_key} already exists")));
+        return Err(ApiError::Conflict(format!(
+            "tool profile {profile_key} already exists"
+        )));
     }
 
     let entry_inputs: Vec<pc_repos::tool::ToolProfileEntryInput> = body
@@ -1773,10 +1862,15 @@ async fn bind_profile_route(
     Json(body): Json<BindProfileBody>,
 ) -> ApiResult<impl IntoResponse> {
     if body.target_type.trim().is_empty() || body.target_id.trim().is_empty() {
-        return Err(ApiError::BadRequest("targetType and targetId required".into()));
+        return Err(ApiError::BadRequest(
+            "targetType and targetId required".into(),
+        ));
     }
     let repo = ToolRepo::new(&state.db);
-    if !repo.profile_belongs_to_company(company_id, profile_id).await? {
+    if !repo
+        .profile_belongs_to_company(company_id, profile_id)
+        .await?
+    {
         return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
     }
     let metadata = body.metadata.clone().unwrap_or_else(|| json!({}));
@@ -1822,7 +1916,9 @@ async fn unbind_profile_route(
     Json(body): Json<UnbindProfileBody>,
 ) -> ApiResult<Json<Value>> {
     if body.target_type.trim().is_empty() || body.target_id.trim().is_empty() {
-        return Err(ApiError::BadRequest("targetType and targetId required".into()));
+        return Err(ApiError::BadRequest(
+            "targetType and targetId required".into(),
+        ));
     }
     let affected = ToolRepo::new(&state.db)
         .delete_profile_binding(company_id, profile_id, &body.target_type, &body.target_id)
@@ -1853,17 +1949,19 @@ async fn get_effective_profiles_for_agent(
 
     let profiles: Vec<Value> = rows
         .into_iter()
-        .map(|(binding_id, target_type, profile_id, profile_key, name, priority)| {
-            json!({
-                "bindingId": binding_id,
-                "profileId": profile_id,
-                "profileKey": profile_key,
-                "name": name,
-                "priority": priority,
-                "targetType": target_type,
-                "targetId": agent_id,
-            })
-        })
+        .map(
+            |(binding_id, target_type, profile_id, profile_key, name, priority)| {
+                json!({
+                    "bindingId": binding_id,
+                    "profileId": profile_id,
+                    "profileKey": profile_key,
+                    "name": name,
+                    "priority": priority,
+                    "targetType": target_type,
+                    "targetId": agent_id,
+                })
+            },
+        )
         .collect();
     let _ = agent_uuid; // suppress unused warning
     Ok(Json(json!({
@@ -1908,7 +2006,10 @@ async fn create_stdio_template_route(
     {
         // 已存在：返回 Conflict。正常创建会跳过。
         let _ = existing;
-        return Err(ApiError::Conflict(format!("stdio template {} already exists", body.name)));
+        return Err(ApiError::Conflict(format!(
+            "stdio template {} already exists",
+            body.name
+        )));
     }
     // 若 body.template_id 字段被显式提供，使用它，否则自动生成
     let template_key = body
@@ -1916,8 +2017,16 @@ async fn create_stdio_template_route(
         .clone()
         .unwrap_or_else(|| format!("stio_{}", Uuid::now_v7().simple()));
     // args 字段允许 Vec<String>，转 jsonb
-    let args_json = if body.args.is_empty() { json!([]) } else { json!(body.args.clone()) };
-    let env_keys_json = if body.env_keys.is_empty() { json!([]) } else { json!(body.env_keys.clone()) };
+    let args_json = if body.args.is_empty() {
+        json!([])
+    } else {
+        json!(body.args.clone())
+    };
+    let env_keys_json = if body.env_keys.is_empty() {
+        json!([])
+    } else {
+        json!(body.env_keys.clone())
+    };
     let tools_json = serde_json::Value::Array(body.tools.clone());
     let input = NewToolStdioTemplate {
         company_id,
@@ -1953,14 +2062,20 @@ async fn disable_stdio_template_route(
     Json(body): Json<DisableStdioTemplateBody>,
 ) -> ApiResult<Json<Value>> {
     let repo = ToolRepo::new(&state.db);
-    let n = repo.disable_stdio_template(company_id, &template_id).await?;
+    let n = repo
+        .disable_stdio_template(company_id, &template_id)
+        .await?;
     if !n {
         return Err(ApiError::NotFound(format!("stdio template {template_id}")));
     }
     state.realtime.publish(
-        LiveEvent::new("tool.stdio_template.disabled", "tool_stdio_template", company_id)
-            .with_company(company_id)
-            .with_data(json!({ "templateId": template_id, "reason": body.reason })),
+        LiveEvent::new(
+            "tool.stdio_template.disabled",
+            "tool_stdio_template",
+            company_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({ "templateId": template_id, "reason": body.reason })),
     );
     Ok(Json(json!({
         "companyId": company_id,
@@ -2057,7 +2172,9 @@ async fn list_examples(
             e
         })
         .collect();
-    Ok(Json(json!({ "companyId": company_id, "examples": items, "items": items })))
+    Ok(Json(
+        json!({ "companyId": company_id, "examples": items, "items": items }),
+    ))
 }
 
 async fn install_example_route(
@@ -2069,7 +2186,10 @@ async fn install_example_route(
     let catalog = example_catalog();
     let example = catalog
         .as_array()
-        .and_then(|arr| arr.iter().find(|e| e.get("id").and_then(Value::as_str) == Some(&id)))
+        .and_then(|arr| {
+            arr.iter()
+                .find(|e| e.get("id").and_then(Value::as_str) == Some(&id))
+        })
         .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("example {id}")))?;
 
@@ -2110,14 +2230,18 @@ async fn install_example_route(
         )
         .await?;
     state.realtime.publish(
-        LiveEvent::new("tool.example.installed", "tool_example", result.application_id)
-            .with_company(company_id)
-            .with_data(json!({
-                "applicationId": result.application_id,
-                "connectionId": result.connection_id,
-                "profileId": result.profile_id,
-                "profileEntries": result.profile_entries,
-            })),
+        LiveEvent::new(
+            "tool.example.installed",
+            "tool_example",
+            result.application_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({
+            "applicationId": result.application_id,
+            "connectionId": result.connection_id,
+            "profileId": result.profile_id,
+            "profileEntries": result.profile_entries,
+        })),
     );
     Ok((
         StatusCode::CREATED,
@@ -2140,7 +2264,10 @@ async fn smoke_example_route(
     let catalog = example_catalog();
     let example = catalog
         .as_array()
-        .and_then(|arr| arr.iter().find(|e| e.get("id").and_then(Value::as_str) == Some(&id)))
+        .and_then(|arr| {
+            arr.iter()
+                .find(|e| e.get("id").and_then(Value::as_str) == Some(&id))
+        })
         .cloned();
     let Some(example) = example else {
         return Ok(Json(json!({
@@ -2193,28 +2320,32 @@ async fn list_apps_attention(
         .unwrap_or_default();
     let items: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, transport, enabled, health_status, health_message)| {
-            let reason = if !enabled {
-                "disabled"
-            } else {
-                match health_status.as_str() {
-                    "unhealthy" => "unhealthy",
-                    "stale" => "stale_health",
-                    _ => "unknown_health",
-                }
-            };
-            json!({
-                "id": id,
-                "name": name,
-                "transport": transport,
-                "enabled": enabled,
-                "healthStatus": health_status,
-                "healthMessage": health_message,
-                "reason": reason,
-            })
-        })
+        .map(
+            |(id, name, transport, enabled, health_status, health_message)| {
+                let reason = if !enabled {
+                    "disabled"
+                } else {
+                    match health_status.as_str() {
+                        "unhealthy" => "unhealthy",
+                        "stale" => "stale_health",
+                        _ => "unknown_health",
+                    }
+                };
+                json!({
+                    "id": id,
+                    "name": name,
+                    "transport": transport,
+                    "enabled": enabled,
+                    "healthStatus": health_status,
+                    "healthMessage": health_message,
+                    "reason": reason,
+                })
+            },
+        )
         .collect();
-    Ok(Json(json!({ "companyId": company_id, "items": items, "apps": items })))
+    Ok(Json(
+        json!({ "companyId": company_id, "items": items, "apps": items }),
+    ))
 }
 
 async fn get_run_decisions_route(
@@ -2227,18 +2358,29 @@ async fn get_run_decisions_route(
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|(id, event_type, tool_name, decision, reason_code, arguments_summary, matched_policy_ids, created_at)| {
-                json!({
-                    "id": id,
-                    "eventType": event_type,
-                    "toolName": tool_name,
-                    "decision": decision,
-                    "reasonCode": reason_code,
-                    "argumentsSummary": arguments_summary,
-                    "matchedPolicyIds": matched_policy_ids,
-                    "createdAt": created_at,
-                })
-            })
+            .map(
+                |(
+                    id,
+                    event_type,
+                    tool_name,
+                    decision,
+                    reason_code,
+                    arguments_summary,
+                    matched_policy_ids,
+                    created_at,
+                )| {
+                    json!({
+                        "id": id,
+                        "eventType": event_type,
+                        "toolName": tool_name,
+                        "decision": decision,
+                        "reasonCode": reason_code,
+                        "argumentsSummary": arguments_summary,
+                        "matchedPolicyIds": matched_policy_ids,
+                        "createdAt": created_at,
+                    })
+                },
+            )
             .collect()
     } else {
         Vec::new()
@@ -2306,7 +2448,11 @@ async fn import_mcp_json_route(
             let args: Vec<String> = def
                 .get("args")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
                 .unwrap_or_default();
             let env: Value = def.get("env").cloned().unwrap_or_else(|| json!({}));
             json!({
@@ -2374,7 +2520,11 @@ async fn policy_test_route(
                     .unwrap_or(true);
                 let app_match = body
                     .application_id
-                    .map(|a| obj.get("applicationId").map(|v| v.as_str() == Some(&a.to_string())).unwrap_or(true))
+                    .map(|a| {
+                        obj.get("applicationId")
+                            .map(|v| v.as_str() == Some(&a.to_string()))
+                            .unwrap_or(true)
+                    })
                     .unwrap_or(true);
                 if r_match && tool_match && app_match {
                     Some(*id)
@@ -2416,7 +2566,11 @@ async fn policy_test_route(
                 body.tool_name.as_deref(),
                 decision,
                 &json!(matched),
-                if matched.is_empty() { "no_policy_match" } else { "policy_match_default_allow" },
+                if matched.is_empty() {
+                    "no_policy_match"
+                } else {
+                    "policy_match_default_allow"
+                },
                 &body.arguments_summary.clone().unwrap_or_else(|| json!({})),
             )
             .await
@@ -2431,7 +2585,6 @@ async fn policy_test_route(
         "auditEvent": audit_event,
     })))
 }
-
 
 // ============================================================================
 // Round 39: tool-profiles / tool-profile-entries CRUD
@@ -2501,12 +2654,16 @@ async fn review_tool_profile_new_tools(
         .approve_new_tools_for_profile(company_id, profile_id, &body.approve)
         .await?;
     state.realtime.publish(
-        LiveEvent::new("tool_profile.new_tools_reviewed", "tool_profile", profile_id)
-            .with_company(company_id)
-            .with_data(json!({
-                "approvedCount": approved,
-                "dismissedCount": body.dismiss.len(),
-            })),
+        LiveEvent::new(
+            "tool_profile.new_tools_reviewed",
+            "tool_profile",
+            profile_id,
+        )
+        .with_company(company_id)
+        .with_data(json!({
+            "approvedCount": approved,
+            "dismissedCount": body.dismiss.len(),
+        })),
     );
     Ok(Json(json!({
         "profileId": profile_id,
@@ -2540,10 +2697,11 @@ async fn duplicate_tool_profile(
         let ts = chrono::Utc::now().timestamp();
         format!("{}_copy_{}", original.profile_key, ts)
     });
-    let new_name = body.name.clone().unwrap_or_else(|| format!("{} (copy)", original.name));
-    let new_id = repo
-        .clone_profile(profile_id, &new_key, &new_name)
-        .await?;
+    let new_name = body
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("{} (copy)", original.name));
+    let new_id = repo.clone_profile(profile_id, &new_key, &new_name).await?;
     state.realtime.publish(
         LiveEvent::new("tool_profile.duplicated", "tool_profile", new_id)
             .with_company(company_id)
@@ -2600,7 +2758,9 @@ async fn create_tool_profile_entry_for_profile(
         .find_profile_company_id(profile_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
-    let selector = body.selector_type.unwrap_or_else(|| "tool_name".to_string());
+    let selector = body
+        .selector_type
+        .unwrap_or_else(|| "tool_name".to_string());
     let effect = body.effect.unwrap_or_else(|| "include".to_string());
     let entry = repo
         .create_profile_entry(&pc_repos::tool::NewToolProfileEntry {
@@ -2729,13 +2889,17 @@ async fn restart_tool_runtime_slot(
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
     state.realtime.publish(
-        LiveEvent::new("tool_runtime_slot.restart_requested", "tool_runtime_slot", Uuid::nil())
-            .with_company(company_id)
-            .with_data(json!({
-                "slotId": slot_id,
-                "action": "restart",
-                "requestedAt": chrono::Utc::now(),
-            })),
+        LiveEvent::new(
+            "tool_runtime_slot.restart_requested",
+            "tool_runtime_slot",
+            Uuid::nil(),
+        )
+        .with_company(company_id)
+        .with_data(json!({
+            "slotId": slot_id,
+            "action": "restart",
+            "requestedAt": chrono::Utc::now(),
+        })),
     );
     Ok(Json(json!({
         "slotId": slot_id,
@@ -2755,13 +2919,17 @@ async fn stop_tool_runtime_slot(
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
     state.realtime.publish(
-        LiveEvent::new("tool_runtime_slot.stop_requested", "tool_runtime_slot", Uuid::nil())
-            .with_company(company_id)
-            .with_data(json!({
-                "slotId": slot_id,
-                "action": "stop",
-                "requestedAt": chrono::Utc::now(),
-            })),
+        LiveEvent::new(
+            "tool_runtime_slot.stop_requested",
+            "tool_runtime_slot",
+            Uuid::nil(),
+        )
+        .with_company(company_id)
+        .with_data(json!({
+            "slotId": slot_id,
+            "action": "stop",
+            "requestedAt": chrono::Utc::now(),
+        })),
     );
     Ok(Json(json!({
         "slotId": slot_id,

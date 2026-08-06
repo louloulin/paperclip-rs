@@ -42,7 +42,8 @@ pub struct CompanyStatsRow {
     pub user_count: i64,
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]pub struct CompanyRow {
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct CompanyRow {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
@@ -261,11 +262,10 @@ impl<'a> CompanyRepo<'a> {
                 .bind(company_id)
                 .fetch_one(pool)
                 .await?;
-        let goal_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM goals WHERE company_id = $1")
-                .bind(company_id)
-                .fetch_one(pool)
-                .await?;
+        let goal_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM goals WHERE company_id = $1")
+            .bind(company_id)
+            .fetch_one(pool)
+            .await?;
         let open_issue_count: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND status NOT IN ('done','cancelled','completed') AND hidden_at IS NULL",
         )
@@ -328,17 +328,20 @@ impl<'a> CompanyRepo<'a> {
         }
         // 初始化占位（确保 list 中所有 id 都有 entry）
         for id in company_ids {
-            out.insert(*id, CompanyStatsRow {
-                company_id: *id,
-                issue_count: 0,
-                open_issue_count: 0,
-                agent_count: 0,
-                pipeline_count: 0,
-                project_count: 0,
-                goal_count: 0,
-                case_count: 0,
-                user_count: 0,
-            });
+            out.insert(
+                *id,
+                CompanyStatsRow {
+                    company_id: *id,
+                    issue_count: 0,
+                    open_issue_count: 0,
+                    agent_count: 0,
+                    pipeline_count: 0,
+                    project_count: 0,
+                    goal_count: 0,
+                    case_count: 0,
+                    user_count: 0,
+                },
+            );
         }
         // 6 个独立 aggregate query，每个一次：ANY($1::uuid[]) WHERE company_id = ANY
         macro_rules! agg {
@@ -421,20 +424,18 @@ impl<'a> CompanyRepo<'a> {
 
     /// Round 168: 取 company 的 budget_monthly_cents。
     pub async fn get_budget(&self, company_id: Uuid) -> sqlx::Result<Option<i32>> {
-        let row: Option<(i32,)> = sqlx::query_as(
-            "SELECT budget_monthly_cents FROM companies WHERE id = $1",
-        )
-        .bind(company_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(i32,)> =
+            sqlx::query_as("SELECT budget_monthly_cents FROM companies WHERE id = $1")
+                .bind(company_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(b,)| b))
     }
     /// Round 174: 实例统计用 —— 列出所有 company_id（按 created_at 升序，与 /api/stats 行为一致）。
     pub async fn list_ids(&self) -> sqlx::Result<Vec<Uuid>> {
-        let rows: Vec<(Uuid,)> =
-            sqlx::query_as("SELECT id FROM companies ORDER BY created_at")
-                .fetch_all(self.db.pool())
-                .await?;
+        let rows: Vec<(Uuid,)> = sqlx::query_as("SELECT id FROM companies ORDER BY created_at")
+            .fetch_all(self.db.pool())
+            .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -456,22 +457,15 @@ impl<'a> CompanyRepo<'a> {
     }
 
     /// Round 182: 设置 company 的 logo_url。
-    pub async fn set_logo_url(
-        &self,
-        company_id: Uuid,
-        logo_url: &str,
-    ) -> sqlx::Result<bool> {
-        let n = sqlx::query(
-            "UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2",
-        )
-        .bind(logo_url)
-        .bind(company_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn set_logo_url(&self, company_id: Uuid, logo_url: &str) -> sqlx::Result<bool> {
+        let n = sqlx::query("UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2")
+            .bind(logo_url)
+            .bind(company_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
-
 }
 
 #[cfg(test)]
