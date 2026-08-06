@@ -429,6 +429,29 @@ async fn create(
         }
     }
     let request_depth = body.request_depth.unwrap_or(0);
+    // R235: idempotency key 重放 — 如果 idempotency_key 存在, 先查找 existing
+    if let Some(key) = body.idempotency_key.as_deref() {
+        if let Some(existing_id) = IssueRepo::new(&state.db)
+            .find_idempotency_key(body.company_id, key)
+            .await?
+        {
+            if let Some(existing) = IssueRepo::new(&state.db).get(existing_id).await? {
+                // Replay: 返回 existing issue (200 OK)
+                return Ok((
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": existing.id,
+                        "company_id": existing.company_id,
+                        "title": existing.title,
+                        "status": existing.status,
+                        "priority": existing.priority,
+                        "workMode": existing.work_mode,
+                        "replayed": true,
+                    })),
+                ));
+            }
+        }
+    }
     if let Some(pid) = body.parent_id {
         // 子 issue：通过 create_child_full 路径以继承 company_id 与 request_depth。
         let parent = IssueRepo::new(&state.db)
@@ -473,6 +496,9 @@ async fn create(
         } else {
             IssueRepo::new(&state.db).create_child_full(&parent, &input).await?
         };
+        // R235: 持久化 idempotency key
+        // 注：ChildIssueFullBody 暂无 idempotency_key 字段, 未来可加
+        // 当前复用 parent.company_id 作为 company_id
         state.realtime.publish(
             LiveEvent::new("issue.created", "issue", row.id)
                 .with_company(row.company_id)
@@ -525,6 +551,12 @@ async fn create(
     } else {
         IssueRepo::new(&state.db).create_full(&input).await?
     };
+    // R235: 持久化 idempotency key (如果有)
+    if let Some(key) = body.idempotency_key.as_deref() {
+        let _ = IssueRepo::new(&state.db)
+            .create_idempotency_key(body.company_id, key, row.id)
+            .await?;
+    }
     state.realtime.publish(
         LiveEvent::new("issue.created", "issue", row.id)
             .with_company(row.company_id)
@@ -860,6 +892,7 @@ async fn create_child(
     } else {
         IssueRepo::new(&state.db).create_child_full(&parent, &input).await?
     };
+    // 注：create_child 暂不持久化 idempotency_key — 未来可加 idempotencyKey 字段
     state.realtime.publish(
         LiveEvent::new("issue.created", "issue", row.id)
             .with_company(row.company_id)

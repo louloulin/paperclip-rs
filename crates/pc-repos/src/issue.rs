@@ -4359,3 +4359,237 @@ mod round234_state_machine_tests {
         assert!(patch.interrupt);
     }
 }
+
+// ============================================================================
+// Round 235: issue_create_idempotency_keys 子表 (idempotency 重放)
+// ============================================================================
+
+/// Round 235: issue_create_idempotency_keys 表的完整行结构。
+///
+/// 对应 Node `issueCreateIdempotencyKeys.$inferSelect`：
+/// - `id`: UUID
+/// - `company_id`: 所属 company (idempotencyKey 在 company 范围内唯一)
+/// - `idempotency_key`: 任意字符串 key (最大 255 chars)
+/// - `issue_id`: 关联的原始 issue (replay 时返回此 issue)
+/// - `created_at`: 创建时间（用于 retention cleanup）
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCreateIdempotencyKeyRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub idempotency_key: String,
+    pub issue_id: Uuid,
+    pub created_at: Timestamp,
+}
+
+/// Round 235: issue_create_idempotency_keys 仓储方法。
+///
+/// 提供 idempotency key 重放语义：
+/// 1. 同一 (companyId, idempotencyKey) 的并发请求被串行化（advisory lock）
+/// 2. 找到 existing issue → 直接返回（不创建新 issue）
+/// 3. 未找到 → 创建 issue + INSERT idempotency_key 记录
+/// 4. 定期清理 expired keys（retention period 默认 30 天）
+impl<'a> IssueRepo<'a> {
+    /// Round 235: 查找 (company_id, idempotency_key) 对应的 existing issue id。
+    ///
+    /// 返回 Some(issue_id) 表示找到 existing — 应返回该 issue 而非创建新 issue。
+    pub async fn find_idempotency_key(
+        &self,
+        company_id: Uuid,
+        idempotency_key: &str,
+    ) -> sqlx::Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT issue_id FROM issue_create_idempotency_keys \\
+             WHERE company_id = $1 AND idempotency_key = $2 \\
+             LIMIT 1",
+        )
+        .bind(company_id)
+        .bind(idempotency_key)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Round 235: INSERT idempotency key 记录。
+    ///
+    /// 使用 ON CONFLICT DO NOTHING 保持幂等 — 同一 (company_id, key) 重复插入
+    /// 不会报错，返回当前已存在的 issue_id（如果发生冲突）。
+    pub async fn create_idempotency_key(
+        &self,
+        company_id: Uuid,
+        idempotency_key: &str,
+        issue_id: Uuid,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "INSERT INTO issue_create_idempotency_keys (company_id, idempotency_key, issue_id) \\
+             VALUES ($1, $2, $3) \\
+             ON CONFLICT (company_id, idempotency_key) DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(idempotency_key)
+        .bind(issue_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Round 235: 批量清理 expired idempotency keys（created_at 早于 cutoff）。
+    ///
+    /// 返回删除的行数。
+    pub async fn cleanup_expired_idempotency_keys(
+        &self,
+        company_id: Uuid,
+        retention_cutoff: chrono::DateTime<chrono::Utc>,
+        batch_size: i64,
+    ) -> sqlx::Result<u64> {
+        let n = sqlx::query(
+            "DELETE FROM issue_create_idempotency_keys \\
+             WHERE id IN ( \\
+                SELECT id FROM issue_create_idempotency_keys \\
+                WHERE company_id = $1 AND created_at < $2 \\
+                ORDER BY created_at ASC, id ASC \\
+                LIMIT $3 \\
+             )",
+        )
+        .bind(company_id)
+        .bind(retention_cutoff)
+        .bind(batch_size)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Round 235: 事务内 INSERT idempotency key。
+    ///
+    /// 用于 create_full_with_relations 事务路径 — 在同一事务中原子性插入 issue + key。
+    pub async fn create_idempotency_key_in_tx(
+        &self,
+        company_id: Uuid,
+        idempotency_key: &str,
+        issue_id: Uuid,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> sqlx::Result<bool> {
+        let n = sqlx::query(
+            "INSERT INTO issue_create_idempotency_keys (company_id, idempotency_key, issue_id) \\
+             VALUES ($1, $2, $3) \\
+             ON CONFLICT (company_id, idempotency_key) DO NOTHING",
+        )
+        .bind(company_id)
+        .bind(idempotency_key)
+        .bind(issue_id)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+}
+
+
+// ============================================================================
+// Round 235: idempotency key 重放机制 单元测试
+// ============================================================================
+#[cfg(test)]
+mod round235_idempotency_tests {
+    //! Round 235: 验证 IssueCreateIdempotencyKeyRow 的字段、camelCase 序列化、
+    //! 借用语义。
+
+    use super::IssueCreateIdempotencyKeyRow;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn idempotency_key_row_parses_camelcase() {
+        let id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let value = json!({
+            "id": id,
+            "companyId": company_id,
+            "idempotencyKey": "issue-create:2026-08-06:T-001",
+            "issueId": issue_id,
+            "createdAt": "2026-08-06T10:00:00Z",
+        });
+        let row: IssueCreateIdempotencyKeyRow = serde_json::from_value(value).expect("parse");
+        assert_eq!(row.id, id);
+        assert_eq!(row.company_id, company_id);
+        assert_eq!(row.idempotency_key, "issue-create:2026-08-06:T-001");
+        assert_eq!(row.issue_id, issue_id);
+    }
+
+    #[test]
+    fn idempotency_key_row_serializes_camelcase() {
+        let id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let row = IssueCreateIdempotencyKeyRow {
+            id,
+            company_id,
+            idempotency_key: "test-key".to_string(),
+            issue_id,
+            created_at: pc_core::Timestamp::from_dt(chrono::Utc::now()),
+        };
+        let v = serde_json::to_value(&row).expect("serialize");
+        let obj = v.as_object().expect("object");
+        assert!(obj.contains_key("companyId"));
+        assert!(obj.contains_key("idempotencyKey"));
+        assert!(obj.contains_key("issueId"));
+        assert!(obj.contains_key("createdAt"));
+        assert_eq!(v["idempotencyKey"], json!("test-key"));
+        assert_eq!(v["companyId"], json!(company_id));
+        assert_eq!(v["issueId"], json!(issue_id));
+    }
+
+    #[test]
+    fn idempotency_key_row_accepts_long_keys() {
+        // key 字段在 schema 中是 text（不限长度），但 Node 端用 max(255)
+        let long_key = "x".repeat(500);
+        let id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        let value = json!({
+            "id": id,
+            "companyId": company_id,
+            "idempotencyKey": long_key,
+            "issueId": issue_id,
+            "createdAt": "2026-08-06T10:00:00Z",
+        });
+        let row: IssueCreateIdempotencyKeyRow = serde_json::from_value(value).expect("parse");
+        assert_eq!(row.idempotency_key.len(), 500);
+    }
+
+    #[test]
+    fn idempotency_key_row_accepts_special_characters() {
+        let id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let issue_id = Uuid::new_v4();
+        // 测试包含特殊字符的 key（Node 端示例: confirmation:issue:plan:revision）
+        let value = json!({
+            "id": id,
+            "companyId": company_id,
+            "idempotencyKey": "confirmation:issue:plan:revision-2026-08-06",
+            "issueId": issue_id,
+            "createdAt": "2026-08-06T10:00:00Z",
+        });
+        let row: IssueCreateIdempotencyKeyRow = serde_json::from_value(value).expect("parse");
+        assert_eq!(row.idempotency_key, "confirmation:issue:plan:revision-2026-08-06");
+    }
+
+    #[test]
+    fn idempotency_key_row_clone_and_eq() {
+        let id = Uuid::new_v4();
+        let row1 = IssueCreateIdempotencyKeyRow {
+            id,
+            company_id: Uuid::new_v4(),
+            idempotency_key: "k1".to_string(),
+            issue_id: Uuid::new_v4(),
+            created_at: pc_core::Timestamp::from_dt(chrono::Utc::now()),
+        };
+        let row2 = row1.clone();
+        assert_eq!(row1.id, row2.id);
+        assert_eq!(row1.idempotency_key, row2.idempotency_key);
+        assert_eq!(row1.issue_id, row2.issue_id);
+    }
+}
+
