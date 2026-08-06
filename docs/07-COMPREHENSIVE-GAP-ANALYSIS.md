@@ -5681,3 +5681,46 @@ R237 Rust 仅返回 4 列最小行，没有 fallback、agent 装饰、outputSile
 ### 总结
 
 R246 把 active-run 路由对齐到 Node 的双路径解析 + agent 装饰语义。下一步推进 outputSilence 真实计算或 liveness decoration。
+
+## 85. 第二百四十七轮增量（Round 247 — outputSilence 真实计算）
+
+### 背景
+
+Node `buildRunOutputSilence` 为 active run 提供 liveness 级别：ok / suspicious / critical / snoozed / not_applicable，使用 60min/4h 双阈值，并接入 active watchdog snooze 决策。R246 Rust 端 `outputSilence: null`，本轮实现真实计算。
+
+### 实现内容
+
+- 仓储层常量：
+  - `ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS = 60 * 60 * 1000`
+  - `ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS = 4 * 60 * 60 * 1000`
+- `RunOutputSilenceSummary` 结构（camelCase）：
+  - `lastOutputAt` / `lastOutputSeq` / `lastOutputStream`
+  - `silenceStartedAt` / `silenceAgeMs`
+  - `level` (`not_applicable`/`ok`/`suspicious`/`critical`/`snoozed`)
+  - `suspicionThresholdMs` / `criticalThresholdMs`
+  - `snoozedUntil` / `evaluationIssueId` / `evaluationIssueIdentifier` / `evaluationIssueAssigneeAgentId`
+- `HeartbeatRepo::build_run_output_silence`：
+  - `silence_started_at = last_output_at ?? started_at`
+  - `silence_age_ms = now - silence_started_at` 仅当 status='running'
+  - `level` 决策：not_applicable → snoozed → critical → suspicious → ok
+  - snooze 通过复用现有 `active_watchdog_snooze`
+  - evaluation issue 查询：context_snapshot.issueId → 当前 in_progress/blocked issue
+
+- active_run 路由切换到真实计算，去掉 `Value::Null`。
+
+### 当前仍有差距
+
+- `evaluationIssueIdentifier` 当前依赖 `issues.identifier`，未走纸夹展示层。
+- 没有实现 Node `latestActiveOutputQuietUntilDecision` 的额外查询优化。
+- 没有把 silence 状态写入 realtime 事件，worker 仍需主动拉取。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round247_tests` | 3 passed |
+| `cargo check -p pc-repos -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R247 把 active-run 路由的 `outputSilence` 从占位 null 升级为 Node 等价的 4 级判断 + snooze + evaluation 查询，闭合 Node recovery 中最关键的 liveness 计算。下一步推进 liveness decoration 字段，或继续补 evaluation worker realtime 联动。

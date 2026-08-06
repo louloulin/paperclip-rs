@@ -4800,13 +4800,44 @@ async fn active_run(
         "agentId": agent_id,
         "agentName": agent_name,
         "adapterType": adapter_type,
-        "outputSilence": Value::Null,
+        "outputSilence": serde_json::to_value(
+            HeartbeatRepo::new(&state.db)
+                .build_run_output_silence(&run, chrono::Utc::now())
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?,
+        ).unwrap_or(Value::Null),
     })))
 }
 
 
 #[cfg(test)]
 #[cfg(test)]
+#[cfg(test)]
+mod round247_tests {
+    #[test]
+    fn output_silence_constants_align_with_node_thresholds() {
+        let repo = include_str!("../../../pc-repos/src/heartbeat.rs");
+        assert!(repo.contains("ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS: i64 = 60 * 60 * 1000"));
+        assert!(repo.contains("ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS: i64 = 4 * 60 * 60 * 1000"));
+    }
+
+    #[test]
+    fn run_output_silence_summary_exposes_node_fields() {
+        let repo = include_str!("../../../pc-repos/src/heartbeat.rs");
+        assert!(repo.contains("pub struct RunOutputSilenceSummary"));
+        assert!(repo.contains("silence_started_at"));
+        assert!(repo.contains("evaluation_issue_identifier"));
+        assert!(repo.contains("snoozed_until"));
+    }
+
+    #[test]
+    fn active_run_route_now_calls_build_run_output_silence() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("build_run_output_silence(&run"));
+        assert!(!src.contains("\"outputSilence\": Value::Null"));
+    }
+}
+
 mod round246_tests {
     #[test]
     fn active_run_prefers_execution_run_id_path() {
@@ -4827,7 +4858,7 @@ mod round246_tests {
     fn active_run_returns_null_when_no_run_exists() {
         let src = include_str!("issues.rs");
         assert!(src.contains("return Ok(Json(Value::Null));"));
-        assert!(src.contains("\"outputSilence\": Value::Null"));
+        assert!(src.contains("return Ok(Json(Value::Null));"));
     }
 }
 

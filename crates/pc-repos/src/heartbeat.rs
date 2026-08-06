@@ -285,6 +285,48 @@ pub struct HeartbeatRow {
     pub updated_at: Timestamp,
 }
 
+/// Round 247: Node `ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS = 60min` 等价阈值常量。
+pub const ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS: i64 = 60 * 60 * 1000;
+pub const ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS: i64 = 4 * 60 * 60 * 1000;
+
+/// Round 247: Node `RunOutputSilenceSummary` 1:1 对齐。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOutputSilenceSummary {
+    pub last_output_at: Option<Timestamp>,
+    pub last_output_seq: i32,
+    pub last_output_stream: Option<String>,
+    pub silence_started_at: Option<Timestamp>,
+    pub silence_age_ms: Option<i64>,
+    pub level: String,
+    pub suspicion_threshold_ms: i64,
+    pub critical_threshold_ms: i64,
+    pub snoozed_until: Option<Timestamp>,
+    pub evaluation_issue_id: Option<Uuid>,
+    pub evaluation_issue_identifier: Option<String>,
+    pub evaluation_issue_assignee_agent_id: Option<Uuid>,
+}
+
+impl RunOutputSilenceSummary {
+    pub fn not_applicable() -> Self {
+        Self {
+            last_output_at: None,
+            last_output_seq: 0,
+            last_output_stream: None,
+            silence_started_at: None,
+            silence_age_ms: None,
+            level: "not_applicable".into(),
+            suspicion_threshold_ms: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
+            critical_threshold_ms: ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
+            snoozed_until: None,
+            evaluation_issue_id: None,
+            evaluation_issue_identifier: None,
+            evaluation_issue_assignee_agent_id: None,
+        }
+    }
+}
+
+
 impl HeartbeatRow {
     pub fn run_status(&self) -> Option<HeartbeatRunStatus> {
         self.status.parse().ok()
@@ -1128,6 +1170,80 @@ impl<'a> HeartbeatRepo<'a> {
             .bind(run_id)
             .fetch_all(self.db.pool())
             .await
+    }
+
+    /// Round 247: 实时计算 run 的 output silence 概要。
+    ///
+    /// 字段对齐 Node `buildRunOutputSilence`：
+    /// - last_output_at / last_output_seq / last_output_stream 来自 heartbeat_runs
+    /// - silence_started_at = last_output_at ?? started_at ?? created_at
+    /// - silence_age_ms 仅在 status='running' 时计算（毫秒）
+    /// - level = `not_applicable` / `ok` / `suspicious` / `critical` / `snoozed`
+    /// - snoozed_until 通过 active_watchdog_snooze 查询
+    /// - evaluationIssue 通过查询 issues 表 + origin_kind / status = 'in_progress'
+    pub async fn build_run_output_silence(
+        &self,
+        run: &HeartbeatRow,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<RunOutputSilenceSummary> {
+        let silence_started_at: Option<Timestamp> = run
+            .last_output_at
+            .or(run.started_at)
+            .map(|ts| ts);
+        let silence_age_ms = if run.status == "running" {
+            silence_started_at.map(|t| (now - t.as_datetime()).num_milliseconds().max(0))
+        } else {
+            None
+        };
+        let level = if run.status != "running" {
+            "not_applicable".to_string()
+        } else {
+            let snooze = self.active_watchdog_snooze(run.company_id, run.id).await?;
+            if let Some(s) = snooze.as_ref() {
+                if s.snoozed_until.map(|t| t.as_datetime() > now).unwrap_or(false) {
+                    "snoozed".to_string()
+                } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS {
+                    "critical".to_string()
+                } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS {
+                    "suspicious".to_string()
+                } else {
+                    "ok".to_string()
+                }
+            } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS {
+                "critical".to_string()
+            } else if (silence_age_ms.unwrap_or(0)) >= ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS {
+                "suspicious".to_string()
+            } else {
+                "ok".to_string()
+            }
+        };
+        let snoozed_until = self.active_watchdog_snooze(run.company_id, run.id)
+            .await?
+            .and_then(|s| s.snoozed_until);
+        let evaluation: Option<(Uuid, Option<String>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT id, identifier, assignee_agent_id \
+             FROM issues WHERE company_id = $1 AND id = $2 \
+               AND status IN ('in_progress','blocked') AND hidden_at IS NULL",
+        )
+        .bind(run.company_id)
+        .bind(run.context_snapshot.as_ref().and_then(|v| v.get("issueId")).and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok()).unwrap_or(Uuid::nil()))
+        .fetch_optional(self.db.pool())
+        .await?;
+        let evaluation = evaluation.unwrap_or((Uuid::nil(), None, None));
+        Ok(RunOutputSilenceSummary {
+            last_output_at: run.last_output_at,
+            last_output_seq: run.last_output_seq,
+            last_output_stream: run.last_output_stream.clone(),
+            silence_started_at,
+            silence_age_ms,
+            level,
+            suspicion_threshold_ms: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
+            critical_threshold_ms: ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
+            snoozed_until,
+            evaluation_issue_id: if evaluation.0.is_nil() { None } else { Some(evaluation.0) },
+            evaluation_issue_identifier: evaluation.1,
+            evaluation_issue_assignee_agent_id: evaluation.2,
+        })
     }
 
     pub async fn active_watchdog_snooze(
