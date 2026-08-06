@@ -98,6 +98,10 @@ pub mod resolve_active_recovery_action_after_source_resolved;
 
 pub mod cleanup_source_resolved_run_process;
 
+pub mod redact_watchdog_evidence_text;
+
+pub mod load_watchdog_redaction_options;
+
 pub mod get_company_issue_prefix;
 
 pub mod load_latest_heartbeat_run_for_issue;

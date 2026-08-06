@@ -116,6 +116,7 @@ async fn description_contains_all_sections() {
     let db = connect().await;
     let _company_id = fixture(&db).await;
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: Some(&sample_source()),
@@ -144,6 +145,7 @@ async fn description_uses_suspicious_level() {
     let db = connect().await;
     let _company_id = fixture(&db).await;
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: Some(&sample_source()),
@@ -164,6 +166,7 @@ async fn description_thresholds_match_node_constants() {
     let db = connect().await;
     let _company_id = fixture(&db).await;
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: Some(&sample_source()),
@@ -183,6 +186,7 @@ async fn description_safe_tail_in_code_block() {
     let db = connect().await;
     let _company_id = fixture(&db).await;
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: Some(&sample_source()),
@@ -209,6 +213,7 @@ async fn description_no_tail_renders_placeholder() {
     let mut evidence = sample_evidence();
     evidence.safe_tail = None;
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: Some(&sample_source()),
@@ -228,6 +233,7 @@ async fn description_source_issue_none_renders_placeholder() {
     let db = connect().await;
     let _company_id = fixture(&db).await;
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: None,
@@ -254,6 +260,7 @@ async fn description_empty_collections_render_placeholders() {
         blockers: vec![],
     };
     let input = BuildStaleRunEvaluationDescriptionInput {
+        redaction: None,
         run: &sample_run(),
         running_agent: &sample_agent(),
         source_issue: Some(&sample_source()),

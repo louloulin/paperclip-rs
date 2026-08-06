@@ -76,6 +76,21 @@ pub async fn escalate_stranded_assigned_issue(
     existing_wake: Option<&WakeSnapshot>,
     wake_template: NewAgentWakeupRequest,
 ) -> sqlx::Result<Option<EscalateDbResult>> {
+    escalate_stranded_assigned_issue_with_comment(db, input, None, existing_wake, wake_template)
+        .await
+}
+
+/// Node `escalateStrandedAssignedIssue(input.comment)` 对应入口。
+///
+/// `comment` 仅覆盖 source escalation 的业务说明前缀；recovery action、owner 与 next action
+/// 仍由统一计划层追加，确保 marker 幂等语义不被调用方破坏。
+pub async fn escalate_stranded_assigned_issue_with_comment(
+    db: &Db,
+    input: EscalateDbInput,
+    comment: Option<String>,
+    existing_wake: Option<&WakeSnapshot>,
+    wake_template: NewAgentWakeupRequest,
+) -> sqlx::Result<Option<EscalateDbResult>> {
     let Some(issue) = IssueRepo::new(db).get(input.issue_id).await? else {
         return Ok(None);
     };
@@ -144,6 +159,7 @@ pub async fn escalate_stranded_assigned_issue(
             }))
         }
         EscalationDecision::SourceEscalate(plan) => {
+            let plan = apply_comment_override(plan, comment.as_deref());
             let (updated, comment_id) = apply_source_escalation(db, &issue, &plan).await?;
             Ok(Some(EscalateDbResult {
                 outcome: EscalateOutcome::SourceEscalated,
@@ -153,6 +169,27 @@ pub async fn escalate_stranded_assigned_issue(
             }))
         }
     }
+}
+
+fn apply_comment_override(
+    mut plan: SourceEscalationPlan,
+    comment: Option<&str>,
+) -> SourceEscalationPlan {
+    let Some(comment) = comment else {
+        return plan;
+    };
+    let owner = plan
+        .owner_agent_id
+        .map(|id| format!("agent `{id}`"))
+        .unwrap_or_else(|| {
+            "board escalation, because Paperclip could not find an invokable recovery owner"
+                .to_owned()
+        });
+    plan.comment_body = format!(
+        "{comment}\n\n- Recovery action: `{}`\n- Recovery owner: {owner}\n- Next action: the recovery owner should either restore a live execution path or record the manual resolution on the source issue.",
+        plan.recovery_action_id,
+    );
+    plan
 }
 
 /// 仅做 in-place 升级的便利入口（对齐 Node `escalateStrandedRecoveryIssueInPlace`）。

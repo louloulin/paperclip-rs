@@ -180,7 +180,7 @@ pub async fn reconcile_and_escalate_stranded_for_company(
     wake_template: NewAgentWakeupRequest,
     max_candidates: i64,
 ) -> sqlx::Result<ReconcileAndEscalateSweepResult> {
-    use super::escalate_db::{escalate_stranded_assigned_issue, EscalateDbInput};
+    use super::escalate_db::{escalate_stranded_assigned_issue_with_comment, EscalateDbInput};
     use super::pause_hold_guard::is_automatic_recovery_suppressed_by_pause_hold;
     let candidates = IssueRepo::new(db)
         .list_stranded_candidates(company_id, max_candidates)
@@ -351,7 +351,8 @@ pub async fn reconcile_and_escalate_stranded_for_company(
         let mut action_id: Option<Uuid> = scheduler_result
             .as_ref()
             .map(|r| r.result.persisted.action.id);
-        let escalation = escalate_stranded_assigned_issue(
+        let escalation_comment = execution_review_escalation_comment(&issue, monitor_run.as_ref());
+        let escalation = escalate_stranded_assigned_issue_with_comment(
             db,
             EscalateDbInput {
                 issue_id: issue.id,
@@ -361,6 +362,7 @@ pub async fn reconcile_and_escalate_stranded_for_company(
                 successful_run_handoff_evidence: None,
                 workspace_validation_fingerprint_override: None,
             },
+            escalation_comment,
             existing_wake,
             wake_template.clone(),
         )
@@ -388,6 +390,43 @@ pub async fn reconcile_and_escalate_stranded_for_company(
         }
     }
     Ok(result)
+}
+
+fn execution_review_escalation_comment(
+    issue: &pc_repos::issue::IssueRow,
+    latest_run: Option<&LatestRunRow>,
+) -> Option<String> {
+    if issue.status != "in_review" {
+        return None;
+    }
+    let latest_run = latest_run?;
+    let retry_reason = latest_run
+        .context_snapshot
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|context| context.get("retryReason"))
+        .and_then(Value::as_str);
+    let failed_automatic_recovery = retry_reason == Some("execution_review_participant_recovery")
+        && matches!(
+            latest_run.status.as_str(),
+            "interrupted" | "failed" | "cancelled" | "timed_out"
+        );
+    if !failed_automatic_recovery {
+        return None;
+    }
+
+    Some(
+        super::build_execution_review_participant_recovery_comment::build_execution_review_participant_recovery_comment(
+            &super::build_recovery_issue_in_place_escalation_comment::EscalationRunView {
+                id: latest_run.id,
+                agent_id: latest_run.agent_id,
+                status: latest_run.status.clone(),
+                error: latest_run.error.clone(),
+                error_code: latest_run.error_code.clone(),
+                context_snapshot: latest_run.context_snapshot.clone(),
+            },
+        ),
+    )
 }
 
 /// DB-only 等价：仅写 recovery action，不 dispatch wake。

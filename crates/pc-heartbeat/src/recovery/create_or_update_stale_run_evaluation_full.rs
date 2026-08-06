@@ -50,6 +50,7 @@ use super::is_recovery_origin_issue::{
 };
 use super::is_terminal_issue_status::is_terminal_issue_status_str;
 use super::latest_same_run_source_terminal_evidence::latest_same_run_source_terminal_evidence;
+use super::load_watchdog_redaction_options::load_watchdog_redaction_options;
 use super::scan_silent_active_runs_db::{
     find_open_stale_run_evaluation, SilentRunCandidate, StaleRunEvaluationOutcome,
     StaleRunEvaluationRow,
@@ -405,9 +406,11 @@ async fn handle_create(
         process_pid: None,
         process_group_id: None,
     };
+    let redaction = load_watchdog_redaction_options(db).await?;
     let description =
         build_stale_run_evaluation_description(&BuildStaleRunEvaluationDescriptionInput {
             run: &run_view,
+            redaction,
             running_agent,
             source_issue: source_issue_view,
             prefix: &prefix,

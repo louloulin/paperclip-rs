@@ -819,3 +819,168 @@ Round 340: ~98%   →   Round 341: ~98.5% →   Round 342: ~99% ✨
 ### 完成度判断
 
 Recovery 核心 stale-run 主链已覆盖：递归防护 → false-positive 去重 → terminal fold → blocked 短路 → closed evaluation 自动 dismiss → evidence 采集 → evaluation 创建/升级 → run event → agent finalize → recovery action 收敛。当前剩余主要集中在本地进程生命周期、敏感信息脱敏、运行时边界和 UI/API 覆盖，不能将“~99%”理解为所有 Node 代码已逐行等价。
+
+## Round 345 增量（2026-08-07）：local process cleanup
+
+### R345：`cleanupSourceResolvedRunProcess`
+
+完成 Node 第 1576 行的本地进程清理端口：
+
+- 新增纯异步模块 `pc_heartbeat::recovery::cleanup_source_resolved_run_process`
+  - 适配 `claude_local / codex_local / cursor / gemini_local / hermes_local / opencode_local / pi_local`
+  - 探测 `kill -0`（pid 与 negative pgid），仅在进程存活时进入终止流程
+  - SIGTERM → 轮询等待 → SIGKILL（force_after_ms=2000）
+  - 返回 `attempted / outcome / adapter_type / pid / process_group_id / error`，可被 fold 落库为可审计 payload
+- `fold_source_resolved_stale_run` 现读取 `process_pid / process_group_id / agent_id` 并把 cleanup 结果写入 `sourceResolvedWatchdogFold.cleanup`
+- 数据库查询 `agents.adapter_type` 只在 fold 内部出现，进程模块不依赖 `Db`，高内聚低耦合
+
+### 验证
+
+- `round345_cleanup_source_resolved_run_process`：4/4 通过（真实 `sleep 30` 子进程被成功 TERM/KILL）。
+- `round339_is_terminal_and_fold`：`source_issue_done_with_evidence_folds_run` 现断言
+  - `child.try_wait().unwrap().is_some()` 真实子进程退出
+  - `result_json.sourceResolvedWatchdogFold.cleanup.outcome ∈ {terminated, termination_sent_still_running}`
+- `pc-heartbeat` 全部 54 个集成测试文件通过
+
+### 完成度判断
+
+Recovery 主链目前覆盖：递归防护 → false-positive 去重 → terminal fold → blocked 短路 → closed evaluation 自动 dismiss → evidence 采集 → evaluation 创建/升级 → run lifecycle event → agent finalize → recovery action 收敛 → 本地进程清理（含 PID/process group）。
+
+剩余主要是：evidence redaction、并发优化、actor/HTTP 边界与 UI 覆盖。
+
+## Round 346 增量（2026-08-07）：evidence redaction
+
+### R346：`redactCurrentUserText` + `redactWatchdogEvidenceText`
+
+完成 Node 第 1470 行的脱敏纯函数端口：
+
+- 新增模块 `pc_heartbeat::recovery::redact_watchdog_evidence_text`
+  - 输入 `CurrentUserRedactionOptions { enabled, user_names, home_dirs, replacement }`
+  - 行为对齐 Node：屏蔽 home directory 路径最后一段与用户名（word boundary）
+  - `enabled=false` / 空输入直通；不依赖 `regex crate`（不支持 look-around），自实现 byte-level word boundary
+- 4/4 测试通过；与 Node 实际输出一致：`alice -> a*****`、`/Users/alice -> /Users/a*****`、`bob=alice&bobby -> b***=alice&bobby`
+
+### 完成度判断
+
+后续接入点：`collect_stale_run_evidence` 的 event message 与 safe_tail、`build_stale_run_evaluation_description` 渲染。下一轮引入 instance settings（`censorUsernameInLogs`）读取并接入。
+
+## Round 347 增量（2026-08-07）：redaction 接入 description builder
+
+### R347：把 R346 redaction 接入 `build_stale_run_evaluation_description`
+
+- 新增可选字段 `BuildStaleRunEvaluationDescriptionInput.redaction: Option<CurrentUserRedactionOptions>`
+- 新增 `apply_redaction(input, options)` 私有 helper：调用 `redact_watchdog_evidence_text`，`None` 直通
+- 渲染 safe_tail（"Last Output Excerpt" 段）和 recent_events 的 event message 时统一应用 redaction
+- 默认所有现有调用方均传 `redaction: None`，保持行为兼容
+- 新增 `round347_redact_evidence_integration`：4 项测试覆盖
+  - 纯函数 helper 行为（用户名、家目录、disabled）
+  - DB 模块 `collect_stale_run_evidence` 返回原始数据（无 redaction），保持职责单一
+  - description builder 在 `redaction=Some(opts)` 时把 safe_tail 与 event message 屏蔽为 `a*****`
+
+### 验证
+
+- 56 个集成测试文件全部通过；`pc-server --bins --no-run` 编译通过
+- 红 → 绿：先因缺字段 `redaction` 失败，补齐签名后 4/4 通过
+
+### 后续计划
+
+- `create_or_update_stale_run_evaluation_full` 接入 instance_settings.censor_username_in_logs 读取，把当前 `None` 升级为真实 options。
+- 把同样的 redaction 接到 `collect_stale_run_evidence` 内（让 event message 在 DB 层就先脱敏，更适合写入 issues.description），但需要先评估是否与“DB 模块保持纯粹职责”冲突——倾向于让上层 builder 做最终脱敏，DB 返回原始数据。
+- `build_execution_review_participant_recovery_comment` 接入 escalate_db 的 comment 写入。
+- `tokio::try_join!` 并发优化 collect_stale_run_evidence。
+- Heartbeat actor 与 pc-http 路由契约补全。
+
+## Round 348-349 增量（2026-08-07）：instance settings 驱动脱敏
+
+### R348：设置到脱敏选项的端到端验证
+
+- 新增 `round348_redaction_from_instance_settings`，覆盖 builder 显式接收 redaction options，以及从真实 PostgreSQL `instance_settings.general` 读取 `censorUsernameInLogs / usernames / homeDirs` 后驱动脱敏。
+- 验证中直接读取 `singleton_key = 'singleton'`，避免测试夹具被额外设置写操作影响。
+- 修复了该轮测试文件遗漏 `ensure_instance_settings` 函数声明导致的语法错误；专项测试 2/2 通过。
+
+### R349：主编排真实接线
+
+- 新增 `load_watchdog_redaction_options` 模块：
+  - `watchdog_redaction_options_from_general` 只负责 JSON 到 `CurrentUserRedactionOptions` 的纯转换；关闭开关时返回 `None`。
+  - `load_watchdog_redaction_options` 只负责读取 singleton setting，缺失行时安全返回 `None`。
+- `create_or_update_stale_run_evaluation_full::handle_create` 在收集 evidence 后读取设置，并把 options 传入 `build_stale_run_evaluation_description`。
+- evidence collector 继续返回原始数据；脱敏只发生在最终 description 渲染边界，避免数据采集与展示策略耦合。
+- 新增 `round349_full_orchestrator_settings_redaction`：真实写入 instance settings、heartbeat run event 与 stale run，调用完整主编排创建 evaluation issue，并断言 description 中：
+  - `alice` 被转换为 `a*****`；
+  - `/Users/alice/work` 被转换为 `/Users/a*****/work`；
+  - 原始用户名不再出现。
+
+### 验证
+
+- R349 严格走红绿循环：接线前测试在 `description.contains("a*****的一项断言")` 处失败，接线后 1/1 通过。
+- `cargo test -p pc-heartbeat --tests -- --test-threads=1`：全部单元与 58 个集成测试文件通过。
+- `cargo fmt --all` 已执行；仓库仍存在历史 warning，本轮未扩大范围清理无关告警。
+
+### 当前差距与后续优先级
+
+Recovery stale-run 主链现已包含 instance settings 驱动的 evidence redaction，核心业务闭环进一步接近 Node。剩余差距按价值排序：
+
+1. **Recovery comment 写入链路**：`buildExecutionReviewParticipantRecoveryComment` 与 unavailable comment 的纯函数已有，仍需完整接入 `escalate_db` 的持久化与幂等路径。
+2. **Evidence 查询并发**：`collect_stale_run_evidence` 的 events、children、blockers 当前顺序执行；可用 `tokio::try_join!` 对齐 Node `Promise.all`，降低 heartbeat 扫描延迟。
+3. **更完整的 sensitive-text redaction**：当前仅实现当前用户名和 home directory；Node 组合的 token、命令及其他敏感文本清洗仍需独立模块迁移。
+4. **Actor/HTTP 边界**：Heartbeat actor 的 Db/服务装配、pc-http recovery 路由契约和错误映射仍低于 Node。
+5. **UI 与运维可观测性**：evaluation、cleanup、redaction 的 API/UI 展示与指标仍未逐项对齐。
+
+完成度仍记为 **Recovery 核心主链约 99%**，该数字表示 stale-run recovery 关键路径，而不是整个 Node paperclip 已逐行完成 Rust 等价复刻。
+
+## Round 350 增量（2026-08-07）：source escalation comment override
+
+### Node 对照结论
+
+Node `escalateStrandedAssignedIssue` 接受可选 `input.comment`，execution-review participant 的 recovery/unavailable builder 只是该通用入口的两个调用方。Node 会把业务说明正文与统一的 recovery action、owner、next action 信息组合后写入 source issue，并用 `Recovery action: <id>` marker 去重。
+
+Rust 原实现仅持久化 `decide_escalation` 生成的通用正文，导致 R330/R331 虽然完成纯函数，但无法通过 source escalation 写入真实 issue comment。
+
+### R350 实现
+
+- 新增兼容入口 `escalate_stranded_assigned_issue_with_comment`：
+  - 原 `escalate_stranded_assigned_issue` 保持签名不变，内部以 `comment = None` 委托新入口。
+  - comment override 仅替换 source escalation 的业务说明前缀，不允许调用方覆盖 recovery marker、owner 和 next-action 结构。
+  - recovery action marker 继续由计划层生成并用于 DB 去重，保持低耦合和幂等性。
+- 新增私有纯变换 `apply_comment_override`，DB helper 不感知 execution-review 具体文案。
+- R330 `build_execution_review_participant_recovery_comment` 与 R331 unavailable builder 现在均可通过同一通用入口真实持久化。
+
+### 真实验证
+
+- 新增 `round350_escalation_comment_override`，真实 PostgreSQL 覆盖 2 个分支：
+  - 自动恢复失败正文写入，并追加 recovery action marker 与 owner。
+  - participant unavailable 正文写入；重复升级返回 `Skipped`，comment 总数保持 1。
+- 严格红绿循环：测试先因新入口不存在编译失败，实现后 2/2 通过。
+- `pc-heartbeat` 全部单元测试及 59 个集成测试文件通过。
+
+### 剩余差距
+
+1. Node source escalation 的 `activity_log` 详情、comment presentation/metadata 尚未完整映射。
+2. execution-review reconciliation 主循环尚未把自动失败/不可调用分支直接路由到新 comment override 入口；当前已具备独立的 builder 与 DB 原子能力。
+3. provider quota、configuration incomplete、successful handoff 等 source escalation 的特化 notice/presentation 仍需逐模块补齐。
+4. evidence 查询并发、敏感文本扩展、actor/HTTP/UI 边界仍是后续重点。
+
+## Round 351 增量（2026-08-07）：sweep 真实接线 execution-review participant 评论
+
+### Node 对照结论
+
+Node `reconcileStrandedAssignedIssues` 主循环中，execution-review participant 分支直接调 `escalateStrandedAssignedIssue({comment: buildExecutionReviewParticipantUnavailableComment|RecoveryComment})`。Rust 之前只在纯函数层完成这两个 builder，sweep 内调用的是无 override 的通用入口，因此真实数据库写入的仍是通用 stranded 文案。
+
+### R351 实现
+
+- 在 `scheduler_db::reconcile_and_escalate_stranded_for_company` 内新增纯选择器 `execution_review_escalation_comment`，仅当 `issue.status == "in_review"` 且 `latest_run.context_snapshot.retryReason == "execution_review_participant_recovery"` 且 `latest_run.status` 属未成功终态时返回 builder 结果；其他分支继续走通用 stranded 文案。
+- 选择器直接复用 R330 的 `build_execution_review_participant_recovery_comment` 与现有 `EscalationRunView`，没有重新生成模板，保持与 Node 文案一致。
+- sweep 改用 R350 通用 `escalate_stranded_assigned_issue_with_comment`，业务正文与 R350 marker/owner 行为自动叠加。
+
+### 真实验证
+
+- 新增 `round351_review_sweep_comment_wiring`：in_review execution_state 含 participant agent、failed run retryReason 为 `execution_review_participant_recovery`，断言真实写入的 comment 以 `"Paperclip retried the pending execution-review participant once"` 开头，且含 `Latest retry failure details were withheld` 与 `Recovery action:`。
+- TDD 红灯：接线前 comment 仍以通用 `"Paperclip exhausted automatic recovery for the assigned issue and escalated to \`blocked\`"` 开头；接线后 1/1 通过。
+- `pc-heartbeat`：488 个单元测试及 60 个集成测试文件全部通过。
+- 通用 sweep（`round295_sweep_escalate`）与 escalation（`round294_escalate`）回归保持原行为，证明新选择器对其他 cause 透明。
+
+### 剩余差距
+
+1. `participantLatestRun` 不可用分支（unavailable）以及 `configuration_incomplete`、已 `didAutomaticRecoveryFail` 但 run 非终止状态的分支暂未单独走 sweep 短路。
+2. Node 的 review sweeper 中 `providerQuota` / `classificationIncomplete` 路径与 `enqueueStrandedIssueRecovery` 的 fallback 优先级尚未一一映射。
+3. activity log、comment metadata/presentation 仍待补齐。

@@ -89,6 +89,8 @@ pub struct BuildStaleRunEvaluationDescriptionInput<'a> {
     pub prefix: &'a str,
     pub evidence: &'a StaleRunEvidenceView,
     pub level: StaleEvaluationLevel,
+    /// 可选 redaction 配置；传入后 safe_tail 与 event message 会被脱敏。
+    pub redaction: Option<super::redact_watchdog_evidence_text::CurrentUserRedactionOptions>,
 }
 
 /// 评估等级（与 Node `level: "suspicious" | "critical"` 对齐）。
@@ -175,6 +177,7 @@ pub fn build_stale_run_evaluation_description(
                 let msg = event
                     .message
                     .clone()
+                    .map(|m| apply_redaction(&m, input.redaction.as_ref()))
                     .unwrap_or_else(|| "(no message)".to_owned());
                 format!(
                     "- {} `{}`{level_suffix}: {msg}",
@@ -243,10 +246,13 @@ pub fn build_stale_run_evaluation_description(
         None => input.run.invocation_source.clone(),
     };
 
-    let tail_block = input
+    let tail_text = input
         .evidence
         .safe_tail
         .as_deref()
+        .map(|t| apply_redaction(t, input.redaction.as_ref()));
+    let tail_block = tail_text
+        .as_ref()
         .map(|t| {
             format!(
                 "```text
@@ -344,6 +350,17 @@ pub fn build_stale_run_evaluation_description(
     )
 }
 
+fn apply_redaction(
+    input: &str,
+    options: Option<&super::redact_watchdog_evidence_text::CurrentUserRedactionOptions>,
+) -> String {
+    match options {
+        Some(opts) => {
+            super::redact_watchdog_evidence_text::redact_watchdog_evidence_text(input, opts.clone())
+        }
+        None => input.to_owned(),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +470,7 @@ mod tests {
     // ===== build_stale_run_evaluation_description =====
     fn build() -> String {
         let input = BuildStaleRunEvaluationDescriptionInput {
+            redaction: None,
             run: &sample_run(),
             running_agent: &sample_agent(),
             source_issue: Some(&sample_source()),
@@ -505,6 +523,7 @@ mod tests {
         let mut run = sample_run();
         run.trigger_detail = None;
         let input = BuildStaleRunEvaluationDescriptionInput {
+            redaction: None,
             run: &run,
             running_agent: &sample_agent(),
             source_issue: Some(&sample_source()),
@@ -564,6 +583,7 @@ mod tests {
         evidence.blockers.clear();
         evidence.safe_tail = None;
         let input = BuildStaleRunEvaluationDescriptionInput {
+            redaction: None,
             run: &sample_run(),
             running_agent: &sample_agent(),
             source_issue: None,
@@ -582,6 +602,7 @@ mod tests {
     fn description_source_issue_none_renders_placeholder() {
         let evidence = sample_evidence();
         let input = BuildStaleRunEvaluationDescriptionInput {
+            redaction: None,
             run: &sample_run(),
             running_agent: &sample_agent(),
             source_issue: None,
