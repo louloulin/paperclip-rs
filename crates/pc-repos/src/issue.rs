@@ -1482,6 +1482,278 @@ impl<'a> IssueRepo<'a> {
             .await
     }
 
+
+    /// Round 230: 完整 create issue 并在事务内同步处理 relations
+    /// (label_ids / blocked_by_issue_ids)。
+    ///
+    /// 与 Node `issueService.create` + 后续 `addLabels` / `addBlockedBy` 对齐 —
+    /// 之前 R229 的 `create_full` 不处理 relations，导致 create 路径上
+    /// label_ids / blocked_by_issue_ids 被丢弃。本方法在单事务内：
+    /// 1. 创建 issue
+    /// 2. 校验 label / blocker 归属
+    /// 3. 插入 issue_labels / issue_relations (type='blocks')
+    /// 4. 检测 blocker 自循环 / 跨图循环
+    ///
+    /// 返回值：包含 label_ids / blocked_by_issue_ids 已被持久化的 IssueRow。
+    pub async fn create_full_with_relations(
+        &self,
+        input: &CreateIssueInput<'_>,
+        actor: Option<&IssueUpdateActor>,
+    ) -> sqlx::Result<IssueRow> {
+        let mut tx = self.db.pool().begin().await?;
+        let row = self.create_full_in_tx(input, &mut tx).await?;
+        Self::apply_create_relations_in_tx(
+            row.company_id,
+            row.id,
+            input.label_ids,
+            input.blocked_by_issue_ids,
+            actor,
+            &mut tx,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Round 230: 完整 create child issue 并在事务内同步处理 relations。
+    ///
+    /// 与 `create_full_with_relations` 对齐，但额外支持：
+    /// - 自动继承 parent 的 company_id / project_id / project_workspace_id / goal_id
+    /// - request_depth = parent.request_depth + 1（或显式 override）
+    pub async fn create_child_full_with_relations(
+        &self,
+        parent: &IssueRow,
+        input: &CreateChildIssueInput<'_>,
+        actor: Option<&IssueUpdateActor>,
+    ) -> sqlx::Result<IssueRow> {
+        let mut tx = self.db.pool().begin().await?;
+        let row = self.create_child_full_in_tx(parent, input, &mut tx).await?;
+        Self::apply_create_relations_in_tx(
+            row.company_id,
+            row.id,
+            input.label_ids,
+            input.blocked_by_issue_ids,
+            actor,
+            &mut tx,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Round 230: 事务内 INSERT issues 行。
+    ///
+    /// 私有 helper — 由 `create_full_with_relations` / `create_child_full_with_relations` 调用。
+    /// 包含与 `create_full` / `create_child_full` 等价的 SQL，但接受外部事务。
+    async fn create_full_in_tx(
+        &self,
+        input: &CreateIssueInput<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> sqlx::Result<IssueRow> {
+        let status = input.status.unwrap_or("todo");
+        let work_mode = input.work_mode.unwrap_or("standard");
+        let priority = input.priority.unwrap_or("medium");
+        let sql = format!(
+            "INSERT INTO issues (company_id, project_id, project_workspace_id, goal_id, parent_id,                     title, description, status, work_mode, harness_kind, priority,                     assignee_agent_id, assignee_user_id,                     created_by_user_id, responsible_user_id,                     request_depth, billing_code, assignee_adapter_overrides,                     execution_policy, execution_workspace_id, execution_workspace_preference,                     execution_workspace_settings, unblock_descriptor)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)              RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(input.company_id)
+            .bind(input.project_id)
+            .bind(input.project_workspace_id)
+            .bind(input.goal_id)
+            .bind(input.parent_id)
+            .bind(input.title)
+            .bind(input.description)
+            .bind(status)
+            .bind(work_mode)
+            .bind(input.harness_kind)
+            .bind(priority)
+            .bind(input.assignee_agent_id)
+            .bind(input.assignee_user_id)
+            .bind(input.created_by_user_id)
+            .bind(input.responsible_user_id)
+            .bind(input.request_depth)
+            .bind(input.billing_code)
+            .bind(input.assignee_adapter_overrides)
+            .bind(input.execution_policy)
+            .bind(input.execution_workspace_id)
+            .bind(input.execution_workspace_preference)
+            .bind(input.execution_workspace_settings)
+            .bind(input.unblock_descriptor)
+            .fetch_one(&mut **tx)
+            .await
+    }
+
+    /// Round 230: 事务内 INSERT child issues 行（继承 parent 的 project/goal/workspace）。
+    async fn create_child_full_in_tx(
+        &self,
+        parent: &IssueRow,
+        input: &CreateChildIssueInput<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> sqlx::Result<IssueRow> {
+        let status = input.status.unwrap_or("todo");
+        let work_mode = input.work_mode.unwrap_or("standard");
+        let priority = input.priority.unwrap_or("medium");
+        let request_depth = if input.request_depth > 0 {
+            input.request_depth
+        } else {
+            parent.request_depth + 1
+        };
+        let sql = format!(
+            "INSERT INTO issues (company_id, parent_id,                     project_id, project_workspace_id, goal_id,                     title, description, status, work_mode, harness_kind, priority,                     assignee_agent_id, assignee_user_id,                     created_by_user_id, responsible_user_id,                     request_depth, billing_code, assignee_adapter_overrides,                     execution_policy, execution_workspace_id, execution_workspace_preference,                     execution_workspace_settings, unblock_descriptor)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)              RETURNING {ISSUE_COLS}"
+        );
+        sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(parent.company_id)
+            .bind(parent.id)
+            .bind(input.project_id.or(parent.project_id))
+            .bind(input.project_workspace_id.or(parent.project_workspace_id))
+            .bind(input.goal_id.or(parent.goal_id))
+            .bind(input.title)
+            .bind(input.description)
+            .bind(status)
+            .bind(work_mode)
+            .bind(input.harness_kind)
+            .bind(priority)
+            .bind(input.assignee_agent_id)
+            .bind(input.assignee_user_id)
+            .bind(input.created_by_user_id)
+            .bind(input.responsible_user_id)
+            .bind(request_depth)
+            .bind(input.billing_code)
+            .bind(input.assignee_adapter_overrides)
+            .bind(input.execution_policy)
+            .bind(input.execution_workspace_id)
+            .bind(input.execution_workspace_preference)
+            .bind(input.execution_workspace_settings)
+            .bind(input.unblock_descriptor)
+            .fetch_one(&mut **tx)
+            .await
+    }
+
+    /// Round 230: 事务内 apply labels + blocked_by relations 到 issue。
+    ///
+    /// 这是 create 路径上的辅助 — 校验 + 插入：
+    /// 1. label 必须在同一 company
+    /// 2. blocker issue 不能是 self
+    /// 3. blocker issue 必须在同一 company
+    /// 4. blocker 关系不能形成 cycle（在已有图基础上）
+    /// 5. INSERT ON CONFLICT DO NOTHING 保持幂等
+    ///
+    /// 与 `update_with_relations` 的差别：本方法仅做 INSERT（不替换旧关系），
+    /// 因为新建 issue 没有历史 relations。
+    async fn apply_create_relations_in_tx(
+        company_id: Uuid,
+        issue_id: Uuid,
+        label_ids: Option<&[Uuid]>,
+        blocked_by_issue_ids: Option<&[Uuid]>,
+        actor: Option<&IssueUpdateActor>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> sqlx::Result<()> {
+        if let Some(label_ids) = label_ids {
+            if !label_ids.is_empty() {
+                let unique: std::collections::BTreeSet<Uuid> = label_ids.iter().copied().collect();
+                let unique_vec: Vec<Uuid> = unique.iter().copied().collect();
+                let count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM labels WHERE company_id = $1 AND id = ANY($2)",
+                )
+                .bind(company_id)
+                .bind(&unique_vec)
+                .fetch_one(&mut **tx)
+                .await?;
+                if count != unique_vec.len() as i64 {
+                    return Err(sqlx::Error::Protocol(
+                        "one or more labels do not belong to the issue company".into(),
+                    ));
+                }
+                for label_id in &unique_vec {
+                    sqlx::query(
+                        "INSERT INTO issue_labels (issue_id, label_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+                    )
+                    .bind(issue_id)
+                    .bind(label_id)
+                    .bind(company_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+        }
+
+        if let Some(blocker_ids) = blocked_by_issue_ids {
+            if !blocker_ids.is_empty() {
+                let unique: std::collections::BTreeSet<Uuid> =
+                    blocker_ids.iter().copied().collect();
+                if unique.contains(&issue_id) {
+                    return Err(sqlx::Error::Protocol(
+                        "an issue cannot be blocked by itself".into(),
+                    ));
+                }
+                let unique_vec: Vec<Uuid> = unique.iter().copied().collect();
+                let count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM issues WHERE company_id = $1 AND id = ANY($2)",
+                )
+                .bind(company_id)
+                .bind(&unique_vec)
+                .fetch_one(&mut **tx)
+                .await?;
+                if count != unique_vec.len() as i64 {
+                    return Err(sqlx::Error::Protocol(
+                        "blocked-by issues must belong to the same company".into(),
+                    ));
+                }
+                // Cycle detection: 检查新 issue 作为被阻塞者加入是否会形成环
+                let edges: Vec<(Uuid, Uuid)> = sqlx::query_as(
+                    "SELECT issue_id, related_issue_id FROM issue_relations                      WHERE company_id = $1 AND type = 'blocks'",
+                )
+                .bind(company_id)
+                .fetch_all(&mut **tx)
+                .await?;
+                let mut graph: std::collections::HashMap<Uuid, Vec<Uuid>> = Default::default();
+                for (from, to) in &edges {
+                    graph.entry(*from).or_default().push(*to);
+                }
+                // 添加新边: each blocker -> issue_id
+                for candidate in &unique_vec {
+                    graph.entry(*candidate).or_default().push(issue_id);
+                }
+                // BFS 从 issue_id 看是否能回到自己（仅经过 type='blocks' 边）
+                for candidate in &unique_vec {
+                    let mut queue = vec![issue_id];
+                    let mut visited = std::collections::HashSet::from([issue_id]);
+                    let mut found_cycle = false;
+                    while let Some(current) = queue.pop() {
+                        if current == *candidate {
+                            found_cycle = true;
+                            break;
+                        }
+                        for next in graph.get(&current).into_iter().flatten() {
+                            if visited.insert(*next) {
+                                queue.push(*next);
+                            }
+                        }
+                    }
+                    if found_cycle {
+                        return Err(sqlx::Error::Protocol(
+                            "blocking relations cannot contain cycles".into(),
+                        ));
+                    }
+                }
+                for blocker_id in &unique_vec {
+                    sqlx::query(
+                        "INSERT INTO issue_relations                             (company_id, issue_id, related_issue_id, type, created_by_agent_id, created_by_user_id)                          VALUES ($1,$2,$3,'blocks',$4,$5) ON CONFLICT DO NOTHING",
+                    )
+                    .bind(company_id)
+                    .bind(blocker_id)
+                    .bind(issue_id)
+                    .bind(actor.and_then(|value| value.agent_id))
+                    .bind(actor.and_then(|value| value.user_id.as_deref()))
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     // ---------- checkout / release ----------
 
     /// Round 126: checkout issue（UPDATE assignee_agent_id + checkout_run_id）。

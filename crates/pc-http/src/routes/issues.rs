@@ -462,7 +462,17 @@ async fn create(
             acceptance_criteria: None,
             block_parent_until_done: false,
         };
-        let row = IssueRepo::new(&state.db).create_child_full(&parent, &input).await?;
+        // R230: 当 label_ids 或 blocked_by_issue_ids 不为空时使用事务版本,
+        // 在事务内同步插入 labels / relations
+        let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+            || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+        let row = if needs_relations {
+            IssueRepo::new(&state.db)
+                .create_child_full_with_relations(&parent, &input, None)
+                .await?
+        } else {
+            IssueRepo::new(&state.db).create_child_full(&parent, &input).await?
+        };
         state.realtime.publish(
             LiveEvent::new("issue.created", "issue", row.id)
                 .with_company(row.company_id)
@@ -505,7 +515,16 @@ async fn create(
         label_ids: body.label_ids.as_deref(),
         unblock_descriptor: body.unblock_descriptor.as_ref(),
     };
-    let row = IssueRepo::new(&state.db).create_full(&input).await?;
+    // R230: 当 label_ids 或 blocked_by_issue_ids 不为空时使用事务版本
+    let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+    let row = if needs_relations {
+        IssueRepo::new(&state.db)
+            .create_full_with_relations(&input, None)
+            .await?
+    } else {
+        IssueRepo::new(&state.db).create_full(&input).await?
+    };
     state.realtime.publish(
         LiveEvent::new("issue.created", "issue", row.id)
             .with_company(row.company_id)
@@ -794,7 +813,16 @@ async fn create_child(
         acceptance_criteria: body.acceptance_criteria.as_deref(),
         block_parent_until_done: body.block_parent_until_done.unwrap_or(false),
     };
-    let row = IssueRepo::new(&state.db).create_child_full(&parent, &input).await?;
+    // R230: 当 label_ids 或 blocked_by_issue_ids 不为空时使用事务版本
+    let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+    let row = if needs_relations {
+        IssueRepo::new(&state.db)
+            .create_child_full_with_relations(&parent, &input, None)
+            .await?
+    } else {
+        IssueRepo::new(&state.db).create_child_full(&parent, &input).await?
+    };
     state.realtime.publish(
         LiveEvent::new("issue.created", "issue", row.id)
             .with_company(row.company_id)
@@ -5051,5 +5079,155 @@ mod round229_tests {
                 serde_json::from_value(payload).expect("parse");
             assert!(body.unblock_descriptor.is_some());
         }
+    }
+}
+
+// ============================================================================
+// Round 230: create path relations 处理逻辑测试
+// ============================================================================
+#[cfg(test)]
+mod round230_tests {
+    //! Round 230: 验证 create / create_child handler 在
+    //! label_ids / blocked_by_issue_ids 不为空时正确选择事务路径。
+    //!
+    //! 由于 helper `needs_relations` 是路由函数内的局部逻辑,
+    //! 这里通过解析 payload 后模拟其行为来验证:
+    //! 1. 空 vec → 不需要事务
+    //! 2. None → 不需要事务
+    //! 3. 非空 → 需要事务（由 handler 选择事务方法）
+
+    use super::{ChildIssueFullBody, CreateIssueFullBody};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn needs_relations_create(body: &CreateIssueFullBody) -> bool {
+        body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+            || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+    }
+
+    fn needs_relations_child(body: &ChildIssueFullBody) -> bool {
+        body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+            || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+    }
+
+    #[test]
+    fn create_path_no_relations_when_label_ids_absent() {
+        let body: CreateIssueFullBody = serde_json::from_value(json!({
+            "companyId": Uuid::new_v4(),
+            "title": "x"
+        }))
+        .expect("parse");
+        assert!(!needs_relations_create(&body));
+    }
+
+    #[test]
+    fn create_path_no_relations_when_label_ids_empty_array() {
+        let body: CreateIssueFullBody = serde_json::from_value(json!({
+            "companyId": Uuid::new_v4(),
+            "title": "x",
+            "labelIds": [],
+            "blockedByIssueIds": [],
+        }))
+        .expect("parse");
+        assert!(!needs_relations_create(&body));
+    }
+
+    #[test]
+    fn create_path_needs_relations_when_label_ids_present() {
+        let body: CreateIssueFullBody = serde_json::from_value(json!({
+            "companyId": Uuid::new_v4(),
+            "title": "x",
+            "labelIds": [Uuid::new_v4()],
+        }))
+        .expect("parse");
+        assert!(needs_relations_create(&body));
+    }
+
+    #[test]
+    fn create_path_needs_relations_when_blocked_by_present() {
+        let body: CreateIssueFullBody = serde_json::from_value(json!({
+            "companyId": Uuid::new_v4(),
+            "title": "x",
+            "blockedByIssueIds": [Uuid::new_v4(), Uuid::new_v4()],
+        }))
+        .expect("parse");
+        assert!(needs_relations_create(&body));
+    }
+
+    #[test]
+    fn create_path_needs_relations_when_both_present() {
+        let body: CreateIssueFullBody = serde_json::from_value(json!({
+            "companyId": Uuid::new_v4(),
+            "title": "x",
+            "labelIds": [Uuid::new_v4()],
+            "blockedByIssueIds": [Uuid::new_v4()],
+        }))
+        .expect("parse");
+        assert!(needs_relations_create(&body));
+    }
+
+    // ── Child path ──
+
+    #[test]
+    fn child_path_no_relations_when_label_ids_absent() {
+        let body: ChildIssueFullBody =
+            serde_json::from_value(json!({"title": "x"})).expect("parse");
+        assert!(!needs_relations_child(&body));
+    }
+
+    #[test]
+    fn child_path_no_relations_when_empty_arrays() {
+        let body: ChildIssueFullBody = serde_json::from_value(json!({
+            "title": "x",
+            "labelIds": [],
+            "blockedByIssueIds": [],
+        }))
+        .expect("parse");
+        assert!(!needs_relations_child(&body));
+    }
+
+    #[test]
+    fn child_path_needs_relations_when_blocked_by_present() {
+        let body: ChildIssueFullBody = serde_json::from_value(json!({
+            "title": "x",
+            "blockedByIssueIds": [Uuid::new_v4()],
+        }))
+        .expect("parse");
+        assert!(needs_relations_child(&body));
+    }
+
+    #[test]
+    fn child_path_accepts_acceptance_criteria_without_relations() {
+        // acceptance_criteria 不影响 relations 路径选择
+        let body: ChildIssueFullBody = serde_json::from_value(json!({
+            "title": "x",
+            "acceptanceCriteria": ["c1"],
+            "blockParentUntilDone": true,
+        }))
+        .expect("parse");
+        assert!(!needs_relations_child(&body));
+        assert_eq!(
+            body.acceptance_criteria.as_ref().map(|v| v.len()),
+            Some(1)
+        );
+        assert_eq!(body.block_parent_until_done, Some(true));
+    }
+
+    #[test]
+    fn child_path_needs_relations_with_full_payload() {
+        // 包含 acceptance_criteria + label_ids + blocked_by — 应走事务
+        let body: ChildIssueFullBody = serde_json::from_value(json!({
+            "title": "x",
+            "labelIds": [Uuid::new_v4()],
+            "blockedByIssueIds": [Uuid::new_v4()],
+            "acceptanceCriteria": ["c1", "c2"],
+            "blockParentUntilDone": false,
+        }))
+        .expect("parse");
+        assert!(needs_relations_child(&body));
+        assert_eq!(
+            body.acceptance_criteria.as_ref().map(|v| v.len()),
+            Some(2)
+        );
     }
 }
