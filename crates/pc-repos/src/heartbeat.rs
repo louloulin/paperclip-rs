@@ -431,6 +431,19 @@ pub struct HeartbeatRunSummaryRow {
     pub error: Option<String>,
 }
 
+/// 扫描结果：silence 超过阈值的活跃 run。
+/// `silence_age_ms` 由 DB 计算（now() - COALESCE(last_output_at, started_at)）。
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct SilentActiveRunRow {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub agent_id: Uuid,
+    pub status: String,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_output_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub silence_age_ms: f64,
+}
+
 pub struct HeartbeatRepo<'a> {
     pub db: &'a Db,
 }
@@ -1379,8 +1392,88 @@ impl<'a> HeartbeatRepo<'a> {
         .await
     }
 
+    /// 列出 silence 超过阈值的活跃 run，供 staleness scanner 扫描。
+    ///
+    /// 仅返回 status IN ('queued','claimed','running','scheduled_retry') 的行。
+    /// `silence_age_ms` 是 `now() - COALESCE(last_output_at, started_at)` 的毫秒数，
+    /// 调用方按 pc-heartbeat::readiness 的阈值判定 Fresh/Suspicious/Critical/Abandoned。
+    ///
+    /// `company_id` 可选过滤；`limit` 默认 50，上限 500。
+    pub async fn list_silent_active_runs(
+        &self,
+        company_id: Option<Uuid>,
+        silence_threshold_ms: i64,
+        limit: i64,
+    ) -> sqlx::Result<Vec<SilentActiveRunRow>> {
+        let limit = limit.clamp(1, 500);
+        let q = format!(
+            "SELECT id, company_id, agent_id, status, \
+                    started_at, last_output_at, \
+                    EXTRACT(EPOCH FROM (now() - COALESCE(last_output_at, started_at))) * 1000 AS silence_age_ms \
+             FROM heartbeat_runs \
+             WHERE status IN ('queued','claimed','running','scheduled_retry') \
+               AND COALESCE(last_output_at, started_at) < now() - ($2 || ' milliseconds')::interval \
+               {company_clause} \
+             ORDER BY last_output_at ASC NULLS FIRST \
+             LIMIT $3",
+            company_clause = if company_id.is_some() { "AND company_id = $1" } else { "" },
+        );
+        let mut query = sqlx::query_as::<_, SilentActiveRunRow>(&q);
+        if let Some(cid) = company_id {
+            query = query.bind(cid);
+        }
+        // 第二/三个 bind 顺序: silence_threshold_ms, limit
+        // 当 company_id = None 时, $1 = silence, $2 = limit
+        // 当 company_id = Some 时, $1 = company_id, $2 = silence, $3 = limit
+        if company_id.is_some() {
+            query = query
+                .bind(silence_threshold_ms.to_string())
+                .bind(limit);
+        } else {
+            query = query.bind(silence_threshold_ms.to_string()).bind(limit);
+        }
+        query.fetch_all(self.db.pool()).await
+    }
 
+    /// 标记 run 为 abandoned（仅在 active 状态下生效；幂等）。
+    /// 返回 true 表示状态被改变，false 表示已是终态或不存在。
+    pub async fn mark_run_abandoned(
+        &self,
+        run_id: Uuid,
+        reason: &str,
+    ) -> sqlx::Result<bool> {
+        let result = sqlx::query(
+            "UPDATE heartbeat_runs \
+             SET status = 'failed', \
+                 error_code = 'stale_run_abandoned', \
+                 error = $2, \
+                 finished_at = COALESCE(finished_at, now()), \
+                 updated_at = now() \
+             WHERE id = $1 AND status IN ('queued','claimed','running','scheduled_retry')",
+        )
+        .bind(run_id)
+        .bind(reason)
+        .execute(self.db.pool())
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
 
+    /// 列出运行中的 stale active run，按 silence 倒序。
+    /// 用于 scheduler tick 周期扫描；返回的 silence_age_ms 由 DB 计算。
+    pub async fn count_silent_active_runs(
+        &self,
+        silence_threshold_ms: i64,
+    ) -> sqlx::Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM heartbeat_runs \
+             WHERE status IN ('queued','claimed','running','scheduled_retry') \
+               AND COALESCE(last_output_at, started_at) < now() - ($1 || ' milliseconds')::interval",
+        )
+        .bind(silence_threshold_ms.to_string())
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(count)
+    }
 }
 
 #[cfg(test)]

@@ -1333,9 +1333,36 @@ pub fn evaluate_daily_cap(
     }
     None
 }
+pub mod readiness;
 pub mod recovery;
 pub mod run_scratch;
 pub mod run_summary;
 pub mod runtime_status;
 pub mod stop_metadata;
+
+// ============================================================================
+// Public API: readiness & staleness recovery
+// ============================================================================
+//
+// pc-heartbeat::readiness 是 scheduler 在 claim run 之前调用的纯函数集合：
+// - `evaluate_readiness`  评估 6 项前置条件（agent/issue lock/budget/dependencies/
+//                          adapter/suppression），返回 `ReadinessReport`
+// - `evaluate_staleness`  根据 last_output_at 与阈值判定 Fresh/Suspicious/
+//                          Critical/Abandoned 四级
+// - `plan_stale_run_recovery` 把 staleness 翻译成待执行动作序列
+// - `build_stale_run_recovery_idempotency_key` 防止重复创建评估 issue
+//
+// 常量 `DEFAULT_*` 与 Node `services/recovery/service.ts` 的默认值对齐：
+// - suspicion threshold: 60 分钟无输出
+// - critical multiplier: 4x（4 小时）
+// - abandoned threshold: 24 小时无响应
+pub use readiness::{
+    build_stale_run_recovery_idempotency_key, evaluate_readiness, evaluate_staleness,
+    plan_stale_run_recovery, AgentSnapshot, BudgetSnapshot, IssueLockSnapshot,
+    ReadinessCheck, ReadinessCheckResult, ReadinessInput, ReadinessReport, RecoveryAction,
+    StaleRunRecoveryInput, StalenessDecision, StalenessInput, StalenessLevel,
+    SuppressionOverride, SuppressionScope, SuppressionSnapshot,
+    DEFAULT_ACTIVE_RUN_ABANDONED_THRESHOLD_MS, DEFAULT_ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
+    DEFAULT_CRITICAL_THRESHOLD_MULTIPLIER,
+};
 
