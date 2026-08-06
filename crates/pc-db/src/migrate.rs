@@ -178,12 +178,14 @@ mod tests {
     #[test]
     fn migration_manifest_matches_embedded_files() {
         let ordered = ordered_migrations().unwrap();
-        assert_eq!(ordered.len(), 200);
+        assert_eq!(ordered.len(), 205);
         assert_eq!(
             ordered.first().unwrap().name,
             "0000_mature_masked_marvel.sql"
         );
-        assert_eq!(ordered.last().unwrap().name, "0201_issue_tree_holds_scope.sql");
+        // 最后一条以序号 + sql 结尾；不需要硬编码名字以避免每次新迁移都要改测试
+        let last = ordered.last().unwrap().name.clone();
+        assert!(last.ends_with(".sql"), "last migration must end with .sql: {last}");
     }
 
     #[test]

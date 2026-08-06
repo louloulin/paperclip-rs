@@ -226,14 +226,25 @@ async fn handle_socket(
     let (mut sender, mut receiver) = socket.split();
 
     // 重连 resume：先把 resume_buffer 中 event_id > resume 的事件重放给客户端。
+    // R257: 同时应用 since / until 时间窗口过滤。
     // 再切换到 broadcast 订阅。
     let (mut rx, replayed) = match resume_from {
         Some(last_id) => {
             let (replay, rx) = state.realtime.subscribe_with_resume(last_id);
-            let count = replay.len();
+            let mut count: usize = 0;
             for arc_evt in replay {
                 if let Some(cid) = initial_company_id {
                     if arc_evt.company_id != Some(cid) {
+                        continue;
+                    }
+                }
+                if let Some(since_ts) = since {
+                    if arc_evt.at < since_ts {
+                        continue;
+                    }
+                }
+                if let Some(until_ts) = until {
+                    if arc_evt.at > until_ts {
                         continue;
                     }
                 }
@@ -241,8 +252,9 @@ async fn handle_socket(
                 if sender.send(Message::Text(frame)).await.is_err() {
                     return;
                 }
+                count += 1;
             }
-            // 通知客户端 resume 边界
+            // 通知客户端 resume 边界（实际回放数 = 经过时间窗口过滤后）
             let ack = json!({"type":"resumed","last_event_id": last_id,"replayed":count}).to_string();
             if sender.send(Message::Text(ack)).await.is_err() {
                 return;

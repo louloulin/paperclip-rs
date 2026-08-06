@@ -41,7 +41,43 @@ use crate::routes::live_events::authorize_ws;
 use crate::AppState;
 
 pub fn router() -> axum::Router<AppState> {
-    axum::Router::new().route("/api/realtime/stream", get(handler))
+    axum::Router::new()
+        .route("/api/realtime/stream", get(handler))
+        .route("/api/realtime/stats", get(stats_handler))
+}
+
+/// R257: GET /api/realtime/stats —— 暴露 realtime bus + rate limiter 当前状态。
+///
+/// 返回 JSON：
+/// ```jsonc
+/// {
+///   "realtime": {
+///     "subscriber_count": 5,
+///     "next_event_id": 1024,
+///     "replay_buffer_size": 256
+///   },
+///   "rate_limit": {
+///     "bucket_capacity": 32,
+///     "bucket_refill_per_second": 8,
+///     "tracked_ip_count": 12,
+///     "max_connections_per_company": 100
+///   }
+/// }
+/// ```
+async fn stats_handler(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
+    axum::Json(json!({
+        "realtime": {
+            "subscriber_count": state.realtime.subscriber_count(),
+            "next_event_id": state.realtime.next_event_id(),
+            "replay_buffer_size": state.realtime.replay_len(),
+        },
+        "rate_limit": {
+            "bucket_capacity": pc_realtime::DEFAULT_BUCKET_CAPACITY,
+            "bucket_refill_per_second": pc_realtime::DEFAULT_BUCKET_REFILL_PER_SECOND,
+            "tracked_ip_count": state.ws.ip_rate_limiter.tracked_ip_count(),
+            "max_connections_per_company": pc_realtime::DEFAULT_MAX_CONNECTIONS_PER_COMPANY,
+        }
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,6 +366,105 @@ fn to_sse_event(evt: &LiveEvent) -> Option<Event> {
 // 我们需要 async_stream crate；检查 Cargo.toml。
 #[allow(dead_code)]
 fn _unused_broadcast_receiver_type_check(_: broadcast::Receiver<Arc<LiveEvent>>) {}
+
+#[cfg(test)]
+#[cfg(test)]
+mod round257_tests {
+    /// R257: SSE build_event_stream 在 replay 阶段调用 passes_filter（已包含 since/until 检查）。
+    #[test]
+    fn sse_replay_stage_applies_passes_filter() {
+        let src = include_str!("realtime_stream.rs");
+        // 找 build_event_stream 中 resume 阶段调用 passes_filter 的位置
+        assert!(
+            src.contains("for arc_evt in replay"),
+            "SSE handler must loop over replay events"
+        );
+        // 实际缩进是 16 空格；replay for 块内必须含 passes_filter + since/until 调用
+        let replay_pass_call = "if !passes_filter(&arc_evt, company_id, channels.as_ref(), since, until) {\n                    continue;\n                }";
+        assert!(
+            src.contains(replay_pass_call),
+            "SSE replay stage must call passes_filter with since/until"
+        );
+    }
+
+    /// R257: WS handle_socket 在 resume 阶段也应用 since/until 过滤。
+    #[test]
+    fn ws_resume_stage_filters_by_since_until() {
+        let src = include_str!("live_events.rs");
+        // resume 阶段 for 循环中应同时检查 since_ts 和 until_ts
+        assert!(
+            src.contains("if let Some(since_ts) = since") && src.contains("if arc_evt.at < since_ts { continue; }"),
+            "WS resume must check since_ts"
+        );
+        assert!(
+            src.contains("if let Some(until_ts) = until") && src.contains("if arc_evt.at > until_ts { continue; }"),
+            "WS resume must check until_ts"
+        );
+        // 同时检查 company_id（已有逻辑未被破坏）
+        assert!(
+            src.contains("if let Some(cid) = initial_company_id") && src.contains("if arc_evt.company_id != Some(cid) { continue; }"),
+            "WS resume must still check company_id"
+        );
+    }
+
+    /// R257: /api/realtime/stats 路由挂载。
+    #[test]
+    fn stats_route_is_mounted() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("/api/realtime/stats"),
+            "realtime_stream.rs must define route on /api/realtime/stats"
+        );
+        let mod_src = include_str!("mod.rs");
+        assert!(
+            mod_src.contains("realtime_stream::router()"),
+            "routes/mod.rs must merge realtime_stream::router()"
+        );
+    }
+
+    /// R257: stats_handler 暴露 realtime + rate_limit 两个字段。
+    #[test]
+    fn stats_handler_exposes_realtime_and_rate_limit() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("async fn stats_handler"), "stats_handler must be defined");
+        assert!(src.contains("\"subscriber_count\""), "stats must include subscriber_count");
+        assert!(src.contains("\"next_event_id\""), "stats must include next_event_id");
+        assert!(src.contains("\"replay_buffer_size\""), "stats must include replay_buffer_size");
+        assert!(src.contains("\"rate_limit\""), "stats must include rate_limit section");
+        assert!(src.contains("\"bucket_capacity\""), "stats must include bucket_capacity");
+        assert!(src.contains("\"bucket_refill_per_second\""), "stats must include bucket_refill_per_second");
+        assert!(src.contains("\"tracked_ip_count\""), "stats must include tracked_ip_count");
+        assert!(src.contains("\"max_connections_per_company\""), "stats must include max_connections_per_company");
+    }
+
+    /// R257: stats_handler 调用 RealtimeHandle::subscriber_count / next_event_id / replay_len。
+    #[test]
+    fn stats_handler_calls_realtime_metrics() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("state.realtime.subscriber_count()"));
+        assert!(src.contains("state.realtime.next_event_id()"));
+        assert!(src.contains("state.realtime.replay_len()"));
+    }
+
+    /// R257: stats_handler 调用 IpRateLimiter::tracked_ip_count。
+    #[test]
+    fn stats_handler_calls_ip_rate_limiter_tracked_ip_count() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("state.ws.ip_rate_limiter.tracked_ip_count()"),
+            "stats_handler must call ip_rate_limiter.tracked_ip_count()"
+        );
+    }
+
+    /// R257: stats_handler 复用 pc_realtime 的默认常量。
+    #[test]
+    fn stats_handler_uses_default_rate_limit_constants() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("pc_realtime::DEFAULT_BUCKET_CAPACITY"));
+        assert!(src.contains("pc_realtime::DEFAULT_BUCKET_REFILL_PER_SECOND"));
+        assert!(src.contains("pc_realtime::DEFAULT_MAX_CONNECTIONS_PER_COMPANY"));
+    }
+}
 
 #[cfg(test)]
 #[cfg(test)]
