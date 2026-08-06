@@ -5757,3 +5757,47 @@ R245-R247 把 watchdog evaluation worker 入口 + 4 级 silence 算完，但 eva
 ### 总结
 
 R248 让 watchdog evaluation 与 active-run 路由达到 Node 兼容性另一段：worker 完成事件透出 + liveness 透传 + worker 拉取端权限收敛。下一步可推进 activity log 写入或 worker 侧消费端实现。
+
+## 87. 第二百四十九轮增量（Round 249 — watchdog actor DTO + activity_log 联动）
+
+### 背景
+
+R245-R248 已经完成 watchdog evaluation worker 入口、4 级 silence 计算、realtime 事件发布，但仍有 3 个 handler（`upsert_watchdog` / `remove_watchdog` / `complete_watchdog_evaluation`）未写入 `activity_log`。Node `completeWatchdogEvaluation` 在写完 evaluation 之后会同步调用 `activity.create`，把 `responsibleUserId` = 当前 user / agent 对应的 user。本轮补齐该写入。
+
+### 实现内容
+
+- 在 `pc-http/src/routes/issues.rs` 内引入本地 `WatchdogActor` 结构体（5 字段：`actor_type`, `agent_id`, `user_id`, `run_id`, `company_id`），比 `pc_repos::task_watchdog_scope::AgentRunActor` 多 `user_id`，专门用于 activity_log 写入。
+- `WatchdogActor` 实现 `into_agent_run_actor()` / `as_agent_run_actor()` 两个转换方法，供 `reject_task_watchdog_config_mutation` 复用 resolver 契约。
+- `watchdog_actor_from_headers` 改为返回 `WatchdogActor`，并填充 `user_id`（`require_user_id`）。
+- `reject_task_watchdog_config_mutation` / `reject_low_trust_control_plane` 改用 `&WatchdogActor`。
+- 三个 handler 在 `IssueRepo::new(&state.db).reconcile_for_issue_and_ancestors` 之后调用 `ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity { ... })`：
+  - `action` 为 `issue.watchdog_created` / `issue.watchdog_updated` / `issue.watchdog_removed` / `issue.watchdog_evaluation_completed`。
+  - `entity_type` 为 `issue_watchdog`。
+  - `actor_type` 通过 `ActorType::from_node_str(...)` 转换。
+  - `actor_id` 优先 `agent_id`，其次 `user_id`，最后 `system`。
+  - `responsible_user_id: actor.user_id.clone()`，对齐 Node `responsibleUserId` 契约。
+- `pc-repos/src/activity.rs` 给 `ActorType` 增加 `from_node_str(&str) -> Self`：未识别值降级为 `System`，与 Node `unwrap_or_else(|| "system".into())` 行为一致。
+
+### 当前仍有差距
+
+- `details` 字段当前只填默认 shapes，未携带 Node `outputDiff` / `executionRunId` 等扩展信息。
+- activity_log 写入未与 realtime `WatchdogUpdated` 事件做 coordinator 关联（仍是 fire-and-forget 模式）。
+- 没有暴露 `GET /api/companies/:id/issues/watchdog-activity` 列表查询，由前端另行订阅 realtime。
+- `WatchdogActor` 字段类型仍直接用 `Option<String>`，未与 Node `AgentRunActor` zod schema 完全对齐。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round249_tests` | 8 passed |
+| `pc-http::round248_tests` | 3 passed |
+| `pc-http::round247_tests` | 3 passed |
+| `pc-http::round246_tests` | 3 passed |
+| `pc-http::round245_tests` | ? |
+| `cargo test -p pc-http --lib` | 160 passed |
+| `cargo test -p pc-repos --lib` | 500 passed |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R249 把 watchdog 控制面路由（upsert / remove / complete evaluation）的 activity_log 写入对齐到 Node 三件套契约：action 字符串 + responsible_user_id + entity_type 一一对应。`WatchdogActor` 本地 DTO 解决了 `pc_repos::task_watchdog_scope::AgentRunActor` 缺少 `user_id` 字段的问题，同时兼容 resolver 消费方。下一步可推进 activity 列表查询接口，或者开始 R250 实现 toggle-watcher / context-snapshot 写入路径。

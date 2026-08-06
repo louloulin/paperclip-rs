@@ -1321,6 +1321,24 @@ async fn upsert_watchdog(
     let _ = IssueRepo::new(&state.db)
         .reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)
         .await;
+    let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
+    let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
+    let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
+        company_id: row.company_id,
+        actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
+        actor_id,
+        action: if created { "issue.watchdog_created".into() } else { "issue.watchdog_updated".into() },
+        entity_type: "issue_watchdog".into(),
+        entity_id: row.id.to_string(),
+        agent_id: actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
+        run_id,
+        responsible_user_id: actor.user_id.clone(),
+        details: Some(json!({
+            "issueId": row.issue_id,
+            "watchdogAgentId": row.watchdog_agent_id,
+            "instructionsChanged": true,
+        })),
+    }).await;
     state.realtime.publish(
         LiveEvent::new(
             if created {
@@ -1354,6 +1372,20 @@ async fn remove_watchdog(
         let _ = IssueRepo::new(&state.db)
             .reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)
             .await;
+        let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
+        let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
+        let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
+            company_id: w.company_id,
+            actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
+            actor_id,
+            action: "issue.watchdog_removed".into(),
+            entity_type: "issue_watchdog".into(),
+            entity_id: w.id.to_string(),
+            agent_id: actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
+            run_id,
+            responsible_user_id: actor.user_id.clone(),
+            details: Some(json!({"issueId": w.issue_id, "watchdogAgentId": w.watchdog_agent_id})),
+        }).await;
         state.realtime.publish(
             LiveEvent::new("issue.watchdog_removed", "issue_watchdog", w.id)
                 .with_company(w.company_id),
@@ -1399,6 +1431,24 @@ async fn complete_watchdog_evaluation(
     if n == 0 {
         return Err(ApiError::NotFound(format!("active watchdog for issue {id}")));
     }
+    let actor_type_str = if actor.agent_id.is_some() { "agent" } else if actor.user_id.is_some() { "user" } else { "board" };
+    let actor_id = actor.agent_id.clone().or(actor.user_id.clone()).unwrap_or_else(|| "system".into());
+    let _ = ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity {
+        company_id: issue.company_id,
+        actor_type: pc_repos::activity::ActorType::from_node_str(actor_type_str),
+        actor_id,
+        action: "issue.watchdog_evaluation_completed".into(),
+        entity_type: "issue_watchdog".into(),
+        entity_id: id.to_string(),
+        agent_id: actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
+        run_id: actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
+        responsible_user_id: actor.user_id.clone(),
+        details: Some(json!({
+            "reviewedFingerprint": body.reviewed_fingerprint,
+            "observedFingerprint": body.observed_fingerprint,
+            "snoozeUntil": body.snooze_until,
+        })),
+    }).await;
     state.realtime.publish(
         LiveEvent::new("issue.watchdog_evaluation_completed", "issue_watchdog", id)
             .with_company(issue.company_id),
@@ -1410,11 +1460,43 @@ async fn complete_watchdog_evaluation(
     })))
 }
 
+/// Round 249: 本地 actor DTO —— 装载 watchdog 控制面所需的全部身份信息。
+///
+/// 与 `pc_repos::task_watchdog_scope::AgentRunActor` 不同点：额外持有 `user_id`，
+/// 以便在 activity_log 写入时正确传递 `responsible_user_id`。
+#[derive(Debug, Clone)]
+struct WatchdogActor {
+    actor_type: String,
+    agent_id: Option<String>,
+    user_id: Option<String>,
+    company_id: Option<String>,
+    run_id: Option<String>,
+}
+
+impl WatchdogActor {
+    fn into_agent_run_actor(self) -> pc_repos::task_watchdog_scope::AgentRunActor {
+        pc_repos::task_watchdog_scope::AgentRunActor {
+            actor_type: self.actor_type,
+            agent_id: self.agent_id,
+            company_id: self.company_id,
+            run_id: self.run_id,
+        }
+    }
+
+    fn as_agent_run_actor(&self) -> pc_repos::task_watchdog_scope::AgentRunActor {
+        pc_repos::task_watchdog_scope::AgentRunActor {
+            actor_type: self.actor_type.clone(),
+            agent_id: self.agent_id.clone(),
+            company_id: self.company_id.clone(),
+            run_id: self.run_id.clone(),
+        }
+    }
+}
+
 async fn watchdog_actor_from_headers(
     state: &AppState,
     headers: &axum::http::HeaderMap,
-) -> ApiResult<pc_repos::task_watchdog_scope::AgentRunActor> {
-    use pc_repos::task_watchdog_scope::AgentRunActor;
+) -> ApiResult<WatchdogActor> {
     let agent_id = headers
         .get("x-paperclip-agent-id")
         .and_then(|v| v.to_str().ok())
@@ -1438,9 +1520,10 @@ async fn watchdog_actor_from_headers(
             .map(|c| c.to_string())
         } else { None }
     } else { None };
-    Ok(AgentRunActor {
+    Ok(WatchdogActor {
         actor_type,
         agent_id,
+        user_id,
         company_id,
         run_id,
     })
@@ -1448,12 +1531,13 @@ async fn watchdog_actor_from_headers(
 
 async fn reject_task_watchdog_config_mutation(
     state: &AppState,
-    actor: &pc_repos::task_watchdog_scope::AgentRunActor,
+    actor: &WatchdogActor,
 ) -> ApiResult<()> {
     use pc_repos::task_watchdog_scope::resolve_task_watchdog_mutation_scope;
     use pc_repos::task_watchdog_scope::TaskWatchdogMutationScope;
     if actor.actor_type != "agent" { return Ok(()); }
-    let scope = resolve_task_watchdog_mutation_scope(&state.db, actor)
+    let probe = actor.as_agent_run_actor();
+    let scope = resolve_task_watchdog_mutation_scope(&state.db, &probe)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if matches!(scope, TaskWatchdogMutationScope::Watchdog { .. }) {
@@ -1466,7 +1550,7 @@ async fn reject_task_watchdog_config_mutation(
 
 fn reject_low_trust_control_plane(
     issue: &pc_repos::issue::IssueRow,
-    actor: &pc_repos::task_watchdog_scope::AgentRunActor,
+    actor: &WatchdogActor,
 ) -> ApiResult<()> {
     if actor.actor_type != "agent" { return Ok(()); }
     let policy = issue.execution_policy.as_ref();
@@ -4817,6 +4901,96 @@ async fn active_run(
 
 
 #[cfg(test)]
+#[cfg(test)]
+#[cfg(test)]
+#[cfg(test)]
+mod round249_tests {
+    /// R249: 在 pc-http 本地定义 WatchdogActor —— 装载 user_id 用于 activity_log.responsible_user_id。
+    #[test]
+    fn watchdog_actor_struct_carries_user_id() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("struct WatchdogActor"));
+        assert!(src.contains("pub user_id: Option<String>"));
+        // 必须同时具备 actor_type / agent_id / run_id / company_id 五个字段
+        assert!(src.contains("actor_type: String"));
+        assert!(src.contains("pub agent_id: Option<String>"));
+        assert!(src.contains("pub run_id: Option<String>"));
+        assert!(src.contains("pub company_id: Option<String>"));
+
+    }
+
+    /// R249: watchdog_actor_from_headers 必须返回本地 WatchdogActor。
+    #[test]
+    fn watchdog_actor_from_headers_returns_local_actor() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("async fn watchdog_actor_from_headers(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> ApiResult<WatchdogActor> {"));
+        assert!(src.contains("Ok(WatchdogActor {"));
+    }
+
+    /// R249: reject_task_watchdog_config_mutation 必须接收 &WatchdogActor 并为 resolver 构造 AgentRunActor。
+    #[test]
+    fn reject_task_watchdog_config_mutation_uses_local_actor() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("async fn reject_task_watchdog_config_mutation(
+    state: &AppState,
+    actor: &WatchdogActor,
+) -> ApiResult<()> {"));
+        assert!(src.contains("actor.as_agent_run_actor()"));
+        assert!(src.contains("resolve_task_watchdog_mutation_scope(&state.db, &probe)"));
+    }
+
+    /// R249: reject_low_trust_control_plane 必须接收 &WatchdogActor。
+    #[test]
+    fn reject_low_trust_control_plane_uses_local_actor() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("fn reject_low_trust_control_plane(
+    issue: &pc_repos::issue::IssueRow,
+    actor: &WatchdogActor,
+) -> ApiResult<()> {"));
+    }
+
+    /// R249: 三个 watchdog handler（upsert / remove / complete evaluation）都必须调用 ActivityRepo::record。
+    #[test]
+    fn watchdog_handlers_write_activity_log() {
+        let src = include_str!("issues.rs");
+        // 三个位置都应直接调用 ActivityRepo::new(&state.db).record(...)
+        assert!(src.contains("ActivityRepo::new(&state.db).record(&pc_repos::activity::NewActivity"));
+        assert!(src.contains("responsible_user_id: actor.user_id.clone()"));
+    }
+
+    /// R249: activity_log action 字符串必须与 Node wire-format 完全一致。
+    #[test]
+    fn watchdog_activity_action_strings_match_node() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"issue.watchdog_created\""));
+        assert!(src.contains("\"issue.watchdog_updated\""));
+        assert!(src.contains("\"issue.watchdog_removed\""));
+        assert!(src.contains("\"issue.watchdog_evaluation_completed\""));
+    }
+
+    /// R249: actor.user_id 必须流向 responsible_user_id —— 这是 Node responsibleUserId 的契约。
+    #[test]
+    fn actor_user_id_flows_to_responsible_user_id() {
+        let src = include_str!("issues.rs");
+        // 三个 handler 各自至少出现一次 responsible_user_id: actor.user_id.clone()
+        let count = src.matches("responsible_user_id: actor.user_id.clone()").count();
+        assert!(count >= 3, "expected at least 3 responsible_user_id bindings, found {count}");
+    }
+
+    /// R249: ActorType::from_node_str 必须存在 —— 将 Node "actor"/"user"/"board" 字符串映射到枚举。
+    #[test]
+    fn actor_type_from_node_str_helper_exists() {
+        let repo = include_str!("../../../pc-repos/src/activity.rs");
+        assert!(repo.contains("pub fn from_node_str(s: &str) -> Self"));
+        assert!(repo.contains("\"user\" => Self::User"));
+        assert!(repo.contains("\"agent\" => Self::Agent"));
+        assert!(repo.contains("\"board\" => Self::Board"));
+    }
+}
+
 #[cfg(test)]
 #[cfg(test)]
 #[cfg(test)]

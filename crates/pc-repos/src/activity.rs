@@ -56,6 +56,19 @@ impl ActorType {
             Self::Plugin => "plugin",
         }
     }
+
+    /// Round 249: 从 Node 风格的小写字符串解析 actor 类型。
+    /// 未识别值退化为 `System` —— 保持原有 `unwrap_or_else(|| "system".into())` 的语义。
+    pub fn from_node_str(s: &str) -> Self {
+        match s {
+            "user" => Self::User,
+            "agent" => Self::Agent,
+            "board" => Self::Board,
+            "api_key" => Self::ApiKey,
+            "plugin" => Self::Plugin,
+            _ => Self::System,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
