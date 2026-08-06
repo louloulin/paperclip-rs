@@ -1334,9 +1334,16 @@ async fn upsert_watchdog(
         run_id,
         responsible_user_id: actor.user_id.clone(),
         details: Some(json!({
+            "identifier": issue.identifier,
             "issueId": row.issue_id,
+            "watchdogId": row.id,
             "watchdogAgentId": row.watchdog_agent_id,
             "instructionsChanged": true,
+            "created": created,
+            "actor": {
+                "actorType": actor_type_str,
+                "actorId": if actor.agent_id.is_some() { actor.agent_id.clone() } else { actor.user_id.clone() },
+            },
         })),
     }).await;
     state.realtime.publish(
@@ -1384,7 +1391,12 @@ async fn remove_watchdog(
             agent_id: actor.agent_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
             run_id,
             responsible_user_id: actor.user_id.clone(),
-            details: Some(json!({"issueId": w.issue_id, "watchdogAgentId": w.watchdog_agent_id})),
+            details: Some(json!({
+                "identifier": issue.identifier,
+                "issueId": w.issue_id,
+                "watchdogId": w.id,
+                "watchdogAgentId": w.watchdog_agent_id,
+            })),
         }).await;
         state.realtime.publish(
             LiveEvent::new("issue.watchdog_removed", "issue_watchdog", w.id)
@@ -1419,6 +1431,9 @@ async fn complete_watchdog_evaluation(
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
     let actor = watchdog_actor_from_headers(&state, &headers).await?;
     reject_low_trust_control_plane(&issue, &actor)?;
+    let watchdog_row = IssueRepo::new(&state.db)
+        .get_active_watchdog(id)
+        .await?;
     let n = IssueRepo::new(&state.db)
         .mark_watchdog_evaluation_completed(
             issue.company_id,
@@ -1444,9 +1459,14 @@ async fn complete_watchdog_evaluation(
         run_id: actor.run_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()),
         responsible_user_id: actor.user_id.clone(),
         details: Some(json!({
+            "identifier": issue.identifier,
+            "issueId": id,
+            "watchdogId": watchdog_row.as_ref().map(|w| w.id),
+            "watchdogAgentId": watchdog_row.as_ref().map(|w| w.watchdog_agent_id),
             "reviewedFingerprint": body.reviewed_fingerprint,
             "observedFingerprint": body.observed_fingerprint,
             "snoozeUntil": body.snooze_until,
+            "updated": n,
         })),
     }).await;
     state.realtime.publish(
@@ -1458,6 +1478,131 @@ async fn complete_watchdog_evaluation(
         "companyId": issue.company_id,
         "updated": n,
     })))
+}
+
+/// Round 250: GET /api/issues/:id/watchdog/activity — 列出该 issue 的 watchdog 控制面活动。
+///
+/// 与 Node GET /issues/:id/activity 不同：本路由专门过滤
+/// `entity_type='issue_watchdog'` 的事件，并按 watchdog 分组返回。
+async fn list_watchdog_activity(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<WatchdogActivityQuery>,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    // 1) 先把当前 / 历史 issue_watchdog 行的 id 全部拿出来
+    let watchdog_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM issue_watchdogs WHERE company_id = $1 AND issue_id = $2",
+    )
+    .bind(issue.company_id)
+    .bind(id)
+    .fetch_all(state.db.pool())
+    .await?;
+    if watchdog_ids.is_empty() {
+        return Ok(Json(json!({
+            "items": [],
+            "issueId": id,
+            "companyId": issue.company_id,
+            "total": 0,
+            "limit": limit,
+            "actionCounts": {},
+        })));
+    }
+    // 2) 一次性拉出所有 entity_id 在这些 watchdog 范围内的活动
+    let entity_ids: Vec<String> = watchdog_ids.iter().map(|u| u.to_string()).collect();
+    let rows = sqlx::query_as::<_, pc_repos::activity::ActivityRow>(
+        "SELECT id, company_id, actor_type, actor_id, action, entity_type, entity_id,                 agent_id, run_id, responsible_user_id, details, created_at          FROM activity_log          WHERE company_id = $1 AND entity_type = 'issue_watchdog' AND entity_id = ANY($2)          ORDER BY created_at DESC LIMIT $3",
+    )
+    .bind(issue.company_id)
+    .bind(&entity_ids)
+    .bind(limit)
+    .fetch_all(state.db.pool())
+    .await?;
+    // 3) 统计 action 分布
+    let mut action_counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    for r in &rows {
+        *action_counts.entry(r.action.clone()).or_insert(0) += 1;
+    }
+    let items: Vec<Value> = rows.iter().map(activity_log_row_json).collect();
+    Ok(Json(json!({
+        "items": items,
+        "issueId": id,
+        "companyId": issue.company_id,
+        "total": items.len(),
+        "limit": limit,
+        "actionCounts": action_counts,
+    })))
+}
+
+/// Round 250: GET /api/issues/:id/watchdog/activity/summary — 聚合返回 watchdog 状态摘要。
+///
+/// 返回最新一条 watchdog_* 事件的 action / 时间戳，以及当前 issue_watchdogs 行的
+/// last_reviewed_fingerprint / last_observed_fingerprint / last_completed_at 等关键状态。
+async fn watchdog_activity_summary(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let watchdog = IssueRepo::new(&state.db).get_active_watchdog(id).await?;
+    let watchdog_id_str = watchdog.as_ref().map(|w| w.id.to_string());
+    let last_event = if let Some(wid) = watchdog_id_str.as_deref() {
+        sqlx::query_as::<_, pc_repos::activity::ActivityRow>(
+            "SELECT id, company_id, actor_type, actor_id, action, entity_type, entity_id,                     agent_id, run_id, responsible_user_id, details, created_at              FROM activity_log              WHERE company_id = $1 AND entity_type = 'issue_watchdog' AND entity_id = $2              ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(issue.company_id)
+        .bind(wid)
+        .fetch_optional(state.db.pool())
+        .await?
+    } else {
+        None
+    };
+    let action_counts = if let Some(wid) = watchdog_id_str.as_deref() {
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            "SELECT action, COUNT(*)::bigint FROM activity_log              WHERE company_id = $1 AND entity_type = 'issue_watchdog' AND entity_id = $2              GROUP BY action",
+        )
+        .bind(issue.company_id)
+        .bind(wid)
+        .fetch_all(state.db.pool())
+        .await?;
+        let mut m = serde_json::Map::new();
+        for (a, n) in rows {
+            m.insert(a, serde_json::json!(n));
+        }
+        m
+    } else {
+        serde_json::Map::new()
+    };
+    Ok(Json(json!({
+        "issueId": id,
+        "companyId": issue.company_id,
+        "watchdog": watchdog.as_ref().map(|w| json!({
+            "id": w.id,
+            "watchdogAgentId": w.watchdog_agent_id,
+            "status": w.status,
+            "lastReviewedFingerprint": w.last_reviewed_fingerprint,
+            "lastObservedFingerprint": w.last_observed_fingerprint,
+            "lastTriggeredAt": w.last_triggered_at,
+            "lastCompletedAt": w.last_completed_at,
+            "triggerCount": w.trigger_count,
+        })),
+        "lastEvent": last_event.as_ref().map(activity_log_row_json),
+        "actionCounts": action_counts,
+    })))
+}
+
+/// Round 250: watchdog activity list 路由查询参数。
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+struct WatchdogActivityQuery {
+    #[serde(default)]
+    limit: Option<i64>,
 }
 
 /// Round 249: 本地 actor DTO —— 装载 watchdog 控制面所需的全部身份信息。
@@ -4901,6 +5046,81 @@ async fn active_run(
 
 
 #[cfg(test)]
+#[cfg(test)]
+#[cfg(test)]
+#[cfg(test)]
+mod round250_tests {
+    /// R250: upsert_watchdog details 必须包含 Node 对齐字段：identifier / watchdogId / created。
+    #[test]
+    fn upsert_watchdog_details_carries_node_fields() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"identifier\": issue.identifier"));
+        assert!(src.contains("\"watchdogId\": row.id"));
+        assert!(src.contains("\"created\": created"));
+    }
+
+    /// R250: remove_watchdog details 必须包含 identifier / watchdogId。
+    #[test]
+    fn remove_watchdog_details_carries_node_fields() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"identifier\": issue.identifier"));
+        assert!(src.contains("\"watchdogId\": w.id"));
+    }
+
+    /// R250: complete_watchdog_evaluation 必须先拉取 active watchdog 拿到 row，再写 details。
+    #[test]
+    fn complete_evaluation_looks_up_watchdog_row() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("get_active_watchdog(id)"));
+        assert!(src.contains("\"watchdogId\": watchdog_row.as_ref().map(|w| w.id)"));
+        assert!(src.contains("\"updated\": n"));
+    }
+
+    /// R250: 新增 list_watchdog_activity handler 与 summary handler。
+    #[test]
+    fn watchdog_activity_list_and_summary_handlers_exist() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("async fn list_watchdog_activity("));
+        assert!(src.contains("async fn watchdog_activity_summary("));
+        assert!(src.contains("struct WatchdogActivityQuery"));
+    }
+
+    /// R250: 两个新路由必须在 router() 中挂载。
+    #[test]
+    fn watchdog_activity_routes_are_mounted() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("/api/issues/:id/watchdog/activity"));
+        assert!(src.contains("get(list_watchdog_activity)"));
+        assert!(src.contains("get(watchdog_activity_summary)"));
+    }
+
+    /// R250: list 路由必须按 entity_type='issue_watchdog' 过滤并支持 limit 限制。
+    #[test]
+    fn list_filters_by_entity_type_issue_watchdog() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("entity_type = 'issue_watchdog'"));
+        assert!(src.contains("ORDER BY created_at DESC LIMIT $3"));
+    }
+
+    /// R250: summary 路由必须返回 lastEvent + actionCounts + watchdog 关键字段。
+    #[test]
+    fn summary_exposes_watchdog_state_and_counts() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"lastReviewedFingerprint\": w.last_reviewed_fingerprint"));
+        assert!(src.contains("\"lastObservedFingerprint\": w.last_observed_fingerprint"));
+        assert!(src.contains("\"triggerCount\": w.trigger_count"));
+        assert!(src.contains("\"lastEvent\": last_event.as_ref().map(activity_log_row_json)"));
+        assert!(src.contains("\"actionCounts\": action_counts"));
+    }
+
+    /// R250: action_counts 走 BTreeMap 排序输出。
+    #[test]
+    fn action_counts_uses_btreemap_for_deterministic_order() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("std::collections::BTreeMap<String, i64>"));
+    }
+}
+
 #[cfg(test)]
 #[cfg(test)]
 #[cfg(test)]

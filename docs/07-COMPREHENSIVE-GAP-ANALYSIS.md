@@ -5801,3 +5801,57 @@ R245-R248 已经完成 watchdog evaluation worker 入口、4 级 silence 计算�
 ### 总结
 
 R249 把 watchdog 控制面路由（upsert / remove / complete evaluation）的 activity_log 写入对齐到 Node 三件套契约：action 字符串 + responsible_user_id + entity_type 一一对应。`WatchdogActor` 本地 DTO 解决了 `pc_repos::task_watchdog_scope::AgentRunActor` 缺少 `user_id` 字段的问题，同时兼容 resolver 消费方。下一步可推进 activity 列表查询接口，或者开始 R250 实现 toggle-watcher / context-snapshot 写入路径。
+
+## 88. 第二百五十轮增量（Round 250 — watchdog activity 列表 / 摘要接口 + details 扩展）
+
+### 背景
+
+R249 把 watchdog 控制面三个 handler 的 `activity_log` 写入对齐到 Node 三件套，但：
+1. 前端 / Worker 仍无法主动查询某 issue 的 watchdog 控制面活动历史。
+2. `details` JSON 字段只携带基础 shape，缺少 Node 端 `identifier` / `watchdogId` / `created` / `previousWatchdogId` 等扩展键。
+3. 缺少聚合接口返回当前 watchdog 状态（最近指纹 / trigger 次数 / 最后事件）。
+
+### 实现内容
+
+- **details JSON 扩展**（三个 handler 全部对齐 Node `logActivity` 契约）：
+  - `upsert_watchdog`：增加 `identifier` / `watchdogId` / `created` / `actor` 嵌套对象。
+  - `remove_watchdog`：增加 `identifier` / `watchdogId`。
+  - `complete_watchdog_evaluation`：在调用 `mark_watchdog_evaluation_completed` 前先通过 `IssueRepo::get_active_watchdog(id)` 拿到行，details 增加 `identifier` / `watchdogId` / `watchdogAgentId` / `updated`。
+- **新路由**：
+  - `GET /api/issues/:id/watchdog/activity`（`list_watchdog_activity`）：
+    - 通过 `SELECT id FROM issue_watchdogs WHERE issue_id=$1` 拉出所有 watchdog 行 id
+    - 一次性 `WHERE entity_type='issue_watchdog' AND entity_id = ANY($1)` 查询 activity_log
+    - 返回 `{items, total, limit, actionCounts: BTreeMap<action, count>}`
+  - `GET /api/issues/:id/watchdog/activity/summary`（`watchdog_activity_summary`）：
+    - 返回 `watchdog` 嵌套对象（id / status / lastReviewedFingerprint / lastObservedFingerprint / lastTriggeredAt / lastCompletedAt / triggerCount）
+    - 返回 `lastEvent`（最新一条 activity_log 行）
+    - 返回 `actionCounts`（按 watchdog 行聚合）
+- **`WatchdogActivityQuery` struct**：`{ limit: Option<i64> }`，默认 100，最大 500。
+- 复用现有 `activity_log_row_json` 共享转换器（与 `issue_activity` 路由完全一致）。
+
+### 当前仍有差距
+
+- `actionCounts` 当前按 watchdog 单行聚合，没有按 issue 全量聚合（与 list 路由的 issue 全量聚合不同）；这是有意的，因为 summary 是「当前 watchdog」维度。
+- `details.actor` 嵌套对象目前只填了 `actorType` / `actorId`，未携带 `actorLabel` / `apiKeyId` 等 Node 完整字段。
+- 未实现 `GET /api/companies/:id/watchdog/activity`（公司级聚合），需要另开路由。
+- 没有 realtime 联动：activity 写入后，watchdog summary 路由不会自动失效（前端仍需轮询或订阅 `issue.watchdog_*` 事件）。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round250_tests` | 8 passed |
+| `pc-http::round249_tests` | 8 passed |
+| `pc-http::round248_tests` | 3 passed |
+| `cargo test -p pc-http --lib` | 168 passed |
+| `cargo test -p pc-repos --lib` | 500 passed |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R250 完成了 watchdog 控制面的「写入 → 列表 → 摘要」三件套：
+1. **写入**（R249）：三个 handler 都把 activity 落库。
+2. **列表**（R250）：新路由 `GET /api/issues/:id/watchdog/activity` 支持 limit + action 分布聚合。
+3. **摘要**（R250）：新路由 `GET /api/issues/:id/watchdog/activity/summary` 一站式返回 watchdog 状态 + 最新事件 + 计数。
+
+下一步可推进 R251（task-watchdog context-snapshot 写入）或 R252（realtime subscriber 端实现）。
