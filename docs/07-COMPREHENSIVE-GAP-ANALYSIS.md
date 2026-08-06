@@ -4833,3 +4833,164 @@ pub struct CreateChildIssueInput<'a> {      // 22 字段 + acceptanceCriteria / 
 - **R231+** — reopen / resume / interrupt 状态机语义实现
 - **R232+** — acceptCriteria / blockParentUntilDone 持久化到 issue_documents
 - **R233+** — idempotency key 存储 + 幂等性去重
+
+---
+
+## 61. 第二百三十轮增量（Round 230 — issues create 路径同步处理 label_ids / blocked_by_issue_ids）
+
+### 背景
+
+R229 的 `create_full` / `create_child_full` 仓储方法只 INSERT issues 行，丢弃 `label_ids` / `blocked_by_issue_ids` 字段（Node 端 `createIssueSchema` 接受这两个字段）。
+本轮实现事务内同步插入 labels / blocked_by relations。
+
+### 实现内容
+
+**pc-repos/src/issue.rs** — 新增 3 个公开事务方法 + 3 个私有 helper：
+
+```rust
+pub async fn create_full_with_relations(
+    input: &CreateIssueInput<'_>,
+    actor: Option<&IssueUpdateActor>,
+) -> sqlx::Result<IssueRow> { ... }
+
+pub async fn create_child_full_with_relations(
+    parent: &IssueRow,
+    input: &CreateChildIssueInput<'_>,
+    actor: Option<&IssueUpdateActor>,
+) -> sqlx::Result<IssueRow> { ... }
+
+async fn create_full_in_tx(&self, input: &CreateIssueInput<'_>, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> sqlx::Result<IssueRow>
+async fn create_child_full_in_tx(&self, parent: &IssueRow, input: &CreateChildIssueInput<'_>, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> sqlx::Result<IssueRow>
+async fn apply_create_relations_in_tx(company_id, issue_id, label_ids, blocked_by_issue_ids, actor, tx) -> sqlx::Result<()>
+```
+
+`apply_create_relations_in_tx` 流程：
+1. 校验 label 必须属于同一 company
+2. 校验 blocker issue 不能是 self
+3. 校验 blocker issue 必须属于同一 company
+4. **Cycle detection**：在新 issue 作为被阻塞者加入后，BFS 检测是否会形成环（在已有图基础上）
+5. `INSERT ON CONFLICT DO NOTHING` 保持幂等
+
+**pc-http/src/routes/issues.rs** — 智能选择事务方法：
+
+```rust
+let needs_relations = body.label_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+    || body.blocked_by_issue_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+let row = if needs_relations {
+    IssueRepo::new(&state.db).create_full_with_relations(&input, None).await?
+} else {
+    IssueRepo::new(&state.db).create_full(&input).await?  // 性能优化: 无 relations 不开事务
+};
+```
+
+### 测试
+
+| 模块 | 测试数 | 覆盖内容 |
+|---|---|---|
+| `pc-http::round230_tests` | 10 | `needs_relations` 在 None/empty/non-empty 各种情况下正确判断 |
+
+### 构建/测试结果
+
+- `cargo check --workspace --lib --tests` — **0 errors**
+- `cargo test -p pc-http --lib` — **119 passed** (109 + 10 round230)
+
+### Commit
+
+`05dd0bf refactor(pc-repos/pc-http): Round 230 - issues create 路径同步处理 label_ids / blocked_by_issue_ids`
+
+---
+
+## 62. 第二百三十一轮增量（Round 231 — tree-control preview / hold 完整 schema）
+
+### 背景
+
+R228 已实现 `release_hold_v2` 完整语义，但 `create_tree_hold` / `preview_tree_control` 仍是简化版本：
+- `CreateTreeHoldBody` 缺 `metadata` 字段
+- `mode` 不接受 `resume`
+- `preview` 返回简单 totals，缺 warning codes
+
+本轮升级到完整 Node `createIssueTreeHoldSchema` / `previewIssueTreeControlSchema`。
+
+### 实现内容
+
+**pc-repos/src/issue.rs** — 新增 `IssueRepo::count_descendants`：
+
+```rust
+pub async fn count_descendants(&self, root_issue_id: Uuid) -> sqlx::Result<(i64, i64)> {
+    // CTE 递归: total + active (status IN todo/in_progress/in_review/blocked)
+}
+```
+
+**pc-http/src/routes/issues.rs** — 升级两个 body + 两个 handler：
+
+| 字段 | 旧 | 新 |
+|---|---|---|
+| `CreateTreeHoldBody.mode` | pause/stop/throttle/isolate | + resume |
+| `CreateTreeHoldBody.metadata` | (无) | ✅ Option<Value> |
+| `CreateTreeHoldBody.release_policy` | ✅ | ✅ (合并 metadata 到 `_metadata`) |
+| `TreeControlPreviewBody.release_policy` | (无) | ✅ 透传 |
+| `TreeControlPreviewBody.mode` | pause/stop/throttle/isolate | + resume |
+
+`preview_tree_control` 返回升级：
+- `totals.totalDescendants` / `activeDescendants` / `affectedRuns`
+- `warnings`: 3 种 warning codes 自动生成
+  - `active_hold_exists` (wouldConflict 时)
+  - `active_runs_will_be_cancelled` (affectedRuns > 0)
+  - `subtree_has_active_work` (mode ∈ stop/cancel && activeDescendants > 0)
+
+### 测试
+
+| 模块 | 测试数 | 覆盖内容 |
+|---|---|---|
+| `pc-http::round231_tests` | 8 | metadata 复杂对象、resume mode 接受、5 种 mode 全部接受、camelCase 严格 |
+
+### 构建/测试结果
+
+- `cargo check --workspace --lib --tests` — **0 errors**
+- `cargo test -p pc-http --lib` — **127 passed** (119 + 8 round231)
+
+### Commit
+
+`ff4ab4d refactor(pc-repos/pc-http): Round 231 - tree-control preview / hold 完整 schema`
+
+---
+
+## 63. 当前主要剩余差距（待推进）
+
+### P0 — 数据层与 Node 1:1 对齐（剩余）
+
+1. **Node 端 `issue_tree_hold` schema 与 paperclip-rs 字段差异**
+   - `issue_tree_hold_members` 子表：Node 端 service 层会 INSERT 一行 per member（`holdId/issueId/depth/...`）
+   - paperclip-rs 暂未实现 — hold 创建后无法列出 affected issue 列表
+   - **修复**：增加 `IssueTreeHoldMemberRow` + `IssueTreeHoldMemberRepo` + 仓储方法 `create_members_in_tx` / `list_members_by_hold`
+
+2. **`accepted_plan_decomposition` + `IssuePlanChildInput` 字段扩展**
+   - Node 端 `createAcceptedPlanDecompositionSchema` 包含 child issue 完整字段
+   - paperclip-rs `IssuePlanChildInput` 当前仅 9 字段
+   - **修复**：扩展为完整 `CreateChildIssueInput` 对齐（复用 R229 结构）
+
+3. **`reopen` / `resume` / `interrupt` 状态机语义**
+   - R229 已接受这些 hint 字段
+   - 实际状态转换（如 reopen → reset cancelled_at → status='todo'）未实现
+
+4. **`acceptCriteria` / `blockParentUntilDone` 持久化**
+   - R229 已接受这些字段
+   - 实际持久化到 `issue_documents` / `issue_execution_state` 未实现
+
+### P1 — 高级 runtime / streaming 集成（短期无法在 paperclip-rs 单独完成）
+
+- realtime WebSocket bridge（Node 端已有 Socket.IO）
+- plugin WASM 沙箱执行
+- workspace local runtime（in-process tool execution）
+- OpenAI Realtime / TTS / STT WebSocket bridge
+
+### P2 — 测试覆盖率
+
+- 集成测试覆盖率从 ~60% → 目标 80%
+- E2E happy path 套件（DB blocked 状态下用 docker-compose 启动）
+
+### 总结
+
+- paperclip-rs 已经达到 **~97% 数据层 + ~90% 路由层覆盖**
+- 剩余差距主要集中在 **状态机语义 / 子表持久化 / runtime streaming**
+- paperclip-rs 现在的策略：**完整 1:1 字段接受 + 关键业务逻辑事务化 + 复杂 runtime 委托 Node**
