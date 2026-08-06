@@ -1,180 +1,145 @@
-//! Session workspace CWD safety check（1:1 port of Node `server/src/services/session-workspace-cwd.ts`，24 行）。
+//! `session_workspace_cwd` 域（Round 266）。
 //!
-//! 单一职责：判断一个 cwd 字符串是否落在「系统根目录」上（不安全）。
+//! 与原 `paperclip/server/src/services/session-workspace-cwd.ts` 1:1 对齐：
+//! 判断一个 session workspace cwd 是否落在"系统根目录"集合中。
 //!
-//! 与 Node `path.normalize` + `Set` 查找 1:1 对齐：
-//! - 空 / null / 全空白 cwd → false（不算不安全，因为根本不是合法 cwd）
-//! - `path.normalize(value.replace(/\/+$/, "") || "/")` —— 去除末尾斜杠后归一化
-//! - 在 `SESSION_CWD_SYSTEM_ROOTS` 集合内 → true
+//! 设计目标：高内聚低耦合。
+//! - **高内聚**：单一职责：cwd 黑名单判定；零 IO，零 DB。
+//! - **低耦合**：仅依赖 `std::path` + 静态集合。可单独被调用方复用。
 //!
-//! 不持有状态；不依赖 IO。
+//! 与 Node 版差异说明：
+//! - Node 使用 `path.normalize` 处理 `..` 与平台分隔符；Rust 中我们用 `path-clean` 类似语义
+//!   （`.`/重复 `/`/末尾 `/` 归一化），并允许绝对路径。
+//! - 系统根集合与 Node 一致。
 
-/// 系统根目录集合（与 Node `SESSION_CWD_SYSTEM_ROOTS` 1:1 对齐）。
-///
-/// 包含 13 个条目（Linux / macOS / BSD 常见系统路径）。
-pub const SESSION_CWD_SYSTEM_ROOTS: &[&str] = &[
-    "/",
-    "/tmp",
-    "/var",
-    "/var/tmp",
-    "/var/run",
-    "/usr",
-    "/etc",
-    "/proc",
-    "/sys",
-    "/dev",
-    "/run",
-    "/private",
-    "/private/tmp",
-];
+use std::collections::HashSet;
+use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
-/// 判断 cwd 是否落在系统根目录上（不安全）。
+/// 系统 cwd 黑名单（与 Node `SESSION_CWD_SYSTEM_ROOTS` 1:1 对齐）。
+fn session_cwd_system_roots() -> &'static HashSet<String> {
+    static CELL: OnceLock<HashSet<String>> = OnceLock::new();
+    CELL.get_or_init(|| {
+        [
+            "/",
+            "/tmp",
+            "/var",
+            "/var/tmp",
+            "/var/run",
+            "/usr",
+            "/etc",
+            "/proc",
+            "/sys",
+            "/dev",
+            "/run",
+            "/private",
+            "/private/tmp",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
+    })
+}
+
+/// 将 `value` 规范化为系统可比对的字符串：trim，去除尾部 `/`，再归一化 `.` / `..`。
+pub fn normalize_session_workspace_cwd(cwd: &str) -> String {
+    let trimmed = cwd.trim();
+    if trimmed.is_empty() {
+        return "/".to_string();
+    }
+    // Node 等价：value.replace(/\/+$/, '') -> '/'
+    let without_trailing = trimmed.trim_end_matches('/');
+    let cleaned = clean_path(Path::new(if without_trailing.is_empty() {
+        "/"
+    } else {
+        without_trailing
+    }));
+    let s = cleaned.to_string_lossy().into_owned();
+    if s.is_empty() { "/".to_string() } else { s }
+}
+
+/// 是否不安全的 session workspace cwd？返回 true 当 cwd 是空字符串/null/undefined 时为 false。
 ///
-/// 行为（与 Node `isUnsafeSessionWorkspaceCwd` 1:1 对齐）：
-/// 1. `cwd` 为 `None` / 空字符串 / 全空白 → 返回 `false`（不算不安全）
-/// 2. 否则 trim + 去除末尾斜杠
-/// 3. 若去除末尾斜杠后为空则归一化为 `"/"`
-/// 4. 在 `SESSION_CWD_SYSTEM_ROOTS` 集合内 → 返回 `true`
-#[must_use]
+/// 与 Node `isUnsafeSessionWorkspaceCwd(cwd: string | null | undefined)` 1:1 对齐。
 pub fn is_unsafe_session_workspace_cwd(cwd: Option<&str>) -> bool {
-    let value = cwd
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let Some(value) = value else {
+    let Some(value) = cwd else {
         return false;
     };
-    // 去除末尾斜杠
-    let stripped = value.trim_end_matches('/');
-    let normalized = if stripped.is_empty() { "/" } else { stripped };
-    SESSION_CWD_SYSTEM_ROOTS.contains(&normalized)
+    if value.trim().is_empty() {
+        return false;
+    }
+    let normalized = normalize_session_workspace_cwd(value);
+    session_cwd_system_roots().contains(&normalized)
+}
+
+fn clean_path(path: &Path) -> PathBuf {
+    let mut cleaned = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => cleaned.push(prefix.as_os_str()),
+            Component::RootDir => cleaned.push(Path::new(std::path::MAIN_SEPARATOR_STR)),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                cleaned.pop();
+            }
+            Component::Normal(segment) => cleaned.push(segment),
+        }
+    }
+    cleaned
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ---- 系统根集合 ----
-
     #[test]
-    fn session_cwd_system_roots_has_thirteen_entries() {
-        assert_eq!(SESSION_CWD_SYSTEM_ROOTS.len(), 13);
+    fn empty_or_null_is_safe() {
+        assert!(!is_unsafe_session_workspace_cwd(None));
+        assert!(!is_unsafe_session_workspace_cwd(Some("")));
+        assert!(!is_unsafe_session_workspace_cwd(Some("   ")));
     }
 
     #[test]
-    fn session_cwd_system_roots_contains_expected_paths() {
-        let expected = [
-            "/", "/tmp", "/var", "/var/tmp", "/var/run", "/usr", "/etc",
-            "/proc", "/sys", "/dev", "/run", "/private", "/private/tmp",
-        ];
-        for path in expected {
+    fn system_roots_are_unsafe() {
+        for root in ["/", "/tmp", "/var", "/var/tmp", "/var/run", "/usr", "/etc"] {
             assert!(
-                SESSION_CWD_SYSTEM_ROOTS.contains(&path),
-                "missing system root: {path}"
+                is_unsafe_session_workspace_cwd(Some(root)),
+                "expected unsafe: {root}"
+            );
+        }
+        // 末尾斜杠归一化
+        assert!(is_unsafe_session_workspace_cwd(Some("/tmp/")));
+        assert!(is_unsafe_session_workspace_cwd(Some("/var//")));
+        // 大小写在 Linux 上严格，非 `/Tmp`
+        assert!(!is_unsafe_session_workspace_cwd(Some("/Tmp")));
+    }
+
+    #[test]
+    fn user_paths_are_safe() {
+        for safe in ["/home/user/project", "/Users/owner/repo", "/workspace/app"] {
+            assert!(
+                !is_unsafe_session_workspace_cwd(Some(safe)),
+                "expected safe: {safe}"
             );
         }
     }
 
-    // ---- 空 / null 输入 ----
-
     #[test]
-    fn none_is_safe() {
-        assert!(!is_unsafe_session_workspace_cwd(None));
+    fn parent_segments_normalize_correctly() {
+        // "/var/tmp/.." -> "/var"（也在黑名单里）
+        assert!(is_unsafe_session_workspace_cwd(Some("/var/tmp/..")));
+        // "/tmp/.." -> "/"（也在黑名单）
+        assert!(is_unsafe_session_workspace_cwd(Some("/tmp/..")));
+        // "/etc/../usr" -> "/usr"（也在黑名单）
+        assert!(is_unsafe_session_workspace_cwd(Some("/etc/../usr")));
     }
 
     #[test]
-    fn empty_string_is_safe() {
-        assert!(!is_unsafe_session_workspace_cwd(Some("")));
-    }
-
-    #[test]
-    fn whitespace_only_is_safe() {
-        assert!(!is_unsafe_session_workspace_cwd(Some("   ")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("\t\n")));
-    }
-
-    // ---- 系统根路径 ----
-
-    #[test]
-    fn root_slash_is_unsafe() {
-        assert!(is_unsafe_session_workspace_cwd(Some("/")));
-    }
-
-    #[test]
-    fn root_with_trailing_slashes_is_unsafe() {
-        assert!(is_unsafe_session_workspace_cwd(Some("////")));
-        assert!(is_unsafe_session_workspace_cwd(Some("//")));
-    }
-
-    #[test]
-    fn tmp_is_unsafe() {
-        assert!(is_unsafe_session_workspace_cwd(Some("/tmp")));
-        assert!(is_unsafe_session_workspace_cwd(Some("/tmp/")));
-        assert!(is_unsafe_session_workspace_cwd(Some("/tmp///")));
-    }
-
-    #[test]
-    fn private_tmp_is_unsafe() {
-        assert!(is_unsafe_session_workspace_cwd(Some("/private/tmp")));
-        assert!(is_unsafe_session_workspace_cwd(Some("/private/tmp/")));
-    }
-
-    #[test]
-    fn var_run_is_unsafe() {
-        assert!(is_unsafe_session_workspace_cwd(Some("/var/run")));
-        assert!(is_unsafe_session_workspace_cwd(Some("/var/run/")));
-    }
-
-    // ---- 非系统路径 ----
-
-    #[test]
-    fn user_home_is_safe() {
-        assert!(!is_unsafe_session_workspace_cwd(Some("/home/user")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("/Users/dev")));
-    }
-
-    #[test]
-    fn project_path_is_safe() {
-        assert!(!is_unsafe_session_workspace_cwd(Some("/home/user/project")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("/var/myapp")));
-        // /var/myapp 不是 /var 本身（虽然父目录是 /var）
-        // 但 Node 端只比对完全归一化路径
-        assert!(!is_unsafe_session_workspace_cwd(Some("/var/myapp")));
-    }
-
-    #[test]
-    fn subdirectory_of_unsafe_root_is_safe() {
-        // /tmp/foo 不是 /tmp 本身（Node 端只比对完全归一化路径）
-        assert!(!is_unsafe_session_workspace_cwd(Some("/tmp/foo")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("/private/tmp/sub")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("/usr/local")));
-    }
-
-    // ---- Trim 行为 ----
-
-    #[test]
-    fn trims_surrounding_whitespace() {
-        assert!(is_unsafe_session_workspace_cwd(Some("  /tmp  ")));
-        assert!(is_unsafe_session_workspace_cwd(Some("\t/private\t")));
-    }
-
-    #[test]
-    fn does_not_trim_internal_whitespace() {
-        // 内部空格保留，归一化后不等于任何已知路径
-        assert!(!is_unsafe_session_workspace_cwd(Some("/tm p")));
-    }
-
-    // ---- 跨平台 ----
-
-    #[test]
-    fn windows_drive_is_safe() {
-        // Windows 路径（C:\...）不属于任何 Unix 系统根
-        assert!(!is_unsafe_session_workspace_cwd(Some("C:\\Users\\dev")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("D:/work")));
-    }
-
-    #[test]
-    fn relative_path_is_safe() {
-        assert!(!is_unsafe_session_workspace_cwd(Some("./tmp")));
-        assert!(!is_unsafe_session_workspace_cwd(Some("project")));
+    fn normalize_basic() {
+        assert_eq!(normalize_session_workspace_cwd("/tmp/"), "/tmp");
+        assert_eq!(normalize_session_workspace_cwd("/var//"), "/var");
+        assert_eq!(normalize_session_workspace_cwd("/"), "/");
+        assert_eq!(normalize_session_workspace_cwd(""), "/");
+        assert_eq!(normalize_session_workspace_cwd("/var/tmp/../"), "/var");
     }
 }

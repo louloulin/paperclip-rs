@@ -13,6 +13,7 @@ pub mod error;
 pub mod execution_allowlist;
 pub mod execution_policy_bootstrap;
 pub mod execution_workspace_policy;
+pub mod workspace_realization;
 pub mod feature_catalog;
 pub mod hash;
 pub mod id;
@@ -20,6 +21,7 @@ pub mod managed_config;
 pub mod mcp_http;
 pub mod money;
 pub mod portability_fidelity;
+pub mod project_workspace_runtime_config;
 pub mod portable_path;
 pub mod routable_blocked;
 pub mod runtime_skill_selections;
@@ -90,6 +92,13 @@ pub use execution_workspace_policy::{
     ParsedExecutionWorkspaceMode, ProjectExecutionWorkspacePolicy, UnrunnableWorktreeIssueRef,
     WORKSPACE_WORKTREE_REQUIRES_PROJECT_CODE, WORKSPACE_WORKTREE_REQUIRES_PROJECT_MESSAGE,
     WORKSPACE_WORKTREE_REQUIRES_PROJECT_REMEDIATION,
+};
+pub use workspace_realization::{
+    build_workspace_realization_record, build_workspace_realization_record_from_driver_input,
+    build_workspace_realization_request, read_additional_sources, read_path_aliases,
+    read_string, read_string_array, read_workspace_realization_request,
+    BuildRecordInput, BuildRequestInput, DriverInput, RealizationRequestError,
+    WorkspaceDriverWorkspace,
 };
 pub use id::Id;
 pub use mcp_http::{
