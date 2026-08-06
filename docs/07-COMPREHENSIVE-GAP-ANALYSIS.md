@@ -6154,3 +6154,57 @@ R255 给 realtime 链路加上了「防滥用」防护层：
 
 下一步可推进 R256（time-range 过滤：`?since=&until=`，与 resume 配合做时间窗口订阅）或 R257（metrics 端点：暴露 rate limit 当前状态）。
 
+## 94. 第二百五十六轮增量（Round 256 — time-range 过滤 since/until）
+
+### 背景
+
+R252~R255 完成了 realtime 订阅链路的 6 个维度（发布、抽象、HTTP 端点、channel 过滤、resume、防滥用）。
+但实际业务中客户端经常需要「只订阅最近 5 分钟内的事件」或「只订阅某个历史时间窗口」，避免回放过期数据造成的网络 / 解析开销。
+
+Node paperclip 端通过 `?since=<timestamp>&until=<timestamp>` query 参数实现时间窗口订阅；Rust 端 `LiveEvent.at` 字段已经存在但未在订阅层使用。
+
+### 实现内容
+
+- **`crates/pc-http/src/routes/realtime_stream.rs`**：
+  - `StreamQuery` 增加 `since: Option<chrono::DateTime<chrono::Utc>>` / `until: Option<chrono::DateTime<chrono::Utc>>` 字段（自动用 RFC3339 解析）。
+  - `passes_filter(evt, company_id, channels, since, until)` 签名扩展：
+    - `Some(since)`：仅 `evt.at >= since` 通过；
+    - `Some(until)`：仅 `evt.at <= until` 通过；
+    - 两个都为 None：跳过时间检查（向后兼容）。
+  - `build_event_stream` 函数签名扩展为接受 `since` / `until`，在 replay + live 两个阶段都调用 `passes_filter`。
+  - SSE handler 把 `query.since` / `query.until` 透传给 `build_event_stream`。
+  - 已有 `passes_filter` 测试（4 个）扩展为 5 参数；新增 3 个时间窗口测试（since-only / until-only / since+until）。
+- **`crates/pc-http/src/routes/live_events.rs`**：
+  - `AuthQuery` 增加 `since` / `until` 字段。
+  - `handle_socket` 函数签名扩展为接受 `since` / `until`。
+  - live 阶段在 company_id 检查之后增加 `arc_evt.at < since_ts` / `arc_evt.at > until_ts` 两个 `continue` 检查。
+
+### 当前仍有差距
+
+- Replay 阶段没有按 since / until 过滤 —— 客户端用 `?resume=<last_id>` 时，replay buffer 中的事件可能落在 since 之前，但当前 SSE handler 没有在 replay 中应用 since / until 过滤（只过滤 live 阶段）。后续 R257/R258 可补齐。
+- WS handler 的 `ClientFrame::Subscribe` 控制帧没有扩展到接受 since / until —— 客户端在 WS 长连接中无法动态调整时间窗口。
+- 时间窗口不支持相对时间（如 `?since=-5m`）；只支持绝对 RFC3339 时间戳。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::realtime_stream::tests::passes_filter_*` | 7 passed (4 原有 + 3 R256) |
+| `pc-http::round256_tests` | 8 passed |
+| `pc-http::round255_tests` | 9 passed (无回归) |
+| `pc-http::round254_tests` | 8 passed (无回归) |
+| `cargo test -p pc-http --lib` | 220 passed (209 + 8 round256 + 3 passes_filter) |
+| `cargo test -p pc-realtime --lib` | 41 passed (无变化) |
+| `cargo test -p pc-repos --lib` | 518 passed (无变化) |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R256 给 realtime 订阅链路加上了「时间窗口」维度：
+1. **类型扩展**（StreamQuery / AuthQuery）：`since` / `until` 用 `chrono::DateTime<Utc>` 自动 RFC3339 反序列化。
+2. **过滤函数扩展**（passes_filter）：从 3 参数扩展到 5 参数，向后兼容（None 时跳过检查）。
+3. **WS + SSE 双覆盖**：两个 handler 都接受 since / until 并应用到 live 阶段过滤。
+4. **测试覆盖 3 种窗口**：since-only / until-only / since+until 组合。
+
+下一步可推进 R257（metrics 端点：暴露 rate limit + subscription 当前状态）或 R258（replay 阶段的 since / until 过滤）。
+
