@@ -5115,3 +5115,114 @@ handler 重构：
 2. **`acceptanceCriteria` / `blockParentUntilDone` 持久化**（R229/R233 已接受，service 层持久化到 issue_documents 待实现）
 3. **`idempotencyKey` 去重逻辑**（R229 已接受 key 字段）
 4. **realtime event 委托**：Node 端负责实际 run cancel/resume execution，paperclip-rs 发 event 后 Node worker 监听并执行
+
+---
+
+## 68. 第二百三十四轮增量（Round 234 — reopen / resume / interrupt 状态机语义）
+
+### 背景
+
+R229 已接受 `reopen` / `resume` / `interrupt` hint 字段在 `UpdateIssueFullBody`，但未实现实际状态转换逻辑。
+
+### 实现内容
+
+**pc-repos/src/issue.rs** — `update_full` 升级：
+- 读出 existing row → 计算 `effective_status`:
+  - `reopen=true || resume=true` 且 `current.status IN ('done','cancelled')` → `effective_status='todo'`
+  - 其他情况 `effective_status = patch.status`
+- SQL UPDATE 加入 `completed_at` / `cancelled_at` 自动重置:
+  ```sql
+  completed_at = CASE WHEN $5='todo' AND completed_at IS NOT NULL THEN NULL ELSE completed_at END
+  cancelled_at = CASE WHEN $5='todo' AND cancelled_at IS NOT NULL THEN NULL ELSE cancelled_at END
+  ```
+
+**pc-http/src/routes/issues.rs** — update 路由升级：
+- `interrupt=true` → 发 `issue.run_interrupt_requested` 事件（含 `requestedBy` + `interruptSource`）
+- `reopen=true` → 发 `issue.reopened` 事件（含 `previousStatus`）
+- `resume=true` → 发 `issue.resumed` 事件（含 `previousStatus`）
+- 实际 run cancel 由 Node worker 监听 realtime event 并执行（runtime worker 职责）
+
+### 测试
+
+| 模块 | 测试数 |
+|---|---|
+| `pc-repos::round234_state_machine_tests` | 10 |
+
+### Commit
+
+`0a6b7e8 refactor(pc-repos/pc-http): Round 234 - reopen/resume/interrupt 状态机语义实现`
+
+---
+
+## 69. 第二百三十五轮增量（Round 235 — issue_create_idempotency_keys 子表）
+
+### 背景
+
+R229 已接受 `idempotencyKey` 字段在 `CreateIssueFullBody`，但未实现去重 / 重放逻辑。Node 端有完整 `issueCreateIdempotencyKeys` 子表 + 事务内 advisory lock + retention cleanup 机制。
+
+### 实现内容
+
+**pc-repos/src/issue.rs** — 新增：
+```rust
+pub struct IssueCreateIdempotencyKeyRow {     // 5 字段（完整镜像 Node schema）
+    id, company_id, idempotency_key, issue_id, created_at
+}
+
+// 4 个仓储方法
+find_idempotency_key(company_id, key) -> Option<issue_id>
+create_idempotency_key(company_id, key, issue_id) -> bool
+cleanup_expired_idempotency_keys(company_id, cutoff, batch_size) -> u64
+create_idempotency_key_in_tx(...) // 事务内插入
+```
+
+**pc-http/src/routes/issues.rs** — create handler 升级：
+- 创建前：若 `idempotency_key` 存在，先查询 existing
+- 找到 existing → 返回 existing (200 OK + `replayed=true`)
+- 未找到 → 继续创建流程，创建后 INSERT idempotency_key
+
+### 测试
+
+| 模块 | 测试数 |
+|---|---|
+| `pc-repos::round235_idempotency_tests` | 5 |
+
+### Commit
+
+`e484c39 refactor(pc-repos/pc-http): Round 235 - issue_create_idempotency_keys 子表 + 重放语义`
+
+---
+
+## 70. 当前累计测试基线（R235）
+
+| 类别 | 数量 |
+|---|---|
+| pc-http lib 测试 | **134 passed** |
+| pc-repos lib 测试 | **500 passed** (485 + 10 R234 + 5 R235) |
+| 累计通过 | **634+ tests** |
+
+## 71. R229-R235 模块总结
+
+| Round | 模块 | 关键交付 |
+|---|---|---|
+| R229 | issues body | CreateBody / UpdateBody / ChildBody 完整 25 字段对齐 Node schema |
+| R230 | issues relations | create_full_with_relations 事务内 labels + blocked_by |
+| R231 | tree-control | preview / hold 完整 schema + warning codes |
+| R232 | tree-hold members | issue_tree_hold_members 子表 15 字段 |
+| R233 | plan decomp children | PlanDecompositionChildInput 完整 25 字段 |
+| R234 | state machine | reopen/resume 状态转换 + interrupt/reopen/resume realtime events |
+| R235 | idempotency | issue_create_idempotency_keys 子表 + 重放语义 |
+
+### 数据层完整度
+
+- **issues 路由层**: 100% Node schema 字段对齐 + 状态机语义 + idempotency 重放
+- **tree-control 路由层**: 100% 字段 + warning codes
+- **tree-hold members 子表**: 100% 镜像
+- **plan decomposition children**: 100% 字段
+- **idempotency keys 子表**: 100% 镜像
+
+### Realtime 事件委托策略
+
+paperclip-rs 在以下场景发 realtime event 委托 Node worker 处理：
+- `interrupt=true` → `issue.run_interrupt_requested` (Node worker 调用 heartbeat.cancelRun)
+- `reopen=true` → `issue.reopened` (UI / worker 监听)
+- `resume=true` → `issue.resumed` (UI / worker 监听)
