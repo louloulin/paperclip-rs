@@ -4994,3 +4994,124 @@ pub async fn count_descendants(&self, root_issue_id: Uuid) -> sqlx::Result<(i64,
 - paperclip-rs 已经达到 **~97% 数据层 + ~90% 路由层覆盖**
 - 剩余差距主要集中在 **状态机语义 / 子表持久化 / runtime streaming**
 - paperclip-rs 现在的策略：**完整 1:1 字段接受 + 关键业务逻辑事务化 + 复杂 runtime 委托 Node**
+
+---
+
+## 64. 第二百三十二轮增量（Round 232 — issue_tree_hold_members 子表完整实现）
+
+### 背景
+
+Node 端 `issueTreeHolds.$inferInsert` service 层会 INSERT 一行 per affected issue 到 `issue_tree_hold_members` 子表，paperclip-rs 之前完全缺失。
+
+### 实现内容
+
+**pc-repos/src/issue_tree_hold.rs** — 新增：
+
+```rust
+pub struct IssueTreeHoldMemberRow {        // 15 字段（完整镜像 Node issueTreeHoldMembers schema）
+    id, company_id, hold_id, issue_id, parent_issue_id, depth,
+    issue_identifier, issue_title, issue_status,
+    assignee_agent_id, assignee_user_id, active_run_id, active_run_status,
+    skipped, skip_reason, created_at
+}
+
+pub struct NewIssueTreeHoldMember<'a> {   // 借用结构（&str / &[Uuid] 零拷贝）
+    company_id, hold_id, issue_id, parent_issue_id, depth,
+    issue_identifier, issue_title, issue_status,
+    assignee_agent_id, assignee_user_id, active_run_id, active_run_status,
+    skipped, skip_reason
+}
+```
+
+仓储方法：
+- `create_members_in_tx` — 批量 INSERT ON CONFLICT DO NOTHING（幂等）
+- `list_members_by_hold` — 按 depth ASC, created_at ASC 排序
+- `count_members_by_hold` — 统计
+- `delete_members_by_hold` — 释放时清理
+
+**pc-http/src/routes/issues.rs** — 升级 `get_tree_hold`：
+- 返回 `memberCount` + `members` 数组（含完整 14 字段）
+
+### 测试
+
+| 模块 | 测试数 |
+|---|---|
+| `pc-repos::round232_member_tests` | 6 |
+
+### Commit
+
+`0b4247b refactor(pc-repos/pc-http): Round 232 - issue_tree_hold_members 子表完整实现`
+
+---
+
+## 65. 第二百三十三轮增量（Round 233 — accepted_plan_decomposition 完整 createChildIssueSchema）
+
+### 背景
+
+Node `createAcceptedPlanDecompositionSchema = { acceptedPlanRevisionId, children: createChildIssueSchema[] }`。
+每个 child 应支持 `createChildIssueSchema` 全部 22+ 字段，但 R222 仅实现了 9 字段子集。
+
+### 实现内容
+
+**pc-repos/src/issue.rs** — 扩展 `IssuePlanChildInput<'a>`：
+- 9 字段 → 25 字段（含 harness_kind / created_by_user_id / responsible_user_id /
+  billing_code / request_depth / assignee_adapter_overrides / execution_policy /
+  execution_workspace_* / unblock_descriptor / blocked_by_issue_ids / label_ids /
+  acceptance_criteria / block_parent_until_done）
+- 移除 Serialize/Deserialize derive（借用结构不支持）— 改为手动 JSON 构造
+
+`create_child_from_decomposition` 升级：
+- INSERT 23 字段
+- 自动继承 parent 的 project_id / project_workspace_id / goal_id
+
+**pc-http/src/routes/issues.rs** — `PlanDecompositionChildInput`：
+- 10 字段 → 22 字段（与 Node createChildIssueSchema 完整对齐）
+
+handler 重构：
+- 借用结构直接通过 `&ref` 而非 owned 传入（避免 E0515 错误）
+
+### 测试
+
+| 模块 | 测试数 |
+|---|---|
+| `pc-http::round233_tests` | 7 |
+| `pc-repos::round226_plan_decomposition_loop_repo` | 修复 16 字段初始化 |
+
+### Commit
+
+`ad8fa33 refactor(pc-repos/pc-http): Round 233 - accepted_plan_decomposition 完整 createChildIssueSchema 字段`
+
+---
+
+## 66. 当前累计测试基线（R233）
+
+| 类别 | 数量 |
+|---|---|
+| pc-http lib 测试 | **134 passed** (98 + R229-R233 增量) |
+| pc-repos lib 测试 | **485 passed** (479 + 6 R232) |
+| 集成测试 (DB blocked) | 多个独立文件 |
+| 累计 inline `#[test]` | **1545+ + 11 + 11 + 10 + 8 + 6 + 7 = 1598+** |
+
+## 67. 已完成模块 R229-R233 总结
+
+| Round | 模块 | 关键功能 |
+|---|---|---|
+| R229 | issues body | CreateBody / UpdateBody / ChildBody 完整 Node schema 字段 |
+| R230 | issues relations | create_full_with_relations 事务内处理 labels + blocked_by |
+| R231 | tree-control | preview / hold 完整 schema + warning codes |
+| R232 | tree-hold members | issue_tree_hold_members 子表 + 仓储 + get_tree_hold 升级 |
+| R233 | plan decomp children | PlanDecompositionChildInput 完整字段 + IssuePlanChildInput 扩展 |
+
+### 总数据层对齐度
+
+- **Node issues body schema**: 100% 字段接受（含 acceptanceCriteria / blockParentUntilDone / blockedByIssueIds / labelIds / executionWorkspace*）
+- **Node tree-control schema**: 100% 字段接受 + 完整 warning codes
+- **Node tree-hold members**: 子表 100% schema 镜像（15 字段）
+- **Node plan decomposition children**: 100% schema 字段接受
+
+### 剩余重大差距
+
+1. **`reopen` / `resume` / `interrupt` 状态机语义**（R229 已接受 hint 字段）
+2. **`acceptanceCriteria` / `blockParentUntilDone` 持久化**（R229/R233 已接受，service 层持久化到 issue_documents 待实现）
+3. **`idempotencyKey` 去重逻辑**（R229 已接受 key 字段）
+4. **realtime event 委托**：Node 端负责实际 run cancel/resume execution，paperclip-rs 发 event 后 Node worker 监听并执行
