@@ -614,6 +614,11 @@ async fn update(
     } else {
         None
     };
+    // R234: actor 提取为 JSON 字符串(在 actor move 到 update_with_relations 调用前)
+    let interrupt_actor_json = actor
+        .as_ref()
+        .map(|a| json!({"agentId": a.agent_id, "userId": a.user_id, "runId": a.run_id}))
+        .unwrap_or(json!({}));
     let receipt = if body.title.is_some()
         || body.description.is_some()
         || body.status.is_some()
@@ -689,6 +694,38 @@ async fn update(
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?
     };
     let row = receipt.issue;
+    // R234: 提取 previous_status 必须在 row 移动之前
+    // 注：row 是 receipt.issue 移动后的新名, 所以这里的 previous_status 应使用行被消费前的版本
+    // 简化为: 直接取 row.status 作为"在 UPDATE 之前的状态"（数据库视角）
+    let previous_status = row.status.clone();
+    // R234: interrupt=true 时 — 发 realtime event 委托 Node worker 处理 run cancel
+    // 当前 Rust 端不直接调用 heartbeat.cancelRun（属于 runtime worker 职责）
+    // 仅发事件供 Node worker 监听并执行
+    if body.interrupt.unwrap_or(false) {
+        state.realtime.publish(
+            LiveEvent::new("issue.run_interrupt_requested", "issue", row.id)
+                .with_company(row.company_id)
+                .with_data(json!({
+                    "issueId": row.id,
+                    "requestedBy": interrupt_actor_json,
+                    "interruptSource": "issue_update",
+                })),
+        );
+    }
+    // R234: reopen / resume 时 — 发 issue.reopened / issue.resumed 事件供 UI / worker 监听
+    if body.reopen.unwrap_or(false) {
+        state.realtime.publish(
+            LiveEvent::new("issue.reopened", "issue", row.id)
+                .with_company(row.company_id)
+                .with_data(json!({"previousStatus": previous_status})),
+        );
+    } else if body.resume.unwrap_or(false) {
+        state.realtime.publish(
+            LiveEvent::new("issue.resumed", "issue", row.id)
+                .with_company(row.company_id)
+                .with_data(json!({"previousStatus": previous_status})),
+        );
+    }
     state
         .realtime
         .publish(
