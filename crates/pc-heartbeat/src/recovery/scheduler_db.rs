@@ -67,16 +67,14 @@ pub async fn ensure_source_scoped_recovery_action_for_issue(
     let Some(issue) = IssueRepo::new(db).get(input.issue_id).await? else {
         return Ok(None);
     };
-    let Some(latest_run_row) = load_latest_run_row(db, issue.company_id, input.issue_id).await?
-    else {
-        return Ok(None);
-    };
+    let latest_run_row = load_latest_run_row(db, issue.company_id, input.issue_id).await?;
     let agents = AgentRepo::new(db).list_by_company(issue.company_id).await?;
     let routing = resolve_stranded_recovery_routing_db(
         &issue,
-        &latest_run_row,
+        latest_run_row.as_ref(),
         &agents,
         input.recovery_owner_agent_id,
+        input.recovery_cause_override,
     );
     let ctx = SchedulerContext {
         company_id: issue.company_id,
@@ -85,7 +83,10 @@ pub async fn ensure_source_scoped_recovery_action_for_issue(
         successful_run_handoff_evidence: input.successful_run_handoff_evidence,
         workspace_validation_fingerprint_override: input.workspace_validation_fingerprint_override,
     };
-    let run_input = build_run_input(&latest_run_row);
+    let run_input = latest_run_row
+        .as_ref()
+        .map(build_run_input)
+        .unwrap_or_default();
     let now: DateTime<Utc> = Utc::now();
     let candidate = decide_recovery_scheduler_plan(&ctx, &run_input, &routing, now);
     let upsert = build_upsert_from_candidate(&ctx, &candidate, &issue.assignee_agent_id);
@@ -204,8 +205,24 @@ pub async fn reconcile_and_escalate_stranded_for_company(
             continue;
         }
         let issue_latest_run = load_latest_run_row(db, issue.company_id, issue.id).await?;
+        let review_participant_id = if issue.status == "in_review" {
+            current_review_participant_agent_id(&issue)
+        } else {
+            None
+        };
+        let review_participant_invokable = if let Some(agent_id) = review_participant_id {
+            Some(
+                AgentRepo::new(db)
+                    .get(agent_id)
+                    .await?
+                    .filter(|agent| agent.company_id == issue.company_id)
+                    .is_some_and(|agent| is_agent_status_invokable(&agent.status)),
+            )
+        } else {
+            None
+        };
         let monitor_run = if issue.status == "in_review" {
-            if let Some(participant_agent_id) = current_review_participant_agent_id(&issue) {
+            if let Some(participant_agent_id) = review_participant_id {
                 load_latest_run_row_for_agent(db, issue.company_id, issue.id, participant_agent_id)
                     .await?
             } else {
@@ -214,6 +231,10 @@ pub async fn reconcile_and_escalate_stranded_for_company(
         } else {
             issue_latest_run.clone()
         };
+        let review_configuration_incomplete = issue.status == "in_review"
+            && monitor_run
+                .as_ref()
+                .is_some_and(is_configuration_incomplete_run);
         if let Some(run) = monitor_run.as_ref() {
             let now = Utc::now();
             let is_unsuccessful_terminal = matches!(
@@ -278,7 +299,7 @@ pub async fn reconcile_and_escalate_stranded_for_company(
         // - if should_escalate_due_to_retry_limit: force escalate path (skip scheduler,
         //   escalate_db will internally re-invoke scheduler for the recovery action)
         // - otherwise: normal schedule + escalate path
-        let mut force_escalate_only = false;
+        let mut force_escalate_only = review_configuration_incomplete;
         if let Some(assignee_agent_id) = issue.assignee_agent_id {
             use super::continuation_retry_summary::{
                 load_continuation_retry_summary, should_escalate_due_to_retry_limit,
@@ -351,14 +372,23 @@ pub async fn reconcile_and_escalate_stranded_for_company(
         let mut action_id: Option<Uuid> = scheduler_result
             .as_ref()
             .map(|r| r.result.persisted.action.id);
-        let escalation_comment = execution_review_escalation_comment(&issue, monitor_run.as_ref());
+        let escalation_comment = execution_review_escalation_comment(
+            &issue,
+            monitor_run.as_ref(),
+            review_participant_invokable,
+        );
+        let review_recovery_cause_override = review_configuration_incomplete
+            .then_some(StrandedRecoveryCause::ConfigurationIncomplete);
+        let review_recovery_owner = review_configuration_incomplete
+            .then_some(review_participant_id)
+            .flatten();
         let escalation = escalate_stranded_assigned_issue_with_comment(
             db,
             EscalateDbInput {
                 issue_id: issue.id,
                 previous_status,
-                recovery_cause_override: None,
-                recovery_owner_agent_id: None,
+                recovery_cause_override: review_recovery_cause_override,
+                recovery_owner_agent_id: review_recovery_owner,
                 successful_run_handoff_evidence: None,
                 workspace_validation_fingerprint_override: None,
             },
@@ -395,9 +425,27 @@ pub async fn reconcile_and_escalate_stranded_for_company(
 fn execution_review_escalation_comment(
     issue: &pc_repos::issue::IssueRow,
     latest_run: Option<&LatestRunRow>,
+    participant_invokable: Option<bool>,
 ) -> Option<String> {
     if issue.status != "in_review" {
         return None;
+    }
+    if let Some(latest_run) = latest_run {
+        if is_configuration_incomplete_run(latest_run) {
+            return Some(
+                super::build_configuration_incomplete_comment::build_configuration_incomplete_comment(
+                    &latest_run_view(latest_run),
+                ),
+            );
+        }
+    }
+    if participant_invokable == Some(false) {
+        let latest_run_view = latest_run.map(latest_run_view);
+        return Some(
+            super::build_execution_review_participant_unavailable_comment::build_execution_review_participant_unavailable_comment_optional(
+                latest_run_view.as_ref(),
+            ),
+        );
     }
     let latest_run = latest_run?;
     let retry_reason = latest_run
@@ -429,6 +477,36 @@ fn execution_review_escalation_comment(
     )
 }
 
+fn is_configuration_incomplete_run(run: &LatestRunRow) -> bool {
+    matches!(
+        run.status.as_str(),
+        "interrupted" | "failed" | "cancelled" | "timed_out"
+    ) && matches!(
+        super::adapter_failure_classification::classify_adapter_failure(
+            run.error.as_deref(),
+            run.error_code.as_deref(),
+            run.result_json.as_ref(),
+            Utc::now(),
+        ),
+        Some(
+            super::adapter_failure_classification::AdapterFailureRecoveryClassification::ConfigurationIncomplete
+        )
+    )
+}
+
+fn latest_run_view(
+    latest_run: &LatestRunRow,
+) -> super::build_recovery_issue_in_place_escalation_comment::EscalationRunView {
+    super::build_recovery_issue_in_place_escalation_comment::EscalationRunView {
+        id: latest_run.id,
+        agent_id: latest_run.agent_id,
+        status: latest_run.status.clone(),
+        error: latest_run.error.clone(),
+        error_code: latest_run.error_code.clone(),
+        context_snapshot: latest_run.context_snapshot.clone(),
+    }
+}
+
 /// DB-only 等价：仅写 recovery action，不 dispatch wake。
 pub async fn persist_source_scoped_recovery_action_for_issue(
     db: &Db,
@@ -437,16 +515,14 @@ pub async fn persist_source_scoped_recovery_action_for_issue(
     let Some(issue) = IssueRepo::new(db).get(input.issue_id).await? else {
         return Ok(None);
     };
-    let Some(latest_run_row) = load_latest_run_row(db, issue.company_id, input.issue_id).await?
-    else {
-        return Ok(None);
-    };
+    let latest_run_row = load_latest_run_row(db, issue.company_id, input.issue_id).await?;
     let agents = AgentRepo::new(db).list_by_company(issue.company_id).await?;
     let routing = resolve_stranded_recovery_routing_db(
         &issue,
-        &latest_run_row,
+        latest_run_row.as_ref(),
         &agents,
         input.recovery_owner_agent_id,
+        input.recovery_cause_override,
     );
     let ctx = SchedulerContext {
         company_id: issue.company_id,
@@ -455,7 +531,10 @@ pub async fn persist_source_scoped_recovery_action_for_issue(
         successful_run_handoff_evidence: input.successful_run_handoff_evidence,
         workspace_validation_fingerprint_override: input.workspace_validation_fingerprint_override,
     };
-    let run_input = build_run_input(&latest_run_row);
+    let run_input = latest_run_row
+        .as_ref()
+        .map(build_run_input)
+        .unwrap_or_default();
     let now: DateTime<Utc> = Utc::now();
     let candidate = decide_recovery_scheduler_plan(&ctx, &run_input, &routing, now);
     let upsert = build_upsert_from_candidate(&ctx, &candidate, &issue.assignee_agent_id);
@@ -628,13 +707,21 @@ fn build_run_input<'a>(row: &'a LatestRunRow) -> SchedulerRunInput<'a> {
 
 fn resolve_stranded_recovery_routing_db(
     issue: &pc_repos::issue::IssueRow,
-    latest_run: &LatestRunRow,
+    latest_run: Option<&LatestRunRow>,
     agents: &[pc_repos::agent::AgentRow],
     preferred_owner_agent_id: Option<Uuid>,
+    recovery_cause_override: Option<StrandedRecoveryCause>,
 ) -> SchedulerRoutingHints {
-    let original_agent_id = latest_run.agent_id.or(issue.assignee_agent_id);
+    let original_agent_id = latest_run
+        .and_then(|run| run.agent_id)
+        .or(issue.assignee_agent_id)
+        .or(preferred_owner_agent_id);
     let return_owner_agent_id = issue.assignee_agent_id.or(original_agent_id);
-    let cause = decide_recovery_cause(&build_run_input(latest_run));
+    let cause = recovery_cause_override.unwrap_or_else(|| {
+        latest_run
+            .map(|run| decide_recovery_cause(&build_run_input(run)))
+            .unwrap_or(StrandedRecoveryCause::RuntimeFailure)
+    });
     let route_to_original = matches!(
         cause,
         StrandedRecoveryCause::ProcessLost

@@ -132,12 +132,7 @@ async fn failed_review_retry_uses_recovery_specific_comment() {
 
     cleanup(&db, company_id).await;
 }
-async fn insert_agent_with_status(
-    db: &Db,
-    company_id: Uuid,
-    agent_id: Uuid,
-    status: &str,
-) {
+async fn insert_agent_with_status(db: &Db, company_id: Uuid, agent_id: Uuid, status: &str) {
     sqlx::query(
         "INSERT INTO agents (id, company_id, name, role, adapter_type, status) \
          VALUES ($1, $2, 'reviewer', 'reviewer', 'process', $3)",
@@ -149,6 +144,8 @@ async fn insert_agent_with_status(
     .await
     .unwrap();
 }
+
+#[tokio::test]
 async fn inactive_review_participant_writes_unavailable_comment() {
     let db = connect().await;
     let company_id = Uuid::new_v4();
@@ -202,6 +199,118 @@ async fn inactive_review_participant_writes_unavailable_comment() {
     .unwrap();
     assert!(body.starts_with("Paperclip cannot continue the pending execution-review participant"));
     assert!(body.contains("participant is not invokable"));
+
+    cleanup(&db, company_id).await;
+}
+
+#[tokio::test]
+async fn configuration_incomplete_review_participant_writes_configuration_comment() {
+    let db = connect().await;
+    let company_id = Uuid::new_v4();
+    let participant_id = Uuid::new_v4();
+    let issue_id = Uuid::new_v4();
+    let run_id = Uuid::new_v4();
+    let prefix = format!("R{}", &company_id.simple().to_string()[..8]);
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
+        .bind(company_id)
+        .bind(format!("r352-{company_id}"))
+        .bind(prefix)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    insert_agent_with_status(&db, company_id, participant_id, "active").await;
+    sqlx::query(
+        "INSERT INTO issues \
+         (id, company_id, title, status, priority, origin_kind, origin_fingerprint, assignee_agent_id, execution_state) \
+         VALUES ($1, $2, 'review target', 'in_review', 'normal', 'system', $3, $4, $5)",
+    )
+    .bind(issue_id)
+    .bind(company_id)
+    .bind(format!("r352-{issue_id}"))
+    .bind(participant_id)
+    .bind(json!({
+        "status": "pending",
+        "currentStageId": "review-stage",
+        "currentStageType": "execution_review",
+        "currentParticipant": {"type": "agent", "agentId": participant_id}
+    }))
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs \
+         (id, company_id, agent_id, invocation_source, status, error, error_code, context_snapshot, started_at, created_at) \
+         VALUES ($1, $2, $3, 'manual', 'failed', 'missing API key', 'adapter_failed', $4, now(), now())",
+    )
+    .bind(run_id)
+    .bind(company_id)
+    .bind(participant_id)
+    .bind(json!({"issueId": issue_id.to_string()}))
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let result = reconcile_and_escalate_stranded_for_company(
+        &db,
+        company_id,
+        None,
+        wake_template(company_id, participant_id),
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.dispatched, 1);
+
+    let body: String = sqlx::query_scalar(
+        "SELECT body FROM issue_comments WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(issue_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(body.starts_with(
+        "Paperclip classified the active review participant's latest adapter failure as `configuration_incomplete`."
+    ));
+    let status: String = sqlx::query_scalar("SELECT status FROM issues WHERE id = $1")
+        .bind(issue_id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "blocked");
+    let cause: String = sqlx::query_scalar(
+        "SELECT cause FROM issue_recovery_actions WHERE source_issue_id = $1 AND status = 'active'",
+    )
+    .bind(issue_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(cause, "configuration_incomplete");
+    let wake_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM agent_wakeup_requests WHERE company_id = $1 AND payload->>'issueId' = $2",
+    )
+    .bind(company_id)
+    .bind(issue_id.to_string())
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(wake_count, 0);
+    let display: (serde_json::Value, serde_json::Value) = sqlx::query_as(
+        "SELECT presentation, metadata FROM issue_comments WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(issue_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        display.0["kind"],
+        serde_json::Value::String("system_notice".to_owned())
+    );
+    assert_eq!(
+        display.0["tone"],
+        serde_json::Value::String("warning".to_owned())
+    );
+    assert_eq!(display.1["version"], serde_json::Value::from(1));
+    assert_eq!(display.1["sections"][0]["title"], "Recovery");
 
     cleanup(&db, company_id).await;
 }

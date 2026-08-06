@@ -28,9 +28,15 @@ use crate::recovery::summarize_run_failure::{
 pub fn build_execution_review_participant_unavailable_comment(
     latest_run: &EscalationRunView,
 ) -> String {
+    build_execution_review_participant_unavailable_comment_optional(Some(latest_run))
+}
+
+pub fn build_execution_review_participant_unavailable_comment_optional(
+    latest_run: Option<&EscalationRunView>,
+) -> String {
     let failure_summary = summarize_run_failure_for_issue_comment(Some(&RunFailureView {
-        error: latest_run.error.as_deref(),
-        error_code: latest_run.error_code.as_deref(),
+        error: latest_run.and_then(|run| run.error.as_deref()),
+        error_code: latest_run.and_then(|run| run.error_code.as_deref()),
     }))
     .unwrap_or("");
 

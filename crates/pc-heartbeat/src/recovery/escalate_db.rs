@@ -13,10 +13,14 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use pc_repos::agent::NewAgentWakeupRequest;
+use pc_repos::agent::{AgentRepo, NewAgentWakeupRequest};
 use pc_repos::issue::{IssueRepo, IssueRow};
 use pc_repos::Db;
 
+use super::build_recovery_comment_display::{
+    build_compact_recovery_presentation, build_recovery_notice_metadata, recovery_cause_title,
+    RecoveryCommentDisplayInput,
+};
 use super::build_recovery_issue_in_place_escalation_comment::{
     build_recovery_issue_in_place_escalation_comment,
     BuildRecoveryIssueInPlaceEscalationCommentInput,
@@ -104,14 +108,32 @@ pub async fn escalate_stranded_assigned_issue_with_comment(
     };
     // 用专用判定函数确认是否值得调用 scheduler
     let needs_scheduler = should_attempt_source_escalation(&snapshot);
+    let review_participant_id = if issue.status == "in_review" {
+        current_review_participant_agent_id_for_escalation(&issue)
+    } else {
+        None
+    };
+    let review_participant_unavailable = comment.as_deref().is_some_and(|body| {
+        body.starts_with("Paperclip cannot continue the pending execution-review participant")
+    });
+    let recovery_cause_override = if review_participant_unavailable {
+        Some(StrandedRecoveryCause::ExecutionReviewParticipantRecovery)
+    } else {
+        input.recovery_cause_override
+    };
+    let recovery_owner_agent_id = if review_participant_unavailable {
+        review_participant_id.or(input.recovery_owner_agent_id)
+    } else {
+        input.recovery_owner_agent_id
+    };
     let scheduler_result = if needs_scheduler {
         ensure_source_scoped_recovery_action_for_issue(
             db,
             SchedulerDbInput {
                 issue_id: input.issue_id,
                 previous_status: Some(input.previous_status.clone()),
-                recovery_cause_override: input.recovery_cause_override,
-                recovery_owner_agent_id: input.recovery_owner_agent_id,
+                recovery_cause_override,
+                recovery_owner_agent_id,
                 successful_run_handoff_evidence: input.successful_run_handoff_evidence.clone(),
                 workspace_validation_fingerprint_override: input
                     .workspace_validation_fingerprint_override
@@ -160,7 +182,24 @@ pub async fn escalate_stranded_assigned_issue_with_comment(
         }
         EscalationDecision::SourceEscalate(plan) => {
             let plan = apply_comment_override(plan, comment.as_deref());
-            let (updated, comment_id) = apply_source_escalation(db, &issue, &plan).await?;
+            let latest_run = load_latest_heartbeat_run_for_issue(db, issue.id).await?;
+            let recovery_owner_name = if let Some(owner_id) = plan.owner_agent_id {
+                AgentRepo::new(db)
+                    .get(owner_id)
+                    .await?
+                    .filter(|agent| agent.company_id == issue.company_id)
+                    .map(|agent| agent.name)
+            } else {
+                None
+            };
+            let (updated, comment_id) = apply_source_escalation(
+                db,
+                &issue,
+                &plan,
+                latest_run.as_ref(),
+                recovery_owner_name.as_deref(),
+            )
+            .await?;
             Ok(Some(EscalateDbResult {
                 outcome: EscalateOutcome::SourceEscalated,
                 updated_issue: updated,
@@ -169,6 +208,21 @@ pub async fn escalate_stranded_assigned_issue_with_comment(
             }))
         }
     }
+}
+
+fn current_review_participant_agent_id_for_escalation(issue: &IssueRow) -> Option<Uuid> {
+    let state = issue.execution_state.as_ref()?.as_object()?;
+    if state.get("status").and_then(Value::as_str) != Some("pending") {
+        return None;
+    }
+    let participant = state.get("currentParticipant")?.as_object()?;
+    if participant.get("type").and_then(Value::as_str) != Some("agent") {
+        return None;
+    }
+    participant
+        .get("agentId")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
 }
 
 fn apply_comment_override(
@@ -266,6 +320,8 @@ async fn apply_source_escalation(
     db: &Db,
     issue: &IssueRow,
     plan: &SourceEscalationPlan,
+    latest_run: Option<&super::build_recovery_issue_in_place_escalation_comment::EscalationRunView>,
+    recovery_owner_name: Option<&str>,
 ) -> sqlx::Result<(IssueRow, Option<Uuid>)> {
     let repo = IssueRepo::new(db);
     let updated = repo
@@ -284,13 +340,29 @@ async fn apply_source_escalation(
         let dedup_hit =
             comment_already_references_marker(db, issue.id, &plan.comment_marker).await?;
         if !dedup_hit {
+            let presentation = build_compact_recovery_presentation(&format!(
+                "Recovery: {} — moved to blocked (owner: {})",
+                recovery_cause_title(plan.cause.as_str()),
+                recovery_owner_name.unwrap_or("board")
+            ));
+            let metadata = build_recovery_notice_metadata(&RecoveryCommentDisplayInput {
+                cause: plan.cause.as_str(),
+                latest_run_id: latest_run.map(|run| run.id),
+                latest_run_status: latest_run.map(|run| run.status.as_str()),
+                recovery_action_id: plan.recovery_action_id,
+                previous_status: &plan.previous_status,
+                recovery_owner_id: plan.owner_agent_id,
+                recovery_owner_name,
+            });
             let row = repo
-                .create_comment(
+                .create_comment_with_display(
                     plan.company_id,
                     issue.id,
                     None,
                     Some("system"),
                     &plan.comment_body,
+                    Some(&presentation),
+                    Some(&metadata),
                 )
                 .await?;
             comment_id = Some(row.id);

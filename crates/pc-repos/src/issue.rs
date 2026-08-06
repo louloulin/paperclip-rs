@@ -83,6 +83,8 @@ pub struct IssueCommentRow {
     pub author_agent_id: Option<Uuid>,
     pub author_user_id: Option<String>,
     pub body: String,
+    pub presentation: Option<Value>,
+    pub metadata: Option<Value>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -2076,7 +2078,7 @@ impl<'a> IssueRepo<'a> {
 
     pub async fn list_comments(&self, issue_id: Uuid) -> sqlx::Result<Vec<IssueCommentRow>> {
         sqlx::query_as::<_, IssueCommentRow>(
-            "SELECT id, company_id, issue_id, author_agent_id, author_user_id, body, created_at, updated_at \
+            "SELECT id, company_id, issue_id, author_agent_id, author_user_id, body, presentation, metadata, created_at, updated_at \
              FROM issue_comments WHERE issue_id = $1 ORDER BY created_at ASC",
         )
         .bind(issue_id)
@@ -2092,16 +2094,40 @@ impl<'a> IssueRepo<'a> {
         author_user_id: Option<&str>,
         body: &str,
     ) -> sqlx::Result<IssueCommentRow> {
+        self.create_comment_with_display(
+            company_id,
+            issue_id,
+            author_agent_id,
+            author_user_id,
+            body,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn create_comment_with_display(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        author_agent_id: Option<Uuid>,
+        author_user_id: Option<&str>,
+        body: &str,
+        presentation: Option<&Value>,
+        metadata: Option<&Value>,
+    ) -> sqlx::Result<IssueCommentRow> {
         sqlx::query_as::<_, IssueCommentRow>(
-            "INSERT INTO issue_comments (company_id, issue_id, author_agent_id, author_user_id, body) \
-             VALUES ($1,$2,$3,$4,$5) \
-             RETURNING id, company_id, issue_id, author_agent_id, author_user_id, body, created_at, updated_at",
+            "INSERT INTO issue_comments (company_id, issue_id, author_agent_id, author_user_id, body, presentation, metadata) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7) \
+             RETURNING id, company_id, issue_id, author_agent_id, author_user_id, body, presentation, metadata, created_at, updated_at",
         )
         .bind(company_id)
         .bind(issue_id)
         .bind(author_agent_id)
         .bind(author_user_id)
         .bind(body)
+        .bind(presentation)
+        .bind(metadata)
         .fetch_one(self.db.pool())
         .await
     }
@@ -2115,7 +2141,7 @@ impl<'a> IssueRepo<'a> {
         sqlx::query_as::<_, IssueCommentRow>(
             "UPDATE issue_comments SET body = $3, updated_at = now() \
              WHERE id = $1 AND issue_id = $2 \
-             RETURNING id, company_id, issue_id, author_agent_id, author_user_id, body, created_at, updated_at",
+             RETURNING id, company_id, issue_id, author_agent_id, author_user_id, body, presentation, metadata, created_at, updated_at",
         )
         .bind(comment_id)
         .bind(issue_id)

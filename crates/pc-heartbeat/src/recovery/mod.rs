@@ -71,7 +71,10 @@ pub mod build_recovery_issue_in_place_escalation_comment;
 
 pub mod build_execution_review_participant_recovery_comment;
 
+pub mod build_configuration_incomplete_comment;
+
 pub mod build_execution_review_participant_unavailable_comment;
+pub mod build_recovery_comment_display;
 
 pub mod build_liveness_escalation_description;
 pub mod build_liveness_original_issue_comment;

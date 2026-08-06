@@ -984,3 +984,72 @@ Node `reconcileStrandedAssignedIssues` 主循环中，execution-review participa
 1. `participantLatestRun` 不可用分支（unavailable）以及 `configuration_incomplete`、已 `didAutomaticRecoveryFail` 但 run 非终止状态的分支暂未单独走 sweep 短路。
 2. Node 的 review sweeper 中 `providerQuota` / `classificationIncomplete` 路径与 `enqueueStrandedIssueRecovery` 的 fallback 优先级尚未一一映射。
 3. activity log、comment metadata/presentation 仍待补齐。
+
+## Round 351b 增量（2026-08-07）：participant unavailable 真实接线
+
+### 实现
+
+- sweep 真实读取 execution-review `currentParticipant.agentId` 对应 agent，并通过统一的 invokable 状态判定识别 offline、缺失或跨公司的 participant。
+- unavailable 文案支持 `latestRun = null`，不再伪造 heartbeat run；无 run 时仍创建 `execution_review_participant_recovery` source-scoped action，并由 participant 作为 recovery owner。
+- scheduler 的 latest run 读取改为可选输入：有 run 时保留原始 evidence，没有 run 时使用空 `SchedulerRunInput`，允许 Node 的“无 live reviewer run + participant 不可调用”分支完成 blocked/escalation 闭环。
+- 保持 R350 通用 comment override、recovery marker、owner 与幂等逻辑不变。
+
+### 真实验证
+
+- `round351_review_sweep_comment_wiring` 2/2 通过：自动恢复失败文案、offline 且无 latest run 的 unavailable 文案均通过真实 PostgreSQL 写入验证。
+- `cargo test -p pc-heartbeat --tests -- --test-threads=1` 全部通过；`cargo fmt --all -- --check` 通过。
+
+## Round 352 增量（2026-08-07）：execution-review configuration_incomplete
+
+### Node 对照结论
+
+Node 在 participant latest run 为终止失败且 adapter failure 分类为 `configuration_incomplete` 时，优先记录配置修复要求并阻断 issue，不进入普通 participant retry、provider quota monitor 或重复 requeue 路径。
+
+### 实现
+
+- 新增纯函数 `build_configuration_incomplete_comment`，复用统一 failure summary，避免把敏感 adapter 错误全文直接写入 issue comment。
+- review sweep 复用已有 adapter failure classifier；命中配置不完整时跳过前置普通 scheduler dispatch，在 escalation 阶段传递 `ConfigurationIncomplete` cause 与 participant recovery owner。
+- recovery action 使用 `configuration_validation` kind / `manual_repair_required` wake policy，真实 comment 保留 recovery marker、owner 与 next action 结构。
+
+### 真实验证
+
+- 新增真实 PostgreSQL 场景：终止的 `adapter_failed` + `missing API key` participant run 写入配置特化 comment，issue 变为 `blocked`，action cause 为 `configuration_incomplete`，且 wake 数为 0。
+- `pc-server --bins` 编译通过；R352 专项测试通过，完整 heartbeat 回归在本轮继续执行。
+
+### 当前剩余差距
+
+1. provider quota 在 review participant 分支已具备 monitor 路径，但 notification/comment presentation 与 Node activity metadata 还未逐字段复刻。
+2. `didAutomaticRecoveryFail` 的非终止 run 边界、成功 handoff、continuation interaction 优先级仍需与 Node 主循环做更细粒度的状态矩阵对照。
+3. activity log actor、comment presentation/metadata、HTTP/API/UI 读写契约仍是 Recovery 之外的主要差距。
+
+## Round 353 增量（2026-08-07）：recovery comment presentation / metadata
+
+### Node 对照结论
+
+Node 的 `escalateStrandedAssignedIssue` 不只写 comment body，还会为 system recovery notice 写入：
+
+- compact `system_notice` presentation（warning tone、compact density、默认折叠详情）；
+- versioned recovery metadata，包含 action、cause、previous status、owner 和 latest run；
+- metadata 与 body marker 一起参与重复通知抑制。
+
+Node execution-review provider quota 分支本身是 monitor-only：命中 quota 时创建/更新 monitor，不立即 blocked，也不应额外写 escalation notice；因此本轮没有人为增加 quota comment。
+
+### R353 实现
+
+- 新增纯模块 `build_recovery_comment_display`，集中构建 presentation、metadata 与 cause title，DB 层不重复拼装 JSON 结构。
+- `IssueCommentRow` 增加 `presentation` / `metadata` 字段；保留原 `create_comment` API，并新增 `create_comment_with_display` 供 recovery notice 使用。
+- source escalation 唯一写库点统一写入 display 数据；旧 comment body、recovery marker、owner 和幂等行为保持不变。
+- HTTP 层复用 `IssueCommentRow` 序列化，因此 issue comments 查询可直接返回新增字段。
+
+### 真实验证
+
+- 在真实 PostgreSQL 的 `configuration_incomplete` review participant 场景中断言：comment body、issue blocked、action cause、无 wake、presentation kind/tone、metadata version/section 全部符合预期。
+- `cargo test -p pc-heartbeat --tests -- --test-threads=1`：491 个单元测试及全部集成测试通过。
+- `cargo check -p pc-server --bins`：通过。
+- `cargo fmt --all -- --check`：通过。
+
+### 下一轮重点
+
+1. 将同一 display contract 补到 recovery issue in-place comment，并覆盖无 latest run 的 metadata 形态。
+2. 对照 Node `noticeMetadataReferencesRecoveryAction`，让 metadata 引用也能作为 dedup marker，而不是只检查 body。
+3. 完成 provider quota monitor 的 retry-at / monitor state / wake backstop 双端状态矩阵。
