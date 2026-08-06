@@ -5552,3 +5552,42 @@ Node 端 watchdog PUT/DELETE 会做两类前置检查：`rejectTaskWatchdogConfi
 ### 总结
 
 R243 把 watchdog 路由接到 Rust 已有 task_watchdog_scope 模块，把 Node 的两类权限语义收敛到同一个 actor 解析入口。下一步推进 reconcile 完整实现或 watchdog 评估 worker 入口。
+
+## 82. 第二百四十四轮增量（Round 244 — watchdog reconcile 祖先链完整化）
+
+### 背景
+
+R243 已为 watchdog 路由接入守卫与单 issue hint。Node `queueTaskWatchdogEvaluation` 调用 `reconcileForIssueAndAncestors`，把触发传播给祖先链路上的所有 watchdog，避免父 issue 状态变更后只重算本地。
+
+### 实现内容
+
+- 新增 `IssueRepo::list_ancestor_issue_ids`：
+  - 使用 PostgreSQL `WITH RECURSIVE` CTE 沿 `parent_id` 上溯。
+  - 排除 hidden issue。
+  - 按 depth 升序返回。
+- 新增 `IssueRepo::reconcile_for_issue_and_ancestors`：
+  - 合并 issue + 所有祖先作为目标集合。
+  - 排序去重。
+  - 一次性 UPDATE 同一公司的 active watchdog hint。
+  - 返回受影响 issue id 列表。
+- watchdog upsert / remove 路由：
+  - 调用 `reconcile_for_issue_and_ancestors`。
+  - 移除 R243 单点 `enqueue_task_watchdog_evaluation`（已删除，避免语义分裂）。
+
+### 当前仍有差距
+
+- reconcile 仅触发表征 hint（`last_triggered_at`、`trigger_count`），尚未真正执行 watchdog 评估 worker。
+- 没有把 reconcile 受影响的祖先 issue 推到 realtime 或 activity log。
+- run_id 仅在 last 触发表中体现，未与 `heartbeat_run_watchdog_decisions` 联动。
+- PostgreSQL 连接受限于本地沙箱，递归 CTE 行为只能通过编译验证。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round244_tests` | 3 passed |
+| `cargo check -p pc-repos -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R244 把 watchdog reconcile 从“单 issue”扩展到“祖先链”，与 Node `reconcileForIssueAndAncestors` 行为一致。下一步可以接入真实的 worker 评估入口或 active-run agent fallback 装饰。

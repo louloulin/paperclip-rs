@@ -1314,7 +1314,7 @@ async fn upsert_watchdog(
         )
         .await?;
     let _ = IssueRepo::new(&state.db)
-        .enqueue_task_watchdog_evaluation(id, run_id)
+        .reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)
         .await;
     state.realtime.publish(
         LiveEvent::new(
@@ -1347,7 +1347,7 @@ async fn remove_watchdog(
     let row = IssueRepo::new(&state.db).disable_watchdog(id).await?;
     if let Some(ref w) = row {
         let _ = IssueRepo::new(&state.db)
-            .enqueue_task_watchdog_evaluation(id, run_id)
+            .reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)
             .await;
         state.realtime.publish(
             LiveEvent::new("issue.watchdog_removed", "issue_watchdog", w.id)
@@ -4948,10 +4948,38 @@ mod round243_tests {
     #[test]
     fn watchdog_routes_enqueue_evaluation_after_mutation() {
         let src = include_str!("issues.rs");
-        assert!(src.contains("enqueue_task_watchdog_evaluation"));
+        assert!(src.contains("reconcile_for_issue_and_ancestors"));
         let repo = include_str!("../../../pc-repos/src/issue.rs");
-        assert!(repo.contains("pub async fn enqueue_task_watchdog_evaluation("));
+        assert!(repo.contains("pub async fn reconcile_for_issue_and_ancestors("));
         assert!(repo.contains("trigger_count = trigger_count + 1"));
+    }
+}
+
+#[cfg(test)]
+mod round244_tests {
+    #[test]
+    fn list_ancestor_issue_ids_uses_recursive_cte() {
+        let repo = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(repo.contains("WITH RECURSIVE ancestors"));
+        assert!(repo.contains("depth > 0 ORDER BY depth ASC"));
+        assert!(repo.contains("pub async fn list_ancestor_issue_ids("));
+    }
+
+    #[test]
+    fn reconcile_for_issue_and_ancestors_targets_full_chain() {
+        let repo = include_str!("../../../pc-repos/src/issue.rs");
+        assert!(repo.contains("pub async fn reconcile_for_issue_and_ancestors("));
+        assert!(repo.contains("issue_id = ANY($1)"));
+        assert!(repo.contains("status = 'active'"));
+    }
+
+    #[test]
+    fn watchdog_routes_now_use_reconcile_helper() {
+        let src = include_str!("issues.rs");
+        // 两次生产调用：upsert 路由 + remove 路由；测试源码本身引用一次不算。
+        assert!(src.contains(".reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)"));
+        let production_call_sites = src.matches(".reconcile_for_issue_and_ancestors(issue.company_id, id, run_id)").count();
+        assert!(production_call_sites >= 2, "watchdog routes should call reconcile_for_issue_and_ancestors in both upsert and remove");
     }
 }
 

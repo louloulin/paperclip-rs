@@ -2234,27 +2234,58 @@ impl<'a> IssueRepo<'a> {
         }
     }
 
-    /// Round 243: best-effort 标记 active watchdog 待评估。
-    pub async fn enqueue_task_watchdog_evaluation(
+    /// Round 244: 递归上溯 issue 的祖先链 (parent_id)，按 depth 升序返回 (issue_id)。
+    pub async fn list_ancestor_issue_ids(
         &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "WITH RECURSIVE ancestors(id, depth) AS (\
+                 SELECT id, 0 FROM issues WHERE company_id = $1 AND id = $2 \
+                 UNION ALL \
+                 SELECT parent.id, ancestors.depth + 1 \
+                 FROM issues parent JOIN ancestors ON parent.id = (\
+                     SELECT parent_id FROM issues WHERE id = ancestors.id\
+                 ) WHERE parent.company_id = $1 AND parent.hidden_at IS NULL\
+             ) SELECT id FROM ancestors WHERE depth > 0 ORDER BY depth ASC",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Round 244: 对齐 Node `taskWatchdogsSvc.reconcileForIssueAndAncestors`。
+    /// 触发 issue 自身 + 所有祖先的 watchdog hint，并返回受影响 id 列表。
+    pub async fn reconcile_for_issue_and_ancestors(
+        &self,
+        company_id: Uuid,
         issue_id: Uuid,
         run_id: Option<Uuid>,
-    ) -> sqlx::Result<u64> {
+    ) -> sqlx::Result<Vec<Uuid>> {
+        let mut targets = vec![issue_id];
+        targets.extend(self.list_ancestor_issue_ids(company_id, issue_id).await?);
+        targets.sort();
+        targets.dedup();
         let n = sqlx::query(
             "UPDATE issue_watchdogs \
              SET last_triggered_at = now(), \
                  trigger_count = trigger_count + 1, \
                  updated_by_run_id = COALESCE($2, updated_by_run_id), \
                  updated_at = now() \
-             WHERE issue_id = $1 AND status = 'active'",
+             WHERE issue_id = ANY($1) AND status = 'active'",
         )
-        .bind(issue_id)
+        .bind(&targets)
         .bind(run_id)
         .execute(self.db.pool())
         .await?
         .rows_affected();
-        Ok(n)
+        if n == 0 { return Ok(Vec::new()); }
+        Ok(targets)
     }
+
 
     pub async fn disable_watchdog(&self, issue_id: Uuid) -> sqlx::Result<Option<IssueWatchdogRow>> {
         sqlx::query_as::<_, IssueWatchdogRow>(
