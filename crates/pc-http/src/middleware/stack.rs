@@ -11,10 +11,9 @@ use super::{
 /// 给定 router 套上默认 middleware 栈（与原 server middleware stack 等价）。
 ///
 /// 顺序：request_id -> access_log -> body_limit -> cors -> handler
-pub fn apply_default_middleware<S>(router: Router<S>) -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
+/// auth_layer 不在此 stack 内：调用方需 Router<AppState> 后单独用
+/// `axum::middleware::from_fn_with_state(state, auth_layer)` 注入。
+pub fn apply_default_middleware(router: Router<AppState>) -> Router<AppState> {
     router
         .layer(from_fn(request_id_layer))
         .layer(from_fn(access_log_layer))

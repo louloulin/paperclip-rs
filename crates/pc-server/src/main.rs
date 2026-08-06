@@ -382,6 +382,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let api_router = pc_http::middleware::apply_default_middleware(pc_http::routes::router())
+        // auth_layer: 必须用 route_layer 而不是 layer，因为 router 尚未带 state
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            pc_http::middleware::auth::auth_layer,
+        ))
         .with_state(state.clone());
     // Look for a UI dist bundle to serve alongside the API.
     let ui_dist_path: Option<std::path::PathBuf> = std::env::var("UI_DIR")

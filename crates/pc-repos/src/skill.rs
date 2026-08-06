@@ -1049,6 +1049,24 @@ impl<'a> SkillRepo<'a> {
             .await?)
     }
 
+    /// 查找仍然有效的 harness run，并限定在同一公司与 issue 下。
+    pub async fn active_test_run_for_issue(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> RepoResult<Option<CompanySkillTestRunRow>> {
+        let sql = format!(
+            "SELECT {TEST_RUN_COLS} FROM company_skill_test_runs \
+             WHERE company_id=$1 AND issue_id=$2 AND deleted_at IS NULL \
+               AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+        );
+        Ok(sqlx::query_as::<_, CompanySkillTestRunRow>(&sql)
+            .bind(company_id)
+            .bind(issue_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
     pub async fn update_test_run_status(
         &self,
         id: Uuid,
@@ -1241,6 +1259,75 @@ impl<'a> SkillRepo<'a> {
         .await?;
         tx.commit().await?;
         Ok((id, next_rev))
+    }
+
+    /// Round 261: 与 Node 版 `ensureRunSkillVersion` 对齐 ——
+    /// 当 caller 没有指定 skill_version_id 时自动快照当前 file_inventory。
+    /// - file_inventory 为空 → 返回错误（与 Node 版 `Cannot run a skill test for a skill with zero files` 一致）
+    /// - 当前 version 不存在，或 file_inventory 与当前 version 不一致 → 创建新 version
+    /// - 否则返回当前 version
+    pub async fn ensure_run_skill_version(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        label: Option<&str>,
+        author_agent_id: Option<Uuid>,
+        author_user_id: Option<&str>,
+    ) -> RepoResult<(Uuid, i32)> {
+        let skill = self
+            .get(company_id, skill_id)
+            .await?
+            .ok_or_else(|| RepoError::NotFound {
+                entity: "company_skill".into(),
+                id: skill_id.to_string(),
+            })?;
+        let inventory = skill.file_inventory.clone();
+        let snapshot: Value = match &inventory {
+            Value::Array(arr) => Value::Array(arr.clone()),
+            Value::Null => Value::Array(Vec::new()),
+            _ => inventory,
+        };
+        let is_empty = match &snapshot {
+            Value::Array(arr) => arr.is_empty(),
+            _ => true,
+        };
+        if is_empty {
+            return Err(RepoError::Invalid(
+                "Cannot run a skill test for a skill with zero files".into(),
+            ));
+        }
+        // 查找 current version
+        let current_version_row: Option<(Uuid, Value)> = if let Some(vid) = skill.current_version_id {
+            sqlx::query_as(
+                "SELECT id, file_inventory FROM company_skill_versions \
+                 WHERE company_id=$1 AND id=$2",
+            )
+            .bind(company_id)
+            .bind(vid)
+            .fetch_optional(self.db.pool())
+            .await?
+        } else {
+            None
+        };
+        // 若 current version 的 file_inventory 与当前 snapshot 一致，直接复用
+        if let Some((vid, prev_inv)) = current_version_row {
+            if version_inventory_snapshot_equal_inner(&prev_inv, &snapshot) {
+                let revision: i32 = sqlx::query_scalar(
+                    "SELECT revision_number FROM company_skill_versions \
+                     WHERE company_id=$1 AND id=$2",
+                )
+                .bind(company_id)
+                .bind(vid)
+                .fetch_one(self.db.pool())
+                .await?;
+                return Ok((vid, revision));
+            }
+        }
+        // 否则创建新 version 并更新 current
+        self.create_version_and_update_current(
+            company_id, skill_id, label, &snapshot, author_agent_id, author_user_id,
+        )
+        .await
     }
 
     /// 取一条 version。
@@ -1617,9 +1704,30 @@ impl<'a> SkillRepo<'a> {
         skill_version_id: Uuid,
         agent_id: Uuid,
         issue_id: Uuid,
+        agent_config_snapshot: &Value,
+        template_id: Option<&str>,
+        template_name: Option<&str>,
+        template_body: Option<&str>,
+        rendered_template_body: Option<&str>,
+        harness_issue_description: &str,
     ) -> RepoResult<()> {
+        let mut tx = self.db.pool().begin().await?;
         sqlx::query(
-            "INSERT INTO company_skill_test_runs                 (id, company_id, skill_id, input_id, input_snapshot, skill_version_id, agent_id,                  agent_config_snapshot, issue_id, status)              VALUES ($1,$2,$3,$4,$5,$6,$7,'{}'::jsonb,$8,'queued')",
+            "UPDATE company_skill_test_runs SET superseded_at=now(), \
+             status=CASE WHEN status IN ('queued','running') THEN 'cancelled' ELSE status END, \
+             error=CASE WHEN status IN ('queued','running') THEN COALESCE(error,'Superseded by newer run') ELSE error END, \
+             harness_issue_expires_at=now()+interval '7 days', updated_at=now() \
+             WHERE company_id=$1 AND skill_id=$2 \
+               AND (($3::uuid IS NULL AND input_id IS NULL) OR input_id=$3) \
+               AND superseded_at IS NULL AND deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .bind(skill_id)
+        .bind(input_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO company_skill_test_runs                 (id, company_id, skill_id, input_id, input_snapshot, skill_version_id, agent_id,                  agent_config_snapshot, issue_id, status, template_id, template_name,                  template_body, rendered_template_body, harness_issue_description)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11,$12,$13,$14)",
         )
         .bind(run_id)
         .bind(company_id)
@@ -1629,9 +1737,32 @@ impl<'a> SkillRepo<'a> {
         .bind(skill_version_id)
         .bind(agent_id)
         .bind(issue_id)
-        .execute(self.db.pool())
+        .bind(agent_config_snapshot)
+        .bind(template_id)
+        .bind(template_name)
+        .bind(template_body)
+        .bind(rendered_template_body)
+        .bind(harness_issue_description)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
+    }
+
+    pub async fn get_test_run_template(
+        &self,
+        company_id: Uuid,
+        template_id: &str,
+    ) -> RepoResult<Option<CompanySkillTestRunTemplateRow>> {
+        let sql = format!(
+            "SELECT {TEST_TEMPLATE_COLS} FROM company_skill_test_run_templates \
+             WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
+        );
+        Ok(sqlx::query_as::<_, CompanySkillTestRunTemplateRow>(&sql)
+            .bind(company_id)
+            .bind(template_id)
+            .fetch_optional(self.db.pool())
+            .await?)
     }
 
     /// 取一条 test run（按 company_id+skill_id+id 定位）。
@@ -1653,23 +1784,125 @@ impl<'a> SkillRepo<'a> {
         Ok(row)
     }
 
+    pub async fn get_test_run_detail_row(
+        &self,
+        company_id: Uuid,
+        skill_id: Uuid,
+        run_id: Uuid,
+    ) -> RepoResult<Option<CompanySkillTestRunRow>> {
+        let sql = format!(
+            "SELECT {TEST_RUN_COLS} FROM company_skill_test_runs \
+             WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND deleted_at IS NULL",
+        );
+        Ok(sqlx::query_as::<_, CompanySkillTestRunRow>(&sql)
+            .bind(company_id)
+            .bind(skill_id)
+            .bind(run_id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
     /// 取消 test run（仅 queued/running 可取消）。
+    /// 取消 test run（仅 queued/running 可取消）。
+    /// 返回更新后的状态与关联 issue_id，供路由层同步清理 harness issue / heartbeat run。
     pub async fn cancel_test_run(
         &self,
         company_id: Uuid,
         skill_id: Uuid,
         run_id: Uuid,
-    ) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE company_skill_test_runs SET status='cancelled', updated_at=now()              WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND status IN ('queued','running')",
+    ) -> RepoResult<Option<(Uuid, String)>> {
+        let row: Option<(Uuid, String)> = sqlx::query_as(
+            "UPDATE company_skill_test_runs SET status='cancelled', updated_at=now() \
+             WHERE company_id=$1 AND skill_id=$2 AND id=$3 AND status IN ('queued','running') \
+             RETURNING issue_id, status",
         )
         .bind(company_id)
         .bind(skill_id)
         .bind(run_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
-        Ok(n > 0)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// 与 Node 版 pruneExpiredTestHarnessIssues 对齐：
+    /// 扫描 `harness_issue_expires_at < now()` 且 `harness_issue_deleted_at IS NULL` 的 run，
+    /// 隐藏对应 issue 并标记 harness_issue_deleted_at。返回处理的 run 数。
+    pub async fn prune_expired_test_harness_issues(
+        &self,
+        company_id: Uuid,
+    ) -> RepoResult<u64> {
+        // 先查询所有过期但未删除的 (run_id, issue_id)
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT id, issue_id FROM company_skill_test_runs \
+             WHERE company_id=$1 AND harness_issue_expires_at < now() \
+               AND harness_issue_deleted_at IS NULL",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let mut count = 0u64;
+        for (run_id, issue_id) in rows {
+            let mut tx = self.db.pool().begin().await?;
+            sqlx::query(
+                "UPDATE issues SET hidden_at=now(), updated_at=now() \
+                 WHERE id=$1 AND company_id=$2 AND hidden_at IS NULL",
+            )
+            .bind(issue_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "UPDATE company_skill_test_runs SET harness_issue_deleted_at=now(), updated_at=now() \
+                 WHERE id=$1 AND company_id=$2",
+            )
+            .bind(run_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// 全公司批量执行 retention sweeper（用于后台任务/单次扫描所有公司）。
+    pub async fn prune_all_expired_test_harness_issues(&self) -> RepoResult<u64> {
+        // 直接扫描所有过期记录，按 run 维度展开
+        let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(
+            "SELECT id, company_id, issue_id FROM company_skill_test_runs \
+             WHERE harness_issue_expires_at < now() AND harness_issue_deleted_at IS NULL",
+        )
+        .fetch_all(self.db.pool())
+        .await?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let mut count = 0u64;
+        for (run_id, company_id, issue_id) in rows {
+            let mut tx = self.db.pool().begin().await?;
+            sqlx::query(
+                "UPDATE issues SET hidden_at=now(), updated_at=now() \
+                 WHERE id=$1 AND company_id=$2 AND hidden_at IS NULL",
+            )
+            .bind(issue_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "UPDATE company_skill_test_runs SET harness_issue_deleted_at=now(), updated_at=now() \
+                 WHERE id=$1 AND company_id=$2",
+            )
+            .bind(run_id)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     /// 硬删 test run。
@@ -1855,4 +2088,61 @@ mod tests {
         assert!(!second);
     }
 
+}
+
+
+/// 内部比较函数：按 path 排序后逐元素比对。
+fn version_inventory_snapshot_equal_inner(a: &Value, b: &Value) -> bool {
+    let normalize = |v: &Value| -> Vec<(String, String, String)> {
+        match v.as_array() {
+            Some(arr) => {
+                let mut entries: Vec<(String, String, String)> = arr
+                    .iter()
+                    .map(|item| {
+                        let path = item.get("path").and_then(Value::as_str).unwrap_or("").to_string();
+                        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("file").to_string();
+                        let content = item.get("content").and_then(Value::as_str).unwrap_or("").to_string();
+                        (path, kind, content)
+                    })
+                    .collect();
+                entries.sort();
+                entries
+            }
+            None => Vec::new(),
+        }
+    };
+    normalize(a) == normalize(b)
+}
+
+#[cfg(test)]
+mod ensure_version_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn snapshot_equal_handles_unordered_arrays() {
+        let a = json!([
+            {"path": "a.md", "kind": "file", "content": "hello"},
+            {"path": "b.md", "kind": "file", "content": "world"},
+        ]);
+        let b = json!([
+            {"path": "b.md", "kind": "file", "content": "world"},
+            {"path": "a.md", "kind": "file", "content": "hello"},
+        ]);
+        assert!(version_inventory_snapshot_equal_inner(&a, &b));
+    }
+
+    #[test]
+    fn snapshot_equal_detects_content_diff() {
+        let a = json!([{"path": "a.md", "kind": "file", "content": "v1"}]);
+        let b = json!([{"path": "a.md", "kind": "file", "content": "v2"}]);
+        assert!(!version_inventory_snapshot_equal_inner(&a, &b));
+    }
+
+    #[test]
+    fn snapshot_equal_handles_null_or_missing() {
+        let a = json!(null);
+        let b = json!([]);
+        assert!(version_inventory_snapshot_equal_inner(&a, &b));
+    }
 }

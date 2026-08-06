@@ -76,6 +76,7 @@ pub mod redact;
 pub mod routine;
 pub mod secret;
 pub mod session_workspace_cwd;
+pub mod workspace_runtime_read_model;
 pub mod settings;
 pub mod sidebar;
 pub mod sidebar_badges;

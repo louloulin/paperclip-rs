@@ -373,6 +373,10 @@ async fn install_company_skill(
     headers: HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> ApiResult<impl IntoResponse> {
+    evaluate_skill_policy(
+        &state, company_id, None,
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsCreate,
+    ).await?;
     let key = body
         .key
         .clone()
@@ -447,6 +451,10 @@ async fn remove_company_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     SkillRepo::new(&state.db)
         .soft_delete(company_id, skill_id)
         .await?;
@@ -480,6 +488,10 @@ async fn put_skill_config(
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<ConfigBody>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     let value = body
         .config
         .clone()
@@ -505,6 +517,36 @@ fn map_skill_repo_error(e: pc_repos::RepoError) -> ApiError {
         pc_repos::RepoError::Invalid(msg) => ApiError::BadRequest(msg),
         other => ApiError::Internal(other.to_string()),
     }
+}
+
+/// 与 Node 版 `assertCanMutateCompanySkills` 等价：调用方对 company_id 必须有权限执行 action。
+/// 默认 allow（policy 缺失），deny 仅在策略显式拒绝时触发。
+async fn evaluate_skill_policy(
+    state: &AppState,
+    company_id: Uuid,
+    skill_id: Option<Uuid>,
+    action: pc_repos::company_skill_policy::SkillPolicyAction,
+) -> ApiResult<()> {
+    let resource = pc_repos::company_skill_policy::PolicyResource { skill_id };
+    let decision = pc_repos::company_skill_policy::CompanySkillPolicyRepo::new(&state.db)
+        .evaluate(
+            company_id,
+            &pc_repos::company_skill_policy::PolicyPrincipal::from_actor(
+                "system",
+                None,
+                Vec::new(),
+            ),
+            action,
+            &resource,
+        )
+        .await?;
+    if !decision.allowed {
+        return Err(ApiError::Forbidden(format!(
+            "skill action {} denied by company policy (rule: {:?}, reason: {})",
+            action.as_str(), decision.rule_id, decision.reason
+        )));
+    }
+    Ok(())
 }
 
 async fn skill_preview(
@@ -771,6 +813,10 @@ async fn skill_update_status(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     let (current, source, ts, cnt) = SkillRepo::new(&state.db)
         .update_status(company_id, skill_id)
         .await
@@ -805,6 +851,10 @@ async fn install_skill_update(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     SkillRepo::new(&state.db)
         .increment_install_count_for_company(company_id, skill_id)
         .await?;
@@ -816,6 +866,10 @@ async fn fork_skill(
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     let new_id: Uuid = Uuid::new_v4();
     let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("Forked Skill");
     SkillRepo::new(&state.db)
@@ -834,6 +888,10 @@ async fn reset_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     SkillRepo::new(&state.db)
         .reset_skill_counters(company_id, skill_id)
         .await?;
@@ -850,6 +908,10 @@ async fn rename_skill(
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RenameBody>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsEdit,
+    ).await?;
     let n = body.name.trim();
     if n.is_empty() || n.len() > 200 {
         return Err(ApiError::BadRequest("name length 1..=200".into()));
@@ -1076,32 +1138,214 @@ struct CreateTestRunBody {
 async fn create_test_run(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
+    actor: pc_auth::AuthContext,
     Json(body): Json<CreateTestRunBody>,
 ) -> ApiResult<Json<Value>> {
-    let version_id = body.skill_version_id.ok_or_else(||
-        ApiError::BadRequest("skill_version_id required".into()))?;
+    // 读取 actor 上下文（用于审计 actor 字段）
+    let actor_for_audit = actor.clone();
+    // Skill Policy 检查：调用方必须拥有 skills.test 权限（默认 allow；deny 仅在策略显式拒绝时触发）。
+    evaluate_skill_policy(
+        &state,
+        company_id,
+        Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsTest,
+    ).await?;
     let agent_id = body.agent_id.ok_or_else(||
         ApiError::BadRequest("agent_id required".into()))?;
+    SkillRepo::new(&state.db)
+        .get(company_id, skill_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {skill_id}")))?;
+    let agent = pc_repos::agent::AgentRepo::new(&state.db)
+        .get(agent_id)
+        .await?
+        .filter(|agent| agent.company_id == company_id)
+        .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    if agent.status == "paused" {
+        return Err(ApiError::Unprocessable("paused agents cannot run skill tests".into()));
+    }
+    // 与 Node 版 ensureRunSkillVersion 对齐：若 caller 未传 skill_version_id，
+    // 比较当前 file_inventory 与 current version；若不一致则自动快照新版本。
+    let version_id = match body.skill_version_id {
+        Some(vid) => {
+            SkillRepo::new(&state.db)
+                .get_version(company_id, skill_id, vid)
+                .await?
+                .ok_or_else(|| ApiError::NotFound(format!("skill version {vid}")))?;
+            vid
+        }
+        None => {
+            let (new_vid, _rev) = SkillRepo::new(&state.db)
+                .ensure_run_skill_version(
+                    company_id, skill_id,
+                    Some("Auto version for test run"),
+                    Some(agent_id), None,
+                )
+                .await
+                .map_err(|err| match err {
+                    pc_repos::RepoError::Invalid(msg) => ApiError::Unprocessable(msg),
+                    pc_repos::RepoError::NotFound { entity, id } => ApiError::NotFound(format!("{entity} {id}")),
+                    other => ApiError::from(other),
+                })?;
+            new_vid
+        }
+    };
     let snapshot: String = if let Some(iid) = body.input_id {
         SkillRepo::new(&state.db)
             .get_test_input_content(company_id, skill_id, iid)
             .await?
-            .unwrap_or_default()
+            .ok_or_else(|| ApiError::NotFound(format!("test input {iid}")))?
     } else { String::new() };
+    if snapshot.trim().is_empty() {
+        return Err(ApiError::Unprocessable("test input content cannot be empty".into()));
+    }
     let issue_id: Uuid = Uuid::new_v4();
     pc_repos::issue::IssueRepo::new(&state.db)
         .create_harness_issue(company_id, issue_id)
         .await?;
     let run_id: Uuid = Uuid::new_v4();
-    SkillRepo::new(&state.db)
+    let adapter_config = agent.adapter_config.clone();
+    let runtime_config = agent.runtime_config.clone();
+    let model = adapter_config
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            runtime_config
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let assigned_skills = adapter_config
+        .get("paperclipSkillSync")
+        .cloned()
+        .filter(|value| value.is_object());
+    let instructions_ref = adapter_config
+        .get("instructionsFilePath")
+        .and_then(Value::as_str)
+        .or_else(|| adapter_config.get("instructionsPath").and_then(Value::as_str))
+        .or_else(|| adapter_config.get("instructionsRef").and_then(Value::as_str))
+        .map(str::to_owned);
+    let agent_config_snapshot = json!({
+        "agentId": agent.id,
+        "name": agent.name,
+        "role": agent.role,
+        "adapterType": agent.adapter_type,
+        "model": model,
+        "adapterConfig": adapter_config,
+        "runtimeConfig": runtime_config,
+        "assignedSkills": assigned_skills,
+        "instructionsRef": instructions_ref,
+    });
+    let skill = SkillRepo::new(&state.db)
+        .get(company_id, skill_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {skill_id}")))?;
+    let template_snapshot = match body.template_id.as_deref() {
+        Some(template_id) if !template_id.is_empty() => Some(
+            SkillRepo::new(&state.db)
+                .get_test_run_template(company_id, template_id)
+                .await?
+                .ok_or_else(|| ApiError::NotFound(format!("test run template {template_id}")))?,
+        ),
+        _ => None,
+    };
+    let template_id_value: Option<String> = template_snapshot
+        .as_ref()
+        .map(|t| t.id.to_string());
+    let template_name_value = template_snapshot
+        .as_ref()
+        .map(|t| t.name.clone());
+    let template_body_value = template_snapshot
+        .as_ref()
+        .map(|t| t.body.clone());
+    let revision_number = SkillRepo::new(&state.db)
+        .get_version(company_id, skill_id, version_id)
+        .await?
+        .map(|v| v.3)
+        .unwrap_or(0);
+    let rendered_template_body = template_body_value
+        .as_deref()
+        .map(|body| {
+            let mut rendered = body.to_owned();
+            for (key, value) in [
+                ("skillName", skill.name.clone()),
+                ("skillKey", skill.key.clone()),
+                ("skillInvocation", skill.key.clone()),
+                ("skillVersion", revision_number.to_string()),
+                ("runId", run_id.to_string()),
+                ("issueId", issue_id.to_string()),
+                ("outputDocumentKey", "output".to_owned()),
+            ] {
+                rendered = rendered.replace(&format!("{{{{{key}}}}}"), &value);
+            }
+            rendered
+        });
+    let harness_issue_description = rendered_template_body
+        .clone()
+        .unwrap_or_else(|| snapshot.clone());
+    // 整个 INSERT 阶段若失败，回滚已创建的 harness issue（避免孤立 issue 累积）。
+    let insert_result = SkillRepo::new(&state.db)
         .create_test_run(
             run_id, company_id, skill_id, body.input_id,
             &snapshot, version_id, agent_id, issue_id,
+            &agent_config_snapshot,
+            template_id_value.as_deref(),
+            template_name_value.as_deref(),
+            template_body_value.as_deref(),
+            rendered_template_body.as_deref(),
+            &harness_issue_description,
         )
-        .await?;
+        .await;
+    if let Err(err) = insert_result {
+        // 清理已创建的 harness issue（隐藏 + status=cancelled），与 Node 版 cleanupCreatedHarnessIssue 对齐
+        let _ = pc_repos::issue::IssueRepo::new(&state.db)
+            .hide_issue_as_skill_test_cleanup(issue_id)
+            .await;
+        return Err(err.into());
+    }
+    // activity audit: skill_test_run_created（与 Node 版 logActivity 对齐）
+    let audit_actor = pc_repos::activity::NewActivity {
+        company_id,
+        actor_type: match &actor_for_audit.actor {
+            pc_auth::Actor::User { .. } => pc_repos::activity::ActorType::User,
+            pc_auth::Actor::Agent { .. } => pc_repos::activity::ActorType::Agent,
+            pc_auth::Actor::System => pc_repos::activity::ActorType::System,
+            pc_auth::Actor::Anonymous => pc_repos::activity::ActorType::System,
+        },
+        actor_id: match &actor_for_audit.actor {
+            pc_auth::Actor::User { id, .. } => id.clone(),
+            pc_auth::Actor::Agent { id, .. } => id.to_string(),
+            pc_auth::Actor::System => "system".into(),
+            pc_auth::Actor::Anonymous => "anonymous".into(),
+        },
+        action: "company.skill_test_run_created".into(),
+        entity_type: "company_skill_test_run".into(),
+        entity_id: run_id.to_string(),
+        agent_id: Some(agent_id),
+        run_id: Some(run_id),
+        responsible_user_id: match &actor_for_audit.actor {
+            pc_auth::Actor::User { id, .. } => Some(id.clone()),
+            _ => None,
+        },
+        details: Some(json!({
+            "skillId": skill_id,
+            "inputId": body.input_id,
+            "skillVersionId": version_id,
+            "agentId": agent_id,
+            "issueId": issue_id,
+            "templateId": template_id_value,
+        })),
+    };
+    let _ = pc_repos::activity::ActivityRepo::new(&state.db)
+        .record(&audit_actor)
+        .await;
     Ok(Json(json!({
         "runId": run_id, "issueId": issue_id, "status": "queued",
         "companyId": company_id, "skillId": skill_id,
+        "skillVersionId": version_id,
+        "agentId": agent_id,
+        "templateId": template_id_value,
     })))
 }
 
@@ -1110,15 +1354,182 @@ async fn get_test_run(
     Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
     let row = SkillRepo::new(&state.db)
-        .get_test_run(company_id, skill_id, run_id)
+        .get_test_run_detail_row(company_id, skill_id, run_id)
         .await?;
-    let (id, st, inp, agent, iss, tmpl, inp_snap, out_snap, err, ts, uts) = row
+    let row = row
         .ok_or_else(|| ApiError::NotFound(format!("test run {run_id}")))?;
+    let id = row.id;
+    let st = row.status.clone();
+    let inp = row.input_id;
+    let agent = Some(row.agent_id);
+    let iss = row.issue_id;
+    let tmpl = row.template_id.clone();
+    let inp_snap = row.input_snapshot.clone();
+    let out_snap = row.output_snapshot.clone();
+    let err = row.error.clone();
+    let ts = row.created_at;
+    let uts = row.updated_at;
+    let harness_issue_expires_at = row.harness_issue_expires_at;
+    let harness_issue_deleted_at = row.harness_issue_deleted_at;
+    let issue = pc_repos::issue::IssueRepo::new(&state.db)
+        .get(iss)
+        .await?;
+    let documents = if issue.is_some() {
+        pc_repos::document::DocumentRepo::new(&state.db)
+            .list_issue_documents_with_keys(company_id, iss)
+            .await?
+            .into_iter()
+            .map(|document| json!({
+                "key": document.key,
+                "id": document.id,
+                "title": document.title,
+                "format": document.format,
+                "body": document.latest_body,
+                "updatedAt": document.updated_at,
+            }))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let attachments = if issue.is_some() {
+        pc_repos::issue::IssueRepo::new(&state.db)
+            .list_issue_attachments_with_assets(company_id, iss)
+            .await?
+            .into_iter()
+            .map(|attachment| json!({
+                "id": attachment.attachment_id,
+                "companyId": attachment.company_id,
+                "issueId": attachment.issue_id,
+                "issueCommentId": attachment.issue_comment_id,
+                "assetId": attachment.asset_id,
+                "provider": attachment.provider,
+                "objectKey": attachment.object_key,
+                "contentType": attachment.content_type,
+                "byteSize": attachment.byte_size,
+                "sha256": attachment.sha256,
+                "originalFilename": attachment.original_filename,
+                "createdByAgentId": attachment.created_by_agent_id,
+                "createdByUserId": attachment.created_by_user_id,
+                "createdAt": attachment.attachment_created_at,
+                "updatedAt": attachment.attachment_updated_at,
+                "contentPath": format!("/api/attachments/{}/content", attachment.attachment_id),
+                "openPath": format!("/api/attachments/{}/content", attachment.attachment_id),
+                "downloadPath": format!("/api/attachments/{}/content?download=1", attachment.attachment_id),
+            }))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let work_products = if issue.is_some() {
+        pc_repos::issue::IssueRepo::new(&state.db)
+            .list_work_products(iss)
+            .await?
+            .into_iter()
+            .map(|product| serde_json::to_value(product).unwrap_or_default())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let interactions = if issue.is_some() {
+        pc_repos::issue::IssueRepo::new(&state.db)
+            .list_interactions_for_company(company_id, iss)
+            .await?
+            .into_iter()
+            .map(|interaction| json!({
+                "id": interaction.id,
+                "kind": interaction.kind,
+                "status": interaction.status,
+                "title": interaction.title.unwrap_or_else(|| interaction.kind.clone()),
+                "createdAt": interaction.created_at,
+                "updatedAt": interaction.updated_at,
+            }))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let skill_version = SkillRepo::new(&state.db)
+        .get_version(company_id, skill_id, row.skill_version_id)
+        .await?
+        .map(|version| json!({
+            "id": version.0,
+            "companyId": version.1,
+            "skillId": version.2,
+            "revisionNumber": version.3,
+            "label": version.4,
+            "fileInventory": version.5,
+            "authorAgentId": version.6,
+            "authorUserId": version.7,
+            "createdAt": version.8,
+        }));
+    let cost = pc_repos::cost::CostRepo::new(&state.db)
+        .issue_summary(iss)
+        .await?
+        .unwrap_or(pc_repos::cost::IssueCostSummaryRow {
+            cost_cents: 0,
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: 0,
+            run_count: 0,
+            runtime_ms: 0,
+        });
+    let cost_value = json!({
+        "costCents": cost.cost_cents,
+        "inputTokens": cost.input_tokens,
+        "cachedInputTokens": cost.cached_input_tokens,
+        "outputTokens": cost.output_tokens,
+        "runCount": cost.run_count,
+        "runtimeMs": cost.runtime_ms,
+    });
+    let artifacts = attachments.iter().map(|attachment| json!({
+        "id": attachment["id"],
+        "kind": "attachment",
+        "title": attachment["originalFilename"].as_str().unwrap_or("Attachment"),
+        "summary": Value::Null,
+        "createdAt": attachment["createdAt"],
+    })).chain(work_products.iter().map(|product| json!({
+        "id": product["id"],
+        "kind": "work_product",
+        "title": product["title"],
+        "summary": product["summary"],
+        "createdAt": product["createdAt"],
+    }))).collect::<Vec<_>>();
+    let harness_available = issue.is_some();
+    let unavailable_reason = if harness_available {
+        Value::Null
+    } else if let Some(deleted_at) = harness_issue_deleted_at {
+        // 已被软删除 -> 区分 expired (expired_at <= deleted_at) vs deleted
+        match harness_issue_expires_at {
+            Some(expires_at) if expires_at.as_datetime() <= deleted_at.as_datetime() => json!("expired"),
+            _ => json!("deleted"),
+        }
+    } else {
+        json!("missing")
+    };
     Ok(Json(json!({
         "id": id, "status": st, "inputId": inp, "agentId": agent,
         "issueId": iss, "templateId": tmpl,
         "inputSnapshot": inp_snap, "outputSnapshot": out_snap,
         "error": err, "createdAt": ts, "updatedAt": uts,
+        "outputBody": out_snap,
+        "skillVersion": skill_version,
+        "cost": cost_value,
+        "harnessIssue": issue.as_ref().map(|issue| json!({
+            "id": issue.id,
+            "identifier": issue.identifier,
+            "title": issue.title,
+            "status": issue.status,
+            "hiddenAt": issue.hidden_at,
+        })),
+        "harnessContent": {
+            "available": harness_available,
+            "unavailableReason": unavailable_reason,
+            "documents": documents,
+            "attachments": attachments,
+            "workProducts": work_products,
+        },
+        "documents": documents,
+        "artifacts": artifacts,
+        "interactions": interactions,
         "companyId": company_id, "skillId": skill_id,
     })))
 }
@@ -1127,13 +1538,46 @@ async fn cancel_test_run(
     State(state): State<AppState>,
     Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    let ok = SkillRepo::new(&state.db)
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsTest,
+    ).await?;
+    let cancelled = SkillRepo::new(&state.db)
         .cancel_test_run(company_id, skill_id, run_id)
         .await?;
-    if !ok {
-        return Err(ApiError::NotFound(format!("test run {run_id} not cancellable")));
+    let (issue_id, status) = match cancelled {
+        Some(v) => v,
+        None => return Err(ApiError::NotFound(format!("test run {run_id} not cancellable"))),
+    };
+    // 同步取消 harness issue（best-effort，不影响主流程）
+    if let Ok(issue_repo) = Result::<_, pc_repos::RepoError>::Ok(pc_repos::issue::IssueRepo::new(&state.db)) {
+        if let Ok(Some(_)) = issue_repo.get(issue_id).await {
+            // 若有 execution_run 则取消 heartbeat run，否则直接标 cancelled
+            let _ = issue_repo.update(
+                issue_id, None, None, Some("cancelled"), None, None,
+            ).await;
+        }
     }
-    Ok(Json(json!({"cancelled": true, "runId": run_id})))
+    // activity audit: skill_test_run_cancelled
+    let _ = pc_repos::activity::ActivityRepo::new(&state.db)
+        .record(&pc_repos::activity::NewActivity {
+            company_id,
+            actor_type: pc_repos::activity::ActorType::System,
+            actor_id: "skill_test_cancel".into(),
+            action: "company.skill_test_run_cancelled".into(),
+            entity_type: "company_skill_test_run".into(),
+            entity_id: run_id.to_string(),
+            agent_id: None,
+            run_id: Some(run_id),
+            responsible_user_id: None,
+            details: Some(json!({
+                "skillId": skill_id,
+                "issueId": issue_id,
+                "status": status,
+            })),
+        })
+        .await;
+    Ok(Json(json!({"cancelled": true, "runId": run_id, "issueId": issue_id, "status": status})))
 }
 
 async fn list_skill_files(
@@ -1202,6 +1646,16 @@ async fn delete_skill_file(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn prune_all_expired_test_runs(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let pruned = SkillRepo::new(&state.db)
+        .prune_all_expired_test_harness_issues()
+        .await?;
+    Ok(Json(json!({"pruned": pruned, "companyId": company_id})))
+}
+
 async fn list_test_run_templates(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
@@ -1235,6 +1689,10 @@ async fn create_test_run_template(
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateTestRunTemplateBody>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, None,
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsCreate,
+    ).await?;
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name required".into()));
     }
@@ -1270,6 +1728,10 @@ async fn patch_test_run_template(
     Path((company_id, template_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchTestRunTemplateBody>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, None,
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsCreate,
+    ).await?;
     let mut updated: Vec<&str> = vec![];
     if body.name.is_some() { updated.push("name"); }
     if body.description.is_some() { updated.push("description"); }
@@ -1293,6 +1755,10 @@ async fn delete_test_run_template(
     State(state): State<AppState>,
     Path((company_id, template_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
+    evaluate_skill_policy(
+        &state, company_id, None,
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsDelete,
+    ).await?;
     let ok = SkillRepo::new(&state.db)
         .soft_delete_test_run_template(company_id, template_id)
         .await?;
@@ -1314,6 +1780,10 @@ async fn import_skills(
     headers: HeaderMap,
     Json(body): Json<ImportSkillsBody>,
 ) -> ApiResult<Json<Value>> {
+    evaluate_skill_policy(
+        &state, company_id, None,
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsImport,
+    ).await?;
     super::change_consent::assert_agent_change_consented(
         &state,
         &headers,
@@ -1392,11 +1862,30 @@ async fn delete_test_run(
     State(state): State<AppState>,
     Path((company_id, skill_id, run_id)): Path<(Uuid, Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
+    evaluate_skill_policy(
+        &state, company_id, Some(skill_id),
+        pc_repos::company_skill_policy::SkillPolicyAction::SkillsTest,
+    ).await?;
     let ok = SkillRepo::new(&state.db)
         .delete_test_run(company_id, skill_id, run_id)
         .await?;
     if !ok {
         return Err(ApiError::NotFound(format!("test run {run_id}")));
     }
+    // activity audit: skill_test_run_deleted
+    let _ = pc_repos::activity::ActivityRepo::new(&state.db)
+        .record(&pc_repos::activity::NewActivity {
+            company_id,
+            actor_type: pc_repos::activity::ActorType::System,
+            actor_id: "skill_test_delete".into(),
+            action: "company.skill_test_run_deleted".into(),
+            entity_type: "company_skill_test_run".into(),
+            entity_id: run_id.to_string(),
+            agent_id: None,
+            run_id: Some(run_id),
+            responsible_user_id: None,
+            details: Some(json!({"skillId": skill_id})),
+        })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }

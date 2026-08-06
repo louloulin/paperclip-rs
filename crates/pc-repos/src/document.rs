@@ -52,6 +52,28 @@ pub struct IssueDocumentLinkRow {
     pub updated_at: Timestamp,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct IssueDocumentWithKeyRow {
+    pub key: String,
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub title: Option<String>,
+    pub format: String,
+    pub latest_body: String,
+    pub latest_revision_id: Option<Uuid>,
+    pub latest_revision_number: i32,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub updated_by_agent_id: Option<Uuid>,
+    pub updated_by_user_id: Option<String>,
+    pub locked_at: Option<Timestamp>,
+    pub locked_by_agent_id: Option<Uuid>,
+    pub locked_by_user_id: Option<String>,
+    pub source_trust: Option<serde_json::Value>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct AnnotationThreadRow {
     pub id: Uuid,
@@ -179,6 +201,28 @@ impl<'a> DocumentRepo<'a> {
             .bind(issue_id)
             .fetch_all(self.db.pool())
             .await
+    }
+
+    /// 列出 issue 文档及其稳定 key，供需要构建聚合视图的上层服务使用。
+    pub async fn list_issue_documents_with_keys(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueDocumentWithKeyRow>> {
+        let rows = sqlx::query_as::<_, IssueDocumentWithKeyRow>(
+            "SELECT idl.key, d.id, d.company_id, d.title, d.format, d.latest_body, \
+             d.latest_revision_id, d.latest_revision_number, d.created_by_agent_id, \
+             d.created_by_user_id, d.updated_by_agent_id, d.updated_by_user_id, \
+             d.locked_at, d.locked_by_agent_id, d.locked_by_user_id, d.source_trust, \
+             d.created_at, d.updated_at FROM documents d \
+             INNER JOIN issue_documents idl ON idl.document_id=d.id \
+             WHERE idl.company_id=$1 AND idl.issue_id=$2 ORDER BY idl.key ASC",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
     }
 
     /// 通过 (issue_id, key) 获取 document

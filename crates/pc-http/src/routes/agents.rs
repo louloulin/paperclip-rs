@@ -1592,6 +1592,9 @@ impl HeartbeatExecutionSink for SqlHeartbeatExecutionSink {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("heartbeat run {run_id} not found"))?;
+        sync_skill_test_run(&self.db, &run, status, outcome.error.as_deref())
+            .await
+            .map_err(|error| error.to_string())?;
         repo.append_event(
             &run,
             if status == "succeeded" {
@@ -1647,6 +1650,59 @@ impl HeartbeatExecutionSink for SqlHeartbeatExecutionSink {
         );
         Ok(())
     }
+}
+
+async fn sync_skill_test_run(
+    db: &pc_db::Db,
+    heartbeat_run: &HeartbeatRow,
+    heartbeat_status: &str,
+    error: Option<&str>,
+) -> Result<(), pc_repos::RepoError> {
+    let Some(issue_id) = heartbeat_run
+        .context_snapshot
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|snapshot| snapshot.get("issueId"))
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+    else {
+        return Ok(());
+    };
+    let target = match heartbeat_status {
+        "succeeded" => pc_repos::skill::SkillTestRunStatus::Passed,
+        "failed" => pc_repos::skill::SkillTestRunStatus::Failed,
+        "cancelled" => pc_repos::skill::SkillTestRunStatus::Cancelled,
+        _ => return Ok(()),
+    };
+    let repo = SkillRepo::new(db);
+    let Some(skill_run) = repo.active_test_run_for_issue(heartbeat_run.company_id, issue_id).await?
+    else {
+        return Ok(());
+    };
+    let output = heartbeat_run.result_json.as_ref().map(ToString::to_string);
+    repo.update_test_run_status(skill_run.id, target, error, output.as_deref())
+        .await?;
+    // activity audit: skill_test_run_completed (与 Node 版 heartbeat completion 对齐)
+    let _ = pc_repos::activity::ActivityRepo::new(db)
+        .record(&pc_repos::activity::NewActivity {
+            company_id: skill_run.company_id,
+            actor_type: pc_repos::activity::ActorType::Agent,
+            actor_id: skill_run.agent_id.to_string(),
+            action: "company.skill_test_run_completed".into(),
+            entity_type: "company_skill_test_run".into(),
+            entity_id: skill_run.id.to_string(),
+            agent_id: Some(skill_run.agent_id),
+            run_id: Some(skill_run.id),
+            responsible_user_id: None,
+            details: Some(json!({
+                "skillId": skill_run.skill_id,
+                "issueId": skill_run.issue_id,
+                "status": target.as_str(),
+                "error": error,
+            })),
+        })
+        .await;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

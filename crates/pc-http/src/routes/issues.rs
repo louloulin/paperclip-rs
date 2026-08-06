@@ -647,6 +647,11 @@ async fn update(
     headers: HeaderMap,
     Json(body): Json<UpdateIssueFullBody>,
 ) -> ApiResult<Json<Value>> {
+    let previous_issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let previous_status = previous_issue.status.clone();
     let actor_agent_id = headers
         .get("x-paperclip-agent-id")
         .and_then(|value| value.to_str().ok())
@@ -752,7 +757,7 @@ async fn update(
     // R234: 提取 previous_status 必须在 row 移动之前
     // 注：row 是 receipt.issue 移动后的新名, 所以这里的 previous_status 应使用行被消费前的版本
     // 简化为: 直接取 row.status 作为"在 UPDATE 之前的状态"（数据库视角）
-    let previous_status = row.status.clone();
+    sync_skill_test_run_for_issue(&state, &row, &previous_status).await?;
     // R234: interrupt=true 时 — 发 realtime event 委托 Node worker 处理 run cancel
     // 当前 Rust 端不直接调用 heartbeat.cancelRun（属于 runtime worker 职责）
     // 仅发事件供 Node worker 监听并执行
@@ -789,6 +794,50 @@ async fn update(
                 .with_data(json!({ "changes": receipt.changes })),
         );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+async fn sync_skill_test_run_for_issue(
+    state: &AppState,
+    issue: &pc_repos::issue::IssueRow,
+    previous_status: &str,
+) -> ApiResult<()> {
+    if issue.harness_kind.as_deref() != Some("skill_test") || previous_status == issue.status {
+        return Ok(());
+    }
+    let target = match issue.status.as_str() {
+        "done" => pc_repos::skill::SkillTestRunStatus::Passed,
+        "cancelled" => pc_repos::skill::SkillTestRunStatus::Cancelled,
+        _ => return Ok(()),
+    };
+    let repo = pc_repos::skill::SkillRepo::new(&state.db);
+    let Some(run) = repo
+        .active_test_run_for_issue(issue.company_id, issue.id)
+        .await?
+    else {
+        return Ok(());
+    };
+    repo.update_test_run_status(run.id, target, None, None).await?;
+    // activity audit: skill_test_run_completed (issue done/cancelled 路径)
+    let _ = pc_repos::activity::ActivityRepo::new(&state.db)
+        .record(&pc_repos::activity::NewActivity {
+            company_id: run.company_id,
+            actor_type: pc_repos::activity::ActorType::Agent,
+            actor_id: run.agent_id.to_string(),
+            action: "company.skill_test_run_completed".into(),
+            entity_type: "company_skill_test_run".into(),
+            entity_id: run.id.to_string(),
+            agent_id: Some(run.agent_id),
+            run_id: Some(run.id),
+            responsible_user_id: None,
+            details: Some(json!({
+                "skillId": run.skill_id,
+                "issueId": run.issue_id,
+                "status": target.as_str(),
+                "trigger": "issue_terminal",
+            })),
+        })
+        .await;
+    Ok(())
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {

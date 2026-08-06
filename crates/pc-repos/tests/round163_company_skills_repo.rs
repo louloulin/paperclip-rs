@@ -347,16 +347,20 @@ async fn test_runs_lifecycle() {
     let issue = Uuid::new_v4();
     let run_id = Uuid::new_v4();
     let repo = SkillRepo::new(&db);
-    repo.create_test_run(run_id, cid, sid, None, "", vid, agent, issue)
+    let snapshot = json!({"id": "agent"});
+    repo.create_test_run(
+        run_id, cid, sid, None, "", vid, agent, issue,
+        &snapshot, None, None, None, None, "test",
+    )
         .await
         .expect("create run");
     let listed = repo.list_test_runs_with_filter(cid, sid, None, 50).await.expect("list");
     assert_eq!(listed.len(), 1);
     let got = repo.get_test_run(cid, sid, run_id).await.expect("get").expect("present");
     assert_eq!(got.0, run_id);
-    // cancel
-    let ok = repo.cancel_test_run(cid, sid, run_id).await.expect("cancel");
-    assert!(ok);
+    // cancel — 新签名返回 Option<(Uuid, String)>
+    let cancelled = repo.cancel_test_run(cid, sid, run_id).await.expect("cancel");
+    assert!(cancelled.is_some());
     // delete
     let del = repo.delete_test_run(cid, sid, run_id).await.expect("del");
     assert!(del);

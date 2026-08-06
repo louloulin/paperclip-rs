@@ -362,6 +362,27 @@ pub struct AssetRow {
     pub updated_at: Timestamp,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct IssueAttachmentWithAssetRow {
+    pub attachment_id: Uuid,
+    pub company_id: Uuid,
+    pub issue_id: Uuid,
+    pub asset_id: Uuid,
+    pub issue_comment_id: Option<Uuid>,
+    pub attachment_created_at: Timestamp,
+    pub attachment_updated_at: Timestamp,
+    pub provider: String,
+    pub object_key: String,
+    pub content_type: String,
+    pub byte_size: i32,
+    pub sha256: String,
+    pub original_filename: Option<String>,
+    pub created_by_agent_id: Option<Uuid>,
+    pub created_by_user_id: Option<String>,
+    pub asset_created_at: Timestamp,
+    pub asset_updated_at: Timestamp,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ExternalObjectMentionRow {
     pub id: Uuid,
@@ -927,6 +948,22 @@ impl<'a> IssueRepo<'a> {
             .bind(assignee_agent_id)
             .fetch_optional(self.db.pool())
             .await
+    }
+
+    /// 与 Node 版 cleanupCreatedHarnessIssue 对齐：当 test run INSERT 失败时，
+    /// 隐藏对应 harness issue 并标 cancelled。失败时不抛错（best-effort）。
+    pub async fn hide_issue_as_skill_test_cleanup(
+        &self,
+        issue_id: Uuid,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "UPDATE issues SET status='cancelled', hidden_at=now(), updated_at=now() \
+             WHERE id=$1 AND hidden_at IS NULL",
+        )
+        .bind(issue_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
     }
 
     pub async fn update_with_receipt(
@@ -3035,6 +3072,25 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+    pub async fn list_interactions_for_company(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueThreadInteractionRow>> {
+        sqlx::query_as::<_, IssueThreadInteractionRow>(
+            "SELECT id, company_id, issue_id, kind, status, continuation_policy, \
+                    source_comment_id, source_run_id, title, summary, \
+                    created_by_agent_id, created_by_user_id, resolved_by_agent_id, \
+                    resolved_by_user_id, payload, result, resolved_at, created_at, updated_at \
+             FROM issue_thread_interactions WHERE company_id=$1 AND issue_id=$2 \
+             ORDER BY created_at DESC",
+        )
+        .bind(company_id)
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
     pub async fn get_interaction(
         &self,
         id: Uuid,
@@ -3464,6 +3520,26 @@ impl<'a> IssueRepo<'a> {
             "SELECT id, company_id, issue_id, asset_id, issue_comment_id, created_at, updated_at \
              FROM issue_attachments WHERE issue_id = $1 ORDER BY created_at DESC",
         )
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// 按公司与 issue 一次加载附件及资产元数据，避免详情聚合出现跨租户记录。
+    pub async fn list_issue_attachments_with_assets(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> sqlx::Result<Vec<IssueAttachmentWithAssetRow>> {
+        sqlx::query_as::<_, IssueAttachmentWithAssetRow>(
+            "SELECT ia.id AS attachment_id, ia.company_id, ia.issue_id, ia.asset_id, ia.issue_comment_id, \
+             ia.created_at AS attachment_created_at, ia.updated_at AS attachment_updated_at, a.provider, a.object_key, \
+             a.content_type, a.byte_size, a.sha256, a.original_filename, \
+             a.created_by_agent_id, a.created_by_user_id, a.created_at, a.updated_at \
+             FROM issue_attachments ia INNER JOIN assets a ON a.id=ia.asset_id \
+             WHERE ia.company_id=$1 AND ia.issue_id=$2 ORDER BY ia.created_at DESC",
+        )
+        .bind(company_id)
         .bind(issue_id)
         .fetch_all(self.db.pool())
         .await
@@ -4793,4 +4869,3 @@ mod round235_idempotency_tests {
         assert_eq!(row1.issue_id, row2.issue_id);
     }
 }
-

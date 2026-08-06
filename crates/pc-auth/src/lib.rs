@@ -25,13 +25,110 @@ pub enum AuthError {
     Hash(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Actor 来源（与原 `paperclip/server/src/middleware/auth.ts` 中 actor.source 对齐）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorSource {
+    None,
+    Anonymous,
+    LocalImplicit,
+    Session,
+    ApiKey,
+    SessionCookie,
+    AgentKey,
+    AgentHeader,
+    AgentJwt,
+    CloudTenant,
+    System,
+}
+
+impl ActorSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActorSource::None => "none",
+            ActorSource::Anonymous => "anonymous",
+            ActorSource::LocalImplicit => "local_implicit",
+            ActorSource::Session => "session",
+            ActorSource::ApiKey => "api_key",
+            ActorSource::SessionCookie => "session_cookie",
+            ActorSource::AgentKey => "agent_key",
+            ActorSource::AgentHeader => "agent_header",
+            ActorSource::AgentJwt => "agent_jwt",
+            ActorSource::CloudTenant => "cloud_tenant",
+            ActorSource::System => "system",
+        }
+    }
+}
+
+/// API key / agent key 作用域
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KeyScope {
+    #[serde(default)]
+    pub can_manage_company: bool,
+    #[serde(default)]
+    pub can_manage_policies: bool,
+    #[serde(default)]
+    pub can_run_agents: bool,
+    #[serde(default)]
+    pub can_create_issues: bool,
+    #[serde(default)]
+    pub can_test_skills: bool,
+    #[serde(default)]
+    pub can_edit_skills: bool,
+    #[serde(default)]
+    pub raw: serde_json::Value,
+}
+
+/// Actor 抽象（与原 paperclip `Actor` 对齐）。
+///
+/// - User         — 登录用户 / board actor（含 companyIds / isInstanceAdmin）
+/// - Agent        — Agent 调用方（含 agentId / companyId / keyId / runId）
+/// - System       — 系统内部调用（heartbeat / scheduler）
+/// - Anonymous    — 未认证（fallback）
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Actor {
-    User { id: String },
-    Agent { id: Uuid },
+    User {
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        email: Option<String>,
+        #[serde(default)]
+        is_instance_admin: bool,
+        #[serde(default)]
+        company_ids: Vec<Uuid>,
+        #[serde(default)]
+        memberships: Vec<CompanyMembership>,
+        #[serde(default)]
+        run_id: Option<Uuid>,
+    },
+    Agent {
+        id: Uuid,
+        company_id: Uuid,
+        #[serde(default)]
+        key_id: Option<Uuid>,
+        #[serde(default)]
+        key_scope: KeyScope,
+        #[serde(default)]
+        run_id: Option<Uuid>,
+        #[serde(default)]
+        on_behalf_of_user_id: Option<String>,
+        #[serde(default)]
+        on_behalf_of_memberships: Vec<CompanyMembership>,
+    },
     System,
     Anonymous,
+}
+
+/// 公司成员资格（与 Node 版 `CompanyMembership` 对齐）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompanyMembership {
+    pub company_id: Uuid,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 impl Actor {
@@ -41,16 +138,66 @@ impl Actor {
     pub fn system() -> Self {
         Actor::System
     }
+    pub fn anonymous() -> Self {
+        Actor::Anonymous
+    }
     pub fn user_id(&self) -> Option<&str> {
-        if let Actor::User { id } = self {
+        if let Actor::User { id, .. } = self {
             Some(id)
         } else {
             None
         }
     }
     pub fn agent_id(&self) -> Option<Uuid> {
-        if let Actor::Agent { id } = self {
+        if let Actor::Agent { id, .. } = self {
             Some(*id)
+        } else {
+            None
+        }
+    }
+    pub fn company_id(&self) -> Option<Uuid> {
+        match self {
+            Actor::Agent { company_id, .. } => Some(*company_id),
+            Actor::User { company_ids, .. } => company_ids.first().copied(),
+            _ => None,
+        }
+    }
+    pub fn company_ids(&self) -> Vec<Uuid> {
+        match self {
+            Actor::User { company_ids, .. } => company_ids.clone(),
+            Actor::Agent { company_id, .. } => vec![*company_id],
+            _ => Vec::new(),
+        }
+    }
+    pub fn has_company_access(&self, company_id: Uuid) -> bool {
+        match self {
+            Actor::User { company_ids, is_instance_admin, .. } => {
+                *is_instance_admin || company_ids.contains(&company_id)
+            }
+            Actor::Agent { company_id: cid, .. } => *cid == company_id,
+            Actor::System => true,
+            Actor::Anonymous => false,
+        }
+    }
+    pub fn run_id(&self) -> Option<Uuid> {
+        match self {
+            Actor::User { run_id, .. } | Actor::Agent { run_id, .. } => *run_id,
+            _ => None,
+        }
+    }
+    pub fn is_instance_admin(&self) -> bool {
+        matches!(self, Actor::User { is_instance_admin: true, .. })
+    }
+    pub fn key_id(&self) -> Option<Uuid> {
+        if let Actor::Agent { key_id, .. } = self {
+            *key_id
+        } else {
+            None
+        }
+    }
+    pub fn key_scope(&self) -> Option<&KeyScope> {
+        if let Actor::Agent { key_scope, .. } = self {
+            Some(key_scope)
         } else {
             None
         }
@@ -60,6 +207,7 @@ impl Actor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
     pub actor: Actor,
+    pub source: ActorSource,
     pub method: &'static str,
     pub api_key_id: Option<Uuid>,
 }
@@ -68,6 +216,7 @@ impl AuthContext {
     pub fn anonymous() -> Self {
         Self {
             actor: Actor::Anonymous,
+            source: ActorSource::Anonymous,
             method: "anonymous",
             api_key_id: None,
         }
@@ -75,12 +224,23 @@ impl AuthContext {
     pub fn system() -> Self {
         Self {
             actor: Actor::System,
+            source: ActorSource::System,
             method: "system",
             api_key_id: None,
         }
     }
+    pub fn for_actor(actor: Actor, source: ActorSource, method: &'static str) -> Self {
+        let api_key_id = actor.key_id();
+        Self { actor, source, method, api_key_id }
+    }
     pub fn require_user(&self) -> Result<&str, AuthError> {
         self.actor.user_id().ok_or(AuthError::InvalidToken)
+    }
+    pub fn require_authenticated(&self) -> Result<(), AuthError> {
+        if self.actor.is_authenticated() { Ok(()) } else { Err(AuthError::MissingCredentials) }
+    }
+    pub fn require_company_access(&self, company_id: Uuid) -> Result<(), AuthError> {
+        if self.actor.has_company_access(company_id) { Ok(()) } else { Err(AuthError::InvalidToken) }
     }
 }
 
@@ -166,24 +326,87 @@ pub async fn resolve_session(
 }
 
 /// 解析请求的 auth 上下文（不依赖 axum extractor，方便从任意地方调用）。
+/// 从 user_id 加载 actor 详细信息（company_ids / memberships / isInstanceAdmin）
+async fn load_user_actor(db: &Db, user_id: &str) -> Actor {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        r#"SELECT id, name FROM "user" WHERE id = $1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(db.pool())
+    .await
+    .ok()
+    .flatten();
+    let (id, name) = row.unwrap_or_else(|| (user_id.to_string(), None));
+    let email: Option<String> = sqlx::query_scalar(
+        "SELECT email FROM account WHERE user_id = $1 AND provider = 'credential' LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(db.pool())
+    .await
+    .ok()
+    .flatten();
+    let is_instance_admin: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id = $1 AND role = 'instance_admin')",
+    )
+    .bind(user_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap_or(false);
+    let memberships: Vec<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT company_id, role::text, status::text FROM company_member \
+         WHERE user_id = $1 AND (status IS NULL OR status = 'active')",
+    )
+    .bind(user_id)
+    .fetch_all(db.pool())
+    .await
+    .unwrap_or_default();
+    let company_ids: Vec<Uuid> = memberships.iter().map(|(c, _, _)| *c).collect();
+    Actor::User {
+        id,
+        name,
+        email,
+        is_instance_admin,
+        company_ids,
+        memberships: memberships.into_iter().map(|(company_id, role, status)| CompanyMembership {
+            company_id, role, status,
+        }).collect(),
+        run_id: None,
+    }
+}
+
+/// 从 axum `Parts` 解析认证上下文（向后兼容）。
 pub async fn resolve_auth(db: &Db, parts: &Parts) -> Result<AuthContext, AuthError> {
-    if let Some(auth) = parts
-        .headers
+    resolve_auth_from_headers(db, parts.headers.clone(), &parts.method.to_string(), &parts.uri.to_string()).await
+}
+
+/// 从 HTTP 头解析认证上下文（与 Node 版 `actorMiddleware` 等价）。
+/// method / uri 仅用于审计日志；不参与解析逻辑。
+pub async fn resolve_auth_from_headers(
+    db: &Db,
+    headers: axum::http::HeaderMap,
+    _method: &str,
+    _uri: &str,
+) -> Result<AuthContext, AuthError> {
+    if let Some(auth) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
     {
         if let Some(token) = auth.strip_prefix("Bearer ") {
             if let Some((key_id, user_id)) = resolve_api_key(db, token).await? {
                 touch_api_key(db, key_id).await.ok();
+                let actor = load_user_actor(db, &user_id).await;
                 return Ok(AuthContext {
-                    actor: Actor::User { id: user_id },
+                    actor,
+                    source: ActorSource::ApiKey,
                     method: "api_key",
                     api_key_id: Some(key_id),
                 });
             }
             if let Some((user_id, _)) = resolve_session(db, token).await? {
+                let actor = load_user_actor(db, &user_id).await;
                 return Ok(AuthContext {
-                    actor: Actor::User { id: user_id },
+                    actor,
+                    source: ActorSource::Session,
                     method: "session",
                     api_key_id: None,
                 });
@@ -191,16 +414,17 @@ pub async fn resolve_auth(db: &Db, parts: &Parts) -> Result<AuthContext, AuthErr
             return Err(AuthError::InvalidToken);
         }
     }
-    if let Some(cookie) = parts
-        .headers
+    if let Some(cookie) = headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
     {
         for kv in cookie.split(';') {
             if let Some(v) = kv.trim().strip_prefix("paperclip_session=") {
                 if let Some((user_id, _)) = resolve_session(db, v).await? {
+                    let actor = load_user_actor(db, &user_id).await;
                     return Ok(AuthContext {
-                        actor: Actor::User { id: user_id },
+                        actor,
+                        source: ActorSource::SessionCookie,
                         method: "session_cookie",
                         api_key_id: None,
                     });
@@ -208,14 +432,34 @@ pub async fn resolve_auth(db: &Db, parts: &Parts) -> Result<AuthContext, AuthErr
             }
         }
     }
-    if let Some(agent_id) = parts
-        .headers
+    if let Some(agent_id) = headers
         .get("x-paperclip-agent-id")
         .and_then(|v| v.to_str().ok())
     {
         if let Ok(uuid) = Uuid::parse_str(agent_id) {
+            let company_id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT company_id FROM agents WHERE id = $1",
+            )
+            .bind(uuid)
+            .fetch_optional(db.pool())
+            .await
+            .ok()
+            .flatten();
+            let actor = match company_id {
+                Some(cid) => Actor::Agent {
+                    id: uuid,
+                    company_id: cid,
+                    key_id: None,
+                    key_scope: KeyScope::default(),
+                    run_id: None,
+                    on_behalf_of_user_id: None,
+                    on_behalf_of_memberships: Vec::new(),
+                },
+                None => Actor::Anonymous,
+            };
             return Ok(AuthContext {
-                actor: Actor::Agent { id: uuid },
+                actor,
+                source: ActorSource::AgentHeader,
                 method: "agent_header",
                 api_key_id: None,
             });
