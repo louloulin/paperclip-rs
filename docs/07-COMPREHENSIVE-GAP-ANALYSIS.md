@@ -5226,3 +5226,71 @@ paperclip-rs 在以下场景发 realtime event 委托 Node worker 处理：
 - `interrupt=true` → `issue.run_interrupt_requested` (Node worker 调用 heartbeat.cancelRun)
 - `reopen=true` → `issue.reopened` (UI / worker 监听)
 - `resume=true` → `issue.resumed` (UI / worker 监听)
+
+---
+
+## 72. 第二百三十六轮增量（Round 236 — 补充 issues 子路由）
+
+### 背景
+
+通过 Node vs Rust 路由对比分析，发现 258 个 Node 路径在 Rust 端缺失。
+本轮从 issues 子模块中实现 2 个 high-value 路由：
+- `tree-control/state` — UI 显示 pause hold gate 状态
+- `live-runs` — UI 显示 issue 当前活跃运行
+
+### 实现内容
+
+**pc-http/src/routes/issues.rs** — 新增 2 个路由 + 2 个 handler：
+
+| 路由 | 方法 | 功能 |
+|---|---|---|
+| `/api/issues/:id/tree-control/state` | GET | 返回 active pause hold gate |
+| `/api/issues/:id/live-runs` | GET | 列出 issue 的活跃 heartbeat runs |
+
+`tree_control_state`:
+- 查询 issue + `find_active_for_root` (复用 R228 仓储方法)
+- 返回 `{issueId, companyId, activePauseHold: {id, mode} | null}`
+
+`list_live_runs`:
+- SQL 直接查询 `heartbeat_runs` 表（按 company + issue_id 或 context_snapshot.issueId）
+- 过滤终态：`status NOT IN ('succeeded','failed','cancelled','timed_out')`
+- LIMIT 50 按 created_at DESC
+- 返回 `{issueId, runs: [{id, status, error, createdAt}, ...]}`
+
+### 测试
+
+| 模块 | 测试数 |
+|---|---|
+| `pc-http::round236_route_tests` | 9 |
+
+### Commit
+
+`500af7a refactor(pc-http): Round 236 - 补充 issues 子路由 (tree-control/state + live-runs)`
+
+---
+
+## 73. 累计测试基线（R236）
+
+| 类别 | 数量 |
+|---|---|
+| pc-http lib | **143 passed** (134 + 9 R236) |
+| pc-repos lib | **500 passed** |
+| 总计 | **643 passed** |
+
+## 74. Node vs Rust 路由差距（R236 后）
+
+通过路径规范化分析（去除 :param 区别 + `/api` 前缀）：
+- Node: 482 unique paths
+- Rust: 331 unique paths
+- 重叠: 224 paths
+- **Rust 端缺失: 258 paths** (主要在 companies/issues/agents/cases/plugins/tool-gateway)
+
+### 下一步高价值补全候选
+
+| Round | 路由 | 价值 |
+|---|---|---|
+| R237 | `/companies/:id/issues/count` + `/issues/:id/approvals` | 简单，board summary 用 |
+| R238 | `/companies/:id/cases` + `/cases/:id/issue-links/:id` | cases 子路由 |
+| R239 | `/agents/:id/keys` + `/agents/:id/permissions` | agent 管理 |
+| R240 | `/plugins/:id` + `/plugins/:id/reload` | plugin 管理 |
+| R241 | `/tool-gateway/:id/runtime-slots` | runtime 监控 |
