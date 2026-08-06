@@ -5434,3 +5434,40 @@ R238-R239 已完成 action source scope、状态白名单、board-only outcome �
 ### 总结
 
 R240首次形成 recovery action 与 source issue 的原子闭环，补齐 hand-back、owner-completed 和事务内审计日志。后续重点转向 recovery wakeup/routine sync，或继续推进 active-run/watchdog 的服务层完整度。
+
+## 79. 第二百四十一轮增量（Round 241 — recovery assignment wakeup 接入）
+
+### 背景
+
+Node recovery resolve 在 issue 被恢复为 `todo` 且 assignee 发生变化时，会向恢复后的 agent 发起 assignment wakeup，并返回 `{ issue, recoveryAction }`，其中 issue 的 `activeRecoveryAction` 已清空。R240 Rust 端只完成了数据库事务，尚未接入该运行时副作用。
+
+### 实现内容
+
+- resolve 路由在 `sourceIssueStatus=todo`、存在 assignee 且状态/assignee 发生变化时调用 `IssueRepo::enqueue_agent_wakeup`。
+- wakeup payload 对齐 Node：
+  - `issueId`
+  - `recoveryActionId`
+  - `mutation: recovery_action_resolution`
+- wakeup reason 使用 `issue_recovery_action_restored`，source 使用 `automation`。
+- 响应结构改为 Node 兼容：
+  - `issue`（含 `activeRecoveryAction: null`）
+  - `recoveryAction`
+- wakeup 失败采用 best-effort，不阻断已经完成的 recovery 事务，保持与 Node catch-and-log 行为一致。
+
+### 当前仍有差距
+
+- wakeup 尚未使用 Node 等价的幂等 key，重复 resolve/retry 时仍需进一步去重。
+- 尚未实现 `routinesSvc.syncRunStatusForIssue` 的完整 routine execution finalization。
+- 尚未接入统一日志 facade，目前使用已有 `activity_log` 与 realtime 事件。
+- PostgreSQL 真实写入验证仍受当前环境连接权限限制。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round241_tests` | 3 passed |
+| `cargo check -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R241补齐了 recovery 恢复后的 agent 唤醒和 Node 响应契约，恢复链路从数据库状态转换延伸到运行时调度副作用。下一步重点是 wakeup 幂等、routine 状态同步和 watchdog evaluation 闭环。

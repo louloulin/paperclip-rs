@@ -1450,15 +1450,37 @@ async fn resolve_recovery(
         )
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("active recovery action {}", body.action_id)))?;
+    if body.source_issue_status.as_deref() == Some("todo")
+        && updated_issue.assignee_agent_id.is_some()
+        && (issue.status != updated_issue.status
+            || issue.assignee_agent_id != updated_issue.assignee_agent_id)
+    {
+        let actor_type = if actor.agent_id.is_some() { "agent" } else { "user" };
+        let actor_id = actor.agent_id.map(|value| value.to_string())
+            .or_else(|| actor.user_id.clone()).unwrap_or_else(|| "system".into());
+        let _ = IssueRepo::new(&state.db).enqueue_agent_wakeup(
+            updated_issue.company_id,
+            updated_issue.assignee_agent_id.expect("checked above"),
+            "automation",
+            "issue_recovery_action_restored",
+            &json!({
+                "issueId": updated_issue.id,
+                "recoveryActionId": row.id,
+                "mutation": "recovery_action_resolution",
+            }),
+            actor_type,
+            &actor_id,
+        ).await;
+    }
     state.realtime.publish(
         LiveEvent::new("issue.recovery.resolved", "issue_recovery_action", row.id)
             .with_company(row.company_id),
     );
     Ok(Json(json!({
-        "action": row,
-        "issue": updated_issue,
-        "issueId": issue.id,
-        "sourceIssueStatus": body.source_issue_status,
+        "issue": { "id": updated_issue.id, "status": updated_issue.status,
+            "assigneeAgentId": updated_issue.assignee_agent_id,
+            "activeRecoveryAction": null },
+        "recoveryAction": row,
     })))
 }
 
@@ -4741,6 +4763,33 @@ mod round240_tests {
         assert!(repo.contains("UPDATE issues SET status=$2, assignee_agent_id=$3"));
         assert!(repo.contains("outcome == \"restored\" && status == \"todo\""));
         assert!(repo.contains("return_owner_agent_id"));
+    }
+}
+
+#[cfg(test)]
+mod round241_tests {
+    #[test]
+    fn recovery_resolution_queues_assignment_wakeup() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("issue_recovery_action_restored"));
+        assert!(src.contains("\"mutation\": \"recovery_action_resolution\""));
+        assert!(src.contains("enqueue_agent_wakeup"));
+        assert!(src.contains("updated_issue.assignee_agent_id"));
+    }
+
+    #[test]
+    fn recovery_resolution_response_matches_node_shape() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"recoveryAction\": row"));
+        assert!(src.contains("\"activeRecoveryAction\": null"));
+    }
+
+    #[test]
+    fn wakeup_is_limited_to_restored_todo_transition() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("body.source_issue_status.as_deref() == Some(\"todo\")"));
+        assert!(src.contains("issue.status != updated_issue.status"));
+        assert!(src.contains("issue.assignee_agent_id != updated_issue.assignee_agent_id"));
     }
 }
 
