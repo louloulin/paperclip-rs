@@ -1335,6 +1335,7 @@ pub fn evaluate_daily_cap(
 }
 pub mod readiness;
 pub mod recovery;
+pub mod retry_policy;
 pub mod run_scratch;
 pub mod run_summary;
 pub mod runtime_status;
@@ -1362,6 +1363,10 @@ pub use wake_dedup::{
 
 pub use wake_dispatch::{
     apply_wakeup_plan, plan_wakeup_dispatch, WakeDispatchOutcome, WakePlan,
+};
+
+pub use retry_policy::{
+    classify_retry_reason, decide_retry_schedule, RetryPolicySchedule, RetryReason,
 };
 
 // ============================================================================
