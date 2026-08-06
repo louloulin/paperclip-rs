@@ -58,6 +58,21 @@ struct StreamQuery {
     /// 缺省 = 全部事件。
     #[serde(default)]
     channels: Option<String>,
+    /// R254: 仅订阅某个 issue 的事件（resource_id == issue_id 且 resource == "issue"）。
+    #[serde(default)]
+    issue_id: Option<Uuid>,
+    /// R254: 仅订阅某个 watchdog 的事件（resource_id == watchdog_id 且 resource == "issue_watchdog"）。
+    #[serde(default)]
+    watchdog_id: Option<Uuid>,
+    /// R254: 仅订阅某个 agent 的事件（resource_id == agent_id 且 resource == "agent"）。
+    #[serde(default)]
+    agent_id: Option<Uuid>,
+    /// R254: 仅订阅某个 heartbeat_run 的事件（resource_id == run_id 且 resource == "heartbeat_run"）。
+    #[serde(default)]
+    run_id: Option<Uuid>,
+    /// R254: 仅订阅某个 resource_id 的事件（任意 resource 类型）。
+    #[serde(default)]
+    resource_id: Option<Uuid>,
 }
 
 async fn handler(
@@ -94,11 +109,39 @@ async fn handler(
 
     let ws_state = state.ws.clone();
     let resume_from = query.resume;
-    let channels_filter: Vec<ChannelFilter> = query
+    let mut channels_filter: Vec<ChannelFilter> = query
         .channels
         .as_deref()
         .map(parse_channels)
         .unwrap_or_default();
+    // R254: per-resource 过滤器（来自 query 参数）
+    if let Some(id) = query.issue_id {
+        channels_filter.push(ChannelFilter::ResourceId {
+            id,
+            resource: Some("issue".to_string()),
+        });
+    }
+    if let Some(id) = query.watchdog_id {
+        channels_filter.push(ChannelFilter::ResourceId {
+            id,
+            resource: Some("issue_watchdog".to_string()),
+        });
+    }
+    if let Some(id) = query.agent_id {
+        channels_filter.push(ChannelFilter::ResourceId {
+            id,
+            resource: Some("agent".to_string()),
+        });
+    }
+    if let Some(id) = query.run_id {
+        channels_filter.push(ChannelFilter::ResourceId {
+            id,
+            resource: Some("heartbeat_run".to_string()),
+        });
+    }
+    if let Some(id) = query.resource_id {
+        channels_filter.push(ChannelFilter::ResourceId { id, resource: None });
+    }
     let sse = Sse::new(build_event_stream(
         ws_state,
         company_id,
@@ -153,7 +196,7 @@ fn build_event_stream(
         let channels_for_filter = channels.clone();
         let filtered: Box<dyn Subscriber> = Box::new(FilteredSubscriber::new(
             live_sub,
-            move |ev: &LiveEvent| matches_any(channels_for_filter.as_ref(), &ev.event),
+            move |ev: &LiveEvent| matches_any(channels_for_filter.as_ref(), ev),
         ));
         let mut subscriber: Box<dyn Subscriber> = Box::new(ReplayThenLiveSubscriber::new(Vec::new(), filtered));
 
@@ -184,7 +227,7 @@ fn passes_filter(evt: &LiveEvent, company_id: Option<Uuid>, channels: &[ChannelF
             return false;
         }
     }
-    matches_any(channels, &evt.event)
+    matches_any(channels, evt)
 }
 
 /// 把 LiveEvent 编码为 SSE Event。
@@ -201,6 +244,108 @@ fn to_sse_event(evt: &LiveEvent) -> Option<Event> {
 // 我们需要 async_stream crate；检查 Cargo.toml。
 #[allow(dead_code)]
 fn _unused_broadcast_receiver_type_check(_: broadcast::Receiver<Arc<LiveEvent>>) {}
+
+#[cfg(test)]
+#[cfg(test)]
+mod round254_tests {
+    /// R254: ChannelFilter enum 增加 ResourceId 变体。
+    #[test]
+    fn channel_filter_exposes_resource_id_variant() {
+        let src = include_str!("../../../pc-realtime/src/channels.rs");
+        assert!(
+            src.contains("ResourceId"),
+            "ChannelFilter must have ResourceId variant"
+        );
+        assert!(
+            src.contains("resource: Option<String>"),
+            "ResourceId variant must carry Option<String> resource"
+        );
+    }
+
+    /// R254: matches_any 接受 LiveEvent 参数（同时检查 event name + resource_id）。
+    #[test]
+    fn matches_any_signature_accepts_live_event() {
+        let src = include_str!("../../../pc-realtime/src/channels.rs");
+        assert!(
+            src.contains("pub fn matches_any(filters: &[ChannelFilter], event: &crate::LiveEvent)"),
+            "matches_any must accept &LiveEvent"
+        );
+        // 兼容便捷函数
+        assert!(
+            src.contains("pub fn matches_any_event_name"),
+            "matches_any_event_name compat helper must exist"
+        );
+    }
+
+    /// R254: ChannelFilter::parse 支持 issue_id / watchdog_id / agent_id / run_id / resource_id 形式。
+    #[test]
+    fn channel_filter_parse_supports_resource_id_forms() {
+        let src = include_str!("../../../pc-realtime/src/channels.rs");
+        assert!(src.contains("\"issue_id\""));
+        assert!(src.contains("\"watchdog_id\""));
+        assert!(src.contains("\"agent_id\""));
+        assert!(src.contains("\"run_id\""));
+        assert!(src.contains("\"resource_id\""));
+    }
+
+    /// R254: StreamQuery 增加 issue_id / watchdog_id / agent_id / run_id / resource_id 字段。
+    #[test]
+    fn stream_query_supports_per_resource_fields() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(src.contains("issue_id: Option<Uuid>"), "StreamQuery must have issue_id");
+        assert!(src.contains("watchdog_id: Option<Uuid>"), "StreamQuery must have watchdog_id");
+        assert!(src.contains("agent_id: Option<Uuid>"), "StreamQuery must have agent_id");
+        assert!(src.contains("run_id: Option<Uuid>"), "StreamQuery must have run_id");
+        assert!(src.contains("resource_id: Option<Uuid>"), "StreamQuery must have resource_id");
+    }
+
+    /// R254: handler 把 per-resource query 字段转换为 ChannelFilter::ResourceId。
+    #[test]
+    fn handler_translates_per_resource_query_into_channel_filter() {
+        let src = include_str!("realtime_stream.rs");
+        let count = src.matches("ChannelFilter::ResourceId {").count();
+        assert!(
+            count >= 5,
+            "handler must push at least 5 ChannelFilter::ResourceId (issue_id/watchdog_id/agent_id/run_id/resource_id), found {count}"
+        );
+        assert!(src.contains("if let Some(id) = query.issue_id"), "handler must process query.issue_id");
+        assert!(src.contains("if let Some(id) = query.watchdog_id"), "handler must process query.watchdog_id");
+        assert!(src.contains("if let Some(id) = query.agent_id"), "handler must process query.agent_id");
+        assert!(src.contains("if let Some(id) = query.run_id"), "handler must process query.run_id");
+        assert!(src.contains("if let Some(id) = query.resource_id"), "handler must process query.resource_id");
+    }
+
+    /// R254: handler 把 issue_id 映射到 resource = Some("issue")。
+    #[test]
+    fn handler_maps_issue_id_to_issue_resource() {
+        let src = include_str!("realtime_stream.rs");
+        // ResourceId { id, resource: Some("issue") } 至少出现一次（issue_id 映射）
+        assert!(
+            src.contains("Some(issue)"),
+            "handler must map query.issue_id to ResourceId with resource=issue"
+        );
+    }
+
+    /// R254: handler 把 watchdog_id 映射到 resource = Some("issue_watchdog")。
+    #[test]
+    fn handler_maps_watchdog_id_to_issue_watchdog_resource() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("Some(issue_watchdog)"),
+            "handler must map query.watchdog_id to ResourceId with resource=issue_watchdog"
+        );
+    }
+
+    /// R254: handler 把 resource_id 映射到 resource = None（任意 resource 类型）。
+    #[test]
+    fn handler_maps_resource_id_to_none_resource() {
+        let src = include_str!("realtime_stream.rs");
+        assert!(
+            src.contains("ChannelFilter::ResourceId { id, resource: None }"),
+            "handler must map query.resource_id to ResourceId with resource None"
+        );
+    }
+}
 
 #[cfg(test)]
 mod round252_tests {

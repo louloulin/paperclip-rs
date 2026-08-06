@@ -6021,3 +6021,64 @@ R253 完成了 task-watchdog capability 闭环：
 
 下一步可推进 R254（per-resource channel 过滤：按 issue_id / run_id 订阅）或 R255（realtime 限流 / throttle）。
 
+## 92. 第二百五十四轮增量（Round 254 — per-resource channel 过滤）
+
+### 背景
+
+R252 把 channel filter 抽象为 `ChannelFilter` enum（Prefix / Exact），让客户端可以按 event name 前缀订阅（如 `issue.*`）。
+但实际业务中，客户端经常需要「只订阅某个 issue 的事件」或「只订阅某个 watchdog 的事件」，避免收到无关事件造成的网络 / 解析开销。
+
+Node 端 paperclip 把这种能力放在「server-side subscription filter」：客户端传入 `issueId` / `watchdogId` / `agentId` query 参数，server 端按 `LiveEvent.resource_id` 过滤。
+
+### 实现内容
+
+- **`pc-realtime/src/channels.rs`**（扩展）：
+  - `ChannelFilter` enum 增加 `ResourceId { id: Uuid, resource: Option<String> }` 变体：
+    - `resource: Some("issue")` 仅匹配 `resource == "issue"` 的事件；
+    - `resource: Some("issue_watchdog")` 仅匹配 watchdog 行的事件；
+    - `resource: Some("agent")` 仅匹配 agent 行的事件；
+    - `resource: Some("heartbeat_run")` 仅匹配 heartbeat run 事件；
+    - `resource: None` 匹配任意 resource 类型。
+  - `ChannelFilter::parse(s)` 增加解析格式：
+    - `issue_id:<uuid>` → `ResourceId { id, resource: Some("issue") }`
+    - `watchdog_id:<uuid>` → `ResourceId { id, resource: Some("issue_watchdog") }`
+    - `agent_id:<uuid>` → `ResourceId { id, resource: Some("agent") }`
+    - `run_id:<uuid>` → `ResourceId { id, resource: Some("heartbeat_run") }`
+    - `resource_id:<uuid>` → `ResourceId { id, resource: None }`
+    - 无效 UUID → fallback 到 `Exact`
+  - `matches_any(filters, event)` 签名变更：参数从 `&str` 改为 `&LiveEvent`，同时检查 event name 与 resource_id。
+  - 新增 `matches_any_event_name(filters, event_name)` 兼容便捷函数（仅检查 event name，忽略 ResourceId filter）。
+- **`pc-http/src/routes/realtime_stream.rs`**：
+  - `StreamQuery` 增加 5 个字段：`issue_id / watchdog_id / agent_id / run_id / resource_id`（都是 `Option<Uuid>`）。
+  - handler 把每个 query 字段转换为对应 `ChannelFilter::ResourceId` 推入 `channels_filter` 列表。
+  - 兼容：原有 `?channels=issue.*` 行为不变，与 `?issue_id=X` 可叠加（filter 列表 OR 语义）。
+
+### 当前仍有差距
+
+- 没有「per-resource + 时间范围」过滤（如「最近 5 分钟内 issue X 的事件」）；需要后续 round 实现 `since_timestamp` / `until_timestamp` filter。
+- `parse_channels` 解析 `xxx.yyy` 时仍走 `Exact`；但 `issue.created` 是 event name 而非 resource_id。如果用户传 `issue_id:created` 会被误判为 ResourceId（fallback 到 Exact 行为正确）。
+- 没有 `data.*` 过滤（如「只订阅 priority=urgent 的 issue 事件」）；需要先扩展 `LiveEvent.data` schema。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-realtime::channels::tests` | 17 passed (9 R252 + 8 R254) |
+| `pc-realtime::subscriber::tests` | 6 passed (无变化) |
+| `pc-realtime::tests`（lib.rs 原 7 个） | 7 passed (无变化) |
+| `pc-http::round254_tests` | 8 passed |
+| `pc-http::round252_tests` | 10 passed (无回归) |
+| `cargo test -p pc-realtime --lib` | 30 passed (22 + 8 R254) |
+| `cargo test -p pc-http --lib` | 200 passed (192 + 8 round254) |
+| `cargo test -p pc-repos --lib` | 518 passed (无变化) |
+| `cargo check --workspace --lib --tests` | 通过 |
+
+### 总结
+
+R254 把 channel filter 从「event name 维度」扩展到「resource_id 维度」：
+1. **类型扩展**（channels）：`ChannelFilter::ResourceId { id, resource }` 1:1 对齐 Node 端 server-side subscription filter。
+2. **签名升级**（channels）：`matches_any(filters, &LiveEvent)` 同时检查 event name + resource_id；新增 `matches_any_event_name` 兼容函数。
+3. **HTTP 暴露**（realtime_stream）：`StreamQuery` 暴露 5 个 per-resource 字段，handler 翻译为 `ChannelFilter::ResourceId`。
+
+下一步可推进 R255（realtime 限流 / throttle：per-IP token bucket）或 R256（time-range 过滤：`?since=&until=`）。
+
