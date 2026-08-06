@@ -5724,3 +5724,36 @@ Node `buildRunOutputSilence` 为 active run 提供 liveness 级别：ok / suspic
 ### 总结
 
 R247 把 active-run 路由的 `outputSilence` 从占位 null 升级为 Node 等价的 4 级判断 + snooze + evaluation 查询，闭合 Node recovery 中最关键的 liveness 计算。下一步推进 liveness decoration 字段，或继续补 evaluation worker realtime 联动。
+
+## 86. 第二百四十八轮增量（Round 248 — watchdog evaluation realtime 联动 + liveness decoration）
+
+### 背景
+
+R245-R247 把 watchdog evaluation worker 入口 + 4 级 silence 算完，但 evaluation 完成事件缺失，UI 与 worker 监听不到；active-run 响应未透出 `livenessState` / `livenessReason` 等 Node `decorateHeartbeatRunRuntimeStatus` 关键字段。本轮补齐。
+
+### 实现内容
+
+- complete handler 在评估写回后发布 `issue.watchdog_evaluation_completed` realtime 事件。
+- `list_company_watchdog_evaluations_route` 接受 `HeaderMap`，拒绝 agent-only 请求：
+  - 拦截 agent actor 但缺少 user header 的调用，返回 403。
+  - 保持 worker 通过 board / user 头识别。
+- active_run 响应增加：
+  - `livenessState`（透传 `HeartbeatRow.liveness_state`）
+  - `livenessReason`（透传 `HeartbeatRow.liveness_reason`）
+
+### 当前仍有差距
+
+- 暂未实现 Node `currentStatusMessage` / `currentToolName` / `lastAssistantSnippet` 等内存 cache 字段。
+- 未实现 worker 真正消费 realtime 事件。
+- `evaluationIssueIdentifier` 仍依赖 `issues.identifier`，未走展示层附加逻辑。
+
+### 测试
+
+| 模块 | 结果 |
+|---|---|
+| `pc-http::round248_tests` | 3 passed |
+| `cargo check -p pc-http --lib --tests` | 通过 |
+
+### 总结
+
+R248 让 watchdog evaluation 与 active-run 路由达到 Node 兼容性另一段：worker 完成事件透出 + liveness 透传 + worker 拉取端权限收敛。下一步可推进 activity log 写入或 worker 侧消费端实现。

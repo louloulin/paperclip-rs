@@ -2169,8 +2169,19 @@ async fn list_company_review_cases_route(
 async fn list_company_watchdog_evaluations_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
     ensure_company_exists(&state, company_id).await?;
+    let agent_id = headers
+        .get("x-paperclip-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok());
+    let user_id = crate::state::require_user_id(&state, &headers).await.ok();
+    if agent_id.is_some() && user_id.is_none() {
+        return Err(ApiError::Forbidden(
+            "watchdog evaluation worker queue requires board or user actor".into(),
+        ));
+    }
     let rows = IssueRepo::new(&state.db)
         .list_pending_watchdog_evaluations(company_id, 200)
         .await?;

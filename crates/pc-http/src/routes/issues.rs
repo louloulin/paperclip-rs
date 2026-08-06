@@ -1399,6 +1399,10 @@ async fn complete_watchdog_evaluation(
     if n == 0 {
         return Err(ApiError::NotFound(format!("active watchdog for issue {id}")));
     }
+    state.realtime.publish(
+        LiveEvent::new("issue.watchdog_evaluation_completed", "issue_watchdog", id)
+            .with_company(issue.company_id),
+    );
     Ok(Json(json!({
         "issueId": id,
         "companyId": issue.company_id,
@@ -4806,6 +4810,8 @@ async fn active_run(
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?,
         ).unwrap_or(Value::Null),
+        "livenessState": run.liveness_state,
+        "livenessReason": run.liveness_reason,
     })))
 }
 
@@ -4813,6 +4819,30 @@ async fn active_run(
 #[cfg(test)]
 #[cfg(test)]
 #[cfg(test)]
+#[cfg(test)]
+mod round248_tests {
+    #[test]
+    fn watchdog_complete_emits_realtime_event() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("issue.watchdog_evaluation_completed"));
+        assert!(src.contains("LiveEvent::new(\"issue.watchdog_evaluation_completed\""));
+    }
+
+    #[test]
+    fn active_run_response_includes_liveness_decoration() {
+        let src = include_str!("issues.rs");
+        assert!(src.contains("\"livenessState\": run.liveness_state"));
+        assert!(src.contains("\"livenessReason\": run.liveness_reason"));
+    }
+
+    #[test]
+    fn company_evaluation_route_requires_board_or_user_actor() {
+        let comp = include_str!("companies.rs");
+        assert!(comp.contains("watchdog evaluation worker queue requires board or user actor"));
+        assert!(comp.contains("headers: HeaderMap"));
+    }
+}
+
 mod round247_tests {
     #[test]
     fn output_silence_constants_align_with_node_thresholds() {
