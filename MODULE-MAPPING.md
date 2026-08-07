@@ -219,7 +219,7 @@
 | `git-workspace-sync.ts` | 5.1 git sync |
 | `index.ts` | 5.1 公共导出 |
 | `local-process-sandbox.ts` | 5.1 sandbox |
-| `server-utils.ts` | `pc-acpx::prompt_compose` (R380+R381+R382+R383+R384+R385+R386+R387 done) + `pc-acpx::build_prompt` (R381 done) + `pc-acpx::instance_root` (R386 done) + `pc-acpx::skill_sync_preference` (R387 done) |
+| `server-utils.ts` | `pc-acpx::prompt_compose` (R380+R381+R382+R383+R384+R385+R386+R387+R388+R389+R390 done) + `pc-acpx::build_prompt` (R381 done) + `pc-acpx::instance_root` (R386 done) + `pc-acpx::skill_sync_preference` (R387 done) + `pc-acpx::skill_snapshot` (R388 done) + `pc-acpx::skill_materialize` (R389 done) + `pc-acpx::skill_io` (R390 done — 7 skill I/O 函数 + 2 常量:is_maintainer_only_skill_target / resolve_paperclip_skills_dir / list_paperclip_skill_entries / read_installed_skill_targets / normalize_configured_paperclip_runtime_skills / read_paperclip_runtime_skill_entries / read_paperclip_skill_markdown / ensure_paperclip_skill_symlink / remove_maintainer_only_skill_symlinks + PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES / PAPERCLIP_SKILL_KEY_PREFIX) |
 | `log-redaction.ts` | 5.1 log redact |
 | `mcp-isolation.integration.test.ts` | 5.1 测试 |
 | `remote-execution-env.ts` | 5.1 remote env |

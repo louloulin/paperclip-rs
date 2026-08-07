@@ -13,6 +13,8 @@
 //! 本适配器在 adapter_config 提供 `effort` 时尝试加 `--effort <level>`，被 CLI 拒绝时
 //! 由 stderr 反映，agent.run 会回退处理（与 Node 行为对齐）。
 
+pub mod skills;
+
 use async_trait::async_trait;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,

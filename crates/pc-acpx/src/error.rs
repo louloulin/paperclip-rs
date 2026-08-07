@@ -66,6 +66,32 @@ pub enum AcpxError {
     /// A read on the acpx subprocess timed out.
     #[error("acpx subprocess read timed out after `{timeout_ms}` ms")]
     ReadTimeout { timeout_ms: u64 },
+    /// `materialize_paperclip_skill_copy` was asked to copy a skill
+    /// into itself, an ancestor, or one of its descendants. Mirrors the
+    /// Node `Refusing to materialize a skill into itself, an ancestor,
+    /// or one of its descendants.` error (L3053).
+    #[error("refusing to materialize skill `{source_path}` into `{target_path}` (self, ancestor, or descendant)")]
+    MaterializeSelfReference {
+        source_path: String,
+        target_path: String,
+    },
+    /// `materialize_paperclip_skill_copy` was called with a skill root
+    /// that is itself a symlink. Mirrors the Node `Refusing to
+    /// materialize a skill root that is itself a symlink.` error
+    /// (L3056).
+    #[error("refusing to materialize skill root `{path}` that is itself a symlink")]
+    MaterializeSymlinkRoot { path: String },
+    /// `materialize_paperclip_skill_copy` was called with a skill root
+    /// that is not a directory. Mirrors the Node `Paperclip skills must
+    /// be directories.` error (L3059).
+    #[error("paperclip skill root `{path}` must be a directory")]
+    MaterializeNotDirectory { path: String },
+    /// `acquire_materialize_lock` gave up after waiting for the
+    /// `MATERIALIZED_SKILL_LOCK_STALE_MS` deadline. Mirrors the Node
+    /// `Timed out waiting for Paperclip skill materialization lock at`
+    /// error (L2993).
+    #[error("timed out waiting for Paperclip skill materialization lock at `{lock_dir}`")]
+    MaterializeLockTimeout { lock_dir: String },
 }
 
 impl AcpxError {

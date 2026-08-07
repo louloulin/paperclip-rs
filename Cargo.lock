@@ -1928,6 +1928,7 @@ name = "pc-adapter-claude-local"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "pc-acpx",
  "pc-adapter-api",
  "pc-adapter-process",
  "serde",

@@ -18,6 +18,7 @@
 #![warn(unused_must_use)]
 
 pub mod acp_runtime;
+pub mod adapter_skills;
 pub mod acpx_engine_executor;
 pub mod agent_command;
 pub mod bin;
@@ -49,6 +50,7 @@ pub mod session_codec;
 pub mod session_compat;
 pub mod session_config_options;
 pub mod settings;
+pub mod skill_io;
 pub mod skill_materialize;
 pub mod skill_runtime;
 pub mod skill_snapshot;
@@ -61,6 +63,8 @@ pub mod subprocess_signal;
 pub mod transcript;
 pub mod usage;
 pub mod workspace_env;
+
+pub use adapter_skills::AdapterSkillContext;
 
 pub use acp_runtime::{
     AcpRuntime, AcpRuntimeAvailableCommand, AcpRuntimeCancelInput, AcpRuntimeCapabilities,
@@ -180,9 +184,21 @@ pub use session_codec::{
     AcpxSessionParams,
 };
 
+pub use skill_io::{
+    ensure_paperclip_skill_symlink, ensure_paperclip_skill_symlink_with_linker,
+    is_maintainer_only_skill_target, list_paperclip_skill_entries,
+    normalize_configured_paperclip_runtime_skills, read_installed_skill_targets,
+    read_paperclip_runtime_skill_entries, read_paperclip_skill_markdown,
+    remove_maintainer_only_skill_symlinks, resolve_paperclip_skills_dir, SkillSymlinkOutcome,
+    PAPERCLIP_SKILL_KEY_PREFIX, PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES,
+};
+
 pub use skill_materialize::{
-    build_skill_set_key, hash_path_contents, materialize_paperclip_skill_copy,
-    MaterializedSkillCopyResult, PaperclipSkillEntry, SkillSourceStatus,
+    acquire_materialize_lock, build_skill_set_key, hash_path_contents, hash_skill_directory,
+    materialize_paperclip_skill_copy, materialized_skill_fingerprint_matches,
+    remove_stale_materialize_lock, MaterializedSkillCopyResult, PaperclipSkillEntry,
+    SkillSourceStatus, MATERIALIZED_SKILL_LOCK_OWNER, MATERIALIZED_SKILL_LOCK_STALE_MS,
+    MATERIALIZED_SKILL_SENTINEL,
 };
 
 pub use skill_runtime::{

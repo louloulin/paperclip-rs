@@ -366,12 +366,73 @@ R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一�
 - **15 + 8 个新单元测试** + **22 个新集成测试**
   (`round385_workspace_env_and_signal.rs`)
 
-### 测试统计（pc-acpx crate，R387 末）
+### 测试统计（pc-acpx crate，R390 末）
 
-- **R386 末**: 656 tests (lib 364 + integration 292)
-- **R387 末**: 694 tests (lib 390 + integration 304),+38 个测试,无回归
-  - +26 skill_sync_preference 单元测试
-  - +12 round387 集成测试
+- **R389 末**: 773 tests (lib 431 + integration 342)
+- **R390 末**: **813 tests (lib 453 + integration 360)**,+40 个测试,无回归
+  - +22 skill_io 单元测试(常量 + 7 个公开函数 + 内部 helpers)
+  - +18 round390 集成测试(`tests/round390_skill_io.rs`)
+
+### R390 增量（skill_io — Node parity port）
+
+- **新模块 `crates/pc-acpx/src/skill_io.rs`**(~930 行含单测):
+  - 7 个公开函数 + 2 个常量 + 1 个公开枚举 + 5 个内部 helper
+  - `PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES`(Node L125-128)
+  - `PAPERCLIP_SKILL_KEY_PREFIX`(Node L2475)
+  - `is_maintainer_only_skill_target`(Node L290-292,含 windows backslash 归一化)
+  - `resolve_paperclip_skills_dir`(Node L2440-2457,async I/O)
+  - `list_paperclip_skill_entries`(Node L2467-2477,async I/O)
+  - `read_installed_skill_targets`(Node L2481-2490,async I/O,unix 分支 symlink)
+  - `normalize_configured_paperclip_runtime_skills`(Node L2740-2767,纯函数)
+  - `read_paperclip_runtime_skill_entries`(Node L2769-2773,async I/O)
+  - `read_paperclip_skill_markdown`(Node L2775-2787,async I/O)
+  - `ensure_paperclip_skill_symlink` + 测试变体 `_with_linker`(Node L2891-2920,async I/O)
+  - `remove_maintainer_only_skill_symlinks`(Node L3121-3160,async I/O)
+  - **关键设计决策**:lex-normalize 替代 `PathBuf::join`,修复 macOS sandbox
+    下未规范化 `..` 路径被 `tokio::fs::metadata` 误判为已存在的问题
+  - **关键设计决策**:`ensure_paperclip_skill_symlink_with_linker<F, Fut>`
+    接受 `link_skill` 闭包注入,便于测试不碰文件系统
+  - `BTreeMap` 稳定迭代顺序 / `tokio::fs::*` 统一 async I/O(`unsafe_code = "forbid"`)
+- **新增 `crates/pc-acpx/tests/round390_skill_io.rs`**(~440 行):
+  - 18 个集成测试覆盖 end-to-end flows(list → markdown → symlink → cleanup)
+  - 重点:`ensure_creates_skips_repairs_real_path` 完整跑 4 个 outcome 分支
+  - `remove_maintainer_only_filters_only_dot_agents_targets` 验证
+    `.agents/skills/` 前缀匹配 + allowed list 排除
+- **更新 `crates/pc-acpx/src/lib.rs`**:新增 `pub mod skill_io;` +
+  12 个 `pub use skill_io::{...};`(按字母序在 `skill_materialize` 之前)
+
+### 当前 adapter-utils 复刻进度（R390 末）
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers (R382) | 100% |
+| normalize (R382) | 100% |
+| log_redaction (R384) | 100% |
+| workspace_env (R385) | 100% |
+| subprocess_signal (R385) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| resolve_paperclip_instance_root_for_adapter (R386) | 100% |
+| skill sync prefs (3 函数) | 100% (R387) |
+| skill snapshots (2 函数) | 100% (R388) |
+| materialize_paperclip_skill_copy (async) | 100% (R389) |
+| **skill I/O (7 函数 + 2 常量)** | **100% (R390)** |
+
+### 下一轮 R391 计划
+
+按 docs/09-CURRENT-STATE-AND-NEXT-PLAN.md 整体推进,**最直接的下一步**
+是用 R388 + R389 + R390 提供的 builder + I/O 在具体 adapter crate
+中实现 `listXxxSkills` / `syncXxxSkills` —— 让 adapter 实质运行:
+
+1. **`pc-adapter-claude-local`**:实现 `listClaudeSkills` /
+   `syncClaudeSkills`,用 R388 `build_runtime_mounted_skill_snapshot` +
+   R390 `list_paperclip_skill_entries` + `read_paperclip_skill_markdown`
+2. **`pc-adapter-codex-local`**:同样模式,基于 codex home
+3. **`pc-adapter-gemini-local`** / **`pc-adapter-grok-local`** /
+   **`pc-adapter-opencode-local`** / **`pc-adapter-pi-local`**:同上
+
+完成后 paperclip-rs 的 adapter 实现就能真正支持 Paperclip skill
+sync workflow,与 Node `paperclip` 行为对齐。
 
 ### 当前 adapter-utils 复刻进度
 
@@ -432,6 +493,99 @@ lexical 路径等价。
 | paths/settings/managed_home/reconcile_skills | 100% |
 | resolve_paperclip_instance_root_for_adapter (R386) | 100% |
 | skill sync prefs (R387) | 100% |
+| skill snapshots (R388) | 100% |
+| materialize_paperclip_skill_copy (R389) | 100% |
+
+### R389 增量（materialize_paperclip_skill_copy 重写）
+
+按 `comet-open` 思路,**完全重写** Node `server-utils.ts` 中
+`materializePaperclipSkillCopy` (L3038-3120) 与所有相关内部 helpers
+(`hashSkillDirectory` L2920-2966 / `materializedSkillFingerprintMatches`
+L2968-2976 / `acquireMaterializeLock` L2978-3000 /
+`removeStaleMaterializeLock` L3003-3026 / `isPidAlive` L3006-3013),
+精确镜像 Node 语义。**修复 root cause**:R367 实施是简化版,与 Node
+行为偏差较大,本次彻底重写。
+
+- **`materialize_paperclip_skill_copy` 重写**(零行为变更点保留):
+  - self / ancestor / descendant 拒绝(L3053)→ `MaterializeSelfReference`
+  - symlink / 非目录 root 拒绝(L3056, L3059)→ `MaterializeSymlinkRoot` / `MaterializeNotDirectory`
+  - Fingerprint cache:计算源 SHA-256,目标 sentinel 命中则 0 拷贝
+  - Materialize lock:`<target>.lock` 互斥,30 秒 stale 阈值
+  - Stale recovery:PID 死亡 / age 超阈值 → 删除锁
+  - 临时目录 + atomic rename:`<target>.tmp-<pid>-<uuid>` → rename
+  - Sentinel 写入:`{ version: 1, sourceFingerprint, copiedFiles, skippedSymlinks }`
+  - File mode 保留(unix only)
+  - 哈希格式 byte-for-byte 镜像(`symlink:<rel>
+` / `dir:<rel>
+` / `file:<rel>:<mode>
+` / `other:<rel>:<mode>
+`)
+- **新增 helper**:`hash_skill_directory` / `materialized_skill_fingerprint_matches`
+  / `acquire_materialize_lock` / `remove_stale_materialize_lock` / `random_uuid_string`
+- **常量**:`MATERIALIZED_SKILL_SENTINEL` / `MATERIALIZED_SKILL_LOCK_OWNER` /
+  `MATERIALIZED_SKILL_LOCK_STALE_MS`
+- **错误变体**:`MaterializeSelfReference` / `MaterializeSymlinkRoot` /
+  `MaterializeNotDirectory` / `MaterializeLockTimeout`
+- **`unsafe_code = "forbid"` 兼容**:shell `kill -0` 探测 PID,纯字符串路径算术,无任何 unsafe
+- **12 个新单元测试 + 19 个新集成测试**
+
+### 当前 adapter-utils 复刻进度（R389 末）
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers (R382) | 100% |
+| normalize (R382) | 100% |
+| log_redaction (R384) | 100% |
+| workspace_env (R385) | 100% |
+| subprocess_signal (R385) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| resolve_paperclip_instance_root_for_adapter (R386) | 100% |
+| skill sync prefs (R387) | 100% |
+| skill snapshots (R388) | 100% |
+| materialize_paperclip_skill_copy (R389) | 100% |
+
+### R388 增量（skill_snapshot）
+
+按 `comet-open` 思路,精确镜像 Node `server-utils.ts` 中
+`buildRuntimeMountedSkillSnapshot` (L2491-2608) 和
+`buildPersistentSkillSnapshot` (L2609-2734),以及相关内部 helpers
+(`skillLocationLabel` L294-298 / `buildManagedSkillOrigin` L300-309 /
+`isPaperclipSkillSourceMissing` L311-313 /
+`resolvePaperclipSkillMissingDetail` L315-320 /
+`resolveSkillDetail` L322-330),新建独立模块 `pc-acpx::skill_snapshot`。
+完整 `AdapterSkillOrigin` / `AdapterSkillState` / `AdapterSkillSyncMode` /
+`InstalledSkillTargetKind` / `PaperclipSkillSourceStatus` enum 镜像。
+
+- **新模块 `crates/pc-acpx/src/skill_snapshot.rs`**(1386 行含 29 单测):
+  - 完整类型镜像:`PaperclipSkillEntry` / `InstalledSkillTarget` /
+    `AdapterSkillEntry` / `AdapterSkillSnapshot` /
+    `AdapterDesiredSkillEntry` / `SkillDetail`(`None` / `Static` / `Dynamic closure`)
+  - `SkillDetail` 三态 enum 镜像 Node `string | ((entry) => string | null) | null`,
+    `From<String>` / `From<&'static str>` / `From<Option<String>>` 便利 impl
+  - `Debug` 手动实现(`dyn Fn` 不支持 derive Debug)
+  - `BTreeMap` / `BTreeSet` 保持确定性迭代顺序
+  - 三个 pass 镜像 Node:available → desired unavailable → external
+  - 零 I/O / 零 async / 零 unsafe
+  - 不通过 lib.rs re-export `PaperclipSkillEntry`(与 `skill_materialize`
+    的同名类型区分,通过 `pc_acpx::skill_snapshot::PaperclipSkillEntry`
+    显式路径访问)
+- **29 个新单元测试** + **19 个新集成测试**(`round388_skill_snapshot.rs`)
+
+### 当前 adapter-utils 复刻进度（R388 末）
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers (R382) | 100% |
+| normalize (R382) | 100% |
+| log_redaction (R384) | 100% |
+| workspace_env (R385) | 100% |
+| subprocess_signal (R385) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| resolve_paperclip_instance_root_for_adapter (R386) | 100% |
+| skill sync prefs (R387) | 100% |
+| skill snapshots (R388) | 100% |
 
 ### R387 增量（skill_sync_preference）
 
@@ -466,11 +620,30 @@ lexical 路径等价。
 | resolve_paperclip_instance_root_for_adapter (R386) | 100% |
 | skill sync prefs (R387) | 100% |
 
-### 下一轮 R388 计划
+### 下一轮 R390+ 计划
 
-按 adapter-utils 复刻路线图(复杂):
-1. `buildRuntimeMountedSkillSnapshot` (Node L2491-2608)— 运行时挂载 skills 快照
-2. `buildPersistentSkillSnapshot` (L2609-2734)— 持久化 skills 快照
-3. 配套 typed `PaperclipSkillEntry` 等数据结构
+R380-R389 共 10 轮、约 100 个 Node `adapter-utils/src/server-utils.ts`
+函数已**完整移植到 Rust**。剩余工作集中在三块:
 
-预计 R388 完成:pc-acpx 720+ tests,workspace 860+ tests。
+#### P0 — 系统核心可靠性(heartbeat)
+- `readiness.rs`(R290 部分完成,需补 staleness / idempotent wake / 抑制 DB override)
+- 其他 retry reason(`dependency_unavailable` / `workspace_locked` / `quota_exceeded`)
+
+#### P1 — 用户面核心
+- company-skills 深度(fork / test-run 状态机)
+- tools / tool-connections 真实 OAuth 流程
+- plugin worker→host 回调 + 生命周期恢复
+- decisions / decision-training 仓储化
+
+#### P2 — Adapter 实质实现
+- 13 个 adapter stubs(`pc-adapter-gemini-local` / `pc-adapter-grok-local`
+  / `pc-adapter-opencode-local` / `pc-adapter-pi-local` /
+  `pc-adapter-cursor-cloud` / 等)从 1-test stub 升级到完整实现
+
+#### P3 — 辅助功能
+- secrets AWS / GCP / Vault 真实解密
+- folders / labels / routines / pipelines 完整迁移
+- cli auth bridge
+- UI e2e 冒烟
+
+预计下一阶段:heartbeat readiness / staleness 完整实现 + 1-2 个 adapter 充实。
