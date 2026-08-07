@@ -233,6 +233,17 @@ pub async fn ensure_provider_quota_wait_recovery_monitor(
         e
     })?;
 
+    // Round 360：写 issues.monitor_notes，与 schedule_provider_quota_recovery_monitor
+    // 文案对齐。事务已 commit，这里独立 UPDATE。
+    if let Some(monitor_notes) = build_provider_quota_monitor_notes(db, input.issue_id).await {
+        let _ =
+            sqlx::query("UPDATE issues SET monitor_notes = $1, updated_at = now() WHERE id = $2")
+                .bind(monitor_notes)
+                .bind(input.issue_id)
+                .execute(db.pool())
+                .await;
+    }
+
     Ok(Some(ProviderQuotaMonitorResult {
         scheduled_run_id,
         wakeup_request_id: wakeup_id,
@@ -243,6 +254,47 @@ pub async fn ensure_provider_quota_wait_recovery_monitor(
 // ============================================================================
 // Helpers (private)
 // ============================================================================
+
+/// Round 360：根据 issue 状态生成与 `schedule_provider_quota_recovery_monitor` 文案对齐的
+/// `monitor_notes` 字符串。
+///
+/// - `in_review`: "Provider usage quota reached; retry the active review participant
+///                 at/after the provider reset time/backoff."
+/// - 其他 (in_progress 等): "Provider usage quota reached; retry the original assignee
+///                          at/after the provider reset time/backoff."
+///
+/// 优先从 `latest_run.result_json.providerQuotaRetryNotBefore` 判断是否是 parsed reset time，
+/// 没有则 fallback 到 "default recovery backoff"。
+async fn build_provider_quota_monitor_notes(db: &Db, issue_id: Uuid) -> Option<String> {
+    let row = sqlx::query_as::<_, (String, Option<Value>)>(
+        "SELECT status,                 (SELECT result_json FROM heartbeat_runs                   WHERE company_id = (SELECT company_id FROM issues WHERE id = $1)                     AND agent_id = (SELECT assignee_agent_id FROM issues WHERE id = $1)                     AND status = 'failed'                     AND context_snapshot->>'issueId' = $1::text                   ORDER BY COALESCE(started_at, created_at) DESC NULLS LAST                   LIMIT 1)          FROM issues WHERE id = $1",
+    )
+    .bind(issue_id)
+    .fetch_optional(db.pool())
+    .await
+    .ok()
+    .flatten();
+    let Some((status, result_json)) = row else {
+        return None;
+    };
+    let parsed_reset_time = result_json
+        .as_ref()
+        .and_then(|v| v.get("providerQuotaRetryNotBefore"))
+        .and_then(|v| v.as_str())
+        .is_some();
+    let in_review = status == "in_review";
+    let suffix = if parsed_reset_time {
+        "at the provider reset time."
+    } else {
+        "after the default recovery backoff."
+    };
+    let prefix = if in_review {
+        "Provider usage quota reached; retry the active review participant "
+    } else {
+        "Provider usage quota reached; retry the original assignee "
+    };
+    Some(format!("{prefix}{suffix}"))
+}
 
 /// 计算 provider_quota retry 时间：
 /// - 从 latest_run.result_json.providerQuotaRetryNotBefore 读取

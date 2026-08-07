@@ -1325,6 +1325,15 @@ struct CommentBody {
     author_agent_id: Option<Uuid>,
     #[serde(default)]
     author_user_id: Option<String>,
+    /// 可选展示元数据（与 `issue_comments.presentation` 列对齐）。
+    /// 系统评论（例如 recovery notice、source escalation notice）会用这个字段
+    /// 携带 title/rows/tone 等结构化展示数据。
+    #[serde(default)]
+    presentation: Option<serde_json::Value>,
+    /// 可选元数据（与 `issue_comments.metadata` 列对齐）。
+    /// 携带 recovery_action_id、actor、category 等不直接展示但供前端/调试用的信息。
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 
 async fn add_comment(
@@ -1347,12 +1356,14 @@ async fn add_comment(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let row = IssueRepo::new(&state.db)
-        .create_comment(
+        .create_comment_with_display(
             issue.company_id,
             issue.id,
             payload.author_agent_id,
             author_user,
             &payload.body,
+            payload.presentation.as_ref(),
+            payload.metadata.as_ref(),
         )
         .await?;
     state.realtime.publish(

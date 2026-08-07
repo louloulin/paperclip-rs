@@ -89,7 +89,8 @@ async fn insert_run(
 
 async fn cleanup(db: &Db, company_id: Uuid) {
     let _ = sqlx::query(
-        "DELETE FROM issue_comments WHERE issue_id IN (SELECT id FROM issues WHERE company_id=$1)",
+        "DELETE FROM activity_log WHERE company_id = $1;
+        let _ = DELETE FROM issue_comments WHERE issue_id IN (SELECT id FROM issues WHERE company_id=$1)",
     )
     .bind(company_id)
     .execute(db.pool())

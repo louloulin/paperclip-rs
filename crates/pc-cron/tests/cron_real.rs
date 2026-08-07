@@ -1,6 +1,6 @@
 //! M15 真实验证：pc-cron 解析 + 下次触发时间。
 
-use chrono::{DateTime, Datelike, Timelike, TimeZone, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use pc_cron::{next_tick_from_expression, parse_cron, validate_cron};
 
 #[test]
@@ -36,7 +36,9 @@ fn validate_cron_returns_none_for_ok() {
 fn next_tick_every_5_min() {
     let parsed = parse_cron("*/5 * * * *").unwrap();
     let now = Utc.with_ymd_and_hms(2026, 8, 7, 12, 0, 0).unwrap();
-    let next = next_tick_from_expression("*/5 * * * *", now).unwrap().unwrap();
+    let next = next_tick_from_expression("*/5 * * * *", now)
+        .unwrap()
+        .unwrap();
     assert!(next > now);
     assert_eq!(next.minute() % 5, 0);
 }
@@ -44,7 +46,9 @@ fn next_tick_every_5_min() {
 #[test]
 fn next_tick_daily_midnight() {
     let now = Utc.with_ymd_and_hms(2026, 8, 7, 12, 0, 0).unwrap();
-    let next = next_tick_from_expression("0 0 * * *", now).unwrap().unwrap();
+    let next = next_tick_from_expression("0 0 * * *", now)
+        .unwrap()
+        .unwrap();
     assert_eq!(next.hour(), 0);
     assert_eq!(next.minute(), 0);
     assert!(next > now);
@@ -54,7 +58,9 @@ fn next_tick_daily_midnight() {
 #[test]
 fn next_tick_at_specific_minute() {
     let now = Utc.with_ymd_and_hms(2026, 8, 7, 12, 0, 0).unwrap();
-    let next = next_tick_from_expression("30 14 * * *", now).unwrap().unwrap();
+    let next = next_tick_from_expression("30 14 * * *", now)
+        .unwrap()
+        .unwrap();
     assert_eq!(next.hour(), 14);
     assert_eq!(next.minute(), 30);
     assert!(next > now);
@@ -77,7 +83,10 @@ fn parsed_cron_serializes() {
     let j = serde_json::to_string(&p).unwrap();
     assert!(j.contains("[0,5,10,15,20,25,30,35,40,45,50,55]") || j.contains("0"));
     let back: pc_cron::ParsedCron = serde_json::from_str(&j).unwrap();
-    assert_eq!(back.minutes, vec![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
+    assert_eq!(
+        back.minutes,
+        vec![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
+    );
 }
 
 #[test]

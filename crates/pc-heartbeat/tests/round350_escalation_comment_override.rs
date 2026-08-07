@@ -40,6 +40,7 @@ fn wake_template(company_id: Uuid, agent_id: Uuid) -> NewAgentWakeupRequest {
 
 async fn cleanup(db: &Db, company_id: Uuid) {
     for table in [
+        "activity_log",
         "agent_wakeup_requests",
         "issue_comments",
         "issue_recovery_actions",

@@ -169,7 +169,10 @@ async fn call(
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("body");
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 async fn call_no_body(
@@ -223,8 +226,14 @@ async fn post_comment_with_presentation_and_metadata_round_trips() {
     assert_eq!(post_status, 201, "POST comment: {post_body}");
 
     // POST 响应里应该立刻回写 presentation/metadata
-    assert_eq!(post_body["presentation"], presentation, "post returned presentation differs");
-    assert_eq!(post_body["metadata"], metadata, "post returned metadata differs");
+    assert_eq!(
+        post_body["presentation"], presentation,
+        "post returned presentation differs"
+    );
+    assert_eq!(
+        post_body["metadata"], metadata,
+        "post returned metadata differs"
+    );
 
     // GET 端点拉回来的数组里也必须保留
     let (get_status, get_body) = call_no_body(
@@ -237,7 +246,10 @@ async fn post_comment_with_presentation_and_metadata_round_trips() {
     assert_eq!(get_status, 200, "GET list: {get_body}");
     let arr = get_body.as_array().expect("array");
     assert_eq!(arr.len(), 1, "expected 1 comment: {get_body}");
-    assert_eq!(arr[0]["presentation"], presentation, "GET presentation differs");
+    assert_eq!(
+        arr[0]["presentation"], presentation,
+        "GET presentation differs"
+    );
     assert_eq!(arr[0]["metadata"], metadata, "GET metadata differs");
     assert_eq!(arr[0]["body"], "system: source escalation required");
     assert_eq!(arr[0]["author_user_id"], user);
@@ -269,7 +281,10 @@ async fn post_comment_without_presentation_metadata_still_works() {
     )
     .await;
     assert_eq!(post_status, 201, "POST: {post_body}");
-    assert!(post_body["presentation"].is_null(), "presentation should be null");
+    assert!(
+        post_body["presentation"].is_null(),
+        "presentation should be null"
+    );
     assert!(post_body["metadata"].is_null(), "metadata should be null");
 
     let (_, get_body) = call_no_body(

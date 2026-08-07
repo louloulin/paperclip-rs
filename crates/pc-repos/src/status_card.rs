@@ -311,15 +311,13 @@ WHERE id IN (
 mod m8_marker_tests {
     #[test]
     fn serde_derive_wired() {
-        assert_eq!(2+2, 4);
+        assert_eq!(2 + 2, 4);
     }
     #[test]
     fn module_loaded() {
         // Confirm we can reference the file's primary types at runtime.
         // This catches accidental module-private renames.
-        let _ = std::any::type_name::<fn()>()
-            .split("::")
-            .next();
+        let _ = std::any::type_name::<fn()>().split("::").next();
     }
 
     #[test]
@@ -332,4 +330,3 @@ mod m8_marker_tests {
         assert_eq!(back["_m8"], true);
     }
 }
-

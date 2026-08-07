@@ -130,7 +130,7 @@ pub fn decide_escalation(
     let activity_action = if candidate.cause == StrandedRecoveryCause::SuccessfulRunMissingState {
         "issue.successful_run_handoff_escalated".to_owned()
     } else {
-        "issue.updated".to_owned()
+        "heartbeat.source_escalated".to_owned()
     };
     let comment_body =
         build_source_escalation_comment_body(issue, candidate, action_id, next_assignee);
@@ -348,7 +348,7 @@ mod tests {
                 assert!(plan.comment_body.contains("`"));
                 assert!(plan.comment_marker.contains("Recovery action: `"));
                 assert!(!plan.is_provider_quota_wait);
-                assert_eq!(plan.activity_action, "issue.updated");
+                assert_eq!(plan.activity_action, "heartbeat.source_escalated");
             }
             other => panic!("expected SourceEscalate, got {other:?}"),
         }

@@ -2809,9 +2809,7 @@ mod m8_marker_tests {
     fn module_loaded() {
         // Confirm we can reference the file's primary types at runtime.
         // This catches accidental module-private renames.
-        let _ = std::any::type_name::<fn()>()
-            .split("::")
-            .next();
+        let _ = std::any::type_name::<fn()>().split("::").next();
     }
 
     #[test]
@@ -2824,4 +2822,3 @@ mod m8_marker_tests {
         assert_eq!(back["_m8"], true);
     }
 }
-

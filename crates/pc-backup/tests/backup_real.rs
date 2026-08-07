@@ -50,7 +50,11 @@ fn psql(port: u16, db: &str, sql: &str) -> (i32, String, String) {
 }
 
 fn seed_db(port: u16, db: &str) {
-    let (code, _, err) = psql(port, db, "CREATE TABLE IF NOT EXISTS m5_demo(id INT PRIMARY KEY, label TEXT);");
+    let (code, _, err) = psql(
+        port,
+        db,
+        "CREATE TABLE IF NOT EXISTS m5_demo(id INT PRIMARY KEY, label TEXT);",
+    );
     assert_eq!(code, 0, "create table: {err}");
     let (code, _, err) = psql(port, db, "INSERT INTO m5_demo(id, label) SELECT g, 'row-'||g FROM generate_series(1,100) g ON CONFLICT DO NOTHING;");
     assert_eq!(code, 0, "insert: {err}");
@@ -87,7 +91,10 @@ async fn dump_creates_gzip_file() {
     let result = BackupEngine::new().run(&opts).await.expect("dump");
     assert!(result.file.path.exists(), "backup file written");
     assert!(result.file.size_bytes > 0, "backup non-empty");
-    assert!(result.file.filename.contains("m5-smoke"), "label in filename");
+    assert!(
+        result.file.filename.contains("m5-smoke"),
+        "label in filename"
+    );
     assert!(result.file.filename.ends_with(".sql.gz"));
 }
 
@@ -127,7 +134,10 @@ async fn dump_restore_roundtrip_row_count() {
         backup_path: dump.file.path.clone(),
         extra_psql_args: vec!["--single-transaction".into()],
     };
-    let restore = RestoreEngine::new().run(&restore_opts).await.expect("restore");
+    let restore = RestoreEngine::new()
+        .run(&restore_opts)
+        .await
+        .expect("restore");
     assert_eq!(restore.psql_exit_code, Some(0));
 
     let dst_count = count_rows(55432, "m5_dst");
@@ -159,7 +169,11 @@ async fn list_finds_backup_files() {
     // Synthesize two backup files directly so retention pruning can't interfere.
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("paperclip-20260101-000000.sql.gz"), b"fake").unwrap();
-    std::fs::write(dir.path().join("paperclip-20260201-000000.sql.gz"), b"fake2").unwrap();
+    std::fs::write(
+        dir.path().join("paperclip-20260201-000000.sql.gz"),
+        b"fake2",
+    )
+    .unwrap();
     let list = BackupEngine::new().list(dir.path()).expect("list");
     assert_eq!(list.len(), 2);
     assert!(list[0].filename.contains("paperclip-"));

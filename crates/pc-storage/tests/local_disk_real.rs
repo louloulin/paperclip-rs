@@ -35,7 +35,11 @@ async fn put_get_roundtrip() {
     let store = LocalDiskStorage::new(dir.path().to_path_buf());
     let payload = Bytes::from_static(b"hello paperclip storage");
     let meta = store
-        .put_object(&target("attachments", "a.txt").location, payload.clone(), Some("text/plain"))
+        .put_object(
+            &target("attachments", "a.txt").location,
+            payload.clone(),
+            Some("text/plain"),
+        )
         .await
         .expect("put");
     assert_eq!(meta.size, payload.len() as u64);
@@ -80,8 +84,14 @@ async fn delete_is_idempotent() {
         .put_object(&target("b", "k").location, Bytes::from_static(b"x"), None)
         .await
         .expect("put");
-    store.delete_object(&loc("b", "k")).await.expect("first delete");
-    store.delete_object(&loc("b", "k")).await.expect("second delete idempotent");
+    store
+        .delete_object(&loc("b", "k"))
+        .await
+        .expect("first delete");
+    store
+        .delete_object(&loc("b", "k"))
+        .await
+        .expect("second delete idempotent");
 }
 
 #[tokio::test]
@@ -89,21 +99,30 @@ async fn list_prefix_filters_correctly() {
     let dir = TempDir::new().unwrap();
     let store = LocalDiskStorage::new(dir.path().to_path_buf());
     store
-        .put_object(&target("bucket1", "a/1.txt").location, Bytes::from_static(b"1"), None)
+        .put_object(
+            &target("bucket1", "a/1.txt").location,
+            Bytes::from_static(b"1"),
+            None,
+        )
         .await
         .unwrap();
     store
-        .put_object(&target("bucket1", "a/2.txt").location, Bytes::from_static(b"2"), None)
+        .put_object(
+            &target("bucket1", "a/2.txt").location,
+            Bytes::from_static(b"2"),
+            None,
+        )
         .await
         .unwrap();
     store
-        .put_object(&target("bucket1", "b/3.txt").location, Bytes::from_static(b"3"), None)
+        .put_object(
+            &target("bucket1", "b/3.txt").location,
+            Bytes::from_static(b"3"),
+            None,
+        )
         .await
         .unwrap();
-    let keys = store
-        .list_prefix("bucket1", "a/")
-        .await
-        .expect("list");
+    let keys = store.list_prefix("bucket1", "a/").await.expect("list");
     assert_eq!(keys.len(), 2);
     let names: Vec<String> = keys.iter().map(|k| k.as_str().to_string()).collect();
     assert!(names.contains(&"a/1.txt".to_string()));
@@ -115,7 +134,11 @@ async fn bucket_with_slash_rejected() {
     let dir = TempDir::new().unwrap();
     let store = LocalDiskStorage::new(dir.path().to_path_buf());
     let err = store
-        .put_object(&target("../etc", "passwd").location, Bytes::from_static(b"x"), None)
+        .put_object(
+            &target("../etc", "passwd").location,
+            Bytes::from_static(b"x"),
+            None,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, pc_storage::StorageError::Invalid(_)));
@@ -126,7 +149,11 @@ async fn key_path_traversal_rejected() {
     let dir = TempDir::new().unwrap();
     let store = LocalDiskStorage::new(dir.path().to_path_buf());
     let err = store
-        .put_object(&target("b", "../escape.txt").location, Bytes::from_static(b"x"), None)
+        .put_object(
+            &target("b", "../escape.txt").location,
+            Bytes::from_static(b"x"),
+            None,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, pc_storage::StorageError::Invalid(_)));
@@ -137,7 +164,11 @@ async fn presign_get_returns_url() {
     let dir = TempDir::new().unwrap();
     let store = LocalDiskStorage::new(dir.path().to_path_buf());
     store
-        .put_object(&target("b", "k.txt").location, Bytes::from_static(b"data"), None)
+        .put_object(
+            &target("b", "k.txt").location,
+            Bytes::from_static(b"data"),
+            None,
+        )
         .await
         .unwrap();
     let url = store

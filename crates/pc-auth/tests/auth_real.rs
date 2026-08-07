@@ -3,7 +3,7 @@
 //! 与 Node `services/authorization.ts` + `auth/better-auth.ts` 行为对齐。
 
 use pc_auth::{
-    hash_password, verify_password, generate_session_token, hash_token, Actor, ActorSource,
+    generate_session_token, hash_password, hash_token, verify_password, Actor, ActorSource,
     AuthContext, AuthError, KeyScope,
 };
 use uuid::Uuid;

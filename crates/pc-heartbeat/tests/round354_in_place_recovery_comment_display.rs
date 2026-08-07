@@ -53,7 +53,8 @@ fn wake_template(company_id: Uuid, agent_id: Uuid) -> NewAgentWakeupRequest {
 async fn cleanup(db: &Db, company_id: Uuid) {
     let statements = [
         "DELETE FROM agent_wakeup_requests WHERE company_id = $1",
-        "DELETE FROM issue_comments WHERE company_id = $1",
+        "DELETE FROM activity_log WHERE company_id = $1;
+        let _ = DELETE FROM issue_comments WHERE company_id = $1",
         "DELETE FROM issue_recovery_actions WHERE company_id = $1",
         "DELETE FROM heartbeat_runs WHERE company_id = $1",
         "DELETE FROM issues WHERE company_id = $1",

@@ -1877,6 +1877,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-acpx"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-activity"
 version = "0.1.0"
 dependencies = [

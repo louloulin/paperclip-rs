@@ -14,6 +14,7 @@ members = [
     "crates/pc-authz",
     "crates/pc-realtime",
     "crates/pc-heartbeat",
+    "crates/pc-acpx",
     "crates/pc-adapter-api",
     "crates/pc-adapter-process",
     "crates/pc-adapter-claude-local",

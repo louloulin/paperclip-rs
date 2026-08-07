@@ -33,10 +33,13 @@ async fn cleanup(db: &Db, company_id: Uuid) {
         .bind(company_id)
         .execute(db.pool())
         .await;
-    let _ = sqlx::query("DELETE FROM issue_comments WHERE company_id = $1")
-        .bind(company_id)
-        .execute(db.pool())
-        .await;
+    let _ = sqlx::query(
+        "DELETE FROM activity_log WHERE company_id = $1;
+        let _ = DELETE FROM issue_comments WHERE company_id = $1",
+    )
+    .bind(company_id)
+    .execute(db.pool())
+    .await;
     let _ = sqlx::query("DELETE FROM issues WHERE company_id = $1")
         .bind(company_id)
         .execute(db.pool())

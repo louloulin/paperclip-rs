@@ -394,7 +394,10 @@ async fn cmd_seed(db: &Db, file: &PathBuf, json: bool) -> Result<()> {
         .await
         .with_context(|| format!("execute {}", file.display()))?;
     if json {
-        println!("{}", json!({ "applied": true, "path": file.display().to_string(), "bytes": sql.len() }));
+        println!(
+            "{}",
+            json!({ "applied": true, "path": file.display().to_string(), "bytes": sql.len() })
+        );
     } else {
         println!("seed applied: {} ({} bytes)", file.display(), sql.len());
     }

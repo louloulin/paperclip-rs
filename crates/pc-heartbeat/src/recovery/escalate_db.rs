@@ -10,9 +10,10 @@
 //! - 若选择 RecoveryInPlace：直接更新 issue 为 blocked + 写 comment
 //! - 全部副作用在 DB 上
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
+use pc_repos::activity::{ActivityRepo, ActorType, NewActivity};
 use pc_repos::agent::{AgentRepo, NewAgentWakeupRequest};
 use pc_repos::issue::{IssueRepo, IssueRow};
 use pc_repos::Db;
@@ -405,6 +406,31 @@ async fn apply_source_escalation(
             comment_id = Some(row.id);
         }
     }
+    // Round 359：source escalation 路径写 activity_log（actor=system），
+    // 让审计/前端 dashboard 能追踪"是谁把 issue 移到 blocked"。
+    let activity_details = json!({
+        "source": plan.activity_source,
+        "cause": plan.cause.as_str(),
+        "previous_status": plan.previous_status,
+        "owner_agent_id": plan.owner_agent_id,
+        "next_assignee_agent_id": plan.next_assignee_agent_id,
+        "recovery_action_id": plan.recovery_action_id.to_string(),
+        "is_provider_quota_wait": plan.is_provider_quota_wait,
+    });
+    let _ = ActivityRepo::new(db)
+        .record(&NewActivity {
+            company_id: plan.company_id,
+            actor_type: ActorType::System,
+            actor_id: "system".to_string(),
+            action: plan.activity_action.clone(),
+            entity_type: "issue".to_string(),
+            entity_id: plan.issue_id.to_string(),
+            agent_id: None,
+            run_id: None,
+            responsible_user_id: None,
+            details: Some(activity_details),
+        })
+        .await;
     Ok((updated, comment_id))
 }
 
@@ -438,6 +464,26 @@ async fn apply_in_place_escalation(
             Some(metadata),
         )
         .await?;
+    // Round 359：in-place escalation 路径写 activity_log（actor=system）。
+    let in_place_details = json!({
+        "source": plan.activity_source,
+        "previous_status": plan.previous_status,
+        "comment_id": row.id.to_string(),
+    });
+    let _ = ActivityRepo::new(db)
+        .record(&NewActivity {
+            company_id: plan.company_id,
+            actor_type: ActorType::System,
+            actor_id: "system".to_string(),
+            action: "heartbeat.recovery_in_place".to_string(),
+            entity_type: "issue".to_string(),
+            entity_id: plan.issue_id.to_string(),
+            agent_id: None,
+            run_id: None,
+            responsible_user_id: None,
+            details: Some(in_place_details),
+        })
+        .await;
     Ok((updated, Some(row.id)))
 }
 

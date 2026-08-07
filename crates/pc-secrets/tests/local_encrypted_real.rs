@@ -79,7 +79,11 @@ async fn wrong_key_decryption_fails() {
     let key_b = [0x22u8; 32];
     let enc = LocalEncryptedProvider::from_bytes(key_a);
     let dec = LocalEncryptedProvider::from_bytes(key_b);
-    let m = extract_material(&enc.create_secret("top-secret".into(), &ctx()).await.unwrap());
+    let m = extract_material(
+        &enc.create_secret("top-secret".into(), &ctx())
+            .await
+            .unwrap(),
+    );
     let err = dec
         .resolve_version(serde_json::to_value(&m).unwrap(), &rtctx(Uuid::new_v4()))
         .await
