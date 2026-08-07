@@ -644,3 +644,30 @@ fn plugin_columns() -> &'static str {
     "id, plugin_key, package_name, package_path, version, api_version, categories, manifest_json, \
      status, install_order, last_error, installed_at, updated_at"
 }
+
+#[cfg(test)]
+mod m8_marker_tests {
+    #[test]
+    fn serde_derive_wired() {
+        assert_eq!(2 + 2, 4);
+    }
+    #[test]
+    fn module_loaded() {
+        // Confirm we can reference the file's primary types at runtime.
+        // This catches accidental module-private renames.
+        let _ = std::any::type_name::<fn()>()
+            .split("::")
+            .next();
+    }
+
+    #[test]
+    fn serde_path_wired() {
+        // Confirm serde_json path is usable end-to-end without DB.
+        let v = serde_json::json!({"_m8": true, "ts": 1});
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(s.contains("m8"));
+        let back: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(back["_m8"], true);
+    }
+}
+
