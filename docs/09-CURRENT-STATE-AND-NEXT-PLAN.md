@@ -366,12 +366,13 @@ R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一�
 - **15 + 8 个新单元测试** + **22 个新集成测试**
   (`round385_workspace_env_and_signal.rs`)
 
-### 测试统计（pc-acpx crate，R390 末）
+### 测试统计（pc-acpx crate，R392 末）
 
-- **R389 末**: 773 tests (lib 431 + integration 342)
-- **R390 末**: **813 tests (lib 453 + integration 360)**,+40 个测试,无回归
-  - +22 skill_io 单元测试(常量 + 7 个公开函数 + 内部 helpers)
-  - +18 round390 集成测试(`tests/round390_skill_io.rs`)
+- **R391 末 pc-acpx**: 818 tests (lib 458 + integration 360)
+- **R391 末 pc-adapter-claude-local**: 36 tests
+- **R392 末 pc-adapter-codex-local**: **17 tests**,+13 个测试,无回归
+  - +6 skills.rs 单元测试(list/sync/desired_names)
+  - +7 round392_codex_skills 集成测试
 
 ### R390 增量（skill_io — Node parity port）
 
@@ -417,22 +418,76 @@ R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一�
 | skill snapshots (2 函数) | 100% (R388) |
 | materialize_paperclip_skill_copy (async) | 100% (R389) |
 | **skill I/O (7 函数 + 2 常量)** | **100% (R390)** |
+| `AdapterSkillContext` | **100% (R391)** |
+| `pc-adapter-claude-local skills.ts` | **100% (R391)** |
+| `pc-adapter-codex-local skills.ts` | **100% (R392)** |
 
-### 下一轮 R391 计划
+### R391 增量（Adapter claude_local skills — 第一个具体 adapter 样板）
 
-按 docs/09-CURRENT-STATE-AND-NEXT-PLAN.md 整体推进,**最直接的下一步**
-是用 R388 + R389 + R390 提供的 builder + I/O 在具体 adapter crate
-中实现 `listXxxSkills` / `syncXxxSkills` —— 让 adapter 实质运行:
+- **新模块 `crates/pc-acpx/src/adapter_skills.rs`**(144 行含 5 单测):
+  - `AdapterSkillContext` 结构(agent_id / company_id / adapter_type / config)
+  - `lookup_path("env.HOME")` 风格的小 helper
+  - `env_object()` 返回 `&Map<String, Value>` 或空 map
+  - 镜像 Node `AdapterSkillContext` (types.ts L278-283)
+- **新模块 `crates/pc-adapter-claude-local/src/skills.rs`**(365 行含 12 单测):
+  - `resolve_claude_skills_home` / `_with` variant(镜像 Node `resolveClaudeSkillsHome` L18-25)
+  - `build_claude_skill_snapshot`(镜像 Node `buildClaudeSkillSnapshot` L27-43)
+  - `list_claude_skills` / `sync_claude_skills`(镜像 Node `listClaudeSkills` L45-47 / `syncClaudeSkills` L49-52)
+  - `resolve_claude_desired_skill_names`(镜像 Node L54-59)
+  - 关键决策:**不改 `Adapter` trait**,每个 adapter crate 单独暴露 `list_*_skills` /
+    `sync_*_skills` 函数,server 端按 `adapter_type` 派发
+  - 关键决策:Claude local sync 是 no-op,只 list(skills 由
+    `prepare_claude_skill_runtime` 在 prompt bundle 中 materialise)
+  - 关键决策:`SkillDetail::Static(...)` 显式包装 `configured_detail`
+- **新集成测试 `tests/round391_claude_skills.rs`**(272 行,11 测试):
+  - end-to-end list / sync / desired-skills 流程
+  - `build_snapshot_matches_list_call` 验证两条调用路径等价
+  - `snapshot_shape_is_stable_for_minimal_config` 防止 shape 漂移
+- **更新 `crates/pc-adapter-claude-local/Cargo.toml`**:加 `pc-acpx` 依赖
+- **更新 `crates/pc-adapter-claude-local/src/lib.rs`**:加 `pub mod skills;`
 
-1. **`pc-adapter-claude-local`**:实现 `listClaudeSkills` /
-   `syncClaudeSkills`,用 R388 `build_runtime_mounted_skill_snapshot` +
-   R390 `list_paperclip_skill_entries` + `read_paperclip_skill_markdown`
-2. **`pc-adapter-codex-local`**:同样模式,基于 codex home
-3. **`pc-adapter-gemini-local`** / **`pc-adapter-grok-local`** /
-   **`pc-adapter-opencode-local`** / **`pc-adapter-pi-local`**:同上
+### 下一轮 R392+ 计划
 
-完成后 paperclip-rs 的 adapter 实现就能真正支持 Paperclip skill
-sync workflow,与 Node `paperclip` 行为对齐。
+R391 已把 `pc-adapter-claude-local` skills 完整落地,**接下来按相同模板**
+继续推进其他 7 个 adapter:
+
+#### R392 — `pc-adapter-codex-local` Skills(简单变种)
+codex-local skills 没有 skillsHome(Node 只调
+`buildRuntimeMountedSkillSnapshot` 不传 skillsHome),是 R391 模板的最简化版。
+
+#### R393 — `pc-adapter-gemini-local` Skills(sync 有实质操作)
+gemini-local 有完整的 symlink sync 逻辑(创建新 desired / 移除
+undesired),用 `ensurePaperclipSkillSymlink` + fs.unlink,是**模板升级到
+有副作用 sync** 的样板。
+
+#### R394 — `grok-local` / `opencode-local` / `pi-local`
+各自有不同 skillsHome(`.claude/skills` 共享 / `.pi/agent/skills`),
+沿用 R391 模板。
+
+#### R395 — `cursor-local` / `hermes`
+cursor-local 有 sync 操作,hermes 用传入的 skillsHome。
+
+#### R396+ — Adapter skills 接入 server
+在 `pc-server` 中加 skills sync 端点 + 在 `pc-agent` 中接入 skill 准备阶段
+(运行时 materialise),把 R388/R389/R390/R391-R395 的工具接入请求路径。
+
+### R392 增量（Adapter codex_local skills — 简化变种样板）
+
+- **新模块 `crates/pc-adapter-codex-local/src/skills.rs`**(287 行含 6 单测):
+  - `build_codex_skill_snapshot`(镜像 Node L13-21)
+  - `list_codex_skills` / `sync_codex_skills`(镜像 Node L23-25 / L27-30)
+  - `resolve_codex_desired_skill_names`(镜像 Node L32-35)
+  - 关键决策:**无 skillsHome / externalInstalled 字段** — Codex 整个 surface
+    由 Paperclip 管理,skills 由 `prepare_codex_skill_runtime` materialise
+    到 per-company managed Codex home
+  - 关键决策:沿用 R391 模板结构,精简掉 Claude 的 skillsHome 相关逻辑
+- **新集成测试 `tests/round392_codex_skills.rs`**(226 行,7 测试):
+  - end-to-end list / sync / desired-skills 流程
+  - `list_codex_skills_handles_missing_skills_directory` 验证 empty case
+  - `codex_snapshot_does_not_surface_skills_home` 验证 Codex 模板精简性
+  - `build_snapshot_matches_list_call` 验证两条调用路径等价
+- **更新 `crates/pc-adapter-codex-local/Cargo.toml`**:加 `pc-acpx` 依赖
+- **更新 `crates/pc-adapter-codex-local/src/lib.rs`**:加 `pub mod skills;`
 
 ### 当前 adapter-utils 复刻进度
 

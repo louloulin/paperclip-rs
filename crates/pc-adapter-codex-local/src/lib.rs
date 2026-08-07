@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod skills;
+
 use async_trait::async_trait;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,

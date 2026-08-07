@@ -1,7 +1,11 @@
 #![forbid(unsafe_code)]
 
+pub mod skills;
+
 //! `gemini_local` local CLI adapter: spawns `gemini`, parses its JSONL
 //! output into the shared `AdapterExecutionResult` shape.
+
+pub mod skills;
 
 use async_trait::async_trait;
 use pc_adapter_api::{

@@ -18,8 +18,8 @@
 #![warn(unused_must_use)]
 
 pub mod acp_runtime;
-pub mod adapter_skills;
 pub mod acpx_engine_executor;
+pub mod adapter_skills;
 pub mod agent_command;
 pub mod bin;
 pub mod build_prompt;

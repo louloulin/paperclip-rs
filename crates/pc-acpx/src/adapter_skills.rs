@@ -107,14 +107,8 @@ mod tests {
             "t",
             json!({ "env": { "HOME": "/home/x" }, "paperclipRuntimeSkills": [] }),
         );
-        assert_eq!(
-            ctx.lookup_path("env.HOME"),
-            Some(json!("/home/x"))
-        );
-        assert_eq!(
-            ctx.lookup_path("paperclipRuntimeSkills"),
-            Some(json!([]))
-        );
+        assert_eq!(ctx.lookup_path("env.HOME"), Some(json!("/home/x")));
+        assert_eq!(ctx.lookup_path("paperclipRuntimeSkills"), Some(json!([])));
         assert_eq!(ctx.lookup_path("env.MISSING"), None);
         assert_eq!(ctx.lookup_path("missing.path.here"), None);
     }
@@ -133,12 +127,7 @@ mod tests {
 
     #[test]
     fn env_object_returns_block_when_object() {
-        let ctx = AdapterSkillContext::new(
-            "a",
-            "c",
-            "t",
-            json!({ "env": { "HOME": "/h" } }),
-        );
+        let ctx = AdapterSkillContext::new("a", "c", "t", json!({ "env": { "HOME": "/h" } }));
         assert_eq!(ctx.env_object().get("HOME"), Some(&json!("/h")));
     }
 }
