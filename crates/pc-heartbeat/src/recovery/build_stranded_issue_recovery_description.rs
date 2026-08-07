@@ -33,6 +33,10 @@ pub struct LatestRunView {
     pub agent_id: Uuid,
     pub status: Option<String>,
     pub context_snapshot: Option<Value>,
+    /// latest run 的 result_json；用于从 `result_json.workspaceValidation.fingerprint`
+    /// 推导 workspace_validation cause 下的 fingerprint。
+    /// owned 以避免调用方需要长期借用。
+    pub result_json: Option<Value>,
 }
 
 /// Source assignee 的最少化 view（用于失败摘要 / agent 链接引用）。
@@ -52,11 +56,41 @@ pub struct BuildStrandedIssueRecoveryDescriptionInput<'a> {
     pub recovery_cause: Option<StrandedRecoveryCause>,
     pub successful_run_handoff_evidence: Option<&'a Value>,
     pub source_assignee: Option<&'a AgentShortView>,
+    /// `WorkspaceValidationFailed` cause 下用于 description 注入的 fingerprint override。
+    /// 优先级高于从 `latest_run.result_json` 自动推导。
+    /// 非 `WorkspaceValidationFailed` cause 时该字段被忽略。
+    pub workspace_validation_fingerprint: Option<&'a str>,
 }
 
 /// 从 context_snapshot.retryReason 读取字符串（trim 后非空）。
 ///
 /// 与 Node `readNonEmptyString(parseObject(...).retryReason) ?? "unknown"` 对齐。
+
+/// 从 `latest_run.result_json.workspaceValidation.fingerprint` 读取 fingerprint。
+///
+/// 与 `scheduler::read_workspace_validation_fingerprint` 对齐；返回 `None` 表示：
+/// - `result_json` 缺失
+/// - `workspaceValidation` 段缺失或为空对象
+/// - `workspaceValidation.fingerprint` 缺失、空字符串或非 string
+fn read_workspace_validation_fingerprint_from_view(
+    latest_run: Option<&LatestRunView>,
+) -> Option<String> {
+    let json = latest_run.and_then(|r| r.result_json.as_ref())?;
+    let payload = json.get("workspaceValidation")?;
+    if let serde_json::Value::Object(map) = payload {
+        if map.is_empty() {
+            return None;
+        }
+    }
+    let raw = payload.get("fingerprint")?.as_str()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
 fn read_retry_reason_from_context(context_snapshot: Option<&Value>) -> &str {
     let Some(value) = context_snapshot else {
         return "unknown";
@@ -153,6 +187,28 @@ pub fn build_stranded_issue_recovery_description(
     };
     let retry_reason =
         read_retry_reason_from_context(input.latest_run.and_then(|r| r.context_snapshot.as_ref()));
+    let workspace_validation_fingerprint: Option<String> =
+        if matches!(input.recovery_cause, Some(StrandedRecoveryCause::WorkspaceValidationFailed)) {
+            input
+                .workspace_validation_fingerprint
+                .map(str::to_owned)
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| read_workspace_validation_fingerprint_from_view(input.latest_run))
+        } else {
+            None
+        };
+    // 当 cause == WorkspaceValidationFailed 时始终输出 fingerprint 行；
+    // 缺失时 fallback 到 `none reported`，让阅读者明确知道 fingerprint 不可用。
+    // 其他 cause 不展示该行（避免噪音）。
+    let workspace_validation_fingerprint_line: Option<String> =
+        if matches!(input.recovery_cause, Some(StrandedRecoveryCause::WorkspaceValidationFailed)) {
+            Some(format!(
+                "- Workspace validation fingerprint: `{}`",
+                workspace_validation_fingerprint.as_deref().unwrap_or("none reported")
+            ))
+        } else {
+            None
+        };
     let run_failure_view = input.latest_run.map(|r| RunFailureView {
         error: None,
         error_code: None,
@@ -190,6 +246,7 @@ pub fn build_stranded_issue_recovery_description(
         ),
         &format!("- Detected invariant: `{detected_invariant}`"),
         &format!("- Retry reason: `{retry_reason}`"),
+        workspace_validation_fingerprint_line.as_deref().unwrap_or(""),
         failure_summary
             .map(|s| format!("- Failure: {}", s.trim()))
             .unwrap_or_else(|| "- Failure: none recorded".to_string())

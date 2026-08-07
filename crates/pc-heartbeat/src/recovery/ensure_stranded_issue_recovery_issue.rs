@@ -254,6 +254,7 @@ pub async fn ensure_stranded_issue_recovery_issue(
             recovery_cause: Some(recovery_cause),
             successful_run_handoff_evidence: input.successful_run_handoff_evidence,
             source_assignee: source_assignee.as_ref(),
+        workspace_validation_fingerprint: None,
         });
 
     // 5. INSERT issue（处理 unique conflict race）

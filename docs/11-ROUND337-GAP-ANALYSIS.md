@@ -1135,3 +1135,69 @@ Rust 端已有 `ensure_provider_quota_wait_recovery_monitor` 模块（`provider_
 2. successful_run_missing_state cause 的特化 presentation/comment 仍是 fallback 通用路径。
 3. workspace_validation_failed cause 的 retry reason 注入 fingerprint 摘要尚未实现。
 4. HTTP/API 序列化、actor 权限、UI 渲染等仍是 Recovery 之外的主要差距。
+
+## Round 356 增量（2026-08-07）：successful_run_missing_state cause 特化（系统 Notice）
+
+### Node 对照结论
+
+Node `services/recovery/successful-run-handoff.ts` 在 successful_run handoff 流程中有两类系统 notice 写到 source issue：
+
+1. **Required notice**：harness 第一次检测到 source run 缺少 disposition 时写入，
+   body 固定为 `"Paperclip needs a disposition before this issue can continue."`，
+   presentation = system_notice (warning tone, "Missing issue disposition")，
+   metadata 包含 `Required action` + `Run evidence` 两 section，
+   `Normalized cause = "successful_run_missing_state"`。
+
+2. **Exhausted notice**：recovery action 耗尽后写入，
+   body 固定为 `"Paperclip could not resolve this issue's missing disposition automatically..."`，
+   presentation = system_notice (danger tone, "Missing disposition recovery blocked")，
+   metadata 包含 `Recovery owner` + `Run evidence` 两 section，
+   `Recovery action` 行携带真实 action_id（与 R354 metadata-aware dedup 联动）。
+
+Rust 端此前只有 `build_successful_run_missing_state_description`（body builder），但
+没有 notice 的 body 常量、presentation/metadata builder 与识别辅助函数。
+
+### R356 实现
+
+- 在 `successful_run_handoff.rs` 中新增：
+  - 常量 `SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY` / `SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY`
+  - 常量 `LEGACY_SUCCESSFUL_RUN_HANDOFF_NOTICE_PREFIXES` / `NOTICE_METADATA_VALUE_MAX_CHARS = 2000`
+  - 类型 `NoticeIssueRef` / `NoticeRunRef` / `NoticeAgentRef` / `SuccessfulRunHandoffNotice`
+  - 辅助：`metadata_text`、`is_successful_run_handoff_required_notice_body`、
+    `key_value_row` / `issue_link_row` / `run_link_row` / `agent_link_row` /
+    `system_notice_presentation`
+  - Builder：`build_successful_run_handoff_required_notice`、
+    `build_successful_run_handoff_exhausted_notice`
+  - 输入 struct：`BuildRequiredNoticeInput` / `BuildExhaustedNoticeInput`
+- `recovery_cause_title("successful_run_missing_state")` 维持
+  `"missing disposition recovery failed"`（R352 之前已存在），R356 通过单测断言不会
+  退化到通用 fallback `"execution path recovery failed"`。
+
+### 真实验证
+
+`round356_successful_run_handoff_notice.rs`（4 个全过）：
+
+- `required_notice_writes_full_system_comment_with_metadata`：把 builder 输出通过
+  `IssueRepo::create_comment_with_display` 落到 PG，验证 body / presentation / metadata
+  都正确写入，且 `Normalized cause` 行取值 `successful_run_missing_state`。
+- `exhausted_notice_with_action_id_writes_recovery_action_key_value`：验证 danger tone
+  + `Recovery action` 行携带真实 action_id（可与 R354 metadata dedup 联动）。
+- `exhausted_notice_without_action_id_falls_back_to_recovery_issue_link`：无 action_id
+  时降级为 issue_link 行，且 `Recovery owner` 缺失时显示 `"unknown"`。
+- `cause_title_for_successful_run_missing_state_is_specific`：纯函数断言
+  `recovery_cause_title("successful_run_missing_state")` 返回专用 title。
+
+5 个新增单测覆盖 pure builder 行为（required/exhausted shape、`is_required_notice_body`
+识别常量 + 旧前缀、`metadata_text` 2000 字符截断）。
+
+`cargo test -p pc-heartbeat --tests -- --test-threads=1`：**916 passed, 0 failed**
+（R355 → R356 新增 5 个 unit + 4 个 integration 测试）。
+`cargo check -p pc-server --bins`：通过。
+`cargo fmt --all -- --check`：通过。
+
+### 剩余差距
+
+1. `workspace_validation_failed` cause 特化：fingerprint 注入 retry reason 摘要尚未实现。
+2. Provider quota cause 在 review participant 路径下 notice presentation 与 Node
+   activity metadata 字段仍有更细的对照空间。
+3. activity log actor、HTTP/API 路由序列化、UI 渲染等仍是 Recovery 之外的主要差距。

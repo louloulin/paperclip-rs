@@ -104,6 +104,7 @@ async fn builds_default_description_with_source_ownership_and_action() {
         agent_id,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "issue_continuation_needed"})),
+        result_json: None,
     };
     let input = BuildStrandedIssueRecoveryDescriptionInput {
         issue: &issue,
@@ -113,6 +114,7 @@ async fn builds_default_description_with_source_ownership_and_action() {
         recovery_cause: Some(StrandedRecoveryCause::RuntimeFailure),
         successful_run_handoff_evidence: None,
         source_assignee: None,
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);
@@ -144,6 +146,7 @@ async fn review_participant_path_uses_distinct_text() {
         agent_id,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "execution_review_participant_recovery"})),
+        result_json: None,
     };
     let input = BuildStrandedIssueRecoveryDescriptionInput {
         issue: &issue,
@@ -153,6 +156,7 @@ async fn review_participant_path_uses_distinct_text() {
         recovery_cause: Some(StrandedRecoveryCause::ExecutionReviewParticipantRecovery),
         successful_run_handoff_evidence: None,
         source_assignee: None,
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);
@@ -181,6 +185,7 @@ async fn successful_run_missing_state_uses_safe_evidence_section() {
         agent_id,
         status: Some("succeeded".to_owned()),
         context_snapshot: Some(json!({"retryReason": "successful_run_missing_state"})),
+        result_json: None,
     };
     let evidence = json!({
         "sourceRunId": source_run_id.to_string(),
@@ -198,6 +203,7 @@ async fn successful_run_missing_state_uses_safe_evidence_section() {
         recovery_cause: Some(StrandedRecoveryCause::SuccessfulRunMissingState),
         successful_run_handoff_evidence: Some(&evidence),
         source_assignee: Some(&source_assignee),
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);
@@ -229,6 +235,7 @@ async fn handles_missing_latest_run() {
         recovery_cause: Some(StrandedRecoveryCause::RuntimeFailure),
         successful_run_handoff_evidence: None,
         source_assignee: None,
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);
@@ -253,6 +260,7 @@ async fn failure_summary_appears_when_run_has_error() {
         agent_id,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "issue_continuation_needed"})),
+        result_json: None,
     };
     let input = BuildStrandedIssueRecoveryDescriptionInput {
         issue: &issue,
@@ -262,6 +270,7 @@ async fn failure_summary_appears_when_run_has_error() {
         recovery_cause: Some(StrandedRecoveryCause::RuntimeFailure),
         successful_run_handoff_evidence: None,
         source_assignee: None,
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);
@@ -286,6 +295,8 @@ async fn retry_reason_unknown_when_context_snapshot_empty() {
         agent_id,
         status: Some("failed".to_owned()),
         context_snapshot: None,
+        result_json: None,
+
     };
     let input = BuildStrandedIssueRecoveryDescriptionInput {
         issue: &issue,
@@ -295,6 +306,7 @@ async fn retry_reason_unknown_when_context_snapshot_empty() {
         recovery_cause: Some(StrandedRecoveryCause::RuntimeFailure),
         successful_run_handoff_evidence: None,
         source_assignee: None,
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);
@@ -317,6 +329,7 @@ async fn retry_reason_unknown_when_empty_string() {
         agent_id,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": ""})),
+        result_json: None,
     };
     let input = BuildStrandedIssueRecoveryDescriptionInput {
         issue: &issue,
@@ -326,6 +339,7 @@ async fn retry_reason_unknown_when_empty_string() {
         recovery_cause: Some(StrandedRecoveryCause::RuntimeFailure),
         successful_run_handoff_evidence: None,
         source_assignee: None,
+        workspace_validation_fingerprint: None,
     };
 
     let description = build_stranded_issue_recovery_description(&input);

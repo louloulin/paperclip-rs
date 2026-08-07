@@ -12,9 +12,10 @@
 
 use pc_heartbeat::recovery::successful_run_handoff::{
     build_successful_run_handoff_exhausted_notice, build_successful_run_handoff_required_notice,
-    is_successful_run_handoff_required_notice_body, BuildExhaustedNoticeInput, BuildRequiredNoticeInput,
-    NoticeAgentRef, NoticeIssueRef, NoticeRunRef, SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY,
-    SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY, SUCCESSFUL_RUN_MISSING_STATE_REASON,
+    is_successful_run_handoff_required_notice_body, BuildExhaustedNoticeInput,
+    BuildRequiredNoticeInput, NoticeAgentRef, NoticeIssueRef, NoticeRunRef,
+    SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY, SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY,
+    SUCCESSFUL_RUN_MISSING_STATE_REASON,
 };
 use pc_repos::issue::IssueRepo;
 use pc_repos::Db;
@@ -34,10 +35,7 @@ async fn cleanup(db: &Db, company_id: Uuid) {
         "DELETE FROM companies WHERE id = $1",
     ];
     for s in stmts {
-        let _ = sqlx::query(s)
-            .bind(company_id)
-            .execute(db.pool())
-            .await;
+        let _ = sqlx::query(s).bind(company_id).execute(db.pool()).await;
     }
 }
 
@@ -49,7 +47,7 @@ async fn fixture(db: &Db) -> (Uuid, Uuid, Uuid, Uuid) {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
         .bind(company_id)
         .bind(format!("r356-{company_id}"))
-        .bind("R356")
+        .bind(format!("R356-{}", &company_id.simple().to_string()[..8]))
         .execute(db.pool())
         .await
         .unwrap();
@@ -159,10 +157,8 @@ async fn required_notice_writes_full_system_comment_with_metadata() {
     // Cause 必须为 successful_run_missing_state（防止回归到通用 fallback）
     let evidence = sections[1]["rows"].as_array().unwrap();
     assert!(
-        evidence
-            .iter()
-            .any(|r| r["label"] == "Normalized cause"
-                && r["value"] == SUCCESSFUL_RUN_MISSING_STATE_REASON),
+        evidence.iter().any(|r| r["label"] == "Normalized cause"
+            && r["value"] == SUCCESSFUL_RUN_MISSING_STATE_REASON),
         "expected cause row to use successful_run_missing_state"
     );
     // Required action 应包含 issue_link（Source issue）和 agent_link（Assignee）
@@ -235,22 +231,24 @@ async fn exhausted_notice_with_action_id_writes_recovery_action_key_value() {
     let presentation = presentation.expect("presentation");
     assert_eq!(presentation["kind"], "system_notice");
     assert_eq!(presentation["tone"], "danger");
-    assert_eq!(presentation["title"], "Missing disposition recovery blocked");
+    assert_eq!(
+        presentation["title"],
+        "Missing disposition recovery blocked"
+    );
     let metadata = metadata.expect("metadata");
     let sections = metadata["sections"].as_array().unwrap();
     assert_eq!(sections.len(), 2);
     let owner_rows = sections[0]["rows"].as_array().unwrap();
-    assert!(owner_rows
-        .iter()
-        .any(|r| r["type"] == "key_value"
+    assert!(
+        owner_rows.iter().any(|r| r["type"] == "key_value"
             && r["label"] == "Recovery action"
             && r["value"] == action_id.to_string()),
-        "Recovery action row should reference the action id (for metadata dedup)");
+        "Recovery action row should reference the action id (for metadata dedup)"
+    );
     let evidence_rows = sections[1]["rows"].as_array().unwrap();
     assert!(evidence_rows
         .iter()
-        .any(|r| r["label"] == "Missing disposition"
-            && r["value"] == "clear_next_step"));
+        .any(|r| r["label"] == "Missing disposition" && r["value"] == "clear_next_step"));
 
     cleanup(&db, company_id).await;
 }
@@ -304,16 +302,12 @@ async fn exhausted_notice_without_action_id_falls_back_to_recovery_issue_link() 
     let metadata = metadata.expect("metadata");
     let sections = metadata["sections"].as_array().unwrap();
     let owner_rows = sections[0]["rows"].as_array().unwrap();
-    assert!(owner_rows
-        .iter()
-        .any(|r| r["type"] == "issue_link"
-            && r["label"] == "Recovery issue"
-            && r["issueId"] == recovery_issue_id.to_string()));
-    assert!(owner_rows
-        .iter()
-        .any(|r| r["type"] == "key_value"
-            && r["label"] == "Recovery owner"
-            && r["value"] == "unknown"));
+    assert!(owner_rows.iter().any(|r| r["type"] == "issue_link"
+        && r["label"] == "Recovery issue"
+        && r["issueId"] == recovery_issue_id.to_string()));
+    assert!(owner_rows.iter().any(|r| r["type"] == "key_value"
+        && r["label"] == "Recovery owner"
+        && r["value"] == "unknown"));
 
     cleanup(&db, company_id).await;
 }

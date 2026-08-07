@@ -148,6 +148,7 @@ async fn creates_recovery_issue_with_owner_and_wake() {
         agent_id: assignee,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "issue_continuation_needed"})),
+        result_json: None,
     };
 
     let input = EnsureStrandedIssueRecoveryInput {
@@ -223,6 +224,8 @@ async fn returns_none_when_input_issue_is_already_recovery() {
         agent_id: assignee,
         status: Some("failed".to_owned()),
         context_snapshot: None,
+        result_json: None,
+
     };
     let input = EnsureStrandedIssueRecoveryInput {
         issue: &recovery,
@@ -277,6 +280,7 @@ async fn returns_existing_when_open_recovery_already_exists() {
         agent_id: assignee,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "issue_continuation_needed"})),
+        result_json: None,
     };
     let input = EnsureStrandedIssueRecoveryInput {
         issue: &source,
@@ -328,6 +332,7 @@ async fn returns_none_when_no_invokable_owner() {
         agent_id: assignee,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "issue_continuation_needed"})),
+        result_json: None,
     };
     let input = EnsureStrandedIssueRecoveryInput {
         issue: &source,
@@ -378,6 +383,7 @@ async fn successful_run_missing_state_title_differs() {
         agent_id: assignee,
         status: Some("succeeded".to_owned()),
         context_snapshot: Some(json!({"retryReason": "successful_run_missing_state"})),
+        result_json: None,
     };
     let input = EnsureStrandedIssueRecoveryInput {
         issue: &source,
@@ -420,6 +426,7 @@ async fn stranded_default_title() {
         agent_id: assignee,
         status: Some("failed".to_owned()),
         context_snapshot: Some(json!({"retryReason": "issue_continuation_needed"})),
+        result_json: None,
     };
     let input = EnsureStrandedIssueRecoveryInput {
         issue: &source,

@@ -524,7 +524,10 @@ pub fn metadata_text(value: Option<&str>, fallback: &str) -> String {
     let raw = value.unwrap_or("").trim();
     let resolved = if raw.is_empty() { fallback } else { raw };
     if resolved.chars().count() > NOTICE_METADATA_VALUE_MAX_CHARS {
-        let mut out: String = resolved.chars().take(NOTICE_METADATA_VALUE_MAX_CHARS - 3).collect();
+        let mut out: String = resolved
+            .chars()
+            .take(NOTICE_METADATA_VALUE_MAX_CHARS - 3)
+            .collect();
         out.push('…');
         out
     } else {
@@ -592,7 +595,9 @@ fn system_notice_presentation(tone: &str, title: &str) -> serde_json::Value {
 /// - body 固定为 `Paperclip needs a disposition before this issue can continue.`
 /// - presentation: system_notice (warning tone, "Missing issue disposition")
 /// - metadata: Required action section + Run evidence section
-pub fn build_successful_run_handoff_required_notice(input: BuildRequiredNoticeInput<'_>) -> SuccessfulRunHandoffNotice {
+pub fn build_successful_run_handoff_required_notice(
+    input: BuildRequiredNoticeInput<'_>,
+) -> SuccessfulRunHandoffNotice {
     SuccessfulRunHandoffNotice {
         body: SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY.to_owned(),
         presentation: system_notice_presentation("warning", "Missing issue disposition"),
@@ -645,10 +650,19 @@ pub fn build_successful_run_handoff_exhausted_notice(
     if let Some(action_id) = input.recovery_action_id {
         rows_owner.push(key_value_row(recovery_owner_label, &action_id));
     } else {
-        rows_owner.push(issue_link_row(recovery_owner_label, input.recovery_issue.as_ref()));
+        rows_owner.push(issue_link_row(
+            recovery_owner_label,
+            input.recovery_issue.as_ref(),
+        ));
     }
-    rows_owner.push(agent_link_row("Recovery owner", input.recovery_owner.as_ref()));
-    rows_owner.push(agent_link_row("Source assignee", input.source_assignee.as_ref()));
+    rows_owner.push(agent_link_row(
+        "Recovery owner",
+        input.recovery_owner.as_ref(),
+    ));
+    rows_owner.push(agent_link_row(
+        "Source assignee",
+        input.source_assignee.as_ref(),
+    ));
     rows_owner.push(key_value_row(
         "Suggested action",
         "choose and record a valid issue disposition without copying transcript content",
@@ -658,7 +672,10 @@ pub fn build_successful_run_handoff_exhausted_notice(
         run_link_row("Source run", input.source_run.as_ref()),
         run_link_row("Corrective handoff run", input.corrective_run.as_ref()),
         key_value_row("Latest issue status", &input.latest_issue_status),
-        key_value_row("Latest handoff run status", &input.latest_handoff_run_status),
+        key_value_row(
+            "Latest handoff run status",
+            &input.latest_handoff_run_status,
+        ),
         key_value_row("Normalized cause", SUCCESSFUL_RUN_MISSING_STATE_REASON),
         key_value_row("Missing disposition", &input.missing_disposition),
     ];
@@ -1203,10 +1220,15 @@ mod tests {
             .iter()
             .find(|r| r["label"] == "Valid dispositions")
             .unwrap();
-        assert!(valid_dispositions["value"].as_str().unwrap().contains("done, cancelled"));
+        assert!(valid_dispositions["value"]
+            .as_str()
+            .unwrap()
+            .contains("done, cancelled"));
         let evidence = sections[1]["rows"].as_array().unwrap();
-        assert!(evidence.iter().any(|r| r["label"] == "Normalized cause"
-            && r["value"] == "successful_run_missing_state"));
+        assert!(evidence
+            .iter()
+            .any(|r| r["label"] == "Normalized cause"
+                && r["value"] == "successful_run_missing_state"));
         assert!(evidence.iter().any(|r| r["label"] == "Automatic retry"
             && r["value"] == "one corrective handoff wake queued"));
     }
@@ -1234,21 +1256,29 @@ mod tests {
         });
         assert_eq!(notice.body, SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY);
         assert_eq!(notice.presentation["tone"], "danger");
-        assert_eq!(notice.presentation["title"], "Missing disposition recovery blocked");
+        assert_eq!(
+            notice.presentation["title"],
+            "Missing disposition recovery blocked"
+        );
         let sections = notice.metadata["sections"].as_array().unwrap();
         assert_eq!(sections.len(), 2);
         let owner_rows = sections[0]["rows"].as_array().unwrap();
-        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery action"
-            && r["value"] == "action-1"));
-        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery owner"
-            && r["type"] == "agent_link"));
-        assert!(owner_rows.iter().any(|r| r["label"] == "Source assignee"
-            && r["type"] == "agent_link"));
+        assert!(owner_rows
+            .iter()
+            .any(|r| r["label"] == "Recovery action" && r["value"] == "action-1"));
+        assert!(owner_rows
+            .iter()
+            .any(|r| r["label"] == "Recovery owner" && r["type"] == "agent_link"));
+        assert!(owner_rows
+            .iter()
+            .any(|r| r["label"] == "Source assignee" && r["type"] == "agent_link"));
         let evidence_rows = sections[1]["rows"].as_array().unwrap();
-        assert!(evidence_rows.iter().any(|r| r["label"] == "Latest issue status"
-            && r["value"] == "blocked"));
-        assert!(evidence_rows.iter().any(|r| r["label"] == "Missing disposition"
-            && r["value"] == "clear_next_step"));
+        assert!(evidence_rows
+            .iter()
+            .any(|r| r["label"] == "Latest issue status" && r["value"] == "blocked"));
+        assert!(evidence_rows
+            .iter()
+            .any(|r| r["label"] == "Missing disposition" && r["value"] == "clear_next_step"));
     }
 
     #[test]
@@ -1267,8 +1297,9 @@ mod tests {
         });
         let sections = notice.metadata["sections"].as_array().unwrap();
         let owner_rows = sections[0]["rows"].as_array().unwrap();
-        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery issue"
-            && r["type"] == "issue_link"));
+        assert!(owner_rows
+            .iter()
+            .any(|r| r["label"] == "Recovery issue" && r["type"] == "issue_link"));
         assert!(owner_rows.iter().any(|r| r["label"] == "Recovery owner"
             && r["type"] == "key_value"
             && r["value"] == "unknown"));
