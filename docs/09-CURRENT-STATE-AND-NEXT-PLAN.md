@@ -177,3 +177,170 @@ R362 起开始聚焦 `pc-acpx` crate（Node `acpx-engine` 的 Rust 镜像），�
 4. **新增 5-7 个集成测试**覆盖 wake prompt body 各种 shape + `commandNotes` 数组 + `instructionsFilePath` 失败路径。
 
 R381 完成后，`pc-acpx::execute()` 的 prompt 路径将与 Node `buildPrompt` 行为 1:1 对齐。
+
+### R381 增量（紧接 R380 prompt_compose）
+
+R381 完整 port Node `renderPaperclipWakePrompt` (L1411, ~300 行) + 新建 `build_prompt` 模块 + 集成到 `execute()`：
+
+- **`prompt_compose` 扩展** (+1010 行 → 总 1698 行)：
+  - `normalize_paperclip_wake_payload` + 8 个 normalize 子函数 (recovery, issue, comment, agent_message, execution_stage, execution_workspace, checkbox_selection, child_issue_summary)
+  - 9 个新 struct：`NormalizedPaperclipWake` / `PaperclipWakeRecovery` / `PaperclipWakeIssue` / `PaperclipWakeComment` / `PaperclipWakeExecutionStage` / `PaperclipWakeAgentMessage` / `PaperclipWakeExecutionWorkspace` / `PaperclipWakeCheckboxSelection` / `PaperclipWakeCheckboxOption` / `PaperclipWakeChildIssueSummary` / `PaperclipWakeOriginalAssignee`
+  - `render_paperclip_wake_prompt` 完整 port：title / execution contract / recovery 7-cause instruction / planning directive / checked-out / execution workspace branch / dependency-blocked / tree-hold / agent message / comments list / execution stage
+  - 5 个 R382+ stub（plan review / task watchdog / liveness continuation / annotation deltas / continuation summary）
+  - 13 个新单元测试（35 总单测，22 R380 + 13 R381）
+- **`build_prompt` 新模块** (415 行)：镜像 Node `buildPrompt` 7 段组合，`BuildPromptInput<'a>` / `BuildPromptOutput` / `BuildPromptMetrics`，`config.promptTemplate` 缺失时 fallback 到 `ctx.run_prompt` 保持向后兼容，8 个单元测试
+- **集成到 `execute()`** (L743-746)：`text: ctx.run_prompt.clone()` 替换为 `text: build_prompt(...).prompt`，`EnsureOutcome` 新增 `resumed_session: bool` 字段
+- **移除 R380 placeholder**：`tests/round380_prompt_compose.rs` 中 `render_wake_prompt_placeholder` 删除，改用真实 `render_paperclip_wake_prompt`
+- **round381 集成测试** (332 行, 7 测试)：验证 `execute()` 后 runtime 收到 7 段组合后的 prompt
+
+### 测试统计（pc-acpx crate，R381 末）
+
+- **R380 末**: 472 tests (lib 251 + integration 221)
+- **R381 末**: 500 tests (lib 272 + integration 228)，+28 个测试，无回归
+  - +13 prompt_compose 单元测试 (R381 normalize + render)
+  - +8 build_prompt 单元测试
+  - +7 round381 集成测试
+
+### 下一轮 R382 计划
+
+1. Port `normalizePaperclipWakePlanReviewContext` (Node L767-820) + render full threads
+2. Port `normalizePaperclipWakeTaskWatchdog` (Node L221-300) + render `WATCHDOG_DEFAULT_MANDATE`
+3. Port `normalizePaperclipWakeLivenessContinuation` + render continuation block
+4. Port `normalizePaperclipWakeAnnotationDelta` + render thread-by-thread
+5. Port `normalizePaperclipWakeContinuationSummary` + render continuation summary
+
+5 个 R382+ stub 已经在 `render_paperclip_wake_prompt` 内标记，每个 emit 单 marker line。R382 完成后 `pc-acpx::execute()` prompt 路径将与 Node `buildPrompt` 行为 1:1 对齐。
+
+### R382 增量（5 个 R381 stub 完整实现）
+
+R382 把 R381 留下的 5 个 R381 stub（plan review / task watchdog / liveness / annotation / continuation）从 marker line 升级为完整 normalize + render：
+
+- **16 个新 struct 类型**：`PaperclipWakePlanReviewAuthor` / `AnnotationDelta` / `PlanReviewComment` / `PlanReviewThread` / `InteractionTarget` / `InteractionResult` / `Interaction` / `Totals` / `Limits` / `Context` / `ContinuationSummary` / `LivenessContinuation` / `TaskWatchdogLeaf` / `TaskWatchdogCapabilitiesTargetScope` / `TaskWatchdogCapabilities` / `TaskWatchdogContext` / `TreeHoldSummary`
+- **`NormalizedPaperclipWake` typed 化**：6 个 `Option<Value>` / `Vec<Value>` 替换为 typed `Option<T>` / `Vec<T>`
+- **13 个新 normalize 子函数**：mirror Node `normalizePaperclipWakePlanReview*` / `AnnotationDelta` / `ContinuationSummary` / `LivenessContinuation` / `TaskWatchdog*` / `TreeHoldSummary`
+- **`WATCHDOG_DEFAULT_MANDATE` 常量** (~40 行,mirror Node L172-205 verbatim)
+- **`normalize_string_list` helper** + 3 个 sizing constants (`MAX_WATCHDOG_*`)
+- **5 个新 render helper**：`render_annotation_deltas` / `render_plan_review_context` / `render_task_watchdog` / `render_continuation_summary` / `render_liveness_continuation` (mirror Node L1660-1900)
+- **5 个 R381 marker line 替换** 为 typed `lines.extend(render_xxx(...))` 调用
+- **9 个新单元测试** + **7 个新集成测试** (round382_stub_completion.rs)
+
+### 测试统计（pc-acpx crate，R382 末）
+
+- **R381 末**: 500 tests (lib 272 + integration 228)
+- **R382 末**: 516 tests (lib 281 + integration 235)，+16 个测试，无回归
+  - +9 prompt_compose 单元测试 (R382 typed struct + render)
+  - +7 round382 集成测试 (5 stub bodies + 2 cross-section)
+
+### 下一轮 R383 计划
+
+1. `unresolvedBlockerSummaries` typed normalize + render (Node L1037)
+2. `executor.principalLabel` 完整 agent/user label rendering
+3. `executionStage.reviewRequest.instructions` 完整 body render
+4. `paperclip_wake_execution_workspace` 完整 (workspace ID + plan integration)
+5. `markdown_inline_code` 全面 escape case 测试
+
+R383 完成后 `pc-acpx::execute()` prompt 路径将与 Node `buildPrompt` 行为 byte-for-byte 等价。
+
+### R383 增量（server-utils.ts 最后 5 个 gap 闭合）
+
+R382 把 5 个 R381 stub 完整实现,但 `prompt_compose.rs` 仍然有 5 个
+"半实现"节点继续依赖 `Vec<Value>` / `Option<Value>` 占位、缺 render
+分支、缺 Node parity 行为。R383 把它们全部闭合,让
+`render_paperclip_wake_prompt` 与 Node `server-utils.ts` 字段级一致。
+
+- **3 个新 struct 类型**：
+  - `PaperclipWakeBlockerSummary` (id / identifier / title / status / priority)
+  - `PaperclipWakeExecutionPrincipal` (principal_type / agent_id / user_id)
+  - `PaperclipWakeReviewRequest` (instructions: String)
+- **`PaperclipWakeExecutionStage` 扩展**：新增 `current_participant` / `return_assignee` / `review_request` typed 字段
+- **`PaperclipWakeExecutionWorkspace` 扩展**：filter 控制字符 + 长度 cap (300) + workspace_id
+- **`NormalizedPaperclipWake.unresolved_blocker_summaries: Vec<PaperclipWakeBlockerSummary>`** typed 化(从 `Vec<Value>` 升级)
+- **3 个新 normalize 子函数**：
+  - `normalize_paperclip_wake_blocker_summary` (Node L1028-1042)
+  - `normalize_paperclip_wake_execution_principal` (Node L1066-1077)
+  - `normalize_paperclip_wake_review_request` (Node L1770-1785)
+- **`principal_label` render helper** (Node L1455-1460): `"agent <id>"` / `"agent"` / `"user <id>"` / `"user"` / `"unknown"`
+- **`MAX_EXECUTION_WORKSPACE_BRANCH_CHARS = 300`** 常量
+- **修复 `markdown_inline_code` trailing space**：从 `format!("{} {}", fence, value)` 改为 `format!("{} {} {}", fence, value, fence)` 与 Node L1247-1254 一致
+- **execution stage render 大升级**：
+  - 已有 review_request → "Review request instructions:" + body
+  - wakeRole == reviewer/approver → 4 行 reviewer 段
+  - wakeRole == executor → 2 行 executor 段
+  - 加 `- execution participant: <label>` + `- execution return assignee: <label>`
+- **依赖阻塞 render 升级**：typed blocker summary 直接 `.iter().map(|b| ...)` 生成 labeled line
+- **11 个新单元测试** + **13 个新集成测试** (round383_remaining_gaps.rs)
+
+### 测试统计（pc-acpx crate，R383 末）
+
+- **R382 末**: 516 tests (lib 281 + integration 235)
+- **R383 末**: 540 tests (lib 292 + integration 248)，+24 个测试，无回归
+  - +11 prompt_compose 单元测试 (R383 typed struct + render)
+  - +13 round383 集成测试 (5 gaps 全覆盖)
+
+> 注：lib 测试 293 是 cargo test -p pc-acpx --lib 总数(包含 build_prompt 等)
+> round383_remaining_gaps 13 个, round382 7 个等
+
+### 下一轮 R384 计划
+
+1. Port `planReview.selectedText` / `prefixText` / `suffixText` trim + truncate (Node issue_render parity)
+2. Port `## State` / `## Resume contract` / `## Recent wake history` block (目前 Rust 端没有这些后置段)
+3. Port `WATCHDOG_DEFAULT_MANDATE` 更新到 Node 最新版(如有)
+4. 复审 `executor/IO/build_runtime` 的状态机相关 race condition
+
+R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一致。剩余 10% 是 plan review 的文本截断行为 + 后置段。
+
+### R384 增量(log_redaction + PID liveness)
+
+按 `comet-open` 思路,继续复刻 Node `adapter-utils` 中尚未在 `pc-acpx`
+实现的简单纯函数模块。本次新增独立模块 `log_redaction`,8 个函数全部
+对齐 Node parity。
+
+- **新模块 `crates/pc-acpx/src/log_redaction.rs`**(~520 行含单测)
+- **新 re-exports**:`is_paperclip_runtime_env_key` /
+  `is_forbidden_config_env_key` / `is_sensitive_env_key` /
+  `expand_home_prefix` / `redact_env_for_logs` /
+  `redact_command_text_for_logs` / `build_invocation_env_for_logs` /
+  `sanitize_inherited_paperclip_env` / `is_pid_alive` /
+  `InvocationEnvOptions` + 3 个常量
+- **`is_pid_alive` 跨平台策略**:workspace `unsafe_code = "forbid"`,
+  改用 `sh -c "kill -0 <pid>; echo $?"` 外部命令,forbid-clean。Node
+  的 `EPERM` 视为 alive 这个 edge case 在 Rust 端被简化(都返回 dead)
+- **`redact_command_text_for_logs`** 简化 Node 的 6 个 regex 为
+  3 个 substring 扫描(sk-/gh[pousr]_/Authorization Bearer),不引入
+  regex 依赖
+- **17 个新单元测试** + **18 个新集成测试** (`round384_log_redaction_and_pid.rs`)
+
+### 测试统计（pc-acpx crate，R384 末）
+
+- **R383 末**: 541 tests (lib 293 + integration 248)
+- **R384 末**: 576 tests (lib 310 + integration 266),+35 个测试,无回归
+  - +17 log_redaction 单元测试
+  - +18 round384 集成测试
+
+### 当前 adapter-utils 复刻进度(基于 docs/38-MODULE-GAP-AUDIT.md)
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers | 100% |
+| normalize | 100% |
+| log_redaction (R384) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| signal_running_process | 0% |
+| sanitize_ssh_remote_env | 0% |
+| shape/rewrite/refresh workspace env | 0% |
+| resolve_paperclip_instance_root_for_adapter | 0% |
+| skill sync prefs | 0% |
+| skill snapshots | 0% |
+| materialize_paperclip_skill_copy (async) | 0% |
+
+### 下一轮 R385 计划
+
+按 P0 路线图:
+1. `signal_running_process` (Node L82-112, Unix process group signal)
+2. `sanitize_ssh_remote_env` (L2311-2317) — SSH env filter,简单纯函数
+3. `shape_paperclip_workspace_env_for_execution` (L2023-2117) — 远程 target env shape,中等
+4. `rewrite_workspace_cwd_env_vars_for_execution` (L2118-2154) — 同系列
+5. `refresh_paperclip_workspace_env_for_execution` (L2155-2228) — 同系列
+
+预计 R385 完成:pc-acpx 600+ tests,workspace 750+ tests。

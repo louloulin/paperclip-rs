@@ -27,8 +27,7 @@ use pc_acpx::{
     is_assignment_shaped_paperclip_wake_reason, is_paperclip_recovery_wake_payload,
     join_prompt_sections, render_api_access_note, render_paperclip_env_note,
     render_paperclip_wake_prompt, render_template, select_paperclip_task_markdown,
-    ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS, RenderWakePromptOptions,
-    SelectTaskMarkdownOptions,
+    RenderWakePromptOptions, SelectTaskMarkdownOptions, ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS,
 };
 use serde_json::{json, Value};
 

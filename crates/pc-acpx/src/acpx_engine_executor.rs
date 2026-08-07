@@ -35,6 +35,7 @@ use crate::acp_runtime::{
     AcpRuntimePromptMode, AcpRuntimeSetConfigOptionInput, AcpRuntimeTurn, AcpRuntimeTurnInput,
     AcpRuntimeTurnResult,
 };
+use crate::build_prompt::{build_prompt, BuildPromptInput};
 use crate::build_runtime::AgentIdentity;
 use crate::prepared_runtime::PreparedRuntimeMode;
 use crate::session_codec::build_session_params;
@@ -202,6 +203,10 @@ pub struct EnsureOutcome {
     pub handle: AcpRuntimeHandle,
     /// `true` when the call returned a previously-cached warm handle.
     pub warm_hit: bool,
+    /// `true` when the session is a resumed one (warm hit or successful
+    /// `ensure_session` retry). Used by `build_prompt` to decide between
+    /// the heartbeat template and a resume-delta wake prompt.
+    pub resumed_session: bool,
 }
 
 impl std::fmt::Debug for EnsureOutcome {
@@ -209,6 +214,7 @@ impl std::fmt::Debug for EnsureOutcome {
         f.debug_struct("EnsureOutcome")
             .field("handle", &self.handle)
             .field("warm_hit", &self.warm_hit)
+            .field("resumed_session", &self.resumed_session)
             .field("runtime_type", &std::any::type_name::<dyn AcpRuntime>())
             .finish()
     }
@@ -436,6 +442,7 @@ impl AcpxEngineExecutor {
                         runtime,
                         handle,
                         warm_hit: true,
+                        resumed_session: resume_session_id.is_some(),
                     },
                     clear_session: false,
                     resumed_session: resume_session_id.is_some(),
@@ -483,6 +490,7 @@ impl AcpxEngineExecutor {
                 runtime,
                 handle,
                 warm_hit: false,
+                resumed_session,
             },
             clear_session,
             resumed_session,
@@ -739,11 +747,29 @@ impl AcpxEngineExecutor {
         }
         let session_params = build_session_params(&prepared, &outcome.handle);
 
+        // Compose the 7-segment prompt via Node `buildPrompt` parity.
+        // When `config.promptTemplate` is unset, this falls back to
+        // `ctx.run_prompt` so existing R376-R379 tests (which pass
+        // `run_prompt: "test"`) keep working without a 7-segment
+        // composition. Production callers set `config.promptTemplate`
+        // and the wake / taskContext / handoff / env / api notes all
+        // light up.
+        let composed = build_prompt(&BuildPromptInput {
+            run_id: &ctx.run_id,
+            agent: &ctx.agent,
+            config: &ctx.config,
+            context: &ctx.context,
+            run_prompt: &ctx.run_prompt,
+            env: &prepared.env,
+            resumed_session: outcome.resumed_session,
+            instructions_prefix: "",
+        });
+
         let timeout_ms = prepared.timeout_sec.checked_mul(1000);
         let turn_input = AcpRuntimeTurnInput {
             handle: outcome.handle.clone(),
             request_id: ctx.run_id.clone(),
-            text: ctx.run_prompt.clone(),
+            text: composed.prompt,
             mode: AcpRuntimePromptMode::Prompt,
             timeout_ms,
             attachments: Vec::new(),

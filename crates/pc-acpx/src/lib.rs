@@ -21,6 +21,7 @@ pub mod acp_runtime;
 pub mod acpx_engine_executor;
 pub mod agent_command;
 pub mod bin;
+pub mod build_prompt;
 pub mod build_runtime;
 pub mod cache;
 pub mod cache_lifecycle;
@@ -35,6 +36,7 @@ pub mod gemini_command_shell;
 pub mod gemini_version;
 pub mod hash;
 pub mod jsonrpc_wire;
+pub mod log_redaction;
 pub mod managed_home;
 pub mod normalize;
 pub mod paperclip_claude_settings;
@@ -96,6 +98,22 @@ pub use constants::{
     GEMINI_VERSION_PROBE_TIMEOUT_MS,
 };
 pub use env_helpers::{default_path_for_platform, ensure_path_in_env, resolve_runtime_env};
+pub use log_redaction::{
+    build_invocation_env_for_logs, expand_home_prefix, is_forbidden_config_env_key,
+    is_paperclip_runtime_env_key, is_pid_alive, is_sensitive_env_key, redact_command_text_for_logs,
+    redact_env_for_logs, sanitize_inherited_paperclip_env, InvocationEnvOptions,
+    DEFAULT_RESOLVED_COMMAND_ENV_KEY, REDACTED_COMMAND_TEXT_VALUE, REDACTED_LOG_VALUE,
+};
+pub use subprocess_signal::{
+    signal_running_process, Signal, SignalOutcome, SignalRunningProcessInput,
+};
+pub use workspace_env::{
+    refresh_paperclip_workspace_env_for_execution, rewrite_workspace_cwd_env_vars_for_execution,
+    sanitize_remote_execution_env, sanitize_ssh_remote_env,
+    shape_paperclip_workspace_env_for_execution, read_env_value_case_insensitive,
+    RefreshWorkspaceEnvInput, ShapeWorkspaceEnvInput, ShapedWorkspaceEnv, WorkspaceHint,
+    REMOTE_EXECUTION_ENV_IDENTITY_KEYS,
+};
 
 pub use error::AcpxError;
 
@@ -135,6 +153,7 @@ pub use prepared_runtime::{
     TimeoutResolution,
 };
 
+pub use build_prompt::{build_prompt, BuildPromptInput, BuildPromptMetrics, BuildPromptOutput};
 pub use build_runtime::{
     apply_paperclip_workspace_env, build_paperclip_env, build_runtime, AgentIdentity,
     BuildRuntimeInput, WakeContext, WorkspaceHints,
@@ -196,8 +215,8 @@ pub use paperclip_claude_settings::{
     ClaudeSettingsWriteInput, PaperclipClaudeSettingsResult,
 };
 pub use paths::{
-    default_paperclip_instance_dir, default_state_dir, expand_home_prefix,
-    resolve_managed_codex_home_dir, resolve_paperclip_instance_root,
+    default_paperclip_instance_dir, default_state_dir, resolve_managed_codex_home_dir,
+    resolve_paperclip_instance_root,
 };
 pub use session_compat::{is_compatible_session, unique_sorted, AcpxPreparedRuntimeLite};
 pub use session_config_options::{
@@ -208,17 +227,17 @@ pub use startup_metrics::{build_startup_step_metrics, StartupMetricsSource, Star
 pub use subprocess_acp_runtime::{SubprocessAcpRuntime, SubprocessAcpRuntimeSpec};
 pub use subprocess_handle::{SpawnAcpxInput, SubprocessHandle, SubprocessTermination};
 
+pub use prompt_compose::normalize_paperclip_wake_payload;
 pub use prompt_compose::{
     is_assignment_shaped_paperclip_wake_reason, is_paperclip_recovery_wake_payload,
     join_prompt_sections, join_prompt_sections_with_separator, render_paperclip_wake_prompt,
-    render_template, select_paperclip_task_markdown, ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS,
-    NormalizedPaperclipWake, PaperclipWakeAgentMessage, PaperclipWakeCheckboxOption,
-    PaperclipWakeCheckboxSelection, PaperclipWakeChildIssueSummary, PaperclipWakeComment,
-    PaperclipWakeExecutionStage, PaperclipWakeExecutionWorkspace, PaperclipWakeIssue,
-    PaperclipWakeOriginalAssignee, PaperclipWakeRecovery, RenderWakePromptOptions,
-    SelectTaskMarkdownOptions,
+    render_template, select_paperclip_task_markdown, NormalizedPaperclipWake,
+    PaperclipWakeAgentMessage, PaperclipWakeCheckboxOption, PaperclipWakeCheckboxSelection,
+    PaperclipWakeChildIssueSummary, PaperclipWakeComment, PaperclipWakeExecutionStage,
+    PaperclipWakeExecutionWorkspace, PaperclipWakeIssue, PaperclipWakeOriginalAssignee,
+    PaperclipWakeRecovery, RenderWakePromptOptions, SelectTaskMarkdownOptions,
+    ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS,
 };
-pub use prompt_compose::normalize_paperclip_wake_payload;
 pub use transcript::{
     parse_acpx_stdout_line, summarize_tool_call, ToolCallSummary, TranscriptEntry,
 };
