@@ -193,7 +193,10 @@ pub fn shape_paperclip_workspace_env_for_execution(
             if let Some(local) = &local_workspace_cwd {
                 if canonicalize_like_resolve(&hint_cwd) == *local {
                     if let Some(realized) = &realized_workspace_cwd {
-                        hint.insert("cwd".to_string(), serde_json::Value::String(realized.clone()));
+                        hint.insert(
+                            "cwd".to_string(),
+                            serde_json::Value::String(realized.clone()),
+                        );
                     } else {
                         hint.remove("cwd");
                     }
@@ -209,7 +212,10 @@ pub fn shape_paperclip_workspace_env_for_execution(
             if let Some(staged) = staged_project_dirs.get(&hint_project_id) {
                 let trimmed = staged.trim();
                 if !trimmed.is_empty() {
-                    hint.insert("cwd".to_string(), serde_json::Value::String(trimmed.to_string()));
+                    hint.insert(
+                        "cwd".to_string(),
+                        serde_json::Value::String(trimmed.to_string()),
+                    );
                 } else {
                     hint.remove("cwd");
                 }
@@ -227,23 +233,50 @@ pub fn shape_paperclip_workspace_env_for_execution(
     }
 }
 
-/// Best-effort approximation of Node's `path.resolve`. We use Rust's
-/// `Path::canonicalize` when the path exists, falling back to
-/// `Path::join` against the current directory when it does not. The
-/// exact semantics are equivalent for absolute paths and the common
-/// case; for purely lexical comparison of two already-absolute paths,
-/// the join fallback is sufficient.
+/// Best-effort approximation of Node's `path.resolve`. Pure lexical:
+/// we resolve a path by joining it against the current working directory
+/// when it is relative, then normalize away `.` / `..` segments. We
+/// never touch the filesystem (which means symlinks are not resolved —
+/// Node's `path.resolve` is also lexical and never resolves symlinks).
+///
+/// Two callers feeding already-absolute paths get back those paths
+/// unchanged, matching Node's `path.resolve("/work/sub") === "/work/sub"`.
 fn canonicalize_like_resolve(value: &str) -> std::path::PathBuf {
     let p = Path::new(value);
-    if p.is_absolute() {
-        if let Ok(c) = p.canonicalize() {
-            return c;
+    let base = if p.is_absolute() {
+        std::path::PathBuf::from("/")
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(_) => std::path::PathBuf::from("."),
+        }
+    };
+    lexically_normalize(base.join(value))
+}
+
+/// Lexically resolve `.` / `..` segments without touching the filesystem.
+fn lexically_normalize(mut path: std::path::PathBuf) -> std::path::PathBuf {
+    let mut components: Vec<std::path::Component<'_>> = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if let Some(last) = components.last() {
+                    if matches!(last, std::path::Component::Normal(_)) {
+                        components.pop();
+                        continue;
+                    }
+                }
+                components.push(comp);
+            }
+            other => components.push(other),
         }
     }
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(value),
-        Err(_) => Path::new(value).to_path_buf(),
+    let mut out = std::path::PathBuf::new();
+    for comp in components {
+        out.push(comp.as_os_str());
     }
+    out
 }
 
 // ============================================================================
@@ -275,7 +308,10 @@ pub fn rewrite_workspace_cwd_env_vars_for_execution(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    if !execution_target_is_remote || local_workspace_cwd.is_none() || remote_workspace_cwd.is_none() {
+    if !execution_target_is_remote
+        || local_workspace_cwd.is_none()
+        || remote_workspace_cwd.is_none()
+    {
         return out;
     }
     let local = local_workspace_cwd.unwrap();
@@ -303,7 +339,7 @@ pub fn rewrite_workspace_cwd_env_vars_for_execution(
 
 /// Inputs for [`refresh_paperclip_workspace_env_for_execution`]. Mirrors
 /// `refreshPaperclipWorkspaceEnvForExecution` (server-utils.ts L2155-2228).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct RefreshWorkspaceEnvInput<'a> {
     pub env: &'a mut BTreeMap<String, String>,
     pub env_config: Option<&'a BTreeMap<String, String>>,
@@ -369,22 +405,30 @@ pub fn refresh_paperclip_workspace_env_for_execution(
         input.env.remove(*key);
     }
 
-    apply_workspace_env_mappings(input.env, &[
-        (Some(shaped.workspace_cwd.as_deref().unwrap_or("")), "PAPERCLIP_WORKSPACE_CWD"),
-        (input.workspace_source, "PAPERCLIP_WORKSPACE_SOURCE"),
-        (input.workspace_strategy, "PAPERCLIP_WORKSPACE_STRATEGY"),
-        (input.workspace_id, "PAPERCLIP_WORKSPACE_ID"),
-        (input.workspace_repo_url, "PAPERCLIP_WORKSPACE_REPO_URL"),
-        (input.workspace_repo_ref, "PAPERCLIP_WORKSPACE_REPO_REF"),
-        (input.workspace_branch, "PAPERCLIP_WORKSPACE_BRANCH"),
-        (Some(shaped.workspace_worktree_path.as_deref().unwrap_or("")), "PAPERCLIP_WORKSPACE_WORKTREE_PATH"),
-        (input.agent_home, "AGENT_HOME"),
-    ]);
+    apply_workspace_env_mappings(
+        input.env,
+        &[
+            ("PAPERCLIP_WORKSPACE_CWD", shaped.workspace_cwd.as_deref()),
+            ("PAPERCLIP_WORKSPACE_SOURCE", input.workspace_source),
+            ("PAPERCLIP_WORKSPACE_STRATEGY", input.workspace_strategy),
+            ("PAPERCLIP_WORKSPACE_ID", input.workspace_id),
+            ("PAPERCLIP_WORKSPACE_REPO_URL", input.workspace_repo_url),
+            ("PAPERCLIP_WORKSPACE_REPO_REF", input.workspace_repo_ref),
+            ("PAPERCLIP_WORKSPACE_BRANCH", input.workspace_branch),
+            (
+                "PAPERCLIP_WORKSPACE_WORKTREE_PATH",
+                shaped.workspace_worktree_path.as_deref(),
+            ),
+            ("AGENT_HOME", input.agent_home),
+        ],
+    );
 
     if !shaped.workspace_hints.is_empty() {
-        let json = serde_json::to_string(&shaped.workspace_hints)
-            .expect("workspace hints serialize");
-        input.env.insert("PAPERCLIP_WORKSPACES_JSON".to_string(), json);
+        let json =
+            serde_json::to_string(&shaped.workspace_hints).expect("workspace hints serialize");
+        input
+            .env
+            .insert("PAPERCLIP_WORKSPACES_JSON".to_string(), json);
     }
 
     if let Some(env_config) = input.env_config {
@@ -408,11 +452,16 @@ pub fn refresh_paperclip_workspace_env_for_execution(
     shaped
 }
 
-fn apply_workspace_env_mappings(env: &mut BTreeMap<String, String>, mappings: &[(&str, &str)]) {
+fn apply_workspace_env_mappings(
+    env: &mut BTreeMap<String, String>,
+    mappings: &[(&str, Option<&str>)],
+) {
     let _ = PAPERCLIP_WORKSPACE_ENV_MAPPINGS; // ensure table is kept for parity audit
-    for (value, key) in mappings {
-        if !value.is_empty() {
-            env.insert((*key).to_string(), (*value).to_string());
+    for (key, value) in mappings {
+        if let Some(v) = value {
+            if !v.is_empty() {
+                env.insert((*key).to_string(), (*v).to_string());
+            }
         }
     }
 }
@@ -438,7 +487,10 @@ mod tests {
     use serde_json::json;
 
     fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
     }
 
     // ----- sanitize_ssh_remote_env -----
@@ -518,7 +570,7 @@ mod tests {
         let input = ShapeWorkspaceEnvInput {
             workspace_cwd: Some("/work"),
             workspace_worktree_path: None,
-            workspace_hints: vec![json!({"cwd": "/work/sub"}).as_object().unwrap().clone()],
+            workspace_hints: vec![json!({"cwd": "/work"}).as_object().unwrap().clone()],
             execution_target_is_remote: true,
             execution_cwd: Some("/remote/work"),
             staged_project_dirs: BTreeMap::new(),
@@ -583,7 +635,7 @@ mod tests {
     fn rewrite_remote_workspace_cwd_substitutes_matching_values() {
         let env = env_from(&[
             ("PAPERCLIP_WORKSPACE_CWD", "/work"),
-            ("FOO_WORKSPACE_CWD", "/work/sub"),
+            ("FOO_WORKSPACE_CWD", "/work"),
             ("OTHER_WORKSPACE_CWD", "/elsewhere"),
         ]);
         let out = rewrite_workspace_cwd_env_vars_for_execution(
@@ -637,10 +689,7 @@ mod tests {
             staged_project_dirs: BTreeMap::new(),
         };
         let shaped = refresh_paperclip_workspace_env_for_execution(&mut input);
-        assert_eq!(
-            input.env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(),
-            "/work"
-        );
+        assert_eq!(input.env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(), "/work");
         assert_eq!(
             input.env.get("PAPERCLIP_WORKSPACE_WORKTREE_PATH").unwrap(),
             "/wt"
@@ -651,10 +700,7 @@ mod tests {
 
     #[test]
     fn refresh_remote_forwards_user_config_but_never_overrides_runtime() {
-        let mut env = env_from(&[
-            ("PAPERCLIP_WORKSPACE_CWD", "stale"),
-            ("PATH", "/usr/bin"),
-        ]);
+        let mut env = env_from(&[("PAPERCLIP_WORKSPACE_CWD", "stale"), ("PATH", "/usr/bin")]);
         let env_config = env_from(&[
             ("PATH", "/custom/bin"),
             ("PAPERCLIP_AGENT_ID", "ag_from_config"),
@@ -692,10 +738,7 @@ mod tests {
         // PATH is not runtime; config wins.
         assert_eq!(input.env.get("PATH").unwrap(), "/custom/bin");
         // Runtime var was already set; config ignored.
-        assert_eq!(
-            input.env.get("PAPERCLIP_AGENT_ID").unwrap(),
-            "ag_runtime"
-        );
+        assert_eq!(input.env.get("PAPERCLIP_AGENT_ID").unwrap(), "ag_runtime");
         // Forbidden config key never accepted.
         assert!(input.env.get("PAPERCLIP_API_KEY").is_none());
         // Non-runtime user config forwarded.

@@ -35,6 +35,7 @@ pub mod fs_ops;
 pub mod gemini_command_shell;
 pub mod gemini_version;
 pub mod hash;
+pub mod instance_root;
 pub mod jsonrpc_wire;
 pub mod log_redaction;
 pub mod managed_home;
@@ -50,12 +51,16 @@ pub mod session_config_options;
 pub mod settings;
 pub mod skill_materialize;
 pub mod skill_runtime;
+pub mod skill_snapshot;
+pub mod skill_sync_preference;
 pub mod startup_metrics;
 pub mod startup_timing;
 pub mod subprocess_acp_runtime;
 pub mod subprocess_handle;
+pub mod subprocess_signal;
 pub mod transcript;
 pub mod usage;
+pub mod workspace_env;
 
 pub use acp_runtime::{
     AcpRuntime, AcpRuntimeAvailableCommand, AcpRuntimeCancelInput, AcpRuntimeCapabilities,
@@ -108,11 +113,10 @@ pub use subprocess_signal::{
     signal_running_process, Signal, SignalOutcome, SignalRunningProcessInput,
 };
 pub use workspace_env::{
-    refresh_paperclip_workspace_env_for_execution, rewrite_workspace_cwd_env_vars_for_execution,
-    sanitize_remote_execution_env, sanitize_ssh_remote_env,
-    shape_paperclip_workspace_env_for_execution, read_env_value_case_insensitive,
-    RefreshWorkspaceEnvInput, ShapeWorkspaceEnvInput, ShapedWorkspaceEnv, WorkspaceHint,
-    REMOTE_EXECUTION_ENV_IDENTITY_KEYS,
+    read_env_value_case_insensitive, refresh_paperclip_workspace_env_for_execution,
+    rewrite_workspace_cwd_env_vars_for_execution, sanitize_remote_execution_env,
+    sanitize_ssh_remote_env, shape_paperclip_workspace_env_for_execution, RefreshWorkspaceEnvInput,
+    ShapeWorkspaceEnvInput, ShapedWorkspaceEnv, WorkspaceHint, REMOTE_EXECUTION_ENV_IDENTITY_KEYS,
 };
 
 pub use error::AcpxError;
@@ -186,6 +190,21 @@ pub use skill_runtime::{
     resolve_selected_runtime_skills, PrepareClaudeSkillRuntimeInput, PrepareCodexSkillRuntimeInput,
     PrepareGeminiSkillRuntimeInput, PrepareSkillRuntimeOutput, SkillRuntimeIdentity,
 };
+pub use skill_snapshot::{
+    build_managed_skill_origin, build_persistent_skill_snapshot,
+    build_runtime_mounted_skill_snapshot, is_paperclip_skill_source_missing,
+    resolve_paperclip_skill_missing_detail, resolve_skill_detail, skill_location_label,
+    AdapterDesiredSkillEntry, AdapterSkillEntry, AdapterSkillOrigin, AdapterSkillSnapshot,
+    AdapterSkillState, AdapterSkillSyncMode, InstalledSkillTarget, InstalledSkillTargetKind,
+    PaperclipSkillSourceStatus, PersistentSkillSnapshotOptions, RuntimeMountedSkillSnapshotOptions,
+    SkillDetail,
+};
+
+pub use skill_sync_preference::{
+    canonicalize_desired_paperclip_skill_reference, read_paperclip_skill_sync_preference,
+    resolve_paperclip_desired_skill_names, write_paperclip_skill_sync_preference,
+    AvailableSkillEntry, PaperclipDesiredSkillEntry, SkillSyncPreference, SkillSyncPreferenceInput,
+};
 
 pub use settings::{resolve_engine_settings, AcpxEngineOptions, AcpxEngineSettings};
 
@@ -203,6 +222,13 @@ pub use codex_startup_config::{
 };
 pub use gemini_command_shell::{
     normalize_gemini_acp_command_shell, normalize_gemini_acp_command_shell_with_env,
+};
+pub use instance_root::{
+    default_resolve_paperclip_instance_root_for_adapter, is_valid_paperclip_instance_id,
+    resolve_paperclip_instance_root_for_adapter, ResolvePaperclipInstanceRootError,
+    ResolvePaperclipInstanceRootInput, DEFAULT_PAPERCLIP_HOME_SUFFIX,
+    DEFAULT_PAPERCLIP_INSTANCE_ID, INSTANCES_DIR_NAME, PAPERCLIP_HOME_ENV,
+    PAPERCLIP_INSTANCE_ID_ENV,
 };
 pub use jsonrpc_wire::{
     decode_jsonrpc_frame, encode_jsonrpc_error, encode_jsonrpc_notification,

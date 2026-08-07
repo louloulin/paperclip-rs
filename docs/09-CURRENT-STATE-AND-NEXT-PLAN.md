@@ -344,3 +344,133 @@ R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一�
 5. `refresh_paperclip_workspace_env_for_execution` (L2155-2228) — 同系列
 
 预计 R385 完成:pc-acpx 600+ tests,workspace 750+ tests。
+
+### R385 增量(workspace_env + subprocess_signal)
+
+按 `comet-open` 思路,继续复刻 Node `adapter-utils` 中尚未在 `pc-acpx`
+实现的 workspace env shaping + subprocess signal 纯函数模块。本次新增
+2 个独立模块,5 个函数全部对齐 Node parity。
+
+- **新模块 `crates/pc-acpx/src/workspace_env.rs`**(~720 行含单测):
+  - `sanitize_ssh_remote_env` + `sanitize_remote_execution_env` + `read_env_value_case_insensitive`(Node L2311-2317 + remote-execution-env.ts L28-44)
+  - `shape_paperclip_workspace_env_for_execution`(L2023-2117)
+  - `rewrite_workspace_cwd_env_vars_for_execution`(L2118-2154)
+  - `refresh_paperclip_workspace_env_for_execution`(L2155-2228)
+  - 完整 typed `WorkspaceHint` / `ShapeWorkspaceEnvInput` / `RefreshWorkspaceEnvInput` / `ShapedWorkspaceEnv`
+  - 自定义 `lexically_normalize` 路径解析,等价 Node `path.resolve` 语义,无文件系统 I/O
+- **新模块 `crates/pc-acpx/src/subprocess_signal.rs`**(~310 行含单测):
+  - `Signal` enum(SIGHUP/SIGINT/SIGQUIT/SIGTERM/SIGKILL/SIGUSR1/SIGUSR2)
+  - `SignalOutcome` enum(GroupSent / DirectSent / SkippedAlreadyExited / Failed)
+  - `signal_running_process`(Node L82-112)
+  - `forbid unsafe_code` 策略 + `i64` pid 避免 wrap,shell-out `kill -<n> <pid>; echo $?` 外部命令
+- **15 + 8 个新单元测试** + **22 个新集成测试**
+  (`round385_workspace_env_and_signal.rs`)
+
+### 测试统计（pc-acpx crate，R387 末）
+
+- **R386 末**: 656 tests (lib 364 + integration 292)
+- **R387 末**: 694 tests (lib 390 + integration 304),+38 个测试,无回归
+  - +26 skill_sync_preference 单元测试
+  - +12 round387 集成测试
+
+### 当前 adapter-utils 复刻进度
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers (R382) | 100% |
+| normalize (R382) | 100% |
+| log_redaction (R384) | 100% |
+| workspace_env (R385) | 100% |
+| subprocess_signal (R385) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| resolve_paperclip_instance_root_for_adapter (R386) | 100% |
+| skill sync prefs (3 函数) | 0% (R387) |
+| skill snapshots (2 函数) | 0% (R388) |
+| materialize_paperclip_skill_copy (async) | 0% (R389) |
+
+### 下一轮 R386 计划
+
+1. `resolve_paperclip_instance_root_for_adapter`(Node L139-285)— 复杂 OS 路径解析
+   - 支持 Unix / Windows 路径
+   - 处理 `paperclip.json` / `.paperclip-instance` 标记
+   - 多级 fallback(env var → home dir → system dir)
+2. 写单元测试 + 集成测试
+3. 文档更新 + 路线图
+
+预计 R386 完成:pc-acpx 640+ tests,workspace 800+ tests。
+
+### R386 增量（instance_root）
+
+按 `comet-open` 思路,精确镜像 Node `server-utils.ts` 中
+`resolvePaperclipInstanceRootForAdapter`(L139-149)的 Node 兼容
+签名/语义,新建独立模块 `pc-acpx::instance_root`,与 R369 早期实现的
+`paths::resolve_paperclip_instance_root`(`PathBuf` + `AcpxError`)并存,
+通过 `instance_root_agrees_with_paths_resolver` 集成测试保证两者
+lexical 路径等价。
+
+- **新模块 `crates/pc-acpx/src/instance_root.rs`**(562 行含 25 单测):
+  - `DEFAULT_PAPERCLIP_INSTANCE_ID` / `PAPERCLIP_HOME_ENV` / `PAPERCLIP_INSTANCE_ID_ENV` / `INSTANCES_DIR_NAME` / `DEFAULT_PAPERCLIP_HOME_SUFFIX`(Node L106 + L107 + L139-149 literal 镜像)
+  - `is_valid_paperclip_instance_id`(镜像 `PATH_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/`)
+  - `expand_home_prefix`(Node L133-137,与 `log_redaction` 共享语义)
+  - `ResolvePaperclipInstanceRootInput` / `ResolvePaperclipInstanceRootError`
+  - `resolve_paperclip_instance_root_for_adapter` + `default_resolve_paperclip_instance_root_for_adapter`
+  - 自定义 `lexically_normalize` + `path_resolve` 路径解析,等价 Node `path.resolve` 语义,无文件系统 I/O
+  - 零 I/O / 零 async / 零 unsafe(满足 `unsafe_code = "forbid"`)
+- **25 个新单元测试** + **12 个新集成测试**(`round386_instance_root.rs`)
+
+### 当前 adapter-utils 复刻进度（R386 末）
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers (R382) | 100% |
+| normalize (R382) | 100% |
+| log_redaction (R384) | 100% |
+| workspace_env (R385) | 100% |
+| subprocess_signal (R385) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| resolve_paperclip_instance_root_for_adapter (R386) | 100% |
+| skill sync prefs (R387) | 100% |
+
+### R387 增量（skill_sync_preference）
+
+按 `comet-open` 思路,精确镜像 Node `server-utils.ts` 中
+`readPaperclipSkillSyncPreference` (L2794-2834) /
+`canonicalizeDesiredPaperclipSkillReference` (L2842-2857) /
+`resolvePaperclipDesiredSkillNames` (L2858-2869) /
+`writePaperclipSkillSyncPreference` (L2870-2899) 四个函数,新建
+独立模块 `pc-acpx::skill_sync_preference`,纯函数 / 零 I/O。
+
+- **新模块 `crates/pc-acpx/src/skill_sync_preference.rs`**(839 行含 26 单测):
+  - `PaperclipDesiredSkillEntry` / `SkillSyncPreference` / `AvailableSkillEntry` / `SkillSyncPreferenceInput` 类型
+  - `read_paperclip_skill_sync_preference`(Node L2794-2834)— 用 `Map.contains_key` 镜像 Node `hasOwnProperty` 语义
+  - `canonicalize_desired_paperclip_skill_reference`(L2842-2857)— exact → runtime_name → slug → unresolved 四级回退
+  - `resolve_paperclip_desired_skill_names`(L2858-2869)— 解析并保留未匹配 reference(与 Node 一致,不静默丢弃)
+  - `write_paperclip_skill_sync_preference`(L2870-2899)— 不 mutate input;任一 entry 有 versionId 时 emit typed shape,否则 emit string shape
+  - 用 `HashSet<String> seen + Vec<...>` 保留 first-seen 顺序,避免 Rust `HashMap` 的非确定性迭代
+  - 零 I/O / 零 async / 零 unsafe
+- **26 个新单元测试** + **12 个新集成测试**(`round387_skill_sync_preference.rs`)
+
+### 当前 adapter-utils 复刻进度（R387 末）
+
+| 模块 | 状态 |
+|---|---|
+| prompt_compose (R380-R383) | 100% |
+| env_helpers (R382) | 100% |
+| normalize (R382) | 100% |
+| log_redaction (R384) | 100% |
+| workspace_env (R385) | 100% |
+| subprocess_signal (R385) | 100% |
+| paths/settings/managed_home/reconcile_skills | 100% |
+| resolve_paperclip_instance_root_for_adapter (R386) | 100% |
+| skill sync prefs (R387) | 100% |
+
+### 下一轮 R388 计划
+
+按 adapter-utils 复刻路线图(复杂):
+1. `buildRuntimeMountedSkillSnapshot` (Node L2491-2608)— 运行时挂载 skills 快照
+2. `buildPersistentSkillSnapshot` (L2609-2734)— 持久化 skills 快照
+3. 配套 typed `PaperclipSkillEntry` 等数据结构
+
+预计 R388 完成:pc-acpx 720+ tests,workspace 860+ tests。
