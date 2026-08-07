@@ -219,23 +219,24 @@ impl<'a> StatusCardRepo<'a> {
 
     /// Round 162: claim_due_status_card_updates — bulk UPDATE FOR UPDATE SKIP LOCKED。
     pub async fn claim_due(&self, limit: i64) -> sqlx::Result<u64> {
-        let n = sqlx::query(
-            "UPDATE status_cards \\
-             SET state = 'pending_refresh', updated_at = now() \\
-             WHERE id IN ( \\
-                 SELECT id FROM status_cards \\
-                 WHERE next_eval_at IS NOT NULL AND next_eval_at <= now() \\
-                   AND state IN ('idle', 'pending_refresh', 'compiling') \\
-                   AND archived_at IS NULL \\
-                   AND generating_issue_id IS NULL \\
-                 ORDER BY next_eval_at ASC LIMIT $1 \\
-                 FOR UPDATE SKIP LOCKED \\
-             )",
-        )
-        .bind(limit.clamp(1, 200))
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+        let sql = r#"
+UPDATE status_cards
+SET state = 'pending_refresh', updated_at = now()
+WHERE id IN (
+    SELECT id FROM status_cards
+    WHERE next_eval_at IS NOT NULL AND next_eval_at <= now()
+      AND state IN ('idle', 'pending_refresh', 'compiling')
+      AND archived_at IS NULL
+      AND generating_issue_id IS NULL
+    ORDER BY next_eval_at ASC LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+"#;
+        let n = sqlx::query(sql)
+            .bind(limit.clamp(1, 200))
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n)
     }
 

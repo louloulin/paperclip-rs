@@ -649,8 +649,11 @@ impl<'a> IssueRepo<'a> {
                 LIMIT $1 FOR UPDATE SKIP LOCKED\
             ) \
             UPDATE issues AS i SET monitor_wake_requested_at=now(), updated_at=now() \
-            FROM due WHERE i.id=due.id RETURNING {ISSUE_COLS}"
+            FROM due \
+            WHERE i.id = due.id \
+            RETURNING i.id, i.company_id, i.project_id, i.project_workspace_id, i.goal_id, i.parent_id, i.title, i.description, i.status, i.work_mode, i.harness_kind, i.priority, i.assignee_agent_id, i.assignee_user_id, i.checkout_run_id, i.execution_run_id, i.execution_agent_name_key, i.execution_locked_at, i.created_by_agent_id, i.created_by_user_id, i.responsible_user_id, i.issue_number, i.identifier, i.origin_kind, i.origin_id, i.origin_run_id, i.origin_fingerprint, i.request_depth, i.billing_code, i.assignee_adapter_overrides, i.execution_policy, i.execution_state, i.monitor_next_check_at, i.monitor_wake_requested_at, i.monitor_last_triggered_at, i.monitor_attempt_count, i.monitor_notes, i.monitor_scheduled_by, i.execution_workspace_id, i.execution_workspace_preference, i.execution_workspace_settings, i.source_trust, i.unblock_descriptor, i.blocked_transition_at, i.blocked_owner_notified_at, i.started_at, i.completed_at, i.cancelled_at, i.hidden_at, i.created_at, i.updated_at"
         );
+
         sqlx::query_as::<_, IssueRow>(&query)
             .bind(limit.clamp(1, 50))
             .fetch_all(self.db.pool())

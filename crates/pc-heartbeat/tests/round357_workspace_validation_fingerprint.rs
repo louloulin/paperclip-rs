@@ -11,8 +11,8 @@
 //! - 非 WorkspaceValidationFailed cause → 不出现 fingerprint 行（避免噪音）
 
 use pc_heartbeat::recovery::build_stranded_issue_recovery_description::{
-    build_stranded_issue_recovery_description,
-    BuildStrandedIssueRecoveryDescriptionInput, LatestRunView,
+    build_stranded_issue_recovery_description, BuildStrandedIssueRecoveryDescriptionInput,
+    LatestRunView,
 };
 use pc_heartbeat::recovery::source_scoped_recovery_action::StrandedRecoveryCause;
 use pc_repos::Db;
@@ -59,7 +59,7 @@ async fn fixture(db: &Db) -> (Uuid, Uuid) {
     .bind(company_id)
     .execute(db.pool())
     .await
-        .unwrap();
+    .unwrap();
     (company_id, agent_id)
 }
 
@@ -79,7 +79,7 @@ async fn insert_issue(db: &Db, company_id: Uuid, status: &str) -> Uuid {
     .bind(json!({"mode":"normal","commentRequired":false,"stages":[]}))
     .execute(db.pool())
     .await
-        .unwrap();
+    .unwrap();
     id
 }
 

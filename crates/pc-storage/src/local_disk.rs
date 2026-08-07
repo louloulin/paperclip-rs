@@ -12,7 +12,7 @@ use tracing::debug;
 
 use crate::error::{StorageError, StorageResult};
 use crate::provider::{ObjectMetadata, ObjectStream, StorageProvider};
-use crate::types::{ObjectKey, StorageClass, StorageLocation};
+use crate::types::{ObjectKey, PresignedUrl, StorageClass, StorageLocation};
 
 #[derive(Debug, Clone)]
 pub struct LocalDiskStorage {
@@ -150,6 +150,48 @@ impl StorageProvider for LocalDiskStorage {
             }
         }
         Ok(out)
+    }
+
+    async fn presign_get(
+        &self,
+        location: &StorageLocation,
+        ttl: std::time::Duration,
+    ) -> StorageResult<PresignedUrl> {
+        // Validate path exists so we don't hand out a URL for missing data
+        let path = self.resolve(&location.bucket, location.key.as_str())?;
+        if !path.exists() {
+            return Err(StorageError::NotFound(format!(
+                "{}/{}",
+                location.bucket,
+                location.key.as_str()
+            )));
+        }
+        let expires_at = chrono::Utc::now() + ttl;
+        // Local-disk presigned URL — `paperclip-local://bucket/key?exp=<unix>&sig=<b64-hash>`.
+        // `sig` is base64(SHA256(root|bucket|key|exp)) — root path is the signing
+        // secret (only the host knows the root, so it is the verifier).
+        let payload = format!(
+            "{}|{}|{}",
+            location.bucket,
+            location.key.as_str(),
+            expires_at.timestamp()
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(self.root.to_string_lossy().as_bytes());
+        hasher.update(b"|");
+        hasher.update(payload.as_bytes());
+        let sig = {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize())
+        };
+        let url = format!(
+            "paperclip-local://{}/{}?exp={}&sig={}",
+            location.bucket,
+            location.key.as_str(),
+            expires_at.timestamp(),
+            sig
+        );
+        Ok(PresignedUrl { url, expires_at })
     }
 }
 

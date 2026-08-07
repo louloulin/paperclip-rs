@@ -17,26 +17,14 @@ use pc_repos::issue_tree_hold::IssueTreeHoldRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route(
-            "/api/issues/:id/tree-control/preview",
-            post(preview_tree_control),
-        )
-        .route(
-            "/api/issues/:id/tree-control/state",
-            get(tree_control_state),
-        )
-        .route(
-            "/api/issues/:id/tree-holds",
-            get(list_tree_holds).post(create_tree_hold),
-        )
         // ── Round 213: company-level tree-holds aggregate ──
+        // All `/api/issues/:issue_id/tree-{holds,control/*}` routes are
+        // registered by `routes::issues` (Round 27/236). Round 215 removed
+        // the duplicate registrations here because they produced axum 0.7
+        // "Overlapping method route" panics during startup.
         .route(
             "/api/companies/:company_id/tree-holds",
             get(list_company_tree_holds),
-        )
-        .route(
-            "/api/issues/:id/tree-holds/:hold_id",
-            get(get_tree_hold).post(release_tree_hold),
         )
 }
 

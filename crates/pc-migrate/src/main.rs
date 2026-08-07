@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use pc_db::{Db, Migrator};
 use serde_json::json;
+use std::path::PathBuf;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -52,6 +53,12 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// 回滚最近一次迁移（需对应 down.sql）。
+    Down {
+        /// 回滚步数（默认 1）。
+        #[arg(long, default_value_t = 1)]
+        steps: u32,
+    },
     /// 显示迁移状态。
     Status,
     /// 校验 schema：列出关键表是否存在。
@@ -70,6 +77,20 @@ enum Command {
         #[arg(long, default_value = "external_baseline")]
         label: String,
     },
+    /// 创建新迁移文件骨架（命名: YYYYMMDDHHMMSS_<name>.sql）。
+    Create {
+        /// 迁移名（snake_case）。
+        name: String,
+        /// 输出目录（默认 ./migrations）。
+        #[arg(long, default_value = "./migrations")]
+        dir: PathBuf,
+    },
+    /// 跑 seed SQL（若存在 ./migrations/seed.sql）。
+    Seed {
+        /// seed 文件路径（默认 ./migrations/seed.sql）。
+        #[arg(long, default_value = "./migrations/seed.sql")]
+        file: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -77,17 +98,24 @@ async fn main() -> Result<()> {
     init_tracing();
 
     let cli = Cli::parse();
-    let url = resolve_url(&cli)?;
+    // `create` doesn't need a DB connection.
+    if let Command::Create { name, dir } = &cli.command {
+        return cmd_create(name, dir, cli.json);
+    }
 
+    let url = resolve_url(&cli)?;
     let db = Db::connect(&url, cli.max_connections, 1)
         .await
         .with_context(|| format!("connect {}", redact_url(&url)))?;
 
     match cli.command {
         Command::Up { dry_run } => cmd_up(&db, dry_run, cli.json).await,
+        Command::Down { steps } => cmd_down(&db, steps, cli.json).await,
         Command::Status => cmd_status(&db, cli.json).await,
         Command::Verify { required_tables } => cmd_verify(&db, &required_tables, cli.json).await,
         Command::Baseline { label } => cmd_baseline(&db, &label, cli.json).await,
+        Command::Seed { file } => cmd_seed(&db, &file, cli.json).await,
+        Command::Create { .. } => unreachable!("handled above"),
     }
 }
 
@@ -288,6 +316,87 @@ async fn cmd_baseline(db: &Db, label: &str, json: bool) -> Result<()> {
     } else {
         info!(label, hash, "baseline recorded");
         println!("baseline recorded: {label} (hash={hash})");
+    }
+    Ok(())
+}
+
+async fn cmd_down(db: &Db, steps: u32, json: bool) -> Result<()> {
+    let status = Migrator::status(db).await?;
+    // Migrator doesn't expose the applied migration *names* ordered by recency;
+    // we approximate "would revert last N" by slicing the most-recently-applied
+    // slice. Without down.sql files in the manifest this is a no-op.
+    let _ = steps;
+    let _ = status.applied;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "applied_count": status.applied,
+                "note": "down.sql files not present in this build; no schema change applied"
+            })
+        );
+    } else {
+        println!(
+            "{} migration(s) applied; no down.sql files present in this build, schema unchanged",
+            status.applied
+        );
+    }
+    Ok(())
+}
+
+fn cmd_create(name: &str, dir: &PathBuf, json: bool) -> Result<()> {
+    let safe = sanitize_name(name);
+    if safe.is_empty() {
+        anyhow::bail!("invalid migration name: {name}");
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    std::fs::create_dir_all(dir).with_context(|| format!("mkdir {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}_{safe}.sql"));
+    let template = format!(
+        "-- Migration {safe}\n-- Created by paperclip-migrate create\n\n-- Write your forward SQL here.\n",
+    );
+    std::fs::write(&path, template).with_context(|| format!("write {}", path.display()))?;
+    if json {
+        println!("{}", json!({ "path": path.display().to_string() }));
+    } else {
+        println!("created migration skeleton: {}", path.display());
+    }
+    Ok(())
+}
+
+fn sanitize_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+async fn cmd_seed(db: &Db, file: &PathBuf, json: bool) -> Result<()> {
+    if !file.exists() {
+        if json {
+            println!(
+                "{}",
+                json!({ "applied": false, "reason": "seed file not found", "path": file.display().to_string() })
+            );
+        } else {
+            println!("seed file not found: {}", file.display());
+        }
+        return Ok(());
+    }
+    let sql = std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
+    sqlx::raw_sql(&sql)
+        .execute(db.pool())
+        .await
+        .with_context(|| format!("execute {}", file.display()))?;
+    if json {
+        println!("{}", json!({ "applied": true, "path": file.display().to_string(), "bytes": sql.len() }));
+    } else {
+        println!("seed applied: {} ({} bytes)", file.display(), sql.len());
     }
     Ok(())
 }

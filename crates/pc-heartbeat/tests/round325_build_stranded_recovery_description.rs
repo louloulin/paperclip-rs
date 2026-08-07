@@ -296,7 +296,6 @@ async fn retry_reason_unknown_when_context_snapshot_empty() {
         status: Some("failed".to_owned()),
         context_snapshot: None,
         result_json: None,
-
     };
     let input = BuildStrandedIssueRecoveryDescriptionInput {
         issue: &issue,

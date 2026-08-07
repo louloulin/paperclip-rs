@@ -1,0 +1,56 @@
+[package]
+name = "pc-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip 服务器二进制入口"
+
+[[bin]]
+name = "paperclip-server"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+otlp = ["pc-telemetry/otlp"]
+
+[dependencies]
+dirs = { workspace = true }
+pc-errors = { path = "../../crates/pc-errors" }
+pc-agent = { path = "../../crates/pc-agent" }
+pc-telemetry = { path = "../../crates/pc-telemetry" }
+pc-config = { path = "../../crates/pc-config" }
+pc-core = { path = "../../crates/pc-core" }
+pc-db = { path = "../../crates/pc-db" }
+pc-http = { path = "../../crates/pc-http" }
+pc-realtime = { path = "../../crates/pc-realtime" }
+pc-heartbeat = { path = "../../crates/pc-heartbeat" }
+pc-repos = { path = "../../crates/pc-repos" }
+pc-storage = { path = "../../crates/pc-storage" }
+pc-secrets = { path = "../../crates/pc-secrets" }
+pc-feature-flags = { path = "../../crates/pc-feature-flags" }
+pc-plugin-host = { path = "../../crates/pc-plugin-host" }
+pc-plugin-protocol = { path = "../../crates/pc-plugin-protocol" }
+uuid = { workspace = true }
+pc-adapter-api = { path = "../../crates/pc-adapter-api" }
+pc-adapter-claude-local = { path = "../../crates/pc-adapter-claude-local" }
+pc-adapter-codex-local = { path = "../../crates/pc-adapter-codex-local" }
+pc-adapter-cursor-cloud = { path = "../../crates/pc-adapter-cursor-cloud" }
+pc-adapter-cursor-local = { path = "../../crates/pc-adapter-cursor-local" }
+pc-adapter-gemini-local = { path = "../../crates/pc-adapter-gemini-local" }
+pc-adapter-grok-local = { path = "../../crates/pc-adapter-grok-local" }
+pc-adapter-hermes = { path = "../../crates/pc-adapter-hermes" }
+pc-adapter-hermes-gateway = { path = "../../crates/pc-adapter-hermes-gateway" }
+pc-adapter-openclaw-gateway = { path = "../../crates/pc-adapter-openclaw-gateway" }
+pc-adapter-opencode-local = { path = "../../crates/pc-adapter-opencode-local" }
+pc-adapter-pi-local = { path = "../../crates/pc-adapter-pi-local" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }

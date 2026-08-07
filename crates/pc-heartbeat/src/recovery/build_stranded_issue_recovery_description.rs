@@ -187,28 +187,34 @@ pub fn build_stranded_issue_recovery_description(
     };
     let retry_reason =
         read_retry_reason_from_context(input.latest_run.and_then(|r| r.context_snapshot.as_ref()));
-    let workspace_validation_fingerprint: Option<String> =
-        if matches!(input.recovery_cause, Some(StrandedRecoveryCause::WorkspaceValidationFailed)) {
-            input
-                .workspace_validation_fingerprint
-                .map(str::to_owned)
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| read_workspace_validation_fingerprint_from_view(input.latest_run))
-        } else {
-            None
-        };
+    let workspace_validation_fingerprint: Option<String> = if matches!(
+        input.recovery_cause,
+        Some(StrandedRecoveryCause::WorkspaceValidationFailed)
+    ) {
+        input
+            .workspace_validation_fingerprint
+            .map(str::to_owned)
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| read_workspace_validation_fingerprint_from_view(input.latest_run))
+    } else {
+        None
+    };
     // 当 cause == WorkspaceValidationFailed 时始终输出 fingerprint 行；
     // 缺失时 fallback 到 `none reported`，让阅读者明确知道 fingerprint 不可用。
     // 其他 cause 不展示该行（避免噪音）。
-    let workspace_validation_fingerprint_line: Option<String> =
-        if matches!(input.recovery_cause, Some(StrandedRecoveryCause::WorkspaceValidationFailed)) {
-            Some(format!(
-                "- Workspace validation fingerprint: `{}`",
-                workspace_validation_fingerprint.as_deref().unwrap_or("none reported")
-            ))
-        } else {
-            None
-        };
+    let workspace_validation_fingerprint_line: Option<String> = if matches!(
+        input.recovery_cause,
+        Some(StrandedRecoveryCause::WorkspaceValidationFailed)
+    ) {
+        Some(format!(
+            "- Workspace validation fingerprint: `{}`",
+            workspace_validation_fingerprint
+                .as_deref()
+                .unwrap_or("none reported")
+        ))
+    } else {
+        None
+    };
     let run_failure_view = input.latest_run.map(|r| RunFailureView {
         error: None,
         error_code: None,

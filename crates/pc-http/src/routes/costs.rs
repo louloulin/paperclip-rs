@@ -87,7 +87,9 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/finance-events",
             post(create_finance_event),
         )
-        .route("/api/agents/:agent_id/budgets", patch(update_agent_budget))
+        // Canonical PATCH `/api/agents/:agent_id/budgets` registration lives in
+        // routes::agents (Round 282 removal — it had produced axum 0.7
+        // "Overlapping method route" panics during integration).
         .route(
             "/api/issues/:issue_id/cost-summary",
             get(issue_cost_summary),

@@ -16,11 +16,11 @@ use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        // issues 扩展
-        .route(
-            "/api/issues/:id/heartbeat-context",
-            get(issue_heartbeat_context),
-        )
+    // Canonical GET `/api/issues/:issue_id/heartbeat-context` is registered
+    // by `routes::issues` (Round 27). Round 215 dedupe removed the
+    // duplicate registration here because axum 0.7 treats `:id` and
+    // `:issue_id` at the same position as a conflicting insertion and
+    // panics at startup. The local handler is kept as dead code.
     // 注: /api/companies/:company_id/issues/count 由 routes/issues.rs 注册
 }
 

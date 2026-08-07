@@ -47,17 +47,10 @@ use pc_core::Timestamp;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        // Round 282 修复：原 `/api/companies/:company_id/labels` 与
-        // `/api/labels/:label_id` 路由被移除以避免 axum 重叠 method route panic；
-        // 这里直接复用 labels.rs 中的 handler（保持 handler 实现唯一来源）。
-        // 这两个 route 与 issues 测试套件绑定（issues_http_contract 内部期望
-        // `routes::issues::router()` 命中）。DELETE `/api/labels/:label_id`
-        // 故意不注册——paperclip API 强制删除 label 必须走
-        // `/api/companies/:company_id/labels/:label_id`（在 companies.rs）。
-        .route(
-            "/api/companies/:company_id/labels",
-            get(super::labels::list_labels).post(super::labels::create_label),
-        )
+        // `/api/companies/:company_id/labels` canonical registration lives in
+        // `routes::labels::router()`. It was historically also registered here
+        // and was the source of axum 0.7 "Overlapping method route" panics —
+        // removed to keep a single source of truth for label routes.
         // 列表 / CRUD
         .route("/api/issues", get(list).post(create))
         .route(
@@ -101,7 +94,11 @@ pub fn router() -> Router<AppState> {
             "/api/issues/:issue_id/admin/force-release",
             post(force_release),
         )
-        .route("/api/issues/:issue_id/checkout", post(checkout_issue))
+        // Canonical POST `/api/issues/:issue_id/checkout` is registered by
+        // `routes::issues_checkout_wakeup` (which also handles wake-up
+        // queueing). The duplicate registration here was removed in
+        // Round 215 because it produced axum 0.7 "Overlapping method route"
+        // panics during startup.
         .route(
             "/api/issues/:issue_id/heartbeat-context",
             get(issue_heartbeat_context),

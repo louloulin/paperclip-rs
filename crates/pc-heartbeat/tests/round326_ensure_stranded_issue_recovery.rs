@@ -225,7 +225,6 @@ async fn returns_none_when_input_issue_is_already_recovery() {
         status: Some("failed".to_owned()),
         context_snapshot: None,
         result_json: None,
-
     };
     let input = EnsureStrandedIssueRecoveryInput {
         issue: &recovery,
