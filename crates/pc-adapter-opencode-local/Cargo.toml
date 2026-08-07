@@ -10,12 +10,13 @@ workspace = true
 
 [dependencies]
 pc-adapter-api = { path = "../pc-adapter-api" }
+pc-acpx = { path = "../pc-acpx" }
 pc-adapter-process = { path = "../pc-adapter-process" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 uuid = { workspace = true }
-tokio = { workspace = true }

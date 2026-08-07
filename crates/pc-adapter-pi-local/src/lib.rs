@@ -3,6 +3,8 @@
 //! `pi_local` local CLI adapter: spawns `pi`, parses its JSONL
 //! output into the shared `AdapterExecutionResult` shape.
 
+pub mod skills;
+
 use async_trait::async_trait;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,

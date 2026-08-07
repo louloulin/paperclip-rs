@@ -1,7 +1,5 @@
 #![forbid(unsafe_code)]
 
-pub mod skills;
-
 //! `gemini_local` local CLI adapter: spawns `gemini`, parses its JSONL
 //! output into the shared `AdapterExecutionResult` shape.
 

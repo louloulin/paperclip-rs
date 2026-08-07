@@ -366,13 +366,15 @@ R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一�
 - **15 + 8 个新单元测试** + **22 个新集成测试**
   (`round385_workspace_env_and_signal.rs`)
 
-### 测试统计（pc-acpx crate，R392 末）
+### 测试统计（pc-acpx crate，R394 末）
 
 - **R391 末 pc-acpx**: 818 tests (lib 458 + integration 360)
 - **R391 末 pc-adapter-claude-local**: 36 tests
-- **R392 末 pc-adapter-codex-local**: **17 tests**,+13 个测试,无回归
-  - +6 skills.rs 单元测试(list/sync/desired_names)
-  - +7 round392_codex_skills 集成测试
+- **R392 末 pc-adapter-codex-local**: 17 tests
+- **R393 末 pc-adapter-gemini-local**: 30 tests
+- **R394 末 pc-adapter-opencode-local**: **30 tests**,+21 个测试,无回归
+  - +11 skills.rs 单元测试(4 sync + 2 list + 4 home + 1 desired)
+  - +10 round394_opencode_skills 集成测试(2 list + 2 sync + 3 home + 1 build + 2 desired)
 
 ### R390 增量（skill_io — Node parity port）
 
@@ -421,6 +423,8 @@ R383 后 `pc-acpx::execute()` 的 prompt 路径 90% 与 Node `buildPrompt` 一�
 | `AdapterSkillContext` | **100% (R391)** |
 | `pc-adapter-claude-local skills.ts` | **100% (R391)** |
 | `pc-adapter-codex-local skills.ts` | **100% (R392)** |
+| `pc-adapter-gemini-local skills.ts` | **100% (R393)** |
+| `pc-adapter-opencode-local skills.ts` | **100% (R394)** |
 
 ### R391 增量（Adapter claude_local skills — 第一个具体 adapter 样板）
 
@@ -470,6 +474,46 @@ cursor-local 有 sync 操作,hermes 用传入的 skillsHome。
 #### R396+ — Adapter skills 接入 server
 在 `pc-server` 中加 skills sync 端点 + 在 `pc-agent` 中接入 skill 准备阶段
 (运行时 materialise),把 R388/R389/R390/R391-R395 的工具接入请求路径。
+
+### R394 增量（Adapter opencode_local skills — 共享 Claude home 变种）
+
+- **新模块 `crates/pc-adapter-opencode-local/src/skills.rs`**(485 行含 11 单测):
+  - `resolve_opencode_skills_home` / `_with` variant(镜像 Node L17-24)
+  - `build_opencode_skill_snapshot`(镜像 Node L26-44)
+  - `list_opencode_skills` / `sync_opencode_skills`(镜像 Node L46-48 / L50-76)
+  - `resolve_opencode_desired_skill_names`(镜像 Node L78-81)
+  - **关键决策**:几乎完全复用 R393 模板(结构 100% 相同,仅字符串字面量差异)
+  - **关键决策**:`skillsHome = ~/.claude/skills`(**共享** Claude 目录)
+  - **关键决策**:Snapshot 强制包含一个 warning
+    `"OpenCode currently uses the shared Claude skills home (~/.claude/skills)."`
+  - **关键决策**:`installedDetail / missingDetail / externalConflictDetail / externalDetail`
+    都加 "shared" 关键词
+  - **首次验证**:"persistent + side-effecting sync" 模板可复用性
+- **新集成测试 `tests/round394_opencode_skills.rs`**(284 行,10 测试):
+  - 完整 3 步 lifecycle(与 R393 一致)
+  - 验证 shared-home warning 始终存在
+  - 验证外部 symlink 保护
+- **更新 `crates/pc-adapter-opencode-local/Cargo.toml`**:加 `pc-acpx` + `tokio` 依赖
+- **更新 `crates/pc-adapter-opencode-local/src/lib.rs`**:加 `pub mod skills;`
+
+### R393 增量（Adapter gemini_local skills — 第一个有副作用 sync 样板）
+
+- **新模块 `crates/pc-adapter-gemini-local/src/skills.rs`**(502 行含 11 单测):
+  - `resolve_gemini_skills_home` / `_with` variant(镜像 Node L17-24)
+  - `build_gemini_skill_snapshot`(镜像 Node L26-40,**用 `buildPersistentSkillSnapshot`**)
+  - `list_gemini_skills` / `sync_gemini_skills`(镜像 Node L42-44 / L46-72)
+  - `resolve_gemini_desired_skill_names`(镜像 Node L74-77)
+  - 关键决策:**双模板**:`runtime_mounted`(Claude/Codex)vs `persistent`(Gemini)
+  - 关键决策:`sync_gemini_skills` 是**真正有副作用**的样板 — 创建 / 修复 symlink + 删除 stale Paperclip-managed symlinks
+  - 关键决策:**直接 `tokio::fs::remove_file`** 镜像 Node `fs.unlink(...).catch(() => {})`,不能用 `ensure_*` 删除
+  - 关键决策:`tokio = { workspace = true }` 从 dev-deps 移到 [dependencies]
+- **新集成测试 `tests/round393_gemini_skills.rs`**(289 行,10 测试):
+  - 端到端 lifecycle:create both → drop one → drop all
+  - `sync_does_not_remove_external_symlinks` 保护用户外部安装
+  - `sync_creates_skills_home_when_missing` 自动 mkdir
+  - `sync_gemini_skills_surfaces_warning_when_no_skills_home` 缺失优雅降级
+- **更新 `crates/pc-adapter-gemini-local/Cargo.toml`**:加 `pc-acpx` + `tokio` 依赖
+- **更新 `crates/pc-adapter-gemini-local/src/lib.rs`**:加 `pub mod skills;`
 
 ### R392 增量（Adapter codex_local skills — 简化变种样板）
 

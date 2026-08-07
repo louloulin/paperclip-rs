@@ -153,11 +153,11 @@
 | `@paperclipai/adapter-codex-local` | `pc-adapter-codex-local` (5.2.2 — `skills.rs` R392 done: list_codex_skills / sync_codex_skills / build_codex_skill_snapshot / resolve_codex_desired_skill_names — **simplified variant, no skillsHome**) |
 | `@paperclipai/adapter-cursor-cloud` | `pc-adapter-cursor-cloud` (5.2.3) |
 | `@paperclipai/adapter-cursor-local` | `pc-adapter-cursor-local` (5.2.4) |
-| `@paperclipai/adapter-gemini-local` | `pc-adapter-gemini-local` (5.2.5) |
+| `@paperclipai/adapter-gemini-local` | `pc-adapter-gemini-local` (5.2.5 — `skills.rs` R393 done: list_gemini_skills / sync_gemini_skills / build_gemini_skill_snapshot / resolve_gemini_skills_home / resolve_gemini_desired_skill_names — **first side-effecting sync: creates + repairs + removes symlinks**) |
 | `@paperclipai/adapter-grok-local` | `pc-adapter-grok-local` (5.2.6) |
 | `@paperclipai/adapter-hermes-gateway` | `pc-adapter-hermes-gateway` (5.2.7) |
 | `@paperclipai/adapter-openclaw-gateway` | `pc-adapter-openclaw-gateway` (5.2.8) |
-| `@paperclipai/adapter-opencode-local` | `pc-adapter-opencode-local` (5.2.9) |
+| `@paperclipai/adapter-opencode-local` | `pc-adapter-opencode-local` (5.2.9 — `skills.rs` R394 done: list_opencode_skills / sync_opencode_skills / build_opencode_skill_snapshot / resolve_opencode_skills_home / resolve_opencode_desired_skill_names — **shares Claude skills home, persistent + side-effecting sync**) |
 | `@paperclipai/adapter-pi-local` | `pc-adapter-pi-local` (5.2.10) |
 | `@paperclipai/adapter-hermes` | 同 `pc-adapter-hermes-gateway`（合并） |
 

@@ -1,25 +1,20 @@
-//! `pc-adapter-gemini-local` skills — list / sync implementation that
-//! mirrors Node `packages/adapters/gemini-local/src/server/skills.ts`.
+//! `pc-adapter-pi-local` skills — list / sync implementation that
+//! mirrors Node `packages/adapters/pi-local/src/server/skills.ts`.
 //!
-//! Unlike Claude / Codex (which build a *runtime-mounted* snapshot),
-//! Gemini uses a **persistent** snapshot shape (`buildPersistentSkillSnapshot`)
-//! because Gemini CLI reads `<skillsHome>` directly at startup — Paperclip
-//! must materialise symlinks there ahead of time.
-//!
-//! This is also the **first adapter whose `sync` is non-trivial**:
-//! `syncGeminiSkills` creates desired symlinks via
-//! `ensurePaperclipSkillSymlink` and removes stale ones where the
-//! installed target points back to the now-undesired source.
+//! Pi local uses the persistent snapshot shape with sync side effects
+//! (creates + repairs + removes symlinks under `~/.pi/agent/skills`).
+//! Structurally identical to gemini-local (R393) and opencode-local
+//! (R394) — only the `skillsHome` path and detail text strings differ.
 //!
 //! ## Public API
 //!
-//! - [`list_gemini_skills`] — return an [`AdapterSkillSnapshot`] for the
+//! - [`list_pi_skills`] — return an [`AdapterSkillSnapshot`] for the
 //!   configured skills.
-//! - [`sync_gemini_skills`] — sync desired skills into `<skillsHome>`
-//!   via symlinks.
-//! - [`resolve_gemini_skills_home`] / [`resolve_gemini_skills_home_with`] —
-//!   resolve `<home>/.gemini/skills` honouring `env.HOME`.
-//! - [`resolve_gemini_desired_skill_names`] — thin wrapper.
+//! - [`sync_pi_skills`] — sync desired skills into
+//!   `<home>/.pi/agent/skills` via symlinks.
+//! - [`resolve_pi_skills_home`] / [`resolve_pi_skills_home_with`] —
+//!   resolve `<home>/.pi/agent/skills` honouring `env.HOME`.
+//! - [`resolve_pi_desired_skill_names`] — thin wrapper.
 //!
 //! All operations use the helpers shipped by `pc-acpx` (R387 / R388 /
 //! R390) — no new I/O primitives are introduced in this crate.
@@ -38,49 +33,44 @@ use pc_acpx::{
 // Skills home resolution
 // ============================================================================
 
-/// Path fragment under `$HOME` that Gemini local uses for skills.
-pub const GEMINI_SKILLS_HOME_SUFFIX: &str = ".gemini/skills";
+/// Path fragment under `$HOME` that Pi local uses for skills.
+pub const PI_SKILLS_HOME_SUFFIX: &str = ".pi/agent/skills";
 
-/// Resolve `<home>/<GEMINI_SKILLS_HOME_SUFFIX>` honouring
+/// Resolve `<home>/<PI_SKILLS_HOME_SUFFIX>` honouring
 /// `config.env.HOME` if present. Mirrors Node
-/// `resolveGeminiSkillsHome` (L17-24).
-///
-/// Returns `None` when no `HOME` override is set — the caller is
-/// expected to substitute `std::env::home_dir` (mirrors Node
-/// `os.homedir()`).
-pub fn resolve_gemini_skills_home(config: &serde_json::Value) -> Option<PathBuf> {
+/// `resolvePiSkillsHome` (L17-24).
+pub fn resolve_pi_skills_home(config: &serde_json::Value) -> Option<PathBuf> {
     let env = config.get("env").and_then(serde_json::Value::as_object);
     let configured = env
         .and_then(|env| env.get("HOME"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    configured.map(|home| PathBuf::from(home).join(GEMINI_SKILLS_HOME_SUFFIX))
+    configured.map(|home| PathBuf::from(home).join(PI_SKILLS_HOME_SUFFIX))
 }
 
 /// Convenience wrapper that injects `default_home` when
-/// [`resolve_gemini_skills_home`] returns `None`.
-pub fn resolve_gemini_skills_home_with(
+/// [`resolve_pi_skills_home`] returns `None`.
+pub fn resolve_pi_skills_home_with(
     config: &serde_json::Value,
     default_home: impl AsRef<Path>,
 ) -> PathBuf {
-    resolve_gemini_skills_home(config)
-        .unwrap_or_else(|| default_home.as_ref().join(GEMINI_SKILLS_HOME_SUFFIX))
+    resolve_pi_skills_home(config)
+        .unwrap_or_else(|| default_home.as_ref().join(PI_SKILLS_HOME_SUFFIX))
 }
 
 // ============================================================================
 // Snapshot builder
 // ============================================================================
 
-/// Build an [`AdapterSkillSnapshot`] for the configured Gemini skills
-/// runtime. Mirrors Node `buildGeminiSkillSnapshot` (L26-40).
+/// Build an [`AdapterSkillSnapshot`] for the configured Pi skills
+/// runtime. Mirrors Node `buildPiSkillSnapshot` (L26-39).
 ///
 /// Reads available entries from the configured
 /// `paperclipRuntimeSkills` config (falling back to filesystem
-/// discovery via `read_paperclip_runtime_skill_entries`), then layers
-/// the currently-installed targets from `<skillsHome>` into a
-/// **persistent** snapshot.
-pub async fn build_gemini_skill_snapshot(
+/// discovery), then layers the currently-installed targets from the
+/// `<home>/.pi/agent/skills` directory into a **persistent** snapshot.
+pub async fn build_pi_skill_snapshot(
     ctx: &AdapterSkillContext,
     module_dir: &Path,
     skills_home: &Path,
@@ -103,10 +93,9 @@ pub async fn build_gemini_skill_snapshot(
         desired_skills,
         installed,
         skills_home: skills_home.to_string_lossy().into_owned(),
-        location_label: Some("~/.gemini/skills".to_string()),
+        location_label: Some("~/.pi/agent/skills".to_string()),
         installed_detail: None,
-        missing_detail: "Configured but not currently linked into the Gemini skills home."
-            .to_string(),
+        missing_detail: "Configured but not currently linked into the Pi skills home.".to_string(),
         external_conflict_detail: "Skill name is occupied by an external installation.".to_string(),
         external_detail: "Installed outside Paperclip management.".to_string(),
         warnings: None,
@@ -118,22 +107,20 @@ pub async fn build_gemini_skill_snapshot(
 // Public API
 // ============================================================================
 
-/// Return the current [`AdapterSkillSnapshot`] for the configured
-/// Gemini skills runtime. Mirrors Node `listGeminiSkills` (L42-44).
+/// Return the current [`AdapterSkillSnapshot`] for the configured Pi
+/// skills runtime. Mirrors Node `listPiSkills` (L41-43).
 ///
-/// `skills_home` is the resolved `<home>/.gemini/skills` directory; if
-/// `None`, the snapshot is still built but `installed` is empty (no
-/// external / symlinked entries surface).
-pub async fn list_gemini_skills(
+/// `skills_home` is the resolved `<home>/.pi/agent/skills` directory.
+/// If `None`, the snapshot is still built with an empty `installed`
+/// map and a warning noting the missing home.
+pub async fn list_pi_skills(
     ctx: &AdapterSkillContext,
     module_dir: &Path,
     skills_home: Option<&Path>,
 ) -> AdapterSkillSnapshot {
     match skills_home {
-        Some(home) => build_gemini_skill_snapshot(ctx, module_dir, home).await,
+        Some(home) => build_pi_skill_snapshot(ctx, module_dir, home).await,
         None => {
-            // No home → empty snapshot (callers can still inspect
-            // available / desired but `installed` stays empty).
             let config_map = ctx.config.as_object().cloned().unwrap_or_default();
             let available_entries =
                 read_paperclip_runtime_skill_entries(&config_map, module_dir, &[]).await;
@@ -153,9 +140,9 @@ pub async fn list_gemini_skills(
                 desired_skills,
                 installed: empty,
                 skills_home: String::new(),
-                location_label: Some("~/.gemini/skills".to_string()),
+                location_label: Some("~/.pi/agent/skills".to_string()),
                 installed_detail: None,
-                missing_detail: "Configured but not currently linked into the Gemini skills home."
+                missing_detail: "Configured but not currently linked into the Pi skills home."
                     .to_string(),
                 external_conflict_detail: "Skill name is occupied by an external installation."
                     .to_string(),
@@ -167,17 +154,15 @@ pub async fn list_gemini_skills(
     }
 }
 
-/// Sync the configured desired skills into the Gemini skills home.
+/// Sync the configured desired skills into the Pi skills home.
 ///
 /// For each `desired` skill, `ensure_paperclip_skill_symlink` creates
 /// or repairs a symlink at `<skillsHome>/<runtime_name>` pointing at
 /// the source. Then any installed entry whose `target_path` matches a
-/// now-*undesired* available source is unlinked — this prevents stale
-/// Paperclip-managed symlinks from lingering after the user removes a
-/// skill from `paperclipSkillSync.desiredSkills`.
+/// now-*undesired* available source is unlinked.
 ///
-/// Mirrors Node `syncGeminiSkills` (L46-72).
-pub async fn sync_gemini_skills(
+/// Mirrors Node `syncPiSkills` (L45-71).
+pub async fn sync_pi_skills(
     ctx: &AdapterSkillContext,
     desired_skills: &[String],
     module_dir: &Path,
@@ -191,13 +176,11 @@ pub async fn sync_gemini_skills(
     // Ensure the home exists so symlink calls do not race creation.
     let _ = tokio::fs::create_dir_all(skills_home).await;
     let installed = read_installed_skill_targets(skills_home).await;
-    let available_by_runtime_name: std::collections::HashMap<
-        &str,
-        &pc_acpx::skill_snapshot::PaperclipSkillEntry,
-    > = available_entries
-        .iter()
-        .map(|entry| (entry.runtime_name.as_str(), entry))
-        .collect();
+    let available_by_runtime_name: std::collections::HashMap<&str, &PaperclipSkillEntry> =
+        available_entries
+            .iter()
+            .map(|entry| (entry.runtime_name.as_str(), entry))
+            .collect();
 
     // 1. Create / repair symlinks for each desired skill.
     for available in &available_entries {
@@ -224,19 +207,15 @@ pub async fn sync_gemini_skills(
             continue;
         }
         let target = skills_home.join(name);
-        // Mirror Node `fs.unlink(...).catch(() => {})` — silently
-        // remove the stale Paperclip-managed symlink. ensure_* only
-        // creates / repairs, so for the stale-remove path we
-        // unlink directly.
         let _ = tokio::fs::remove_file(&target).await;
     }
 
-    build_gemini_skill_snapshot(ctx, module_dir, skills_home).await
+    build_pi_skill_snapshot(ctx, module_dir, skills_home).await
 }
 
 /// Thin wrapper around `pc_acpx::resolve_paperclip_desired_skill_names`.
-/// Mirrors Node `resolveGeminiDesiredSkillNames` (L74-77).
-pub fn resolve_gemini_desired_skill_names(
+/// Mirrors Node `resolvePiDesiredSkillNames` (L73-76).
+pub fn resolve_pi_desired_skill_names(
     ctx: &AdapterSkillContext,
     available_entries: &[pc_acpx::skill_snapshot::AdapterSkillEntry],
 ) -> Vec<String> {
@@ -267,13 +246,13 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!(
-            "pc-adapter-gemini-local-{label}-{nanos}-{}",
+            "pc-adapter-pi-local-{label}-{nanos}-{}",
             std::process::id()
         ))
     }
 
     fn make_ctx(config: serde_json::Value) -> AdapterSkillContext {
-        AdapterSkillContext::new("agent-1", "company-1", "gemini_local", config)
+        AdapterSkillContext::new("agent-1", "company-1", "pi_local", config)
     }
 
     fn make_module_layout(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -282,32 +261,35 @@ mod tests {
         (parent, module_dir)
     }
 
-    // ---- resolve_gemini_skills_home ----
+    // ---- resolve_pi_skills_home ----
 
     #[test]
     fn skills_home_uses_configured_home() {
         let config = json!({ "env": { "HOME": "/custom/home" } });
-        let resolved = resolve_gemini_skills_home(&config);
-        assert_eq!(resolved, Some(PathBuf::from("/custom/home/.gemini/skills")));
+        let resolved = resolve_pi_skills_home(&config);
+        assert_eq!(
+            resolved,
+            Some(PathBuf::from("/custom/home/.pi/agent/skills"))
+        );
     }
 
     #[test]
     fn skills_home_trims_whitespace() {
         let config = json!({ "env": { "HOME": "  /trim/me  " } });
-        let resolved = resolve_gemini_skills_home(&config);
-        assert_eq!(resolved, Some(PathBuf::from("/trim/me/.gemini/skills")));
+        let resolved = resolve_pi_skills_home(&config);
+        assert_eq!(resolved, Some(PathBuf::from("/trim/me/.pi/agent/skills")));
     }
 
     #[test]
     fn skills_home_returns_none_when_unset() {
-        assert!(resolve_gemini_skills_home(&json!({})).is_none());
-        assert!(resolve_gemini_skills_home(&json!({ "env": {} })).is_none());
+        assert!(resolve_pi_skills_home(&json!({})).is_none());
+        assert!(resolve_pi_skills_home(&json!({ "env": {} })).is_none());
     }
 
     #[test]
     fn skills_home_with_default_falls_back() {
-        let resolved = resolve_gemini_skills_home_with(&json!({}), "/fallback");
-        assert_eq!(resolved, PathBuf::from("/fallback/.gemini/skills"));
+        let resolved = resolve_pi_skills_home_with(&json!({}), "/fallback");
+        assert_eq!(resolved, PathBuf::from("/fallback/.pi/agent/skills"));
     }
 
     // ---- build / list ----
@@ -325,9 +307,9 @@ mod tests {
             .unwrap();
 
         let ctx = make_ctx(json!({ "env": { "HOME": parent.to_string_lossy() } }));
-        let snapshot = list_gemini_skills(&ctx, &module_dir, Some(&skills_dir)).await;
+        let snapshot = list_pi_skills(&ctx, &module_dir, Some(&skills_dir)).await;
 
-        assert_eq!(snapshot.adapter_type, "gemini_local");
+        assert_eq!(snapshot.adapter_type, "pi_local");
         assert!(snapshot.supported);
         assert!(snapshot.warnings.is_empty());
         let mut names: Vec<String> = snapshot
@@ -346,27 +328,24 @@ mod tests {
         let (parent, module_dir) = make_module_layout("list-none");
         tokio::fs::create_dir_all(&module_dir).await.unwrap();
         let ctx = make_ctx(json!({}));
-        let snapshot = list_gemini_skills(&ctx, &module_dir, None).await;
-        assert_eq!(snapshot.adapter_type, "gemini_local");
-        // When skills home is missing, snapshot surfaces a warning so
-        // callers know the listing is incomplete.
+        let snapshot = list_pi_skills(&ctx, &module_dir, None).await;
+        assert_eq!(snapshot.adapter_type, "pi_local");
+        // Missing-home warning surfaces the gap to callers.
         assert!(!snapshot.warnings.is_empty());
 
         let _ = tokio::fs::remove_dir_all(&parent).await;
     }
 
-    // ---- sync (the key new behaviour) ----
+    // ---- sync (R393 / R394 模板复用) ----
 
     #[tokio::test]
     #[cfg(unix)]
     async fn sync_creates_symlinks_for_desired_skills() {
         let (parent, module_dir) = make_module_layout("sync-create");
-        // Source skills live outside the home.
         let source_a = parent.join("src-a");
         let source_b = parent.join("src-b");
         tokio::fs::create_dir_all(&source_a).await.unwrap();
         tokio::fs::create_dir_all(&source_b).await.unwrap();
-        // Skills home is separate.
         let skills_home = parent.join("home");
         tokio::fs::create_dir_all(&skills_home).await.unwrap();
 
@@ -380,9 +359,7 @@ mod tests {
             "paperclipai/paperclip/a".to_string(),
             "paperclipai/paperclip/b".to_string(),
         ];
-        let _ = sync_gemini_skills(&ctx, &desired, &module_dir, &skills_home).await;
-
-        // Both symlinks should now exist.
+        let _ = sync_pi_skills(&ctx, &desired, &module_dir, &skills_home).await;
         assert!(tokio::fs::symlink_metadata(skills_home.join("a"))
             .await
             .unwrap()
@@ -401,7 +378,6 @@ mod tests {
     #[cfg(unix)]
     async fn sync_removes_stale_symlinks_for_undesired_skills() {
         let (parent, module_dir) = make_module_layout("sync-remove");
-        // A single source.
         let source = parent.join("src");
         tokio::fs::create_dir_all(&source).await.unwrap();
         let skills_home = parent.join("home");
@@ -413,16 +389,13 @@ mod tests {
             ]
         }));
 
-        // 1. Sync with desired=["..."] creates the symlink.
         let desired = vec!["paperclipai/paperclip/only".to_string()];
-        let _ = sync_gemini_skills(&ctx, &desired, &module_dir, &skills_home).await;
+        let _ = sync_pi_skills(&ctx, &desired, &module_dir, &skills_home).await;
         assert!(tokio::fs::symlink_metadata(skills_home.join("only"))
             .await
             .is_ok());
 
-        // 2. Sync with empty desired removes the symlink (the
-        //    installed.target_path matched the now-undesired source).
-        let _ = sync_gemini_skills(&ctx, &[], &module_dir, &skills_home).await;
+        let _ = sync_pi_skills(&ctx, &[], &module_dir, &skills_home).await;
         assert!(tokio::fs::symlink_metadata(skills_home.join("only"))
             .await
             .is_err());
@@ -434,12 +407,10 @@ mod tests {
     #[cfg(unix)]
     async fn sync_does_not_remove_external_symlinks() {
         let (parent, module_dir) = make_module_layout("sync-external");
-        // External source (different path than our configured source).
         let external_source = parent.join("external-src");
         tokio::fs::create_dir_all(&external_source).await.unwrap();
         let skills_home = parent.join("home");
         tokio::fs::create_dir_all(&skills_home).await.unwrap();
-        // Pre-existing external symlink at "external-link".
         std::os::unix::fs::symlink(&external_source, skills_home.join("external-link")).unwrap();
 
         let ctx = make_ctx(json!({
@@ -447,9 +418,7 @@ mod tests {
                 { "key": "paperclipai/paperclip/external-link", "runtimeName": "external-link", "source": "/some/other/path" },
             ]
         }));
-        let _ = sync_gemini_skills(&ctx, &[], &module_dir, &skills_home).await;
-        // External symlink must remain because its target does not
-        // match the configured `source`.
+        let _ = sync_pi_skills(&ctx, &[], &module_dir, &skills_home).await;
         let meta = tokio::fs::symlink_metadata(skills_home.join("external-link"))
             .await
             .unwrap();
@@ -464,7 +433,6 @@ mod tests {
         let source = parent.join("src");
         tokio::fs::create_dir_all(&source).await.unwrap();
         let skills_home = parent.join("does-not-exist-yet").join("home");
-        // Don't pre-create skills_home — sync should mkdir it.
 
         let ctx = make_ctx(json!({
             "paperclipRuntimeSkills": [
@@ -472,19 +440,19 @@ mod tests {
             ]
         }));
         let desired = vec!["paperclipai/paperclip/only".to_string()];
-        let _ = sync_gemini_skills(&ctx, &desired, &module_dir, &skills_home).await;
+        let _ = sync_pi_skills(&ctx, &desired, &module_dir, &skills_home).await;
         assert!(tokio::fs::metadata(&skills_home).await.is_ok());
 
         let _ = tokio::fs::remove_dir_all(&parent).await;
     }
 
-    // ---- resolve_gemini_desired_skill_names ----
+    // ---- resolve_pi_desired_skill_names ----
 
     #[test]
     fn desired_names_delegate_to_pc_acpx() {
         let ctx = make_ctx(json!({}));
         let entries: Vec<pc_acpx::skill_snapshot::AdapterSkillEntry> = Vec::new();
-        let desired = resolve_gemini_desired_skill_names(&ctx, &entries);
+        let desired = resolve_pi_desired_skill_names(&ctx, &entries);
         assert!(desired.is_empty());
     }
 }
