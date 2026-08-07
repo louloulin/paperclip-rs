@@ -19,6 +19,16 @@ pub enum AcpxError {
     /// The target path has no parent directory (e.g. only a filename).
     #[error("path `{0}` has no parent directory")]
     NoParent(PathBuf),
+    /// The platform does not support symbolic links (R367 staging seam).
+    #[error("symbolic links are not supported on this platform")]
+    SymlinkUnsupported,
+    /// A blocking task panicked or was cancelled.
+    #[error("blocking task `{context}` failed: {error}")]
+    Join {
+        context: String,
+        #[source]
+        error: tokio::task::JoinError,
+    },
 }
 
 impl AcpxError {

@@ -20,16 +20,25 @@
 pub mod acp_runtime;
 pub mod agent_command;
 pub mod bin;
+pub mod cache;
+pub mod child_stderr;
 pub mod constants;
+pub mod env_helpers;
 pub mod error;
+pub mod error_classification;
 pub mod fs_ops;
 pub mod gemini_version;
 pub mod hash;
+pub mod managed_home;
 pub mod normalize;
 pub mod prepared_runtime;
+pub mod reconcile_skills;
 pub mod session_codec;
 pub mod settings;
+pub mod skill_materialize;
+pub mod skill_runtime;
 pub mod startup_metrics;
+pub mod startup_timing;
 pub mod transcript;
 pub mod usage;
 
@@ -49,6 +58,16 @@ pub use agent_command::{
     ResolveBuiltInAgentCommandInput,
 };
 pub use bin::{find_ancestor_bin, Platform};
+
+pub use cache::{
+    cleanup_idle_with_report, AsyncKeyedLocks, IdleCache, IdleEvictionReport, LastUsed,
+};
+pub use child_stderr::{
+    flush_child_stderr, flush_child_stderr_with, read_child_stderr_tail, route_child_stderr,
+    route_child_stderr_with, ChildStderrError, ChildStderrState, FlushedStderr, RoutedStderr,
+    BENIGN_NES_CLOSE_STDERR,
+};
+
 pub use constants::{
     acpx_agent_id_for_adapter_type, ACPX_ADAPTER_AGENT_IDS, DEFAULT_ACP_ENGINE_AGENT,
     DEFAULT_ACP_ENGINE_MODE, DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS,
@@ -56,11 +75,19 @@ pub use constants::{
     DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS, GEMINI_NATIVE_ACP_FLAG_MIN_VERSION,
     GEMINI_VERSION_PROBE_TIMEOUT_MS,
 };
+pub use env_helpers::{default_path_for_platform, ensure_path_in_env, resolve_runtime_env};
 
 pub use error::AcpxError;
 
+pub use error_classification::{
+    classify_error, describe_error_diagnostics, is_resume_failure, AcpxErrorDiagnostics,
+    AcpxExecutionPhase, ClassifiedError,
+};
+
 pub use fs_ops::{
-    ensure_parent_dir, path_exists, path_is_file, write_file_atomically, WriteFileAtomicallyInput,
+    ensure_copied_file, ensure_parent_dir, ensure_symlink, lstat_or_none, path_exists,
+    path_is_file, readlink_or_none, remove_path_if_exists, symlink_or_copy_file,
+    write_file_atomically, WriteFileAtomicallyInput,
 };
 
 pub use gemini_version::{
@@ -76,9 +103,20 @@ pub use normalize::{
     NormalizedNonInteractivePermissions, NormalizedPermissionMode,
 };
 
+pub use managed_home::{
+    prepare_managed_codex_home, read_managed_codex_skills_manifest,
+    write_managed_codex_skills_manifest, LogStream, ManagedSkillsManifest, OnLogSink,
+    PrepareManagedCodexHomeInput, PAPERCLIP_MANAGED_CODEX_SKILLS_MANIFEST,
+};
+
 pub use prepared_runtime::{
     format_timeout_start_log_line, PreparedRuntime, PreparedRuntimeBuilder, PreparedRuntimeMode,
     PreparedRuntimeNonInteractivePermissions, PreparedRuntimePermissionMode, TimeoutResolution,
+};
+
+pub use reconcile_skills::{
+    reconcile_managed_codex_skills, ReconcileManagedCodexSkillsInput, RevocationPhase,
+    RevocationRecord,
 };
 
 pub use session_codec::{
@@ -86,7 +124,27 @@ pub use session_codec::{
     serialize as session_codec_serialize, AcpxSessionParams,
 };
 
+pub use skill_materialize::{
+    build_skill_set_key, hash_path_contents, materialize_paperclip_skill_copy,
+    MaterializedSkillCopyResult, PaperclipSkillEntry, SkillSourceStatus,
+};
+
+pub use skill_runtime::{
+    prepare_claude_skill_runtime, prepare_codex_skill_runtime, prepare_gemini_skill_runtime,
+    resolve_selected_runtime_skills, PrepareClaudeSkillRuntimeInput, PrepareCodexSkillRuntimeInput,
+    PrepareGeminiSkillRuntimeInput, PrepareSkillRuntimeOutput, SkillRuntimeIdentity,
+};
+
 pub use settings::{resolve_engine_settings, AcpxEngineOptions, AcpxEngineSettings};
+
+pub use startup_timing::{
+    build_step_event, measure_startup_step, normalize_provider_family, NoopSpanContext,
+    NoopStartupSpan, NoopStartupTraceContext, NoopStartupTracer, RuntimeStartupStepEvent,
+    StartupSpan, StartupSpanAttribute, StartupSpanContextAny, StartupSpanStatus,
+    StartupStepContext, StartupStepMeasureOptions, StartupTraceContext, StartupTracer,
+    BUILT_IN_PROVIDER_FAMILIES, PLUGIN_PROVIDER_FAMILY, RUN_STARTUP_STEP_EVENT_TYPE,
+    SPAN_STATUS_CODE_ERROR,
+};
 
 pub use startup_metrics::{build_startup_step_metrics, StartupMetricsSource, StartupStepMetrics};
 

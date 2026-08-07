@@ -150,6 +150,147 @@ fn compose_temp_path(target: &Path) -> PathBuf {
 }
 
 // ============================================================================
+// Symbolic link helpers (R367 skill staging seam)
+// ============================================================================
+
+/// Create a symbolic link at `link` pointing to `target`. The parent
+/// directory of `link` is created if missing. On platforms where
+/// symlinks are unavailable the call returns `AcpxError::SymlinkUnsupported`.
+pub async fn ensure_symlink(
+    link: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> Result<(), AcpxError> {
+    let link = link.as_ref();
+    let target = target.as_ref();
+    ensure_parent_dir(link).await?;
+    let link_str = link.to_path_buf();
+    let target_str = target.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target_str, &link_str).map_err(|error| AcpxError::Io {
+                path: link_str,
+                error,
+            })?;
+            Ok::<(), AcpxError>(())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (target_str, link_str);
+            Err(AcpxError::SymlinkUnsupported)
+        }
+    })
+    .await
+    .map_err(|error| AcpxError::Join {
+        context: "ensure_symlink".into(),
+        error,
+    })?
+}
+
+/// Copy `source` to `target` if `source` exists. The target's parent
+/// directory is created if missing. Returns `true` when a copy was made,
+/// `false` when the source did not exist.
+pub async fn ensure_copied_file(
+    target: impl AsRef<Path>,
+    source: impl AsRef<Path>,
+) -> Result<bool, AcpxError> {
+    let target = target.as_ref();
+    let source = source.as_ref();
+    if !path_exists(source).await {
+        return Ok(false);
+    }
+    ensure_parent_dir(target).await?;
+    let target_str = target.to_path_buf();
+    let source_str = source.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        std::fs::copy(&source_str, &target_str).map_err(|error| AcpxError::Io {
+            path: target_str,
+            error,
+        })?;
+        Ok::<(), AcpxError>(())
+    })
+    .await
+    .map_err(|error| AcpxError::Join {
+        context: "ensure_copied_file".into(),
+        error,
+    })??;
+    Ok(true)
+}
+
+/// Symlink a single regular file from `source` to `target`. When the
+/// platform does not support symlinks, fall back to a file copy. When
+/// `source` does not exist, returns `false` without touching `target`.
+pub async fn symlink_or_copy_file(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> Result<bool, AcpxError> {
+    let source = source.as_ref();
+    let target = target.as_ref();
+    if !path_exists(source).await {
+        return Ok(false);
+    }
+    ensure_parent_dir(target).await?;
+    let source_buf = source.to_path_buf();
+    let target_buf = target.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<bool, AcpxError> {
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(&source_buf, &target_buf).is_ok() {
+                return Ok(true);
+            }
+        }
+        std::fs::copy(&source_buf, &target_buf).map_err(|error| AcpxError::Io {
+            path: target_buf,
+            error,
+        })?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| AcpxError::Join {
+        context: "symlink_or_copy_file".into(),
+        error,
+    })?
+}
+
+/// Async `lstat` that returns `None` when the path is missing or the
+/// metadata cannot be read.
+pub async fn lstat_or_none(candidate: impl AsRef<Path>) -> Option<std::fs::Metadata> {
+    match tokio::fs::symlink_metadata(candidate.as_ref()).await {
+        Ok(metadata) => Some(metadata),
+        Err(_) => None,
+    }
+}
+
+/// Async `readlink` that returns `None` when the path is missing or not a
+/// symlink.
+pub async fn readlink_or_none(candidate: impl AsRef<Path>) -> Option<PathBuf> {
+    match tokio::fs::read_link(candidate.as_ref()).await {
+        Ok(path) => Some(path),
+        Err(_) => None,
+    }
+}
+
+/// Recursively remove a path (file, symlink, or directory). Returns
+/// `true` when something was removed, `false` when the path did not
+/// exist.
+pub async fn remove_path_if_exists(candidate: impl AsRef<Path>) -> Result<bool, AcpxError> {
+    let candidate = candidate.as_ref().to_path_buf();
+    if tokio::fs::symlink_metadata(&candidate).await.is_err() {
+        return Ok(false);
+    }
+    if tokio::fs::remove_dir_all(&candidate).await.is_ok() {
+        return Ok(true);
+    }
+    tokio::fs::remove_file(&candidate)
+        .await
+        .map_err(|error| AcpxError::Io {
+            path: candidate,
+            error,
+        })?;
+    Ok(true)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -244,6 +385,136 @@ mod tests {
             }
         }
         assert_eq!(leftovers, 0, "all temp files should be cleaned up");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn ensure_symlink_creates_link_with_original_target() {
+        let dir = unique_tempdir("symlink");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let target = dir.join("source.txt");
+        tokio::fs::write(&target, "hello").await.unwrap();
+        let link = dir.join("link.txt");
+        ensure_symlink(&link, &target).await.unwrap();
+        let meta = tokio::fs::symlink_metadata(&link).await.unwrap();
+        assert!(meta.file_type().is_symlink());
+        let contents = tokio::fs::read_to_string(&link).await.unwrap();
+        assert_eq!(contents, "hello");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn ensure_copied_file_returns_false_when_source_missing() {
+        let dir = unique_tempdir("copy-missing");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let source = dir.join("does-not-exist.txt");
+        let target = dir.join("target.txt");
+        let result = ensure_copied_file(&target, &source).await.unwrap();
+        assert!(!result);
+        assert!(!tokio::fs::try_exists(&target).await.unwrap_or(false));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn ensure_copied_file_copies_existing_file() {
+        let dir = unique_tempdir("copy");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let source = dir.join("source.txt");
+        tokio::fs::write(&source, "abc").await.unwrap();
+        let target = dir.join("nested/target.txt");
+        ensure_copied_file(&target, &source).await.unwrap();
+        let contents = tokio::fs::read_to_string(&target).await.unwrap();
+        assert_eq!(contents, "abc");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn symlink_or_copy_file_returns_false_when_source_missing() {
+        let dir = unique_tempdir("sl-or-copy-missing");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let source = dir.join("missing.txt");
+        let target = dir.join("target.txt");
+        let result = symlink_or_copy_file(&source, &target).await.unwrap();
+        assert!(!result);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn symlink_or_copy_file_prefers_symlink_on_unix() {
+        let dir = unique_tempdir("sl-or-copy");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let source = dir.join("source.txt");
+        tokio::fs::write(&source, "x").await.unwrap();
+        let target = dir.join("target.txt");
+        let result = symlink_or_copy_file(&source, &target).await.unwrap();
+        assert!(result);
+        let meta = tokio::fs::symlink_metadata(&target).await.unwrap();
+        assert!(meta.file_type().is_symlink());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn lstat_or_none_returns_none_for_missing_path() {
+        let result = lstat_or_none("/nonexistent/path").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn lstat_or_none_returns_metadata_for_existing_path() {
+        let dir = unique_tempdir("lstat");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let result = lstat_or_none(&dir).await;
+        assert!(result.is_some());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn readlink_or_none_returns_none_for_regular_file() {
+        let dir = unique_tempdir("readlink");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let file = dir.join("regular.txt");
+        tokio::fs::write(&file, "x").await.unwrap();
+        let result = readlink_or_none(&file).await;
+        assert!(result.is_none());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn readlink_or_none_returns_target_for_symlink() {
+        let dir = unique_tempdir("readlink-sl");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let target = dir.join("real.txt");
+        tokio::fs::write(&target, "x").await.unwrap();
+        let link = dir.join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let result = readlink_or_none(&link).await;
+        assert!(result.is_some());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn remove_path_if_exists_returns_false_when_missing() {
+        let dir = unique_tempdir("remove-missing");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let result = remove_path_if_exists(dir.join("missing")).await.unwrap();
+        assert!(!result);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn remove_path_if_exists_removes_directory() {
+        let dir = unique_tempdir("remove-dir");
+        let target = dir.join("subdir");
+        tokio::fs::create_dir_all(&target).await.unwrap();
+        tokio::fs::write(target.join("file.txt"), "x")
+            .await
+            .unwrap();
+        let result = remove_path_if_exists(&target).await.unwrap();
+        assert!(result);
+        assert!(!tokio::fs::try_exists(&target).await.unwrap_or(false));
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }
