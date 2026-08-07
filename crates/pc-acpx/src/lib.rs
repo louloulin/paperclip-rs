@@ -22,23 +22,32 @@ pub mod agent_command;
 pub mod bin;
 pub mod cache;
 pub mod child_stderr;
+pub mod codex_startup_config;
 pub mod constants;
 pub mod env_helpers;
 pub mod error;
 pub mod error_classification;
 pub mod fs_ops;
+pub mod gemini_command_shell;
 pub mod gemini_version;
 pub mod hash;
+pub mod jsonrpc_wire;
 pub mod managed_home;
 pub mod normalize;
+pub mod paperclip_claude_settings;
+pub mod paths;
 pub mod prepared_runtime;
 pub mod reconcile_skills;
 pub mod session_codec;
+pub mod session_compat;
+pub mod session_config_options;
 pub mod settings;
 pub mod skill_materialize;
 pub mod skill_runtime;
 pub mod startup_metrics;
 pub mod startup_timing;
+pub mod subprocess_acp_runtime;
+pub mod subprocess_handle;
 pub mod transcript;
 pub mod usage;
 
@@ -146,7 +155,34 @@ pub use startup_timing::{
     SPAN_STATUS_CODE_ERROR,
 };
 
+pub use codex_startup_config::{
+    build_codex_startup_config, CodexStartupConfigInput, CodexStartupConfigOutput,
+};
+pub use gemini_command_shell::{
+    normalize_gemini_acp_command_shell, normalize_gemini_acp_command_shell_with_env,
+};
+pub use jsonrpc_wire::{
+    decode_jsonrpc_frame, encode_jsonrpc_error, encode_jsonrpc_notification,
+    encode_jsonrpc_request, encode_jsonrpc_response, jsonrpc_error_from_value, next_jsonrpc_id,
+    parse_jsonrpc_line, JsonRpcErrorBody, JsonRpcFrame, JsonRpcIdAllocator, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, JSONRPC_VERSION,
+};
+pub use paperclip_claude_settings::{
+    paperclip_claude_settings_write_with, referenced_source_content_signature,
+    ClaudeSettingsWriteInput, PaperclipClaudeSettingsResult,
+};
+pub use paths::{
+    default_paperclip_instance_dir, default_state_dir, expand_home_prefix,
+    resolve_managed_codex_home_dir, resolve_paperclip_instance_root,
+};
+pub use session_compat::{is_compatible_session, unique_sorted, AcpxPreparedRuntimeLite};
+pub use session_config_options::{
+    render_api_access_note, render_paperclip_env_note, result_error_message,
+    session_config_options, usage_breakdowns_equal, SessionConfigOption,
+};
 pub use startup_metrics::{build_startup_step_metrics, StartupMetricsSource, StartupStepMetrics};
+pub use subprocess_acp_runtime::{SubprocessAcpRuntime, SubprocessAcpRuntimeSpec};
+pub use subprocess_handle::{SpawnAcpxInput, SubprocessHandle, SubprocessTermination};
 
 pub use transcript::{
     parse_acpx_stdout_line, summarize_tool_call, ToolCallSummary, TranscriptEntry,
