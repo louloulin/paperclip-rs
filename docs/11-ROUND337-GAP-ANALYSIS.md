@@ -1053,3 +1053,85 @@ Node execution-review provider quota 分支本身是 monitor-only：命中 quota
 1. 将同一 display contract 补到 recovery issue in-place comment，并覆盖无 latest run 的 metadata 形态。
 2. 对照 Node `noticeMetadataReferencesRecoveryAction`，让 metadata 引用也能作为 dedup marker，而不是只检查 body。
 3. 完成 provider quota monitor 的 retry-at / monitor state / wake backstop 双端状态矩阵。
+
+## Round 354 增量（2026-08-07）：in-place recovery comment presentation/metadata + metadata-aware dedup
+
+### Node 对照结论
+
+Node 在 `escalateStrandedRecoveryIssueInPlace` 路径下同样会写入 recovery notice presentation/metadata，但相对 source escalation 有两点差异：
+
+- 没有 `Recovery action` 行（in-place 不创建新的 recovery action，action 仍归属于 source issue）；
+- `noticeMetadataReferencesRecoveryAction` 通过 `sections[].rows[].{type=key_value,label="Recovery action"}` 来识别一次 system comment 是否已经引用某个 action，使 metadata 本身成为幂等性载体（不完全依赖 body 文本）。
+
+Rust 之前的 in-place 升级在 DB 层只写 body markdown，缺 presentation/metadata；同时 `apply_in_place_escalation` 完全没有 marker 判断，重复调用会写第二条 system comment。
+
+### R354 实现
+
+- `build_recovery_issue_in_place_escalation_comment` 抽出 `IN_PLACE_ESCALATION_MARKER` 公开常量（body 稳定前缀），供 dedup 判定复用。
+- `build_recovery_comment_display::RecoveryCommentDisplayInput.recovery_action_id` 改为 `Option<Uuid>`，in-place 场景不再传伪造值；`build_recovery_notice_metadata` 在 `recovery_action_id = None` 时跳过 `Recovery action` 行，但保留 `Cause` / `Previous status` / `Recovery owner` 三行（owner 默认 `board`）。
+- 新增纯函数 `metadata_references_recovery_action(metadata, action_id)`，完全对齐 Node `noticeMetadataReferencesRecoveryAction` 的 `sections[].rows[]` 形状判定。
+- `apply_in_place_escalation` 现在在写 comment 前先检查最近 50 条 system comment 是否含 `IN_PLACE_ESCALATION_MARKER`，命中则静默跳过；修复了 in-place 重复调用时的二次写入漏洞。
+- `comment_already_references_marker` 升级为查询最近 50 条 system comment 的 `body` 与 `metadata`，source escalation 同时支持 body marker 与 metadata `Recovery action` 引用双重判定。
+- 主入口 `escalate_stranded_assigned_issue_with_comment` 的 `RecoveryInPlace` 分支同样构建 presentation/metadata，确保主入口与 `escalate_stranded_recovery_issue_in_place` 行为对齐。
+
+### 真实验证
+
+- 新增 `round354_in_place_recovery_comment_display.rs`（真实 PostgreSQL）：
+  - `in_place_with_run_writes_presentation_and_metadata_without_action_row`：含 latest run 时 metadata 4 行（无 `Recovery action`），含 run_link 行；
+  - `in_place_without_run_omits_run_link_row`：无 latest run 时 metadata 仅 3 行（Cause + Previous status + Recovery owner=board），断言无 `run_link` 行；
+  - `in_place_repeat_does_not_double_write`：第二次调用仍走 `RecoveryInPlace`，但 `apply_in_place_escalation` 通过 body marker 跳过第二次写入，`comment_id` 为 None；
+  - `source_escalation_repeat_does_not_double_write`：source escalation 第二次调用 system comment 总数保持 1，且首条 comment 的 `metadata_references_recovery_action(action_id)` 为 true。
+- 扩展 `round351_review_sweep_comment_wiring::configuration_incomplete_review_participant_writes_configuration_comment`：断言 `metadata_references_recovery_action(Some(metadata), action_id)` 为 true，确认 metadata 引用 action id 真正落到 PG 行。
+- `cargo test -p pc-heartbeat --tests -- --test-threads=1`：904 个测试全部通过（490 单元 + 414 集成），比 R353 增加 4 个 round354 集成测试，0 失败。
+- `cargo check -p pc-server --bins`：通过。
+- `cargo fmt --all -- --check`：通过。
+
+### 当前剩余差距
+
+1. provider quota monitor 的 retry-at / monitor state / wake backstop 双端状态矩阵仍未与 Node 完全对照（monitor 创建/解析路径已实现，但状态转换分支覆盖不足）。
+2. `successful_run_missing_state` cause 的特化 notice/presentation 仍是 fallback 通用路径（其他 cause 都已特化）。
+3. `workspace_validation_failed` cause 特化路径的 retry reason 字段走通用 `execution path recovery failed`，未注入 fingerprint 摘要。
+4. activity log actor、HTTP/API 序列化、UI 展示仍然是 Recovery 之外的主要差距。
+5. recovery issue comment 的 metadata 没有 `Recovery action` 行，因此 in-place 路径目前仅依赖 body marker dedup；如果未来需要 metadata 级 dedup（例如多端 UI 重渲染），需要为 in-place 引入幂等键（例如源 issue id + fingerprint）。
+
+## Round 355 增量（2026-08-07）：ensure_provider_quota_wait_recovery_monitor 接线
+
+### Node 对照结论
+
+Node `services/recovery/service.ts` 的 `ensureSourceScopedStrandedRecoveryAction` 之后，无条件紧跟一个判断：
+
+```
+isProviderQuotaWait = cause === "provider_quota"
+                  && !recoveryAction.ownerAgentId
+                  && Boolean(recoveryAction.returnOwnerAgentId);
+if (isProviderQuotaWait) await ensureProviderQuotaWaitRecoveryMonitor({...});
+```
+
+即只要 recovery action 因 provider_quota 被创建且没有 owner agent，Node 会自动创建一个 scheduled_retry heartbeat_run + 一个 queued wakeup，把 action.monitor_policy 的 `{type:"wait_recovery", scheduledRunId, retryAt}` 写回。
+
+Rust 端已有 `ensure_provider_quota_wait_recovery_monitor` 模块（`provider_quota_recovery_monitor.rs`，round318 已 db unit test 覆盖），但 `persist_source_scoped_recovery_action` 没有调用它，导致 `monitor_only` action 的 `scheduledRunId` 永远为空，外部 system 无法触发 retry。
+
+### R355 实现
+
+- 在 `persist_source_scoped_recovery_action`（`orchestrator.rs`）upsert 完成后，判断 `cause == "provider_quota" && owner_agent_id == None && return_owner_agent_id == Some`，
+  调用新薄壳 `ensure_provider_quota_monitor_for_action` → `ensure_provider_quota_wait_recovery_monitor`，
+  把 monitor_policy 的 scheduledRunId / retryAt 真正写入。
+- 写入后再重新读取 action 行，让 caller 看到 `monitor_policy.scheduledRunId`（之前会被 stale `in_memory` action 掩盖）。
+
+### 真实验证
+
+`round355_provider_quota_wait_monitor_wiring.rs`（3 个全过）：
+
+- `action_creation_for_provider_quota_with_invokable_assignee_creates_scheduled_retry`：显式 `recovery_cause_override=ProviderQuota` → action cause/provider_quota + wake_policy=monitor_only + return_owner_agent_id=Some(agent) + scheduled_retry run + queued wakeup + monitor_policy.scheduledRunId 与实际 scheduled_run 一致 + action.timeout_at 已设置。
+- `auto_classification_via_run_error_code_triggers_monitor_wiring`：仅置 `error_code=provider_quota`、不传 override → 自动分类到 ProviderQuota，验证接线自动触发。
+- `repeat_invocation_is_idempotent`：第二次调用不增加 scheduled_retry run 与 queued wakeup 计数。
+
+`cargo test -p pc-heartbeat --tests -- --test-threads=1`：**907 passed, 0 failed**（R354 → R355 +3 个集成测试）。
+`cargo check -p pc-server --bins`：通过；`cargo fmt --all -- --check`：通过。
+
+### 剩余差距
+
+1. Provider quota wake backstop（rounded `enqueue_source_scoped_stranded_recovery_wake` 在 ProviderQuota + 无 owner 场景下不创建 wake，与 Node 一致）已经覆盖；下次再深入 monitor 的 `wakeup_request_id` 交叉调用 `agent_wakeup_requests.wakePolicy.type` 字段验证。
+2. successful_run_missing_state cause 的特化 presentation/comment 仍是 fallback 通用路径。
+3. workspace_validation_failed cause 的 retry reason 注入 fingerprint 摘要尚未实现。
+4. HTTP/API 序列化、actor 权限、UI 渲染等仍是 Recovery 之外的主要差距。

@@ -311,6 +311,19 @@ async fn configuration_incomplete_review_participant_writes_configuration_commen
     );
     assert_eq!(display.1["version"], serde_json::Value::from(1));
     assert_eq!(display.1["sections"][0]["title"], "Recovery");
+    // Round 354 增强：metadata 必须含 Recovery action 行，且 metadata_references_recovery_action 对真 action_id 返回 true
+    use pc_heartbeat::recovery::build_recovery_comment_display::metadata_references_recovery_action;
+    let action_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM issue_recovery_actions WHERE source_issue_id = $1 AND status = 'active'",
+    )
+    .bind(issue_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(
+        metadata_references_recovery_action(Some(&display.1), action_id),
+        "metadata must reference the recovery action for future dedup"
+    );
 
     cleanup(&db, company_id).await;
 }

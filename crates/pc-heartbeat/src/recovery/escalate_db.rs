@@ -18,8 +18,8 @@ use pc_repos::issue::{IssueRepo, IssueRow};
 use pc_repos::Db;
 
 use super::build_recovery_comment_display::{
-    build_compact_recovery_presentation, build_recovery_notice_metadata, recovery_cause_title,
-    RecoveryCommentDisplayInput,
+    build_compact_recovery_presentation, build_recovery_notice_metadata,
+    metadata_references_recovery_action, recovery_cause_title, RecoveryCommentDisplayInput,
 };
 use super::build_recovery_issue_in_place_escalation_comment::{
     build_recovery_issue_in_place_escalation_comment,
@@ -172,7 +172,26 @@ pub async fn escalate_stranded_assigned_issue_with_comment(
             recovery_action_id: action_id,
         })),
         EscalationDecision::RecoveryInPlace(plan) => {
-            let (updated, comment_id) = apply_in_place_escalation(db, &issue, &plan).await?;
+            // Round 354：in-place 升级也要写 presentation + metadata。
+            // 与 escalate_stranded_recovery_issue_in_place 行为一致：
+            // - 无 recovery action（in-place 不创建）
+            // - 无 recovery owner
+            // - latest_run 来自 issue 上的最近 heartbeat_run
+            let latest_run = load_latest_heartbeat_run_for_issue(db, issue.id).await?;
+            let presentation = build_compact_recovery_presentation(
+                "Recovery: recovery attempt failed — remains blocked",
+            );
+            let metadata = build_recovery_notice_metadata(&RecoveryCommentDisplayInput {
+                cause: "recovery_issue_failed",
+                latest_run_id: latest_run.as_ref().map(|run| run.id),
+                latest_run_status: latest_run.as_ref().map(|run| run.status.as_str()),
+                recovery_action_id: None,
+                previous_status: &input.previous_status,
+                recovery_owner_id: None,
+                recovery_owner_name: None,
+            });
+            let (updated, comment_id) =
+                apply_in_place_escalation(db, &issue, &plan, &presentation, &metadata).await?;
             Ok(Some(EscalateDbResult {
                 outcome: EscalateOutcome::RecoveryInPlace,
                 updated_issue: updated,
@@ -283,10 +302,22 @@ pub async fn escalate_stranded_recovery_issue_in_place(
                     issue_identifier: issue.identifier.clone(),
                     issue_id: issue.id,
                     previous_status: previous_status.clone(),
-                    latest_run,
+                    latest_run: latest_run.clone(),
                     prefix,
                 },
             );
+            let presentation = build_compact_recovery_presentation(
+                "Recovery: recovery attempt failed — remains blocked",
+            );
+            let metadata = build_recovery_notice_metadata(&RecoveryCommentDisplayInput {
+                cause: "recovery_issue_failed",
+                latest_run_id: latest_run.as_ref().map(|run| run.id),
+                latest_run_status: latest_run.as_ref().map(|run| run.status.as_str()),
+                recovery_action_id: None,
+                previous_status: &previous_status,
+                recovery_owner_id: None,
+                recovery_owner_name: None,
+            });
             let enriched_plan = RecoveryInPlacePlan {
                 issue_id: plan.issue_id,
                 company_id: plan.company_id,
@@ -295,7 +326,8 @@ pub async fn escalate_stranded_recovery_issue_in_place(
                 activity_source: plan.activity_source.clone(),
             };
             let (updated, comment_id) =
-                apply_in_place_escalation(db, &issue, &enriched_plan).await?;
+                apply_in_place_escalation(db, &issue, &enriched_plan, &presentation, &metadata)
+                    .await?;
             Ok(Some(EscalateDbResult {
                 outcome: EscalateOutcome::RecoveryInPlace,
                 updated_issue: updated,
@@ -337,8 +369,13 @@ async fn apply_source_escalation(
         .unwrap_or_else(|| issue.clone());
     let mut comment_id = None;
     if plan.should_post_comment {
-        let dedup_hit =
-            comment_already_references_marker(db, issue.id, &plan.comment_marker).await?;
+        let dedup_hit = comment_already_references_marker(
+            db,
+            issue.id,
+            &plan.comment_marker,
+            Some(plan.recovery_action_id),
+        )
+        .await?;
         if !dedup_hit {
             let presentation = build_compact_recovery_presentation(&format!(
                 "Recovery: {} — moved to blocked (owner: {})",
@@ -349,7 +386,7 @@ async fn apply_source_escalation(
                 cause: plan.cause.as_str(),
                 latest_run_id: latest_run.map(|run| run.id),
                 latest_run_status: latest_run.map(|run| run.status.as_str()),
-                recovery_action_id: plan.recovery_action_id,
+                recovery_action_id: Some(plan.recovery_action_id),
                 previous_status: &plan.previous_status,
                 recovery_owner_id: plan.owner_agent_id,
                 recovery_owner_name,
@@ -375,37 +412,65 @@ async fn apply_in_place_escalation(
     db: &Db,
     issue: &IssueRow,
     plan: &RecoveryInPlacePlan,
+    presentation: &Value,
+    metadata: &Value,
 ) -> sqlx::Result<(IssueRow, Option<Uuid>)> {
     let repo = IssueRepo::new(db);
     let updated = repo
         .update(issue.id, None, None, Some("blocked"), None, Some(None))
         .await?
         .unwrap_or_else(|| issue.clone());
+    // Round 354：in-place 升级也要 dedup —— 使用 IN_PLACE_ESCALATION_MARKER 作 marker
+    // 查询最近 50 条 system comment，body 含 marker 即跳过，避免重复写。
+    let marker =
+        super::build_recovery_issue_in_place_escalation_comment::IN_PLACE_ESCALATION_MARKER;
+    if comment_body_contains_marker(db, issue.id, marker).await? {
+        return Ok((updated, None));
+    }
     let row = repo
-        .create_comment(
+        .create_comment_with_display(
             plan.company_id,
             issue.id,
             None,
             Some("system"),
             &plan.comment_body,
+            Some(presentation),
+            Some(metadata),
         )
         .await?;
     Ok((updated, Some(row.id)))
+}
+
+async fn comment_body_contains_marker(db: &Db, issue_id: Uuid, marker: &str) -> sqlx::Result<bool> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT body FROM issue_comments \n         WHERE issue_id=$1 AND deleted_at IS NULL AND author_user_id='system' \n         ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(issue_id)
+    .fetch_all(db.pool())
+    .await?;
+    Ok(rows.iter().any(|(body,)| body.contains(marker)))
 }
 
 async fn comment_already_references_marker(
     db: &Db,
     issue_id: Uuid,
     marker: &str,
+    recovery_action_id: Option<Uuid>,
 ) -> sqlx::Result<bool> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM issue_comments              WHERE issue_id=$1 AND deleted_at IS NULL              AND body LIKE '%' || $2 || '%'",
+    let rows: Vec<(String, Option<Value>)> = sqlx::query_as(
+        "SELECT body, metadata FROM issue_comments \
+         WHERE issue_id=$1 AND deleted_at IS NULL AND author_user_id='system' \
+         ORDER BY created_at DESC LIMIT 50",
     )
     .bind(issue_id)
-    .bind(marker)
-    .fetch_optional(db.pool())
+    .fetch_all(db.pool())
     .await?;
-    Ok(row.map(|(c,)| c > 0).unwrap_or(false))
+    Ok(rows.into_iter().any(|(body, metadata)| {
+        body.contains(marker)
+            || recovery_action_id.is_some_and(|action_id| {
+                metadata_references_recovery_action(metadata.as_ref(), action_id)
+            })
+    }))
 }
 
 /// Rebuild SchedulerCandidate from a persisted recovery action row.

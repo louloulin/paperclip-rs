@@ -27,6 +27,10 @@ use crate::recovery::summarize_run_failure::{
 use serde_json::Value;
 use uuid::Uuid;
 
+/// 稳定的 in-place 升级评论前缀，用于 dedup 判定（body 含此 marker 即跳过）。
+pub const IN_PLACE_ESCALATION_MARKER: &str =
+    "Paperclip stopped automatic stranded-work recovery for this recovery issue.";
+
 /// Latest run 的最少化 view（用于避免强依赖完整 HeartbeatRunRow）。
 ///
 /// `agent_id` 为 Option 以匹配 Node `runUiLink` 在缺失时的可空语义（fallback）。
@@ -117,7 +121,7 @@ pub fn build_recovery_issue_in_place_escalation_comment(
     };
 
     [
-        "Paperclip stopped automatic stranded-work recovery for this recovery issue.",
+        IN_PLACE_ESCALATION_MARKER,
         "",
         &format!("- Recovery issue: {issue_link}"),
         &format!("- Previous status: `{}`", input.previous_status),
@@ -215,9 +219,7 @@ mod tests {
             prefix: "PAP".to_owned(),
         };
         let body = build_recovery_issue_in_place_escalation_comment(&input);
-        assert!(body.starts_with(
-            "Paperclip stopped automatic stranded-work recovery for this recovery issue."
-        ));
+        assert!(body.starts_with(IN_PLACE_ESCALATION_MARKER));
         assert!(body.contains("- Recovery issue: [PAP-1](/PAP/issues/PAP-1)"));
         assert!(body.contains("- Previous status: `in_progress`"));
         assert!(body.contains("- Retry reason: `issue_continuation_needed`"));

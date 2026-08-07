@@ -455,6 +455,253 @@ fn fence_untrusted_text(s: &str) -> String {
 }
 
 // ============================================================================
+// System notice builders (Round 356)
+// ============================================================================
+
+/// Round 356：harness 写向 source issue 的「required notice」body 常量。
+///
+/// 对齐 Node `SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY`：
+/// "Paperclip needs a disposition before this issue can continue."
+pub const SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY: &str =
+    "Paperclip needs a disposition before this issue can continue.";
+
+/// Round 356：recovery action 耗尽后写向 source issue 的「exhausted notice」body 常量。
+///
+/// 对齐 Node `SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY`。
+pub const SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY: &str = "Paperclip could not resolve this issue's missing disposition automatically. The issue is blocked on a recovery owner.";
+
+/// Round 356：旧版本 notice body 的可能前缀（保持识别兼容）。
+pub const LEGACY_SUCCESSFUL_RUN_HANDOFF_NOTICE_PREFIXES: &[&str] = &[
+    "## This issue still needs a next step",
+    "## Successful run missing issue disposition",
+];
+
+/// Round 356：3 行 metadata 文本上限（对齐 Node `metadataText` 2000 字符截断）。
+pub const NOTICE_METADATA_VALUE_MAX_CHARS: usize = 2000;
+
+/// Round 356：issue 链接行（Required action section 第一行）。
+#[derive(Debug, Clone)]
+pub struct NoticeIssueRef {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
+    pub status: String,
+}
+
+/// Round 356：run 链接行（Required action / Run evidence section）。
+#[derive(Debug, Clone)]
+pub struct NoticeRunRef {
+    pub id: String,
+    pub status: String,
+}
+
+/// Round 356：agent 链接行（Recovery owner / Assignee section）。
+#[derive(Debug, Clone)]
+pub struct NoticeAgentRef {
+    pub id: String,
+    pub name: String,
+}
+
+/// Round 356：notice 输出 = body + presentation + metadata。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuccessfulRunHandoffNotice {
+    pub body: String,
+    pub presentation: serde_json::Value,
+    pub metadata: serde_json::Value,
+}
+
+/// Round 356：是否 `required notice` body（精确等于常量或旧前缀）。
+pub fn is_successful_run_handoff_required_notice_body(body: &str) -> bool {
+    let trimmed = body.trim();
+    trimmed == SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY
+        || LEGACY_SUCCESSFUL_RUN_HANDOFF_NOTICE_PREFIXES
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+}
+
+/// Round 356：metadata 文本的安全取值（空 → fallback；>2000 字符截断）。
+pub fn metadata_text(value: Option<&str>, fallback: &str) -> String {
+    let raw = value.unwrap_or("").trim();
+    let resolved = if raw.is_empty() { fallback } else { raw };
+    if resolved.chars().count() > NOTICE_METADATA_VALUE_MAX_CHARS {
+        let mut out: String = resolved.chars().take(NOTICE_METADATA_VALUE_MAX_CHARS - 3).collect();
+        out.push('…');
+        out
+    } else {
+        resolved.to_owned()
+    }
+}
+
+fn key_value_row(label: &str, value: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "key_value",
+        "label": label,
+        "value": metadata_text(Some(value), "unknown"),
+    })
+}
+
+fn issue_link_row(label: &str, issue: Option<&NoticeIssueRef>) -> serde_json::Value {
+    match issue {
+        Some(i) => serde_json::json!({
+            "type": "issue_link",
+            "label": label,
+            "issueId": i.id,
+            "identifier": i.identifier,
+            "title": i.title,
+        }),
+        None => key_value_row(label, "unknown"),
+    }
+}
+
+fn run_link_row(label: &str, run: Option<&NoticeRunRef>) -> serde_json::Value {
+    match run {
+        Some(r) => serde_json::json!({
+            "type": "run_link",
+            "label": label,
+            "runId": r.id,
+            "title": r.status,
+        }),
+        None => key_value_row(label, "unknown"),
+    }
+}
+
+fn agent_link_row(label: &str, agent: Option<&NoticeAgentRef>) -> serde_json::Value {
+    match agent {
+        Some(a) => serde_json::json!({
+            "type": "agent_link",
+            "label": label,
+            "agentId": a.id,
+            "name": a.name,
+        }),
+        None => key_value_row(label, "unknown"),
+    }
+}
+
+fn system_notice_presentation(tone: &str, title: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "system_notice",
+        "tone": tone,
+        "title": title,
+        "detailsDefaultOpen": false,
+    })
+}
+
+/// Round 356：harness 通知 source issue：必须产出一个合法 disposition。
+///
+/// 与 Node `buildSuccessfulRunHandoffRequiredNotice` 对齐：
+/// - body 固定为 `Paperclip needs a disposition before this issue can continue.`
+/// - presentation: system_notice (warning tone, "Missing issue disposition")
+/// - metadata: Required action section + Run evidence section
+pub fn build_successful_run_handoff_required_notice(input: BuildRequiredNoticeInput<'_>) -> SuccessfulRunHandoffNotice {
+    SuccessfulRunHandoffNotice {
+        body: SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY.to_owned(),
+        presentation: system_notice_presentation("warning", "Missing issue disposition"),
+        metadata: serde_json::json!({
+            "version": 1,
+            "sourceRunId": input.run.id,
+            "sections": [
+                {
+                    "title": "Required action",
+                    "rows": [
+                        issue_link_row("Source issue", Some(&input.issue)),
+                        agent_link_row("Assignee", Some(&input.agent)),
+                        key_value_row("Missing disposition", "clear_next_step"),
+                        key_value_row(
+                            "Valid dispositions",
+                            "done, cancelled, in_review with an owner, blocked with blockers, delegated follow-up, or explicit continuation",
+                        ),
+                    ],
+                },
+                {
+                    "title": "Run evidence",
+                    "rows": [
+                        run_link_row("Successful run", Some(&input.run)),
+                        key_value_row("Run status", &input.run.status),
+                        key_value_row("Normalized cause", SUCCESSFUL_RUN_MISSING_STATE_REASON),
+                        key_value_row("Detected progress", &input.detected_progress_summary),
+                        key_value_row("Automatic retry", "one corrective handoff wake queued"),
+                    ],
+                },
+            ],
+        }),
+    }
+}
+
+/// Round 356：harness 通知 source issue：recovery 已耗尽，issue 由 recovery owner 接管。
+///
+/// 与 Node `buildSuccessfulRunHandoffExhaustedNotice` 对齐：
+/// - body 固定为 `Paperclip could not resolve this issue's missing disposition automatically...`
+/// - presentation: system_notice (danger tone, "Missing disposition recovery blocked")
+/// - metadata: Recovery owner section + Run evidence section
+pub fn build_successful_run_handoff_exhausted_notice(
+    input: BuildExhaustedNoticeInput<'_>,
+) -> SuccessfulRunHandoffNotice {
+    let recovery_owner_label = if input.recovery_action_id.is_some() {
+        "Recovery action"
+    } else {
+        "Recovery issue"
+    };
+    let mut rows_owner = vec![issue_link_row("Source issue", Some(&input.issue))];
+    if let Some(action_id) = input.recovery_action_id {
+        rows_owner.push(key_value_row(recovery_owner_label, &action_id));
+    } else {
+        rows_owner.push(issue_link_row(recovery_owner_label, input.recovery_issue.as_ref()));
+    }
+    rows_owner.push(agent_link_row("Recovery owner", input.recovery_owner.as_ref()));
+    rows_owner.push(agent_link_row("Source assignee", input.source_assignee.as_ref()));
+    rows_owner.push(key_value_row(
+        "Suggested action",
+        "choose and record a valid issue disposition without copying transcript content",
+    ));
+
+    let rows_evidence = vec![
+        run_link_row("Source run", input.source_run.as_ref()),
+        run_link_row("Corrective handoff run", input.corrective_run.as_ref()),
+        key_value_row("Latest issue status", &input.latest_issue_status),
+        key_value_row("Latest handoff run status", &input.latest_handoff_run_status),
+        key_value_row("Normalized cause", SUCCESSFUL_RUN_MISSING_STATE_REASON),
+        key_value_row("Missing disposition", &input.missing_disposition),
+    ];
+
+    SuccessfulRunHandoffNotice {
+        body: SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY.to_owned(),
+        presentation: system_notice_presentation("danger", "Missing disposition recovery blocked"),
+        metadata: serde_json::json!({
+            "version": 1,
+            "sourceRunId": input.source_run.as_ref().map(|r| r.id.clone()),
+            "sections": [
+                { "title": "Recovery owner", "rows": rows_owner },
+                { "title": "Run evidence", "rows": rows_evidence },
+            ],
+        }),
+    }
+}
+
+/// Round 356: `build_successful_run_handoff_required_notice` 输入。
+#[derive(Debug, Clone)]
+pub struct BuildRequiredNoticeInput<'a> {
+    pub issue: NoticeIssueRef,
+    pub run: NoticeRunRef,
+    pub agent: NoticeAgentRef,
+    pub detected_progress_summary: &'a str,
+}
+
+/// Round 356: `build_successful_run_handoff_exhausted_notice` 输入。
+#[derive(Debug, Clone)]
+pub struct BuildExhaustedNoticeInput<'a> {
+    pub issue: NoticeIssueRef,
+    pub source_run: Option<NoticeRunRef>,
+    pub corrective_run: Option<NoticeRunRef>,
+    pub source_assignee: Option<NoticeAgentRef>,
+    pub recovery_issue: Option<NoticeIssueRef>,
+    pub recovery_action_id: Option<String>,
+    pub recovery_owner: Option<NoticeAgentRef>,
+    pub latest_issue_status: &'a str,
+    pub latest_handoff_run_status: &'a str,
+    pub missing_disposition: &'a str,
+}
+
+// ============================================================================
 // Core decision function
 // ============================================================================
 
@@ -901,5 +1148,162 @@ mod tests {
             decision.reason(),
             Some("corrective handoff wake already exists for this source run")
         );
+    }
+
+    fn sample_issue() -> NoticeIssueRef {
+        NoticeIssueRef {
+            id: "issue-1".into(),
+            identifier: "PAP-1".into(),
+            title: "Test issue".into(),
+            status: "in_progress".into(),
+        }
+    }
+    fn sample_run() -> NoticeRunRef {
+        NoticeRunRef {
+            id: "run-1".into(),
+            status: "succeeded".into(),
+        }
+    }
+    fn sample_agent() -> NoticeAgentRef {
+        NoticeAgentRef {
+            id: "agent-1".into(),
+            name: "Alice".into(),
+        }
+    }
+
+    #[test]
+    fn required_notice_matches_node_shape() {
+        let issue = sample_issue();
+        let run = sample_run();
+        let agent = sample_agent();
+        let notice = build_successful_run_handoff_required_notice(BuildRequiredNoticeInput {
+            issue: issue.clone(),
+            run: run.clone(),
+            agent: agent.clone(),
+            detected_progress_summary: "made progress",
+        });
+        assert_eq!(notice.body, SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY);
+        assert_eq!(notice.presentation["kind"], "system_notice");
+        assert_eq!(notice.presentation["tone"], "warning");
+        assert_eq!(notice.presentation["title"], "Missing issue disposition");
+        assert_eq!(notice.presentation["detailsDefaultOpen"], false);
+        assert_eq!(notice.metadata["version"], 1);
+        assert_eq!(notice.metadata["sourceRunId"], "run-1");
+        let sections = notice.metadata["sections"].as_array().unwrap();
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0]["title"], "Required action");
+        assert_eq!(sections[1]["title"], "Run evidence");
+        let required = sections[0]["rows"].as_array().unwrap();
+        let issue_link_row = required
+            .iter()
+            .find(|r| r["type"] == "issue_link" && r["label"] == "Source issue")
+            .unwrap();
+        assert_eq!(issue_link_row["issueId"], "issue-1");
+        let valid_dispositions = required
+            .iter()
+            .find(|r| r["label"] == "Valid dispositions")
+            .unwrap();
+        assert!(valid_dispositions["value"].as_str().unwrap().contains("done, cancelled"));
+        let evidence = sections[1]["rows"].as_array().unwrap();
+        assert!(evidence.iter().any(|r| r["label"] == "Normalized cause"
+            && r["value"] == "successful_run_missing_state"));
+        assert!(evidence.iter().any(|r| r["label"] == "Automatic retry"
+            && r["value"] == "one corrective handoff wake queued"));
+    }
+
+    #[test]
+    fn exhausted_notice_with_action_id_has_recovery_action_key_value() {
+        let issue = sample_issue();
+        let notice = build_successful_run_handoff_exhausted_notice(BuildExhaustedNoticeInput {
+            issue,
+            source_run: Some(sample_run()),
+            corrective_run: Some(NoticeRunRef {
+                id: "run-2".into(),
+                status: "succeeded".into(),
+            }),
+            source_assignee: Some(sample_agent()),
+            recovery_issue: None,
+            recovery_action_id: Some("action-1".to_owned()),
+            recovery_owner: Some(NoticeAgentRef {
+                id: "agent-2".into(),
+                name: "Bob".into(),
+            }),
+            latest_issue_status: "blocked",
+            latest_handoff_run_status: "succeeded",
+            missing_disposition: "clear_next_step",
+        });
+        assert_eq!(notice.body, SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY);
+        assert_eq!(notice.presentation["tone"], "danger");
+        assert_eq!(notice.presentation["title"], "Missing disposition recovery blocked");
+        let sections = notice.metadata["sections"].as_array().unwrap();
+        assert_eq!(sections.len(), 2);
+        let owner_rows = sections[0]["rows"].as_array().unwrap();
+        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery action"
+            && r["value"] == "action-1"));
+        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery owner"
+            && r["type"] == "agent_link"));
+        assert!(owner_rows.iter().any(|r| r["label"] == "Source assignee"
+            && r["type"] == "agent_link"));
+        let evidence_rows = sections[1]["rows"].as_array().unwrap();
+        assert!(evidence_rows.iter().any(|r| r["label"] == "Latest issue status"
+            && r["value"] == "blocked"));
+        assert!(evidence_rows.iter().any(|r| r["label"] == "Missing disposition"
+            && r["value"] == "clear_next_step"));
+    }
+
+    #[test]
+    fn exhausted_notice_without_action_id_falls_back_to_recovery_issue_link() {
+        let notice = build_successful_run_handoff_exhausted_notice(BuildExhaustedNoticeInput {
+            issue: sample_issue(),
+            source_run: None,
+            corrective_run: None,
+            source_assignee: None,
+            recovery_issue: Some(sample_issue()),
+            recovery_action_id: None,
+            recovery_owner: None,
+            latest_issue_status: "blocked",
+            latest_handoff_run_status: "unknown",
+            missing_disposition: "clear_next_step",
+        });
+        let sections = notice.metadata["sections"].as_array().unwrap();
+        let owner_rows = sections[0]["rows"].as_array().unwrap();
+        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery issue"
+            && r["type"] == "issue_link"));
+        assert!(owner_rows.iter().any(|r| r["label"] == "Recovery owner"
+            && r["type"] == "key_value"
+            && r["value"] == "unknown"));
+    }
+
+    #[test]
+    fn is_required_notice_body_recognizes_constant_and_legacy_prefixes() {
+        assert!(is_successful_run_handoff_required_notice_body(
+            SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY
+        ));
+        assert!(is_successful_run_handoff_required_notice_body(
+            "  Paperclip needs a disposition before this issue can continue.  "
+        ));
+        assert!(is_successful_run_handoff_required_notice_body(
+            "## This issue still needs a next step
+..."
+        ));
+        assert!(is_successful_run_handoff_required_notice_body(
+            "## Successful run missing issue disposition
+..."
+        ));
+        assert!(!is_successful_run_handoff_required_notice_body(
+            "Paperclip exhausted automatic recovery for an assigned issue..."
+        ));
+    }
+
+    #[test]
+    fn metadata_text_truncates_at_max_chars() {
+        let long = "a".repeat(NOTICE_METADATA_VALUE_MAX_CHARS + 50);
+        let out = metadata_text(Some(&long), "fallback");
+        assert!(out.chars().count() <= NOTICE_METADATA_VALUE_MAX_CHARS);
+        assert!(out.ends_with('…'));
+        let none = metadata_text(None, "fallback");
+        assert_eq!(none, "fallback");
+        let empty = metadata_text(Some(""), "fallback");
+        assert_eq!(empty, "fallback");
     }
 }
