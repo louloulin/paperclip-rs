@@ -219,6 +219,7 @@
 | `git-workspace-sync.ts` | 5.1 git sync |
 | `index.ts` | 5.1 公共导出 |
 | `local-process-sandbox.ts` | 5.1 sandbox |
+| `server-utils.ts` | `pc-acpx::prompt_compose` (R380 done) |
 | `log-redaction.ts` | 5.1 log redact |
 | `mcp-isolation.integration.test.ts` | 5.1 测试 |
 | `remote-execution-env.ts` | 5.1 remote env |

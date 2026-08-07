@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::agent_command::BuiltInAgentCommand;
+use crate::cache_lifecycle::AsyncCallback;
 use crate::startup_metrics::StartupStepMetrics;
 
 // ============================================================================
@@ -53,6 +54,49 @@ impl PreparedRuntimePermissionMode {
             PreparedRuntimePermissionMode::ApproveAll => "approve-all",
             PreparedRuntimePermissionMode::ApproveReads => "approve-reads",
             PreparedRuntimePermissionMode::DenyAll => "deny-all",
+        }
+    }
+}
+
+// ============================================================================
+// Prepared staged runtime (sandbox bridge seam)
+// ============================================================================
+
+/// Staged remote runtime descriptor. Returned by `build_runtime` when a
+/// remote process session staged the workspace + managed home into a
+/// sandbox before the run started. Mirrors the inline
+/// `PreparedAdapterExecutionTargetRuntime` shape used by the Node engine's
+/// `buildRuntime` for the remote lane.
+///
+/// The Rust port keeps the type intentionally minimal: the full
+/// remote-runtime record lives in the sandbox-utils seam (R375+), so
+/// here we only expose the two paths the executor consumes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedStagedRuntime {
+    /// Host-side workspace path (the staging source).
+    pub workspace_local_dir: PathBuf,
+    /// In-sandbox workspace path (the staging target). `None` on local
+    /// runs that never crossed the staging seam.
+    pub workspace_remote_dir: Option<PathBuf>,
+}
+
+impl PreparedStagedRuntime {
+    /// Build a host-only (local) staged runtime descriptor.
+    pub fn local(workspace_local_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            workspace_local_dir: workspace_local_dir.into(),
+            workspace_remote_dir: None,
+        }
+    }
+
+    /// Build a host + remote (sandbox) staged runtime descriptor.
+    pub fn remote(
+        workspace_local_dir: impl Into<PathBuf>,
+        workspace_remote_dir: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            workspace_local_dir: workspace_local_dir.into(),
+            workspace_remote_dir: Some(workspace_remote_dir.into()),
         }
     }
 }
@@ -136,6 +180,20 @@ pub struct PreparedRuntime {
     pub agent_command: Option<BuiltInAgentCommand>,
     /// Per-step startup metrics. Empty for local runs.
     pub step_metrics: StartupStepMetrics,
+    /// Staged remote runtime (sandbox lane only). `None` for local /
+    /// runner-less ACP→CLI fallback runs that never crossed the staging
+    /// seam.
+    pub staged_runtime: Option<PreparedStagedRuntime>,
+    /// Env delta applied by the staging seam (e.g. `CODEX_HOME` repointed
+    /// onto the in-sandbox asset dir). Replayed verbatim on a compatible
+    /// resume so a later run reuses the same home.
+    pub remote_staging_env_delta: Option<BTreeMap<String, String>>,
+    /// Per-run teardown that copies the live in-sandbox auth back onto the
+    /// host (e.g. codex `auth.json` copy-back). `None` on local runs.
+    pub remote_managed_home_teardown: Option<AsyncCallback>,
+    /// One-time staged-temp cleanup. Fired when the staged entry is
+    /// dropped (cache eviction / session end). `None` on local runs.
+    pub remote_staging_dispose: Option<AsyncCallback>,
 }
 
 impl PreparedRuntime {
@@ -167,6 +225,10 @@ impl PreparedRuntime {
             fingerprint: String::new(),
             agent_command: None,
             step_metrics: StartupStepMetrics::default(),
+            staged_runtime: None,
+            remote_staging_env_delta: None,
+            remote_managed_home_teardown: None,
+            remote_staging_dispose: None,
         }
     }
 }
@@ -195,6 +257,10 @@ pub struct PreparedRuntimeBuilder {
     pub fingerprint: String,
     pub agent_command: Option<BuiltInAgentCommand>,
     pub step_metrics: StartupStepMetrics,
+    pub staged_runtime: Option<PreparedStagedRuntime>,
+    pub remote_staging_env_delta: Option<BTreeMap<String, String>>,
+    pub remote_managed_home_teardown: Option<AsyncCallback>,
+    pub remote_staging_dispose: Option<AsyncCallback>,
 }
 
 impl PreparedRuntimeBuilder {
@@ -296,6 +362,26 @@ impl PreparedRuntimeBuilder {
         self
     }
 
+    pub fn staged_runtime(mut self, staged: PreparedStagedRuntime) -> Self {
+        self.staged_runtime = Some(staged);
+        self
+    }
+
+    pub fn remote_staging_env_delta(mut self, delta: BTreeMap<String, String>) -> Self {
+        self.remote_staging_env_delta = Some(delta);
+        self
+    }
+
+    pub fn remote_managed_home_teardown(mut self, callback: AsyncCallback) -> Self {
+        self.remote_managed_home_teardown = Some(callback);
+        self
+    }
+
+    pub fn remote_staging_dispose(mut self, callback: AsyncCallback) -> Self {
+        self.remote_staging_dispose = Some(callback);
+        self
+    }
+
     pub fn build(self) -> PreparedRuntime {
         PreparedRuntime {
             acpx_agent: self.acpx_agent,
@@ -318,6 +404,10 @@ impl PreparedRuntimeBuilder {
             fingerprint: self.fingerprint,
             agent_command: self.agent_command,
             step_metrics: self.step_metrics,
+            staged_runtime: self.staged_runtime,
+            remote_staging_env_delta: self.remote_staging_env_delta,
+            remote_managed_home_teardown: self.remote_managed_home_teardown,
+            remote_staging_dispose: self.remote_staging_dispose,
         }
     }
 }
@@ -430,5 +520,54 @@ mod tests {
             PreparedRuntimeNonInteractivePermissions::Fail.as_str(),
             "fail"
         );
+    }
+}
+
+#[cfg(test)]
+mod staged_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn local_descriptor_has_no_remote_dir() {
+        let staged = PreparedStagedRuntime::local("/host/repo");
+        assert_eq!(staged.workspace_local_dir, PathBuf::from("/host/repo"));
+        assert_eq!(staged.workspace_remote_dir, None);
+    }
+
+    #[test]
+    fn remote_descriptor_keeps_both_paths() {
+        let staged = PreparedStagedRuntime::remote("/host/repo", "/sandbox/workspace");
+        assert_eq!(staged.workspace_local_dir, PathBuf::from("/host/repo"));
+        assert_eq!(
+            staged.workspace_remote_dir,
+            Some(PathBuf::from("/sandbox/workspace"))
+        );
+    }
+
+    #[test]
+    fn builder_accepts_staged_runtime() {
+        let staged = PreparedStagedRuntime::remote("/host", "/sandbox");
+        let runtime = PreparedRuntime::builder("claude")
+            .staged_runtime(staged.clone())
+            .build();
+        assert_eq!(runtime.staged_runtime, Some(staged));
+    }
+
+    #[test]
+    fn builder_accepts_remote_callbacks_and_env_delta() {
+        let teardown = AsyncCallback::new(|| async {});
+        let dispose = AsyncCallback::new(|| async {});
+        let mut delta = BTreeMap::new();
+        delta.insert("CODEX_HOME".to_string(), "/sandbox/home".to_string());
+
+        let runtime = PreparedRuntime::builder("codex")
+            .remote_staging_env_delta(delta.clone())
+            .remote_managed_home_teardown(teardown)
+            .remote_staging_dispose(dispose)
+            .build();
+
+        assert_eq!(runtime.remote_staging_env_delta, Some(delta));
+        assert!(runtime.remote_managed_home_teardown.is_some());
+        assert!(runtime.remote_staging_dispose.is_some());
     }
 }

@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::{Future, StreamExt};
+use futures::Future;
 use serde::Deserialize;
 use tokio::sync::{broadcast, oneshot, Mutex as TokioMutex};
 use tokio::task::JoinHandle;
@@ -150,7 +150,7 @@ impl SubprocessAcpRuntime {
     ) -> Result<serde_json::Value, AcpxError> {
         let handle = self.ensure_subprocess().await?;
         let (id, body) = {
-            let mut sync_state = self.sync_state.lock().expect("sync_state poisoned");
+            let sync_state = self.sync_state.lock().expect("sync_state poisoned");
             let id = next_jsonrpc_id(&sync_state.id_alloc);
             let body = encode_jsonrpc_request(id, method, params);
             (id, body)

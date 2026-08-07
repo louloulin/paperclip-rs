@@ -18,9 +18,12 @@
 #![warn(unused_must_use)]
 
 pub mod acp_runtime;
+pub mod acpx_engine_executor;
 pub mod agent_command;
 pub mod bin;
+pub mod build_runtime;
 pub mod cache;
+pub mod cache_lifecycle;
 pub mod child_stderr;
 pub mod codex_startup_config;
 pub mod constants;
@@ -37,6 +40,7 @@ pub mod normalize;
 pub mod paperclip_claude_settings;
 pub mod paths;
 pub mod prepared_runtime;
+pub mod prompt_compose;
 pub mod reconcile_skills;
 pub mod session_codec;
 pub mod session_compat;
@@ -60,7 +64,8 @@ pub use acp_runtime::{
     AcpRuntimeSetModeInput, AcpRuntimeStatus, AcpRuntimeStream, AcpRuntimeToolCallLocation,
     AcpRuntimeTurn, AcpRuntimeTurnAttachment, AcpRuntimeTurnInput, AcpRuntimeTurnResult,
     AcpRuntimeTurnResultError, AcpRuntimeTurnResultFuture, AcpRuntimeTurnResultResolver,
-    AcpRuntimeUsageBreakdown, AcpRuntimeUsageCost, McpServerEntry, SessionAgentOptions,
+    AcpRuntimeUsageBreakdown, AcpRuntimeUsageCost, McpServerEntry, MockAcpRuntime,
+    SessionAgentOptions,
 };
 pub use agent_command::{
     resolve_built_in_agent_command, shell_quote, BuiltInAgentCommand,
@@ -70,6 +75,12 @@ pub use bin::{find_ancestor_bin, Platform};
 
 pub use cache::{
     cleanup_idle_with_report, AsyncKeyedLocks, IdleCache, IdleEvictionReport, LastUsed,
+};
+pub use cache_lifecycle::{
+    cleanup_idle_handles, cleanup_idle_staged_runtimes, clear_warm_handle_timer, close_warm_handle,
+    discard_staged_runtime, save_staged_runtime_after_clean_turn, schedule_idle_handle_cleanup,
+    warm_handle_matches, with_session_staging_lease, AsyncCallback, RuntimeCacheEntry,
+    SessionStagingLease, SessionStagingLocks, StagedRuntimeCacheEntry, TokioCleanupHandle,
 };
 pub use child_stderr::{
     flush_child_stderr, flush_child_stderr_with, read_child_stderr_tail, route_child_stderr,
@@ -120,7 +131,19 @@ pub use managed_home::{
 
 pub use prepared_runtime::{
     format_timeout_start_log_line, PreparedRuntime, PreparedRuntimeBuilder, PreparedRuntimeMode,
-    PreparedRuntimeNonInteractivePermissions, PreparedRuntimePermissionMode, TimeoutResolution,
+    PreparedRuntimeNonInteractivePermissions, PreparedRuntimePermissionMode, PreparedStagedRuntime,
+    TimeoutResolution,
+};
+
+pub use build_runtime::{
+    apply_paperclip_workspace_env, build_paperclip_env, build_runtime, AgentIdentity,
+    BuildRuntimeInput, WakeContext, WorkspaceHints,
+};
+
+pub use acpx_engine_executor::{
+    system_now_ms, AcpxEngineExecutor, AcpxEngineExecutorDeps, AcpxEngineExecutorState,
+    AcpxRuntimeFactory, AdapterExecutionContext, AdapterExecutionResult, AdapterExecutionSink,
+    EnsureOutcome, ExecutorLogStream, NoopSink, NowFn,
 };
 
 pub use reconcile_skills::{
@@ -129,8 +152,9 @@ pub use reconcile_skills::{
 };
 
 pub use session_codec::{
-    deserialize as session_codec_deserialize, get_display_id as session_codec_get_display_id,
-    serialize as session_codec_serialize, AcpxSessionParams,
+    build_session_params, deserialize as session_codec_deserialize,
+    get_display_id as session_codec_get_display_id, serialize as session_codec_serialize,
+    AcpxSessionParams,
 };
 
 pub use skill_materialize::{
@@ -184,6 +208,17 @@ pub use startup_metrics::{build_startup_step_metrics, StartupMetricsSource, Star
 pub use subprocess_acp_runtime::{SubprocessAcpRuntime, SubprocessAcpRuntimeSpec};
 pub use subprocess_handle::{SpawnAcpxInput, SubprocessHandle, SubprocessTermination};
 
+pub use prompt_compose::{
+    is_assignment_shaped_paperclip_wake_reason, is_paperclip_recovery_wake_payload,
+    join_prompt_sections, join_prompt_sections_with_separator, render_paperclip_wake_prompt,
+    render_template, select_paperclip_task_markdown, ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS,
+    NormalizedPaperclipWake, PaperclipWakeAgentMessage, PaperclipWakeCheckboxOption,
+    PaperclipWakeCheckboxSelection, PaperclipWakeChildIssueSummary, PaperclipWakeComment,
+    PaperclipWakeExecutionStage, PaperclipWakeExecutionWorkspace, PaperclipWakeIssue,
+    PaperclipWakeOriginalAssignee, PaperclipWakeRecovery, RenderWakePromptOptions,
+    SelectTaskMarkdownOptions,
+};
+pub use prompt_compose::normalize_paperclip_wake_payload;
 pub use transcript::{
     parse_acpx_stdout_line, summarize_tool_call, ToolCallSummary, TranscriptEntry,
 };

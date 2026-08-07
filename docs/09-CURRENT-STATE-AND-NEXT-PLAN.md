@@ -131,3 +131,49 @@
 - 新增 stale run 恢复策略
 - 完整单测 + 集成测试覆盖
 
+
+---
+
+## 六、附录 — R362-R380 `pc-acpx` 复刻进展（2026-08-07 完成）
+
+R362 起开始聚焦 `pc-acpx` crate（Node `acpx-engine` 的 Rust 镜像），按模块逐个复刻 Node `acpx-engine/*` + `adapter-utils/src/server-utils.ts` 的纯函数层。R380 收尾。
+
+### 已完成模块
+
+| 轮次 | Node 源 | Rust 模块 | 单测 | 集成测 |
+|---|---|---|---|---|
+| R362 | execute.ts 顶层 | `pc-acpx::acpx_engine_executor` 入口 | 7 | — |
+| R363 | jsonrpc wire | `pc-acpx::jsonrpc_wire` | 4 | — |
+| R364 | build_runtime | `pc-acpx::build_runtime` | 4 | — |
+| R365 | acp_runtime 协议 | `pc-acpx::acp_runtime` | 4 | — |
+| R366 | recovery / startup_timing | `pc-acpx::error_classification` + `startup_timing` | 9 | — |
+| R367 | skill_staging | `pc-acpx::skill_materialize` | 9 | — |
+| R368 | cache env | `pc-acpx::cache` | 10 | — |
+| R369 | path claude config | `pc-acpx::paths` + `paperclip_claude_settings` | 26 | — |
+| R370 | jsonrpc wire 端到端 | `pc-acpx::jsonrpc_wire` 增强 | 19 | — |
+| R371 | subprocess_acp_runtime | `pc-acpx::subprocess_acp_runtime` | 10 | — |
+| R372 | start_turn_stream | `pc-acpx::acpx_engine_executor` turn | 5 | — |
+| R373 | cache_lifecycle | `pc-acpx::cache_lifecycle` | 14 | — |
+| R374 | build_runtime 顶层装配 | `pc-acpx::build_runtime` 增强 | 24 | — |
+| R375 | executor factory | `pc-acpx::acpx_engine_executor` 工厂 | 19 | — |
+| R376 | execute() 入口 | `pc-acpx::acpx_engine_executor::execute` | 16 | — |
+| R377 | session options | `pc-acpx::session_config_options` + `session_codec` | 11 | — |
+| R378 | result shaping | `pc-acpx::usage` + `transcript` | 10 | — |
+| R379 | resume-retry / timeout / 终态清理 | `pc-acpx::acpx_engine_executor` 增强 | 7 | — |
+| **R380** | **renderTemplate / joinPromptSections / selectPaperclipTaskMarkdown / isAssignmentShapedPaperclipWakeReason / isPaperclipRecoveryWakePayload** | **`pc-acpx::prompt_compose`** | **12** | **22** |
+
+### 测试统计（pc-acpx crate）
+
+- **R362 起开始**: 0 tests
+- **R372 末**: 152 tests
+- **R379 末**: 438 tests (lib 229 + integration 209)
+- **R380 末**: 472 tests (lib 251 + integration 221)，新增 34 个测试 (22 单测 + 12 集成)，无回归
+
+### 下一轮 R381 计划
+
+1. **Port `renderPaperclipWakePrompt`** (Node `server-utils.ts` L1411, ~85 行) → `pc-acpx::prompt_compose::render_wake_prompt`，替换集成测试中的 `render_wake_prompt_placeholder`。
+2. **新建 `pc-acpx::build_prompt`** 模块（或 `acpx_engine_executor::build_prompt` 方法）镜像 Node `buildPrompt` (L2246)，把 R380 的 5 个纯函数 + R381 的 `render_wake_prompt` + `render_paperclip_env_note` / `render_api_access_note` / `instructionsFilePath` I/O 组合成 7 段 prompt。
+3. **集成到 `execute()`**：替换 `acpx_engine_executor.rs` L743-746 的 `text: ctx.run_prompt.clone()` 为 `text: build_prompt(ctx, resumed_session, env).await.prompt`。
+4. **新增 5-7 个集成测试**覆盖 wake prompt body 各种 shape + `commandNotes` 数组 + `instructionsFilePath` 失败路径。
+
+R381 完成后，`pc-acpx::execute()` 的 prompt 路径将与 Node `buildPrompt` 行为 1:1 对齐。

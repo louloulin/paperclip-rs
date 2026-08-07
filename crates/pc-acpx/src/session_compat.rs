@@ -132,6 +132,74 @@ pub fn is_compatible_session(
     stable_json(&saved_remote) == stable_json(&current_remote)
 }
 
+/// Decide whether the raw persisted `sessionParams` JSON can be resumed.
+///
+/// The Node executor receives an untyped object, not a `HashMap<String,
+/// String>`. Keeping this projection here avoids lossy conversions in the
+/// executor (in particular for the nested `remoteExecution` identity) and
+/// makes the compatibility gate usable by every execution target.
+pub fn is_compatible_session_value(
+    params: &serde_json::Value,
+    runtime: &AcpxPreparedRuntimeLite,
+) -> bool {
+    let Some(record) = params.as_object() else {
+        return false;
+    };
+
+    let read_string = |key: &str| {
+        record
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+
+    if read_string("configFingerprint") != Some(runtime.fingerprint.as_str()) {
+        return false;
+    }
+    if read_string("sessionKey") != Some(runtime.session_key.as_str()) {
+        return false;
+    }
+    if read_string("agent") != Some(runtime.acpx_agent.as_str()) {
+        return false;
+    }
+    if read_string("mode") != Some(runtime.mode.as_str()) {
+        return false;
+    }
+    let Some(saved_cwd) = read_string("cwd") else {
+        return false;
+    };
+    if !paths_equal(saved_cwd, &runtime.cwd) {
+        return false;
+    }
+
+    let saved_remote = record
+        .get("remoteExecution")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    let current_remote = runtime
+        .remote_execution_identity
+        .clone()
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    stable_json(&saved_remote) == stable_json(&current_remote)
+}
+
+/// Extract the ACP backend session id used for a resume request.
+///
+/// Compatibility and identity are intentionally separate: a record may be
+/// compatible while only carrying a runtime/cache identity, in which case a
+/// warm handle can still be reused but no `resumeSessionId` is sent.
+pub fn resume_session_id(params: &serde_json::Value) -> Option<String> {
+    params
+        .as_object()
+        .and_then(|record| record.get("acpSessionId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn paths_equal(a: &str, b: &str) -> bool {
     let pa = Path::new(a);
     let pb = Path::new(b);

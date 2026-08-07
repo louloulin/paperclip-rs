@@ -265,3 +265,166 @@ mod tests {
         assert!(read_string(Some(&Value::from(42))).is_none());
     }
 }
+
+// ============================================================================
+// build_session_params (R377 — helper to project PreparedRuntime + handle
+// into AcpxSessionParams for the run result)
+// ============================================================================
+
+use crate::acp_runtime::AcpRuntimeHandle;
+use crate::prepared_runtime::PreparedRuntime;
+
+/// Build an `AcpxSessionParams` from a `PreparedRuntime` + the
+/// `AcpRuntimeHandle` returned by `ensure_session`. Mirrors the inline
+/// `buildSessionParams({ prepared, handle })` call at the bottom of
+/// Node `executeAcpxEngine`.
+pub fn build_session_params(
+    prepared: &PreparedRuntime,
+    handle: &AcpRuntimeHandle,
+) -> AcpxSessionParams {
+    AcpxSessionParams {
+        runtime_session_name: handle.runtime_session_name.clone().or_else(|| {
+            handle
+                .acpx_record_id
+                .clone()
+                .or_else(|| handle.backend_session_id.clone())
+        }),
+        session_key: Some(prepared.session_key.clone()),
+        acpx_record_id: handle.acpx_record_id.clone(),
+        acp_session_id: handle.backend_session_id.clone(),
+        agent_session_id: handle.agent_session_id.clone(),
+        agent: Some(prepared.acpx_agent.clone()),
+        cwd: Some(prepared.cwd.to_string_lossy().to_string()),
+        mode: Some(prepared.mode.as_str().to_string()),
+        state_dir: Some(prepared.state_dir.to_string_lossy().to_string()),
+        config_fingerprint: Some(prepared.fingerprint.clone()),
+        workspace_id: if prepared.workspace_id.is_empty() {
+            None
+        } else {
+            Some(prepared.workspace_id.clone())
+        },
+        repo_url: if prepared.workspace_repo_url.is_empty() {
+            None
+        } else {
+            Some(prepared.workspace_repo_url.clone())
+        },
+        repo_ref: if prepared.workspace_repo_ref.is_empty() {
+            None
+        } else {
+            Some(prepared.workspace_repo_ref.clone())
+        },
+        remote_execution: None,
+    }
+}
+
+#[cfg(test)]
+mod build_session_params_tests {
+    use super::*;
+    use crate::prepared_runtime::{
+        PreparedRuntimeMode, PreparedRuntimeNonInteractivePermissions,
+        PreparedRuntimePermissionMode,
+    };
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn prepared() -> PreparedRuntime {
+        PreparedRuntime::builder("claude")
+            .mode(PreparedRuntimeMode::Persistent)
+            .cwd("/repo")
+            .workspace_id("ws_1")
+            .workspace_repo_url("git@github.com:foo/bar.git")
+            .workspace_repo_ref("main")
+            .permission_mode(PreparedRuntimePermissionMode::ApproveAll)
+            .non_interactive_permissions(PreparedRuntimeNonInteractivePermissions::Deny)
+            .state_dir("/state")
+            .session_key("paperclip:co:claude:ws_1:abc")
+            .fingerprint("abc")
+            .env(BTreeMap::new())
+            .build()
+    }
+
+    fn handle() -> AcpRuntimeHandle {
+        AcpRuntimeHandle {
+            session_key: "sk".into(),
+            backend: "claude".into(),
+            runtime_session_name: Some("rsn".into()),
+            cwd: Some("/repo".into()),
+            acpx_record_id: Some("rec-1".into()),
+            backend_session_id: Some("bsid-1".into()),
+            agent_session_id: Some("asid-1".into()),
+        }
+    }
+
+    #[test]
+    fn builds_session_params_from_prepared_and_handle() {
+        let params = build_session_params(&prepared(), &handle());
+        assert_eq!(params.runtime_session_name.as_deref(), Some("rsn"));
+        assert_eq!(
+            params.session_key.as_deref(),
+            Some("paperclip:co:claude:ws_1:abc")
+        );
+        assert_eq!(params.acpx_record_id.as_deref(), Some("rec-1"));
+        assert_eq!(params.acp_session_id.as_deref(), Some("bsid-1"));
+        assert_eq!(params.agent_session_id.as_deref(), Some("asid-1"));
+        assert_eq!(params.agent.as_deref(), Some("claude"));
+        assert_eq!(params.cwd.as_deref(), Some("/repo"));
+        assert_eq!(params.mode.as_deref(), Some("persistent"));
+        assert_eq!(params.state_dir.as_deref(), Some("/state"));
+        assert_eq!(params.config_fingerprint.as_deref(), Some("abc"));
+        assert_eq!(params.workspace_id.as_deref(), Some("ws_1"));
+        assert_eq!(
+            params.repo_url.as_deref(),
+            Some("git@github.com:foo/bar.git")
+        );
+        assert_eq!(params.repo_ref.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn drops_empty_workspace_fields() {
+        let mut p = prepared();
+        p.workspace_id = String::new();
+        p.workspace_repo_url = String::new();
+        p.workspace_repo_ref = String::new();
+        let params = build_session_params(&p, &handle());
+        assert!(params.workspace_id.is_none());
+        assert!(params.repo_url.is_none());
+        assert!(params.repo_ref.is_none());
+    }
+
+    #[test]
+    fn falls_back_to_acpx_record_id_when_runtime_session_name_missing() {
+        let mut h = handle();
+        h.runtime_session_name = None;
+        let params = build_session_params(&prepared(), &h);
+        assert_eq!(params.runtime_session_name.as_deref(), Some("rec-1"));
+    }
+
+    #[test]
+    fn build_session_params_serializes_back_to_json() {
+        let params = build_session_params(&prepared(), &handle());
+        let serialized = serialize(Some(&params)).expect("serialized");
+        assert!(serialized.get("agent").is_some());
+        assert!(serialized.get("sessionKey").is_some());
+        assert_eq!(
+            serialized.get("agent").and_then(|v| v.as_str()),
+            Some("claude")
+        );
+    }
+
+    #[test]
+    fn build_session_params_state_dir_path_string() {
+        let p = prepared();
+        let params = build_session_params(&p, &handle());
+        // PathBuf→String is forward-slash even on Windows (to_string_lossy
+        // uses OS-native separators; we just assert it's non-empty).
+        assert!(params.state_dir.is_some());
+    }
+
+    #[test]
+    fn build_session_params_default_cwd() {
+        let p = PreparedRuntime::builder("claude").build();
+        let params = build_session_params(&p, &handle());
+        // Empty PathBuf serializes to ""; that's still Some("").
+        assert!(params.cwd.is_some());
+    }
+}

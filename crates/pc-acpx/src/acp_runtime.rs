@@ -452,9 +452,7 @@ pub trait AcpRuntime: Send + Sync {
         &self,
         _input: AcpRuntimeSetConfigOptionInput,
     ) -> Result<(), AcpRuntimeError> {
-        Err(AcpRuntimeError::SessionError(
-            "set_config_option not supported".into(),
-        ))
+        Ok(())
     }
 
     async fn doctor(&self) -> Option<AcpRuntimeDoctorReport> {
