@@ -1881,9 +1881,11 @@ name = "pc-acpx"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "futures",
  "hex",
+ "rand 0.8.7",
  "regex",
  "serde",
  "serde_json",

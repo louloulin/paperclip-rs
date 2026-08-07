@@ -27,7 +27,10 @@ fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 fn sandbox_shell_bash_branch_compiles_full_command() {
     let shell = preferred_shell_for_sandbox(Some("bash"));
     let script = shell_command_args("echo hello");
-    assert_eq!(format!("{} {:?}", shell, script), "bash [\"-c\", \"echo hello\"]");
+    assert_eq!(
+        format!("{} {:?}", shell, script),
+        "bash [\"-c\", \"echo hello\"]"
+    );
 }
 
 #[test]
@@ -88,8 +91,14 @@ fn exclude_patterns_handle_git_archive_exclude_set() {
         "*/.git",
         "*/.git/*",
     ];
-    assert!(should_exclude_path("node_modules/foo/bar.js", &git_excludes));
-    assert!(should_exclude_path("packages/app/node_modules/x.js", &git_excludes));
+    assert!(should_exclude_path(
+        "node_modules/foo/bar.js",
+        &git_excludes
+    ));
+    assert!(should_exclude_path(
+        "packages/app/node_modules/x.js",
+        &git_excludes
+    ));
     assert!(should_exclude_path("dist/output.txt", &git_excludes));
     assert!(should_exclude_path("a/b/dist/x.js", &git_excludes));
     assert!(should_exclude_path(".git/HEAD", &git_excludes));
@@ -128,7 +137,10 @@ fn command_redaction_preserves_log_lines_without_secrets() {
         "build complete",
     ];
     for line in lines {
-        assert!(!maybe_contains_secret_text(line), "{line} should not trigger detection");
+        assert!(
+            !maybe_contains_secret_text(line),
+            "{line} should not trigger detection"
+        );
         assert_eq!(redact_command_text(line, None), line);
     }
 }
@@ -196,5 +208,8 @@ fn sandbox_install_command_handles_scoped_package() {
     let script = build_sandbox_npm_install_command("@paperclipai/cli");
     assert!(script.contains("npm install -g '@paperclipai/cli';"));
     // Should appear 3 times (root, sudo, fallback)
-    assert_eq!(script.matches("npm install -g '@paperclipai/cli'").count(), 3);
+    assert_eq!(
+        script.matches("npm install -g '@paperclipai/cli'").count(),
+        3
+    );
 }

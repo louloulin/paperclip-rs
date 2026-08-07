@@ -43,7 +43,10 @@ fn path_contains_segment_or_descendant(relative: &str, segment: &str) -> bool {
 /// - anything else → exact match via [`is_relative_path_or_descendant`]
 #[must_use]
 pub fn exclude_pattern_matches(relative: &str, pattern: &str) -> bool {
-    if let Some(stripped) = pattern.strip_prefix("*/").and_then(|s| s.strip_suffix("/*")) {
+    if let Some(stripped) = pattern
+        .strip_prefix("*/")
+        .and_then(|s| s.strip_suffix("/*"))
+    {
         return path_contains_segment_or_descendant(relative, stripped);
     }
     if let Some(stripped) = pattern.strip_prefix("*/") {
@@ -71,7 +74,10 @@ mod tests {
 
     #[test]
     fn relative_path_or_descendant_handles_exact_match() {
-        assert!(is_relative_path_or_descendant("node_modules", "node_modules"));
+        assert!(is_relative_path_or_descendant(
+            "node_modules",
+            "node_modules"
+        ));
     }
 
     #[test]
@@ -89,19 +95,25 @@ mod tests {
             "node_modules"
         ));
         // Prefix-only collision: "node" should not match "node_modules"
-        assert!(!is_relative_path_or_descendant(
-            "node",
-            "node_modules"
-        ));
+        assert!(!is_relative_path_or_descendant("node", "node_modules"));
     }
 
     #[test]
     fn pattern_matches_descendant_shape() {
-        assert!(exclude_pattern_matches("a/node_modules/b", "*/node_modules/*"));
+        assert!(exclude_pattern_matches(
+            "a/node_modules/b",
+            "*/node_modules/*"
+        ));
         assert!(exclude_pattern_matches("node_modules", "*/node_modules/*"));
-        assert!(exclude_pattern_matches("a/node_modules", "*/node_modules/*"));
+        assert!(exclude_pattern_matches(
+            "a/node_modules",
+            "*/node_modules/*"
+        ));
         // "node_modules/foo" matches because it starts with "node_modules/"
-        assert!(exclude_pattern_matches("node_modules/foo", "*/node_modules/*"));
+        assert!(exclude_pattern_matches(
+            "node_modules/foo",
+            "*/node_modules/*"
+        ));
     }
 
     #[test]

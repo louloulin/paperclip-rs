@@ -27,8 +27,24 @@ pub const REDACTED_COMMAND_TEXT_VALUE: &str = "***REDACTED***";
 /// `COMMAND_SECRET_HINTS`. The presence of any hint in the lowercased
 /// text flips the helper into the active replacement branch.
 pub const COMMAND_SECRET_HINTS: &[&str] = &[
-    "api", "key", "token", "auth", "bearer", "secret", "pass", "credential", "jwt", "private",
-    "cookie", "connectionstring", "sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_",
+    "api",
+    "key",
+    "token",
+    "auth",
+    "bearer",
+    "secret",
+    "pass",
+    "credential",
+    "jwt",
+    "private",
+    "cookie",
+    "connectionstring",
+    "sk-",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
 ];
 
 /// True when the lowercased text contains any of
@@ -69,60 +85,38 @@ fn redact_command_text_inner(command: &str, placeholder: &str) -> String {
     let secret_name = "[A-Za-z0-9_-]*(?:api[-_]?key|(?:access[-_]?|auth[-_]?)?token|token|authorization|bearer|secret|passwd|password|credential|jwt|private[-_]?key|cookie|connectionstring)[A-Za-z0-9_-]*";
 
     // 1. Authorization: Bearer <value>
-    let auth_re = regex::Regex::new(
-        "(?i)\\bAuthorization\\s*:\\s*Bearer\\s+[^\\s\"\\']+"
-    ).unwrap();
+    let auth_re = regex::Regex::new("(?i)\\bAuthorization\\s*:\\s*Bearer\\s+[^\\s\"\\']+").unwrap();
 
     // CLI options with double quotes: --api-key "value"
-    let cli_dq_re = regex::Regex::new(
-        format!(
-            "(?i)(\\B-{{1,2}}{secret_name}(?:\\s+|=)\"([^\"]*)\")"
-        )
-        .as_str(),
-    ).unwrap();
+    let cli_dq_re =
+        regex::Regex::new(format!("(?i)(\\B-{{1,2}}{secret_name}(?:\\s+|=)\"([^\"]*)\")").as_str())
+            .unwrap();
     // CLI options with single quotes: --api-key 'value'
-    let cli_sq_re = regex::Regex::new(
-        format!(
-            "(?i)(\\B-{{1,2}}{secret_name}(?:\\s+|=)'([^']*)')"
-        )
-        .as_str(),
-    ).unwrap();
+    let cli_sq_re =
+        regex::Regex::new(format!("(?i)(\\B-{{1,2}}{secret_name}(?:\\s+|=)'([^']*)')").as_str())
+            .unwrap();
     // CLI options unquoted: --api-key value
-    let cli_uq_re = regex::Regex::new(
-        format!(
-            "(?i)(\\B-{{1,2}}{secret_name}(?:\\s+|=))[^\\s\"\\']+"
-        )
-        .as_str(),
-    ).unwrap();
+    let cli_uq_re =
+        regex::Regex::new(format!("(?i)(\\B-{{1,2}}{secret_name}(?:\\s+|=))[^\\s\"\\']+").as_str())
+            .unwrap();
 
     // Env-var with double quotes: KEY="value"
-    let env_dq_re = regex::Regex::new(
-        format!(
-            "(?i)(\\b{secret_name}\\s*=\\s*)\"([^\"]*)\""
-        )
-        .as_str(),
-    ).unwrap();
+    let env_dq_re =
+        regex::Regex::new(format!("(?i)(\\b{secret_name}\\s*=\\s*)\"([^\"]*)\"").as_str()).unwrap();
     // Env-var with single quotes: KEY='value'
-    let env_sq_re = regex::Regex::new(
-        format!(
-            "(?i)(\\b{secret_name}\\s*=\\s*)'([^']*)'"
-        )
-        .as_str(),
-    ).unwrap();
+    let env_sq_re =
+        regex::Regex::new(format!("(?i)(\\b{secret_name}\\s*=\\s*)'([^']*)'").as_str()).unwrap();
     // Env-var unquoted: KEY=value
-    let env_uq_re = regex::Regex::new(
-        format!(
-            "(?i)(\\b{secret_name}\\s*=\\s*)[^\\s\"\\']+"
-        )
-        .as_str(),
-    ).unwrap();
+    let env_uq_re =
+        regex::Regex::new(format!("(?i)(\\b{secret_name}\\s*=\\s*)[^\\s\"\\']+").as_str()).unwrap();
 
     // Token formats
     let openai_re = regex::Regex::new("\\bsk-[A-Za-z0-9_-]{12,}\\b").unwrap();
     let github_re = regex::Regex::new("\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b").unwrap();
     let jwt_re = regex::Regex::new(
         "\\b[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}(?:\\.[A-Za-z0-9_-]{8,})?\\b",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Authorization: Bearer
     let s1 = auth_re.replace_all(command, |caps: &regex::Captures<'_>| {

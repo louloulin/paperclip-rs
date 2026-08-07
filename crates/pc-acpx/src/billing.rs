@@ -68,7 +68,10 @@ mod tests {
     fn explicit_key_wins_even_when_base_url_points_elsewhere() {
         let mut env = empty_env();
         env.insert("OPENROUTER_API_KEY".to_string(), "sk-or-v1-xyz".to_string());
-        env.insert("OPENAI_BASE_URL".to_string(), "https://api.example.com".to_string());
+        env.insert(
+            "OPENAI_BASE_URL".to_string(),
+            "https://api.example.com".to_string(),
+        );
         assert_eq!(
             infer_openai_compatible_biller(&env, Some("openai")),
             Some("openrouter".to_string())
@@ -124,7 +127,10 @@ mod tests {
     #[test]
     fn falls_back_when_no_signal_matches() {
         let mut env = empty_env();
-        env.insert("OPENAI_BASE_URL".to_string(), "https://api.openai.com".to_string());
+        env.insert(
+            "OPENAI_BASE_URL".to_string(),
+            "https://api.openai.com".to_string(),
+        );
         assert_eq!(
             infer_openai_compatible_biller(&env, Some("openai")),
             Some("openai".to_string())
