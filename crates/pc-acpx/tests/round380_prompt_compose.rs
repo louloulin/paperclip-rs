@@ -21,7 +21,7 @@
 //! - `ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS` 4 项已知
 //! - 字符数 metrics (与 Node buildPrompt 命名一致) 全部对得上
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use pc_acpx::{
     is_assignment_shaped_paperclip_wake_reason, is_paperclip_recovery_wake_payload,
@@ -60,7 +60,7 @@ fn build_prompt_preview(
     bootstrap_prompt_template: &str,
     template_data: &Value,
     context: &Value,
-    env: &HashMap<String, String>,
+    env: &BTreeMap<String, String>,
     resumed_session: bool,
     instructions_prefix: &str,
 ) -> BuildPromptPreviewOutput {
@@ -140,8 +140,8 @@ fn fixture_template_data() -> Value {
     })
 }
 
-fn fixture_env() -> HashMap<String, String> {
-    let mut env = HashMap::new();
+fn fixture_env() -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
     env.insert(
         "PAPERCLIP_API_URL".to_string(),
         "https://api.paperclip.local".to_string(),

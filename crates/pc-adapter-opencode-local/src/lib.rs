@@ -126,8 +126,10 @@ impl Adapter for OpencodeLocalAdapter {
         let execution = execute_process_capture(&spec, &context, events).await?;
         let parsed = parse_opencode_stream_json(&execution.stdout);
         let mut result = execution.result;
-        result.provider = Some(ADAPTER_TYPE.into());
+        let provider = pc_acpx::model_id::parse_model_provider(model.as_deref());
+        result.provider = Some(provider.clone().unwrap_or_else(|| ADAPTER_TYPE.to_owned()));
         result.model = model;
+        result.billing_type = Some("unknown".to_owned());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.session_id = parsed.session_id;
         result.cost_usd = parsed.cost_usd;
@@ -137,6 +139,7 @@ impl Adapter for OpencodeLocalAdapter {
             .filter(|s| !s.is_empty()));
         result.result_json = Some(serde_json::json!({
             "toolErrors": parsed.tool_errors,
+            "biller": crate::execute_helpers::resolve_opencode_biller(&context.env, provider.as_deref()),
         }));
         Ok(result)
     }

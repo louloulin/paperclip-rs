@@ -18,7 +18,7 @@
 //! `config.promptTemplate` and the wake / taskContext / handoff / env
 //! / api notes will all light up.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -148,12 +148,10 @@ pub fn build_prompt(input: &BuildPromptInput<'_>) -> BuildPromptOutput {
         .trim()
         .to_string();
 
-    // Convert BTreeMap → HashMap for the two env renderers (they take
-    // &HashMap<String, String>). Cheap because envs are small.
-    let env_hash: HashMap<String, String> =
-        env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let paperclip_env_note = render_paperclip_env_note(&env_hash);
-    let api_access_note = render_api_access_note(&env_hash);
+    // `render_paperclip_env_note` / `render_api_access_note` take
+    // `&BTreeMap<String, String>` so we can pass `env` directly.
+    let paperclip_env_note = render_paperclip_env_note(env);
+    let api_access_note = render_api_access_note(env);
 
     let prompt = join_prompt_sections(&[
         Some(prompt_instructions_prefix),

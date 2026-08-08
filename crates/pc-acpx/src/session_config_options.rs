@@ -3,7 +3,7 @@
 //! and `renderApiAccessNote`. These helpers back the runtime override
 //! surface area (`set_config_option`) and the human-readable prompt notes.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -90,7 +90,12 @@ pub fn usage_breakdowns_equal(left: &[(String, f64)], right: &[(String, f64)]) -
 
 /// Render a short note listing the `PAPERCLIP_*` environment variables that
 /// are exported into the run. Mirrors Node `renderPaperclipEnvNote`.
-pub fn render_paperclip_env_note(env: &HashMap<String, String>) -> String {
+///
+/// Accepts `&BTreeMap<String, String>` so adapters can pass `context.env`
+/// without copying, matching the convention of `env_helpers::has_non_empty_env_value`.
+/// The rendered note ends in two trailing newlines (`\n\n`) so it composes
+/// cleanly when `join_prompt_sections` drops it between sections.
+pub fn render_paperclip_env_note(env: &BTreeMap<String, String>) -> String {
     let mut keys: Vec<&str> = env
         .keys()
         .filter(|key| key.starts_with("PAPERCLIP_"))
@@ -100,46 +105,57 @@ pub fn render_paperclip_env_note(env: &HashMap<String, String>) -> String {
     if keys.is_empty() {
         return String::new();
     }
-    [
-        "Paperclip runtime note:",
-        &format!(
-            "The following PAPERCLIP_* environment variables are available in this run: {}",
-            keys.join(", ")
-        ),
-        "Do not assume these variables are missing without checking your shell environment.",
-    ]
-    .join("\n")
+    format!(
+        "Paperclip runtime note:\n\
+         The following PAPERCLIP_* environment variables are available in this run: {keys}\n\
+         Do not assume these variables are missing without checking your shell environment.\n\n\n",
+        keys = keys.join(", ")
+    )
 }
 
 /// Render a short note showing how to call the Paperclip API. Mirrors Node
-/// `renderApiAccessNote`.
-pub fn render_api_access_note(env: &HashMap<String, String>) -> String {
-    let _api_url = match env.get("PAPERCLIP_API_URL") {
-        Some(value) if !value.is_empty() => value,
-        _ => return String::new(),
-    };
-    let api_key = match env.get("PAPERCLIP_API_KEY") {
-        Some(value) if !value.is_empty() => value,
-        _ => return String::new(),
-    };
+/// `renderApiAccessNote` (per-adapter shape).
+///
+/// Returns `""` unless both `PAPERCLIP_API_URL` and `PAPERCLIP_API_KEY` are
+/// present with non-whitespace values. The note ends in two trailing newlines
+/// (`\n\n`) so adapters can drop it into a multi-section prompt without
+/// spurious blank-line collapsing.
+pub fn render_api_access_note(env: &BTreeMap<String, String>) -> String {
+    let api_url_present = env
+        .get("PAPERCLIP_API_URL")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let api_key_present = env
+        .get("PAPERCLIP_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !api_url_present || !api_key_present {
+        return String::new();
+    }
+    let api_key = env
+        .get("PAPERCLIP_API_KEY")
+        .map(|value| value.as_str())
+        .unwrap_or_default();
     let mut lines: Vec<String> = vec![
         "Paperclip API access note:".to_string(),
-        "Use terminal commands with curl to make Paperclip API requests."
-            .to_string(),
+        "Use terminal commands with curl to make Paperclip API requests.".to_string(),
         "Normalize the base URL before adding API paths:".to_string(),
-        format!(
-            "  PAPERCLIP_API_BASE=\"${{{api_url_env}%/}}\"; PAPERCLIP_API_BASE=\"${{{api_url_env}%/api}}\"",
-            api_url_env = "PAPERCLIP_API_URL"
-        ),
+        "  PAPERCLIP_API_BASE=\"${PAPERCLIP_API_URL%/}\"; PAPERCLIP_API_BASE=\"${PAPERCLIP_API_BASE%/api}\"".to_string(),
         "GET example:".to_string(),
         format!(
-            "  curl -s -H \"Authorization: Bearer {api_key}\" \"$PAPERCLIP_API_BASE/api/agents/me\""
+            "  curl -s -H \"Authorization: Bearer {api_key}\" \"$PAPERCLIP_API_BASE/api/agents/me\"",
+            api_key = api_key
         ),
     ];
-    if let Some(task_id) = env.get("PAPERCLIP_TASK_ID").filter(|v| !v.is_empty()) {
+    if let Some(task_id) = env
+        .get("PAPERCLIP_TASK_ID")
+        .filter(|value| !value.trim().is_empty())
+    {
         lines.push("Scoped issue comment example:".to_string());
         lines.push(format!(
-            "  curl -s -X POST -H \"Authorization: Bearer {api_key}\" -H \"Content-Type: application/json\" -H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\" -d '{{\"body\":\"Status update from agent.\"}}' \"$PAPERCLIP_API_BASE/api/issues/{task_id}/comments\""
+            "  curl -s -X POST -H \"Authorization: Bearer {api_key}\" -H \"Content-Type: application/json\" -H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\" -d '{{\"body\":\"Status update from agent.\"}}' \"$PAPERCLIP_API_BASE/api/issues/{task_id}/comments\"",
+            api_key = api_key,
+            task_id = task_id.as_str()
         ));
     } else {
         lines.push(
@@ -147,5 +163,125 @@ pub fn render_api_access_note(env: &HashMap<String, String>) -> String {
                 .to_string(),
         );
     }
+    lines.push(String::new());
+    lines.push(String::new());
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn render_paperclip_env_note_empty_returns_empty_string() {
+        let env = env_from(&[("PATH", "/usr/bin")]);
+        assert_eq!(render_paperclip_env_note(&env), "");
+    }
+
+    #[test]
+    fn render_paperclip_env_note_lists_keys_sorted_without_values() {
+        let env = env_from(&[
+            ("PAPERCLIP_RUN_ID", "run-1"),
+            ("PAPERCLIP_API_KEY", "key-1"),
+            ("PAPERCLIP_TASK_ID", "task-1"),
+        ]);
+        let note = render_paperclip_env_note(&env);
+        assert!(note.contains("PAPERCLIP_API_KEY, PAPERCLIP_RUN_ID, PAPERCLIP_TASK_ID"));
+        // 仅列变量名，不应包含任何值。
+        assert!(!note.contains("run-1"));
+        assert!(!note.contains("key-1"));
+        assert!(!note.contains("task-1"));
+    }
+
+    #[test]
+    fn render_paperclip_env_note_ends_with_two_newlines() {
+        let env = env_from(&[("PAPERCLIP_RUN_ID", "run-1")]);
+        let note = render_paperclip_env_note(&env);
+        assert!(note.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn render_paperclip_env_note_ignores_non_paperclip_keys() {
+        let env = env_from(&[
+            ("PAPERCLIP_RUN_ID", "run-1"),
+            ("NOT_PAPERCLIP", "value"),
+            ("PAPERCLIP_TOKEN", "tok-1"),
+        ]);
+        let note = render_paperclip_env_note(&env);
+        assert!(note.contains("PAPERCLIP_RUN_ID"));
+        assert!(note.contains("PAPERCLIP_TOKEN"));
+        assert!(!note.contains("NOT_PAPERCLIP"));
+    }
+
+    #[test]
+    fn render_api_access_note_requires_both_url_and_key() {
+        assert_eq!(render_api_access_note(&env_from(&[])), "");
+        assert_eq!(
+            render_api_access_note(&env_from(&[("PAPERCLIP_API_URL", "https://api.test")])),
+            ""
+        );
+        assert_eq!(
+            render_api_access_note(&env_from(&[("PAPERCLIP_API_KEY", "sk-test")])),
+            ""
+        );
+    }
+
+    #[test]
+    fn render_api_access_note_ignores_whitespace_only_values() {
+        let env = env_from(&[
+            ("PAPERCLIP_API_URL", "  "),
+            ("PAPERCLIP_API_KEY", "sk-test"),
+        ]);
+        assert_eq!(render_api_access_note(&env), "");
+        let env = env_from(&[
+            ("PAPERCLIP_API_URL", "https://api.test"),
+            ("PAPERCLIP_API_KEY", "  "),
+        ]);
+        assert_eq!(render_api_access_note(&env), "");
+    }
+
+    #[test]
+    fn render_api_access_note_with_credentials_returns_get_example() {
+        let env = env_from(&[
+            ("PAPERCLIP_API_URL", "https://api.test"),
+            ("PAPERCLIP_API_KEY", "sk-test"),
+        ]);
+        let note = render_api_access_note(&env);
+        assert!(note.contains("Paperclip API access note"));
+        assert!(note.contains("curl"));
+        assert!(note.contains("GET example"));
+        assert!(note.contains("/api/agents/me"));
+        assert!(!note.contains("sk-test"));
+    }
+
+    #[test]
+    fn render_api_access_note_includes_task_id_comment_example() {
+        let env = env_from(&[
+            ("PAPERCLIP_API_URL", "https://api.test"),
+            ("PAPERCLIP_API_KEY", "sk-test"),
+            ("PAPERCLIP_TASK_ID", "issue-42"),
+        ]);
+        let note = render_api_access_note(&env);
+        assert!(note.contains("Scoped issue comment example"));
+        assert!(note.contains("issue-42"));
+        assert!(note.contains("X-Paperclip-Run-Id"));
+    }
+
+    #[test]
+    fn render_api_access_note_falls_back_to_real_id_warning_without_task_id() {
+        let env = env_from(&[
+            ("PAPERCLIP_API_URL", "https://api.test"),
+            ("PAPERCLIP_API_KEY", "sk-test"),
+        ]);
+        let note = render_api_access_note(&env);
+        assert!(note.contains("Use a real issue id from the current context"));
+        assert!(!note.contains("Scoped issue comment example"));
+    }
 }

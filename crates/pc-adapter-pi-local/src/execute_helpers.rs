@@ -11,41 +11,18 @@ use pc_acpx::{billing::infer_openai_compatible_biller, paths};
 
 use crate::pi_stream_json::is_pi_unknown_session_error;
 
-/// 解析 "provider/model" 形式的 provider 前缀。
+/// 解析 "provider/model" 形式的 provider 前缀（pi-local 兼容性 re-export）。
 ///
-/// Node 等价：`parseModelProvider`。无 `/` 或全空白返回 `None`。
+/// Node 等价：`parseModelProvider`（pi-local）。权威实现在 `pc_acpx::model_id`。
 pub fn model_provider(model: Option<&str>) -> Option<String> {
-    let trimmed = model?.trim();
-    if !trimmed.contains('/') {
-        return None;
-    }
-    let idx = trimmed.find('/').unwrap();
-    let prefix = trimmed[..idx].trim();
-    if prefix.is_empty() {
-        None
-    } else {
-        Some(prefix.to_owned())
-    }
+    pc_acpx::model_id::parse_model_provider(model)
 }
 
-/// 解析 "provider/model" 形式的 model id。
+/// 解析 "provider/model" 形式的 model id（pi-local 兼容性 re-export）。
 ///
-/// Node 等价：`parseModelId`。无 `/` 时返回整串作为 model id。
+/// Node 等价：`parseModelId`（pi-local）。权威实现在 `pc_acpx::model_id`。
 pub fn model_id(model: Option<&str>) -> Option<String> {
-    let trimmed = model?.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if !trimmed.contains('/') {
-        return Some(trimmed.to_owned());
-    }
-    let idx = trimmed.find('/').unwrap();
-    let suffix = trimmed[idx + 1..].trim();
-    if suffix.is_empty() {
-        None
-    } else {
-        Some(suffix.to_owned())
-    }
+    pc_acpx::model_id::parse_model_id(model)
 }
 
 /// 解析 biller：env 中 OpenAI 兼容 hint 优先，否则 fallback 到 provider，最后 "unknown"。

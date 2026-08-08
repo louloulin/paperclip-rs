@@ -1,6 +1,6 @@
 //! R369 path + claude settings + session config helpers tests.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use pc_acpx::{
@@ -243,7 +243,7 @@ fn usage_breakdowns_equal_handles_empty_and_unequal() {
 
 #[test]
 fn render_paperclip_env_note_lists_keys_or_returns_empty() {
-    let mut env = HashMap::new();
+    let mut env = BTreeMap::new();
     env.insert("PAPERCLIP_API_URL".into(), "x".into());
     env.insert("PAPERCLIP_RUN_ID".into(), "1".into());
     env.insert("OTHER".into(), "y".into());
@@ -251,15 +251,15 @@ fn render_paperclip_env_note_lists_keys_or_returns_empty() {
     assert!(note.contains("PAPERCLIP_API_URL"));
     assert!(note.contains("PAPERCLIP_RUN_ID"));
     assert!(!note.contains("OTHER"));
-    let empty = render_paperclip_env_note(&HashMap::new());
+    let empty = render_paperclip_env_note(&BTreeMap::new());
     assert!(empty.is_empty());
 }
 
 #[test]
 fn render_api_access_note_requires_both_keys() {
-    let env = HashMap::new();
+    let env: BTreeMap<String, String> = BTreeMap::new();
     assert!(render_api_access_note(&env).is_empty());
-    let mut env = HashMap::new();
+    let mut env = BTreeMap::new();
     env.insert("PAPERCLIP_API_URL".into(), "https://api.example/".into());
     env.insert("PAPERCLIP_API_KEY".into(), "secret".into());
     let note = render_api_access_note(&env);

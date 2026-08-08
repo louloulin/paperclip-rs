@@ -12,6 +12,11 @@ use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::Value;
 
 pub mod grok_jsonl;
+pub mod execute_helpers;
+
+pub use execute_helpers::{
+    resolve_grok_billing_type, GrokBillingType,
+};
 
 pub use grok_jsonl::{is_grok_unknown_session_error, parse_grok_jsonl, ParsedGrokJsonl};
 
@@ -116,8 +121,10 @@ impl Adapter for GrokLocalAdapter {
         let execution = execute_process_capture(&spec, &context, events).await?;
         let parsed = parse_grok_jsonl(&execution.stdout);
         let mut result = execution.result;
+        let billing_type = crate::execute_helpers::resolve_grok_billing_type(&context.env);
         result.provider = Some(ADAPTER_TYPE.into());
         result.model = model;
+        result.billing_type = Some(billing_type.as_str().to_owned());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.session_id = parsed.session_id;
         result.error_message = parsed
