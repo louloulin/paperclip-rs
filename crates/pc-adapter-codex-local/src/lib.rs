@@ -253,14 +253,56 @@ impl Adapter for CodexLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = string(&context.adapter_config, "command").unwrap_or("codex");
-        let built = build_codex_exec_args(
+        // 首轮 attempt：若 `context.session_id` 非空，传 `resume <sid>`，与 Node
+        // `buildArgs(resumeSessionId)` 行为一致。
+        let initial_built = build_codex_exec_args(
             &context.adapter_config,
             context.session_id.as_deref(),
             false,
         );
-        let spec = ProcessSpec::new(command, &built.args).with_stdin(context.prompt.clone());
-        let execution = execute_process_capture(&spec, &context, events).await?;
-        let parsed = parse_codex_jsonl(&execution.stdout);
+        let initial_spec = ProcessSpec::new(command, &initial_built.args)
+            .with_stdin(context.prompt.clone());
+        let initial_execution = execute_process_capture(&initial_spec, &context, events.clone()).await?;
+        let initial_parsed = parse_codex_jsonl(&initial_execution.stdout);
+
+        // 决策：unknown session + 有 resume id → 真实重跑一轮（不带 resume）。
+        let mut retried_after_unknown_session = false;
+        let mut clear_session_on_retry = false;
+        let mut active_execution = initial_execution;
+        let mut active_parsed = initial_parsed;
+        let mut active_built = initial_built;
+        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            if !active_execution.result.timed_out
+                && active_execution.result.exit_code.unwrap_or(0) != 0
+                && crate::codex_errors::is_codex_unknown_session_error(
+                    &active_execution.stdout,
+                    &active_execution.stderr,
+                )
+            {
+                let _ = events
+                    .clone()
+                    .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                        "[paperclip] Codex resume session \"{sid}\" is unavailable; retrying with a fresh session.\n"
+                    )))
+                    .await;
+                let retry_built = build_codex_exec_args(&context.adapter_config, None, false);
+                let retry_spec = ProcessSpec::new(command, &retry_built.args)
+                    .with_stdin(context.prompt.clone());
+                let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
+                let retry_execution =
+                    execute_process_capture(&retry_spec, &context, retry_sink).await?;
+                let retry_parsed = parse_codex_jsonl(&retry_execution.stdout);
+                active_execution = retry_execution;
+                active_parsed = retry_parsed;
+                active_built = retry_built;
+                retried_after_unknown_session = true;
+                clear_session_on_retry = true;
+            }
+        }
+
+        let execution = active_execution;
+        let parsed = active_parsed;
+        let built = active_built;
         let mut result = execution.result;
         result.session_id = parsed.session_id;
         let billing_type = crate::execute_helpers::resolve_codex_billing_type(&context.env);
@@ -275,12 +317,38 @@ impl Adapter for CodexLocalAdapter {
         });
         result.error_message = parsed
             .error_message
-            .or_else(|| (result.exit_code != Some(0)).then(|| execution.stderr.trim().to_owned()));
+            .or_else(|| {
+                (result.exit_code != Some(0))
+                    .then(|| execution.stderr.trim().to_owned())
+                    .filter(|s| !s.is_empty())
+            });
+
+        // 错误族 + transient fallback 决策：覆盖首轮与重试后最终结果。
+        let decision = crate::execute_helpers::decide_codex_retry(
+            crate::execute_helpers::CodexRetryInput {
+                session_id: context.session_id.as_deref().unwrap_or(""),
+                timed_out: result.timed_out,
+                exit_code: result.exit_code,
+                stdout: &execution.stdout,
+                stderr: &execution.stderr,
+                error_message: result.error_message.as_deref(),
+                saw_protocol_event: parsed.saw_protocol_event,
+                saw_protocol_terminal_event: parsed.saw_protocol_terminal_event,
+                now: std::time::SystemTime::now(),
+            },
+        );
+        if clear_session_on_retry || decision.clear_session {
+            result.clear_session = true;
+        }
+        let transient_fallback_mode = decision
+            .transient_fallback_mode
+            .map(|mode| mode.as_str().to_owned());
+
         let paperclip_env_note =
             pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
         let api_access_note =
             pc_acpx::session_config_options::render_api_access_note(&context.env);
-        result.result_json = Some(serde_json::json!({
+        let mut result_json = serde_json::json!({
             "sawProtocolEvent": parsed.saw_protocol_event,
             "sawProtocolTerminalEvent": parsed.saw_protocol_terminal_event,
             "fastModeRequested": built.fast_mode_requested,
@@ -288,7 +356,13 @@ impl Adapter for CodexLocalAdapter {
             "biller": crate::execute_helpers::resolve_codex_biller(&context.env, billing_type),
             "paperclipEnvNote": paperclip_env_note,
             "apiAccessNote": api_access_note,
-        }));
+            "errorFamily": decision.error_family.as_str(),
+            "retriedAfterUnknownSession": retried_after_unknown_session,
+        });
+        if let Some(mode) = transient_fallback_mode {
+            result_json["transientFallbackMode"] = serde_json::Value::String(mode);
+        }
+        result.result_json = Some(result_json);
         Ok(result)
     }
 }

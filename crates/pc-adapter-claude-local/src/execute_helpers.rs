@@ -113,7 +113,7 @@ pub struct ClaudeRetryInput<'a> {
     pub session_id: &'a str,
     pub timed_out: bool,
     pub exit_code: Option<i32>,
-    pub parsed: Option<&'a crate::claude_stream_json::ParsedClaudeStreamJson>,
+    pub parsed: Option<&'a serde_json::Value>,
     pub stdout: &'a str,
     pub stderr: &'a str,
     pub error_message: Option<&'a str>,
@@ -131,43 +131,47 @@ pub struct ClaudeRetryDecision {
 /// 在 `execute()` 主循环里复用：把首轮 attempt 多种判断压缩成单一决策，
 /// 与 Node `errorFamily` + `retryNotBefore` + `clearSession` 三者等价。
 pub fn decide_retry(input: ClaudeRetryInput<'_>) -> ClaudeRetryDecision {
-    use crate::claude_stream_json::ParsedClaudeStreamJson;
+    use crate::claude_errors::{
+        is_claude_max_turns_result, is_claude_poisoned_previous_message_id_error,
+        is_claude_provider_quota_error, is_claude_refusal_result,
+        is_claude_transient_upstream_error, is_claude_unknown_session_error,
+    };
     let failed = !input.timed_out && input.exit_code.unwrap_or(0) != 0;
-    let parsed = input.parsed;
-    let unknown_session = parsed
-        .map(|p| crate::claude_stream_json::is_claude_unknown_session_error(p))
+    let parsed_ref = input.parsed;
+    let unknown_session = parsed_ref
+        .map(|v| is_claude_unknown_session_error(Some(v)))
         .unwrap_or(false)
         && !input.session_id.is_empty();
-    let max_turns = parsed
-        .map(crate::claude_stream_json::is_claude_max_turns_result)
+    let max_turns = parsed_ref
+        .map(|v| is_claude_max_turns_result(Some(v)))
         .unwrap_or(false);
-    let poisoned = parsed
-        .map(crate::claude_stream_json::is_claude_poisoned_previous_message_id_error)
+    let poisoned = parsed_ref
+        .map(|v| is_claude_poisoned_previous_message_id_error(v))
         .unwrap_or(false);
-    let refusal = parsed
-        .map(crate::claude_stream_json::is_claude_refusal_result)
+    let refusal = parsed_ref
+        .map(|v| is_claude_refusal_result(Some(v)))
         .unwrap_or(false);
     let provider_quota = failed
         && !max_turns
         && !poisoned
-        && parsed
-            .map(|p| crate::claude_stream_json::is_claude_provider_quota_error(
-                p,
+        && parsed_ref
+            .map(|v| is_claude_provider_quota_error(
+                Some(v),
                 input.stdout,
                 input.stderr,
-                input.error_message.unwrap_or(""),
+                input.error_message,
             ))
             .unwrap_or(false);
     let transient_upstream = failed
         && !max_turns
         && !poisoned
         && !provider_quota
-        && parsed
-            .map(|p| crate::claude_stream_json::is_claude_transient_upstream_error(
-                p,
+        && parsed_ref
+            .map(|v| is_claude_transient_upstream_error(
+                Some(v),
                 input.stdout,
                 input.stderr,
-                input.error_message.unwrap_or(""),
+                input.error_message,
             ))
             .unwrap_or(false);
 
@@ -199,6 +203,7 @@ pub fn decide_retry(input: ClaudeRetryInput<'_>) -> ClaudeRetryDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
 
     fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -345,4 +350,76 @@ mod tests {
             false,
         ));
     }
+
+    // ------------------------------------------------------------
+    // decide_retry
+    // ------------------------------------------------------------
+
+    fn base_failed() -> super::ClaudeRetryInput<'static> {
+        super::ClaudeRetryInput {
+            session_id: "s-1",
+            timed_out: false,
+            exit_code: Some(1),
+            parsed: None,
+            stdout: "",
+            stderr: "",
+            error_message: Some(""),
+        }
+    }
+
+    #[test]
+    fn decide_retry_exit_code_0_全部为None() {
+        let mut input = base_failed();
+        input.exit_code = Some(0);
+        let decision = super::decide_retry(input);
+        assert_eq!(decision.error_family, super::ClaudeErrorFamily::None);
+        assert!(!decision.clear_session);
+    }
+
+    #[test]
+    fn decide_retry_unknown_session_标记clear_session() {
+        let parsed = serde_json::json!({"result":"No conversation found with session id x"});
+        let parsed_value = parsed;
+        let mut input = base_failed();
+        input.parsed = Some(&parsed_value);
+        let decision = super::decide_retry(input);
+        assert_eq!(decision.error_family, super::ClaudeErrorFamily::UnknownSession);
+        assert!(decision.clear_session);
+    }
+
+    #[test]
+    fn decide_retry_provider_quota_不触发clear_session() {
+        let parsed = serde_json::json!({"result":"Claude usage limit reached"});
+        let parsed_value = parsed;
+        let mut input = base_failed();
+        input.parsed = Some(&parsed_value);
+        let decision = super::decide_retry(input);
+        assert_eq!(decision.error_family, super::ClaudeErrorFamily::ProviderQuota);
+        assert!(!decision.clear_session);
+        assert!(decision.provider_quota);
+    }
+
+    #[test]
+    fn decide_retry_transient_upstream_不触发clear_session() {
+        let parsed = serde_json::json!({"result":"upstream 429 too many requests"});
+        let parsed_value = parsed;
+        let mut input = base_failed();
+        input.parsed = Some(&parsed_value);
+        let decision = super::decide_retry(input);
+        assert_eq!(decision.error_family, super::ClaudeErrorFamily::TransientUpstream);
+        assert!(!decision.clear_session);
+        assert!(decision.transient_upstream);
+    }
+
+    #[test]
+    fn decide_retry_max_turns_触发clear_session() {
+        let parsed = serde_json::json!({"subtype":"error_max_turns"});
+        let parsed_value = parsed;
+        let mut input = base_failed();
+        input.parsed = Some(&parsed_value);
+        let decision = super::decide_retry(input);
+        assert_eq!(decision.error_family, super::ClaudeErrorFamily::MaxTurns);
+        assert!(decision.clear_session);
+    }
+
 }

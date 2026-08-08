@@ -153,6 +153,138 @@ pub fn resolve_codex_skills_dir(codex_home: &str) -> String {
     }
 }
 
+/// Codex adapter 的错误族分类。
+///
+/// Node 等价：`errorFamily` 字段 + `transientFallbackMode` 决策。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexErrorFamily {
+    None,
+    ProviderQuota,
+    TransientUpstream,
+    RefreshTokenReused,
+    RefreshTokenExpired,
+    RefreshTokenInvalidated,
+    HarnessCrash,
+    UnknownSession,
+}
+
+impl CodexErrorFamily {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CodexErrorFamily::None => "",
+            CodexErrorFamily::ProviderQuota => "provider_quota",
+            CodexErrorFamily::TransientUpstream => "transient_upstream",
+            CodexErrorFamily::RefreshTokenReused => "refresh_token_reused",
+            CodexErrorFamily::RefreshTokenExpired => "refresh_token_expired",
+            CodexErrorFamily::RefreshTokenInvalidated => "refresh_token_invalidated",
+            CodexErrorFamily::HarnessCrash => "codex_harness_crash",
+            CodexErrorFamily::UnknownSession => "unknown_session",
+        }
+    }
+}
+
+/// Codex 一次 attempt 的综合分类结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexRetryDecision {
+    pub error_family: CodexErrorFamily,
+    pub clear_session: bool,
+    pub transient_fallback_mode: Option<CodexTransientFallbackMode>,
+}
+
+/// Codex adapter 的 retry 决策输入快照。
+#[derive(Debug, Clone, Copy)]
+pub struct CodexRetryInput<'a> {
+    pub session_id: &'a str,
+    pub timed_out: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: &'a str,
+    pub stderr: &'a str,
+    pub error_message: Option<&'a str>,
+    pub saw_protocol_event: bool,
+    pub saw_protocol_terminal_event: bool,
+    pub now: std::time::SystemTime,
+}
+
+/// 整合多个 Codex 错误分类器，返回单一决策。
+///
+/// Node 等价：`execute.ts` L1300-1450 的 family + retryNotBefore + clearSession 三元组。
+pub fn decide_codex_retry(input: CodexRetryInput<'_>) -> CodexRetryDecision {
+    use crate::codex_errors::{
+        classify_codex_auth_refresh_failure, is_codex_harness_crash,
+        is_codex_provider_quota_error, is_codex_transient_upstream_error,
+        is_codex_unknown_session_error, CodexAuthRefreshFailureClass,
+        CodexProtocolState,
+    };
+    let failed = !input.timed_out && input.exit_code.unwrap_or(0) != 0;
+    let now = input.now;
+    let provider_quota = failed
+        && is_codex_provider_quota_error(
+            Some(input.stdout),
+            Some(input.stderr),
+            input.error_message,
+            now,
+        );
+    let transient_upstream = !provider_quota
+        && failed
+        && is_codex_transient_upstream_error(
+            Some(input.stdout),
+            Some(input.stderr),
+            input.error_message,
+            now,
+        );
+    let auth_failure = if failed {
+        classify_codex_auth_refresh_failure(
+            Some(input.stdout),
+            Some(input.stderr),
+            input.error_message,
+        )
+    } else {
+        None
+    };
+    let harness_crash = is_codex_harness_crash(CodexProtocolState {
+        exit_code: input.exit_code,
+        saw_protocol_event: input.saw_protocol_event,
+        saw_protocol_terminal_event: input.saw_protocol_terminal_event,
+    });
+    let unknown_session = failed
+        && !input.session_id.is_empty()
+        && is_codex_unknown_session_error(input.stdout, input.stderr);
+
+    let error_family = if provider_quota {
+        CodexErrorFamily::ProviderQuota
+    } else if transient_upstream {
+        CodexErrorFamily::TransientUpstream
+    } else if matches!(auth_failure, Some(CodexAuthRefreshFailureClass::RefreshTokenReused)) {
+        CodexErrorFamily::RefreshTokenReused
+    } else if matches!(auth_failure, Some(CodexAuthRefreshFailureClass::RefreshTokenExpired)) {
+        CodexErrorFamily::RefreshTokenExpired
+    } else if matches!(auth_failure, Some(CodexAuthRefreshFailureClass::RefreshTokenInvalidated)) {
+        CodexErrorFamily::RefreshTokenInvalidated
+    } else if harness_crash {
+        CodexErrorFamily::HarnessCrash
+    } else if unknown_session {
+        CodexErrorFamily::UnknownSession
+    } else {
+        CodexErrorFamily::None
+    };
+
+    // transient 上游错误 → 同 session + 更安全调用；quota → fresh session + 更安全调用。
+    let transient_fallback_mode = if provider_quota {
+        Some(CodexTransientFallbackMode::FreshSessionSaferInvocation)
+    } else if transient_upstream {
+        Some(CodexTransientFallbackMode::SaferInvocation)
+    } else {
+        None
+    };
+    let clear_session = unknown_session || matches!(auth_failure, Some(_));
+
+    CodexRetryDecision {
+        error_family,
+        clear_session,
+        transient_fallback_mode,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,8 +411,92 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // decide_codex_retry
+    // -----------------------------------------------------------------
+
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    fn fixed_now() -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(22 * 3600)
+    }
+    fn base() -> super::CodexRetryInput<'static> {
+        super::CodexRetryInput {
+            session_id: "thread-1",
+            timed_out: false,
+            exit_code: Some(1),
+            stdout: "",
+            stderr: "",
+            error_message: Some(""),
+            saw_protocol_event: true,
+            saw_protocol_terminal_event: true,
+            now: fixed_now(),
+        }
+    }
+
     #[test]
-    fn fallback_mode_非法值_None() {
+
+    #[test]
+    fn decide_codex_retry_provider_quota_with_retry_not_before() {
+        let mut input = base();
+        input.error_message = Some("You've hit your usage limit for gpt-5, try again at 3:30 PM (UTC)");
+        let decision = super::decide_codex_retry(input);
+        assert_eq!(decision.error_family, super::CodexErrorFamily::ProviderQuota);
+        assert!(!decision.clear_session);
+        assert_eq!(
+            decision.transient_fallback_mode,
+            Some(super::CodexTransientFallbackMode::FreshSessionSaferInvocation)
+        );
+    }
+
+    #[test]
+    fn decide_codex_retry_transient_upstream_returns_safer_invocation() {
+        let mut input = base();
+        input.stderr = "high demand temporary errors";
+        let decision = super::decide_codex_retry(input);
+        assert_eq!(decision.error_family, super::CodexErrorFamily::TransientUpstream);
+        assert_eq!(
+            decision.transient_fallback_mode,
+            Some(super::CodexTransientFallbackMode::SaferInvocation)
+        );
+    }
+
+    #[test]
+    fn decide_codex_retry_refresh_token_reused_clears_session() {
+        let mut input = base();
+        input.stdout = "refresh_token_reused detected";
+        let decision = super::decide_codex_retry(input);
+        assert_eq!(decision.error_family, super::CodexErrorFamily::RefreshTokenReused);
+        assert!(decision.clear_session);
+    }
+
+    #[test]
+    fn decide_codex_retry_unknown_session_clears_session() {
+        let mut input = base();
+        input.stderr = "unknown session id: thread-1";
+        let decision = super::decide_codex_retry(input);
+        assert_eq!(decision.error_family, super::CodexErrorFamily::UnknownSession);
+        assert!(decision.clear_session);
+    }
+
+    #[test]
+    fn decide_codex_retry_harness_crash_when_protocol_started_nonterminal() {
+        let mut input = base();
+        input.saw_protocol_terminal_event = false;
+        let decision = super::decide_codex_retry(input);
+        assert_eq!(decision.error_family, super::CodexErrorFamily::HarnessCrash);
+    }
+
+    #[test]
+    fn decide_codex_retry_exit_0_返回None() {
+        let mut input = base();
+        input.exit_code = Some(0);
+        let decision = super::decide_codex_retry(input);
+        assert_eq!(decision.error_family, super::CodexErrorFamily::None);
+        assert!(!decision.clear_session);
+        assert_eq!(decision.transient_fallback_mode, None);
+    }
+
+        fn fallback_mode_非法值_None() {
         assert_eq!(
             read_codex_transient_fallback_mode(
                 &serde_json::json!({"codexTransientFallbackMode": "invalid_mode"})

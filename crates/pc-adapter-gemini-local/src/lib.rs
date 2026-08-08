@@ -44,7 +44,7 @@ fn default_model(config: &Value) -> Option<String> {
         .map(String::from)
 }
 
-pub fn build_gemini_exec_args(config: &Value) -> Vec<String> {
+pub fn build_gemini_exec_args(config: &Value, resume_session_id: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     args.push("--output-format".into());
     args.push("stream-json".into());
@@ -60,6 +60,10 @@ pub fn build_gemini_exec_args(config: &Value) -> Vec<String> {
         for item in extra.iter().filter_map(|v| v.as_str()) {
             args.push(item.to_owned());
         }
+    }
+    if let Some(sid) = resume_session_id.map(str::trim).filter(|s| !s.is_empty()) {
+        args.push("--resume".into());
+        args.push(sid.to_owned());
     }
     args
 }
@@ -123,11 +127,50 @@ impl Adapter for GeminiLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
-        let args = build_gemini_exec_args(&context.adapter_config);
         let model = default_model(&context.adapter_config);
-        let spec = ProcessSpec::new(&command, &args).with_stdin(context.prompt.clone());
-        let execution = execute_process_capture(&spec, &context, events).await?;
-        let parsed = parse_gemini_stream_json(&execution.stdout);
+        let initial_args =
+            build_gemini_exec_args(&context.adapter_config, context.session_id.as_deref());
+        let initial_spec = ProcessSpec::new(&command, &initial_args)
+            .with_stdin(context.prompt.clone());
+        let initial_execution =
+            execute_process_capture(&initial_spec, &context, events.clone()).await?;
+        let initial_parsed = parse_gemini_stream_json(&initial_execution.stdout);
+
+        // 真实重跑：unknown session + 有 resume → 重新构造 args（去掉 --resume）。
+        let mut retried_after_unknown_session = false;
+        let mut clear_session_on_retry = false;
+        let mut active_execution = initial_execution;
+        let mut active_parsed = initial_parsed;
+        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            if !active_execution.result.timed_out
+                && active_execution.result.exit_code.unwrap_or(0) != 0
+                && is_gemini_session_unrecoverable_error(
+                    &active_execution.stdout,
+                    &active_execution.stderr,
+                )
+            {
+                let _ = events
+                    .clone()
+                    .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                        "[paperclip] Gemini resume session \"{sid}\" is unavailable; retrying with a fresh session.\n"
+                    )))
+                    .await;
+                let retry_args = build_gemini_exec_args(&context.adapter_config, None);
+                let retry_spec = ProcessSpec::new(&command, &retry_args)
+                    .with_stdin(context.prompt.clone());
+                let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
+                let retry_execution =
+                    execute_process_capture(&retry_spec, &context, retry_sink).await?;
+                let retry_parsed = parse_gemini_stream_json(&retry_execution.stdout);
+                active_execution = retry_execution;
+                active_parsed = retry_parsed;
+                retried_after_unknown_session = true;
+                clear_session_on_retry = true;
+            }
+        }
+
+        let execution = active_execution;
+        let parsed = active_parsed;
         let mut result = execution.result;
         let billing_type = crate::execute_helpers::resolve_gemini_billing_type(&context.env);
         result.provider = Some(ADAPTER_TYPE.into());
@@ -150,11 +193,17 @@ impl Adapter for GeminiLocalAdapter {
                 "apiAccessNote".to_owned(),
                 Value::String(crate::execute_helpers::render_api_access_note(&context.env)),
             );
+            map.insert(
+                "retriedAfterUnknownSession".to_owned(),
+                Value::Bool(retried_after_unknown_session),
+            );
         }
         result.result_json = Some(result_json);
+        if clear_session_on_retry && result.session_id.is_none() {
+            result.clear_session = true;
+        }
         Ok(result)
-    }
-}
+    }}
 
 #[cfg(test)]
 mod tests {
@@ -175,7 +224,7 @@ mod tests {
     #[test]
     fn build_args_emits_model_flag() {
         let config = serde_json::json!({"model": "gemini-2.5-pro"});
-        let args = build_gemini_exec_args(&config);
+        let args = build_gemini_exec_args(&config, None);
         assert!(args.contains(&"--model".into()));
         assert!(args.contains(&"gemini-2.5-pro".into()));
         assert!(args.contains(&"--output-format".into()));
@@ -185,7 +234,7 @@ mod tests {
     #[test]
     fn build_args_appends_extra_args() {
         let config = serde_json::json!({"extraArgs": ["--yolo", "--no-cache"]});
-        let args = build_gemini_exec_args(&config);
+        let args = build_gemini_exec_args(&config, None);
         assert!(args.contains(&"--yolo".into()));
         assert!(args.contains(&"--no-cache".into()));
     }

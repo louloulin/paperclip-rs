@@ -44,7 +44,7 @@ pub struct CursorExecArgs {
     pub force: bool,
 }
 
-pub fn build_cursor_exec_args(config: &Value) -> CursorExecArgs {
+pub fn build_cursor_exec_args(config: &Value, resume_session_id: Option<&str>) -> CursorExecArgs {
     let model = config
         .get("model")
         .and_then(|v| v.as_str())
@@ -74,6 +74,11 @@ pub fn build_cursor_exec_args(config: &Value) -> CursorExecArgs {
         })
         .unwrap_or_default();
 
+    let resume_session_id = resume_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
     let mut args: Vec<String> = Vec::new();
     // 必选协议 flag（按 Node 顺序）
     args.push("--print".into());
@@ -93,6 +98,10 @@ pub fn build_cursor_exec_args(config: &Value) -> CursorExecArgs {
     }
     if force {
         args.push("--force".into());
+    }
+    if let Some(ref sid) = resume_session_id {
+        args.push("--resume".into());
+        args.push(sid.clone());
     }
     args.extend(extra_args);
 
@@ -271,10 +280,54 @@ impl Adapter for CursorLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
-        let built = build_cursor_exec_args(&context.adapter_config);
-        let spec = ProcessSpec::new(&command, &built.args).with_stdin(context.prompt.clone());
-        let execution = execute_process_capture(&spec, &context, events).await?;
-        let parsed = parse_cursor_stream_json(&execution.stdout);
+        let initial_built = build_cursor_exec_args(
+            &context.adapter_config,
+            context.session_id.as_deref(),
+        );
+        let initial_spec = ProcessSpec::new(&command, &initial_built.args)
+            .with_stdin(context.prompt.clone());
+        let initial_execution =
+            execute_process_capture(&initial_spec, &context, events.clone()).await?;
+        let initial_parsed = parse_cursor_stream_json(&initial_execution.stdout);
+
+        // 真实重跑：unknown session + 有 resume → 重新构造 args（去掉 --resume）。
+        let mut retried_after_unknown_session = false;
+        let mut clear_session_on_retry = false;
+        let mut active_execution = initial_execution;
+        let mut active_parsed = initial_parsed;
+        let mut active_built = initial_built;
+        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            if !active_execution.result.timed_out
+                && active_execution.result.exit_code.unwrap_or(0) != 0
+                && is_cursor_unknown_session_error(
+                    &active_execution.stdout,
+                    &active_execution.stderr,
+                )
+            {
+                let _ = events
+                    .clone()
+                    .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                        "[paperclip] Cursor resume session \"{sid}\" is unavailable; retrying with a fresh session.\n"
+                    )))
+                    .await;
+                let retry_built = build_cursor_exec_args(&context.adapter_config, None);
+                let retry_spec = ProcessSpec::new(&command, &retry_built.args)
+                    .with_stdin(context.prompt.clone());
+                let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
+                let retry_execution =
+                    execute_process_capture(&retry_spec, &context, retry_sink).await?;
+                let retry_parsed = parse_cursor_stream_json(&retry_execution.stdout);
+                active_execution = retry_execution;
+                active_parsed = retry_parsed;
+                active_built = retry_built;
+                retried_after_unknown_session = true;
+                clear_session_on_retry = true;
+            }
+        }
+
+        let execution = active_execution;
+        let parsed = active_parsed;
+        let built = active_built;
         let mut result = execution.result;
         result.session_id = parsed.session_id.clone();
         result.provider = Some("cursor_local".into());
@@ -301,6 +354,7 @@ impl Adapter for CursorLocalAdapter {
             "workspace": built.workspace,
             "sandbox": built.sandbox,
             "force": built.force,
+            "retriedAfterUnknownSession": retried_after_unknown_session,
         }));
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
         result.usage = Some(parsed.usage.clone());
@@ -310,6 +364,9 @@ impl Adapter for CursorLocalAdapter {
                 .filter(|s| !s.is_empty())
         });
         result.cost_usd = parsed.cost_usd;
+        if clear_session_on_retry && parsed.session_id.is_none() {
+            result.clear_session = true;
+        }
         Ok(result)
     }
 }
@@ -337,7 +394,7 @@ mod tests {
 
     #[test]
     fn builds_minimal_args() {
-        let built = build_cursor_exec_args(&serde_json::json!({}));
+        let built = build_cursor_exec_args(&serde_json::json!({}), None);
         assert_eq!(
             built.args,
             vec![
@@ -361,7 +418,7 @@ mod tests {
             "force": true,
             "extraArgs": ["--resume", "abc"]
         });
-        let built = build_cursor_exec_args(&config);
+        let built = build_cursor_exec_args(&config, None);
         assert_eq!(built.model.as_deref(), Some("claude-3-5-sonnet"));
         assert_eq!(built.workspace.as_deref(), Some("/tmp/ws"));
         assert!(built.sandbox);

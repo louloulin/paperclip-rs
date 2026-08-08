@@ -349,10 +349,38 @@ impl Adapter for ClaudeLocalAdapter {
             pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
         let api_access_note =
             pc_acpx::session_config_options::render_api_access_note(&context.env);
-        result.result_json = Some(json!({
+        let decision = crate::execute_helpers::decide_retry(
+            crate::execute_helpers::ClaudeRetryInput {
+                session_id: result.session_id.as_deref().unwrap_or(""),
+                timed_out: result.timed_out,
+                exit_code: result.exit_code,
+                parsed: parsed.result_json.as_ref(),
+                stdout: &execution.stdout,
+                stderr: &execution.stderr,
+                error_message: result.error_message.as_deref(),
+            },
+        );
+        let mut stop_reason = parsed.stop_reason.clone();
+        if matches!(
+            decision.error_family,
+            crate::execute_helpers::ClaudeErrorFamily::MaxTurns
+        ) {
+            stop_reason = Some("max_turns_exhausted".to_owned());
+        } else if matches!(
+            decision.error_family,
+            crate::execute_helpers::ClaudeErrorFamily::PoisonedPreviousMessageId
+        ) {
+            stop_reason = Some("claude_poisoned_previous_message_id".to_owned());
+        } else if matches!(
+            decision.error_family,
+            crate::execute_helpers::ClaudeErrorFamily::Refusal
+        ) {
+            stop_reason = Some("refusal".to_owned());
+        }
+        let mut merged = json!({
             "sawProtocolEvent": true,
             "sawProtocolTerminalEvent": parsed.result_json.is_some(),
-            "stopReason": parsed.stop_reason,
+            "stopReason": stop_reason,
             "costUsd": parsed.cost_usd,
             "claudeResult": parsed.result_json,
             "effortRequested": built.effort,
@@ -362,7 +390,15 @@ impl Adapter for ClaudeLocalAdapter {
             "dangerouslySkipPermissions": built.dangerously_skip_permissions,
             "paperclipEnvNote": paperclip_env_note,
             "apiAccessNote": api_access_note,
-        }));
+            "errorFamily": decision.error_family.as_str(),
+        });
+        if decision.provider_quota || decision.transient_upstream {
+            merged["transientUpstream"] = json!(decision.transient_upstream);
+        }
+        result.result_json = Some(merged);
+        if decision.clear_session {
+            result.clear_session = true;
+        }
         Ok(result)
     }
 }

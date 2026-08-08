@@ -41,7 +41,7 @@ fn default_model(config: &Value) -> Option<String> {
         .map(String::from)
 }
 
-pub fn build_opencode_exec_args(config: &Value) -> Vec<String> {
+pub fn build_opencode_exec_args(config: &Value, resume_session_id: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     args.push("--output-format".into());
     args.push("stream-json".into());
@@ -57,6 +57,10 @@ pub fn build_opencode_exec_args(config: &Value) -> Vec<String> {
         for item in extra.iter().filter_map(|v| v.as_str()) {
             args.push(item.to_owned());
         }
+    }
+    if let Some(sid) = resume_session_id.map(str::trim).filter(|s| !s.is_empty()) {
+        args.push("--session".into());
+        args.push(sid.to_owned());
     }
     args
 }
@@ -120,17 +124,59 @@ impl Adapter for OpencodeLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
-        let args = build_opencode_exec_args(&context.adapter_config);
         let model = default_model(&context.adapter_config);
-        let spec = ProcessSpec::new(&command, &args).with_stdin(context.prompt.clone());
-        let execution = execute_process_capture(&spec, &context, events).await?;
-        let parsed = parse_opencode_stream_json(&execution.stdout);
+        let initial_args =
+            build_opencode_exec_args(&context.adapter_config, context.session_id.as_deref());
+        let initial_spec = ProcessSpec::new(&command, &initial_args)
+            .with_stdin(context.prompt.clone());
+        let initial_execution =
+            execute_process_capture(&initial_spec, &context, events.clone()).await?;
+        let initial_parsed = parse_opencode_stream_json(&initial_execution.stdout);
+
+        // 真实重跑：unknown session + 有 resume → 重新构造 args（去掉 --session）。
+        let mut retried_after_unknown_session = false;
+        let mut clear_session_on_retry = false;
+        let mut active_execution = initial_execution;
+        let mut active_parsed = initial_parsed;
+        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            let initial_failed = !active_execution.result.timed_out
+                && (active_execution.result.exit_code.unwrap_or(0) != 0
+                    || active_parsed.error_message.is_some());
+            if initial_failed
+                && is_opencode_unknown_session_error(
+                    &active_execution.stdout,
+                    &active_execution.stderr,
+                )
+            {
+                let _ = events
+                    .clone()
+                    .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                        "[paperclip] OpenCode session \"{sid}\" is unavailable; retrying with a fresh session.\n"
+                    )))
+                    .await;
+                let retry_args = build_opencode_exec_args(&context.adapter_config, None);
+                let retry_spec = ProcessSpec::new(&command, &retry_args)
+                    .with_stdin(context.prompt.clone());
+                let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
+                let retry_execution =
+                    execute_process_capture(&retry_spec, &context, retry_sink).await?;
+                let retry_parsed = parse_opencode_stream_json(&retry_execution.stdout);
+                active_execution = retry_execution;
+                active_parsed = retry_parsed;
+                retried_after_unknown_session = true;
+                clear_session_on_retry = true;
+            }
+        }
+
+        let execution = active_execution;
+        let parsed = active_parsed;
         let mut result = execution.result;
         let provider = pc_acpx::model_id::parse_model_provider(model.as_deref());
         result.provider = Some(provider.clone().unwrap_or_else(|| ADAPTER_TYPE.to_owned()));
         result.model = model;
         result.billing_type = Some("unknown".to_owned());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
+        let resolved_session_id = parsed.session_id.clone();
         result.session_id = parsed.session_id;
         result.cost_usd = parsed.cost_usd;
         result.usage = Some(parsed.usage.clone());
@@ -146,7 +192,11 @@ impl Adapter for OpencodeLocalAdapter {
             "biller": crate::execute_helpers::resolve_opencode_biller(&context.env, provider.as_deref()),
             "paperclipEnvNote": paperclip_env_note,
             "apiAccessNote": api_access_note,
+            "retriedAfterUnknownSession": retried_after_unknown_session,
         }));
+        if clear_session_on_retry && resolved_session_id.is_none() {
+            result.clear_session = true;
+        }
         Ok(result)
     }
 }
@@ -170,7 +220,7 @@ mod tests {
     #[test]
     fn build_args_emits_model_flag() {
         let config = serde_json::json!({"model": "anthropic/claude-sonnet-4"});
-        let args = build_opencode_exec_args(&config);
+        let args = build_opencode_exec_args(&config, None);
         assert!(args.contains(&"--model".into()));
         assert!(args.contains(&"anthropic/claude-sonnet-4".into()));
         assert!(args.contains(&"--output-format".into()));
@@ -180,7 +230,7 @@ mod tests {
     #[test]
     fn build_args_appends_extra_args() {
         let config = serde_json::json!({"extraArgs": ["--yolo", "--no-cache"]});
-        let args = build_opencode_exec_args(&config);
+        let args = build_opencode_exec_args(&config, None);
         assert!(args.contains(&"--yolo".into()));
         assert!(args.contains(&"--no-cache".into()));
     }
