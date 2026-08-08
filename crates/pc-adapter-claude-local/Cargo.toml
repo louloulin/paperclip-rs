@@ -12,6 +12,7 @@ workspace = true
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-acpx = { path = "../pc-acpx" }
 pc-adapter-process = { path = "../pc-adapter-process" }
+pc-adapter-quota = { path = "../pc-adapter-quota" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 sha2 = "0.10"
@@ -22,3 +23,4 @@ uuid = { workspace = true }
 regex-lite = "0.1"
 
 [dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

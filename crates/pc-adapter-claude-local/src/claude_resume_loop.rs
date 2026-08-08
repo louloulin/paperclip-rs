@@ -218,6 +218,43 @@ pub async fn run_resume_retry_loop(
     );
 
     let (final_stdout, final_stderr, final_exit, final_parsed_stream, clear_on_missing) = if session_error.is_some() && input.resume_session_id.is_some() {
+        // Poisoned session：先清理 Claude CLI 缓存的 jsonl 文件，避免下次 --resume 仍然命中坏状态。
+        // 仅在本地执行时执行（远程执行 target 的 jsonl 在远端 host 上）。
+        if matches!(session_error, Some(SessionErrorKind::Poisoned)) && !input.execution_target_is_remote {
+            let claude_config_dir = crate::claude_config::resolve_shared_claude_config_dir(
+                &input.context.env,
+                &std::env::var("HOME").unwrap_or_default(),
+            );
+            let session_id = input.resume_session_id.unwrap_or("");
+            if !session_id.is_empty() {
+                match crate::claude_session_cleanup::unlink_poisoned_session_file(
+                    &claude_config_dir,
+                    input.effective_execution_cwd,
+                    session_id,
+                )
+                .await
+                {
+                    Ok(true) => {
+                        let path = crate::claude_session_cleanup::build_poisoned_jsonl_path(
+                            &claude_config_dir,
+                            input.effective_execution_cwd,
+                            session_id,
+                        );
+                        let _ = input
+                            .events
+                            .clone()
+                            .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                                "[paperclip] Removed poisoned session file: {}\n",
+                                path.display()
+                            )))
+                            .await;
+                    }
+                    Ok(false) => { /* 文件不存在，不是错误 */ }
+                    Err(_e) => { /* best-effort：清理失败不阻断重试 */ }
+                }
+            }
+        }
+
         // 重试：fresh session
         let retry_args = build_resume_claude_args(input.base_args, None);
         let retry_spec = ProcessSpec::new(input.command, &retry_args).with_stdin(input.context.prompt.clone());

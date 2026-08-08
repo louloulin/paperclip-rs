@@ -1,5 +1,25 @@
 # Proposal: paperclip-rs Modules Replica
 
+## 状态快照（2026-08-09，Phase 1 完善时）
+
+- `paperclip/` Node server：760 文件 / 444,278 行 TS + 9969 UI 文件 + 56 路由 / 211 services / 109 表 / 11 内置适配器
+- `paperclip-rs/` Rust workspace：41 crates + 2 apps、~333,866 行 Rust（含 tests/fixtures），`apps/pc-server` + `apps/pc-cli` 已物理独立（M1 ✅）
+- 真实运行基线（commit 78daa50 + R461–R465）：`pc-acpx` 883、`pc-adapter-claude-local` 437、`pc-adapter-codex-local` 305、`pc-activity` 14、`pc-adapter-process` 6、`pc-adapter-quota` 39 → 合计 **1684 测试通过 / 0 失败**
+- `scripts/e2e-baseline.sh`：临时 PG16 起来、`pc-migrate up` 172 表、`pc-server` 起来、`/health` 200、启动 WARN 0、路由冲突 0（M2 ✅ / M9.1–9.2 ✅）
+- 综合完成度 ≈ 75–80%（docs/07-COMPREHENSIVE-GAP-ANALYSIS.md 加权审计）
+
+### Phase 1 残余真实差距（驱动本 change 后续模块）
+
+1. **UI 切流未真实验证**（U1）：`paperclip-rs/ui/` 直接复用上游 UI，但无 `VITE_API_BASE` 配置、无前后端联调脚本
+2. **前后端端到端验证缺失**（U2）：无 Playwright 整剧本（登录 → 公司 → issue → heartbeat → live-event）
+3. **OpenAPI ↔ UI 类型未对齐**（U3）：`pc-openapi` 产物与 UI 60 api client 字段未做字节级一致验证
+4. **远程 execution target 未完整**（M13-deep）：claude-local / codex-local 远程路径 `restoreRemoteWorkspace` / `materializeRemoteClaudeConfig` / SSH bridge 未复刻
+5. **路由字节级对齐（剩余 ≈ 14%）**：raw 提取 46.1% method+path 重合，缺口集中在 companies 子路由（skills/tools/folders/invites/labels/approvals/org-svg.png/join-requests）
+6. **Auth/AuthZ 55% → 100%**：argon2id 哈希 ✅，refresh rotation / OAuth / CSRF / API key `pk_<base62>` 仍简化
+7. **M12 心跳 stale lock sweep 回归**（known）：`round300` 4 个失败待修
+
+> Why this matters：上述 7 项中第 1–3 项是用户目标"真实启动前后端验证"的硬阻塞；第 4–7 项是 Rust 端继续深化、为最终等价切换铺路。
+
 ## Why
 
 `paperclip/` 仓库（760 server files / 44.4 万行 TS + 1168 UI files / 34.4 万行 + 10 个内置适配器 + 109 张表）当前所有后端职责都跑在 Node + Express + better-auth + Drizzle 单体上。痛点（PROJECT-PLAN.md 已明列）：V8 启动开销大、冷启动 3–5s、常驻 400MB+、类型边界模糊、跨平台部署薄弱。

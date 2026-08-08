@@ -1,0 +1,481 @@
+warning: unused import: `serde_json::Value`
+ --> crates/pc-core/src/workspace_file_list_response_builder.rs:8:5
+  |
+8 | use serde_json::Value;
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `PreviewKind`
+  --> crates/pc-core/src/workspace_file_list_response_builder.rs:11:59
+   |
+11 |     content_type_for_path, preview_kind_for_content_type, PreviewKind,
+   |                                                           ^^^^^^^^^^^
+
+warning: unused variable: `path`
+   --> crates/pc-core/src/issue_execution_validation.rs:123:5
+    |
+123 |     path: &[&str],
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `issues`
+   --> crates/pc-core/src/issue_execution_validation.rs:124:5
+    |
+124 |     issues: &mut Vec<ValidationIssue>,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_issues`
+
+warning: variable does not need to be mutable
+   --> crates/pc-core/src/issue_execution_validation.rs:691:9
+    |
+691 |     let mut policy = IssueExecutionPolicy {
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `kind`
+   --> crates/pc-core/src/issue_execution_validation.rs:815:9
+    |
+815 |     let kind = parse_stage_type(type_str)?;
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_kind`
+
+warning: unused variable: `drop_end`
+   --> crates/pc-core/src/workspace_runtime_readiness.rs:200:9
+    |
+200 |     let drop_end = parsed
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_drop_end`
+
+warning: function `clone_record_value` is never used
+  --> crates/pc-core/src/execution_workspace_config.rs:91:4
+   |
+91 | fn clone_record_value(value: Option<&Map<String, Value>>) -> Option<Map<String, Value>> {
+   |    ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `require_str` is never used
+   --> crates/pc-core/src/issue_execution_validation.rs:103:4
+    |
+103 | fn require_str<'a>(
+    |    ^^^^^^^^^^^
+
+warning: function `require_string` is never used
+   --> crates/pc-core/src/issue_execution_validation.rs:121:4
+    |
+121 | fn require_string<'a>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `optional_string` is never used
+   --> crates/pc-core/src/issue_execution_validation.rs:129:4
+    |
+129 | fn optional_string(obj: &Value, default: Option<String>) -> Option<String> {
+    |    ^^^^^^^^^^^^^^^
+
+warning: function `stage_type_as_str` is never used
+   --> crates/pc-core/src/issue_execution_validation.rs:175:4
+    |
+175 | fn stage_type_as_str(kind: IssueExecutionStageType) -> &'static str {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `clone_record_value` is never used
+   --> crates/pc-core/src/project_workspace_runtime_config.rs:200:4
+    |
+200 | fn clone_record_value(value: Option<&Map<String, Value>>) -> Option<Map<String, Value>> {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: field `protocol_end` is never read
+   --> crates/pc-core/src/workspace_runtime_readiness.rs:157:5
+    |
+155 | struct MiniUrl {
+    |        ------- field in this struct
+156 |     full: String,
+157 |     protocol_end: usize,
+    |     ^^^^^^^^^^^^
+
+2026-08-08T22:25:59.029857Z  INFO db connected attempt=1 max=4 min=1
+2026-08-08T22:25:59.041846Z  INFO column "name" of relation "__drizzle_migrations" already exists, skipping
+2026-08-08T22:25:59.045673Z  INFO schema "drizzle" already exists, skipping
+2026-08-08T22:25:59.045906Z  INFO relation "__drizzle_migrations" already exists, skipping
+2026-08-08T22:25:59.046176Z  INFO column "name" of relation "__drizzle_migrations" already exists, skipping
+2026-08-08T22:25:59.074694Z  INFO database migration applied migration="0000_mature_masked_marvel.sql"
+2026-08-08T22:25:59.086470Z  INFO database migration applied migration="0001_fast_northstar.sql"
+2026-08-08T22:25:59.087789Z  INFO database migration applied migration="0002_big_zaladane.sql"
+2026-08-08T22:25:59.090123Z  INFO database migration applied migration="0003_shallow_quentin_quire.sql"
+2026-08-08T22:25:59.093582Z  INFO database migration applied migration="0004_issue_identifiers.sql"
+2026-08-08T22:25:59.096829Z  INFO database migration applied migration="0005_chief_luke_cage.sql"
+2026-08-08T22:25:59.102999Z  INFO database migration applied migration="0006_overjoyed_mister_sinister.sql"
+2026-08-08T22:25:59.106350Z  INFO database migration applied migration="0007_new_quentin_quire.sql"
+2026-08-08T22:25:59.107327Z  INFO database migration applied migration="0008_amused_zzzax.sql"
+2026-08-08T22:25:59.112773Z  INFO database migration applied migration="0009_fast_jackal.sql"
+2026-08-08T22:25:59.118119Z  INFO database migration applied migration="0010_stale_justin_hammer.sql"
+2026-08-08T22:25:59.120921Z  INFO database migration applied migration="0011_windy_corsair.sql"
+2026-08-08T22:25:59.122209Z  INFO database migration applied migration="0012_perpetual_ser_duncan.sql"
+2026-08-08T22:25:59.124118Z  INFO database migration applied migration="0013_dashing_wasp.sql"
+2026-08-08T22:25:59.139032Z  INFO database migration applied migration="0014_many_mikhail_rasputin.sql"
+2026-08-08T22:25:59.140164Z  INFO database migration applied migration="0015_project_color_archived.sql"
+2026-08-08T22:25:59.141117Z  INFO database migration applied migration="0016_agent_icon.sql"
+2026-08-08T22:25:59.144377Z  INFO database migration applied migration="0017_tiresome_gabe_jones.sql"
+2026-08-08T22:25:59.148444Z  INFO database migration applied migration="0018_flat_sleepwalker.sql"
+2026-08-08T22:25:59.151561Z  INFO database migration applied migration="0019_public_victor_mancha.sql"
+2026-08-08T22:25:59.152403Z  INFO database migration applied migration="0020_white_anita_blake.sql"
+2026-08-08T22:25:59.153182Z  INFO database migration applied migration="0021_chief_vindicator.sql"
+2026-08-08T22:25:59.153933Z  INFO database migration applied migration="0022_company_brand_color.sql"
+2026-08-08T22:25:59.154793Z  INFO database migration applied migration="0023_fair_lethal_legion.sql"
+2026-08-08T22:25:59.156167Z  INFO database migration applied migration="0024_far_beast.sql"
+2026-08-08T22:25:59.159384Z  INFO database migration applied migration="0025_nasty_salo.sql"
+2026-08-08T22:25:59.161912Z  INFO identifier "workspace_runtime_services_project_workspace_id_project_workspaces_id_fk" will be truncated to "workspace_runtime_services_project_workspace_id_project_workspa"
+2026-08-08T22:25:59.162712Z  INFO identifier "workspace_runtime_services_started_by_run_id_heartbeat_runs_id_fk" will be truncated to "workspace_runtime_services_started_by_run_id_heartbeat_runs_id_"
+2026-08-08T22:25:59.164179Z  INFO database migration applied migration="0026_lying_pete_wisdom.sql"
+2026-08-08T22:25:59.165079Z  INFO database migration applied migration="0027_tranquil_tenebrous.sql"
+2026-08-08T22:25:59.172662Z  INFO database migration applied migration="0028_harsh_goliath.sql"
+2026-08-08T22:25:59.189174Z  INFO database migration applied migration="0029_plugin_tables.sql"
+2026-08-08T22:25:59.192315Z  INFO database migration applied migration="0030_rich_magneto.sql"
+2026-08-08T22:25:59.202308Z  INFO database migration applied migration="0031_zippy_magma.sql"
+2026-08-08T22:25:59.215779Z  INFO database migration applied migration="0032_pretty_doctor_octopus.sql"
+2026-08-08T22:25:59.218669Z  INFO database migration applied migration="0033_shiny_black_tarantula.sql"
+2026-08-08T22:25:59.221538Z  INFO database migration applied migration="0034_fat_dormammu.sql"
+2026-08-08T22:25:59.227327Z  INFO identifier "execution_workspaces_project_workspace_id_project_workspaces_id_fk" will be truncated to "execution_workspaces_project_workspace_id_project_workspaces_id"
+2026-08-08T22:25:59.227956Z  INFO identifier "execution_workspaces_derived_from_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "execution_workspaces_derived_from_execution_workspace_id_execut"
+2026-08-08T22:25:59.228918Z  INFO identifier "issue_work_products_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "issue_work_products_execution_workspace_id_execution_workspaces"
+2026-08-08T22:25:59.229127Z  INFO identifier "issue_work_products_runtime_service_id_workspace_runtime_services_id_fk" will be truncated to "issue_work_products_runtime_service_id_workspace_runtime_servic"
+2026-08-08T22:25:59.234277Z  INFO identifier "workspace_runtime_services_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "workspace_runtime_services_execution_workspace_id_execution_wor"
+2026-08-08T22:25:59.235986Z  INFO identifier "workspace_runtime_services_company_execution_workspace_status_idx" will be truncated to "workspace_runtime_services_company_execution_workspace_status_i"
+2026-08-08T22:25:59.236484Z  INFO database migration applied migration="0035_marvelous_satana.sql"
+2026-08-08T22:25:59.238784Z  INFO database migration applied migration="0036_cheerful_nitro.sql"
+2026-08-08T22:25:59.240803Z  INFO identifier "workspace_operations_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "workspace_operations_execution_workspace_id_execution_workspace"
+2026-08-08T22:25:59.242233Z  INFO database migration applied migration="0037_friendly_eddie_brock.sql"
+2026-08-08T22:25:59.243656Z  INFO database migration applied migration="0038_careless_iron_monger.sql"
+2026-08-08T22:25:59.258498Z  INFO database migration applied migration="0039_fat_magneto.sql"
+2026-08-08T22:25:59.260352Z  INFO database migration applied migration="0040_eager_shotgun.sql"
+2026-08-08T22:25:59.261424Z  INFO database migration applied migration="0041_curly_maria_hill.sql"
+2026-08-08T22:25:59.264889Z  INFO database migration applied migration="0042_spotty_the_renegades.sql"
+2026-08-08T22:25:59.266389Z  INFO database migration applied migration="0043_reflective_captain_universe.sql"
+2026-08-08T22:25:59.269057Z  INFO column "general" of relation "instance_settings" already exists, skipping
+2026-08-08T22:25:59.270430Z  INFO index "board_api_keys_key_hash_idx" does not exist, skipping
+2026-08-08T22:25:59.272538Z  INFO database migration applied migration="0044_illegal_toad.sql"
+2026-08-08T22:25:59.276783Z  INFO database migration applied migration="0045_workable_shockwave.sql"
+2026-08-08T22:25:59.278325Z  INFO database migration applied migration="0046_smooth_sentinels.sql"
+2026-08-08T22:25:59.287420Z  INFO database migration applied migration="0047_overjoyed_groot.sql"
+2026-08-08T22:25:59.288371Z  INFO database migration applied migration="0048_flashy_marrow.sql"
+2026-08-08T22:25:59.293332Z  INFO database migration applied migration="0049_flawless_abomination.sql"
+2026-08-08T22:25:59.294178Z  INFO database migration applied migration="0050_stiff_luckman.sql"
+2026-08-08T22:25:59.308630Z  INFO database migration applied migration="0051_young_korg.sql"
+2026-08-08T22:25:59.312618Z  INFO identifier "issue_execution_decisions_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "issue_execution_decisions_created_by_run_id_heartbeat_runs_id_f"
+2026-08-08T22:25:59.313680Z  INFO database migration applied migration="0052_mushy_trauma.sql"
+2026-08-08T22:25:59.317013Z  INFO database migration applied migration="0053_sharp_wild_child.sql"
+2026-08-08T22:25:59.318125Z  INFO database migration applied migration="0054_draft_routines.sql"
+2026-08-08T22:25:59.318978Z  INFO database migration applied migration="0055_kind_weapon_omega.sql"
+2026-08-08T22:25:59.323207Z  INFO database migration applied migration="0056_spooky_ultragirl.sql"
+2026-08-08T22:25:59.325567Z  INFO database migration applied migration="0057_tidy_join_requests.sql"
+2026-08-08T22:25:59.327609Z  INFO database migration applied migration="0058_wealthy_starbolt.sql"
+2026-08-08T22:25:59.332212Z  INFO database migration applied migration="0059_plugin_database_namespaces.sql"
+2026-08-08T22:25:59.336521Z  INFO index "issue_reference_mentions_company_source_mention_uq" does not exist, skipping
+2026-08-08T22:25:59.337226Z  INFO database migration applied migration="0060_orange_annihilus.sql"
+2026-08-08T22:25:59.338314Z  INFO database migration applied migration="0061_lively_thor_girl.sql"
+2026-08-08T22:25:59.340066Z  INFO database migration applied migration="0062_routine_run_dispatch_fingerprint.sql"
+2026-08-08T22:25:59.342438Z  INFO identifier "issue_thread_interactions_source_comment_id_issue_comments_id_fk" will be truncated to "issue_thread_interactions_source_comment_id_issue_comments_id_f"
+2026-08-08T22:25:59.342470Z  INFO identifier "issue_thread_interactions_source_comment_id_issue_comments_id_fk" will be truncated to "issue_thread_interactions_source_comment_id_issue_comments_id_f"
+2026-08-08T22:25:59.342485Z  INFO identifier "issue_thread_interactions_source_comment_id_issue_comments_id_fk" will be truncated to "issue_thread_interactions_source_comment_id_issue_comments_id_f"
+2026-08-08T22:25:59.345308Z  INFO database migration applied migration="0063_issue_thread_interactions.sql"
+2026-08-08T22:25:59.346401Z  INFO database migration applied migration="0064_issue_thread_interaction_idempotency.sql"
+2026-08-08T22:25:59.349273Z  INFO identifier "environment_leases_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "environment_leases_execution_workspace_id_execution_workspaces_"
+2026-08-08T22:25:59.353562Z  INFO database migration applied migration="0065_environments.sql"
+2026-08-08T22:25:59.362010Z  INFO database migration applied migration="0066_issue_tree_holds.sql"
+2026-08-08T22:25:59.363941Z  INFO database migration applied migration="0067_agent_default_environment.sql"
+2026-08-08T22:25:59.365567Z  INFO database migration applied migration="0068_environment_local_driver_unique.sql"
+2026-08-08T22:25:59.367078Z  INFO database migration applied migration="0069_liveness_recovery_dedupe.sql"
+2026-08-08T22:25:59.370438Z  INFO identifier "heartbeat_run_watchdog_decisions_evaluation_issue_id_issues_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_evaluation_issue_id_issues_id_"
+2026-08-08T22:25:59.370461Z  INFO identifier "heartbeat_run_watchdog_decisions_evaluation_issue_id_issues_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_evaluation_issue_id_issues_id_"
+2026-08-08T22:25:59.370470Z  INFO identifier "heartbeat_run_watchdog_decisions_evaluation_issue_id_issues_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_evaluation_issue_id_issues_id_"
+2026-08-08T22:25:59.370816Z  INFO identifier "heartbeat_run_watchdog_decisions_created_by_agent_id_agents_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_created_by_agent_id_agents_id_"
+2026-08-08T22:25:59.370829Z  INFO identifier "heartbeat_run_watchdog_decisions_created_by_agent_id_agents_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_created_by_agent_id_agents_id_"
+2026-08-08T22:25:59.370836Z  INFO identifier "heartbeat_run_watchdog_decisions_created_by_agent_id_agents_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_created_by_agent_id_agents_id_"
+2026-08-08T22:25:59.371122Z  INFO identifier "heartbeat_run_watchdog_decisions_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_created_by_run_id_heartbeat_ru"
+2026-08-08T22:25:59.371129Z  INFO identifier "heartbeat_run_watchdog_decisions_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_created_by_run_id_heartbeat_ru"
+2026-08-08T22:25:59.371136Z  INFO identifier "heartbeat_run_watchdog_decisions_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "heartbeat_run_watchdog_decisions_created_by_run_id_heartbeat_ru"
+2026-08-08T22:25:59.372353Z  INFO database migration applied migration="0070_active_run_output_watchdog.sql"
+2026-08-08T22:25:59.373206Z  INFO database migration applied migration="0071_default_hire_approval_off.sql"
+2026-08-08T22:25:59.374439Z  INFO database migration applied migration="0072_large_sandman.sql"
+2026-08-08T22:25:59.375306Z  INFO database migration applied migration="0073_shiny_salo.sql"
+2026-08-08T22:25:59.376816Z  INFO database migration applied migration="0074_striped_genesis.sql"
+2026-08-08T22:25:59.378570Z  INFO database migration applied migration="0075_cultured_sebastian_shaw.sql"
+2026-08-08T22:25:59.381815Z  INFO database migration applied migration="0076_useful_elektra.sql"
+2026-08-08T22:25:59.384850Z  INFO identifier "routine_revisions_restored_from_revision_id_routine_revisions_id_fk" will be truncated to "routine_revisions_restored_from_revision_id_routine_revisions_i"
+2026-08-08T22:25:59.384872Z  INFO identifier "routine_revisions_restored_from_revision_id_routine_revisions_id_fk" will be truncated to "routine_revisions_restored_from_revision_id_routine_revisions_i"
+2026-08-08T22:25:59.384888Z  INFO identifier "routine_revisions_restored_from_revision_id_routine_revisions_id_fk" will be truncated to "routine_revisions_restored_from_revision_id_routine_revisions_i"
+2026-08-08T22:25:59.387617Z  INFO database migration applied migration="0077_unusual_karnak.sql"
+2026-08-08T22:25:59.388716Z  INFO database migration applied migration="0078_white_darwin.sql"
+2026-08-08T22:25:59.390132Z  INFO database migration applied migration="0079_company_search_document_indexes.sql"
+2026-08-08T22:25:59.396535Z  INFO database migration applied migration="0080_company_search_fuzzystrmatch.sql"
+2026-08-08T22:25:59.397478Z  INFO database migration applied migration="0081_optimal_dormammu.sql"
+2026-08-08T22:25:59.407751Z  INFO database migration applied migration="0082_dry_vision.sql"
+2026-08-08T22:25:59.410372Z  INFO identifier "company_secret_provider_configs_created_by_agent_id_agents_id_fk" will be truncated to "company_secret_provider_configs_created_by_agent_id_agents_id_f"
+2026-08-08T22:25:59.410397Z  INFO identifier "company_secret_provider_configs_created_by_agent_id_agents_id_fk" will be truncated to "company_secret_provider_configs_created_by_agent_id_agents_id_f"
+2026-08-08T22:25:59.410410Z  INFO identifier "company_secret_provider_configs_created_by_agent_id_agents_id_fk" will be truncated to "company_secret_provider_configs_created_by_agent_id_agents_id_f"
+2026-08-08T22:25:59.412552Z  INFO identifier "company_secrets_provider_config_id_company_secret_provider_configs_id_fk" will be truncated to "company_secrets_provider_config_id_company_secret_provider_conf"
+2026-08-08T22:25:59.412565Z  INFO identifier "company_secrets_provider_config_id_company_secret_provider_configs_id_fk" will be truncated to "company_secrets_provider_config_id_company_secret_provider_conf"
+2026-08-08T22:25:59.412581Z  INFO identifier "company_secrets_provider_config_id_company_secret_provider_configs_id_fk" will be truncated to "company_secrets_provider_config_id_company_secret_provider_conf"
+2026-08-08T22:25:59.414328Z  INFO database migration applied migration="0083_company_secret_provider_configs.sql"
+2026-08-08T22:25:59.420263Z  INFO database migration applied migration="0084_issue_recovery_actions.sql"
+2026-08-08T22:25:59.421667Z  INFO database migration applied migration="0085_tranquil_the_executioner.sql"
+2026-08-08T22:25:59.423562Z  INFO database migration applied migration="0086_routine_env_runtime_contract.sql"
+2026-08-08T22:25:59.424706Z  INFO database migration applied migration="0087_backfill_environment_manage_human_defaults.sql"
+2026-08-08T22:25:59.426575Z  INFO database migration applied migration="0088_backfill_principal_access_compatibility.sql"
+2026-08-08T22:25:59.430060Z  INFO identifier "cloud_upstream_runs_connection_id_cloud_upstream_connections_id_fk" will be truncated to "cloud_upstream_runs_connection_id_cloud_upstream_connections_id"
+2026-08-08T22:25:59.430124Z  INFO identifier "cloud_upstream_runs_connection_id_cloud_upstream_connections_id_fk" will be truncated to "cloud_upstream_runs_connection_id_cloud_upstream_connections_id"
+2026-08-08T22:25:59.430160Z  INFO identifier "cloud_upstream_runs_connection_id_cloud_upstream_connections_id_fk" will be truncated to "cloud_upstream_runs_connection_id_cloud_upstream_connections_id"
+2026-08-08T22:25:59.432649Z  INFO database migration applied migration="0089_cloud_upstreams.sql"
+2026-08-08T22:25:59.443140Z  INFO database migration applied migration="0090_resource_memberships.sql"
+2026-08-08T22:25:59.452542Z  INFO identifier "document_annotation_threads_original_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_threads_original_revision_id_document_revis"
+2026-08-08T22:25:59.452615Z  INFO identifier "document_annotation_threads_original_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_threads_original_revision_id_document_revis"
+2026-08-08T22:25:59.452637Z  INFO identifier "document_annotation_threads_original_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_threads_original_revision_id_document_revis"
+2026-08-08T22:25:59.453105Z  INFO identifier "document_annotation_threads_current_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_threads_current_revision_id_document_revisi"
+2026-08-08T22:25:59.453157Z  INFO identifier "document_annotation_threads_current_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_threads_current_revision_id_document_revisi"
+2026-08-08T22:25:59.453233Z  INFO identifier "document_annotation_threads_current_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_threads_current_revision_id_document_revisi"
+2026-08-08T22:25:59.457169Z  INFO identifier "document_annotation_comments_thread_id_document_annotation_threads_id_fk" will be truncated to "document_annotation_comments_thread_id_document_annotation_thre"
+2026-08-08T22:25:59.457223Z  INFO identifier "document_annotation_comments_thread_id_document_annotation_threads_id_fk" will be truncated to "document_annotation_comments_thread_id_document_annotation_thre"
+2026-08-08T22:25:59.457328Z  INFO identifier "document_annotation_comments_thread_id_document_annotation_threads_id_fk" will be truncated to "document_annotation_comments_thread_id_document_annotation_thre"
+2026-08-08T22:25:59.461931Z  INFO identifier "document_annotation_comments_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "document_annotation_comments_created_by_run_id_heartbeat_runs_i"
+2026-08-08T22:25:59.462017Z  INFO identifier "document_annotation_comments_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "document_annotation_comments_created_by_run_id_heartbeat_runs_i"
+2026-08-08T22:25:59.462058Z  INFO identifier "document_annotation_comments_created_by_run_id_heartbeat_runs_id_fk" will be truncated to "document_annotation_comments_created_by_run_id_heartbeat_runs_i"
+2026-08-08T22:25:59.465160Z  INFO identifier "document_annotation_anchor_snapshots_thread_id_document_annotation_threads_id_fk" will be truncated to "document_annotation_anchor_snapshots_thread_id_document_annotat"
+2026-08-08T22:25:59.465186Z  INFO identifier "document_annotation_anchor_snapshots_thread_id_document_annotation_threads_id_fk" will be truncated to "document_annotation_anchor_snapshots_thread_id_document_annotat"
+2026-08-08T22:25:59.465394Z  INFO identifier "document_annotation_anchor_snapshots_thread_id_document_annotation_threads_id_fk" will be truncated to "document_annotation_anchor_snapshots_thread_id_document_annotat"
+2026-08-08T22:25:59.467902Z  INFO identifier "document_annotation_anchor_snapshots_document_id_documents_id_fk" will be truncated to "document_annotation_anchor_snapshots_document_id_documents_id_f"
+2026-08-08T22:25:59.468259Z  INFO identifier "document_annotation_anchor_snapshots_document_id_documents_id_fk" will be truncated to "document_annotation_anchor_snapshots_document_id_documents_id_f"
+2026-08-08T22:25:59.468304Z  INFO identifier "document_annotation_anchor_snapshots_document_id_documents_id_fk" will be truncated to "document_annotation_anchor_snapshots_document_id_documents_id_f"
+2026-08-08T22:25:59.468704Z  INFO identifier "document_annotation_anchor_snapshots_from_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_anchor_snapshots_from_revision_id_document_"
+2026-08-08T22:25:59.468872Z  INFO identifier "document_annotation_anchor_snapshots_from_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_anchor_snapshots_from_revision_id_document_"
+2026-08-08T22:25:59.469202Z  INFO identifier "document_annotation_anchor_snapshots_from_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_anchor_snapshots_from_revision_id_document_"
+2026-08-08T22:25:59.470971Z  INFO identifier "document_annotation_anchor_snapshots_to_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_anchor_snapshots_to_revision_id_document_re"
+2026-08-08T22:25:59.471543Z  INFO identifier "document_annotation_anchor_snapshots_to_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_anchor_snapshots_to_revision_id_document_re"
+2026-08-08T22:25:59.471578Z  INFO identifier "document_annotation_anchor_snapshots_to_revision_id_document_revisions_id_fk" will be truncated to "document_annotation_anchor_snapshots_to_revision_id_document_re"
+2026-08-08T22:25:59.481340Z  INFO identifier "document_annotation_anchor_snapshots_company_thread_created_at_idx" will be truncated to "document_annotation_anchor_snapshots_company_thread_created_at_"
+2026-08-08T22:25:59.482516Z  INFO identifier "document_annotation_anchor_snapshots_company_document_revision_idx" will be truncated to "document_annotation_anchor_snapshots_company_document_revision_"
+2026-08-08T22:25:59.484607Z  INFO database migration applied migration="0091_old_swarm.sql"
+2026-08-08T22:25:59.491770Z  INFO identifier "issue_plan_decompositions_accepted_plan_revision_id_document_revisions_id_fk" will be truncated to "issue_plan_decompositions_accepted_plan_revision_id_document_re"
+2026-08-08T22:25:59.493064Z  INFO identifier "issue_plan_decompositions_accepted_interaction_id_issue_thread_interactions_id_fk" will be truncated to "issue_plan_decompositions_accepted_interaction_id_issue_thread_"
+2026-08-08T22:25:59.500308Z  INFO database migration applied migration="0092_mighty_puma.sql"
+2026-08-08T22:25:59.506865Z  INFO database migration applied migration="0093_giant_green_goblin.sql"
+2026-08-08T22:25:59.510904Z  INFO database migration applied migration="0094_backfill_archived_company_agent_pauses.sql"
+2026-08-08T22:25:59.516771Z  INFO database migration applied migration="0095_issue_comment_tombstones.sql"
+2026-08-08T22:25:59.525136Z  INFO identifier "document_annotation_comments_issue_comment_id_issue_comments_id_fk" will be truncated to "document_annotation_comments_issue_comment_id_issue_comments_id"
+2026-08-08T22:25:59.525292Z  INFO identifier "document_annotation_comments_issue_comment_id_issue_comments_id_fk" will be truncated to "document_annotation_comments_issue_comment_id_issue_comments_id"
+2026-08-08T22:25:59.525311Z  INFO identifier "document_annotation_comments_issue_comment_id_issue_comments_id_fk" will be truncated to "document_annotation_comments_issue_comment_id_issue_comments_id"
+2026-08-08T22:25:59.528607Z  INFO database migration applied migration="0096_document_annotation_issue_comment_links.sql"
+2026-08-08T22:25:59.530980Z  INFO database migration applied migration="0097_low_trust_source_trust.sql"
+2026-08-08T22:25:59.533204Z  INFO database migration applied migration="0098_project_icon.sql"
+2026-08-08T22:25:59.562439Z  INFO identifier "company_skill_comments_parent_comment_id_company_skill_comments_id_fk" will be truncated to "company_skill_comments_parent_comment_id_company_skill_comments"
+2026-08-08T22:25:59.562500Z  INFO identifier "company_skill_comments_parent_comment_id_company_skill_comments_id_fk" will be truncated to "company_skill_comments_parent_comment_id_company_skill_comments"
+2026-08-08T22:25:59.562547Z  INFO identifier "company_skill_comments_parent_comment_id_company_skill_comments_id_fk" will be truncated to "company_skill_comments_parent_comment_id_company_skill_comments"
+2026-08-08T22:25:59.591152Z  INFO database migration applied migration="0099_skills_store_foundation.sql"
+2026-08-08T22:25:59.606997Z  INFO database migration applied migration="0100_skill_install_count_backfill.sql"
+2026-08-08T22:25:59.631926Z  INFO database migration applied migration="0101_plugin_company_id_tenant_isolation.sql"
+2026-08-08T22:25:59.636004Z  INFO database migration applied migration="0102_managed_sandbox_dedup_index.sql"
+2026-08-08T22:25:59.637180Z  INFO database migration applied migration="0103_agent_error_reason.sql"
+2026-08-08T22:25:59.644706Z  INFO database migration applied migration="0104_issue_watchdogs.sql"
+2026-08-08T22:25:59.652747Z  INFO database migration applied migration="0105_instance_scoped_environments.sql"
+2026-08-08T22:25:59.662755Z  INFO database migration applied migration="0106_external_object_references.sql"
+2026-08-08T22:25:59.663945Z  INFO database migration applied migration="0107_external_object_display_metadata.sql"
+2026-08-08T22:25:59.666193Z  INFO database migration applied migration="0108_workspace_operations_issue_id.sql"
+2026-08-08T22:25:59.675292Z  INFO database migration applied migration="0109_routine_description_annotations.sql"
+2026-08-08T22:25:59.678911Z  INFO database migration applied migration="0110_document_company_cascade.sql"
+2026-08-08T22:25:59.679919Z  INFO database migration applied migration="0111_backfill_skill_create_human_defaults.sql"
+2026-08-08T22:25:59.680922Z  INFO database migration applied migration="0112_rename_skill_create_permission_key.sql"
+2026-08-08T22:25:59.714499Z  INFO database migration applied migration="0113_pipeline_foundation.sql"
+2026-08-08T22:25:59.715244Z  INFO constraint "pipeline_case_events_0114_placeholder" of relation "pipeline_case_events" does not exist, skipping
+2026-08-08T22:25:59.715448Z  INFO database migration applied migration="0114_pipeline_case_issue_unlinked_event.sql"
+2026-08-08T22:25:59.716931Z  INFO database migration applied migration="0115_pipeline_routine_origin.sql"
+2026-08-08T22:25:59.717842Z  INFO constraint "pipeline_case_events_0116_placeholder" of relation "pipeline_case_events" does not exist, skipping
+2026-08-08T22:25:59.718089Z  INFO database migration applied migration="0116_pipeline_upstream_drift_event.sql"
+2026-08-08T22:25:59.718726Z  INFO constraint "pipeline_case_events_0117_placeholder" of relation "pipeline_case_events" does not exist, skipping
+2026-08-08T22:25:59.718908Z  INFO database migration applied migration="0117_pipeline_transition_forced_event.sql"
+2026-08-08T22:25:59.720228Z  INFO database migration applied migration="0118_pipeline_case_agent_fanout.sql"
+2026-08-08T22:25:59.720803Z  INFO constraint "pipeline_case_events_0119_placeholder" of relation "pipeline_case_events" does not exist, skipping
+2026-08-08T22:25:59.721019Z  INFO database migration applied migration="0119_pipeline_drift_acknowledged_event.sql"
+2026-08-08T22:25:59.722507Z  INFO database migration applied migration="0120_pipeline_stage_working_primitives.sql"
+2026-08-08T22:25:59.727975Z  INFO database migration applied migration="0121_pipeline_automation_retry_effects.sql"
+2026-08-08T22:25:59.732829Z  INFO database migration applied migration="0122_pipeline_case_documents.sql"
+2026-08-08T22:25:59.734411Z  INFO database migration applied migration="0123_document_annotation_source_trust.sql"
+2026-08-08T22:25:59.735505Z  INFO database migration applied migration="0124_agent_api_key_scope_config.sql"
+2026-08-08T22:25:59.738746Z  INFO identifier "environment_custom_image_templates_environment_id_environments_id_fk" will be truncated to "environment_custom_image_templates_environment_id_environments_"
+2026-08-08T22:25:59.739185Z  INFO identifier "environment_custom_image_templates_created_by_agent_id_agents_id_fk" will be truncated to "environment_custom_image_templates_created_by_agent_id_agents_i"
+2026-08-08T22:25:59.739641Z  INFO identifier "environment_custom_image_setup_sessions_company_id_companies_id_fk" will be truncated to "environment_custom_image_setup_sessions_company_id_companies_id"
+2026-08-08T22:25:59.739976Z  INFO identifier "environment_custom_image_setup_sessions_environment_id_environments_id_fk" will be truncated to "environment_custom_image_setup_sessions_environment_id_environm"
+2026-08-08T22:25:59.740932Z  INFO identifier "environment_custom_image_setup_sessions_environment_lease_id_environment_leases_id_fk" will be truncated to "environment_custom_image_setup_sessions_environment_lease_id_en"
+2026-08-08T22:25:59.741221Z  INFO identifier "environment_custom_image_setup_sessions_started_by_agent_id_agents_id_fk" will be truncated to "environment_custom_image_setup_sessions_started_by_agent_id_age"
+2026-08-08T22:25:59.741503Z  INFO identifier "environment_custom_image_templates_company_environment_status_idx" will be truncated to "environment_custom_image_templates_company_environment_status_i"
+2026-08-08T22:25:59.742319Z  INFO identifier "environment_custom_image_templates_company_environment_active_uq" will be truncated to "environment_custom_image_templates_company_environment_active_u"
+2026-08-08T22:25:59.743558Z  INFO identifier "environment_custom_image_setup_sessions_company_environment_status_idx" will be truncated to "environment_custom_image_setup_sessions_company_environment_sta"
+2026-08-08T22:25:59.743962Z  INFO identifier "environment_custom_image_setup_sessions_company_environment_active_uq" will be truncated to "environment_custom_image_setup_sessions_company_environment_act"
+2026-08-08T22:25:59.744568Z  INFO identifier "environment_custom_image_setup_sessions_company_promoted_template_idx" will be truncated to "environment_custom_image_setup_sessions_company_promoted_templa"
+2026-08-08T22:25:59.745527Z  INFO database migration applied migration="0125_environment_custom_image_templates.sql"
+2026-08-08T22:25:59.747074Z  INFO identifier "environment_custom_image_templates_company_environment_status_idx" will be truncated to "environment_custom_image_templates_company_environment_status_i"
+2026-08-08T22:25:59.747231Z  INFO identifier "environment_custom_image_templates_company_environment_active_uq" will be truncated to "environment_custom_image_templates_company_environment_active_u"
+2026-08-08T22:25:59.747365Z  INFO identifier "environment_custom_image_setup_sessions_company_environment_status_idx" will be truncated to "environment_custom_image_setup_sessions_company_environment_sta"
+2026-08-08T22:25:59.747420Z  INFO identifier "environment_custom_image_setup_sessions_company_environment_active_uq" will be truncated to "environment_custom_image_setup_sessions_company_environment_act"
+2026-08-08T22:25:59.747555Z  INFO identifier "environment_custom_image_setup_sessions_company_promoted_template_idx" will be truncated to "environment_custom_image_setup_sessions_company_promoted_templa"
+2026-08-08T22:25:59.747900Z  INFO identifier "environment_custom_image_setup_sessions_company_id_companies_id_fk" will be truncated to "environment_custom_image_setup_sessions_company_id_companies_id"
+2026-08-08T22:25:59.748572Z  INFO identifier "environment_custom_image_templates_environment_provider_status_idx" will be truncated to "environment_custom_image_templates_environment_provider_status_"
+2026-08-08T22:25:59.752174Z  INFO database migration applied migration="0127_environment_custom_images_instance_scoped.sql"
+2026-08-08T22:25:59.757408Z  INFO identifier "user_secret_definitions_provider_config_id_company_secret_provider_configs_id_fk" will be truncated to "user_secret_definitions_provider_config_id_company_secret_provi"
+2026-08-08T22:25:59.757434Z  INFO identifier "user_secret_definitions_provider_config_id_company_secret_provider_configs_id_fk" will be truncated to "user_secret_definitions_provider_config_id_company_secret_provi"
+2026-08-08T22:25:59.757449Z  INFO identifier "user_secret_definitions_provider_config_id_company_secret_provider_configs_id_fk" will be truncated to "user_secret_definitions_provider_config_id_company_secret_provi"
+2026-08-08T22:25:59.759157Z  INFO identifier "user_secret_declarations_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "user_secret_declarations_user_secret_definition_id_user_secret_"
+2026-08-08T22:25:59.759182Z  INFO identifier "user_secret_declarations_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "user_secret_declarations_user_secret_definition_id_user_secret_"
+2026-08-08T22:25:59.759207Z  INFO identifier "user_secret_declarations_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "user_secret_declarations_user_secret_definition_id_user_secret_"
+2026-08-08T22:25:59.759437Z  INFO identifier "company_secrets_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "company_secrets_user_secret_definition_id_user_secret_definitio"
+2026-08-08T22:25:59.759457Z  INFO identifier "company_secrets_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "company_secrets_user_secret_definition_id_user_secret_definitio"
+2026-08-08T22:25:59.759470Z  INFO identifier "company_secrets_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "company_secrets_user_secret_definition_id_user_secret_definitio"
+2026-08-08T22:25:59.759710Z  INFO identifier "secret_access_events_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "secret_access_events_user_secret_definition_id_user_secret_defi"
+2026-08-08T22:25:59.759728Z  INFO identifier "secret_access_events_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "secret_access_events_user_secret_definition_id_user_secret_defi"
+2026-08-08T22:25:59.759754Z  INFO identifier "secret_access_events_user_secret_definition_id_user_secret_definitions_id_fk" will be truncated to "secret_access_events_user_secret_definition_id_user_secret_defi"
+2026-08-08T22:25:59.768939Z  INFO database migration applied migration="0128_user_specific_secrets.sql"
+2026-08-08T22:25:59.770843Z  INFO database migration applied migration="0129_agent_api_key_responsible_user.sql"
+2026-08-08T22:25:59.772720Z  INFO database migration applied migration="0131_repair_run_responsible_user_context_refs.sql"
+2026-08-08T22:25:59.776423Z  INFO database migration applied migration="0132_issue_comment_derived_attribution_fast.sql"
+2026-08-08T22:25:59.778200Z  INFO database migration applied migration="0133_resource_membership_stars.sql"
+2026-08-08T22:25:59.783426Z  INFO database migration applied migration="0134_run_responsible_user_invariant.sql"
+2026-08-08T22:25:59.784171Z  INFO table "run_responsible_user_updated_at_sweeps" does not exist, skipping
+2026-08-08T22:25:59.786443Z  INFO database migration applied migration="0135_repair_run_responsible_user_updated_at_sweep.sql"
+2026-08-08T22:25:59.788023Z  INFO database migration applied migration="0136_acpx_default_engine_migration.sql"
+2026-08-08T22:25:59.792911Z  INFO identifier "company_skill_test_runs_input_id_company_skill_test_inputs_id_fk" will be truncated to "company_skill_test_runs_input_id_company_skill_test_inputs_id_f"
+2026-08-08T22:25:59.792938Z  INFO identifier "company_skill_test_runs_input_id_company_skill_test_inputs_id_fk" will be truncated to "company_skill_test_runs_input_id_company_skill_test_inputs_id_f"
+2026-08-08T22:25:59.792952Z  INFO identifier "company_skill_test_runs_input_id_company_skill_test_inputs_id_fk" will be truncated to "company_skill_test_runs_input_id_company_skill_test_inputs_id_f"
+2026-08-08T22:25:59.793210Z  INFO identifier "company_skill_test_runs_skill_version_id_company_skill_versions_id_fk" will be truncated to "company_skill_test_runs_skill_version_id_company_skill_versions"
+2026-08-08T22:25:59.793225Z  INFO identifier "company_skill_test_runs_skill_version_id_company_skill_versions_id_fk" will be truncated to "company_skill_test_runs_skill_version_id_company_skill_versions"
+2026-08-08T22:25:59.793241Z  INFO identifier "company_skill_test_runs_skill_version_id_company_skill_versions_id_fk" will be truncated to "company_skill_test_runs_skill_version_id_company_skill_versions"
+2026-08-08T22:25:59.796817Z  INFO database migration applied migration="0137_skill_studio_server_foundation.sql"
+2026-08-08T22:25:59.798287Z  INFO database migration applied migration="0138_skill_studio_run_retention.sql"
+2026-08-08T22:25:59.800658Z  INFO identifier "company_skill_test_run_templates_created_by_agent_id_agents_id_fk" will be truncated to "company_skill_test_run_templates_created_by_agent_id_agents_id_"
+2026-08-08T22:25:59.800680Z  INFO identifier "company_skill_test_run_templates_created_by_agent_id_agents_id_fk" will be truncated to "company_skill_test_run_templates_created_by_agent_id_agents_id_"
+2026-08-08T22:25:59.800734Z  INFO identifier "company_skill_test_run_templates_created_by_agent_id_agents_id_fk" will be truncated to "company_skill_test_run_templates_created_by_agent_id_agents_id_"
+2026-08-08T22:25:59.801078Z  INFO identifier "company_skill_test_run_templates_updated_by_agent_id_agents_id_fk" will be truncated to "company_skill_test_run_templates_updated_by_agent_id_agents_id_"
+2026-08-08T22:25:59.801088Z  INFO identifier "company_skill_test_run_templates_updated_by_agent_id_agents_id_fk" will be truncated to "company_skill_test_run_templates_updated_by_agent_id_agents_id_"
+2026-08-08T22:25:59.801100Z  INFO identifier "company_skill_test_run_templates_updated_by_agent_id_agents_id_fk" will be truncated to "company_skill_test_run_templates_updated_by_agent_id_agents_id_"
+2026-08-08T22:25:59.802448Z  INFO database migration applied migration="0139_skill_studio_run_templates.sql"
+2026-08-08T22:25:59.805744Z  INFO database migration applied migration="0140_built_in_managed_resources.sql"
+2026-08-08T22:25:59.806839Z  INFO database migration applied migration="0141_heartbeat_runs_company_created_at_index.sql"
+2026-08-08T22:25:59.808549Z  INFO database migration applied migration="0142_company_search_sort_indexes.sql"
+2026-08-08T22:25:59.830239Z  INFO database migration applied migration="0143_cases_foundation.sql"
+2026-08-08T22:25:59.832898Z  INFO constraint "document_annotation_threads_exactly_one_owner_chk" of relation "document_annotation_threads" does not exist, skipping
+2026-08-08T22:25:59.833364Z  INFO constraint "document_annotation_comments_exactly_one_owner_chk" of relation "document_annotation_comments" does not exist, skipping
+2026-08-08T22:25:59.834403Z  INFO database migration applied migration="0144_case_document_annotations.sql"
+2026-08-08T22:25:59.836126Z  INFO database migration applied migration="0145_inbox_dismissal_snooze_kind.sql"
+2026-08-08T22:25:59.837118Z  INFO database migration applied migration="0146_routine_activity_gate.sql"
+2026-08-08T22:25:59.837925Z  INFO database migration applied migration="0147_cost_event_status.sql"
+2026-08-08T22:25:59.842850Z  INFO identifier "tool_access_audit_events_catalog_entry_id_tool_catalog_entries_id_fk" will be truncated to "tool_access_audit_events_catalog_entry_id_tool_catalog_entries_"
+2026-08-08T22:25:59.842872Z  INFO identifier "tool_access_audit_events_catalog_entry_id_tool_catalog_entries_id_fk" will be truncated to "tool_access_audit_events_catalog_entry_id_tool_catalog_entries_"
+2026-08-08T22:25:59.845216Z  INFO identifier "tool_access_audit_events_catalog_entry_id_tool_catalog_entries_id_fk" will be truncated to "tool_access_audit_events_catalog_entry_id_tool_catalog_entries_"
+2026-08-08T22:25:59.849008Z  INFO database migration applied migration="0148_tool_access_mcp_connections.sql"
+2026-08-08T22:25:59.861810Z  INFO identifier "tool_profile_entries_catalog_entry_id_tool_catalog_entries_id_fk" will be truncated to "tool_profile_entries_catalog_entry_id_tool_catalog_entries_id_f"
+2026-08-08T22:25:59.861833Z  INFO identifier "tool_profile_entries_catalog_entry_id_tool_catalog_entries_id_fk" will be truncated to "tool_profile_entries_catalog_entry_id_tool_catalog_entries_id_f"
+2026-08-08T22:25:59.861844Z  INFO identifier "tool_runtime_slots_project_workspace_id_project_workspaces_id_fk" will be truncated to "tool_runtime_slots_project_workspace_id_project_workspaces_id_f"
+2026-08-08T22:25:59.861851Z  INFO identifier "tool_runtime_slots_project_workspace_id_project_workspaces_id_fk" will be truncated to "tool_runtime_slots_project_workspace_id_project_workspaces_id_f"
+2026-08-08T22:25:59.861858Z  INFO identifier "tool_runtime_slots_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "tool_runtime_slots_execution_workspace_id_execution_workspaces_"
+2026-08-08T22:25:59.861869Z  INFO identifier "tool_runtime_slots_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "tool_runtime_slots_execution_workspace_id_execution_workspaces_"
+2026-08-08T22:25:59.861928Z  INFO identifier "tool_action_requests_interaction_id_issue_thread_interactions_id_fk" will be truncated to "tool_action_requests_interaction_id_issue_thread_interactions_i"
+2026-08-08T22:25:59.861935Z  INFO identifier "tool_action_requests_interaction_id_issue_thread_interactions_id_fk" will be truncated to "tool_action_requests_interaction_id_issue_thread_interactions_i"
+2026-08-08T22:25:59.864452Z  INFO identifier "tool_profile_entries_catalog_entry_id_tool_catalog_entries_id_fk" will be truncated to "tool_profile_entries_catalog_entry_id_tool_catalog_entries_id_f"
+2026-08-08T22:25:59.865825Z  INFO identifier "tool_runtime_slots_project_workspace_id_project_workspaces_id_fk" will be truncated to "tool_runtime_slots_project_workspace_id_project_workspaces_id_f"
+2026-08-08T22:25:59.866144Z  INFO identifier "tool_runtime_slots_execution_workspace_id_execution_workspaces_id_fk" will be truncated to "tool_runtime_slots_execution_workspace_id_execution_workspaces_"
+2026-08-08T22:25:59.869666Z  INFO identifier "tool_action_requests_interaction_id_issue_thread_interactions_id_fk" will be truncated to "tool_action_requests_interaction_id_issue_thread_interactions_i"
+2026-08-08T22:25:59.882843Z  INFO database migration applied migration="0149_agent_access_phase2_contracts.sql"
+2026-08-08T22:25:59.883769Z  INFO database migration applied migration="0150_tool_invocation_catalog_snapshots.sql"
+2026-08-08T22:25:59.889088Z  INFO database migration applied migration="0151_tool_gateway_sessions.sql"
+2026-08-08T22:25:59.890623Z  INFO database migration applied migration="0152_tool_connection_application_no_cascade.sql"
+2026-08-08T22:25:59.894298Z  INFO database migration applied migration="0153_tool_stdio_command_templates.sql"
+2026-08-08T22:25:59.897122Z  INFO database migration applied migration="0154_tool_oauth_states.sql"
+2026-08-08T22:25:59.898242Z  INFO database migration applied migration="0155_tool_oauth_state_actor_binding.sql"
+2026-08-08T22:25:59.899002Z  INFO database migration applied migration="0156_tool_oauth_state_session_binding.sql"
+2026-08-08T22:25:59.899750Z  INFO database migration applied migration="0157_tool_profile_new_tools_review.sql"
+2026-08-08T22:25:59.900869Z  INFO database migration applied migration="0158_tool_invocation_connected_mcp_metadata.sql"
+2026-08-08T22:25:59.907268Z  INFO database migration applied migration="0159_named_mcp_gateways.sql"
+2026-08-08T22:25:59.913868Z  INFO identifier "tool_mcp_gateway_tokens_expiry_override_by_agent_id_agents_id_fk" will be truncated to "tool_mcp_gateway_tokens_expiry_override_by_agent_id_agents_id_f"
+2026-08-08T22:25:59.913888Z  INFO identifier "tool_mcp_gateway_tokens_expiry_override_by_agent_id_agents_id_fk" will be truncated to "tool_mcp_gateway_tokens_expiry_override_by_agent_id_agents_id_f"
+2026-08-08T22:25:59.913903Z  INFO identifier "tool_gateway_sessions_gateway_token_id_tool_mcp_gateway_tokens_id_fk" will be truncated to "tool_gateway_sessions_gateway_token_id_tool_mcp_gateway_tokens_"
+2026-08-08T22:25:59.913910Z  INFO identifier "tool_gateway_sessions_gateway_token_id_tool_mcp_gateway_tokens_id_fk" will be truncated to "tool_gateway_sessions_gateway_token_id_tool_mcp_gateway_tokens_"
+2026-08-08T22:25:59.913922Z  INFO identifier "tool_access_audit_events_gateway_token_id_tool_mcp_gateway_tokens_id_fk" will be truncated to "tool_access_audit_events_gateway_token_id_tool_mcp_gateway_toke"
+2026-08-08T22:25:59.913929Z  INFO identifier "tool_access_audit_events_gateway_token_id_tool_mcp_gateway_tokens_id_fk" will be truncated to "tool_access_audit_events_gateway_token_id_tool_mcp_gateway_toke"
+2026-08-08T22:25:59.914602Z  INFO identifier "tool_mcp_gateway_tokens_expiry_override_by_agent_id_agents_id_fk" will be truncated to "tool_mcp_gateway_tokens_expiry_override_by_agent_id_agents_id_f"
+2026-08-08T22:25:59.915249Z  INFO identifier "tool_gateway_sessions_gateway_token_id_tool_mcp_gateway_tokens_id_fk" will be truncated to "tool_gateway_sessions_gateway_token_id_tool_mcp_gateway_tokens_"
+2026-08-08T22:25:59.917031Z  INFO identifier "tool_access_audit_events_gateway_token_id_tool_mcp_gateway_tokens_id_fk" will be truncated to "tool_access_audit_events_gateway_token_id_tool_mcp_gateway_toke"
+2026-08-08T22:25:59.919314Z  INFO database migration applied migration="0160_mcp_gateway_contract_expansion.sql"
+2026-08-08T22:25:59.920152Z  INFO database migration applied migration="0161_environment_custom_image_company_scope_repair.sql"
+2026-08-08T22:25:59.922603Z  INFO database migration applied migration="0162_tool_runtime_metric_counters.sql"
+2026-08-08T22:25:59.923572Z  INFO database migration applied migration="0163_secret_binding_projection_class.sql"
+2026-08-08T22:25:59.927310Z  INFO database migration applied migration="0164_plugin_config_company_scope.sql"
+2026-08-08T22:25:59.929438Z  INFO identifier "connection_token_issuances_application_id_tool_applications_id_fk" will be truncated to "connection_token_issuances_application_id_tool_applications_id_"
+2026-08-08T22:25:59.929453Z  INFO identifier "connection_token_issuances_application_id_tool_applications_id_fk" will be truncated to "connection_token_issuances_application_id_tool_applications_id_"
+2026-08-08T22:25:59.929461Z  INFO identifier "connection_token_issuances_application_id_tool_applications_id_fk" will be truncated to "connection_token_issuances_application_id_tool_applications_id_"
+2026-08-08T22:25:59.932402Z  INFO database migration applied migration="0165_connection_token_issuances.sql"
+2026-08-08T22:25:59.937084Z  INFO database migration applied migration="0166_smoke_lab_results.sql"
+2026-08-08T22:25:59.937835Z  INFO identifier "environment_custom_image_templates_company_environment_status_idx" will be truncated to "environment_custom_image_templates_company_environment_status_i"
+2026-08-08T22:25:59.937861Z  INFO index "environment_custom_image_templates_company_environment_status_i" does not exist, skipping
+2026-08-08T22:25:59.937961Z  INFO index "environment_custom_image_templates_company_provider_status_idx" does not exist, skipping
+2026-08-08T22:25:59.938033Z  INFO identifier "environment_custom_image_templates_company_environment_active_uq" will be truncated to "environment_custom_image_templates_company_environment_active_u"
+2026-08-08T22:25:59.938042Z  INFO index "environment_custom_image_templates_company_environment_active_u" does not exist, skipping
+2026-08-08T22:25:59.938103Z  INFO index "environment_custom_image_templates_company_last_used_idx" does not exist, skipping
+2026-08-08T22:25:59.938160Z  INFO identifier "environment_custom_image_setup_sessions_company_environment_status_idx" will be truncated to "environment_custom_image_setup_sessions_company_environment_sta"
+2026-08-08T22:25:59.938173Z  INFO index "environment_custom_image_setup_sessions_company_environment_sta" does not exist, skipping
+2026-08-08T22:25:59.938230Z  INFO identifier "environment_custom_image_setup_sessions_company_environment_active_uq" will be truncated to "environment_custom_image_setup_sessions_company_environment_act"
+2026-08-08T22:25:59.938244Z  INFO index "environment_custom_image_setup_sessions_company_environment_act" does not exist, skipping
+2026-08-08T22:25:59.938306Z  INFO index "environment_custom_image_setup_sessions_company_template_idx" does not exist, skipping
+2026-08-08T22:25:59.938365Z  INFO identifier "environment_custom_image_setup_sessions_company_promoted_template_idx" will be truncated to "environment_custom_image_setup_sessions_company_promoted_templa"
+2026-08-08T22:25:59.938373Z  INFO index "environment_custom_image_setup_sessions_company_promoted_templa" does not exist, skipping
+2026-08-08T22:25:59.938433Z  INFO index "environment_custom_image_setup_sessions_company_expires_idx" does not exist, skipping
+2026-08-08T22:25:59.938534Z  INFO constraint "environment_custom_image_templates_company_id_companies_id_fk" of relation "environment_custom_image_templates" does not exist, skipping
+2026-08-08T22:25:59.938595Z  INFO identifier "environment_custom_image_setup_sessions_company_id_companies_id_fk" will be truncated to "environment_custom_image_setup_sessions_company_id_companies_id"
+2026-08-08T22:25:59.938614Z  INFO constraint "environment_custom_image_setup_sessions_company_id_companies_id" of relation "environment_custom_image_setup_sessions" does not exist, skipping
+2026-08-08T22:25:59.938670Z  INFO column "company_id" of relation "environment_custom_image_templates" does not exist, skipping
+2026-08-08T22:25:59.938726Z  INFO column "company_id" of relation "environment_custom_image_setup_sessions" does not exist, skipping
+2026-08-08T22:25:59.938921Z  INFO database migration applied migration="0167_environment_custom_image_instance_scope_cleanup.sql"
+2026-08-08T22:25:59.942935Z  INFO database migration applied migration="0168_tool_connection_installs.sql"
+2026-08-08T22:25:59.945972Z  INFO database migration applied migration="0169_tool_gateway_protocol_rate_limit_counters.sql"
+2026-08-08T22:25:59.947814Z  INFO database migration applied migration="0170_company_skill_policies.sql"
+2026-08-08T22:25:59.951307Z  INFO database migration applied migration="0171_issue_create_idempotency_keys.sql"
+2026-08-08T22:25:59.955577Z  INFO database migration applied migration="0172_inbox_archive_agent_policies.sql"
+2026-08-08T22:25:59.956690Z  INFO trigger "agents_cleanup_inbox_policy_allowlists" for relation "agents" does not exist, skipping
+2026-08-08T22:25:59.956937Z  INFO database migration applied migration="0173_inbox_policy_agent_cleanup.sql"
+2026-08-08T22:25:59.961049Z  INFO database migration applied migration="0174_folders.sql"
+2026-08-08T22:25:59.962806Z  INFO constraint "folders_company_kind_parent_slug_uq" of relation "folders" does not exist, skipping
+2026-08-08T22:25:59.966194Z  INFO database migration applied migration="0175_nested_skill_folders.sql"
+2026-08-08T22:25:59.967344Z  INFO database migration applied migration="0176_issue_create_idempotency_key_expiry.sql"
+2026-08-08T22:25:59.968854Z  INFO database migration applied migration="0177_activity_log_responsible_user.sql"
+2026-08-08T22:25:59.973192Z  INFO database migration applied migration="0178_summary_slots.sql"
+2026-08-08T22:25:59.973965Z  INFO database migration applied migration="0179_summary_slot_failure_reason.sql"
+2026-08-08T22:25:59.977464Z  INFO database migration applied migration="0180_decision_training_examples.sql"
+2026-08-08T22:25:59.978415Z  INFO database migration applied migration="0181_decision_training_retention_policy.sql"
+2026-08-08T22:25:59.983436Z  INFO database migration applied migration="0182_connections_v3_schema_core.sql"
+2026-08-08T22:25:59.985287Z  INFO database migration applied migration="0183_connection_user_authorization_state.sql"
+2026-08-08T22:25:59.986470Z  INFO database migration applied migration="0184_routable_blocked.sql"
+2026-08-08T22:25:59.993323Z  INFO database migration applied migration="0185_status_cards.sql"
+2026-08-08T22:25:59.994288Z  INFO database migration applied migration="0186_status_card_compile_provenance.sql"
+2026-08-08T22:25:59.995147Z  INFO database migration applied migration="0187_status_card_pending_change_hash.sql"
+2026-08-08T22:25:59.996356Z  INFO database migration applied migration="0188_status_card_generation_issue_index.sql"
+2026-08-08T22:25:59.997650Z  INFO database migration applied migration="0189_status_card_agent.sql"
+2026-08-08T22:25:59.998496Z  INFO database migration applied migration="0190_status_card_single_prompt.sql"
+2026-08-08T22:25:59.999388Z  INFO database migration applied migration="0191_status_card_mentioned_issue_ids.sql"
+2026-08-08T22:26:00.000279Z  INFO database migration applied migration="0192_task_watchdog_stop_snapshots.sql"
+2026-08-08T22:26:00.002964Z  INFO database migration applied migration="0193_document_memberships.sql"
+2026-08-08T22:26:00.004432Z  INFO database migration applied migration="0194_company_skill_releases.sql"
+2026-08-08T22:26:00.006315Z  INFO database migration applied migration="0195_built_in_agent_unique_marker.sql"
+2026-08-08T22:26:00.008804Z  INFO database migration applied migration="0196_drop_cloud_upstream_tables.sql"
+2026-08-08T22:26:00.022108Z  INFO database migration applied migration="0197_decisions_v1.sql"
+2026-08-08T22:26:00.024957Z  INFO database migration applied migration="0199_team_installs.sql"
+2026-08-08T22:26:00.027607Z  INFO database migration applied migration="0200_project_artifacts.sql"
+2026-08-08T22:26:00.028644Z  INFO database migration applied migration="0201_issue_tree_holds_scope.sql"
+2026-08-08T22:26:00.030918Z  INFO database migration applied migration="0202_company_assets.sql"
+2026-08-08T22:26:00.033270Z  INFO database migration applied migration="0203_workspace_action_log.sql"
+2026-08-08T22:26:00.037725Z  INFO database migration applied migration="0204_board_chat.sql"
+2026-08-08T22:26:00.042215Z  INFO database migration applied migration="0205_smoke_lab_services.sql"
+2026-08-08T22:26:00.044843Z  INFO database migration applied migration="0206_skill_configs.sql"
+2026-08-08T22:26:00.047088Z  INFO database migration applied migration="0207_execution_lease.sql"
+2026-08-08T22:26:00.047259Z  INFO schema "drizzle" already exists, skipping
+2026-08-08T22:26:00.047417Z  INFO relation "__drizzle_migrations" already exists, skipping
+2026-08-08T22:26:00.047569Z  INFO column "name" of relation "__drizzle_migrations" already exists, skipping
+2026-08-08T22:26:00.049013Z  INFO migrations up applied=205 available=205 pending=0 durationMs=1019
+applied 205 migration(s); 0 pending (205 total available) in 1.019049583s

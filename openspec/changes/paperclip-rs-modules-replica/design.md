@@ -395,3 +395,129 @@ pub trait AdapterRuntime: Send + Sync {
 3. **真实验证**：回归 `scripts/e2e-baseline.sh` + 模块自身的 happy + ≥3 edge case
 
 不通过的模块不算"完成"，继续迭代直至真实验证绿。
+
+
+---
+
+## M17 — UI 切流真实链路（U1）
+
+**目标**：让 `paperclip-rs/ui/` 通过 `VITE_API_BASE` 指向 Rust server，跑通 60 个 api client 的 happy path。
+
+**实现**：
+1. `ui/src/api/client.ts`：读 `import.meta.env.VITE_API_BASE`（默认 `/api`），baseUrl 可被环境变量覆盖；保持 fetch/cookie/session 语义不变
+2. `apps/pc-server` 不动路由前缀（已为 `/api/...` 与 `/live-events`，与 Node 一致）
+3. `scripts/dev-ui-rust.sh`：临时 PG → pc-migrate → 起 pc-server on :53100 → cd ui && VITE_API_BASE=http://localhost:53100 pnpm dev → curl 5 个 GET endpoint（auth/companies/issues/agents/heartbeat）返回 200
+4. `tests/ui/contract-smoke.test.ts`：vitest + msw mock；断言 5 个 client 的 request shape 字段 1:1 命中后端 schema
+
+**验收**：
+- `bash scripts/dev-ui-rust.sh` 0 错误退出
+- `pnpm vitest run tests/ui/contract-smoke.test.ts` 全过
+- evidence: `m17-ui-cutover.md`
+
+---
+
+## M18 — 前后端端到端（U2）
+
+**目标**：Playwright 整剧本串联 PG + pc-server + Vite UI。
+
+**实现**：
+1. `apps/pc-server` 在 `127.0.0.1:53100` 起来（已具备）；`vite` 在 `127.0.0.1:5173` 起来，UI 走 `VITE_API_BASE=http://localhost:53100`
+2. `tests/e2e/full-stack.spec.ts`（Playwright）：
+   - 步骤 1：UI 登录页提交 email+password → 拿到 session cookie
+   - 步骤 2：创建公司 → 创建 issue
+   - 步骤 3：触发 heartbeat（POST `/api/agents/:id/heartbeat`）→ WS `/live-events` 收 `heartbeat.run.completed`
+   - 步骤 4：UI 列表自动刷新（断言新 issue 出现）
+3. `scripts/e2e-full-stack.sh`：CI 入口，先 `e2e-baseline.sh` 再跑 Playwright；任何步骤失败非 0 退出
+
+**验收**：
+- 三态（macOS、Linux glibc、Linux musl）都跑通
+- 失败时 Playwright 自动截图 + 录屏到 `tests/e2e/__screenshots__/` 与 `__videos__/`
+- evidence: `m18-full-stack.md` + CI 视频链接
+
+---
+
+## M19 — OpenAPI ↔ UI 类型对齐（U3）
+
+**目标**：`/openapi.json` 字段 1:1 对齐 Node 上游产物。
+
+**实现**：
+1. `pc-openapi`：基于 axum router 反射生成 OpenAPI 3.1，所有路径/参数/响应/字段 snake→camel
+2. `scripts/check-ui-contract.sh`：
+   - 起 pc-server → `curl /openapi.json > rust-openapi.json`
+   - 上游 Node server（如果可起）→ `curl /openapi.json > node-openapi.json`
+   - `jq -r '.paths | keys[]'` diff，path 重合率 ≥ 99%
+3. 字段命名约定写入 `pc-core::serde_defaults`，所有 router DTO 引用
+
+**验收**：
+- `bash scripts/check-ui-contract.sh` 通过
+- 任何 path 差异单独说明（设计差异 vs 缺口）
+- evidence: `m19-openapi-ui.md`
+
+---
+
+## M20 — 远程 execution target（claude-local / codex-local）
+
+**目标**：claude-local / codex-local 远程执行路径完整复刻 Node `execute.ts` L570–690。
+
+**实现**：
+1. `pc-adapter-claude-local::claude_remote_workspace`（已存 stub 167 LOC）：补 `restoreRemoteWorkspace` / `materializeRemoteClaudeConfig` / `startAdapterExecutionTargetPaperclipBridge` / `localProcessSandbox` (bwrap)
+2. `pc-acpx::execution_target`（61 测试）：补 SSH target 的 `process_session` bridge、remote asset sync skill 决策
+3. 真实 fixture：mock SSH server（`tests/fixtures/sshd-mock/`）跑通 start → materialize → invoke → restore
+4. 增量 +20 集成测试
+
+**验收**：
+- `cargo test -p pc-adapter-claude-local -p pc-adapter-codex-local -p pc-acpx` 通过 +20
+- evidence: `m20-remote-execution.md`
+
+---
+
+## M21 — 路由字节级对齐收口（剩余 14%）
+
+**目标**：raw method+path 重合率 46.1% → 95%。
+
+**实现**：
+1. 新增/补全 `crates/pc-http/src/routes/`：
+   - `companies/skills.rs`（完整）
+   - `companies/tools.rs`（tool profile、tool connection CRUD）
+   - `companies/folders.rs`、`companies/labels.rs`、`companies/invites.rs`、`companies/approvals.rs`
+   - `companies/org_svg_png.rs`（独立 PNG endpoint）
+   - `companies/join_requests.rs`
+   - `admin.rs`
+2. 每个新路由 ≥ 1 happy + 1 edge 测试
+3. `scripts/diff-routes.sh`：regex 提取 Rust 与 Node 双边的 `router.{get,post,patch,delete}("/path")`，算重合率
+
+**验收**：
+- 重合率 ≥ 95%
+- evidence: `m21-routes-byte-level.md`
+
+---
+
+## M22 — Auth/AuthZ 完整化
+
+**目标**：从 55% → 100%。argon2id ✅ → +refresh rotation / OAuth / CSRF / API key。
+
+**实现**：
+1. `pc-auth::session::refresh`：sliding 30 天 rotation，cookie + DB 双源
+2. `pc-auth::oauth`：Google / GitHub provider trait，与 better-auth 行为等价
+3. `pc-http::middleware::csrf`：double-submit cookie，safe methods 跳过
+4. `pc-auth::api_key`：`pk_<base62>`（32 字符随机），sha256 哈希入库，吊销走 tombstone
+5. `pc-authz::policy::ApiKey` actor type 接入现有 Policy trait
+
+**验收**：
+- 80+ 集成测试（每 resource × allow/deny/not_owner × session/api_key/csrf）
+- evidence: `m22-auth-complete.md`
+
+---
+
+## M23 — M12 stale lock sweep 回归修复
+
+**目标**：`round300` 4 个失败测试全过。
+
+**实现**：
+1. 对照 `paperclip/server/src/services/heartbeat.ts` 中的 stale lock 处理函数
+2. `pc-heartbeat::recovery::stale_issue_lock_sweep`：核对阈值（Node 默认 5 分钟）/lock holder 删除语义/事件发布
+3. `tests/round300_*` 4 个失败 → 全过
+
+**验收**：
+- `cargo test -p pc-heartbeat --tests` 0 失败
+- evidence: `m23-stale-lock-sweep.md`

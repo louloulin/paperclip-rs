@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio = { workspace = true, features = ["fs", "io-util", "process", "time", "sync"] }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
@@ -24,7 +24,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 rand = "0.8"
 base64 = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "fs"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "process", "time", "io-util", "net", "sync"] }

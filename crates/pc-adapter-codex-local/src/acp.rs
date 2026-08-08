@@ -1598,12 +1598,13 @@ mod tests {
     // ---- tempfile helper ----
     fn tempdir() -> PathBuf {
         let base = std::env::temp_dir().join(format!(
-            "pc-acp-test-{}-{}",
+            "pc-acp-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            uuid::Uuid::new_v4().simple()
         ));
         std::fs::create_dir_all(&base).unwrap();
         base

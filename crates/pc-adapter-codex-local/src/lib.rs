@@ -11,7 +11,13 @@ pub mod runtime_config;
 pub mod codex_home;
 pub mod codex_home_staging;
 pub mod acp;
+pub mod codex_test;
 pub mod config_schema;
+pub mod codex_remote_workspace;
+pub mod codex_bridge_env;
+pub mod codex_execution_env;
+pub mod codex_session_params;
+pub mod codex_session_resume;
 
 pub use execute_helpers::{
     fallback_mode_uses_fresh_session, fallback_mode_uses_safer_invocation,
@@ -402,43 +408,36 @@ fn build_resolved_session_params(
     resolved_session_id: Option<&str>,
     cwd: Option<&std::path::Path>,
     adapter_config: &serde_json::Value,
+    execution_target: Option<&serde_json::Value>,
 ) -> Option<serde_json::Value> {
-    let sid = resolved_session_id?;
-    let mut object = serde_json::Map::new();
-    object.insert("sessionId".into(), serde_json::Value::String(sid.to_owned()));
-    if let Some(dir) = cwd {
-        object.insert(
-            "cwd".into(),
-            serde_json::Value::String(dir.to_string_lossy().to_string()),
-        );
-    }
-    if let Some(workspace_context) = adapter_config.get("workspaceContext") {
-        if let Some(workspace_id) = workspace_context.get("workspaceId").and_then(|v| v.as_str()) {
-            if !workspace_id.is_empty() {
-                object.insert(
-                    "workspaceId".into(),
-                    serde_json::Value::String(workspace_id.to_owned()),
-                );
-            }
-        }
-        if let Some(repo_url) = workspace_context.get("repoUrl").and_then(|v| v.as_str()) {
-            if !repo_url.is_empty() {
-                object.insert(
-                    "repoUrl".into(),
-                    serde_json::Value::String(repo_url.to_owned()),
-                );
-            }
-        }
-        if let Some(repo_ref) = workspace_context.get("repoRef").and_then(|v| v.as_str()) {
-            if !repo_ref.is_empty() {
-                object.insert(
-                    "repoRef".into(),
-                    serde_json::Value::String(repo_ref.to_owned()),
-                );
-            }
-        }
-    }
-    Some(serde_json::Value::Object(object))
+    // 复用 codex_session_params 模块（对齐 Node resolvedSessionParams：
+    // sessionId / cwd / remoteExecution? / workspaceId? / repoUrl? / repoRef?）
+    let cwd_str = cwd.as_ref().map(|p| p.to_string_lossy().to_string());
+    let target = execution_target.and_then(|v| {
+        pc_acpx::execution_target::parse_adapter_execution_target(v)
+    });
+    let is_remote = pc_acpx::execution_target::adapter_execution_target_is_remote(target.as_ref());
+    let identity = if is_remote {
+        pc_acpx::execution_target::adapter_execution_target_session_identity(target.as_ref())
+            .map(|id| serde_json::to_value(id).ok())
+            .flatten()
+    } else {
+        None
+    };
+    let workspace_context = adapter_config.get("workspaceContext");
+    let input = crate::codex_session_params::ResolvedSessionParamsInput {
+        session_id: resolved_session_id,
+        cwd: cwd_str.as_deref().unwrap_or(""),
+        execution_target_is_remote: is_remote,
+        remote_execution_identity: identity,
+        workspace_id: workspace_context
+            .and_then(|w| w.get("workspaceId").and_then(|v| v.as_str())),
+        repo_url: workspace_context
+            .and_then(|w| w.get("repoUrl").and_then(|v| v.as_str())),
+        repo_ref: workspace_context
+            .and_then(|w| w.get("repoRef").and_then(|v| v.as_str())),
+    };
+    crate::codex_session_params::build_resolved_session_params(&input)
 }
 
 #[async_trait]
@@ -469,6 +468,141 @@ impl Adapter for CodexLocalAdapter {
                 ))
                 .await;
         }
+        // R490+R492：构建执行 env（对齐 Node execute.ts L806-907）。远程 +
+        // usesBridge 时合并 paperclip bridge env；R492 起 SSH 远程 target
+        // 启动真实 bridge（server/worker + SSH runner），并用真实 bridge
+        // env 覆盖 4 键；sandbox target 无 provider runner，保持 env-only
+        // 合并；本地原样返回。
+        let timeout_sec = context
+            .adapter_config
+            .get("timeoutSec")
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let execution_env = crate::codex_execution_env::build_codex_execution_env(
+            &crate::codex_execution_env::CodexExecutionEnvInput {
+                run_id: &context.run_id.to_string(),
+                base_env: &context.env,
+                execution_target: context.execution_target.as_ref(),
+                runtime_root_dir: None,
+                timeout_sec,
+            },
+        )
+        .map_err(AdapterError::InvalidConfiguration)?;
+        if let Some(line) = &execution_env.start_log_line {
+            let _ = events
+                .clone()
+                .emit(pc_adapter_api::AdapterEvent::stdout(line.clone()))
+                .await;
+        }
+        // R492：真实 bridge 启动（对齐 Node execute.ts 的
+        // `startAdapterExecutionTargetPaperclipBridge` 分支）。SSH target →
+        // 完整启动；sandbox / 本地 → None（保持 env-only）。
+        let mut started_bridge: Option<pc_acpx::bridge_executor::StartedAdapterBridge> = None;
+        let env = if execution_env.bridge_plan.is_some() {
+            let events_for_bridge_log = events.clone();
+            match crate::codex_bridge_env::start_codex_execution_bridge(
+                &context.run_id.to_string(),
+                &context.env,
+                context.execution_target.as_ref(),
+                timeout_sec,
+                Some(Arc::new(move |line: &str| {
+                    // 启动日志经 events sink 下发（闭包保持同步发射语义：
+                    // 对齐 Node onLog 同步回调）。
+                    let sink = events_for_bridge_log.clone();
+                    let line = line.to_string();
+                    tokio::spawn(async move {
+                        let _ = sink
+                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
+                            .await;
+                    });
+                })),
+            )
+            .await
+            {
+                Ok(Some(bridge)) => {
+                    // 真实 bridge env 覆盖（对齐 Node
+                    // `Object.assign(env, paperclipBridge.env)`）。
+                    let mut env = execution_env.env;
+                    for (key, value) in &bridge.env {
+                        env.insert(key.clone(), value.clone());
+                    }
+                    let _ = events
+                        .clone()
+                        .emit(pc_adapter_api::AdapterEvent::stdout(
+                            "[paperclip] Sandbox ACP API callback bridge enabled for this run.\n"
+                                .to_owned(),
+                        ))
+                        .await;
+                    started_bridge = Some(bridge);
+                    env
+                }
+                Ok(None) => execution_env.env,
+                Err(error) => return Err(AdapterError::InvalidConfiguration(error)),
+            }
+        } else {
+            execution_env.env
+        };
+        // R493：process session bridge（对齐 Node execute.ts
+        // `useRemoteProcessSession` 分支 + `settleRemoteBridgeStarts`）。
+        // Rust sandbox target 尚无 provider runner，gate 的
+        // `Boolean(executionTarget.runner)` 恒为 false → 不触发启动；
+        // 代码路径保留（未来接入 provider runner 后自动生效），启动 env
+        // 在 paperclip bridge env 合并后传入（等价于 Node env thunk
+        // 求值结果）。
+        let mut started_process_session_bridge: Option<
+            pc_acpx::process_session_bridge::ProcessSessionBridgeHandle,
+        > = None;
+        let parsed_target = context
+            .execution_target
+            .as_ref()
+            .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
+        let agent_command_shell = string(&context.adapter_config, "agentCommand")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let use_remote_process_session = crate::codex_bridge_env::use_codex_remote_process_session(
+            parsed_target.as_ref(),
+            false,
+            !agent_command_shell.is_empty(),
+        );
+        if use_remote_process_session {
+            let session_cwd = pc_acpx::execution_target::adapter_execution_target_remote_cwd(
+                parsed_target.as_ref(),
+                "",
+            );
+            let events_for_bridge_log = events.clone();
+            match crate::codex_bridge_env::start_codex_process_session_bridge(
+                &context.run_id.to_string(),
+                context.execution_target.as_ref(),
+                None,
+                "codex",
+                &agent_command_shell,
+                &session_cwd,
+                &env,
+                timeout_sec,
+                None,
+                Some(Arc::new(move |line: &str| {
+                    let sink = events_for_bridge_log.clone();
+                    let line = line.to_string();
+                    tokio::spawn(async move {
+                        let _ = sink
+                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
+                            .await;
+                    });
+                })),
+            )
+            .await
+            {
+                Ok(Some(handle)) => started_process_session_bridge = Some(handle),
+                Ok(None) => {}
+                Err(error) => return Err(AdapterError::InvalidConfiguration(error)),
+            }
+        }
+        let execution_context = AdapterExecutionContext {
+            env,
+            ..context.clone()
+        };
+        let outcome: Result<AdapterExecutionResult, AdapterError> = async {
         // 首轮 attempt：若 `context.session_id` 非空，传 `resume <sid>`，与 Node
         // `buildArgs(resumeSessionId)` 行为一致。
         let initial_built = build_codex_exec_args(
@@ -479,7 +613,7 @@ impl Adapter for CodexLocalAdapter {
         let (initial_execution, initial_monitor) = execute_codex_with_monitor(
             command,
             &initial_built,
-            &context,
+            &execution_context,
             events.clone(),
             monitor_timeout_ms,
         )
@@ -512,7 +646,7 @@ impl Adapter for CodexLocalAdapter {
                 let (retry_execution, retry_monitor) = execute_codex_with_monitor(
                     command,
                     &retry_built,
-                    &context,
+                    &execution_context,
                     retry_sink,
                     monitor_timeout_ms,
                 )
@@ -583,6 +717,7 @@ impl Adapter for CodexLocalAdapter {
             result.session_id.as_deref(),
             context.cwd.as_deref(),
             &context.adapter_config,
+            context.execution_target.as_ref(),
         );
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.usage = Some(UsageSummary {
@@ -640,6 +775,19 @@ impl Adapter for CodexLocalAdapter {
         result.result_json = Some(result_json);
         Ok(result)
     }
+    .await;
+    // R492+R493 teardown：双 bridge 在所有出口停止（对齐 Node
+    // `cleanupRemoteBridges` 的
+    // `Promise.allSettled([processSessionBridge?.stop(), paperclipBridge?.stop()])`：
+    // 先停 process session bridge，再停 paperclip bridge，全部 best-effort）。
+    if let Some(bridge) = &started_process_session_bridge {
+        bridge.stop().await;
+    }
+    if let Some(bridge) = &started_bridge {
+        bridge.stop().await;
+    }
+    outcome
+    }
 }
 
 #[cfg(test)]
@@ -657,6 +805,7 @@ mod tests {
             Some("thread_123"),
             Some(std::path::Path::new("/repo")),
             &config,
+            None,
         )
         .expect("params should be present when session_id resolves");
         assert_eq!(
@@ -682,6 +831,7 @@ mod tests {
             Some("thread_x"),
             Some(std::path::Path::new("/work")),
             &config,
+            None,
         )
         .expect("params should be present");
         assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
@@ -705,19 +855,79 @@ mod tests {
             Some("thread_x"),
             None,
             &config,
+            None,
         )
         .expect("params should be present");
         assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
         assert_eq!(params.get("repoRef").and_then(|v| v.as_str()), Some("main"));
         assert!(params.get("repoUrl").is_none());
-        assert!(params.get("cwd").is_none());
+        // Node codex resolvedSessionParams 始终写 cwd（cwd: effectiveExecutionCwd）
+        assert_eq!(params.get("cwd").and_then(|v| v.as_str()), Some(""));
     }
 
     #[test]
     fn build_resolved_session_params_none_when_session_id_missing() {
         let config = serde_json::json!({});
-        let params = build_resolved_session_params(None, Some(std::path::Path::new("/repo")), &config);
+        let params = build_resolved_session_params(
+            None,
+            Some(std::path::Path::new("/repo")),
+            &config,
+            None,
+        );
         assert!(params.is_none());
+    }
+
+    #[test]
+    fn build_resolved_session_params_includes_remote_execution_identity() {
+        // 对齐 Node：远程执行时 sessionParams 装配 remoteExecution identity
+        let config = serde_json::json!({
+            "workspaceContext": {
+                "workspaceId": "ws_1",
+                "repoUrl": "git@github.com:foo/bar.git",
+                "repoRef": "main",
+            }
+        });
+        let target = serde_json::json!({
+            "kind": "remote",
+            "transport": "ssh",
+            "remoteCwd": "/remote/workspace/.paperclip-runtime/runs/run-1/workspace",
+            "spec": {
+                "host": "127.0.0.1",
+                "port": 2222,
+                "username": "fixture",
+                "remoteWorkspacePath": "/remote/workspace",
+                "remoteCwd": "/remote/workspace/.paperclip-runtime/runs/run-1/workspace",
+                "privateKey": "PRIVATE KEY",
+                "knownHosts": "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+                "strictHostKeyChecking": true,
+            }
+        });
+        let params = build_resolved_session_params(
+            Some("thread_remote"),
+            Some(std::path::Path::new("/remote/workspace/.paperclip-runtime/runs/run-1/workspace")),
+            &config,
+            Some(&target),
+        )
+        .expect("params should be present");
+        let remote = params.get("remoteExecution").expect("remoteExecution present");
+        assert_eq!(remote.get("transport").and_then(|v| v.as_str()), Some("ssh"));
+        assert_eq!(remote.get("host").and_then(|v| v.as_str()), Some("127.0.0.1"));
+        assert_eq!(remote.get("username").and_then(|v| v.as_str()), Some("fixture"));
+        assert_eq!(remote.get("port").and_then(|v| v.as_u64()), Some(2222));
+        assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
+    }
+
+    #[test]
+    fn build_resolved_session_params_omits_remote_execution_for_local() {
+        let config = serde_json::json!({});
+        let params = build_resolved_session_params(
+            Some("thread_local"),
+            Some(std::path::Path::new("/repo")),
+            &config,
+            None,
+        )
+        .expect("params should be present");
+        assert!(params.get("remoteExecution").is_none());
     }
 
     #[test]

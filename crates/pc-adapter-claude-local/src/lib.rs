@@ -45,6 +45,7 @@ use pc_adapter_api::{
 use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub const ADAPTER_TYPE: &str = "claude_local";
 
@@ -149,6 +150,104 @@ pub fn build_claude_exec_args(config: &Value) -> ClaudeExecArgs {
         dangerously_skip_permissions,
     }
 }
+
+/// 从 adapter_config 构造 Claude CLI 启动参数（v2 版本，使用 `build_claude_args_v2` 完整逻辑）。
+///
+/// 与 `build_claude_exec_args` 的区别：
+/// - args 顺序严格对齐 Node `buildClaudeArgs`
+/// - 支持 `--chrome` / `--max-turns` / `--strict-mcp-config`
+/// - Bedrock auth 模式下 gating `--model`
+/// - resume 时跳过 `--append-system-prompt-file`
+///
+/// 当前默认入口仍是 `build_claude_exec_args`（向后兼容）。v2 用于需要完整 Node 语义的场景。
+#[must_use]
+pub fn build_claude_exec_args_v2(
+    config: &Value,
+    effective_execution_cwd: &str,
+    resume_session_id: Option<&str>,
+    is_bedrock_auth: bool,
+) -> ClaudeExecArgs {
+    let model = config
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let effort = config
+        .get("effort")
+        .or_else(|| config.get("modelReasoningEffort"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let add_dir = config
+        .get("addDir")
+        .or_else(|| config.get("cwd"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let append_system_prompt_file = config
+        .get("appendSystemPromptFile")
+        .or_else(|| config.get("instructionsFile"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mcp_config = config
+        .get("mcpConfig")
+        .or_else(|| config.get("mcp_config"))
+        .map(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Object(_) | Value::Array(_) => Some(v.to_string()),
+            _ => None,
+        })
+        .flatten();
+    let chrome = config
+        .get("chrome")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let max_turns = config
+        .get("maxTurns")
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32)
+        .unwrap_or(0);
+    let dangerously_skip_permissions = config
+        .get("dangerouslySkipPermissions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let extra_args: Vec<String> = config
+        .get("extraArgs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let input = crate::claude_cli_args::build_claude_args_input_from_context(
+        config,
+        effective_execution_cwd,
+        effort.as_deref(),
+        mcp_config.as_deref(),
+        add_dir.as_deref(),
+        max_turns,
+        resume_session_id,
+        append_system_prompt_file.as_deref(),
+        &extra_args,
+        is_bedrock_auth,
+        false,
+    );
+    let args = crate::claude_cli_args::build_claude_args_v2(&input);
+
+    ClaudeExecArgs {
+        args,
+        model,
+        effort,
+        add_dir,
+        append_system_prompt_file,
+        mcp_config,
+        dangerously_skip_permissions,
+    }
+}
+
 
 fn default_command(config: &Value) -> String {
     config
@@ -321,14 +420,163 @@ impl ClaudeLocalAdapter {
     /// - 通过 `claude_result_builder::assemble_claude_result` 整合最终结果
     /// - session_params 由 `claude_session_params::build_resolved_session_params` 组装
     ///
-    /// 远程执行路径（bridge / materialzeRemoteClaudeConfig）暂未实现，留待后续。
+    /// 远程执行路径：bridge env 合并已实现（R490）；真实 bridge
+    /// server/worker 执行器与 materializeRemoteClaudeConfig 留待后续。
     pub async fn execute_with_resume_retry(
         &self,
         context: AdapterExecutionContext,
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
-        let built = build_claude_exec_args(&context.adapter_config);
+        // R490+R492：构建执行 env（对齐 Node claude execute.ts L679-692）。
+        // 远程 + usesBridge 时合并 paperclip bridge env；R492 起 SSH 远程
+        // target 启动真实 bridge（server/worker + SSH runner），并用真实
+        // bridge env 覆盖 4 键；sandbox target 无 provider runner，保持
+        // env-only 合并；本地原样返回。
+        let timeout_sec = context
+            .adapter_config
+            .get("timeoutSec")
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let execution_env = crate::claude_execution_env::build_claude_execution_env(
+            &crate::claude_execution_env::ClaudeExecutionEnvInput {
+                run_id: &context.run_id.to_string(),
+                base_env: &context.env,
+                execution_target: context.execution_target.as_ref(),
+                runtime_root_dir: None,
+                timeout_sec,
+            },
+        )
+        .map_err(AdapterError::InvalidConfiguration)?;
+        if let Some(line) = &execution_env.start_log_line {
+            let _ = events
+                .clone()
+                .emit(pc_adapter_api::AdapterEvent::stdout(line.clone()))
+                .await;
+        }
+        // R492：真实 bridge 启动（对齐 Node claude execute.ts 的
+        // `startAdapterExecutionTargetPaperclipBridge` 分支）。SSH target →
+        // 完整启动；sandbox / 本地 → None（保持 env-only）。
+        let mut started_bridge: Option<pc_acpx::bridge_executor::StartedAdapterBridge> = None;
+        let env = if execution_env.bridge_plan.is_some() {
+            let events_for_bridge_log = events.clone();
+            match crate::claude_remote_workspace::start_claude_execution_bridge(
+                &context.run_id.to_string(),
+                &context.env,
+                context.execution_target.as_ref(),
+                timeout_sec,
+                Some(Arc::new(move |line: &str| {
+                    // 启动日志经 events sink 下发（对齐 Node onLog 同步回调）。
+                    let sink = events_for_bridge_log.clone();
+                    let line = line.to_string();
+                    tokio::spawn(async move {
+                        let _ = sink
+                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
+                            .await;
+                    });
+                })),
+            )
+            .await
+            {
+                Ok(Some(bridge)) => {
+                    // 真实 bridge env 覆盖（对齐 Node
+                    // `Object.assign(env, paperclipBridge.env)`）。
+                    let mut env = execution_env.env;
+                    for (key, value) in &bridge.env {
+                        env.insert(key.clone(), value.clone());
+                    }
+                    let _ = events
+                        .clone()
+                        .emit(pc_adapter_api::AdapterEvent::stdout(
+                            "[paperclip] Sandbox ACP API callback bridge enabled for this run.\n"
+                                .to_owned(),
+                        ))
+                        .await;
+                    started_bridge = Some(bridge);
+                    env
+                }
+                Ok(None) => execution_env.env,
+                Err(error) => return Err(AdapterError::InvalidConfiguration(error)),
+            }
+        } else {
+            execution_env.env
+        };
+        // R493：process session bridge（对齐 Node execute.ts
+        // `useRemoteProcessSession` 分支 + `settleRemoteBridgeStarts`）。
+        // Rust sandbox target 尚无 provider runner，gate 的
+        // `Boolean(executionTarget.runner)` 恒为 false → 不触发启动；
+        // 代码路径保留（未来接入 provider runner 后自动生效），启动 env
+        // 在 paperclip bridge env 合并后传入（等价于 Node env thunk
+        // 求值结果）。
+        let mut started_process_session_bridge: Option<
+            pc_acpx::process_session_bridge::ProcessSessionBridgeHandle,
+        > = None;
+        let parsed_target = context
+            .execution_target
+            .as_ref()
+            .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
+        let agent_command_shell = context
+            .adapter_config
+            .get("agentCommand")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let use_remote_process_session = crate::claude_remote_workspace::use_claude_remote_process_session(
+            parsed_target.as_ref(),
+            false,
+            !agent_command_shell.is_empty(),
+        );
+        if use_remote_process_session {
+            let session_cwd = pc_acpx::execution_target::adapter_execution_target_remote_cwd(
+                parsed_target.as_ref(),
+                "",
+            );
+            let events_for_bridge_log = events.clone();
+            match crate::claude_remote_workspace::start_claude_process_session_bridge(
+                &context.run_id.to_string(),
+                context.execution_target.as_ref(),
+                None,
+                "claude",
+                &agent_command_shell,
+                &session_cwd,
+                &env,
+                timeout_sec,
+                None,
+                Some(Arc::new(move |line: &str| {
+                    let sink = events_for_bridge_log.clone();
+                    let line = line.to_string();
+                    tokio::spawn(async move {
+                        let _ = sink
+                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
+                            .await;
+                    });
+                })),
+            )
+            .await
+            {
+                Ok(Some(handle)) => started_process_session_bridge = Some(handle),
+                Ok(None) => {}
+                Err(error) => return Err(AdapterError::InvalidConfiguration(error)),
+            }
+        }
+        let execution_context = AdapterExecutionContext {
+            env,
+            ..context.clone()
+        };
+        // 第一步：用 v2 构造 base args（不含 --resume）
+        let is_bedrock_auth = crate::claude_models::is_bedrock_env(&context.env);
+        let effective_execution_cwd_pre = context
+            .cwd
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let built = build_claude_exec_args_v2(
+            &context.adapter_config,
+            &effective_execution_cwd_pre,
+            None,
+            is_bedrock_auth,
+        );
 
         let runtime_session_id = context.session_id.as_deref().unwrap_or("");
         let runtime_session_cwd = context
@@ -352,9 +600,25 @@ impl ClaudeLocalAdapter {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        let execution_target_is_remote = false;
-        let execution_target: Option<&Value> = None;
-        let execution_target_session_identity: Option<&Value> = None;
+        // 从 context.execution_target 解析远程状态（对齐 Node execute.ts）：
+        // - execution_target_is_remote：远程 target（SSH / Sandbox）为 true
+        // - execution_target_session_identity：远程时才装配 identity
+        let parsed_target = context.execution_target.as_ref().and_then(|v| {
+            pc_acpx::execution_target::parse_adapter_execution_target(v)
+        });
+        let execution_target_is_remote =
+            pc_acpx::execution_target::adapter_execution_target_is_remote(parsed_target.as_ref());
+        let execution_target: Option<&Value> = context.execution_target.as_ref();
+        let execution_target_session_identity_owned: Option<Value> = if execution_target_is_remote {
+            pc_acpx::execution_target::adapter_execution_target_session_identity(
+                parsed_target.as_ref(),
+            )
+            .and_then(|id| serde_json::to_value(id).ok())
+        } else {
+            None
+        };
+        let execution_target_session_identity: Option<&Value> =
+            execution_target_session_identity_owned.as_ref();
 
         let decision = crate::claude_session_resume::decide_claude_session_resume(
             &crate::claude_session_resume::SessionResumeInput {
@@ -381,7 +645,7 @@ impl ClaudeLocalAdapter {
             .map(str::to_owned);
 
         let loop_input = crate::claude_resume_loop::ResumeRetryInput {
-            context: &context,
+            context: &execution_context,
             events: events.clone(),
             command: &command,
             base_args: &built.args,
@@ -399,7 +663,18 @@ impl ClaudeLocalAdapter {
             is_bedrock_auth: crate::claude_models::is_bedrock_env(&context.env),
             now: std::time::SystemTime::now(),
         };
-        crate::claude_resume_loop::run_resume_retry_loop(&loop_input).await
+        let result = crate::claude_resume_loop::run_resume_retry_loop(&loop_input).await;
+        // R492+R493 teardown：双 bridge 在所有出口停止（对齐 Node
+        // `cleanupRemoteBridges` 的
+        // `Promise.allSettled([processSessionBridge?.stop(), paperclipBridge?.stop()])`：
+        // 先停 process session bridge，再停 paperclip bridge，全部 best-effort）。
+        if let Some(bridge) = &started_process_session_bridge {
+            bridge.stop().await;
+        }
+        if let Some(bridge) = &started_bridge {
+            bridge.stop().await;
+        }
+        result
     }
 }
 
@@ -716,17 +991,7 @@ mod tests {
     /// v2 execute：单 attempt 成功路径（用真实 fixture）。
     #[tokio::test(flavor = "multi_thread")]
     async fn execute_with_resume_retry_happy_path() {
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::temp_dir()
-            .join(format!("paperclip-claude-v2-{}.sh", uuid::Uuid::new_v4()));
-        std::fs::write(
-            &path,
-            "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"v2_sess\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"hi\"}}' '{\"type\":\"result\",\"is_error\":false,\"result\":\"v2 done\",\"session_id\":\"v2_sess\",\"model\":\"claude-opus-4-7\",\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"cache_read_input_tokens\":2}}'\n",
-        )
-        .unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+        let path = copy_fixture_to_temp("claude_happy_path.sh");
 
         let adapter = ClaudeLocalAdapter::new();
         let (sink, _receiver) = AdapterEventSink::channel(8);
@@ -746,30 +1011,15 @@ mod tests {
         let usage = result.usage.expect("usage present");
         assert_eq!(usage.output_tokens, 3);
         assert!(!result.clear_session);
-        std::fs::remove_file(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
     }
 
     /// v2 execute：第一次 attempt 返回 unknown session → 自动 fresh 重试 → 成功。
     #[tokio::test(flavor = "multi_thread")]
     async fn execute_with_resume_retry_unknown_session_triggers_fresh_retry() {
-        use std::os::unix::fs::PermissionsExt;
-        // 第一次调用：返回 unknown session 错误
-        // 第二次调用：返回成功（fresh session）
-        let path = std::env::temp_dir()
-            .join(format!("paperclip-claude-retry-{}.sh", uuid::Uuid::new_v4()));
         let counter_path = std::env::temp_dir()
             .join(format!("paperclip-claude-retry-{}.counter", uuid::Uuid::new_v4()));
-        std::fs::write(
-            &path,
-            format!(
-                "#!/bin/sh\ncounter_file="{counter}"\ncount=$(cat $counter_file 2>/dev/null || echo 0)\ncount=$((count+1))\necho $count > $counter_file\nif [ $count -eq 1 ]; then\n  printf '%s\\n' '{{\"type\":\"result\",\"is_error\":true,\"errors\":[{{\"message\":\"No conversation found with session ID: abc\"}}],\"session_id\":\"abc\"}}'\n  exit 1\nelse\n  printf '%s\\n' '{{\"type\":\"thread.started\",\"thread_id\":\"fresh_sess\"}}' '{{\"type\":\"result\",\"is_error\":false,\"result\":\"fresh done\",\"session_id\":\"fresh_sess\",\"model\":\"claude-opus-4-7\"}}'\nfi\n",
-                counter = counter_path.to_string_lossy()
-            ),
-        )
-        .unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+        let path = copy_fixture_to_temp("claude_retry_unknown_session.sh");
 
         let adapter = ClaudeLocalAdapter::new();
         let (sink, _receiver) = AdapterEventSink::channel(8);
@@ -782,6 +1032,10 @@ mod tests {
             "command": path.to_string_lossy(),
             "model": "claude-opus-4-7",
         });
+        context.env.insert(
+            "PAPERCLIP_RETRY_COUNTER".to_owned(),
+            counter_path.to_string_lossy().to_string(),
+        );
         // 显式传 session_id 触发 resume 路径
         context.session_id = Some("550e8400-e29b-41d4-a716-446655440000".to_owned());
 
@@ -789,25 +1043,17 @@ mod tests {
         // 重试后应该 fresh session
         assert_eq!(result.session_id.as_deref(), Some("fresh_sess"));
         assert_eq!(result.summary.as_deref(), Some("fresh done"));
-        assert!(result.clear_session, "missing session 应当清除 server 端持久化的 sid");
-        std::fs::remove_file(&path).unwrap();
+        // 对齐 Node L1202：resolvedSessionId 有值时 clearSession=false
+        // 重试成功产生新 session，server 端持久化的旧 sid 由调用方根据 session_id 切换自行清理
+        assert!(!result.clear_session);
+        let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&counter_path);
     }
 
     /// v2 execute：session_id 不是合法 UUID → 不传 --resume，单 attempt。
     #[tokio::test(flavor = "multi_thread")]
     async fn execute_with_resume_retry_invalid_uuid_skips_resume() {
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::temp_dir()
-            .join(format!("paperclip-claude-invalid-uuid-{}.sh", uuid::Uuid::new_v4()));
-        std::fs::write(
-            &path,
-            "#!/bin/sh\n# 验证 stdin 不为空 + args 不含 --resume\nif echo "$@" | grep -q -- '--resume'; then\n  echo 'unexpected --resume' >&2\n  exit 2\nfi\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"sess1\"}'\n",
-        )
-        .unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+        let path = copy_fixture_to_temp("claude_invalid_uuid.sh");
 
         let adapter = ClaudeLocalAdapter::new();
         let (sink, _receiver) = AdapterEventSink::channel(8);
@@ -820,7 +1066,21 @@ mod tests {
 
         let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
         assert_eq!(result.session_id.as_deref(), Some("sess1"));
-        std::fs::remove_file(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 把 tests/fixtures/<name> 复制到 /tmp/paperclip-claude-<uuid>-<name> 并设可执行权限。
+    fn copy_fixture_to_temp(name: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let src = manifest_dir.join("tests").join("fixtures").join(name);
+        let dest = std::env::temp_dir()
+            .join(format!("paperclip-claude-{}-{}", uuid::Uuid::new_v4(), name));
+        std::fs::copy(&src, &dest).expect("copy fixture");
+        let mut perms = std::fs::metadata(&dest).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dest, perms).expect("chmod");
+        dest
     }
 
     #[test]
@@ -867,13 +1127,89 @@ mod tests {
     fn extract_runtime_session_params_extracts_all_fields() {
         let params = serde_json::json!({
             "promptBundleKey": "bundle-x",
-            "mcpServerIdentity": "[{"name":"a"}]",
+            "mcpServerIdentity": r#"[{"name":"a"}]"#,
             "remoteExecution": {"id": "ssh-1"},
         });
         let (b, m, r) = extract_runtime_session_params(Some(&params));
         assert_eq!(b, "bundle-x");
-        assert_eq!(m, "[{"name":"a"}]");
+        assert_eq!(m, r#"[{"name":"a"}]"#);
         assert!(r.is_some());
+    }
+
+    #[test]
+    fn build_claude_exec_args_v2_minimal() {
+        let config = serde_json::json!({});
+        let built = build_claude_exec_args_v2(&config, "/cwd", None, false);
+        assert_eq!(
+            built.args,
+            vec!["--print", "--output-format", "stream-json", "--verbose"]
+        );
+        assert!(built.model.is_none());
+        assert!(built.effort.is_none());
+    }
+
+    #[test]
+    fn build_claude_exec_args_v2_full_features() {
+        let config = serde_json::json!({
+            "model": "claude-opus-4-7",
+            "chrome": true,
+            "effort": "high",
+            "maxTurns": 50,
+            "addDir": "/workspace",
+            "mcpConfig": "/mcp.json",
+            "dangerouslySkipPermissions": true,
+        });
+        let built = build_claude_exec_args_v2(&config, "/workspace", None, false);
+        // 验证 args 顺序对齐 Node
+        let expected = vec![
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--dangerously-skip-permissions",
+            "--chrome",
+            "--model",
+            "claude-opus-4-7",
+            "--effort",
+            "high",
+            "--max-turns",
+            "50",
+            "--mcp-config",
+            "/mcp.json",
+            "--strict-mcp-config",
+            "--add-dir",
+            "/workspace",
+        ];
+        assert_eq!(built.args, expected);
+    }
+
+    #[test]
+    fn build_claude_exec_args_v2_with_resume_skips_instructions() {
+        let config = serde_json::json!({
+            "appendSystemPromptFile": "/instr.md",
+            "model": "claude-opus-4-7",
+        });
+        let built = build_claude_exec_args_v2(&config, "/cwd", Some("abc-123"), false);
+        // resume 时不应传 --append-system-prompt-file
+        assert!(!built.args.contains(&"--append-system-prompt-file".to_owned()));
+        // 但应传 --resume
+        let idx = built.args.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(built.args[idx + 1], "abc-123");
+    }
+
+    #[test]
+    fn build_claude_exec_args_v2_bedrock_auth_skips_anthropic_short_model() {
+        let config = serde_json::json!({"model": "claude-opus-4-6"});
+        let built = build_claude_exec_args_v2(&config, "/cwd", None, true);
+        assert!(!built.args.contains(&"--model".to_owned()));
+    }
+
+    #[test]
+    fn build_claude_exec_args_v2_bedrock_auth_keeps_bedrock_native() {
+        let config = serde_json::json!({"model": "us.anthropic.claude-opus-4-8-v1"});
+        let built = build_claude_exec_args_v2(&config, "/cwd", None, true);
+        assert!(built.args.contains(&"--model".to_owned()));
+        assert!(built.args.iter().any(|a| a.contains("us.anthropic")));
     }
 
     #[test]
@@ -887,8 +1223,13 @@ mod tests {
         assert!(r.is_none());
     }
 }
+pub mod claude_cli_args;
 pub mod claude_session_params;
 pub mod claude_result_builder;
 pub mod claude_prompt_sections;
 pub mod claude_mcp_config;
+pub mod claude_session_cleanup;
 pub mod claude_resume_loop;
+pub mod claude_remote_workspace;
+pub mod claude_execution_env;
+pub mod claude_quota;

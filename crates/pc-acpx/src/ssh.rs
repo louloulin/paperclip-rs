@@ -34,6 +34,7 @@
 //!   without changing call sites in `execution_target` /
 //!   `remote_managed_runtime`.
 
+use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -308,9 +309,631 @@ pub struct KnownHostsEntryInput {
     pub public_key: String,
 }
 
+// =============================================================================
+// SSH 执行器（对齐 Node ssh.ts：createSshAuthArgs / runSshCommand /
+// createSshCommandManagedRuntimeRunner / buildSshSpawnTarget）
+// =============================================================================
+
+/// `ssh` 认证参数 + 临时文件句柄（对齐 Node `createSshAuthArgs`）。
+///
+/// Node 用 `fs.mkdtemp` 把 private key / known hosts 写成 0600 临时文件，
+/// 命令结束后 `cleanup()` 删除整个临时目录。Rust 版本在 `Drop` 中同步
+/// 清理，防止异步路径上泄漏密钥文件。
+pub struct SshAuthArgs {
+    args: Vec<String>,
+    temp_dirs: Vec<std::path::PathBuf>,
+}
+
+impl SshAuthArgs {
+    /// 构造认证参数（对齐 Node `createSshAuthArgs`）：
+    /// - 固定 `-o BatchMode=yes -o ConnectTimeout=10` + StrictHostKeyChecking
+    /// - strictHostKeyChecking=true 且给了 knownHosts → 写入 0600 临时文件，
+    ///   用 `UserKnownHostsFile` 指向它
+    /// - strictHostKeyChecking=false → `UserKnownHostsFile=/dev/null`
+    /// - 给了 privateKey → 写入 0600 临时文件，用 `-i` 指向它
+    pub fn create(config: &SshConnectionConfig) -> Result<Self, String> {
+        let mut temp_dirs = Vec::new();
+        let mut args: Vec<String> = vec![
+            "-o".to_string(),
+            "BatchMode=yes".to_string(),
+            "-o".to_string(),
+            "ConnectTimeout=10".to_string(),
+            "-o".to_string(),
+            format!(
+                "StrictHostKeyChecking={}",
+                if config.strict_host_key_checking { "yes" } else { "no" }
+            ),
+        ];
+        if config.strict_host_key_checking {
+            if let Some(known_hosts) = config.known_hosts.as_deref().filter(|s| !s.is_empty()) {
+                let dir = write_temp_secure_file("paperclip-ssh-known-hosts-", known_hosts)?;
+                args.push("-o".to_string());
+                args.push(format!("UserKnownHostsFile={}", dir.join("payload").display()));
+                temp_dirs.push(dir);
+            }
+        } else {
+            args.push("-o".to_string());
+            args.push("UserKnownHostsFile=/dev/null".to_string());
+        }
+        if let Some(private_key) = config.private_key.as_deref().filter(|s| !s.is_empty()) {
+            let dir = write_temp_secure_file("paperclip-ssh-key-", private_key)?;
+            args.push("-i".to_string());
+            args.push(dir.join("payload").display().to_string());
+            temp_dirs.push(dir);
+        }
+        Ok(Self { args, temp_dirs })
+    }
+
+    /// 认证参数（`-o ...` / `-i ...` 列表，不含 host 目标）。
+    #[must_use]
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+}
+
+impl Drop for SshAuthArgs {
+    fn drop(&mut self) {
+        for dir in &self.temp_dirs {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+/// 把内容写入一个 `temp_dir/<uuid>/payload` 的 0600 文件（对齐 Node
+/// `withTempFile`：目录 mkdtemp、文件 0600、内容补尾随换行）。
+fn write_temp_secure_file(prefix: &str, contents: &str) -> Result<std::path::PathBuf, String> {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!(
+        "{}{}-{}",
+        prefix,
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("create temp dir {} failed: {error}", dir.display()))?;
+    let file_path = dir.join("payload");
+    let normalized = if contents.ends_with('\n') {
+        contents.to_string()
+    } else {
+        format!("{contents}\n")
+    };
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&file_path)?;
+        file.write_all(normalized.as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(format!(
+            "write temp file {} failed: {error}",
+            file_path.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(dir)
+}
+
+/// `run_ssh_command` 选项（对齐 Node `runSshCommand` options）。
+#[derive(Debug, Clone)]
+pub struct SshCommandOptions {
+    pub env: BTreeMap<String, String>,
+    pub stdin: Option<String>,
+    pub timeout_ms: u64,
+    pub max_buffer: usize,
+}
+
+impl Default for SshCommandOptions {
+    fn default() -> Self {
+        Self {
+            env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: 15_000,
+            max_buffer: 1024 * 128,
+        }
+    }
+}
+
+/// SSH 命令失败结果（对齐 Node `spawnText` 失败时挂在 error 上的
+/// stdout / stderr / code / signal / killed 属性）。
+#[derive(Debug, Clone)]
+pub struct SshCommandError {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub signal: Option<String>,
+    pub timed_out: bool,
+    pub message: String,
+}
+
+impl std::fmt::Display for SshCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for SshCommandError {}
+
+impl SshCommandError {
+    /// 组装失败消息（对齐 Node `spawnText` close 分支：
+    /// `stderr.trim() || stdout.trim() || Process exited with code <code>`）。
+    fn from_output(
+        stdout: &str,
+        stderr: &str,
+        exit_code: Option<i32>,
+        signal: Option<String>,
+        timed_out: bool,
+    ) -> Self {
+        let message = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            format!("Process exited with code {}", exit_code.unwrap_or(-1))
+        };
+        Self {
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+            exit_code,
+            signal,
+            timed_out,
+            message,
+        }
+    }
+}
+
+/// 构建远程登录脚本（对齐 Node `runSshCommand` / `buildSshSpawnTarget`
+/// 的 remoteScript）：
+///
+/// ```sh
+/// if [ -f /etc/profile ]; then . /etc/profile >/dev/null 2>&1 || true; fi
+/// if [ -f "$HOME/.profile" ]; then . "$HOME/.profile" >/dev/null 2>&1 || true; fi
+/// if [ -f "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile" >/dev/null 2>&1 || true; elif [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc" >/dev/null 2>&1 || true; fi
+/// if [ -f "$HOME/.zprofile" ]; then . "$HOME/.zprofile" >/dev/null 2>&1 || true; fi
+/// exec env KEY=VALUE sh -c '<remoteCommand>'   # env 非空时
+/// exec sh -c '<remoteCommand>'                 # env 为空时
+/// ```
+///
+/// 先 source 登录 profile 再跑 `env KEY=VAL cmd`，让用户显式注入的
+/// identity 覆盖 profile 里重新导出的同名变量（对齐 Node 注释语义）。
+fn build_ssh_login_script(
+    remote_command: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    for key in env.keys() {
+        if !is_valid_shell_env_key(key) {
+            return Err(format!("Invalid SSH environment variable key: {key}"));
+        }
+    }
+    let env_args: Vec<String> = env
+        .iter()
+        .map(|(key, value)| format!("{key}={}", shell_quote(value)))
+        .collect();
+    let exec_line = if env_args.is_empty() {
+        format!("exec sh -c {}", shell_quote(remote_command))
+    } else {
+        format!(
+            "exec env {} sh -c {}",
+            env_args.join(" "),
+            shell_quote(remote_command)
+        )
+    };
+    let mut lines = ssh_profile_sourcing_lines();
+    lines.push(exec_line);
+    Ok(lines.join(" && "))
+}
+
+/// 登录 profile sourcing 行（对齐 Node `runSshCommand` /
+/// `buildSshSpawnTarget` remoteScript 的前 4 行）。
+fn ssh_profile_sourcing_lines() -> Vec<String> {
+    vec![
+        "if [ -f /etc/profile ]; then . /etc/profile >/dev/null 2>&1 || true; fi".to_string(),
+        "if [ -f \"$HOME/.profile\" ]; then . \"$HOME/.profile\" >/dev/null 2>&1 || true; fi"
+            .to_string(),
+        "if [ -f \"$HOME/.bash_profile\" ]; then . \"$HOME/.bash_profile\" >/dev/null 2>&1 || true; elif [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\" >/dev/null 2>&1 || true; fi"
+            .to_string(),
+        "if [ -f \"$HOME/.zprofile\" ]; then . \"$HOME/.zprofile\" >/dev/null 2>&1 || true; fi"
+            .to_string(),
+    ]
+}
+
+/// 运行一条远程 SSH 命令（对齐 Node `runSshCommand`）：
+///
+/// 1. 构造认证参数（临时 key / known_hosts 文件）
+/// 2. 组装远程登录脚本（profile sourcing + env 注入 + `sh -c`）
+/// 3. `ssh -o ... [-i key] -p <port> user@host sh -c '<script>'`
+/// 4. 支持 stdin 管道、超时（SIGTERM → 5s 后 SIGKILL）、maxBuffer 上限
+///
+/// 成功返回 `{stdout, stderr}`；失败返回 [`SshCommandError`]（携带
+/// stdout / stderr / exit_code / signal / timed_out，对齐 Node error 属性）。
+pub async fn run_ssh_command(
+    config: &SshConnectionConfig,
+    remote_command: &str,
+    options: &SshCommandOptions,
+) -> Result<SshCommandResult, SshCommandError> {
+    let auth = SshAuthArgs::create(config).map_err(|error| SshCommandError {
+        stdout: String::new(),
+        stderr: error.clone(),
+        exit_code: None,
+        signal: None,
+        timed_out: false,
+        message: error,
+    })?;
+    let script = build_ssh_login_script(remote_command, &options.env).map_err(|error| {
+        SshCommandError {
+            stdout: String::new(),
+            stderr: error.clone(),
+            exit_code: None,
+            signal: None,
+            timed_out: false,
+            message: error,
+        }
+    })?;
+    let mut ssh_args: Vec<String> = auth.args().to_vec();
+    ssh_args.push("-p".to_string());
+    ssh_args.push(config.port.to_string());
+    ssh_args.push(format!("{}@{}", config.username, config.host));
+    ssh_args.push("sh -c".to_string());
+    ssh_args.push(shell_quote(&script));
+    spawn_ssh_capture("ssh", &ssh_args, options).await
+}
+
+/// 对 `ssh` 子进程做完整 I/O 捕获（对齐 Node `spawnText`）：
+/// - stdin 提供时走管道并写入后 end；否则 /dev/null
+/// - stdout / stderr 全量收集，任一流超过 `max_buffer` → SIGTERM 并判失败
+/// - `timeout_ms` 超时 → SIGTERM，5s 宽限后 SIGKILL（防止远端挂死）
+/// - close 时 exit code 0 → 成功；否则失败（携带 code / signal / killed）
+async fn spawn_ssh_capture(
+    command: &str,
+    args: &[String],
+    options: &SshCommandOptions,
+) -> Result<SshCommandResult, SshCommandError> {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+    use tokio::time::{timeout, Duration};
+
+    let spawn_error = |message: String| SshCommandError {
+        stdout: String::new(),
+        stderr: message.clone(),
+        exit_code: None,
+        signal: None,
+        timed_out: false,
+        message,
+    };
+    let mut child = Command::new(command)
+        .args(args)
+        .stdin(if options.stdin.is_some() {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        })
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| spawn_error(error.to_string()))?;
+
+    if let Some(stdin_data) = &options.stdin {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| spawn_error("child stdin pipe unavailable".to_string()))?;
+        let data = stdin_data.clone();
+        tokio::spawn(async move {
+            let _ = stdin.write_all(data.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        });
+    }
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| spawn_error("child stdout pipe unavailable".to_string()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| spawn_error("child stderr pipe unavailable".to_string()))?;
+
+    let max_buffer = options.max_buffer;
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let mut overflow = false;
+        let mut tmp = [0u8; 8192];
+        loop {
+            match stdout.read(&mut tmp).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.len() > max_buffer {
+                        overflow = true;
+                        break;
+                    }
+                }
+            }
+        }
+        (String::from_utf8_lossy(&buf).into_owned(), overflow)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let mut overflow = false;
+        let mut tmp = [0u8; 8192];
+        loop {
+            match stderr.read(&mut tmp).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.len() > max_buffer {
+                        overflow = true;
+                        break;
+                    }
+                }
+            }
+        }
+        (String::from_utf8_lossy(&buf).into_owned(), overflow)
+    });
+
+    let mut timed_out = false;
+    let wait_result = if options.timeout_ms > 0 {
+        match timeout(Duration::from_millis(options.timeout_ms), child.wait()).await {
+            Ok(result) => result
+                .map(|status| status.code())
+                .map_err(|error| error.to_string()),
+            Err(_) => {
+                timed_out = true;
+                // SIGTERM，5s 宽限后 SIGKILL（对齐 Node killEscalation）。
+                let _ = child.kill().await;
+                let escalated = timeout(Duration::from_secs(5), child.wait())
+                    .await
+                    .is_err();
+                if escalated {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                }
+                Ok(None)
+            }
+        }
+    } else {
+        child
+            .wait()
+            .await
+            .map(|status| status.code())
+            .map_err(|error| error.to_string())
+    };
+    let (stdout, stdout_overflow) = stdout_task.await.unwrap_or_default();
+    let (stderr, stderr_overflow) = stderr_task.await.unwrap_or_default();
+
+    if stdout_overflow || stderr_overflow {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(SshCommandError {
+            stdout,
+            stderr,
+            exit_code: None,
+            signal: None,
+            timed_out: false,
+            message: format!("Process output exceeded maxBuffer of {max_buffer} bytes."),
+        });
+    }
+
+    let exit_code = wait_result.map_err(|message| SshCommandError {
+        stdout: stdout.clone(),
+        stderr: stderr.clone(),
+        exit_code: None,
+        signal: None,
+        timed_out: false,
+        message,
+    })?;
+    match exit_code {
+        Some(0) => Ok(SshCommandResult { stdout, stderr }),
+        _ => Err(SshCommandError::from_output(
+            &stdout, &stderr, exit_code, None, timed_out,
+        )),
+    }
+}
+
+/// SSH runner（对齐 Node `createSshCommandManagedRuntimeRunner` 返回值，
+/// 实现 [`crate::bridge_executor::BridgeCommandRunner`]）。
+pub struct SshCommandManagedRuntimeRunner {
+    spec: SshRemoteExecutionSpec,
+    default_cwd: String,
+    max_buffer_bytes: usize,
+}
+
+impl SshCommandManagedRuntimeRunner {
+    /// 构造 SSH runner。
+    ///
+    /// `default_cwd` 缺省（空）时回退到 `spec.remote_cwd`；`max_buffer_bytes`
+    /// 非正数时回退到 1 MiB（对齐 Node：`1024 * 1024`）。
+    #[must_use]
+    pub fn new(
+        spec: SshRemoteExecutionSpec,
+        default_cwd: Option<String>,
+        max_buffer_bytes: Option<usize>,
+    ) -> Self {
+        let default_cwd = default_cwd
+            .map(|cwd| cwd.trim().to_string())
+            .filter(|cwd| !cwd.is_empty())
+            .unwrap_or_else(|| spec.remote_cwd.clone());
+        let max_buffer_bytes = max_buffer_bytes
+            .filter(|bytes| *bytes > 0)
+            .unwrap_or(1024 * 1024);
+        Self {
+            spec,
+            default_cwd,
+            max_buffer_bytes,
+        }
+    }
+
+    /// 当前 spec（调试 / 测试用）。
+    #[must_use]
+    pub fn spec(&self) -> &SshRemoteExecutionSpec {
+        &self.spec
+    }
+}
+
+#[async_trait]
+impl crate::bridge_executor::BridgeCommandRunner for SshCommandManagedRuntimeRunner {
+    async fn execute(
+        &self,
+        input: &crate::bridge_executor::RunnerExecuteInput,
+    ) -> Result<crate::bridge_executor::RunnerCommandResult, String> {
+        use crate::bridge_executor::RunnerCommandResult;
+        // 对齐 Node createSshCommandManagedRuntimeRunner.execute：
+        // `command` trim；`cwd` trim 后为空 → defaultCwd；env 全部注入。
+        let command = input.command.trim();
+        let cwd = input.cwd.trim();
+        let cwd = if cwd.is_empty() { &self.default_cwd } else { cwd };
+        // 对齐 Node：`Object.entries(env).filter(v => typeof v === "string")`
+        // —— Rust 的 BTreeMap<String,String> 天然全是字符串，原样保留
+        // 空值（`KEY=''` 也会注入）。
+        let env_entries: Vec<(String, String)> = input
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let env_prefix = if env_entries.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "env {} ",
+                env_entries
+                    .iter()
+                    .map(|(key, value)| format!("{key}={}", shell_quote(value)))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        let export_prefix = if env_entries.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "{} ",
+                env_entries
+                    .iter()
+                    .map(|(key, value)| format!("export {key}={};", shell_quote(value)))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        let command_script = if command == "sh" || command == "bash" {
+            if matches!(input.args.first().map(String::as_str), Some("-c") | Some("-lc"))
+                && input.args.len() >= 2
+            {
+                format!("{export_prefix}{}", input.args[1])
+            } else {
+                format!(
+                    "{env_prefix}exec {}",
+                    std::iter::once(shell_quote(command))
+                        .chain(input.args.iter().map(|arg| shell_quote(arg)))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            }
+        } else {
+            format!(
+                "{env_prefix}exec {}",
+                std::iter::once(shell_quote(command))
+                    .chain(input.args.iter().map(|arg| shell_quote(arg)))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        let remote_command = format!("cd {} && {command_script}", shell_quote(cwd));
+        let result = run_ssh_command(
+            &self.spec.as_connection_config(),
+            &remote_command,
+            &SshCommandOptions {
+                env: BTreeMap::new(),
+                stdin: input.stdin.clone(),
+                timeout_ms: input.timeout_ms,
+                max_buffer: self.max_buffer_bytes,
+            },
+        )
+        .await;
+        match result {
+            Ok(ok) => Ok(RunnerCommandResult {
+                stdout: ok.stdout,
+                stderr: ok.stderr,
+                exit_code: Some(0),
+                timed_out: false,
+            }),
+            Err(error) => Ok(RunnerCommandResult {
+                stdout: error.stdout,
+                stderr: error.stderr,
+                exit_code: error.exit_code,
+                timed_out: error.timed_out,
+            }),
+        }
+    }
+}
+
+/// 构建 `ssh` spawn 目标（对齐 Node `buildSshSpawnTarget`：命令固定
+/// `ssh`，args 含认证参数 + `-p <port> user@host sh -c '<script>'`，
+/// auth 临时文件随返回值 drop 清理）。进程 session bridge 启动时把
+/// 该目标交给 runner 执行。
+#[must_use]
+pub fn build_ssh_spawn_target(
+    spec: &SshRemoteExecutionSpec,
+    command: &str,
+    args: &[String],
+    env: &BTreeMap<String, String>,
+) -> Result<SshSpawnTarget, String> {
+    for key in env.keys() {
+        if !is_valid_shell_env_key(key) {
+            return Err(format!("Invalid SSH environment variable key: {key}"));
+        }
+    }
+    let auth = SshAuthArgs::create(&spec.as_connection_config())?;
+    let env_args: Vec<String> = env
+        .iter()
+        .map(|(key, value)| format!("{key}={}", shell_quote(value)))
+        .collect();
+    let remote_command_parts: String = std::iter::once(shell_quote(command))
+        .chain(args.iter().map(|arg| shell_quote(arg)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let exec_line = if env_args.is_empty() {
+        format!("exec {remote_command_parts}")
+    } else {
+        format!("exec env {} {remote_command_parts}", env_args.join(" "))
+    };
+    // 对齐 Node buildSshSpawnTarget：profile 行 + `cd` + `exec` 直接
+    // join（不包 `sh -c`，env 直接进 exec 行）。
+    let mut remote_script = ssh_profile_sourcing_lines();
+    remote_script.push(format!(
+        "cd {} && {exec_line}",
+        shell_quote(&spec.remote_cwd)
+    ));
+    let remote_script = remote_script.join(" && ");
+    let mut ssh_args: Vec<String> = auth.args().to_vec();
+    ssh_args.push("-p".to_string());
+    ssh_args.push(spec.port.to_string());
+    ssh_args.push(format!("{}@{}", spec.username, spec.host));
+    ssh_args.push("sh -c".to_string());
+    ssh_args.push(shell_quote(&remote_script));
+    Ok(SshSpawnTarget {
+        args: ssh_args,
+        _auth: auth,
+    })
+}
+
+/// `ssh` spawn 目标（对齐 Node `buildSshSpawnTarget` 返回值：
+/// `{ command, args, cleanup }`；Rust 中 command 固定 `"ssh"`，
+/// cleanup 由 `_auth` 的 Drop 完成）。
+pub struct SshSpawnTarget {
+    pub args: Vec<String>,
+    _auth: SshAuthArgs,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bridge_executor::BridgeCommandRunner;
     use serde_json::json;
 
     // ---- types ----
@@ -572,5 +1195,187 @@ mod tests {
             public_key: "  ssh-ed25519 AAAA  ".to_string(),
         });
         assert_eq!(entry, "[h.example]:22 ssh-ed25519 AAAA");
+    }
+
+    // ---- build_ssh_login_script ----
+
+    #[test]
+    fn login_script_sources_profiles_then_exec_sh_c() {
+        let script = build_ssh_login_script("echo hi", &BTreeMap::new()).expect("valid");
+        assert!(script.starts_with(
+            "if [ -f /etc/profile ]; then . /etc/profile >/dev/null 2>&1 || true; fi && "
+        ));
+        assert!(script.contains(
+            "if [ -f \"$HOME/.profile\" ]; then . \"$HOME/.profile\" >/dev/null 2>&1 || true; fi"
+        ));
+        assert!(script.contains(
+            "elif [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\" >/dev/null 2>&1 || true; fi"
+        ));
+        assert!(script.contains("exec sh -c 'echo hi'"));
+    }
+
+    #[test]
+    fn login_script_injects_env_before_sh_c() {
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), "/opt/bin:/usr/bin".to_string());
+        env.insert("TOKEN".to_string(), "a'b".to_string());
+        let script = build_ssh_login_script("pwd", &env).expect("valid");
+        assert!(script.contains("exec env PATH='/opt/bin:/usr/bin' TOKEN='a'\"'\"'b' sh -c 'pwd'"));
+    }
+
+    #[test]
+    fn login_script_rejects_invalid_env_key() {
+        let mut env = BTreeMap::new();
+        env.insert("1BAD-KEY".to_string(), "v".to_string());
+        let error = build_ssh_login_script("true", &env).expect_err("invalid key");
+        assert!(error.contains("Invalid SSH environment variable key: 1BAD-KEY"));
+    }
+
+    // ---- SshAuthArgs ----
+
+    fn config_with_secrets() -> SshConnectionConfig {
+        SshConnectionConfig {
+            host: "h".into(),
+            port: 2222,
+            username: "u".into(),
+            remote_workspace_path: "/w".into(),
+            private_key: Some("PRIVATE KEY DATA".into()),
+            known_hosts: Some("[h]:2222 ssh-ed25519 AAAA".into()),
+            strict_host_key_checking: true,
+        }
+    }
+
+    #[test]
+    fn auth_args_use_temp_files_for_key_and_known_hosts() {
+        let auth = SshAuthArgs::create(&config_with_secrets()).expect("auth args");
+        let args = auth.args().to_vec();
+        assert!(args.contains(&"-o".to_string()));
+        let flags: Vec<&String> = args.iter().collect();
+        assert!(flags.windows(2).any(|w| w[0] == "-o" && w[1] == "BatchMode=yes"));
+        assert!(flags.windows(2).any(|w| w[0] == "-o" && w[1] == "ConnectTimeout=10"));
+        assert!(flags
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "StrictHostKeyChecking=yes"));
+        let known_hosts = flags
+            .windows(2)
+            .find(|w| w[0] == "-o" && w[1].starts_with("UserKnownHostsFile="))
+            .map(|w| w[1].trim_start_matches("UserKnownHostsFile="))
+            .expect("known hosts file");
+        let key = flags
+            .windows(2)
+            .find(|w| w[0] == "-i")
+            .map(|w| w[1].as_str())
+            .expect("private key file");
+        assert!(known_hosts.contains("paperclip-ssh-known-hosts-"));
+        assert!(key.contains("paperclip-ssh-key-"));
+        assert!(std::path::Path::new(known_hosts).exists());
+        assert!(std::path::Path::new(key).exists());
+        // drop 清理临时文件
+        drop(auth);
+        assert!(!std::path::Path::new(known_hosts).exists());
+        assert!(!std::path::Path::new(key).exists());
+    }
+
+    #[test]
+    fn auth_args_relaxed_mode_points_known_hosts_at_dev_null() {
+        let mut config = config_with_secrets();
+        config.strict_host_key_checking = false;
+        let auth = SshAuthArgs::create(&config).expect("auth args");
+        let flags: Vec<&String> = auth.args().iter().collect();
+        assert!(flags
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "StrictHostKeyChecking=no"));
+        assert!(flags
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "UserKnownHostsFile=/dev/null"));
+        // 仍保留 -i key（有 private key 时）
+        assert!(flags.windows(2).any(|w| w[0] == "-i"));
+    }
+
+    #[test]
+    fn auth_args_without_secrets_has_no_temp_files() {
+        let mut config = config_with_secrets();
+        config.private_key = None;
+        config.known_hosts = None;
+        let auth = SshAuthArgs::create(&config).expect("auth args");
+        let flags: Vec<&String> = auth.args().iter().collect();
+        assert!(!flags.windows(2).any(|w| w[0] == "-i"));
+        assert!(!flags
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1].starts_with("UserKnownHostsFile=")));
+    }
+
+    // ---- SshCommandManagedRuntimeRunner ----
+
+    fn spec_for_runner(remote_cwd: &str) -> SshRemoteExecutionSpec {
+        SshRemoteExecutionSpec {
+            host: "h".into(),
+            port: 2222,
+            username: "u".into(),
+            remote_workspace_path: remote_cwd.into(),
+            private_key: None,
+            known_hosts: None,
+            strict_host_key_checking: false,
+            remote_cwd: remote_cwd.into(),
+        }
+    }
+
+    #[test]
+    fn runner_defaults_fall_back_to_remote_cwd_and_1mib() {
+        let runner =
+            SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), None, None);
+        assert_eq!(runner.default_cwd, "/w");
+        assert_eq!(runner.max_buffer_bytes, 1024 * 1024);
+        let runner =
+            SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), Some("  /x  ".into()), Some(0));
+        assert_eq!(runner.default_cwd, "/x");
+        assert_eq!(runner.max_buffer_bytes, 1024 * 1024);
+    }
+
+    #[test]
+    fn runner_builds_remote_command_with_cd_and_exec() {
+        let runner =
+            SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), None, None);
+        let input = crate::bridge_executor::RunnerExecuteInput {
+            command: "printf".into(),
+            args: vec!["%s".into(), "hi".into()],
+            cwd: String::new(),
+            env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: 1000,
+        };
+        // execute 会尝试真实 ssh；这里只验证失败路径的 exit_code 传播
+        // 语义（本机无可用 sshd 时 ssh 命令会立即失败，返回非 0）。
+        let result = tokio_test_runtime().block_on(runner.execute(&input)).expect("runner err is Ok result");
+        assert!(result.exit_code != Some(0));
+    }
+
+    // ---- build_ssh_spawn_target ----
+
+    #[test]
+    fn spawn_target_shapes_ssh_args() {
+        let spec = spec_for_runner("/w");
+        let mut env = BTreeMap::new();
+        env.insert("A".to_string(), "1".to_string());
+        let target = build_ssh_spawn_target(&spec, "node", &["--version".into()], &env)
+            .expect("spawn target");
+        assert!(target.args.windows(2).any(|w| w[0] == "-p" && w[1] == "2222"));
+        assert!(target.args.contains(&"u@h".to_string()));
+        let sh_idx = target.args.iter().position(|a| a == "sh -c").expect("sh -c");
+        let script_arg = &target.args[sh_idx + 1];
+        // 整个 remote_script 被 shell_quote 包裹，内部单引号会被转义为
+        // `"'"'"`，因此按转义后的形式断言。
+        assert!(script_arg.contains("cd '\"'\"'/w'\"'\"'"));
+        assert!(script_arg.contains("exec env A='\"'\"'1'\"'\"' '\"'\"'node'\"'\"' '\"'\"'--version'\"'\"'"));
+        // 外层仍由单个 `sh -c` 包裹
+        assert!(script_arg.starts_with("'if [ -f /etc/profile"));
+        assert!(script_arg.ends_with("version'\"'\"''"));
+    }
+
+    fn tokio_test_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
     }
 }

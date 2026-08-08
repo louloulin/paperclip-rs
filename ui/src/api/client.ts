@@ -1,6 +1,12 @@
 import { getPageVisibility, getVisibilityHeaderValue } from "@/lib/page-visibility";
 
-const BASE = "/api";
+// Default keeps the historical behaviour (Vite dev-server proxies `/api/*` to the
+// Rust server on 3100). Set `VITE_API_BASE=http://localhost:53100` (or any full
+// URL) to point the UI directly at a different Rust server instance — useful
+// for parity tests, staging deployments, and the `scripts/dev-ui-rust.sh`
+// full-stack harness.
+const BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
+const IS_ABSOLUTE_BASE = /^https?:\/\//.test(BASE);
 
 export class ApiError extends Error {
   status: number;
@@ -46,7 +52,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   applyObservabilityHeaders(headers);
 
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${BASE}${IS_ABSOLUTE_BASE && path.startsWith("/") ? path.slice(1) : path}`, {
     headers,
     credentials: "include",
     ...init,
