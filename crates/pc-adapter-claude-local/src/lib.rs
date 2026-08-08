@@ -15,6 +15,7 @@
 
 pub mod skills;
 pub mod claude_stream_json;
+pub mod claude_test;
 pub mod claude_config;
 pub mod claude_models;
 pub mod claude_permissions;
@@ -24,6 +25,7 @@ pub mod claude_errors;
 pub mod execute_helpers;
 pub mod acp;
 pub mod config_schema;
+pub mod claude_session_resume;
 
 pub use claude_stream_json::{
     claude_model_usage_totals, detect_claude_login_required, extract_claude_login_url,
@@ -584,3 +586,5 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+pub mod claude_session_params;
+pub mod claude_result_builder;

@@ -9,6 +9,7 @@ pub mod auth_copyback;
 pub mod codex_auth_merge;
 pub mod runtime_config;
 pub mod codex_home;
+pub mod codex_home_staging;
 pub mod acp;
 pub mod config_schema;
 

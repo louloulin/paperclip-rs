@@ -51,6 +51,11 @@ pub struct AdapterExecutionContext {
     pub session_params: Option<serde_json::Value>,
     pub adapter_config: serde_json::Value,
     pub runtime_config: serde_json::Value,
+    /// 执行目标（local / ssh / sandbox），由 route 层从 agent config 解析并
+    /// 注入。adapter 在需要 ssh/sandbox 行为时通过 `pc_acpx::execution_target`
+    /// 下的 `AdapterExecutionTarget` 解码。存为 JSON 以避免 pc-adapter-api
+    /// 与 pc-acpx 形成循环依赖。
+    pub execution_target: Option<serde_json::Value>,
     pub cancellation: CancellationToken,
 }
 
@@ -66,8 +71,21 @@ impl AdapterExecutionContext {
             session_params: None,
             adapter_config: serde_json::Value::Null,
             runtime_config: serde_json::Value::Null,
+            execution_target: None,
             cancellation: CancellationToken::new(),
         }
+    }
+
+    /// 设置 execution_target（JSON 形式）。调用方通常从 agent config 解析后
+    /// 注入。
+    pub fn with_execution_target(mut self, target: serde_json::Value) -> Self {
+        self.execution_target = Some(target);
+        self
+    }
+
+    /// 取出 execution_target 的 JSON 形式。
+    pub fn execution_target_json(&self) -> Option<&serde_json::Value> {
+        self.execution_target.as_ref()
     }
 }
 

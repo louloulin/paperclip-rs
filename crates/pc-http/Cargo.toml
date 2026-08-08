@@ -21,6 +21,7 @@ pc-adapter-quota = { path = "../pc-adapter-quota" }
 pc-auth = { path = "../pc-auth" }
 pc-backup = { path = "../pc-backup" }
 pc-repos = { path = "../pc-repos" }
+pc-acpx = { path = "../pc-acpx" }
 pc-secrets = { path = "../pc-secrets" }
 pc-plugin-host = { path = "../pc-plugin-host" }
 pc-plugin-protocol = { path = "../pc-plugin-protocol" }

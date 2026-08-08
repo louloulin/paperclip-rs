@@ -1487,6 +1487,11 @@ async fn launch_registered_adapter(
             .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.into())))
             .collect();
     }
+    // 注入 execution_target：合并 agent.adapter_config 与 agent.runtime_config
+    // 中各自的 executionTarget / legacy remoteExecution。统一走
+    // pc_acpx::execution_target::read_adapter_execution_target 自动 fallback。
+    execution_context.execution_target =
+        resolve_execution_target_for_agent(&agent.adapter_config, &agent.runtime_config);
     let sink: Arc<dyn HeartbeatExecutionSink> = Arc::new(SqlHeartbeatExecutionSink {
         db: state.db.clone(),
         realtime: state.realtime.clone(),
@@ -2378,6 +2383,41 @@ async fn read_workspace_operation_log(
     })))
 }
 
+/// 从 agent.config 与 agent.runtime_config 中合并 `executionTarget`，
+/// 并 fallback 到 legacy `remoteExecution` 字段。对齐 Node
+/// `readAdapterExecutionTarget` 行为，但同时合并两路 sources:
+///   1. agent.adapter_config.executionTarget
+///   2. agent.runtime_config.executionTarget
+///   3. agent.runtime_config.remoteExecution  (legacy)
+/// 优先取已类型化的实例，再回退到 JSON 解析。
+pub fn resolve_execution_target_for_agent(
+    adapter_config: &serde_json::Value,
+    runtime_config: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    use pc_acpx::execution_target::{
+        is_adapter_execution_target_instance, read_adapter_execution_target,
+    };
+    let from_cfg = adapter_config.get("executionTarget");
+    let from_rt = runtime_config.get("executionTarget");
+    let from_legacy = runtime_config.get("remoteExecution");
+
+    // 1. 已类型化实例(wrapped)优先
+    if let Some(v) = from_cfg {
+        if is_adapter_execution_target_instance(v) {
+            return Some(v.clone());
+        }
+    }
+    if let Some(v) = from_rt {
+        if is_adapter_execution_target_instance(v) {
+            return Some(v.clone());
+        }
+    }
+    // 2. 解析（优先 runtime_config > adapter_config）
+    let parsed = read_adapter_execution_target(from_rt, from_legacy)
+        .or_else(|| read_adapter_execution_target(from_cfg, from_legacy));
+    parsed.map(|target| serde_json::to_value(target).unwrap_or(serde_json::Value::Null))
+}
+
 #[cfg(test)]
 mod heartbeat_route_tests {
     use super::*;
@@ -2393,5 +2433,110 @@ mod heartbeat_route_tests {
         assert_eq!(normalize_heartbeat_limit(None), 200);
         assert_eq!(normalize_heartbeat_limit(Some(0)), 1);
         assert_eq!(normalize_heartbeat_limit(Some(2_000)), 1_000);
+    }
+
+    // ---- resolve_execution_target_for_agent ----
+
+    fn empty_obj() -> serde_json::Value {
+        serde_json::json!({})
+    }
+
+    #[test]
+    fn resolve_execution_target_returns_none_when_no_sources() {
+        let result = resolve_execution_target_for_agent(&empty_obj(), &empty_obj());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_execution_target_from_adapter_config() {
+        let adapter_config = serde_json::json!({
+            "executionTarget": {
+                "kind": "local",
+                "environmentId": "env-1"
+            }
+        });
+        let result = resolve_execution_target_for_agent(&adapter_config, &empty_obj());
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed["kind"], "local");
+        assert_eq!(parsed["environmentId"], "env-1");
+    }
+
+    #[test]
+    fn resolve_execution_target_from_runtime_config() {
+        let runtime_config = serde_json::json!({
+            "executionTarget": {
+                "kind": "local",
+                "environmentId": "env-2"
+            }
+        });
+        let result = resolve_execution_target_for_agent(&empty_obj(), &runtime_config);
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed["environmentId"], "env-2");
+    }
+
+    #[test]
+    fn resolve_execution_target_when_both_typed_first_source_wins() {
+        let adapter_config = serde_json::json!({
+            "executionTarget": {
+                "kind": "local",
+                "environmentId": "env-1"
+            }
+        });
+        let runtime_config = serde_json::json!({
+            "executionTarget": {
+                "kind": "local",
+                "environmentId": "env-2"
+            }
+        });
+        let result = resolve_execution_target_for_agent(&adapter_config, &runtime_config);
+        let parsed = result.unwrap();
+        // typed instance check: adapter_config wins (first non-empty wins)
+        assert_eq!(parsed["environmentId"], "env-1");
+    }
+
+    #[test]
+    fn resolve_execution_target_falls_back_to_legacy_remote_execution() {
+        // legacy remoteExecution puts SSH fields (host, username, port, remoteCwd)
+        // at the top level (not nested under spec).
+        let runtime_config = serde_json::json!({
+            "remoteExecution": {
+                "host": "host.example.com",
+                "username": "user",
+                "port": 22,
+                "remoteCwd": "/tmp"
+            }
+        });
+        let result = resolve_execution_target_for_agent(&empty_obj(), &runtime_config);
+        assert!(result.is_some(), "legacy remoteExecution should produce a target");
+        let parsed = result.unwrap();
+        assert_eq!(parsed["kind"], "remote");
+        assert_eq!(parsed["transport"], "ssh");
+        assert_eq!(parsed["remoteCwd"], "/tmp");
+    }
+
+    #[test]
+    fn resolve_execution_target_handles_invalid_inputs() {
+        // Invalid JSON object should not crash, just return None
+        let adapter_config = serde_json::json!({"executionTarget": "not-an-object"});
+        let runtime_config = serde_json::json!({"executionTarget": 42});
+        let result = resolve_execution_target_for_agent(&adapter_config, &runtime_config);
+        // Both fail parsing → None
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_execution_target_prefers_typed_instance() {
+        // 当 value 已是 typed instance（is_adapter_execution_target_instance returns true）
+        // 直接返回克隆，不重新解析
+        let adapter_config = serde_json::json!({
+            "executionTarget": {
+                "kind": "local",
+                "environmentId": "env-1"
+            }
+        });
+        let result = resolve_execution_target_for_agent(&adapter_config, &empty_obj());
+        assert!(result.is_some());
     }
 }

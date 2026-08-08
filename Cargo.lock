@@ -1945,6 +1945,7 @@ dependencies = [
  "pc-acpx",
  "pc-adapter-api",
  "pc-adapter-process",
+ "regex-lite",
  "serde",
  "serde_json",
  "sha2",
@@ -2330,6 +2331,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
+ "pc-acpx",
  "pc-activity",
  "pc-adapter-api",
  "pc-adapter-quota",
@@ -2992,6 +2994,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
