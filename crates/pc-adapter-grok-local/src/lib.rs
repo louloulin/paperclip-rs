@@ -11,6 +11,10 @@ use pc_adapter_api::{
 use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::Value;
 
+pub mod grok_jsonl;
+
+pub use grok_jsonl::{is_grok_unknown_session_error, parse_grok_jsonl, ParsedGrokJsonl};
+
 pub const ADAPTER_TYPE: &str = "grok_local";
 
 fn default_command(config: &Value) -> String {
@@ -49,32 +53,31 @@ pub fn build_grok_exec_args(config: &Value) -> Vec<String> {
 }
 
 pub fn parse_grok_output(stdout: &str) -> Option<String> {
-    let mut summary: Option<String> = None;
+    let parsed = parse_grok_jsonl(stdout);
+    if !parsed.summary.is_empty() {
+        return Some(parsed.summary);
+    }
+    let mut summary = None;
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let event: Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(_) => {
-                summary = Some(trimmed.to_owned());
-                continue;
-            }
+        let Ok(event) = serde_json::from_str::<Value>(trimmed) else {
+            summary = Some(trimmed.to_owned());
+            continue;
         };
-        if let Some(text) = event
-            .pointer("/message/content/0/text")
-            .and_then(Value::as_str)
-        {
-            summary = Some(text.to_owned());
-        } else if let Some(text) = event.pointer("/part/text").and_then(Value::as_str) {
-            summary = Some(text.to_owned());
-        } else if let Some(text) = event.get("text").and_then(Value::as_str) {
-            summary = Some(text.to_owned());
-        } else if let Some(content) = event.get("content").and_then(Value::as_str) {
-            summary = Some(content.to_owned());
-        } else if let Some(result) = event.get("result").and_then(Value::as_str) {
-            summary = Some(result.to_owned());
+        for candidate in [
+            event.pointer("/message/content/0/text").and_then(Value::as_str),
+            event.pointer("/part/text").and_then(Value::as_str),
+            event.get("text").and_then(Value::as_str),
+            event.get("content").and_then(Value::as_str),
+            event.get("result").and_then(Value::as_str),
+        ] {
+            if let Some(text) = candidate {
+                summary = Some(text.to_owned());
+                break;
+            }
         }
     }
     summary
@@ -111,14 +114,20 @@ impl Adapter for GrokLocalAdapter {
         let model = default_model(&context.adapter_config);
         let spec = ProcessSpec::new(&command, &args).with_stdin(context.prompt.clone());
         let execution = execute_process_capture(&spec, &context, events).await?;
-        let summary = parse_grok_output(&execution.stdout);
+        let parsed = parse_grok_jsonl(&execution.stdout);
         let mut result = execution.result;
         result.provider = Some(ADAPTER_TYPE.into());
         result.model = model;
-        result.summary = summary;
-        result.error_message = (result.exit_code != Some(0))
-            .then(|| execution.stderr.trim().to_owned())
-            .filter(|s| !s.is_empty());
+        result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
+        result.session_id = parsed.session_id;
+        result.error_message = parsed
+            .error_message
+            .or_else(|| (result.exit_code != Some(0)).then(|| execution.stderr.trim().to_owned()).filter(|s| !s.is_empty()));
+        result.result_json = Some(serde_json::json!({
+            "thought": parsed.thought,
+            "stopReason": parsed.stop_reason,
+            "requestId": parsed.request_id,
+        }));
         Ok(result)
     }
 }

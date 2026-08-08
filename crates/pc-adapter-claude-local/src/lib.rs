@@ -14,11 +14,19 @@
 //! 由 stderr 反映，agent.run 会回退处理（与 Node 行为对齐）。
 
 pub mod skills;
+pub mod claude_stream_json;
+pub mod claude_errors;
+
+pub use claude_stream_json::{
+    claude_model_usage_totals, detect_claude_login_required, extract_claude_login_url,
+    is_claude_image_processing_error, is_claude_unknown_session_error,
+    parse_claude_stream_json, ParsedClaudeStreamJson,
+};
 
 use async_trait::async_trait;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,
-    AdapterExecutionResult, UsageSummary,
+    AdapterExecutionResult,
 };
 use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::{json, Value};
@@ -315,27 +323,25 @@ impl Adapter for ClaudeLocalAdapter {
         let built = build_claude_exec_args(&context.adapter_config);
         let spec = ProcessSpec::new(&command, &built.args).with_stdin(context.prompt.clone());
         let execution = execute_process_capture(&spec, &context, events).await?;
-        let parsed = parse_claude_jsonl(&execution.stdout);
+        let parsed = parse_claude_stream_json(&execution.stdout);
         let mut result = execution.result;
         result.session_id = parsed.session_id.clone();
         result.provider = Some("claude_local".into());
         result.model = parsed.model.clone().or_else(|| built.model.clone());
         result.billing_type = Some("subscription".into());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
-        result.usage = Some(UsageSummary {
-            input_tokens: parsed.input_tokens,
-            output_tokens: parsed.output_tokens,
-            cached_input_tokens: Some(parsed.cache_read_tokens),
-        });
+        result.usage = parsed.usage.clone();
         result.error_message = parsed.error_message.clone().or_else(|| {
             (result.exit_code != Some(0))
                 .then(|| execution.stderr.trim().to_owned())
                 .filter(|s| !s.is_empty())
         });
         result.result_json = Some(json!({
-            "sawProtocolEvent": parsed.saw_protocol_event,
-            "sawProtocolTerminalEvent": parsed.saw_protocol_terminal_event,
+            "sawProtocolEvent": true,
+            "sawProtocolTerminalEvent": parsed.result_json.is_some(),
             "stopReason": parsed.stop_reason,
+            "costUsd": parsed.cost_usd,
+            "claudeResult": parsed.result_json,
             "effortRequested": built.effort,
             "addDir": built.add_dir,
             "appendSystemPromptFile": built.append_system_prompt_file,

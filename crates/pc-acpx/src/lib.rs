@@ -65,6 +65,8 @@ pub mod ssh;
 pub mod session_codec;
 pub mod session_compaction;
 pub mod session_compat;
+pub mod server_utils;
+pub mod server_utils_wake;
 pub mod session_config_options;
 pub mod settings;
 pub mod skill_io;
