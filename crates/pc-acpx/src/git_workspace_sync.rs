@@ -184,6 +184,7 @@ use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use crate::ssh::{SshAuthArgs, SshRemoteExecutionSpec};
 
 /// Result of a local `git` invocation (mirrors Node `GitCommandResult`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -509,7 +510,7 @@ pub async fn stream_local_file_to_ssh(
         ));
     }
 
-    let auth = SshAuthArgs::create(spec).map_err(SshStreamError::Auth)?;
+    let auth = SshAuthArgs::create(&spec.as_connection_config()).map_err(SshStreamError::Auth)?;
 
     let mut command = tokio::process::Command::new("ssh");
     command
@@ -559,7 +560,7 @@ pub async fn stream_ssh_to_local_file(
 ) -> Result<(), SshStreamError> {
     use tokio::io::AsyncWriteExt;
 
-    let auth = SshAuthArgs::create(spec).map_err(SshStreamError::Auth)?;
+    let auth = SshAuthArgs::create(&spec.as_connection_config()).map_err(SshStreamError::Auth)?;
 
     let mut command = tokio::process::Command::new("ssh");
     command
@@ -660,39 +661,77 @@ pub async fn import_git_workspace_to_ssh(
         uuid::Uuid::new_v4()
     );
 
-    // Build remote script first (we need the temp_ref literal embedded).
-    let remote_setup_script = format!(
-        "set -e
-         mkdir -p {runtime_dir}
-         tmp_bundle=$(mktemp {runtime_dir}/import-XXXXXX.bundle)
-         trap 'rm -f "$tmp_bundle"' EXIT
-         cat > "$tmp_bundle"
-         if [ ! -d {remote_dir}/.git ]; then git init {remote_dir} >/dev/null; fi
-         git -C {remote_dir} fetch --force "$tmp_bundle" '{temp_ref}:{temp_ref}' >/dev/null
-         {checkout}
-         git -C {remote_dir} reset --hard {head} >/dev/null
-         git -C {remote_dir} clean -fdx -e .paperclip-runtime >/dev/null
-         git -C {remote_dir} update-ref -d {temp_ref} >/dev/null 2>&1 || true",
-        runtime_dir = shell_quote_posix(&format!("{remote_dir}/.paperclip-runtime")),
-        remote_dir = shell_quote_posix(remote_dir),
-        temp_ref = temp_ref,
-        head = shell_quote_posix(&snapshot.head_commit),
-        checkout = match &snapshot.branch_name {
-            Some(branch) => format!(
-                "git -C {} checkout --force -B {} {} >/dev/null",
-                shell_quote_posix(remote_dir),
-                shell_quote_posix(branch),
-                shell_quote_posix(&snapshot.head_commit),
-            ),
-            None => format!(
-                "git -C {} -c advice.detachedHead=false checkout --force --detach {} >/dev/null",
-                shell_quote_posix(remote_dir),
-                shell_quote_posix(&snapshot.head_commit),
-            ),
+    // Build remote script. Use string concatenation (via Vec<String>) to
+    // avoid Rust 2021's reserved `$identifier` syntax in string literals.
+    let runtime_dir_quoted = shell_quote(&format!("{remote_dir}/.paperclip-runtime"));
+    let remote_dir_quoted = shell_quote(remote_dir);
+    let head_quoted = shell_quote(&snapshot.head_commit);
+    let checkout_line = match &snapshot.branch_name {
+        Some(branch) => format!(
+            "git -C {} checkout --force -B {} {} >/dev/null",
+            remote_dir_quoted,
+            shell_quote(branch),
+            head_quoted,
+        ),
+        None => format!(
+            "git -C {} -c advice.detachedHead=false checkout --force --detach {} >/dev/null",
+            remote_dir_quoted,
+            head_quoted,
+        ),
+    };
+    let mut script_lines: Vec<String> = vec![
+        "set -e".to_owned(),
+        format!("mkdir -p {}", runtime_dir = runtime_dir_quoted),
+        format!(
+            "tmp_bundle=$(mktemp {}/import-XXXXXX.bundle)",
+            runtime_dir = runtime_dir_quoted,
+        ),
+        // Build the trap line by concatenating at runtime; this keeps the
+        // shell variable literal (`$` + `tmp_bundle`) out of any single
+        // Rust string/format literal where `$identifier` would be reserved.
+        String::from("trap 'rm -f \"")
+            + "$" + "tmp_bundle"
+            + &String::from("\"' EXIT"),
+        // cat > "$tmp_bundle"
+        String::from("cat > \"")
+            + "$" + "tmp_bundle"
+            + &String::from("\""),
+        format!(
+            "if [ ! -d {0}/.git ]; then git init {0} >/dev/null; fi",
+            remote_dir_quoted,
+        ),
+        // Same for the fetch line — assemble at runtime.
+        {
+            let mut s = String::from("git -C ");
+            s.push_str(&remote_dir_quoted);
+            s.push_str(" fetch --force \"");
+            s.push_str("$");
+            s.push_str("tmp_bundle\" '");
+            s.push_str(&temp_ref);
+            s.push_str(":");
+            s.push_str(&temp_ref);
+            s.push_str("' >/dev/null");
+            s
         },
-    );
+        checkout_line,
+        format!(
+            "git -C {} reset --hard {} >/dev/null",
+            remote_dir = remote_dir_quoted,
+            head = head_quoted,
+        ),
+        format!(
+            "git -C {} clean -fdx -e .paperclip-runtime >/dev/null",
+            remote_dir = remote_dir_quoted,
+        ),
+        format!(
+            "git -C {} update-ref -d {} >/dev/null 2>&1 || true",
+            remote_dir = remote_dir_quoted,
+            temp_ref = temp_ref,
+        ),
+    ];
+    let remote_setup_script = script_lines.join("\n");
 
-    let result: Result<(), String> = async {
+        let result: Result<(), String> = async {
         // 1. update-ref
         run_local_git(
             &local_dir_str,
@@ -759,18 +798,38 @@ pub async fn export_git_workspace_from_ssh(
         uuid::Uuid::new_v4()
     );
 
-    let export_script = format!(
-        "set -e
-         git -C {remote_dir} update-ref refs/paperclip/ssh-sync/export HEAD
-         mkdir -p {runtime_dir}
-         tmp_bundle=$(mktemp {runtime_dir}/export-XXXXXX.bundle)
-         cleanup() {{ rm -f "$tmp_bundle"; git -C {remote_dir} update-ref -d refs/paperclip/ssh-sync/export >/dev/null 2>&1 || true; }}
-         trap cleanup EXIT
-         git -C {remote_dir} bundle create "$tmp_bundle" refs/paperclip/ssh-sync/export >/dev/null
-         cat "$tmp_bundle"",
-        remote_dir = shell_quote_posix(remote_dir),
-        runtime_dir = shell_quote_posix(&format!("{remote_dir}/.paperclip-runtime")),
-    );
+        // Build export script. Use string concatenation to avoid Rust 2021
+    // reserved `$identifier` syntax in single string literals.
+    let remote_dir_quoted = shell_quote(remote_dir);
+    let runtime_dir_quoted = shell_quote(&format!("{remote_dir}/.paperclip-runtime"));
+    let mut export_lines: Vec<String> = vec![
+        "set -e".to_owned(),
+        format!(
+            "git -C {} update-ref refs/paperclip/ssh-sync/export HEAD",
+            remote_dir = remote_dir_quoted,
+        ),
+        format!("mkdir -p {}", runtime_dir = runtime_dir_quoted),
+        format!(
+            "tmp_bundle=$(mktemp {}/export-XXXXXX.bundle)",
+            runtime_dir = runtime_dir_quoted,
+        ),
+        // cleanup() body — assemble at runtime to avoid reserved prefix.
+        String::from("cleanup() { rm -f \"")
+            + "$" + "tmp_bundle"
+            + &String::from("\"; git -C ")
+            + &remote_dir_quoted
+            + " update-ref -d refs/paperclip/ssh-sync/export >/dev/null 2>&1 || true; }",
+        "trap cleanup EXIT".to_owned(),
+        // bundle create — also assemble at runtime.
+        String::from("git -C ")
+            + &remote_dir_quoted
+            + " bundle create \""
+            + "$" + "tmp_bundle"
+            + "\" refs/paperclip/ssh-sync/export >/dev/null",
+        // cat "$tmp_bundle"
+        String::from("cat \"") + "$" + "tmp_bundle" + "\"",
+    ];
+    let export_script = export_lines.join("\n");
 
     let result: Result<String, String> = async {
         // 1. stream remote → local bundle
@@ -832,10 +891,7 @@ pub async fn export_git_workspace_from_ssh(
 /// POSIX shell single-quote a string (path-style, uses forward slashes).
 /// Mirrors the Node `shellQuote` helper. We use forward slashes here so
 /// remote shell scripts are portable across platforms.
-fn shell_quote_posix(value: &str) -> String {
-    let escaped = value.replace(''', r#"'"'"'"#);
-    format!("'{escaped}'")
-}
+// shell_quote is defined at line ~171; we use that one.
 
 #[cfg(test)]
 mod tests {

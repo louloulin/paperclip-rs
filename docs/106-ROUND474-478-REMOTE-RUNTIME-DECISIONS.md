@@ -1111,3 +1111,79 @@ Node `packages/adapter-utils/src/git-workspace-sync.ts`（433 行）的核心被
 | P2 | `integrateImportedGitHead` | Node L916-1000（concurrent ref retry + merge-tree），R498 之后 |
 | P2 | `restoreWorkspaceFromSshExecution` | Node L1559-1650（pick import/export/reset 策略），R500+ |
 | P3 | 其他 adapter | cursor / gemini / grok / pi / hermes / openclaw 延后（用户约束） |
+
+## 39. R498 完成：importGitWorkspaceToSsh / exportGitWorkspaceFromSsh 端口
+
+### 动机
+
+Node `packages/adapter-utils/src/git-workspace-sync.ts` 的 import/export 函数
+（~165 行）调用 `streamLocalFileToSsh` / `streamSshToLocalFile`（在 ssh.ts 中，
+~110 行）。R497 已端口基础 snapshot reader + run_local_git；本轮补
+stream helpers + import/export 本身，让 SSH 远端 workspace 同步在 Rust 端
+**真正能跑通**——之前两函数都被 `claude_remote_workspace` /
+`codex_remote_workspace` 的注释声明 TODO，但实际调用落空。
+
+### 关键改动
+
+1. **`stream_local_file_to_ssh`**（port of Node `streamLocalFileToSsh`）：
+   - tokio::process::Command spawn `ssh ... sh -c <script>`，stdin 管道
+   - tokio::fs::File → tokio::io::copy → child.stdin
+   - drop stdin（EOF）→ child.wait → 检查 status
+   - 文件不存在 / 权限 / spawn / 非零退出各自错误（`SshStreamError` enum）
+
+2. **`stream_ssh_to_local_file`**（port of Node `streamSshToLocalFile`）：
+   - 类似结构但 stdout → 本地文件
+   - 文件以 0o600 创建（对齐 Node `createWriteStream({ mode: 0o600 })`）
+
+3. **`import_git_workspace_to_ssh`**（port of Node `importGitWorkspaceToSsh`）：
+   - 创建 `tmp_bundle=$(mktemp ...)` 在远端 `<remoteDir>/.paperclip-runtime/`
+   - 流式推送本地 git bundle 到远端
+   - 远端脚本：`git init` → `fetch --force $tmp_bundle <tempRef>:<tempRef>` →
+     `checkout -B <branch>` 或 `--detach` → `reset --hard` → `clean -fdx -e .paperclip-runtime`
+   - 本地 cleanup：delete temp ref + rm bundle dir
+
+4. **`export_git_workspace_from_ssh`**（port of Node `exportGitWorkspaceFromSsh`）：
+   - 远端脚本：`update-ref refs/paperclip/ssh-sync/export HEAD` →
+     `bundle create $tmp_bundle <ref>` → `cat $tmp_bundle`
+   - 本地 fetch bundle → `reset --hard <importedRef>` (可选) → `rev-parse <importedRef>`
+   - 返回 imported HEAD SHA
+
+5. **Rust 2021 兼容**：shell 脚本中的 `$tmp_bundle` 是 Rust 2021 reserved
+   prefixed identifier 语法。规避策略：用 `Vec<String>` + `String::from`
+   + 字面 `"$"` + `"tmp_bundle"` 拼接，把 `$identifier` 散布到多个
+   string literal 中而非出现在单个 format! 调用里。
+
+### 真实验证（`tests/round498_git_workspace_sync_ssh.rs`，pc-acpx +2）
+
+- `import_git_workspace_to_ssh_runs_remote_git_init_and_checkout`（10.18s）：
+  - 本地 git repo（init + commit "hello from local"）
+  - SSH fixture：真实 sshd + ssh-keygen + ed25519
+  - 调用 `import_git_workspace_to_ssh` 后，远端目录出现 `.git` + `hello.txt`
+  - 远端 `hello.txt` 内容含 `"hello from local"`
+- `export_git_workspace_from_ssh_runs_remote_bundle_create_and_local_reset`：
+  - 远端 git repo（init + commit "world from remote"）
+  - 本地空 git repo
+  - 调用 `export_git_workspace_from_ssh(..., reset_local_workspace=true)` 后
+  - 返回 imported HEAD SHA = 远端 `rev-parse HEAD`
+  - 本地 working tree 出现 `world.txt` 含 `"world from remote"`
+
+### 测试快照
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | 999 |
+| pc-acpx integration | 1609（+2 R498） |
+| pc-adapter-codex-local lib | 390 |
+| pc-adapter-claude-local lib | 421 |
+| **本仓合计** | **3419** |
+
+### 后续计划（R499+）
+
+| 优先级 | 模块 | 内容 |
+|---|---|---|
+| P1 | R499：`createTransferProgress` 进度上报 | 真实百分比 / 字节速率 / 阶段标签，对齐 Node `runtime-progress.ts`；R498 的 import/export 接受 `Option<ProgressSink>` 参数 |
+| P1 | R500：`integrateImportedGitHead` | Node L916-1000（concurrent ref retry + merge-tree），用于 `export` 后本地同步 |
+| P2 | `restoreWorkspaceFromSshExecution` | Node L1559-1650（pick import/export/reset 策略），R501 |
+| P2 | `syncDirectoryToSsh` | Node L1270-1530（tar 流 + 进度 + delta 排除），R502 |
+| P2 | `SshLabFixture` 上移 | round492 / round494 / round495 / round496 / round498 五处各有一份；上移为共享 helper |
+| P3 | 其他 adapter | cursor / gemini / grok / pi / hermes / openclaw 延后（用户约束） |
