@@ -461,7 +461,7 @@ async fn sign_in_email(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<SignInEmailBody>,
-) -> ApiResult<Json<AuthSuccessResponse>> {
+) -> ApiResult<(StatusCode, HeaderMap, Json<AuthSuccessResponse>)> {
     let email = body.email.trim().to_lowercase();
     let password = body.password;
     if email.is_empty() || password.is_empty() {
@@ -511,7 +511,8 @@ async fn sign_in_email(
     state.realtime.publish(
         pc_realtime::LiveEvent::new("auth.signed_in", "user", Uuid::nil()).with_actor(&user.id),
     );
-    Ok(Json(AuthSuccessResponse {
+    let cookie = session_cookie(&session_token, expires_at);
+    let resp = AuthSuccessResponse {
         success: true,
         user: SessionUserOut {
             id: user.id.clone(),
@@ -521,9 +522,12 @@ async fn sign_in_email(
             image: user.image.clone(),
         },
         redirect: false,
-        token: session_token,
+        token: session_token.clone(),
         expires_at,
-    }))
+    };
+    let mut out_headers = HeaderMap::new();
+    out_headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie"));
+    Ok((StatusCode::OK, out_headers, Json(resp)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -544,7 +548,7 @@ struct SignUpResponse {
 async fn sign_up_email(
     State(state): State<AppState>,
     Json(body): Json<SignUpEmailBody>,
-) -> ApiResult<Json<SignUpResponse>> {
+) -> ApiResult<(StatusCode, HeaderMap, Json<SignUpResponse>)> {
     let email = body.email.trim().to_lowercase();
     let name = body.name.trim();
     if email.is_empty() || name.is_empty() || body.password.len() < 8 {
@@ -587,7 +591,8 @@ async fn sign_up_email(
     state.realtime.publish(
         pc_realtime::LiveEvent::new("auth.signed_up", "user", Uuid::nil()).with_actor(&user_id),
     );
-    Ok(Json(SignUpResponse {
+    let cookie = session_cookie(&session_token, expires_at);
+    let resp = SignUpResponse {
         success: true,
         user: SessionUserOut {
             id: user_id.clone(),
@@ -596,9 +601,12 @@ async fn sign_up_email(
             email_verified: false,
             image: None,
         },
-        token: session_token,
+        token: session_token.clone(),
         expires_at,
-    }))
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie header"));
+    Ok((StatusCode::OK, headers, Json(resp)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -618,7 +626,7 @@ async fn refresh_session(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<RefreshBody>,
-) -> ApiResult<Json<RefreshResponse>> {
+) -> ApiResult<(StatusCode, HeaderMap, Json<RefreshResponse>)> {
     // Prefer explicit token from body, fall back to Authorization/Cookie
     let old_token = body
         .token
@@ -663,11 +671,15 @@ async fn refresh_session(
         pc_realtime::LiveEvent::new("auth.session_rotated", "user", Uuid::nil())
             .with_actor(&user_id),
     );
-    Ok(Json(RefreshResponse {
+    let cookie = session_cookie(&new_token, expires_at);
+    let resp = RefreshResponse {
         success: true,
-        token: new_token,
+        token: new_token.clone(),
         expires_at,
-    }))
+    };
+    let mut out_headers = HeaderMap::new();
+    out_headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie"));
+    Ok((StatusCode::OK, out_headers, Json(resp)))
 }
 
 // ============================================================================
@@ -732,4 +744,16 @@ async fn get_profile_short(
         "createdAt": user.created_at.as_datetime(),
         "companyIds": companies,
     })))
+}
+
+/// Build the Set-Cookie header value for `paperclip_session=<token>` with
+/// HttpOnly + SameSite=Lax + Path=/ + 30-day expiry. Matches the Node
+/// better-auth `paperclip_session` cookie contract so the React UI (which
+/// uses `credentials: "include"`) can persist the session across requests.
+fn session_cookie(token: &str, expires_at: chrono::DateTime<Utc>) -> String {
+    let max_age = (expires_at - chrono::Utc::now()).num_seconds().max(0);
+    format!(
+        "paperclip_session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        token, max_age
+    )
 }

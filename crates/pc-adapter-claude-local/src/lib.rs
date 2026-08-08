@@ -42,7 +42,7 @@ use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,
     AdapterExecutionResult,
 };
-use pc_adapter_process::{execute_process_capture, ProcessSpec};
+
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -737,8 +737,24 @@ impl Adapter for ClaudeLocalAdapter {
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
         let built = build_claude_exec_args(&context.adapter_config);
-        let spec = ProcessSpec::new(&command, &built.args).with_stdin(context.prompt.clone());
-        let execution = execute_process_capture(&spec, &context, events).await?;
+        // R496：CLI 执行改走 `execute_command_for_target` 三分支 dispatch
+        // （local / ssh / sandbox-fallback），让 Claude 主路径也享受远程
+        // target 支持。`execute_claude_attempt_for_target` 复用 R495 的
+        // helper：on_log → AdapterEventSink，timeout/grace 对齐 Node
+        // `runChildProcess` 默认（15min / 5s）。
+        let stdin = if context.prompt.is_empty() {
+            None
+        } else {
+            Some(context.prompt.as_str())
+        };
+        let execution = crate::claude_resume_loop::execute_claude_attempt_for_target(
+            &command,
+            &built.args,
+            stdin,
+            &context,
+            events,
+        )
+        .await?;
         let parsed = parse_claude_stream_json(&execution.stdout);
         let mut result = execution.result;
         result.session_id = parsed.session_id.clone();

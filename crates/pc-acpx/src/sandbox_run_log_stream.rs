@@ -148,6 +148,54 @@ pub trait SandboxRunLogRunner: Send + Sync + 'static {
 }
 
 // =============================================================================
+// =============================================================================
+// Bridge runner adapter
+// =============================================================================
+
+/// Adapter that wraps a `BridgeCommandRunner` and exposes it as a
+/// `SandboxRunLogRunner` for the tail factory. Avoids the Arc
+/// trait-object coercion problem (`Arc<dyn BridgeCommandRunner>` does not
+/// auto-unsize to `Arc<dyn SandboxRunLogRunner>` even when a blanket impl
+/// exists — the trait-object vtables are distinct).
+pub struct BridgeRunnerAdapter {
+    inner: Arc<dyn crate::bridge_executor::BridgeCommandRunner>,
+}
+
+#[async_trait::async_trait]
+impl SandboxRunLogRunner for BridgeRunnerAdapter {
+    async fn execute(
+        &self,
+        input: SandboxRunLogTickInput,
+    ) -> Result<SandboxRunLogTickResult, String> {
+        let result = self
+            .inner
+            .execute(&crate::bridge_executor::RunnerExecuteInput {
+                command: input.command,
+                args: input.args,
+                cwd: input.cwd,
+                env: input.env,
+                stdin: None,
+                timeout_ms: input.timeout_ms,
+            })
+            .await?;
+        Ok(SandboxRunLogTickResult {
+            exit_code: result.exit_code,
+            timed_out: result.timed_out,
+            stdout: result.stdout,
+        })
+    }
+}
+
+/// Wrap a `BridgeCommandRunner` so the tail factory can use it. Mirrors
+/// the tail runner injection point used by Node's bridge bring-up (the
+/// Node sandbox runner is `CommandManagedRuntimeRunner` directly; the
+/// tick consumes the same command/args/cwd/env/timeoutMs subset).
+pub fn adapt_bridge_runner(
+    runner: Arc<dyn crate::bridge_executor::BridgeCommandRunner>,
+) -> Arc<dyn SandboxRunLogRunner> {
+    Arc::new(BridgeRunnerAdapter { inner: runner })
+}
+
 // Factory options - mirrors Node `SandboxRunLogTailFactoryOptions`.
 // =============================================================================
 

@@ -21,6 +21,10 @@
 //! （`streamRunLogs`）执行器留待后续。
 
 use crate::sandbox_callback_bridge as scb;
+use crate::sandbox_run_log_stream::{
+    create_sandbox_run_log_tail_factory, SandboxRunLogRunner, SandboxRunLogTailFactory,
+    SandboxRunLogTailFactoryOptions,
+};
 use crate::{
     execution_target::{
         adapter_execution_target_remote_cwd, adapter_execution_target_uses_paperclip_bridge,
@@ -1053,6 +1057,9 @@ pub struct StartedAdapterBridge {
     pub worker: BridgeWorkerHandle,
     pub bridge_runtime_dir: String,
     pub has_run_log_tail: bool,
+    /// Sandbox-only: run log tail factory for streaming CLI output during
+    /// the run (mirrors Node `AdapterExecutionTargetPaperclipBridgeHandle.runLogTail`).
+    pub run_log_tail: Option<Arc<SandboxRunLogTailFactory>>,
     asset_dir: PathBuf,
 }
 
@@ -1190,12 +1197,55 @@ pub async fn start_adapter_execution_target_paperclip_bridge(
             crate::execution_target::AdapterRemoteExecutionTarget::Sandbox(sandbox)
         ) if sandbox.stream_run_logs != Some(false)
     );
+    let run_log_tail = if let AdapterExecutionTarget::Remote(
+        crate::execution_target::AdapterRemoteExecutionTarget::Sandbox(sandbox),
+    ) = target
+    {
+        if sandbox.stream_run_logs != Some(false) {
+            // Mirror Node L1848-1866: create the tail factory from the
+            // sandbox runner + logs dir + shell, then emit the enabled
+            // log line through on_log.
+            let logs_dir = format!("{}/logs", paths.queue_dir);
+            let shell_command = if sandbox.shell_command.as_deref() == Some("bash") {
+                Some("bash")
+            } else {
+                None
+            };
+            // Adapt any `BridgeCommandRunner` to the `SandboxRunLogRunner`
+            // shape via [`pc_acpx::sandbox_run_log_stream::adapt_bridge_runner`]
+            // (avoiding Arc trait-object coercion between independent traits).
+            let tail_runner = crate::sandbox_run_log_stream::adapt_bridge_runner(
+                Arc::clone(&input.runner),
+            );
+            let factory = create_sandbox_run_log_tail_factory(SandboxRunLogTailFactoryOptions {
+                runner: tail_runner,
+                remote_cwd: sandbox.remote_cwd.clone(),
+                logs_dir,
+                shell_command,
+                poll_interval_ms: None,
+                max_chunk_bytes_per_tick: None,
+                tick_timeout_ms: None,
+                max_consecutive_failures: None,
+            });
+            if let Some(on_log) = &input.on_log {
+                on_log(
+                    "[paperclip] Sandbox run log streaming enabled for this run.\n",
+                );
+            }
+            Some(Arc::new(factory))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     Ok(Some(StartedAdapterBridge {
         env,
         server,
         worker,
         bridge_runtime_dir: paths.bridge_runtime_dir,
         has_run_log_tail,
+        run_log_tail,
         asset_dir: asset.local_dir,
     }))
 }

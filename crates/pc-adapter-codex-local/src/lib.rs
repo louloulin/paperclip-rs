@@ -282,18 +282,69 @@ pub struct MonitorOutcome {
 ///
 /// 复刻 Node execute.ts：monitor 触发时设置 kill_flag 终止子进程，
 /// 返回 `MonitorOutcome`；未触发返回 `None`。
-async fn execute_codex_with_monitor(
+///
+/// R495：CLI 执行改走 [`pc_acpx::execution_target_process::execute_command_for_target`]，
+/// 由其按 target 类型分发（local / ssh / sandbox-fallback），output
+/// inactivity monitor 的 kill_flag 透传到新执行器，
+/// `killed_by_flag` 信号替代原 `killed by output inactivity monitor`
+/// 错误消息字串判断。
+///
+/// `pub` 暴露给集成测试（如 round495_remote_execute）使用：
+/// 真实 sshd fixture + SSH target 验证 codex 路径经新 helper 远端执行。
+pub async fn execute_codex_with_monitor(
     command: &str,
     built: &CodexExecArgs,
     context: &AdapterExecutionContext,
     events: AdapterEventSink,
     monitor_timeout_ms: Option<u64>,
 ) -> Result<(pc_adapter_process::StreamingProcessExecution, Option<MonitorOutcome>), AdapterError> {
-    let spec = ProcessSpec::new(command, &built.args).with_stdin(context.prompt.clone());
+    use pc_acpx::execution_target_process::execute_command_for_target;
+
+    let args = built.args.clone();
+    let stdin: Option<&str> = if context.prompt.is_empty() { None } else { Some(&context.prompt) };
+    // 执行超时独立于 monitor 的不活动窗口：执行超时默认 15min（对齐 Node
+    // `runChildProcess` 默认；spec.timeout 在 pc-adapter-process 中也是
+    // 15min 默认），monitor 的 `kill_flag` 才是短超时（300ms）触发点。
+    let timeout_sec = 900.0_f64;
+    let grace_sec = 5.0_f64;
+    let cwd_owned = context.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
+    let cwd: &str = cwd_owned.as_deref().unwrap_or("");
+    let env = context.env.clone();
+    let target_json = context.execution_target.clone();
+
+    // 不启用 monitor：纯转发 output chunks + emit events。
+    let on_log_no_monitor: Arc<dyn Fn(&str, &str) + Send + Sync> = {
+        let events_for_log = events.clone();
+        Arc::new(move |stream, chunk| {
+            let owned = chunk.to_string();
+            let events = events_for_log.clone();
+            let label = match stream {
+                "stderr" => pc_adapter_api::AdapterEvent::stderr(owned),
+                _ => pc_adapter_api::AdapterEvent::stdout(owned),
+            };
+            tokio::spawn(async move {
+                let _ = events.emit(label).await;
+            });
+        })
+    };
     if monitor_timeout_ms.is_none() {
-        let execution = execute_process_capture(&spec, context, events).await?;
-        return Ok((execution.into_streaming(), None));
+        let result = execute_command_for_target(
+            command,
+            &args,
+            stdin.as_deref(),
+            timeout_sec,
+            grace_sec,
+            &env,
+            &cwd,
+            target_json.as_ref(),
+            Some(on_log_no_monitor),
+            None,
+        )
+        .await
+        .map_err(|error| AdapterError::Process(error))?;
+        return Ok((run_process_result_to_streaming(result), None));
     }
+
     let timeout_ms = monitor_timeout_ms.expect("checked above");
     let kill_flag = Arc::new(AtomicBool::new(false));
     let outcome: Arc<std::sync::Mutex<Option<MonitorOutcome>>> =
@@ -319,74 +370,109 @@ async fn execute_codex_with_monitor(
 
     let monitor_for_chunk = Arc::new(monitor);
     let monitor_for_chunk_cb = Arc::clone(&monitor_for_chunk);
-    let on_chunk: Arc<dyn Fn(&str, &str) + Send + Sync> = Arc::new(move |stream, chunk| {
-        monitor_for_chunk_cb.note_output_chunk(stream, chunk);
-    });
+    // monitor 启用：on_log 同时转发 events + 通知 monitor chunk 回调。
+    let on_log: Arc<dyn Fn(&str, &str) + Send + Sync> = {
+        let events_for_log = events.clone();
+        let monitor_for_chunk_outer = Arc::clone(&monitor_for_chunk_cb);
+        Arc::new(move |stream, chunk| {
+            monitor_for_chunk_outer.note_output_chunk(stream, chunk);
+            let owned = chunk.to_string();
+            let events = events_for_log.clone();
+            let label = match stream {
+                "stderr" => pc_adapter_api::AdapterEvent::stderr(owned),
+                _ => pc_adapter_api::AdapterEvent::stdout(owned),
+            };
+            tokio::spawn(async move {
+                let _ = events.emit(label).await;
+            });
+        })
+    };
 
-    // R438：process-activity-monitor 接线。子进程启动后，周期性采样
-    // /proc/<pid>/stat + /proc/<pid>/io；CPU ticks / IO bytes 增加时
-    // 把 output_inactivity_monitor 的 last_event_at 推回当下，避免
-    // 子进程在静默跑但无 stdout 时被误杀。
-    let activity_monitor: Option<pc_activity::ProcessActivityMonitorHandle> = None;
-
-    let execution = match execute_process_capture_with_options(
-        &spec,
-        context,
-        events,
-        Some(on_chunk),
-        Some(kill_flag),
+    let result = execute_command_for_target(
+        command,
+        &args,
+        stdin.as_deref(),
+        timeout_sec,
+        grace_sec,
+        &env,
+        &cwd,
+        target_json.as_ref(),
+        Some(on_log),
+        Some(Arc::clone(&kill_flag)),
     )
     .await
-    {
-        Ok(execution) => execution,
-        Err(AdapterError::Process(message)) if message.contains("killed by output inactivity monitor") => {
-            let outcome_locked = outcome.lock().expect("monitor outcome lock").clone();
-            if outcome_locked.is_some() {
-                // monitor 触发终止 → 返回空执行 + outcome（对齐 Node monitor 分支）。
-                drop(monitor_for_chunk);
-                return Ok((
-                    pc_adapter_process::StreamingProcessExecution {
-                        result: AdapterExecutionResult {
-                            error_message: Some(message),
-                            ..AdapterExecutionResult::default()
-                        },
-                        stdout: String::new(),
-                        stderr: String::new(),
-                        spawned_pid: None,
-                    },
-                    outcome_locked,
-                ));
-            }
-            return Err(AdapterError::Process(message));
-        }
-        Err(error) => return Err(error),
-    };
+    .map_err(|error| AdapterError::Process(error))?;
 
-    // 启动 process-activity-monitor（如有 spawned_pid）。
-    let activity_monitor = if let Some(pid) = execution.spawned_pid {
-        let monitor_for_chunk_outer = Arc::clone(&monitor_for_chunk);
-        // 抑制 unused 警告（_activity_monitor 在 activity callback 中被消费）
-        let _ = &activity_monitor;
-        let monitor = pc_activity::spawn_process_activity_monitor(
-            pc_activity::ProcessActivityMonitorOptions {
-                pid,
-                process_group_id: Some(pid),
-                on_activity: Box::new(move || {
-                    monitor_for_chunk_outer.note_process_activity();
-                }),
-                interval: None, // 使用默认 15s
-                sample: None,
-            },
-        );
-        Some(monitor)
-    } else {
-        None
-    };
+    // monitor 触发终止（kill_flag 已被外部置位）→ 返回 monitor outcome。
+    if result.killed_by_flag {
+        let outcome_locked = outcome.lock().expect("monitor outcome lock").clone();
+        if outcome_locked.is_some() {
+            let error_message = crate::output_inactivity_monitor::
+                format_output_inactivity_monitor_error_message(
+                    outcome_locked.as_ref().unwrap().elapsed_ms_since_last_event,
+                );
+            drop(monitor_for_chunk_cb);
+            return Ok((
+                pc_adapter_process::StreamingProcessExecution {
+                    result: AdapterExecutionResult {
+                        error_message: Some(error_message),
+                        ..AdapterExecutionResult::default()
+                    },
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    spawned_pid: result.spawned_pid,
+                },
+                outcome_locked,
+            ));
+        }
+    }
+
+    // R438：process-activity-monitor 接线（如有 spawned_pid）。
+    let activity_monitor: Option<pc_activity::ProcessActivityMonitorHandle> =
+        if let Some(pid) = result.spawned_pid {
+            let monitor_for_chunk_outer = Arc::clone(&monitor_for_chunk_cb);
+            let monitor = pc_activity::spawn_process_activity_monitor(
+                pc_activity::ProcessActivityMonitorOptions {
+                    pid,
+                    process_group_id: Some(pid),
+                    on_activity: Box::new(move || {
+                        monitor_for_chunk_outer.note_process_activity();
+                    }),
+                    interval: None,
+                    sample: None,
+                },
+            );
+            Some(monitor)
+        } else {
+            None
+        };
 
     let outcome = outcome.lock().expect("monitor outcome lock").clone();
-    // activity_monitor 在此 drop（执行完成后停止采样）
     drop(activity_monitor);
-    Ok((execution, outcome))
+    drop(monitor_for_chunk_cb);
+    Ok((
+        run_process_result_to_streaming(result),
+        outcome,
+    ))
+}
+
+/// `RunProcessResult` → `StreamingProcessExecution`（对齐
+/// `execute_process_capture_with_options` 返回结构）。
+fn run_process_result_to_streaming(
+    result: pc_acpx::execution_target_process::RunProcessResult,
+) -> pc_adapter_process::StreamingProcessExecution {
+    use std::os::unix::process::ExitStatusExt;
+    pc_adapter_process::StreamingProcessExecution {
+        result: AdapterExecutionResult {
+            exit_code: result.exit_code,
+            signal: result.signal.clone(),
+            timed_out: result.timed_out,
+            ..AdapterExecutionResult::default()
+        },
+        stdout: result.stdout,
+        stderr: result.stderr,
+        spawned_pid: result.spawned_pid,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1154,9 +1240,17 @@ mod monitor_integration_tests {
         assert!(outcome.timeout_ms >= 300);
         // 进程应被终止，不会等到 30s。
         assert!(execution.result.exit_code.is_none() || execution.result.exit_code != Some(0));
-        assert_eq!(
-            execution.result.error_message.as_deref(),
-            Some("killed by output inactivity monitor")
+        // R495：错误消息对齐 Node formatOutputInactivityMonitorErrorMessage：
+        // "monitor: no codex activity (output or process) for {m}m {s}s"。
+        // elapsed 取决于 timer jitter，使用前缀匹配，避免对实际 ms 数敏感。
+        let error_message = execution
+            .result
+            .error_message
+            .as_deref()
+            .expect("monitor kill must populate error_message");
+        assert!(
+            error_message.starts_with("monitor: no codex activity (output or process) for "),
+            "unexpected monitor error message: {error_message}"
         );
     }
 

@@ -1,11 +1,11 @@
 //! 默认 middleware 装配。
 use crate::AppState;
-use axum::middleware::from_fn;
+use axum::{middleware::from_fn, Extension};
 use axum::Router;
 
 use super::{
     access_log::access_log_layer, body_limit::body_limit_layer, cors::cors_layer,
-    redaction::RedactionConfig, request_id::request_id_layer,
+    cors::CorsConfig, redaction::RedactionConfig, request_id::request_id_layer,
 };
 
 /// 给定 router 套上默认 middleware 栈（与原 server middleware stack 等价）。
@@ -19,6 +19,7 @@ pub fn apply_default_middleware(router: Router<AppState>) -> Router<AppState> {
         .layer(from_fn(access_log_layer))
         .layer(from_fn(body_limit_layer))
         .layer(from_fn(cors_layer))
+        .layer(Extension(CorsConfig::from_environment()))
 }
 
 /// 默认 RedactionConfig（从环境变量读取 placeholder / fields）。

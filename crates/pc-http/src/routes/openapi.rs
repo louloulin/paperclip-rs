@@ -7,8 +7,12 @@ use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        // Canonical mount points used by the Rust server itself.
         .route("/openapi.json", get(document))
         .route("/api/openapi", get(document))
+        // Alias matching the Node upstream contract (`/api/openapi.json`) so
+        // parity tests and shared OpenAPI consumers can use one URL.
+        .route("/api/openapi.json", get(document))
 }
 
 async fn document(State(state): State<AppState>) -> Json<Value> {

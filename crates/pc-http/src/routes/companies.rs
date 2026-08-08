@@ -28,6 +28,7 @@ use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
 use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
 use pc_repos::goal::GoalRepo;
+use pc_repos::invite::{InviteRepo, NewInvite};
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue::IssueRepo;
 use pc_repos::label::{LabelPatch, LabelRepo, NewLabel};
@@ -78,7 +79,7 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/export",
             post(start_company_export),
         )
-        // ── Round 45: cross-company aggregation + export plural alias ──
+    // ── Round 45: cross-company aggregation + export plural alias ──
         .route("/api/companies/stats", get(get_companies_stats))
         .route("/api/companies/issues", get(get_companies_issues_malformed))
         .route(
@@ -2969,3 +2970,5 @@ mod round224_tests {
         assert!(body.pause_automations.is_none());
     }
 }
+
+

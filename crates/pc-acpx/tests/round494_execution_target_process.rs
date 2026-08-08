@@ -13,7 +13,8 @@
 use pc_acpx::bridge_executor::{BridgeCommandRunner, LocalProcessBridgeRunner};
 use pc_acpx::execution_target::AdapterExecutionTarget;
 use pc_acpx::execution_target_process::{
-    run_adapter_execution_target_process, RunAdapterExecutionTargetProcessOptions,
+    execute_command_for_target, run_adapter_execution_target_process,
+    RunAdapterExecutionTargetProcessOptions,
 };
 use pc_acpx::sandbox_run_log_stream::{
     create_sandbox_run_log_tail_factory, SandboxRunLogRunner, SandboxRunLogTailFactoryOptions,
@@ -565,3 +566,169 @@ async fn ssh_branch_runs_remote_command_via_spawn_target() {
 }
 
 use std::sync::Mutex;
+
+// ---------------------------------------------------------------------------
+// 6. execute_command_for_target: local target → 本地 spawn（走本地分支）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn execute_command_for_target_local_dispatches_locally() {
+    let local_target = serde_json::json!({ "kind": "local" });
+    let env = BTreeMap::new();
+    let result = execute_command_for_target(
+        "sh",
+        &["-c".to_string(), "printf 'local-dispatch\n'".to_string()],
+        None,
+        0.0,
+        1.0,
+        &env,
+        "",
+        Some(&local_target),
+        None,
+        None,
+    )
+    .await
+    .expect("local dispatch succeeds");
+    assert_eq!(result.exit_code, Some(0));
+    assert!(!result.timed_out);
+    assert_eq!(result.stdout, "local-dispatch
+");
+}
+
+// ---------------------------------------------------------------------------
+// 7. execute_command_for_target: ssh target → ssh 分支（真实 sshd）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn execute_command_for_target_ssh_dispatches_remotely() {
+    let Some(fixture) = SshLabFixture::start().await else {
+        return;
+    };
+    let target = serde_json::json!({
+        "kind": "remote",
+        "transport": "ssh",
+        "host": fixture.config.host,
+        "port": fixture.config.port,
+        "username": fixture.config.username,
+        "remoteWorkspacePath": fixture.config.remote_workspace_path,
+        "remoteCwd": fixture.config.remote_workspace_path,
+        "privateKey": fixture.config.private_key,
+        "knownHosts": fixture.config.known_hosts,
+        "strictHostKeyChecking": fixture.config.strict_host_key_checking,
+    });
+    let env = BTreeMap::new();
+    let remote_marker = "exec-cmd-target-ok";
+    let chunks = Arc::new(Mutex::new(Vec::<String>::new()));
+    let chunks_for_log = Arc::clone(&chunks);
+    let on_log: Arc<dyn Fn(&str, &str) + Send + Sync> = Arc::new(move |stream, chunk| {
+        if stream == "stdout" {
+            chunks_for_log.lock().expect("lock").push(chunk.to_string());
+        }
+    });
+    let result = execute_command_for_target(
+        "sh",
+        &["-c".to_string(), format!("echo {remote_marker}")],
+        None,
+        8.0,
+        1.0,
+        &env,
+        "",
+        Some(&target),
+        Some(on_log),
+        None,
+    )
+    .await
+    .expect("ssh dispatch succeeds");
+    assert_eq!(result.exit_code, Some(0));
+    assert!(
+        result.stdout.contains(remote_marker),
+        "remote stdout contains marker; got {:?}",
+        result.stdout
+    );
+    let observed = chunks.lock().expect("lock").join("");
+    assert!(observed.contains(remote_marker), "on_log streamed remote output");
+}
+
+// ---------------------------------------------------------------------------
+// 8. execute_command_for_target: sandbox target → 回退本地（无 provider runner）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn execute_command_for_target_sandbox_falls_back_to_local() {
+    let sandbox_target = serde_json::json!({
+        "kind": "remote",
+        "transport": "sandbox",
+        "providerKey": "local-test",
+        "remoteCwd": "/sandbox/workspace",
+        "timeoutMs": 30_000,
+    });
+    let env = BTreeMap::new();
+    let chunks = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let chunks_for_log = Arc::clone(&chunks);
+    let on_log: Arc<dyn Fn(&str, &str) + Send + Sync> = Arc::new(move |stream, chunk| {
+        chunks_for_log
+            .lock()
+            .expect("lock")
+            .push((stream.to_string(), chunk.to_string()));
+    });
+    let result = execute_command_for_target(
+        "sh",
+        &["-c".to_string(), "printf 'sandbox-fallback\n'".to_string()],
+        None,
+        0.0,
+        1.0,
+        &env,
+        "",
+        Some(&sandbox_target),
+        Some(on_log),
+        None,
+    )
+    .await
+    .expect("sandbox fallback succeeds");
+    assert_eq!(result.exit_code, Some(0));
+    let observed = chunks.lock().expect("lock").clone();
+    let stdout_text: String = observed
+        .iter()
+        .filter(|(s, _)| s == "stdout")
+        .map(|(_, c)| c.clone())
+        .collect();
+    assert!(
+        stdout_text.contains("sandbox-fallback"),
+        "fallback ran the local command; got {stdout_text:?}"
+    );
+    assert!(
+        stdout_text.contains("sandbox provider runner not implemented"),
+        "fallback emits the note; got {stdout_text:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 9. execute_command_for_target: kill_flag 集成 → timed_out + SIGTERM
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn execute_command_for_target_respects_kill_flag() {
+    let kill_flag = Arc::new(AtomicBool::new(false));
+    let flag_for_killer = Arc::clone(&kill_flag);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        flag_for_killer.store(true, Ordering::SeqCst);
+    });
+    let env = BTreeMap::new();
+    let result = execute_command_for_target(
+        "sh",
+        &["-c".to_string(), "sleep 30".to_string()],
+        None,
+        0.0,
+        1.0,
+        &env,
+        "",
+        None, // no target → local dispatch
+        None,
+        Some(kill_flag),
+    )
+    .await
+    .expect("kill_flag dispatch succeeds");
+    assert!(result.timed_out, "kill_flag triggers timed_out");
+    assert_eq!(result.signal.as_deref(), Some("SIGTERM"));
+}

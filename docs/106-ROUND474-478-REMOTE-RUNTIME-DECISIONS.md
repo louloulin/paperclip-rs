@@ -855,14 +855,259 @@ postgres 时有测试隔离问题（`--test-threads=1` 下 5/5 通过），与 R
 | pc-adapter-codex-local | 476（+7：gate/回退单测 4 + 集成 3） |
 | pc-adapter-claude-local | 492（+7：gate/回退单测 4 + 集成 3） |
 | **本仓合计（workspace 除 postgres 依赖套件）** | **3559（+20）** |
+## 34. R494 增量 — run log tail 接入 bridge 编排 + `runAdapterExecutionTargetProcess` 三分支（+5 测试）
 
-## 34. 后续计划（R494+）
+### 新增组件（`pc-acpx::execution_target_process`，对齐 Node execution-target.ts L570-630）
+
+- `RunProcessResult` / `RunAdapterExecutionTargetProcessOptions`：
+  对齐 Node 同名结构（exit code / signal / timed-out / stdout / stderr /
+  started_at + cwd / env / stdin / timeoutSec / graceSec / onLog /
+  runLogTail / runner / killFlag）
+- `run_adapter_execution_target_process` 三分支 dispatch：
+  - **sandbox**：`options.runner.execute` + run log tail
+    `create → wrap_command → start → execute → finish → abort`
+    集成（对齐 Node L575-617）
+  - **ssh**：`build_ssh_spawn_target` → 本地 `ssh` 进程流式 spawn（对齐
+    `runChildProcess` + `resolveSpawnTarget` 的 `remoteExecution` 分支）
+  - **local**（或 absent）：直接本地 spawn
+- `spawn_stream_capture`（local + ssh 共用）：`tokio::process` + process
+  group（detach + pgid = pid）+ stdin pipe + 双 reader 流式 `on_log` +
+  50ms tick 监控 timeout/grace + kill_flag + 进程组 SIGTERM → grace →
+  SIGKILL + 双流捕获（`append_with_byte_cap`）
+- `make_tail_sink`：把 `(stream, chunk)` on_log 适配成
+  `SandboxRunLogTailHandle.start` 的 `SandboxRunLogSink`（`BoxFuture`）
+
+### bridge 编排接入（Node L1848-1866）
+
+- `pc_acpx::sandbox_run_log_stream::adapt_bridge_runner`：
+  `BridgeCommandRunner → SandboxRunLogRunner` 包装（绕开 Arc trait-object
+  unsize 限制——`Arc<dyn A>` 不会自动转为 `Arc<dyn B>` 即使有 blanket impl）
+- `StartedAdapterBridge.run_log_tail: Option<Arc<SandboxRunLogTailFactory>>`：
+  paperclip bridge start 在 sandbox target + `streamRunLogs !== false`
+  时用 `adapt_bridge_runner` 适配 runner + 从 `<queue_dir>/logs` 组装
+  `logs_dir` + `preferred_shell_for_sandbox` shell + 触发
+  `[paperclip] Sandbox run log streaming enabled for this run.` 日志
+
+### 真实验证（`tests/round494_execution_target_process.rs`，pc-acpx +5）
+
+- **local echo**：捕获 stdout + exit 0 + on_log 流式 chunk 到达
+- **local timeout**：0.3s timeout + 0.2s grace → SIGTERM 升级 SIGKILL；
+  `timed_out` 标记 + signal label（SIGTERM / SIGKILL）
+- **local kill_flag**：150ms 后翻 flag → SIGTERM + `timed_out=true`
+- **sandbox run-log-tail**：LocalProcessBridgeRunner + 真实 node child
+  (`fs.openSync + writeSync`) 在 sandbox `<logs_dir>` 写 5 行日志，
+  真实 tail poll loop 通过 on_log 流式推送（对齐 Node `runLogTail.start`
+  → `writeRemoteEventToSocket`）
+- **ssh remote command**：真实 sshd fixture + `build_ssh_spawn_target` →
+  本地 spawn `ssh -p <port> user@host sh -c 'cd <cwd> && exec <cmd>'`，
+  流式 on_log + 远端 echo 通过 stdout 回传
+
+### 测试快照（R494 后）
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | 993 |
+| pc-acpx 集成 | 1603（+round494 5 个） |
+| pc-adapter-codex-local | 476 |
+| pc-adapter-claude-local | 492 |
+| **本仓合计（workspace 除 postgres 依赖套件）** | **3564（+5）** |
+
+## 35. 后续计划（R495+）
 
 | 优先级 | 模块 | 内容 |
 |---|---|---|
-| P1 | 全量回归 | 跑三 crate 全量测试确认快照，核对 git diff 无残留 |
-| P2 | sandbox run log tail | `streamRunLogs` 的 run log tail 工厂（`sandbox_run_log_stream`）接入 bridge 编排（`has_run_log_tail` 已就位） |
+| P1 | 远程 CLI 执行接入 | codex/claude execute 对 SSH target 改走 `run_adapter_execution_target_process` 的 ssh 分支（替代当前 `execute_process_capture` 本地执行），output inactivity monitor 复用现有 kill_flag 路径；sandbox target 因 provider runner 缺失暂保持本地执行 |
 | P2 | `git_workspace_sync` 对照 | importGitWorkspaceToSsh / exportGitWorkspaceFromSsh / `syncDirectoryToSsh` 与 Node 逐函数对照补缺（tar 流 + 进度上报） |
-| P2 | SSH env-lab fixture 上移 | `SshLabFixture` 从各测试文件收敛为共享测试支持模块，供 git sync / log tail 轮次复用 |
-| P3 | provider runner | sandbox provider runner（E2B/Daytona 等）接入后，`use_*_remote_process_session` gate 自动生效，process session bridge 与 paperclip bridge 真正并发（对齐 Node `settleRemoteBridgeStarts`） |
+| P2 | SSH env-lab fixture 上移 | `SshLabFixture` 从各测试文件收敛为共享测试支持模块，供 git sync 轮次复用 |
+| P2 | `round493_sandbox_test` 拓扑 | pc-acpx round493 + adapter round493 的本地 sandbox fixture + 真实 node/sshd 测试拓扑收敛为共享 helper，减少测试样板 |
+| P3 | provider runner | sandbox provider runner（E2B/Daytona 等）接入后，bridge / process session bridge / run log tail 真正并发生效，codex/claude execute 按 gate 切换到 sandbox + ssh 分支 |
 | P3 | 其他 adapter | hermes/cursor-cloud/openclaw/gateway 延后（用户约束） |
+
+## 36. R495 完成：codex / claude CLI 改走 execute_command_for_target
+
+### 动机
+
+R494 引入 `execute_command_for_target(spec_program, spec_args, ...)` 作为
+remote-runtime 三分支 dispatch 入口（ssh 分支、sandbox fallback、本地）。
+R495 让 codex / claude 的实际 CLI 执行都改走这个新 helper，使远程
+ssh/sandbox 路径生效，同时把 output inactivity monitor 的 kill_flag 信号
+合入新 helper 的超时/中止语义。
+
+### 关键改动
+
+1. `crates/pc-acpx/src/execution_target_process.rs`：
+   - 新增 `RunProcessResult { exit_code, signal, timed_out, killed_by_flag,
+     spawned_pid, stdout, stderr, started_at }`（对齐 Node `RunProcessResult`
+     shape）
+   - `spawn_stream_capture` 50ms tick 同时监控 timeout/grace 与 kill_flag；
+     timeout 触发时优先检查 kill_flag（race window：上一次 tick → 当前
+     tick 之间翻转）→ `killed_by_flag=true, timed_out=false`
+   - 三分支 dispatch（`fallback = !wants_remote || !has_runner`）：
+     sandbox-without-runner 走本地分支并 emit 一行 one-time note
+
+2. `crates/pc-adapter-codex-local/src/lib.rs`：
+   - `execute_codex_with_monitor` 替换为：
+     - 不启用 monitor：`execute_command_for_target` 直跑
+     - 启用 monitor：spawn `RunningMonitor`（250ms tick）+ on_log 闭包
+       同时 emit `AdapterEvent::Output(stdout/stderr)` 与
+       `monitor.note_output_chunk`
+   - `execute_codex_with_monitor` 提升为 `pub`（供 round495 集成测试）
+   - `RunProcessResult → StreamingProcessExecution` 转换
+     (`run_process_result_to_streaming`)，保留 exit_code / signal /
+     timed_out 字段
+   - `killed_by_flag` 分支：构造 `error_message` 走
+     `format_output_inactivity_monitor_error_message`（对齐 Node
+     `formatOutputInactivityMonitorErrorMessage`），不再用硬编码字符串
+
+3. `crates/pc-adapter-claude-local/src/claude_resume_loop.rs`：
+   - 新增 helper `execute_claude_attempt_for_target(command, args, stdin,
+     context, events)` 包装 `execute_command_for_target`，on_log 同样 emit
+     `AdapterEvent::Output(stdout/stderr)`
+   - 替换 `run_resume_retry_loop` 中两处 `execute_process_capture`（initial
+     + retry）；Claude 无 output inactivity monitor，kill_flag=None
+
+4. 测试：
+   - `monitor_fires_and_kills_silent_process` 修复：原断言硬编码
+     `"killed by output inactivity monitor"`（早期字符串），新 helper 输出
+     对齐 Node 的 `"monitor: no codex activity (output or process) for
+     {m}m {s}s"`；改为前缀匹配避免 timer jitter 敏感
+   - `crates/pc-adapter-codex-local/tests/round495_codex_remote_execute.rs`
+     新增：真实 sshd fixture + SSH target + `/bin/sh -c 'printf <marker>'`
+     占位命令，验证 `execute_codex_with_monitor` 经 SSH 分支把远端 stdout
+     拉回 `StreamingProcessExecution.stdout` 与 `AdapterEventSink`
+
+### 真实验证
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | 993 |
+| pc-acpx 集成 | 1603 |
+| pc-adapter-codex-local lib | 390（+1 fix） |
+| pc-adapter-codex-local 集成 | 477（+1 round495） |
+| pc-adapter-claude-local | 421 |
+| **本仓合计** | **3884** |
+
+### 后续计划（R496+）
+
+| 优先级 | 模块 | 内容 |
+|---|---|---|
+| P1 | `execute_process_capture` 退役 | `crates/pc-adapter-claude-local/src/lib.rs:741` 主 `execute()` 仍用旧 `pc_adapter_process::execute_process_capture`；下一轮迁到 `execute_command_for_target` 让 Claude 主路径也享受三分支 dispatch |
+| P1 | provider runner | sandbox target 的 `provider_runner` 字段接入；接入后 sandbox 不再 fallback 到本地分支 |
+| P2 | `git_workspace_sync` 对照 | 与 Node 逐函数对照补 `importGitWorkspaceToSsh` / `exportGitWorkspaceFromSsh` / `syncDirectoryToSsh`（tar 流 + 进度上报） |
+| P2 | SSH fixture 上移 | `SshLabFixture` 从 round492 / round495 / round494 三处收敛为共享 helper，供 git sync / bridge 轮次复用 |
+| P2 | monitor chunk 抖动 | 当 child 退出前最后一刻 stdout 到达但 tick 已超时，存在 < 50ms race：monitor fire 但 on_log note_output_chunk 已被 child exit 跳过 → outcome 已被记入，OK；如发现 monitor fire 后 stdout 仍回流到 result.stdout 可引入 explicit drain 阶段 |
+| P3 | 其他 adapter | hermes / cursor-cloud / openclaw / gateway 延后（用户约束：adapter 优先只做 claude-local / codex-local） |
+
+## 37. R496 完成：Claude 主 execute() 迁到 execute_command_for_target
+
+### 动机
+
+R495 把 `claude_resume_loop::run_resume_retry_loop`（resume retry 路径）迁到了
+`execute_command_for_target`，但 `ClaudeLocalAdapter::execute()`（主执行路径，
+被 route 层通过 `AdapterRegistry::execute` 调用）仍走旧的
+`pc_adapter_process::execute_process_capture`。这意味着生产路径对 SSH 远端 target
+完全无感 — 没有三分支 dispatch，ssh/sandbox 配置无法生效。
+
+### 关键改动
+
+1. `crates/pc-adapter-claude-local/src/claude_resume_loop.rs`：
+   - 把 `execute_claude_attempt_for_target` 从 `async fn` 提升为
+     `pub(crate) async fn`，供 `lib.rs::execute()` 共享。
+
+2. `crates/pc-adapter-claude-local/src/lib.rs::execute()`：
+   - 删除 `ProcessSpec::new(...) + execute_process_capture(...)` 两步
+   - 改为 `execute_claude_attempt_for_target(command, args, stdin, context, events)`
+   - `stdin` 按 prompt 是否空区分 `Some(prompt.as_str()) / None`
+   - 删除 `use pc_adapter_process::{execute_process_capture, ProcessSpec};`
+
+3. 测试：
+   - 新增 `crates/pc-adapter-claude-local/tests/round496_claude_remote_execute.rs`：
+     真实 sshd fixture + SSH target + `/bin/echo` 占位命令，验证
+     `ClaudeLocalAdapter::execute()` 经 SSH 分支把远端 exit_code=0、
+     provider="claude_local"、billing_type 填充、result_json 已构造。
+   - 测试覆盖 `Adapter` trait 的 `execute` 入口（实际生产调用路径）。
+
+### 真实验证
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | 993 |
+| pc-acpx 集成 | 1607 |
+| pc-adapter-codex-local | 477 |
+| pc-adapter-claude-local lib | 421 |
+| pc-adapter-claude-local 集成 | 493（+1 round496） |
+| **本仓合计** | **3991** |
+
+### 后续计划（R497+）
+
+| 优先级 | 模块 | 内容 |
+|---|---|---|
+| P1 | `execute_process_capture` 退役 | codex-local / 其他 adapter 检查是否还有 `execute_process_capture` 直接调用，统一改走 `execute_command_for_target` |
+| P1 | provider runner 接入 | sandbox target 的 `provider_runner` 字段接入；接入后 sandbox 不再 fallback 到本地分支 |
+| P2 | `git_workspace_sync` 复刻 | `importGitWorkspaceToSsh` / `exportGitWorkspaceFromSsh` / `syncDirectoryToSsh`（tar 流 + 进度上报） |
+| P2 | `SshLabFixture` 上移 | round492 / round494 / round495 / round496 四处各有一份；上移到 `pc-acpx::test_support` 或 `tests/common` 共享 |
+| P2 | Claude `execute_with_resume_retry` 接入生产路径 | 当前只有 `execute()` 被 route 调用；`execute_with_resume_retry`（含 bridge 启动 + session resume 重试）只被测试覆盖 — 接入生产路径后才能在 Claude 走完 bridge + resume + retry 完整流程 |
+| P3 | 其他 adapter | hermes / cursor-cloud / openclaw / gateway 延后（用户约束：adapter 优先只做 claude-local / codex-local） |
+
+## 38. R497 完成：git-workspace-sync.ts 基础模块端口
+
+### 动机
+
+Node `packages/adapter-utils/src/git-workspace-sync.ts`（433 行）的核心被
+`importGitWorkspaceToSsh` / `exportGitWorkspaceFromSsh` 依赖：snapshot reader
++ local git 执行 + ref 删除。Rust 端 `pc-acpx/src/git_workspace_sync.rs`
+只有 R399 的纯 helper（ref name 生成 + script builder），缺 async 部分。
+不先端口基础，import/export 无法真实验证。
+
+### 关键改动
+
+`crates/pc-acpx/src/git_workspace_sync.rs` 新增：
+
+1. `GitCommandResult` struct — stdout/stderr 包装
+2. `RunLocalGitError` enum — `Timeout { timeout_ms }` / `NonZeroExit` /
+   `OutputOverflow { max_buffer_bytes }` / `Spawn(io::Error)`
+3. `run_local_git(local_dir, args, timeout_ms, max_buffer_bytes)` — `tokio::process::Command`
+   + 并发读 stdout/stderr（Vec 上限强制），timeout 经 `tokio::time::timeout`，
+   溢出时返回 `OutputOverflow`，保留 stderr 给上层做 prerequisite 检测
+4. `GitWorkspaceSnapshot` struct — head_commit / branch_name / overlay_paths /
+   deleted_paths / ignored_paths（对齐 Node `GitWorkspaceSnapshot`）
+5. `read_git_workspace_snapshot(local_dir)` — `rev-parse --is-inside-work-tree`
+   非零退出（"fatal: not a git repository"）→ `Ok(None)`，与 Node 调用方约定
+   一致；然后并发跑 `rev-parse HEAD` / `--abbrev-ref HEAD` / diff-ACMRTUXB /
+   `ls-files --others --exclude-standard` / diff-D / `status --ignored --porcelain`
+   6 个 git 命令，组合成 snapshot
+6. `delete_local_git_ref(local_dir, ref)` — best-effort，错误吞掉（对齐
+   Node `.catch(() => undefined)`）
+7. `read_git_workspace_snapshot_path(&Path)` — 便捷 Path 重载
+
+### 真实验证
+
+- 10 既有 unit 测试全过
+- 6 新增 async 集成测试用真实 git CLI（`git init` / `commit` / `config`）：
+  - `run_local_git_returns_stdout_for_rev_parse` — SHA-1 长度 40
+  - `run_local_git_returns_non_zero_exit_error_on_bad_command` — `NonZeroExit` + stderr 非空
+  - `read_git_workspace_snapshot_returns_none_for_non_git_dir` — `Ok(None)` 语义
+  - `read_git_workspace_snapshot_reads_head_for_clean_repo` — head_commit 长度 40
+  - `read_git_workspace_snapshot_picks_up_overlay_paths` — overlay 同时包含 untracked + modified
+  - `delete_local_git_ref_swallows_errors` — 不存在的 ref 不报错
+
+### 测试快照
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | 999（+6 R497） |
+| pc-acpx 集成 | 1607 |
+| pc-adapter-codex-local | 477 |
+| pc-adapter-claude-local | 914（lib 421 + 集成 493） |
+| **本仓合计** | **3997** |
+
+### 后续计划（R498+）
+
+| 优先级 | 模块 | 内容 |
+|---|---|---|
+| P1 | R498：port `importGitWorkspaceToSsh` / `exportGitWorkspaceFromSsh` | 在 R497 基础上加 `streamLocalFileToSsh` / `streamSshToLocalFile` + bundle transfer；进度上报留到 R499 |
+| P2 | R499：`createTransferProgress` 进度上报 | 真实百分比 / 字节速率 / 阶段标签，对齐 Node `runtime-progress.ts` |
+| P2 | `SshLabFixture` 上移 | round492 / round494 / round495 / round496 四处各有一份；上移为共享 helper |
+| P2 | `integrateImportedGitHead` | Node L916-1000（concurrent ref retry + merge-tree），R498 之后 |
+| P2 | `restoreWorkspaceFromSshExecution` | Node L1559-1650（pick import/export/reset 策略），R500+ |
+| P3 | 其他 adapter | cursor / gemini / grok / pi / hermes / openclaw 延后（用户约束） |

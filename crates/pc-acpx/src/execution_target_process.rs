@@ -52,6 +52,14 @@ pub struct RunProcessResult {
     pub exit_code: Option<i32>,
     pub signal: Option<String>,
     pub timed_out: bool,
+    /// `true` when the caller-supplied `kill_flag` flipped and we dispatched
+    /// `SIGTERM` to the process group (mirrors Node `runChildProcess`'s
+    /// `monitor`-triggered kill). `false` for normal exits, true timeouts
+    /// (no external flag), or exit-code failures.
+    pub killed_by_flag: bool,
+    /// Spawned child pid (host pid for local / ssh branches; sandbox
+    /// branch reports the runner's pid). `None` when unavailable.
+    pub spawned_pid: Option<u32>,
     pub stdout: String,
     pub stderr: String,
     pub started_at: String,
@@ -212,6 +220,8 @@ async fn run_sandbox_branch(
                 exit_code: result.exit_code,
                 signal: None,
                 timed_out: result.timed_out,
+                killed_by_flag: false,
+                spawned_pid: None, // sandbox runner pid not surfaced by BridgeCommandRunner
                 stdout: result.stdout,
                 stderr: result.stderr,
                 started_at: system_now_iso(),
@@ -271,6 +281,7 @@ async fn spawn_stream_capture(
     let timeout_ms = if timeout_sec > 0.0 { (timeout_sec * 1000.0) as u64 } else { 0 };
     let grace_ms = if grace_sec > 0.0 { (grace_sec * 1000.0) as u64 } else { 5_000 };
     let use_timeout = timeout_ms > 0;
+    let needs_watch = use_timeout || kill_flag.is_some();
 
     let mut cmd = tokio::process::Command::new(command);
     cmd.args(args)
@@ -285,8 +296,6 @@ async fn spawn_stream_capture(
     #[cfg(unix)]
     {
         // Mirrors Node `detached: true` + process group == child pid.
-        // Process-group signalling ensures children-of-children also exit
-        // on SIGTERM/SIGKILL.
         cmd.process_group(0);
     }
 
@@ -297,7 +306,6 @@ async fn spawn_stream_capture(
             .take()
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stdin pipe unavailable"))?;
         s.write_all(data.as_bytes()).await?;
-        // Drop closes stdin, EOF for the child.
         drop(s);
     }
     let pid = child.id().unwrap_or(0);
@@ -318,10 +326,9 @@ async fn spawn_stream_capture(
     let mut term_sent = false;
     let mut kill_sent = false;
     let mut signal_label: Option<&'static str> = None;
+    let mut exit_status: Option<std::process::ExitStatus> = None;
 
-    if !use_timeout && kill_flag.is_none() {
-        let _ = child.wait().await;
-    } else {
+    if needs_watch {
         let deadline_term = if use_timeout {
             Some(tokio::time::Instant::now() + Duration::from_millis(timeout_ms))
         } else {
@@ -337,7 +344,7 @@ async fn spawn_stream_capture(
         loop {
             tokio::select! {
                 res = child.wait() => {
-                    let _ = res;
+                    exit_status = res.ok();
                     break;
                 }
                 _ = interval.tick() => {
@@ -359,7 +366,12 @@ async fn spawn_stream_capture(
                         if !term_sent {
                             if let Some(deadline) = deadline_term {
                                 if now >= deadline {
-                                    timed_out = true;
+                                    // 检查 kill_flag 是否在 timeout 触发前一刻被置位（race window：
+                                    // monitor 在 [上一次 tick, 当前 tick] 之间翻转）。若已置位，
+                                    // 优先标记 `killed_by_flag`（monitor 终止），不标记 `timed_out`。
+                                    let flag_now = kill_flag.is_some_and(|f| f.load(Ordering::SeqCst));
+                                    killed_by_flag = flag_now;
+                                    timed_out = !flag_now;
                                     term_sent = true;
                                     signal_label = Some("SIGTERM");
                                     let _ = signal_running_process(SignalRunningProcessInput {
@@ -389,6 +401,8 @@ async fn spawn_stream_capture(
                 }
             }
         }
+    } else {
+        exit_status = child.wait().await.ok();
     }
 
     let _ = stdout_task.await;
@@ -398,9 +412,11 @@ async fn spawn_stream_capture(
     let stderr_final = stderr_state.lock().expect("stderr lock").clone();
 
     Ok(RunProcessResult {
-        exit_code: None,
+        exit_code: exit_status.and_then(|s| s.code()),
         signal: signal_label.map(str::to_string),
         timed_out: timed_out || killed_by_flag,
+        killed_by_flag,
+        spawned_pid: if pid > 0 { Some(pid) } else { None },
         stdout: stdout_final,
         stderr: stderr_final,
         started_at,
@@ -461,4 +477,98 @@ fn system_now_iso() -> String {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     format!("{now}")
+}
+
+// =============================================================================
+// Adapter-facing helper
+// =============================================================================
+
+/// Adapter-friendly entry point that takes the process spec + context
+/// (mirroring `execute_process_capture_with_options` shape) plus the
+/// raw `execution_target` JSON from the adapter context, and routes to
+/// the correct execution target branch (ssh / sandbox / local).
+///
+/// - Local target or absent → local child spawn (mirrors
+///   `execute_process_capture_with_options` semantics: streaming `on_log`
+///   + `kill_flag` driven termination via SIGTERM to the process group).
+/// - SSH target → `build_ssh_spawn_target` + local `ssh` process spawn
+///   (Node `runChildProcess` with `remoteExecution` branch equivalent).
+/// - Sandbox target → currently falls back to local execution (no
+///   provider runner in Rust yet); logs a one-time note via `on_log`.
+///   When a provider runner is wired in, this branch will dispatch to
+///   `run_adapter_execution_target_process` with the runner + tail
+///   factory.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_command_for_target(
+    spec_program: &str,
+    spec_args: &[String],
+    spec_stdin: Option<&str>,
+    spec_timeout_sec: f64,
+    spec_grace_sec: f64,
+    context_env: &BTreeMap<String, String>,
+    context_cwd: &str,
+    execution_target: Option<&serde_json::Value>,
+    on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    kill_flag: Option<Arc<AtomicBool>>,
+) -> Result<RunProcessResult, String> {
+    let target = execution_target.and_then(crate::execution_target::parse_adapter_execution_target);
+    // Note: provider_runner slot doesn't exist on AdapterSandboxExecutionTarget
+    // yet; treat as "runner missing" → fall back to local (consistent with
+    // bridge_executor / process_session_bridge sandbox branches).
+    let has_runner = matches!(
+        target,
+        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(_)))
+    );
+    let wants_remote = matches!(
+        target,
+        Some(AdapterExecutionTarget::Remote(_))
+    );
+    let fallback = !wants_remote || !has_runner;
+    if fallback {
+        if let Some(on_log) = &on_log {
+            // Only emit the note for sandbox-without-runner; SSH without
+            // runner never reaches here (has_runner follows ssh membership).
+            if wants_remote {
+                on_log(
+                    "stdout",
+                    "[paperclip] sandbox provider runner not implemented; falling back to local CLI execution.\n",
+                );
+            }
+        }
+        return spawn_stream_capture(
+            spec_program,
+            spec_args,
+            context_cwd,
+            context_env,
+            spec_stdin,
+            spec_timeout_sec,
+            spec_grace_sec,
+            on_log,
+            kill_flag.as_deref(),
+            DEFAULT_OUTPUT_CAP_BYTES,
+            DEFAULT_OUTPUT_CAP_BYTES,
+        )
+        .await
+        .map_err(|error| format!("local process failed: {error}"));
+    }
+    run_adapter_execution_target_process(
+        "adapter-process-runner",
+        target.as_ref(),
+        spec_program,
+        spec_args,
+        &RunAdapterExecutionTargetProcessOptions {
+            cwd: context_cwd,
+            env: context_env,
+            stdin: spec_stdin,
+            timeout_sec: spec_timeout_sec,
+            grace_sec: spec_grace_sec,
+            on_log,
+            run_log_tail: None,
+            runner: Arc::new(crate::bridge_executor::LocalProcessBridgeRunner),
+            kill_flag,
+            stdout_cap_bytes: None,
+            stderr_cap_bytes: None,
+        },
+    )
+    .await
 }

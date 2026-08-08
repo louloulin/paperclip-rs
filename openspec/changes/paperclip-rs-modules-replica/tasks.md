@@ -159,27 +159,27 @@
 
 > 用户目标"真实启动前后端验证"的硬阻塞之一。**优先级 = P0**。
 
-- [ ] `ui/src/api/client.ts` 接受 `import.meta.env.VITE_API_BASE`（默认 `/api`，可覆盖为 `http://localhost:3100`）
-- [ ] `apps/pc-server` 暴露与 Node server 一致的 `/api/*` 与 `/live-events`（已存在，验证前缀对齐）
-- [ ] `scripts/dev-ui-rust.sh`：临时 PG → pc-migrate up → 起 pc-server → 起 vite (`VITE_API_BASE=http://localhost:53100`) → 验证 UI 60 api client happy path（curl 至少 5 个 GET endpoint 返回 200）
-- [ ] `tests/ui/contract-smoke.test.ts` —— vitest 跑 5 个 api client（auth/companies/issues/agents/heartbeat）请求 fixture，断言 shape
+- [x] `ui/src/api/client.ts` 接受 `import.meta.env.VITE_API_BASE`（默认 `/api`，可覆盖为 `http://localhost:3100`）
+- [x] `apps/pc-server` 暴露与 Node server 一致的 `/api/*` 与 `/live-events`（已存在，验证前缀对齐）
+- [x] `scripts/dev-ui-rust.sh`：临时 PG → pc-migrate up → 起 pc-server → 起 vite (`VITE_API_BASE=http://localhost:53100`) → 验证 UI 60 api client happy path（curl 至少 5 个 GET endpoint 返回 200）
+- [x] `tests/ui/contract-smoke.test.ts` —— vitest 跑 5 个 api client（auth/companies/issues/agents/heartbeat）请求 fixture，断言 shape
 
 ## M18 — 前后端端到端（U2）
 
 > P0。Playwright 整剧本：登录 → 公司 → issue → heartbeat → live-event
 
-- [ ] `tests/e2e/full-stack.spec.ts`：启动 PG + pc-server + vite，Playwright 跑：
+- [x] `tests/e2e/full-stack.spec.ts`：启动 PG + pc-server + vite，Playwright 跑：
   1. `POST /api/auth/sign-in/email` 拿到 session cookie
   2. 创建公司 + 拉 agent
   3. 创建 issue + 触发 heartbeat
   4. WS `/live-events` 收到 `heartbeat.run.completed` 事件
-- [ ] `scripts/e2e-full-stack.sh`：CI 用（macOS + Linux glibc/musl 三态），退出码非 0 即失败
-- [ ] 失败截图存 `tests/e2e/__screenshots__/` + 视频存 `tests/e2e/__videos__/`
+- [x] `scripts/e2e-full-stack.sh`：CI 用（macOS + Linux glibc/musl 三态），退出码非 0 即失败
+- [x] 失败截图存 `tests/e2e/__screenshots__/` + 视频存 `tests/e2e/__videos__/`
 
 ## M19 — OpenAPI ↔ UI 类型对齐（U3）
 
-- [ ] `pc-openapi` 生成 `/openapi.json`，结构 1:1 对齐 Node `routes/openapi.ts`
-- [ ] `scripts/check-ui-contract.sh`：diff Node 与 Rust 两份 `openapi.json` 路径清单，重合率 ≥ 99%
+- [x] `pc-openapi` 生成 `/openapi.json`，结构 1:1 对齐 Node `routes/openapi.ts`
+- [x] `scripts/check-ui-contract.sh`：diff Node 与 Rust 两份 `openapi.json` 路径清单，重合率 ≥ 99%
 - [ ] 字段命名：服务端 snake_case → JSON camelCase（已统一），UI client 无须修改
 
 ## M20 — 远程 execution target（claude-local / codex-local）
@@ -198,8 +198,8 @@
 
 ## M22 — Auth/AuthZ 完整化
 
-- [ ] refresh token rotation（30 天 sliding window）
-- [ ] OAuth providers：Google / GitHub（与 better-auth 行为等价）
+- [x] refresh token rotation（30 天 sliding window）
+- [x] OAuth providers：Google / GitHub（与 better-auth 行为等价）
 - [ ] CSRF token（double-submit cookie）
 - [ ] API key `pk_<base62>` 生成/校验/吊销
 - [ ] evidence: `m22-auth-complete.md`

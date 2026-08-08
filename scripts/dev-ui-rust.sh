@@ -16,9 +16,11 @@ cd "$ROOT"
 
 PG_BIN="${PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 DATA_DIR="${TMPDIR:-/tmp}/pc-dev-pgdata-$$"
-PG_PORT="${PAPERCLIP_DEV_PG_PORT:-55433}"
-SRV_PORT="${PAPERCLIP_DEV_HTTP_PORT:-53100}"
-UI_PORT="${PAPERCLIP_DEV_UI_PORT:-5173}"
+# Use PID + epoch offset to avoid collisions between back-to-back runs.
+# Caller can still override via PAPERCLIP_DEV_*_PORT env vars.
+PG_PORT="${PAPERCLIP_DEV_PG_PORT:-$(( 55440 + (RANDOM % 200) ))}"
+SRV_PORT="${PAPERCLIP_DEV_HTTP_PORT:-$(( 53200 + (RANDOM % 200) ))}"
+UI_PORT="${PAPERCLIP_DEV_UI_PORT:-$(( 51800 + (RANDOM % 200) ))}"
 LOG_DIR="$ROOT/.dev-logs"
 mkdir -p "$LOG_DIR"
 
@@ -55,7 +57,7 @@ SRV_PID=$!
 HEALTH_OK=0
 for i in $(seq 1 60); do
   sleep 0.5
-  if curl -fsS "http://127.0.0.1:$SRV_PORT/health" >/dev/null 2>&1; then
+  if curl -fsS -4 "http://localhost:$SRV_PORT/health" >/dev/null 2>&1 || curl -fsS "http://localhost:$SRV_PORT/health" >/dev/null 2>&1; then
     HEALTH_OK=1; echo "[dev] pc-server /health 200 after $((i/2))s"; break
   fi
 done
@@ -71,7 +73,7 @@ cd "$ROOT"
 VITE_OK=0
 for i in $(seq 1 60); do
   sleep 0.5
-  if curl -fsS "http://127.0.0.1:$UI_PORT" >/dev/null 2>&1; then
+  if curl -fsS -4 "http://localhost:$UI_PORT" >/dev/null 2>&1 || curl -fsS "http://localhost:$UI_PORT" >/dev/null 2>&1; then
     VITE_OK=1; echo "[dev] vite ready after $((i/2))s"; break
   fi
 done
@@ -90,7 +92,7 @@ ENDPOINTS=(
 )
 PASS=0; FAIL=0
 for ep in "${ENDPOINTS[@]}"; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$SRV_PORT$ep" || echo "000")
+  code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$SRV_PORT$ep" || echo "000")
   if [[ "$code" == "200" || "$code" == "204" || "$code" == "401" ]]; then
     # 401 (no session) 也算合约成功 — 端点存在且按预期拒绝未认证请求
     echo "[dev] PASS  $ep → $code"
@@ -106,4 +108,14 @@ if [[ $FAIL -ne 0 ]]; then
   echo "[dev] tail server.log"; tail -40 "$LOG_DIR/server.log"
   exit 1
 fi
+
+echo "[dev] capture OpenAPI document (M19)"
+curl -fsS "http://localhost:$SRV_PORT/openapi.json" >"$ROOT/.route-audit/rust-openapi.json"
+echo "[dev] capture /api/openapi.json (M19 alias probe)"
+curl -s -o "$ROOT/.route-audit/rust-openapi-api.json" -w "  status=%{http_code}\n" \
+  "http://localhost:$SRV_PORT/api/openapi.json" || true
+echo "[dev] capture UI api client count (M19 evidence)"
+find "$ROOT/ui/src/api" -name "*.ts" -not -name "*.test.ts" -not -name "client.ts" \
+  | xargs grep -lE "^export const [a-zA-Z]+ = \{|^export function [a-zA-Z]+\(" 2>/dev/null \
+  | wc -l >"$ROOT/.route-audit/ui-client-count.txt"
 echo "[dev] ALL CHECKS PASSED — M17 UI 切流真实链路 ✅"

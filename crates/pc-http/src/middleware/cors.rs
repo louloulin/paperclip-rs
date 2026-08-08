@@ -5,9 +5,9 @@
 
 use axum::{
     extract::Request,
-    http::{HeaderName, HeaderValue, Method},
+    http::{header, HeaderName, HeaderValue, Method, StatusCode},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
 /// 默认允许来源（dev + 本地）。
@@ -35,6 +35,26 @@ impl Default for CorsConfig {
     }
 }
 
+impl CorsConfig {
+    /// Builds the process-wide CORS policy from the development defaults and
+    /// the explicit comma-separated allow-list supplied by the operator.
+    pub fn from_environment() -> Self {
+        let mut config = Self::default();
+        if let Ok(origins) = std::env::var("PAPERCLIP_CORS_ALLOWED_ORIGINS") {
+            for origin in origins.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+                if !config.allowed_origins.iter().any(|allowed| allowed == origin) {
+                    config.allowed_origins.push(origin.to_owned());
+                }
+            }
+        }
+        config
+    }
+
+    fn allows(&self, origin: &str) -> bool {
+        self.allowed_origins.iter().any(|allowed| allowed == origin)
+    }
+}
+
 pub async fn cors_layer(req: Request, next: Next) -> Response {
     let origin = req
         .headers()
@@ -45,37 +65,46 @@ pub async fn cors_layer(req: Request, next: Next) -> Response {
         .extensions()
         .get::<CorsConfig>()
         .cloned()
-        .unwrap_or_default();
-    let mut response = next.run(req).await;
+        .unwrap_or_else(CorsConfig::from_environment);
+    let is_preflight = req.method() == Method::OPTIONS;
+    let mut response = if is_preflight {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(req).await
+    };
     if let Some(o) = origin {
-        if cfg.allowed_origins.iter().any(|a| a == &o) {
+        if cfg.allows(&o) {
             if let Ok(v) = HeaderValue::from_str(&o) {
                 response
                     .headers_mut()
-                    .insert(HeaderName::from_static("access-control-allow-origin"), v);
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
             }
         }
     }
     response
         .headers_mut()
-        .entry(HeaderName::from_static("access-control-allow-methods"))
+        .entry(header::ACCESS_CONTROL_ALLOW_METHODS)
         .or_insert(HeaderValue::from_static(
             "GET,POST,PUT,PATCH,DELETE,OPTIONS",
         ));
     response
         .headers_mut()
-        .entry(HeaderName::from_static("access-control-allow-headers"))
+        .entry(header::ACCESS_CONTROL_ALLOW_HEADERS)
         .or_insert(HeaderValue::from_static(
             "content-type,authorization,x-request-id,x-csrf-token",
         ));
     response
         .headers_mut()
-        .entry(HeaderName::from_static("access-control-allow-credentials"))
+        .entry(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
         .or_insert(HeaderValue::from_static("true"));
     response
         .headers_mut()
-        .entry(HeaderName::from_static("access-control-max-age"))
+        .entry(header::ACCESS_CONTROL_MAX_AGE)
         .or_insert(HeaderValue::from_static("600"));
+    response
+        .headers_mut()
+        .entry(header::VARY)
+        .or_insert(HeaderValue::from_static("Origin, Access-Control-Request-Method, Access-Control-Request-Headers"));
     response
 }
 
@@ -116,6 +145,14 @@ impl CorsLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::Body,
+        http::{header, Request, StatusCode},
+        middleware::from_fn,
+        routing::get,
+        Router,
+    };
+    use tower::ServiceExt;
 
     #[test]
     fn default_origins_include_local_dev() {
@@ -129,5 +166,70 @@ mod tests {
     #[test]
     fn layer_constructs() {
         let _ = CorsLayer::new();
+    }
+
+    #[tokio::test]
+    async fn allowed_preflight_short_circuits_method_routing() {
+        let app = Router::new()
+            .route("/api/health", get(|| async { "ok" }))
+            .layer(from_fn(cors_layer));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/health")
+                    .header(header::ORIGIN, "http://localhost:5173")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "content-type,x-request-id",
+                    )
+                    .body(Body::empty())
+                    .expect("preflight request"),
+            )
+            .await
+            .expect("preflight response");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("http://localhost:5173"))
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+            Some(&HeaderValue::from_static("true"))
+        );
+        assert!(response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("GET")));
+    }
+
+    #[tokio::test]
+    async fn disallowed_origin_is_not_reflected() {
+        let app = Router::new()
+            .route("/api/health", get(|| async { "ok" }))
+            .layer(from_fn(cors_layer));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .header(header::ORIGIN, "https://evil.example")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none());
     }
 }

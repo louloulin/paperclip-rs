@@ -28,8 +28,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@assistant-ui/react": "0.14.14",
-    "@assistant-ui/store": "^0.3.2",
+    "@assistant-ui/react": "0.15.11",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -70,7 +69,6 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
-    "@assistant-ui/tap": "^0.9.9",
     "@storybook/addon-a11y": "10.5.4",
     "@storybook/addon-docs": "10.5.0",
     "@storybook/react-vite": "10.5.0",
@@ -85,13 +83,5 @@
     "vite": "^6.1.0",
     "vitest": "^4.1.10"
   },
-  "packageManager": "pnpm@10.33.1+sha512.05ba3c1d5d1c18f68df06470d74055e62d41fc110a0c660db1b2dfb2785327f04cf0f68345d4609bc52089e7fa0343c31593b2f9594e2c5d5da426230acc9820",
-  "pnpm": {
-    "overrides": {
-      "@assistant-ui/react": "0.14.14",
-      "@assistant-ui/store": "0.3.2",
-      "@assistant-ui/tap": "0.9.9",
-      "@assistant-ui/core": "0.2.23"
-    }
-  }
+  "packageManager": "pnpm@10.33.1+sha512.05ba3c1d5d1c18f68df06470d74055e62d41fc110a0c660db1b2dfb2785327f04cf0f68345d4609bc52089e7fa0343c31593b2f9594e2c5d5da426230acc9820"
 }

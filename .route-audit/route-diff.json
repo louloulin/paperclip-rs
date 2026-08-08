@@ -1,0 +1,227 @@
+{
+  "node_unique": 693,
+  "rust_unique": 687,
+  "common": 526,
+  "missing_in_rust": 167,
+  "extra_in_rust": 161,
+  "coverage_method_path": 75.9,
+  "missing_by_category": {
+    ":param": 129,
+    "root": 14,
+    "settings": 3,
+    "gateways": 3,
+    "exports": 2,
+    "imports": 2,
+    "export": 2,
+    "sessions": 1,
+    "restart": 1,
+    "artifacts": 1,
+    "users": 1,
+    "archive": 1,
+    "branding": 1,
+    "me": 1,
+    "timeline": 1
+  },
+  "top_missing": [
+    {
+      "method": "DELETE",
+      "path": "/api/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/adapters/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/agents/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/agents/:param/instructions-bundle/file"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/attachments/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/folders/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/me/user-secrets/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skill-policy"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skill-test-run-templates/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skills/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skills/:param/comments/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skills/:param/files"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skills/:param/star"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/skills/:param/test-inputs/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/companies/:param/tools/policies/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/decision-training/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/environments/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/environments/:param/custom-image-template"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/goals/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/issues/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/issues/:param/comments/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/issues/:param/documents/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/issues/:param/inbox-archive"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/issues/:param/watchdog"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/labels/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/pipelines/:param/stages/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plugins/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/projects/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/projects/:param/workspaces/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/routine-triggers/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/secret-provider-configs/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/secrets/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/status-cards/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tool-applications/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tool-connections/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tool-profile-entries/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/work-products/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/"
+    },
+    {
+      "method": "GET",
+      "path": "/api/"
+    },
+    {
+      "method": "GET",
+      "path": "/api/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/api/:param/artifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/:param/export/fidelity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/:param/feedback-traces"
+    },
+    {
+      "method": "GET",
+      "path": "/api/:param/timeline"
+    },
+    {
+      "method": "GET",
+      "path": "/api/_plugins/:param/ui/*filePath"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/search/extract"
+    },
+    {
+      "method": "GET",
+      "path": "/api/import/jobs/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/apiPrefer"
+    },
+    {
+      "method": "GET",
+      "path": "/apiX-Paperclip-Run-Id"
+    },
+    {
+      "method": "GET",
+      "path": "/apiaccept"
+    }
+  ]
+}

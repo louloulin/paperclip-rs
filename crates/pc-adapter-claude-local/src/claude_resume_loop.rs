@@ -26,8 +26,11 @@ use crate::claude_session_resume::{
 };
 use crate::claude_stream_json::{parse_claude_stream_json, ParsedClaudeStreamJson};
 use crate::execute_helpers::resolve_claude_billing_type;
-use pc_adapter_api::{AdapterExecutionContext, AdapterExecutionResult, AdapterEventSink};
-use pc_adapter_process::{execute_process_capture, ProcessSpec};
+use pc_adapter_api::{
+    AdapterError, AdapterExecutionContext, AdapterExecutionResult, AdapterEventSink,
+};
+use std::sync::Arc;
+use pc_adapter_process::{ProcessExecution, ProcessSpec};
 use serde_json::{json, Value};
 use std::time::SystemTime;
 
@@ -198,12 +201,79 @@ pub struct ResumeRetryInput<'a> {
 /// 2. 检测 session 错误
 /// 3. 如有错误：第二次 attempt（不带 --resume，clear_session_on_missing_session=true）
 /// 4. 组装并返回 AdapterExecutionResult
+/// R495：CLI 执行改走 [`pc_acpx::execution_target_process::execute_command_for_target`]，
+/// 让 claude 也享受 local / ssh / sandbox-fallback 三分支 dispatch。
+///
+/// 该 helper 取代之前的 `pc_adapter_process::execute_process_capture`：on_log
+/// 闭包把每段输出 forward 给 `AdapterEventSink`，timeout/grace 与 Node
+/// `runChildProcess` 默认一致（15min / 5s），无 monitor（Claude 无
+/// output-inactivity 概念）。返回 `ProcessExecution`（不带 `spawned_pid`，
+/// 与旧调用方兼容）。
+///
+/// R496：暴露 `pub(crate)` 供 [`crate::ClaudeLocalAdapter::execute`]（主
+/// 执行路径）共享 — 该路径同样需要 SSH / sandbox 三分支 dispatch。
+pub(crate) async fn execute_claude_attempt_for_target(
+    command: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    context: &AdapterExecutionContext,
+    events: AdapterEventSink,
+) -> Result<ProcessExecution, pc_adapter_api::AdapterError> {
+    use pc_acpx::execution_target_process::execute_command_for_target;
+
+    let on_log: Arc<dyn Fn(&str, &str) + Send + Sync> = {
+        let events_for_log = events.clone();
+        Arc::new(move |stream, chunk| {
+            let owned = chunk.to_string();
+            let events = events_for_log.clone();
+            let label = match stream {
+                "stderr" => pc_adapter_api::AdapterEvent::stderr(owned),
+                _ => pc_adapter_api::AdapterEvent::stdout(owned),
+            };
+            tokio::spawn(async move {
+                let _ = events.emit(label).await;
+            });
+        })
+    };
+    let cwd_owned = context.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
+    let cwd = cwd_owned.as_deref().unwrap_or("");
+    let target_json = context.execution_target.clone();
+
+    let result = execute_command_for_target(
+        command,
+        args,
+        stdin,
+        900.0_f64,
+        5.0_f64,
+        &context.env,
+        cwd,
+        target_json.as_ref(),
+        Some(on_log),
+        None,
+    )
+    .await
+    .map_err(pc_adapter_api::AdapterError::Process)?;
+
+    Ok(ProcessExecution {
+        result: AdapterExecutionResult {
+            exit_code: result.exit_code,
+            signal: result.signal.clone(),
+            timed_out: result.timed_out,
+            ..AdapterExecutionResult::default()
+        },
+        stdout: result.stdout,
+        stderr: result.stderr,
+    })
+}
+
 pub async fn run_resume_retry_loop(
     input: &ResumeRetryInput<'_>,
 ) -> Result<AdapterExecutionResult, pc_adapter_api::AdapterError> {
     let args = build_resume_claude_args(input.base_args, input.resume_session_id);
-    let spec = ProcessSpec::new(input.command, &args).with_stdin(input.context.prompt.clone());
-    let initial_execution = execute_process_capture(&spec, input.context, input.events.clone()).await?;
+    let stdin = if input.context.prompt.is_empty() { None } else { Some(input.context.prompt.as_str()) };
+    let initial_execution =
+        execute_claude_attempt_for_target(input.command, &args, stdin, input.context, input.events.clone())
+            .await?;
     let initial_stdout = initial_execution.stdout.clone();
     let initial_stderr = initial_execution.stderr.clone();
     let initial_exit = initial_execution.result.exit_code;
@@ -257,8 +327,10 @@ pub async fn run_resume_retry_loop(
 
         // 重试：fresh session
         let retry_args = build_resume_claude_args(input.base_args, None);
-        let retry_spec = ProcessSpec::new(input.command, &retry_args).with_stdin(input.context.prompt.clone());
-        let retry_execution = execute_process_capture(&retry_spec, input.context, input.events.clone()).await?;
+        let stdin = if input.context.prompt.is_empty() { None } else { Some(input.context.prompt.as_str()) };
+        let retry_execution =
+            execute_claude_attempt_for_target(input.command, &retry_args, stdin, input.context, input.events.clone())
+                .await?;
         let retry_stdout = retry_execution.stdout.clone();
         let retry_stderr = retry_execution.stderr.clone();
         let retry_exit = retry_execution.result.exit_code;

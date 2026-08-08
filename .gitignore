@@ -19,7 +19,7 @@ vendor/pdfium/
 # Machine-local cargo config; written by scripts/setup-pdfium.sh with
 # the absolute path to vendor/pdfium. Safe to delete and re-run setup.
 .cargo/config.local.toml
-
+.dev-logs/
 # Python (skill-creator scripts, eval helpers)
 __pycache__/
 *.pyc
