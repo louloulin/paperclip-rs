@@ -6,13 +6,14 @@
 //! module ports the session-identity type, the equality check, and the
 //! exclude-pattern generator.
 
+use serde::{Deserialize, Serialize};
 use crate::exclude_patterns::exclude_pattern_matches;
 use crate::git_workspace_sync::GIT_ARCHIVE_EXCLUDES;
 
 /// Local mirror of `SshRemoteExecutionSpec` from `ssh.ts`. The full ssh
 /// module is deferred; for now we only need the fields that participate
 /// in session-identity comparison.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SshRemoteExecutionSpec {
     pub host: String,
     pub port: Option<u16>,
@@ -76,7 +77,7 @@ pub fn resolve_asset_remote_dir(runtime_root_dir: &str, asset_key: &str) -> Stri
 
 /// The session identity used to compare a saved session against the
 /// current runtime spec. Mirrors Node `buildRemoteExecutionSessionIdentity`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteExecutionSessionIdentity {
     pub transport: &'static str,
     pub host: String,

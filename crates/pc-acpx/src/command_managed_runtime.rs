@@ -257,11 +257,38 @@ mod tests {
     }
 
     #[test]
-    fn assert_confined_handles_dotdot_segment_in_middle() {
+    fn assert_confined_rejects_dotdot_segment_in_middle() {
+        // A `..` segment anywhere in the cwd is rejected early with the
+        // "not a confined absolute POSIX path" message (matching the Node
+        // guard, which short-circuits on `..` before normalize-then-check).
         let ops = vec![op_with_cwd(Some("/workspace/target/../escape"))];
-        // After normalize: /workspace/escape — escapes target root /workspace/target
         let err = assert_post_upload_commands_confined(&ops).unwrap_err();
-        assert!(err.contains("escapes"));
+        assert!(
+            err.contains("not a confined absolute POSIX path"),
+            "expected dotdot rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn assert_confined_catches_normalized_escape_without_dotdot() {
+        // A path with NO `..` segments that still normalizes outside the
+        // target root (because the root has a trailing segment the cwd
+        // is not contained in) is caught by the post-normalize "escapes"
+        // branch. Here target root is /workspace/target and cwd is
+        // /workspace/other — no `..` in cwd, but it does not lie under
+        // /workspace/target.
+        let op = SandboxSyncOperation {
+            files: vec![mapping("/workspace/target")],
+            post_upload_commands: vec![PostUploadCommand {
+                cwd: Some("/workspace/other".to_string()),
+                command: "ls".to_string(),
+            }],
+        };
+        let err = assert_post_upload_commands_confined(&[op]).unwrap_err();
+        assert!(
+            err.contains("escapes the operation"),
+            "expected escape rejection, got: {err}"
+        );
     }
 
     #[test]
