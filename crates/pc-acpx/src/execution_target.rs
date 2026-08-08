@@ -1023,6 +1023,72 @@ impl PreparedAdapterExecutionTargetRuntimeLike for PreparedAdapterExecutionTarge
     }
 }
 
+// ============================================================================
+// R435 — Remote execution runtime helpers (effective_execution_cwd +
+// remote_codex_home) — 复刻 Node codex execute.ts L716-738。
+// ============================================================================
+
+/// 计算运行实际使用的 cwd，对齐 Node：
+///
+/// ```text
+/// effectiveExecutionCwd = targetWorkspaceRealization?.mode === "in_place"
+///   ? targetWorkspaceRealization.authoritativeRoot
+///   : adapterExecutionTargetRemoteCwd(executionTarget, cwd);
+/// ```
+///
+/// - 当 workspace_realization 存在且 mode == "in_place" → 返回
+///   `authoritative_root`（远程端已经在该路径准备好工作目录）；
+/// - 否则 → 返回 remote target 自带的 `remote_cwd`，无 remote target 时
+///   退回到 `local_cwd`。
+#[must_use]
+pub fn effective_execution_cwd(
+    workspace_realization: Option<&AdapterWorkspaceRealization>,
+    target: Option<&AdapterExecutionTarget>,
+    local_cwd: &str,
+) -> String {
+    if let Some(realization) = workspace_realization {
+        if realization.mode == AdapterWorkspaceRealizationMode::InPlace {
+            return realization.authoritative_root.clone();
+        }
+    }
+    adapter_execution_target_remote_cwd(target, local_cwd)
+}
+
+/// 解析远程 codex 的 home 目录（仅在 `executionTargetIsRemote` 时调用）。
+/// 对齐 Node codex execute.ts：
+///
+/// ```text
+/// const remoteCodexHome = executionTargetIsRemote
+///   ? preparedExecutionTargetRuntime?.assetDirs.home ??
+///     path.posix.join(effectiveExecutionCwd, ".paperclip-runtime", "codex", "home")
+///   : null;
+/// ```
+///
+/// 本助手只覆盖默认路径段；当 `prepared.asset_dirs.home` 已就绪时由调用者
+/// 优先使用。这里返回 `Option<&str>`：本地时为 `None`，远程时为
+/// `<effective_cwd>/.paperclip-runtime/codex/home`。
+#[must_use]
+pub fn default_remote_codex_home_path(effective_execution_cwd: &str) -> String {
+    let trimmed = effective_execution_cwd.trim_end_matches('/');
+    if trimmed.is_empty() {
+        ".paperclip-runtime/codex/home".to_string()
+    } else {
+        format!("{trimmed}/.paperclip-runtime/codex/home")
+    }
+}
+
+/// 综合便捷函数：当 target 是远程时返回默认 codex home 路径，本地返回 None。
+#[must_use]
+pub fn resolve_remote_codex_home(
+    target: Option<&AdapterExecutionTarget>,
+    effective_execution_cwd: &str,
+) -> Option<String> {
+    if !adapter_execution_target_is_remote(target) {
+        return None;
+    }
+    Some(default_remote_codex_home_path(effective_execution_cwd))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1610,5 +1676,111 @@ mod tests {
             runtime_asset_dir(&p, "skill-1", "/workspace/"),
             "/workspace/.paperclip-runtime/skill-1"
         );
+    }
+
+    // ---- R435 effective_execution_cwd / remote_codex_home ----
+
+    fn workspace_realization_in_place(root: &str) -> AdapterWorkspaceRealization {
+        AdapterWorkspaceRealization {
+            mode: AdapterWorkspaceRealizationMode::InPlace,
+            authoritative_root: root.to_string(),
+            path_aliases: vec![],
+            outbound_restore_paths: vec![],
+        }
+    }
+
+    fn workspace_realization_copy() -> AdapterWorkspaceRealization {
+        AdapterWorkspaceRealization {
+            mode: AdapterWorkspaceRealizationMode::Copy,
+            authoritative_root: "/copy-target".to_string(),
+            path_aliases: vec![],
+            outbound_restore_paths: vec![],
+        }
+    }
+
+    #[test]
+    fn effective_execution_cwd_uses_in_place_authoritative_root() {
+        let realization = workspace_realization_in_place("/remote/in_place");
+        let cwd = effective_execution_cwd(
+            Some(&realization),
+            Some(&ssh_target()),
+            "/local/cwd",
+        );
+        assert_eq!(cwd, "/remote/in_place");
+    }
+
+    #[test]
+    fn effective_execution_cwd_falls_back_to_remote_cwd_when_copy() {
+        let realization = workspace_realization_copy();
+        let cwd = effective_execution_cwd(
+            Some(&realization),
+            Some(&ssh_target()),
+            "/local/cwd",
+        );
+        // copy mode → 不使用 authoritative_root，回退到 target.remote_cwd
+        assert_eq!(cwd, "/workspace");
+    }
+
+    #[test]
+    fn effective_execution_cwd_falls_back_to_local_when_no_realization() {
+        let cwd = effective_execution_cwd(
+            None,
+            Some(&ssh_target()),
+            "/local/cwd",
+        );
+        assert_eq!(cwd, "/workspace");
+    }
+
+    #[test]
+    fn effective_execution_cwd_falls_back_to_local_for_local_target() {
+        let cwd = effective_execution_cwd(None, Some(&local_target()), "/local/cwd");
+        assert_eq!(cwd, "/local/cwd");
+    }
+
+    #[test]
+    fn default_remote_codex_home_path_appends_dot_paperclip_runtime() {
+        assert_eq!(
+            default_remote_codex_home_path("/remote/cwd"),
+            "/remote/cwd/.paperclip-runtime/codex/home"
+        );
+    }
+
+    #[test]
+    fn default_remote_codex_home_path_trims_trailing_slash() {
+        assert_eq!(
+            default_remote_codex_home_path("/remote/cwd/"),
+            "/remote/cwd/.paperclip-runtime/codex/home"
+        );
+    }
+
+    #[test]
+    fn default_remote_codex_home_path_handles_empty_cwd() {
+        assert_eq!(
+            default_remote_codex_home_path(""),
+            ".paperclip-runtime/codex/home"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_codex_home_returns_none_for_local() {
+        let home = resolve_remote_codex_home(Some(&local_target()), "/local/cwd");
+        assert!(home.is_none());
+    }
+
+    #[test]
+    fn resolve_remote_codex_home_returns_path_for_remote() {
+        // 调用方负责把 effective_execution_cwd 传给本助手；这里覆盖
+        // ssh_target 配合相同 cwd 的常见场景。
+        let home = resolve_remote_codex_home(Some(&ssh_target()), "/workspace");
+        assert_eq!(
+            home.as_deref(),
+            Some("/workspace/.paperclip-runtime/codex/home")
+        );
+    }
+
+    #[test]
+    fn resolve_remote_codex_home_returns_none_when_no_target() {
+        let home = resolve_remote_codex_home(None, "/remote/cwd");
+        assert!(home.is_none());
     }
 }

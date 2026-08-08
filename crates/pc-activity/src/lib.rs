@@ -10,10 +10,16 @@
 
 pub mod kinds;
 pub mod log;
+pub mod process_activity_monitor;
 pub mod sink;
 pub mod types;
 
 pub use kinds::ActivityKind;
 pub use log::{ActivityLog, InMemoryActivityLog};
+pub use process_activity_monitor::{
+    sample_process_activity, spawn_process_activity_monitor, ProcessActivityMonitorHandle,
+    ProcessActivityMonitorOptions, ProcessActivitySnapshot,
+    DEFAULT_PROCESS_ACTIVITY_POLL_INTERVAL_MS,
+};
 pub use sink::{ActivitySink, SharedActivitySink};
 pub use types::{ActivityActor, ActivityEvent, ActivityFilter, ActivityId, ActivityQuery};

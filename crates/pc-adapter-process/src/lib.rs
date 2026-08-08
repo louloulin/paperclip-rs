@@ -239,8 +239,12 @@ pub async fn execute_process_capture_with_options(
             return Err(AdapterError::TimedOut);
         }
         () = wait_for_kill_flag(kill_flag_for_select) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            // R439：渐进终止 — 先 SIGTERM 给子进程清理机会，grace 后 SIGKILL。
+            let _ = terminate_with_grace(
+                &mut child,
+                std::time::Duration::from_secs(20),
+            )
+            .await;
             stdout_task.abort();
             stderr_task.abort();
             return Err(AdapterError::Process("killed by output inactivity monitor".into()));
@@ -347,6 +351,113 @@ fn exit_signal(status: std::process::ExitStatus) -> Option<String> {
 #[cfg(not(unix))]
 fn exit_signal(_status: std::process::ExitStatus) -> Option<String> {
     None
+}
+
+// ============================================================================
+// R439 — Graceful termination: SIGTERM → SIGKILL escalation.
+// ============================================================================
+
+/// 在 Unix 上向进程发送 SIGTERM：通过 `kill -TERM <pid>` 派发信号。
+#[cfg(unix)]
+fn send_sigterm(pid: u32) -> Result<(), String> {
+    let status = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "kill -TERM {pid} exited with {status:?}"
+        ))
+    }
+}
+
+/// 优雅终止子进程：
+/// 1. 先发送 SIGTERM（Unix）让进程有机会清理；
+/// 2. 在 `grace` 时长内轮询等待退出；
+/// 3. 进程仍在 → 调用 `child.kill()` 升级到 SIGKILL。
+///
+/// 对齐 Node `resolveAdapterExecutionTargetTimeoutSec` + codex execute
+/// 的 `graceSec` 默认 20s 行为。
+pub async fn terminate_with_grace(
+    child: &mut tokio::process::Child,
+    grace: std::time::Duration,
+) -> Result<(), String> {
+    if let Some(pid) = child.id() {
+        #[cfg(unix)]
+        {
+            let _ = send_sigterm(pid);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
+    }
+    // 轮询等待，最多 grace 时长
+    let deadline = tokio::time::Instant::now() + grace;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => return Ok(()),
+            Ok(None) => {
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    // 超时仍未退出 → SIGKILL
+    child.kill().await.map_err(|e| e.to_string())?;
+    let _ = child.wait().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod graceful_tests {
+    use super::*;
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    /// SIGTERM 后子进程立即退出 → terminate_with_grace 应快速返回。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminate_with_grace_handles_quick_exit() {
+        // trap SIGTERM via `sh -c "trap 'exit 0' TERM; sleep 5"`
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.args(["-c", "trap 'exit 0' TERM; sleep 5"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let mut child = cmd.spawn().expect("spawn");
+        let start = tokio::time::Instant::now();
+        let result = terminate_with_grace(&mut child, Duration::from_secs(3)).await;
+        assert!(result.is_ok(), "expected ok, got {result:?}");
+        // 进程应在 < 1s 内响应 SIGTERM 退出
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    /// SIGTERM 后子进程不退出 → 应在 grace 后升级到 SIGKILL。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminate_with_grace_escalates_to_sigkill() {
+        // `sleep 30` 忽略 SIGTERM（默认 trap），靠 grace 后 SIGKILL 杀掉
+        let mut cmd = tokio::process::Command::new("sleep");
+        cmd.arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let mut child = cmd.spawn().expect("spawn");
+        let start = tokio::time::Instant::now();
+        let result = terminate_with_grace(&mut child, Duration::from_millis(500)).await;
+        assert!(result.is_ok());
+        // 应在 ~grace（500ms）后通过 SIGKILL 杀掉，而不是等满 30s
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
 }
 
 #[cfg(test)]

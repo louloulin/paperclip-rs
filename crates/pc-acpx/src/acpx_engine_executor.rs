@@ -1098,6 +1098,30 @@ mod tests {
         assert_eq!(prepared.fingerprint, prepared_again.fingerprint);
         assert_eq!(prepared.session_key, prepared_again.session_key);
     }
+
+    #[test]
+    fn prepared_runtime_lite_propagates_remote_execution_identity() {
+        let mut identity = std::collections::BTreeMap::new();
+        identity.insert("hostId".into(), serde_json::json!("host-1"));
+        identity.insert("sessionId".into(), serde_json::json!("sess-1"));
+        let prepared = PreparedRuntime::builder("claude")
+            .remote_execution_identity(identity.clone())
+            .build();
+        let lite = prepared_runtime_lite(&prepared);
+        let value = lite
+            .remote_execution_identity
+            .expect("remote_execution_identity should propagate");
+        let object = value.as_object().expect("value is object");
+        assert_eq!(object.get("hostId").and_then(|v| v.as_str()), Some("host-1"));
+        assert_eq!(object.get("sessionId").and_then(|v| v.as_str()), Some("sess-1"));
+    }
+
+    #[test]
+    fn prepared_runtime_lite_omits_remote_execution_identity_when_unset() {
+        let prepared = PreparedRuntime::builder("claude").build();
+        let lite = prepared_runtime_lite(&prepared);
+        assert!(lite.remote_execution_identity.is_none());
+    }
 }
 
 // ============================================================================
@@ -1307,7 +1331,7 @@ fn prepared_runtime_lite(prepared: &PreparedRuntime) -> AcpxPreparedRuntimeLite 
         remote_execution_identity: prepared
             .remote_execution_identity
             .clone()
-            .map(serde_json::Value::Object),
+            .map(|identity| serde_json::Value::Object(identity.into_iter().collect())),
         requested_model: if prepared.requested_model.is_empty() {
             None
         } else {

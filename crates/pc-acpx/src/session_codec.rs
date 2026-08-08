@@ -427,4 +427,46 @@ mod build_session_params_tests {
         // Empty PathBuf serializes to ""; that's still Some("").
         assert!(params.cwd.is_some());
     }
+
+    #[test]
+    fn build_session_params_propagates_remote_execution_identity() {
+        let mut identity = BTreeMap::new();
+        identity.insert("hostId".into(), serde_json::json!("host-7"));
+        identity.insert("sessionId".into(), serde_json::json!("sess-9"));
+        let p = PreparedRuntime::builder("claude")
+            .mode(PreparedRuntimeMode::Persistent)
+            .cwd("/repo")
+            .permission_mode(PreparedRuntimePermissionMode::ApproveAll)
+            .non_interactive_permissions(PreparedRuntimeNonInteractivePermissions::Deny)
+            .state_dir("/state")
+            .session_key("paperclip:co:claude:ws_1:abc")
+            .fingerprint("abc")
+            .env(BTreeMap::new())
+            .remote_execution_identity(identity.clone())
+            .build();
+        let params = build_session_params(&p, &handle());
+        assert_eq!(params.remote_execution, Some(identity));
+    }
+
+    #[test]
+    fn build_session_params_omits_remote_execution_when_unset() {
+        let params = build_session_params(&prepared(), &handle());
+        assert!(params.remote_execution.is_none());
+    }
+
+    #[test]
+    fn serialize_writes_remote_execution_object() {
+        let mut identity = BTreeMap::new();
+        identity.insert("hostId".into(), serde_json::json!("host-1"));
+        identity.insert("sessionId".into(), serde_json::json!("sess-1"));
+        let mut params = build_session_params(&prepared(), &handle());
+        params.remote_execution = Some(identity);
+        let serialized = serialize(Some(&params)).expect("serialized");
+        let remote = serialized
+            .get("remoteExecution")
+            .and_then(|v| v.as_object())
+            .expect("remoteExecution object");
+        assert_eq!(remote.get("hostId").and_then(|v| v.as_str()), Some("host-1"));
+        assert_eq!(remote.get("sessionId").and_then(|v| v.as_str()), Some("sess-1"));
+    }
 }

@@ -12,6 +12,8 @@ workspace = true
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-acpx = { path = "../pc-acpx" }
 pc-adapter-process = { path = "../pc-adapter-process" }
+pc-activity = { path = "../pc-activity" }
+futures-core = "0.3"
 async-trait = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -19,5 +21,6 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 
-[dev-dependencies]
 uuid = { workspace = true }
+
+[dev-dependencies]

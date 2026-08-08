@@ -270,6 +270,93 @@ pub enum AdapterExecutionError {
     Adapter(#[from] AdapterError),
 }
 
+// =============================================================================
+// Adapter config schema — declarative UI config for adapters
+//
+// Mirrors Node `@paperclipai/adapter-utils` types:
+//   - `AdapterConfigSchema`
+//   - `ConfigFieldSchema`
+//   - `ConfigFieldOption`
+// =============================================================================
+
+/// Option label/value pair for select/combobox fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigFieldOption {
+    pub label: String,
+    pub value: String,
+    /// Optional group key for categorizing options.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// Field type discriminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigFieldType {
+    Text,
+    Select,
+    Toggle,
+    Number,
+    Textarea,
+    Combobox,
+}
+
+impl ConfigFieldType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ConfigFieldType::Text => "text",
+            ConfigFieldType::Select => "select",
+            ConfigFieldType::Toggle => "toggle",
+            ConfigFieldType::Number => "number",
+            ConfigFieldType::Textarea => "textarea",
+            ConfigFieldType::Combobox => "combobox",
+        }
+    }
+}
+
+/// Declarative field schema for adapter config UI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigFieldSchema {
+    pub key: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub field_type: ConfigFieldType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<ConfigFieldOption>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Optional metadata — not rendered, but available to custom UI logic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
+/// Adapter config schema declaration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdapterConfigSchema {
+    pub fields: Vec<ConfigFieldSchema>,
+}
+
+impl AdapterConfigSchema {
+    #[must_use]
+    pub fn new(fields: Vec<ConfigFieldSchema>) -> Self {
+        Self { fields }
+    }
+}
+
+/// Field visibility predicate (`visibleWhen: { key, values }`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldVisibility {
+    pub key: String,
+    pub values: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -337,4 +424,5 @@ mod tests {
             AdapterRegistryError::AlreadyRegistered("fake".into())
         );
     }
+
 }

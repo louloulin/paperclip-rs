@@ -4,6 +4,13 @@ pub mod skills;
 pub mod codex_errors;
 pub mod execute_helpers;
 pub mod output_inactivity_monitor;
+pub mod auth_precedence;
+pub mod auth_copyback;
+pub mod codex_auth_merge;
+pub mod runtime_config;
+pub mod codex_home;
+pub mod acp;
+pub mod config_schema;
 
 pub use execute_helpers::{
     fallback_mode_uses_fresh_session, fallback_mode_uses_safer_invocation,
@@ -32,6 +39,10 @@ pub struct CodexExecArgs {
     pub model: String,
     pub fast_mode_requested: bool,
     pub fast_mode_applied: bool,
+    /// 当 fast_mode 被请求但未生效时给出原因（对齐 Node
+    /// ）。None 表示无原因
+    /// （要么未请求，要么已应用）。
+    pub fast_mode_ignored_reason: Option<String>,
 }
 
 pub fn build_codex_exec_args(
@@ -90,12 +101,31 @@ pub fn build_codex_exec_args(
     } else {
         args.push("-".into());
     }
+    let fast_mode_ignored_reason = if fast_mode_requested && !fast_mode_applied {
+        Some(format_fast_mode_ignored_reason(&model))
+    } else {
+        None
+    };
     CodexExecArgs {
         args,
         model,
         fast_mode_requested,
         fast_mode_applied,
+        fast_mode_ignored_reason,
     }
+}
+
+fn format_fast_mode_ignored_reason(model: &str) -> String {
+    let label = if model.is_empty() { "(default)" } else { model };
+    format!(
+        "Configured fast mode is currently only supported on {} or manually configured model IDs; Paperclip will ignore it for model {label}.",
+        fast_mode_supported_models_label(),
+    )
+}
+
+fn fast_mode_supported_models_label() -> String {
+    const FAST: &[&str] = &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"];
+    FAST.join(", ")
 }
 
 fn normalize_model(model: Option<&str>) -> String {
@@ -286,6 +316,12 @@ async fn execute_codex_with_monitor(
         monitor_for_chunk_cb.note_output_chunk(stream, chunk);
     });
 
+    // R438：process-activity-monitor 接线。子进程启动后，周期性采样
+    // /proc/<pid>/stat + /proc/<pid>/io；CPU ticks / IO bytes 增加时
+    // 把 output_inactivity_monitor 的 last_event_at 推回当下，避免
+    // 子进程在静默跑但无 stdout 时被误杀。
+    let activity_monitor: Option<pc_activity::ProcessActivityMonitorHandle> = None;
+
     let execution = match execute_process_capture_with_options(
         &spec,
         context,
@@ -318,9 +354,31 @@ async fn execute_codex_with_monitor(
         }
         Err(error) => return Err(error),
     };
-    drop(monitor_for_chunk);
+
+    // 启动 process-activity-monitor（如有 spawned_pid）。
+    let activity_monitor = if let Some(pid) = execution.spawned_pid {
+        let monitor_for_chunk_outer = Arc::clone(&monitor_for_chunk);
+        // 抑制 unused 警告（_activity_monitor 在 activity callback 中被消费）
+        let _ = &activity_monitor;
+        let monitor = pc_activity::spawn_process_activity_monitor(
+            pc_activity::ProcessActivityMonitorOptions {
+                pid,
+                process_group_id: Some(pid),
+                on_activity: Box::new(move || {
+                    monitor_for_chunk_outer.note_process_activity();
+                }),
+                interval: None, // 使用默认 15s
+                sample: None,
+            },
+        );
+        Some(monitor)
+    } else {
+        None
+    };
 
     let outcome = outcome.lock().expect("monitor outcome lock").clone();
+    // activity_monitor 在此 drop（执行完成后停止采样）
+    drop(activity_monitor);
     Ok((execution, outcome))
 }
 
@@ -332,6 +390,54 @@ impl CodexLocalAdapter {
     pub const fn new() -> Self {
         Self
     }
+}
+
+/// 组装 codex execute 的 resolvedSessionParams（对齐 Node execute.ts L1342-1357）。
+///
+/// 当前仅本地执行：仅装配 `sessionId` + `cwd`。
+/// `workspaceId` / `repoUrl` / `repoRef` 从 `adapter_config.workspaceContext` 读取
+/// （若有），便于后续 resume 时复用。
+fn build_resolved_session_params(
+    resolved_session_id: Option<&str>,
+    cwd: Option<&std::path::Path>,
+    adapter_config: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let sid = resolved_session_id?;
+    let mut object = serde_json::Map::new();
+    object.insert("sessionId".into(), serde_json::Value::String(sid.to_owned()));
+    if let Some(dir) = cwd {
+        object.insert(
+            "cwd".into(),
+            serde_json::Value::String(dir.to_string_lossy().to_string()),
+        );
+    }
+    if let Some(workspace_context) = adapter_config.get("workspaceContext") {
+        if let Some(workspace_id) = workspace_context.get("workspaceId").and_then(|v| v.as_str()) {
+            if !workspace_id.is_empty() {
+                object.insert(
+                    "workspaceId".into(),
+                    serde_json::Value::String(workspace_id.to_owned()),
+                );
+            }
+        }
+        if let Some(repo_url) = workspace_context.get("repoUrl").and_then(|v| v.as_str()) {
+            if !repo_url.is_empty() {
+                object.insert(
+                    "repoUrl".into(),
+                    serde_json::Value::String(repo_url.to_owned()),
+                );
+            }
+        }
+        if let Some(repo_ref) = workspace_context.get("repoRef").and_then(|v| v.as_str()) {
+            if !repo_ref.is_empty() {
+                object.insert(
+                    "repoRef".into(),
+                    serde_json::Value::String(repo_ref.to_owned()),
+                );
+            }
+        }
+    }
+    Some(serde_json::Value::Object(object))
 }
 
 #[async_trait]
@@ -468,6 +574,15 @@ impl Adapter for CodexLocalAdapter {
         result.provider = Some("openai".into());
         result.billing_type = Some(billing_type.as_str().to_owned());
         result.model = (!built.model.is_empty()).then_some(built.model);
+        // 组装 resolvedSessionParams，对齐 Node codex execute.ts L1342-1357：
+        // { sessionId, cwd, remoteExecution?, workspaceId?, repoUrl?, repoRef? }
+        // 当前 codex-local 仅本地执行，remoteExecution 暂不装配；
+        // workspace 字段从 adapter_config.workspaceContext 读取（若有）。
+        result.session_params = build_resolved_session_params(
+            result.session_id.as_deref(),
+            context.cwd.as_deref(),
+            &context.adapter_config,
+        );
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.usage = Some(UsageSummary {
             input_tokens: parsed.usage.input_tokens,
@@ -529,9 +644,80 @@ impl Adapter for CodexLocalAdapter {
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
 
     use super::*;
     use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
+
+    #[test]
+    fn build_resolved_session_params_only_session_id_and_cwd() {
+        let config = serde_json::json!({});
+        let params = build_resolved_session_params(
+            Some("thread_123"),
+            Some(std::path::Path::new("/repo")),
+            &config,
+        )
+        .expect("params should be present when session_id resolves");
+        assert_eq!(
+            params.get("sessionId").and_then(|v| v.as_str()),
+            Some("thread_123")
+        );
+        assert_eq!(params.get("cwd").and_then(|v| v.as_str()), Some("/repo"));
+        assert!(params.get("workspaceId").is_none());
+        assert!(params.get("repoUrl").is_none());
+        assert!(params.get("repoRef").is_none());
+    }
+
+    #[test]
+    fn build_resolved_session_params_includes_workspace_context() {
+        let config = serde_json::json!({
+            "workspaceContext": {
+                "workspaceId": "ws_1",
+                "repoUrl": "git@github.com:foo/bar.git",
+                "repoRef": "main",
+            }
+        });
+        let params = build_resolved_session_params(
+            Some("thread_x"),
+            Some(std::path::Path::new("/work")),
+            &config,
+        )
+        .expect("params should be present");
+        assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
+        assert_eq!(
+            params.get("repoUrl").and_then(|v| v.as_str()),
+            Some("git@github.com:foo/bar.git")
+        );
+        assert_eq!(params.get("repoRef").and_then(|v| v.as_str()), Some("main"));
+    }
+
+    #[test]
+    fn build_resolved_session_params_skips_empty_workspace_fields() {
+        let config = serde_json::json!({
+            "workspaceContext": {
+                "workspaceId": "ws_1",
+                "repoUrl": "",
+                "repoRef": "main",
+            }
+        });
+        let params = build_resolved_session_params(
+            Some("thread_x"),
+            None,
+            &config,
+        )
+        .expect("params should be present");
+        assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
+        assert_eq!(params.get("repoRef").and_then(|v| v.as_str()), Some("main"));
+        assert!(params.get("repoUrl").is_none());
+        assert!(params.get("cwd").is_none());
+    }
+
+    #[test]
+    fn build_resolved_session_params_none_when_session_id_missing() {
+        let config = serde_json::json!({});
+        let params = build_resolved_session_params(None, Some(std::path::Path::new("/repo")), &config);
+        assert!(params.is_none());
+    }
 
     #[test]
     fn builds_codex_exec_args_with_alias_fast_mode_and_resume() {
@@ -624,6 +810,101 @@ mod tests {
         assert_eq!(result.usage.unwrap().output_tokens, 2);
         std::fs::remove_file(path).unwrap();
     }
+
+    /// 真实 codex JSONL fixture 跑通后，`result.session_params` 应携带
+    /// `{ sessionId, cwd, workspaceId?, repoUrl?, repoRef? }`（对齐 Node
+    /// codex execute.ts L1342-1357 的 resolvedSessionParams）。
+    #[tokio::test]
+    async fn codex_adapter_populates_session_params() {
+        let path =
+            std::env::temp_dir().join(format!("paperclip-codex-params-{}", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread_params\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ok\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}'\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let adapter = CodexLocalAdapter::new();
+        let (sink, _receiver) = AdapterEventSink::channel(8);
+        let mut context =
+            AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "p");
+        context.cwd = Some(std::env::temp_dir());
+        context.adapter_config = serde_json::json!({
+            "command": path,
+            "workspaceContext": {
+                "workspaceId": "ws_params",
+                "repoUrl": "git@github.com:foo/bar.git",
+                "repoRef": "main",
+            },
+        });
+
+        let result = adapter.execute(context, sink).await.unwrap();
+
+        let params = result
+            .session_params
+            .as_ref()
+            .expect("session_params should be populated");
+        assert_eq!(
+            params.get("sessionId").and_then(|v| v.as_str()),
+            Some("thread_params")
+        );
+        let expected_cwd = std::env::temp_dir().to_string_lossy().to_string();
+        assert_eq!(
+            params.get("cwd").and_then(|v| v.as_str()),
+            Some(expected_cwd.as_str())
+        );
+        assert_eq!(
+            params.get("workspaceId").and_then(|v| v.as_str()),
+            Some("ws_params")
+        );
+        assert_eq!(
+            params.get("repoUrl").and_then(|v| v.as_str()),
+            Some("git@github.com:foo/bar.git")
+        );
+        assert_eq!(params.get("repoRef").and_then(|v| v.as_str()), Some("main"));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn fast_mode_ignored_reason_set_when_requested_but_not_applied() {
+        let config = serde_json::json!({
+            "model": "o3",
+            "fastMode": true,
+        });
+        let built = build_codex_exec_args(&config, None, false);
+        assert!(built.fast_mode_requested);
+        assert!(!built.fast_mode_applied);
+        let reason = built.fast_mode_ignored_reason.expect("reason expected");
+        assert!(reason.contains("Configured fast mode is currently only supported on"));
+        assert!(reason.contains("will ignore it for model o3"));
+    }
+
+    #[test]
+    fn fast_mode_ignored_reason_none_when_applied() {
+        let config = serde_json::json!({
+            "model": "gpt-5.6-sol",
+            "fastMode": true,
+        });
+        let built = build_codex_exec_args(&config, None, false);
+        assert!(built.fast_mode_requested);
+        assert!(built.fast_mode_applied);
+        assert!(built.fast_mode_ignored_reason.is_none());
+    }
+
+    #[test]
+    fn fast_mode_ignored_reason_none_when_not_requested() {
+        let config = serde_json::json!({
+            "model": "o3",
+            "fastMode": false,
+        });
+        let built = build_codex_exec_args(&config, None, false);
+        assert!(!built.fast_mode_requested);
+        assert!(!built.fast_mode_applied);
+        assert!(built.fast_mode_ignored_reason.is_none());
+    }
+
 }
 
 #[cfg(test)]
@@ -644,6 +925,7 @@ mod monitor_integration_tests {
             model: "gpt-5.6-sol".to_owned(),
             fast_mode_requested: false,
             fast_mode_applied: false,
+            fast_mode_ignored_reason: None,
         };
         let (sink, _rx) = AdapterEventSink::channel(8);
         let (execution, outcome) = execute_codex_with_monitor(
@@ -680,6 +962,7 @@ mod monitor_integration_tests {
             model: "gpt-5.6-sol".to_owned(),
             fast_mode_requested: false,
             fast_mode_applied: false,
+            fast_mode_ignored_reason: None,
         };
         let (sink, _rx) = AdapterEventSink::channel(8);
         let (_execution, outcome) = execute_codex_with_monitor(

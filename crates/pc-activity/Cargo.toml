@@ -15,8 +15,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+futures-core = "0.3"
 tracing = "0.1"
 uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+futures-core = "0.3"
