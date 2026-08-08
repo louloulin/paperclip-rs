@@ -73,6 +73,16 @@ pub fn resolve_runtime_env(env: BTreeMap<String, String>) -> BTreeMap<String, St
     combined
 }
 
+/// 判断 env 中某个键是否"非空字符串"。
+///
+/// Node 等价：`hasNonEmptyEnvValue`（claude-local / codex-local 通用）。
+/// `key` 缺失或值为非字符串 / 空字符串 / 纯空白 → 返回 `false`。
+pub fn has_non_empty_env_value(env: &std::collections::BTreeMap<String, String>, key: &str) -> bool {
+    env.get(key)
+        .map(|raw| !raw.trim().is_empty())
+        .unwrap_or(false)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -147,5 +157,24 @@ mod tests {
         let result = resolve_runtime_env(caller);
         // Caller's PATH wins (no platform default inserted).
         assert_eq!(result.get("PATH"), Some(&"/caller/bin".to_string()));
+    }
+
+    #[test]
+    fn has_non_empty_env_value_命中() {
+        let mut env = BTreeMap::new();
+        env.insert("FOO".to_owned(), "bar".to_owned());
+        assert!(has_non_empty_env_value(&env, "FOO"));
+        env.insert("BAZ".to_owned(), "  spaced  ".to_owned());
+        assert!(has_non_empty_env_value(&env, "BAZ"));
+    }
+
+    #[test]
+    fn has_non_empty_env_value_空值或缺失() {
+        let mut env = BTreeMap::new();
+        env.insert("EMPTY".to_owned(), "".to_owned());
+        env.insert("SPACES".to_owned(), "   ".to_owned());
+        assert!(!has_non_empty_env_value(&env, "EMPTY"));
+        assert!(!has_non_empty_env_value(&env, "SPACES"));
+        assert!(!has_non_empty_env_value(&env, "MISSING"));
     }
 }

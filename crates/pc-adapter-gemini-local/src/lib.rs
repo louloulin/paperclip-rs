@@ -5,6 +5,12 @@
 
 pub mod skills;
 pub mod gemini_stream_json;
+pub mod execute_helpers;
+
+pub use execute_helpers::{
+    build_gemini_headless_env, gemini_skills_home, render_api_access_note,
+    render_paperclip_env_note, resolve_gemini_billing_type, GeminiBillingType,
+};
 
 pub use gemini_stream_json::{
     detect_gemini_auth_required, detect_gemini_quota_exhausted,
@@ -123,8 +129,10 @@ impl Adapter for GeminiLocalAdapter {
         let execution = execute_process_capture(&spec, &context, events).await?;
         let parsed = parse_gemini_stream_json(&execution.stdout);
         let mut result = execution.result;
+        let billing_type = crate::execute_helpers::resolve_gemini_billing_type(&context.env);
         result.provider = Some(ADAPTER_TYPE.into());
         result.model = model;
+        result.billing_type = Some(billing_type.as_str().to_owned());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.usage = Some(parsed.usage);
         result.error_message = parsed.error_message.or_else(|| (result.exit_code != Some(0))
@@ -132,7 +140,18 @@ impl Adapter for GeminiLocalAdapter {
             .filter(|s| !s.is_empty()));
         result.session_id = parsed.session_id;
         result.cost_usd = parsed.cost_usd;
-        result.result_json = parsed.result_json;
+        let mut result_json = parsed.result_json.unwrap_or_else(|| serde_json::json!({}));
+        if let Value::Object(ref mut map) = result_json {
+            map.insert(
+                "paperclipEnvNote".to_owned(),
+                Value::String(crate::execute_helpers::render_paperclip_env_note(&context.env)),
+            );
+            map.insert(
+                "apiAccessNote".to_owned(),
+                Value::String(crate::execute_helpers::render_api_access_note(&context.env)),
+            );
+        }
+        result.result_json = Some(result_json);
         Ok(result)
     }
 }

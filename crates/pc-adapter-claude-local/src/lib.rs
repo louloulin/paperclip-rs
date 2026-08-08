@@ -16,11 +16,16 @@
 pub mod skills;
 pub mod claude_stream_json;
 pub mod claude_errors;
+pub mod execute_helpers;
 
 pub use claude_stream_json::{
     claude_model_usage_totals, detect_claude_login_required, extract_claude_login_url,
     is_claude_image_processing_error, is_claude_unknown_session_error,
     parse_claude_stream_json, ParsedClaudeStreamJson,
+};
+pub use execute_helpers::{
+    claude_session_cwd_matches_execution_target, is_bedrock_auth, resolve_claude_billing_type,
+    ClaudeBillingType,
 };
 
 use async_trait::async_trait;
@@ -328,7 +333,11 @@ impl Adapter for ClaudeLocalAdapter {
         result.session_id = parsed.session_id.clone();
         result.provider = Some("claude_local".into());
         result.model = parsed.model.clone().or_else(|| built.model.clone());
-        result.billing_type = Some("subscription".into());
+        result.billing_type = Some(
+            crate::execute_helpers::resolve_claude_billing_type(&context.env)
+                .as_str()
+                .to_owned(),
+        );
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
         result.usage = parsed.usage.clone();
         result.error_message = parsed.error_message.clone().or_else(|| {

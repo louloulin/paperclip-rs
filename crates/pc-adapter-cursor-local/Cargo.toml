@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-adapter-process = { path = "../pc-adapter-process" }
+pc-acpx = { path = "../pc-acpx" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

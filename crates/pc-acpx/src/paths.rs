@@ -125,3 +125,106 @@ fn is_valid_instance_id(value: &str) -> bool {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
+
+/// 规范化 cwd 字符串：清理 `./` / `../`，保留绝对路径字面量。
+///
+/// Node 等价（pi-local `normalizeExecutionCwd` 与
+/// claude-local `claudeSessionCwdMatchesExecutionTarget` 内的 `path.resolve`）。
+///
+/// 与 `Path::canonicalize` 不同：纯字符串处理，不做 fs 解析。
+///
+/// 实现要点：避免 `out.join("/")` 在根前缀处产生 `"//a/b"` 双斜杠，
+/// 因此把根前缀视为"前缀标记"，最后再以 `format!("/{}", ...)` 拼回。
+pub fn normalize_cwd(candidate: &str) -> String {
+    let path = std::path::Path::new(candidate);
+    let mut absolute = false;
+    let mut segments: Vec<String> = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::Prefix(_) => {
+                absolute = true;
+                segments.push(comp.as_os_str().to_string_lossy().into_owned());
+            }
+            std::path::Component::RootDir => {
+                absolute = true;
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                let can_pop = segments
+                    .last()
+                    .map(|last| last != "..")
+                    .unwrap_or(false);
+                if can_pop {
+                    segments.pop();
+                } else if !absolute {
+                    segments.push("..".to_owned());
+                }
+                // absolute + 栈空/栈顶 `..` → 忽略（已经在根目录之上）
+            }
+            std::path::Component::Normal(part) => {
+                segments.push(part.to_string_lossy().into_owned());
+            }
+        }
+    }
+    if segments.is_empty() {
+        if absolute { "/".to_owned() } else { ".".to_owned() }
+    } else if absolute {
+        format!("/{}", segments.join("/"))
+    } else {
+        segments.join("/")
+    }
+}
+
+/// 比较两个 cwd 是否指向同一逻辑路径（POSIX 大小写敏感）。
+///
+/// Node 等价：pi-local `executionCwdsMatch` / claude-local 内部比较。
+pub fn cwds_match(saved: &str, current: &str) -> bool {
+    normalize_cwd(saved) == normalize_cwd(current)
+}
+
+#[cfg(test)]
+mod path_utils_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_cwd_绝对路径() {
+        assert_eq!(normalize_cwd("/a/b/c"), "/a/b/c");
+        assert_eq!(normalize_cwd("/a/./b"), "/a/b");
+        assert_eq!(normalize_cwd("/a/b/../c"), "/a/c");
+        assert_eq!(normalize_cwd("/a/b/c/.."), "/a/b");
+    }
+
+    #[test]
+    fn normalize_cwd_相对路径() {
+        assert_eq!(normalize_cwd("a/b"), "a/b");
+        assert_eq!(normalize_cwd("./a/b"), "a/b");
+        assert_eq!(normalize_cwd("a/./b"), "a/b");
+        assert_eq!(normalize_cwd("a/b/../c"), "a/c");
+    }
+
+    #[test]
+    fn normalize_cwd_根路径() {
+        assert_eq!(normalize_cwd("/"), "/");
+        assert_eq!(normalize_cwd("/."), "/");
+        assert_eq!(normalize_cwd("/.."), "/");
+    }
+
+    #[test]
+    fn normalize_cwd_空输入() {
+        assert_eq!(normalize_cwd(""), ".");
+    }
+
+    #[test]
+    fn cwds_match_基本() {
+        assert!(cwds_match("/a/b", "/a/b"));
+        assert!(!cwds_match("/a/b", "/a/c"));
+        assert!(!cwds_match("/a/b", "/a/b/c"));
+        assert!(!cwds_match("/a/B", "/a/b")); // 大小写敏感
+    }
+
+    #[test]
+    fn cwds_match_规范化() {
+        assert!(cwds_match("/a/./b", "/a/b"));
+        assert!(cwds_match("/a/b/../c", "/a/c"));
+    }
+}

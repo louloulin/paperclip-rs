@@ -2,6 +2,13 @@
 
 pub mod skills;
 pub mod codex_errors;
+pub mod execute_helpers;
+
+pub use execute_helpers::{
+    fallback_mode_uses_fresh_session, fallback_mode_uses_safer_invocation,
+    read_codex_transient_fallback_mode, resolve_codex_biller, resolve_codex_billing_type,
+    resolve_codex_skills_dir, CodexBillingType, CodexTransientFallbackMode,
+};
 
 use async_trait::async_trait;
 use pc_adapter_api::{
@@ -256,9 +263,10 @@ impl Adapter for CodexLocalAdapter {
         let parsed = parse_codex_jsonl(&execution.stdout);
         let mut result = execution.result;
         result.session_id = parsed.session_id;
+        let billing_type = crate::execute_helpers::resolve_codex_billing_type(&context.env);
         result.provider = Some("openai".into());
+        result.billing_type = Some(billing_type.as_str().to_owned());
         result.model = (!built.model.is_empty()).then_some(built.model);
-        result.billing_type = Some("subscription".into());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.usage = Some(UsageSummary {
             input_tokens: parsed.usage.input_tokens,
@@ -273,6 +281,7 @@ impl Adapter for CodexLocalAdapter {
             "sawProtocolTerminalEvent": parsed.saw_protocol_terminal_event,
             "fastModeRequested": built.fast_mode_requested,
             "fastModeApplied": built.fast_mode_applied,
+            "biller": crate::execute_helpers::resolve_codex_biller(&context.env, billing_type),
         }));
         Ok(result)
     }

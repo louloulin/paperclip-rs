@@ -4,6 +4,11 @@
 //! output into the shared `AdapterExecutionResult` shape.
 
 pub mod skills;
+pub mod execute_helpers;
+
+pub use execute_helpers::{
+    claude_skills_home, resolve_opencode_biller,
+};
 pub mod opencode_stream_json;
 
 pub use opencode_stream_json::{

@@ -47,6 +47,7 @@ pub mod jsonrpc_wire;
 pub mod local_process_sandbox;
 pub mod log_redaction;
 pub mod managed_home;
+pub mod model_id;
 pub mod normalize;
 pub mod paperclip_claude_settings;
 pub mod paths;

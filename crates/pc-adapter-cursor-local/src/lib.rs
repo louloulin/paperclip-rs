@@ -20,6 +20,12 @@ use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::{json, Value};
 
 pub mod cursor_stream_json;
+pub mod execute_helpers;
+
+pub use execute_helpers::{
+    cursor_skills_home, normalize_mode, resolve_cursor_biller, resolve_cursor_billing_type,
+    resolve_provider_from_model, CursorBillingType, CursorMode,
+};
 
 pub use cursor_stream_json::{
     is_cursor_unknown_session_error, normalize_cursor_stream_line,
@@ -273,7 +279,19 @@ impl Adapter for CursorLocalAdapter {
         result.session_id = parsed.session_id.clone();
         result.provider = Some("cursor_local".into());
         result.model = parsed.model.clone().or_else(|| built.model.clone());
-        result.billing_type = Some("subscription".into());
+        let billing_type = crate::execute_helpers::resolve_cursor_billing_type(&context.env);
+        let model_for_provider = context.adapter_config.get("model").and_then(Value::as_str);
+        let provider = crate::execute_helpers::resolve_provider_from_model(
+            model_for_provider.unwrap_or(""),
+        );
+        result.billing_type = Some(billing_type.as_str().to_owned());
+        result.result_json = Some(serde_json::json!({
+            "biller": crate::execute_helpers::resolve_cursor_biller(
+                &context.env,
+                billing_type,
+                provider.as_deref(),
+            ),
+        }));
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
         result.usage = Some(parsed.usage.clone());
         result.error_message = parsed.error_message.clone().or_else(|| {
