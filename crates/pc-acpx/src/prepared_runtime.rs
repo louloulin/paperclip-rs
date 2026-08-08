@@ -184,6 +184,10 @@ pub struct PreparedRuntime {
     /// runner-less ACP→CLI fallback runs that never crossed the staging
     /// seam.
     pub staged_runtime: Option<PreparedStagedRuntime>,
+    /// Remote execution session identity (SSH 4-tuple or sandbox 5-tuple).
+    /// `None` on local runs. Mirrors Node `prepared.remoteExecutionIdentity`
+    /// and is serialized into `sessionParams.remoteExecution`.
+    pub remote_execution_identity: Option<BTreeMap<String, serde_json::Value>>,
     /// Env delta applied by the staging seam (e.g. `CODEX_HOME` repointed
     /// onto the in-sandbox asset dir). Replayed verbatim on a compatible
     /// resume so a later run reuses the same home.
@@ -226,6 +230,7 @@ impl PreparedRuntime {
             agent_command: None,
             step_metrics: StartupStepMetrics::default(),
             staged_runtime: None,
+            remote_execution_identity: None,
             remote_staging_env_delta: None,
             remote_managed_home_teardown: None,
             remote_staging_dispose: None,
@@ -258,6 +263,7 @@ pub struct PreparedRuntimeBuilder {
     pub agent_command: Option<BuiltInAgentCommand>,
     pub step_metrics: StartupStepMetrics,
     pub staged_runtime: Option<PreparedStagedRuntime>,
+    pub remote_execution_identity: Option<BTreeMap<String, serde_json::Value>>,
     pub remote_staging_env_delta: Option<BTreeMap<String, String>>,
     pub remote_managed_home_teardown: Option<AsyncCallback>,
     pub remote_staging_dispose: Option<AsyncCallback>,
@@ -367,6 +373,15 @@ impl PreparedRuntimeBuilder {
         self
     }
 
+    /// Set the remote execution session identity (R434).
+    pub fn remote_execution_identity(
+        mut self,
+        identity: BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        self.remote_execution_identity = Some(identity);
+        self
+    }
+
     pub fn remote_staging_env_delta(mut self, delta: BTreeMap<String, String>) -> Self {
         self.remote_staging_env_delta = Some(delta);
         self
@@ -405,6 +420,7 @@ impl PreparedRuntimeBuilder {
             agent_command: self.agent_command,
             step_metrics: self.step_metrics,
             staged_runtime: self.staged_runtime,
+            remote_execution_identity: self.remote_execution_identity,
             remote_staging_env_delta: self.remote_staging_env_delta,
             remote_managed_home_teardown: self.remote_managed_home_teardown,
             remote_staging_dispose: self.remote_staging_dispose,

@@ -17,6 +17,7 @@ pc-telemetry = { path = "../pc-telemetry" }
 pc-realtime = { path = "../pc-realtime" }
 pc-heartbeat = { path = "../pc-heartbeat" }
 pc-adapter-api = { path = "../pc-adapter-api" }
+pc-adapter-quota = { path = "../pc-adapter-quota" }
 pc-auth = { path = "../pc-auth" }
 pc-backup = { path = "../pc-backup" }
 pc-repos = { path = "../pc-repos" }

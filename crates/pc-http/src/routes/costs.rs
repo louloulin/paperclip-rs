@@ -320,8 +320,43 @@ async fn window_spend(
     ))
 }
 
+/// 聚合各 provider 的配额窗口（复刻 Node `GET /companies/:companyId/costs/quota-windows`）。
+///
+/// 并行探测 codex_local（RPC→WHAM）与 claude_local（OAuth→CLI），
+/// 每个 provider 独立 20s 超时；单 provider 失败返回错误结果而非阻塞整体。
 async fn quota_windows() -> Json<Vec<Value>> {
-    Json(Vec::new())
+    use pc_adapter_quota::{fetch_all_quota_windows, probe_claude_local, probe_codex_local};
+    let tasks: Vec<(
+        String,
+        std::pin::Pin<Box<dyn std::future::Future<Output = pc_adapter_quota::ProviderQuotaResult> + Send>>,
+    )> = vec![
+        ("codex_local".to_owned(), Box::pin(probe_codex_local())),
+        ("claude_local".to_owned(), Box::pin(probe_claude_local())),
+    ];
+    let results = fetch_all_quota_windows(tasks).await;
+    Json(
+        results
+            .into_iter()
+            .map(|result| {
+                json!({
+                    "provider": result.provider,
+                    "source": result.source,
+                    "ok": result.ok,
+                    "errorFamily": result.error_family,
+                    "error": result.error,
+                    "windows": result.windows.iter().map(|window| {
+                        json!({
+                            "label": window.label,
+                            "usedPercent": window.used_percent,
+                            "resetsAt": window.resets_at,
+                            "valueLabel": window.value_label,
+                            "detail": window.detail,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 async fn budget_overview(

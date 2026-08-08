@@ -3,6 +3,7 @@
 pub mod skills;
 pub mod codex_errors;
 pub mod execute_helpers;
+pub mod output_inactivity_monitor;
 
 pub use execute_helpers::{
     fallback_mode_uses_fresh_session, fallback_mode_uses_safer_invocation,
@@ -15,7 +16,11 @@ use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,
     AdapterExecutionResult, UsageSummary,
 };
-use pc_adapter_process::{execute_process_capture, ProcessSpec};
+use pc_adapter_process::{
+    execute_process_capture, execute_process_capture_with_options, ProcessSpec,
+};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use serde_json::Value;
 
 pub const ADAPTER_TYPE: &str = "codex_local";
@@ -228,6 +233,97 @@ fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
+/// 输出不活动监控的结果（对齐 Node execute.ts 的 monitor 组装）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonitorOutcome {
+    pub termination_signal: String,
+    pub elapsed_ms_since_last_event: u64,
+    pub timeout_ms: u64,
+}
+
+/// 运行一次 codex 进程并接入输出不活动监控。
+///
+/// 复刻 Node execute.ts：monitor 触发时设置 kill_flag 终止子进程，
+/// 返回 `MonitorOutcome`；未触发返回 `None`。
+async fn execute_codex_with_monitor(
+    command: &str,
+    built: &CodexExecArgs,
+    context: &AdapterExecutionContext,
+    events: AdapterEventSink,
+    monitor_timeout_ms: Option<u64>,
+) -> Result<(pc_adapter_process::StreamingProcessExecution, Option<MonitorOutcome>), AdapterError> {
+    let spec = ProcessSpec::new(command, &built.args).with_stdin(context.prompt.clone());
+    if monitor_timeout_ms.is_none() {
+        let execution = execute_process_capture(&spec, context, events).await?;
+        return Ok((execution.into_streaming(), None));
+    }
+    let timeout_ms = monitor_timeout_ms.expect("checked above");
+    let kill_flag = Arc::new(AtomicBool::new(false));
+    let outcome: Arc<std::sync::Mutex<Option<MonitorOutcome>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let outcome_for_monitor = Arc::clone(&outcome);
+    let kill_flag_for_monitor = Arc::clone(&kill_flag);
+    let monitor = crate::output_inactivity_monitor::spawn_monitor(
+        timeout_ms,
+        move |state| {
+            let elapsed = state
+                .fired_at
+                .unwrap_or(state.last_event_at)
+                .saturating_sub(state.last_event_at);
+            *outcome_for_monitor.lock().expect("monitor outcome lock") = Some(MonitorOutcome {
+                termination_signal: "SIGTERM".to_owned(),
+                elapsed_ms_since_last_event: elapsed,
+                timeout_ms,
+            });
+            kill_flag_for_monitor.store(true, std::sync::atomic::Ordering::SeqCst);
+        },
+    )
+    .map_err(AdapterError::Process)?;
+
+    let monitor_for_chunk = Arc::new(monitor);
+    let monitor_for_chunk_cb = Arc::clone(&monitor_for_chunk);
+    let on_chunk: Arc<dyn Fn(&str, &str) + Send + Sync> = Arc::new(move |stream, chunk| {
+        monitor_for_chunk_cb.note_output_chunk(stream, chunk);
+    });
+
+    let execution = match execute_process_capture_with_options(
+        &spec,
+        context,
+        events,
+        Some(on_chunk),
+        Some(kill_flag),
+    )
+    .await
+    {
+        Ok(execution) => execution,
+        Err(AdapterError::Process(message)) if message.contains("killed by output inactivity monitor") => {
+            let outcome_locked = outcome.lock().expect("monitor outcome lock").clone();
+            if outcome_locked.is_some() {
+                // monitor 触发终止 → 返回空执行 + outcome（对齐 Node monitor 分支）。
+                drop(monitor_for_chunk);
+                return Ok((
+                    pc_adapter_process::StreamingProcessExecution {
+                        result: AdapterExecutionResult {
+                            error_message: Some(message),
+                            ..AdapterExecutionResult::default()
+                        },
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        spawned_pid: None,
+                    },
+                    outcome_locked,
+                ));
+            }
+            return Err(AdapterError::Process(message));
+        }
+        Err(error) => return Err(error),
+    };
+    drop(monitor_for_chunk);
+
+    let outcome = outcome.lock().expect("monitor outcome lock").clone();
+    Ok((execution, outcome))
+}
+
 #[derive(Debug, Default)]
 pub struct CodexLocalAdapter;
 
@@ -253,6 +349,19 @@ impl Adapter for CodexLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = string(&context.adapter_config, "command").unwrap_or("codex");
+        // 输出不活动监控：解析 adapterConfig.outputInactivityTimeoutMs（R433）。
+        let monitor_resolution = crate::output_inactivity_monitor::resolve_codex_inactivity_timeout(
+            context.adapter_config.get("outputInactivityTimeoutMs"),
+        );
+        let monitor_timeout_ms = monitor_resolution.timeout_ms();
+        if monitor_resolution.is_disabled() {
+            let _ = events
+                .clone()
+                .emit(pc_adapter_api::AdapterEvent::stderr(
+                    "[paperclip] Codex output inactivity monitor is DISABLED via adapterConfig.outputInactivityTimeoutMs=null. Hung codex runs will only be detected by the platform-level silent-run safety net.\n".to_owned(),
+                ))
+                .await;
+        }
         // 首轮 attempt：若 `context.session_id` 非空，传 `resume <sid>`，与 Node
         // `buildArgs(resumeSessionId)` 行为一致。
         let initial_built = build_codex_exec_args(
@@ -260,9 +369,14 @@ impl Adapter for CodexLocalAdapter {
             context.session_id.as_deref(),
             false,
         );
-        let initial_spec = ProcessSpec::new(command, &initial_built.args)
-            .with_stdin(context.prompt.clone());
-        let initial_execution = execute_process_capture(&initial_spec, &context, events.clone()).await?;
+        let (initial_execution, initial_monitor) = execute_codex_with_monitor(
+            command,
+            &initial_built,
+            &context,
+            events.clone(),
+            monitor_timeout_ms,
+        )
+        .await?;
         let initial_parsed = parse_codex_jsonl(&initial_execution.stdout);
 
         // 决策：unknown session + 有 resume id → 真实重跑一轮（不带 resume）。
@@ -271,6 +385,7 @@ impl Adapter for CodexLocalAdapter {
         let mut active_execution = initial_execution;
         let mut active_parsed = initial_parsed;
         let mut active_built = initial_built;
+        let mut active_monitor = initial_monitor;
         if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
             if !active_execution.result.timed_out
                 && active_execution.result.exit_code.unwrap_or(0) != 0
@@ -286,15 +401,20 @@ impl Adapter for CodexLocalAdapter {
                     )))
                     .await;
                 let retry_built = build_codex_exec_args(&context.adapter_config, None, false);
-                let retry_spec = ProcessSpec::new(command, &retry_built.args)
-                    .with_stdin(context.prompt.clone());
                 let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
-                let retry_execution =
-                    execute_process_capture(&retry_spec, &context, retry_sink).await?;
+                let (retry_execution, retry_monitor) = execute_codex_with_monitor(
+                    command,
+                    &retry_built,
+                    &context,
+                    retry_sink,
+                    monitor_timeout_ms,
+                )
+                .await?;
                 let retry_parsed = parse_codex_jsonl(&retry_execution.stdout);
                 active_execution = retry_execution;
                 active_parsed = retry_parsed;
                 active_built = retry_built;
+                active_monitor = retry_monitor;
                 retried_after_unknown_session = true;
                 clear_session_on_retry = true;
             }
@@ -303,6 +423,45 @@ impl Adapter for CodexLocalAdapter {
         let execution = active_execution;
         let parsed = active_parsed;
         let built = active_built;
+        // 输出不活动监控触发 → 组装 `codex_output_inactivity_monitor` 结果（对齐 Node toResult）。
+        if let Some(monitor) = active_monitor {
+            let error_message = crate::output_inactivity_monitor::
+                format_output_inactivity_monitor_error_message(
+                    monitor.elapsed_ms_since_last_event,
+                );
+            let mut monitor_result = AdapterExecutionResult {
+                exit_code: None,
+                signal: Some(monitor.termination_signal.clone()),
+                timed_out: false,
+                error_message: Some(error_message.clone()),
+                error_code: Some("codex_output_inactivity_monitor".to_owned()),
+                provider: Some("openai".to_owned()),
+                result_json: Some(serde_json::json!({
+                    "stdout": execution.stdout,
+                    "stderr": execution.stderr,
+                    "outputInactivityMonitor": {
+                        "kind": "output_inactivity",
+                        "timeoutMs": monitor.timeout_ms,
+                        "elapsedMsSinceLastEvent": monitor.elapsed_ms_since_last_event,
+                        "terminationSignal": monitor.termination_signal,
+                    },
+                })),
+                ..AdapterExecutionResult::default()
+            };
+            monitor_result.billing_type =
+                Some(crate::execute_helpers::resolve_codex_billing_type(&context.env).as_str().to_owned());
+            let paperclip_env_note =
+                pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
+            let api_access_note =
+                pc_acpx::session_config_options::render_api_access_note(&context.env);
+            if let Some(result_json) = monitor_result.result_json.as_mut() {
+                result_json["paperclipEnvNote"] = serde_json::Value::String(paperclip_env_note);
+                result_json["apiAccessNote"] = serde_json::Value::String(api_access_note);
+                result_json["errorFamily"] = serde_json::Value::Null;
+            }
+            let _ = error_message;
+            return Ok(monitor_result);
+        }
         let mut result = execution.result;
         result.session_id = parsed.session_id;
         let billing_type = crate::execute_helpers::resolve_codex_billing_type(&context.env);
@@ -464,5 +623,74 @@ mod tests {
         assert_eq!(result.summary.as_deref(), Some("Fixture done"));
         assert_eq!(result.usage.unwrap().output_tokens, 2);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod monitor_integration_tests {
+    use super::*;
+    use pc_adapter_api::{AdapterEventSink, AdapterExecutionContext};
+
+    /// 真实进程 + 极短超时：验证 monitor 触发后 kill 子进程并返回 outcome。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn monitor_fires_and_kills_silent_process() {
+        let context = AdapterExecutionContext::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "ignored prompt",
+        );
+        let built = CodexExecArgs {
+            args: vec!["30".to_owned()],
+            model: "gpt-5.6-sol".to_owned(),
+            fast_mode_requested: false,
+            fast_mode_applied: false,
+        };
+        let (sink, _rx) = AdapterEventSink::channel(8);
+        let (execution, outcome) = execute_codex_with_monitor(
+            "sleep",
+            &built,
+            &context,
+            sink,
+            Some(300),
+        )
+        .await
+        .expect("execute should complete after monitor kill");
+
+        let outcome = outcome.expect("monitor must fire on silent process");
+        assert_eq!(outcome.termination_signal, "SIGTERM");
+        assert!(outcome.timeout_ms >= 300);
+        // 进程应被终止，不会等到 30s。
+        assert!(execution.result.exit_code.is_none() || execution.result.exit_code != Some(0));
+        assert_eq!(
+            execution.result.error_message.as_deref(),
+            Some("killed by output inactivity monitor")
+        );
+    }
+
+    /// monitor 禁用时不创建监控，正常执行。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn monitor_disabled_returns_no_outcome() {
+        let context = AdapterExecutionContext::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "ignored",
+        );
+        let built = CodexExecArgs {
+            args: vec![].to_vec(),
+            model: "gpt-5.6-sol".to_owned(),
+            fast_mode_requested: false,
+            fast_mode_applied: false,
+        };
+        let (sink, _rx) = AdapterEventSink::channel(8);
+        let (_execution, outcome) = execute_codex_with_monitor(
+            "/bin/echo",
+            &built,
+            &context,
+            sink,
+            None,
+        )
+        .await
+        .expect("execute should succeed");
+        assert!(outcome.is_none());
     }
 }

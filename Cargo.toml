@@ -27,6 +27,7 @@ members = [
     "crates/pc-adapter-hermes-gateway",
     "crates/pc-adapter-openclaw-gateway",
     "crates/pc-adapter-opencode-local",
+    "crates/pc-adapter-quota",
     "crates/pc-adapter-pi-local",
     "crates/pc-plugin-protocol",
     "crates/pc-plugin-host",

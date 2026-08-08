@@ -1304,7 +1304,10 @@ fn prepared_runtime_lite(prepared: &PreparedRuntime) -> AcpxPreparedRuntimeLite 
         acpx_agent: prepared.acpx_agent.clone(),
         mode: prepared.mode.as_str().to_string(),
         cwd: prepared.cwd.to_string_lossy().to_string(),
-        remote_execution_identity: None,
+        remote_execution_identity: prepared
+            .remote_execution_identity
+            .clone()
+            .map(serde_json::Value::Object),
         requested_model: if prepared.requested_model.is_empty() {
             None
         } else {

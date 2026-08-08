@@ -313,7 +313,7 @@ pub fn build_session_params(
         } else {
             Some(prepared.workspace_repo_ref.clone())
         },
-        remote_execution: None,
+        remote_execution: prepared.remote_execution_identity.clone(),
     }
 }
 
