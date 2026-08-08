@@ -44,6 +44,7 @@ use pc_adapter_api::{
 };
 use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 pub const ADAPTER_TYPE: &str = "claude_local";
 
@@ -311,6 +312,132 @@ impl ClaudeLocalAdapter {
     pub const fn new() -> Self {
         Self
     }
+
+    /// v2 execute：集成 R461 模块（session resume 重试循环 + 错误族 + session_params）。
+    ///
+    /// 与 `execute` 的差别：
+    /// - 调用 `claude_session_resume::decide_claude_session_resume` 决策是否 resume
+    /// - 第一次 attempt 失败 + 是 session 错误 → 自动 fresh 重试
+    /// - 通过 `claude_result_builder::assemble_claude_result` 整合最终结果
+    /// - session_params 由 `claude_session_params::build_resolved_session_params` 组装
+    ///
+    /// 远程执行路径（bridge / materialzeRemoteClaudeConfig）暂未实现，留待后续。
+    pub async fn execute_with_resume_retry(
+        &self,
+        context: AdapterExecutionContext,
+        events: AdapterEventSink,
+    ) -> Result<AdapterExecutionResult, AdapterError> {
+        let command = default_command(&context.adapter_config);
+        let built = build_claude_exec_args(&context.adapter_config);
+
+        let runtime_session_id = context.session_id.as_deref().unwrap_or("");
+        let runtime_session_cwd = context
+            .cwd
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let runtime_session_params = context.session_params.as_ref();
+        let (
+            runtime_prompt_bundle_key,
+            runtime_mcp_server_identity,
+            runtime_remote_execution,
+        ) = extract_runtime_session_params(runtime_session_params);
+
+        let prompt_bundle_key =
+            compute_prompt_bundle_key(&context.prompt, &context.adapter_config);
+        let mcp_server_identity = String::new();
+        let effective_execution_cwd = context
+            .cwd
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        let execution_target_is_remote = false;
+        let execution_target: Option<&Value> = None;
+        let execution_target_session_identity: Option<&Value> = None;
+
+        let decision = crate::claude_session_resume::decide_claude_session_resume(
+            &crate::claude_session_resume::SessionResumeInput {
+                runtime_session_id,
+                runtime_session_cwd: &runtime_session_cwd,
+                runtime_remote_execution,
+                runtime_prompt_bundle_key: &runtime_prompt_bundle_key,
+                runtime_mcp_server_identity: &runtime_mcp_server_identity,
+                effective_execution_cwd: &effective_execution_cwd,
+                current_prompt_bundle_key: &prompt_bundle_key,
+                current_mcp_server_identity: &mcp_server_identity,
+                execution_target_is_remote,
+                execution_target,
+            },
+        );
+        for log in &decision.log_lines {
+            let _ = events
+                .clone()
+                .emit(pc_adapter_api::AdapterEvent::stdout(log.clone()))
+                .await;
+        }
+        let resume_session_id = decision
+            .resume_session_id(runtime_session_id)
+            .map(str::to_owned);
+
+        let loop_input = crate::claude_resume_loop::ResumeRetryInput {
+            context: &context,
+            events: events.clone(),
+            command: &command,
+            base_args: &built.args,
+            resume_session_id: resume_session_id.as_deref(),
+            runtime_session_id,
+            effective_execution_cwd: &effective_execution_cwd,
+            prompt_bundle_key: &prompt_bundle_key,
+            mcp_server_identity: &mcp_server_identity,
+            workspace_id: None,
+            repo_url: None,
+            repo_ref: None,
+            execution_target_is_remote,
+            execution_target_session_identity,
+            config_model: built.model.as_deref().unwrap_or(""),
+            is_bedrock_auth: crate::claude_models::is_bedrock_env(&context.env),
+            now: std::time::SystemTime::now(),
+        };
+        crate::claude_resume_loop::run_resume_retry_loop(&loop_input).await
+    }
+}
+
+/// content-addressed prompt bundle key：基于 prompt + adapter_config 的 SHA-256 hex（前 16 字节）。
+pub fn compute_prompt_bundle_key(prompt: &str, adapter_config: &Value) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(prompt.as_bytes());
+    hasher.update(adapter_config.to_string().as_bytes());
+    let digest = hasher.finalize();
+    hex_encode(&digest[..16])
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        s.push_str(&format!("{:02x}", byte));
+    }
+    s
+}
+
+fn extract_runtime_session_params(
+    params: Option<&Value>,
+) -> (String, String, Option<&Value>) {
+    let Some(value) = params else {
+        return (String::new(), String::new(), None);
+    };
+    let bundle_key = value
+        .get("promptBundleKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let mcp_identity = value
+        .get("mcpServerIdentity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let remote = value.get("remoteExecution");
+    (bundle_key, mcp_identity, remote)
 }
 
 impl Default for ClaudeLocalAdapter {
@@ -585,6 +712,183 @@ mod tests {
         assert_eq!(result.model.as_deref(), Some("claude-opus-4-7"));
         std::fs::remove_file(path).unwrap();
     }
+
+    /// v2 execute：单 attempt 成功路径（用真实 fixture）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_with_resume_retry_happy_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir()
+            .join(format!("paperclip-claude-v2-{}.sh", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"v2_sess\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"hi\"}}' '{\"type\":\"result\",\"is_error\":false,\"result\":\"v2 done\",\"session_id\":\"v2_sess\",\"model\":\"claude-opus-4-7\",\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"cache_read_input_tokens\":2}}'\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let adapter = ClaudeLocalAdapter::new();
+        let (sink, _receiver) = AdapterEventSink::channel(8);
+        let mut context =
+            AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "prompt");
+        context.adapter_config = serde_json::json!({
+            "command": path.to_string_lossy(),
+            "model": "claude-opus-4-7",
+            "dangerouslySkipPermissions": true,
+        });
+
+        let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.session_id.as_deref(), Some("v2_sess"));
+        assert_eq!(result.summary.as_deref(), Some("v2 done"));
+        assert_eq!(result.model.as_deref(), Some("claude-opus-4-7"));
+        let usage = result.usage.expect("usage present");
+        assert_eq!(usage.output_tokens, 3);
+        assert!(!result.clear_session);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// v2 execute：第一次 attempt 返回 unknown session → 自动 fresh 重试 → 成功。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_with_resume_retry_unknown_session_triggers_fresh_retry() {
+        use std::os::unix::fs::PermissionsExt;
+        // 第一次调用：返回 unknown session 错误
+        // 第二次调用：返回成功（fresh session）
+        let path = std::env::temp_dir()
+            .join(format!("paperclip-claude-retry-{}.sh", uuid::Uuid::new_v4()));
+        let counter_path = std::env::temp_dir()
+            .join(format!("paperclip-claude-retry-{}.counter", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\ncounter_file="{counter}"\ncount=$(cat $counter_file 2>/dev/null || echo 0)\ncount=$((count+1))\necho $count > $counter_file\nif [ $count -eq 1 ]; then\n  printf '%s\\n' '{{\"type\":\"result\",\"is_error\":true,\"errors\":[{{\"message\":\"No conversation found with session ID: abc\"}}],\"session_id\":\"abc\"}}'\n  exit 1\nelse\n  printf '%s\\n' '{{\"type\":\"thread.started\",\"thread_id\":\"fresh_sess\"}}' '{{\"type\":\"result\",\"is_error\":false,\"result\":\"fresh done\",\"session_id\":\"fresh_sess\",\"model\":\"claude-opus-4-7\"}}'\nfi\n",
+                counter = counter_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let adapter = ClaudeLocalAdapter::new();
+        let (sink, _receiver) = AdapterEventSink::channel(8);
+        let mut context = AdapterExecutionContext::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "prompt",
+        );
+        context.adapter_config = serde_json::json!({
+            "command": path.to_string_lossy(),
+            "model": "claude-opus-4-7",
+        });
+        // 显式传 session_id 触发 resume 路径
+        context.session_id = Some("550e8400-e29b-41d4-a716-446655440000".to_owned());
+
+        let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
+        // 重试后应该 fresh session
+        assert_eq!(result.session_id.as_deref(), Some("fresh_sess"));
+        assert_eq!(result.summary.as_deref(), Some("fresh done"));
+        assert!(result.clear_session, "missing session 应当清除 server 端持久化的 sid");
+        std::fs::remove_file(&path).unwrap();
+        let _ = std::fs::remove_file(&counter_path);
+    }
+
+    /// v2 execute：session_id 不是合法 UUID → 不传 --resume，单 attempt。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_with_resume_retry_invalid_uuid_skips_resume() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir()
+            .join(format!("paperclip-claude-invalid-uuid-{}.sh", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\n# 验证 stdin 不为空 + args 不含 --resume\nif echo "$@" | grep -q -- '--resume'; then\n  echo 'unexpected --resume' >&2\n  exit 2\nfi\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"sess1\"}'\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let adapter = ClaudeLocalAdapter::new();
+        let (sink, _receiver) = AdapterEventSink::channel(8);
+        let mut context =
+            AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "prompt");
+        context.adapter_config = serde_json::json!({
+            "command": path.to_string_lossy(),
+        });
+        context.session_id = Some("not-a-uuid".to_owned());
+
+        let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
+        assert_eq!(result.session_id.as_deref(), Some("sess1"));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn compute_prompt_bundle_key_stable_for_same_input() {
+        let cfg = serde_json::json!({"model": "x"});
+        let k1 = compute_prompt_bundle_key("hello", &cfg);
+        let k2 = compute_prompt_bundle_key("hello", &cfg);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn compute_prompt_bundle_key_differs_for_different_prompt() {
+        let cfg = serde_json::json!({});
+        let k1 = compute_prompt_bundle_key("hello", &cfg);
+        let k2 = compute_prompt_bundle_key("world", &cfg);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn compute_prompt_bundle_key_differs_for_different_config() {
+        let cfg1 = serde_json::json!({"model": "a"});
+        let cfg2 = serde_json::json!({"model": "b"});
+        let k1 = compute_prompt_bundle_key("hello", &cfg1);
+        let k2 = compute_prompt_bundle_key("hello", &cfg2);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn compute_prompt_bundle_key_returns_32_hex_chars() {
+        let k = compute_prompt_bundle_key("hello", &serde_json::json!({}));
+        assert_eq!(k.len(), 32);
+        assert!(k.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn extract_runtime_session_params_handles_missing() {
+        let (b, m, r) = extract_runtime_session_params(None);
+        assert_eq!(b, "");
+        assert_eq!(m, "");
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn extract_runtime_session_params_extracts_all_fields() {
+        let params = serde_json::json!({
+            "promptBundleKey": "bundle-x",
+            "mcpServerIdentity": "[{"name":"a"}]",
+            "remoteExecution": {"id": "ssh-1"},
+        });
+        let (b, m, r) = extract_runtime_session_params(Some(&params));
+        assert_eq!(b, "bundle-x");
+        assert_eq!(m, "[{"name":"a"}]");
+        assert!(r.is_some());
+    }
+
+    #[test]
+    fn extract_runtime_session_params_omits_missing_fields() {
+        let params = serde_json::json!({
+            "promptBundleKey": "bundle-x",
+        });
+        let (b, m, r) = extract_runtime_session_params(Some(&params));
+        assert_eq!(b, "bundle-x");
+        assert_eq!(m, "");
+        assert!(r.is_none());
+    }
 }
 pub mod claude_session_params;
 pub mod claude_result_builder;
+pub mod claude_prompt_sections;
+pub mod claude_mcp_config;
+pub mod claude_resume_loop;
