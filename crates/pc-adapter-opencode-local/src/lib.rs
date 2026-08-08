@@ -137,9 +137,15 @@ impl Adapter for OpencodeLocalAdapter {
         result.error_message = parsed.error_message.or_else(|| (result.exit_code != Some(0))
             .then(|| execution.stderr.trim().to_owned())
             .filter(|s| !s.is_empty()));
+        let paperclip_env_note =
+            pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
+        let api_access_note =
+            pc_acpx::session_config_options::render_api_access_note(&context.env);
         result.result_json = Some(serde_json::json!({
             "toolErrors": parsed.tool_errors,
             "biller": crate::execute_helpers::resolve_opencode_biller(&context.env, provider.as_deref()),
+            "paperclipEnvNote": paperclip_env_note,
+            "apiAccessNote": api_access_note,
         }));
         Ok(result)
     }

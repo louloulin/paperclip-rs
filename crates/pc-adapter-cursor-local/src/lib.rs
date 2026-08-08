@@ -285,12 +285,22 @@ impl Adapter for CursorLocalAdapter {
             model_for_provider.unwrap_or(""),
         );
         result.billing_type = Some(billing_type.as_str().to_owned());
-        result.result_json = Some(serde_json::json!({
+        let paperclip_env_note =
+            pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
+        let api_access_note =
+            pc_acpx::session_config_options::render_api_access_note(&context.env);
+        result.result_json = Some(json!({
             "biller": crate::execute_helpers::resolve_cursor_biller(
                 &context.env,
                 billing_type,
                 provider.as_deref(),
             ),
+            "paperclipEnvNote": paperclip_env_note,
+            "apiAccessNote": api_access_note,
+            "cursorResult": parsed.result_json,
+            "workspace": built.workspace,
+            "sandbox": built.sandbox,
+            "force": built.force,
         }));
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
         result.usage = Some(parsed.usage.clone());
@@ -300,12 +310,6 @@ impl Adapter for CursorLocalAdapter {
                 .filter(|s| !s.is_empty())
         });
         result.cost_usd = parsed.cost_usd;
-        result.result_json = Some(json!({
-            "cursorResult": parsed.result_json,
-            "workspace": built.workspace,
-            "sandbox": built.sandbox,
-            "force": built.force,
-        }));
         Ok(result)
     }
 }

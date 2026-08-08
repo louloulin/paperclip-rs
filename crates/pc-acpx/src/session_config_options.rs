@@ -132,20 +132,13 @@ pub fn render_api_access_note(env: &BTreeMap<String, String>) -> String {
     if !api_url_present || !api_key_present {
         return String::new();
     }
-    let api_key = env
-        .get("PAPERCLIP_API_KEY")
-        .map(|value| value.as_str())
-        .unwrap_or_default();
     let mut lines: Vec<String> = vec![
         "Paperclip API access note:".to_string(),
         "Use terminal commands with curl to make Paperclip API requests.".to_string(),
         "Normalize the base URL before adding API paths:".to_string(),
         "  PAPERCLIP_API_BASE=\"${PAPERCLIP_API_URL%/}\"; PAPERCLIP_API_BASE=\"${PAPERCLIP_API_BASE%/api}\"".to_string(),
         "GET example:".to_string(),
-        format!(
-            "  curl -s -H \"Authorization: Bearer {api_key}\" \"$PAPERCLIP_API_BASE/api/agents/me\"",
-            api_key = api_key
-        ),
+        "  curl -s -H \"Authorization: Bearer $PAPERCLIP_API_KEY\" \"$PAPERCLIP_API_BASE/api/agents/me\"".to_string(),
     ];
     if let Some(task_id) = env
         .get("PAPERCLIP_TASK_ID")
@@ -153,8 +146,7 @@ pub fn render_api_access_note(env: &BTreeMap<String, String>) -> String {
     {
         lines.push("Scoped issue comment example:".to_string());
         lines.push(format!(
-            "  curl -s -X POST -H \"Authorization: Bearer {api_key}\" -H \"Content-Type: application/json\" -H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\" -d '{{\"body\":\"Status update from agent.\"}}' \"$PAPERCLIP_API_BASE/api/issues/{task_id}/comments\"",
-            api_key = api_key,
+            "  curl -s -X POST -H \"Authorization: Bearer $PAPERCLIP_API_KEY\" -H \"Content-Type: application/json\" -H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\" -d '{{\"body\":\"Status update from agent.\"}}' \"$PAPERCLIP_API_BASE/api/issues/{task_id}/comments\"",
             task_id = task_id.as_str()
         ));
     } else {

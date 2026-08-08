@@ -21,7 +21,7 @@
 //! - `ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS` 4 项已知
 //! - 字符数 metrics (与 Node buildPrompt 命名一致) 全部对得上
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use pc_acpx::{
     is_assignment_shaped_paperclip_wake_reason, is_paperclip_recovery_wake_payload,

@@ -345,6 +345,10 @@ impl Adapter for ClaudeLocalAdapter {
                 .then(|| execution.stderr.trim().to_owned())
                 .filter(|s| !s.is_empty())
         });
+        let paperclip_env_note =
+            pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
+        let api_access_note =
+            pc_acpx::session_config_options::render_api_access_note(&context.env);
         result.result_json = Some(json!({
             "sawProtocolEvent": true,
             "sawProtocolTerminalEvent": parsed.result_json.is_some(),
@@ -356,6 +360,8 @@ impl Adapter for ClaudeLocalAdapter {
             "appendSystemPromptFile": built.append_system_prompt_file,
             "mcpConfigProvided": built.mcp_config.is_some(),
             "dangerouslySkipPermissions": built.dangerously_skip_permissions,
+            "paperclipEnvNote": paperclip_env_note,
+            "apiAccessNote": api_access_note,
         }));
         Ok(result)
     }

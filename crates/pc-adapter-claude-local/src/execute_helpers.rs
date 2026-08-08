@@ -76,6 +76,126 @@ pub fn claude_session_cwd_matches_execution_target(
     pc_acpx::paths::cwds_match(runtime_session_cwd, effective_execution_cwd)
 }
 
+/// Claude adapter 单一 attempt 的"错误族"分类。
+///
+/// Node 等价：`errorFamily` 字段在 Node 里有 `provider_quota` / `transient_upstream`
+/// 两个值。Rust 端我们用枚举表达相同概念。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudeErrorFamily {
+    None,
+    ProviderQuota,
+    TransientUpstream,
+    MaxTurns,
+    PoisonedPreviousMessageId,
+    Refusal,
+    ModelRefusal,
+    UnknownSession,
+}
+
+impl ClaudeErrorFamily {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClaudeErrorFamily::None => "",
+            ClaudeErrorFamily::ProviderQuota => "provider_quota",
+            ClaudeErrorFamily::TransientUpstream => "transient_upstream",
+            ClaudeErrorFamily::MaxTurns => "max_turns",
+            ClaudeErrorFamily::PoisonedPreviousMessageId => "claude_poisoned_previous_message_id",
+            ClaudeErrorFamily::Refusal => "refusal",
+            ClaudeErrorFamily::ModelRefusal => "model_refusal",
+            ClaudeErrorFamily::UnknownSession => "unknown_session",
+        }
+    }
+}
+
+/// Claude adapter 的 retry 决策输入快照。
+#[derive(Debug, Clone)]
+pub struct ClaudeRetryInput<'a> {
+    pub session_id: &'a str,
+    pub timed_out: bool,
+    pub exit_code: Option<i32>,
+    pub parsed: Option<&'a crate::claude_stream_json::ParsedClaudeStreamJson>,
+    pub stdout: &'a str,
+    pub stderr: &'a str,
+    pub error_message: Option<&'a str>,
+}
+
+/// Claude adapter 一次 attempt 的综合分类结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeRetryDecision {
+    pub error_family: ClaudeErrorFamily,
+    pub clear_session: bool,
+    pub provider_quota: bool,
+    pub transient_upstream: bool,
+}
+
+/// 在 `execute()` 主循环里复用：把首轮 attempt 多种判断压缩成单一决策，
+/// 与 Node `errorFamily` + `retryNotBefore` + `clearSession` 三者等价。
+pub fn decide_retry(input: ClaudeRetryInput<'_>) -> ClaudeRetryDecision {
+    use crate::claude_stream_json::ParsedClaudeStreamJson;
+    let failed = !input.timed_out && input.exit_code.unwrap_or(0) != 0;
+    let parsed = input.parsed;
+    let unknown_session = parsed
+        .map(|p| crate::claude_stream_json::is_claude_unknown_session_error(p))
+        .unwrap_or(false)
+        && !input.session_id.is_empty();
+    let max_turns = parsed
+        .map(crate::claude_stream_json::is_claude_max_turns_result)
+        .unwrap_or(false);
+    let poisoned = parsed
+        .map(crate::claude_stream_json::is_claude_poisoned_previous_message_id_error)
+        .unwrap_or(false);
+    let refusal = parsed
+        .map(crate::claude_stream_json::is_claude_refusal_result)
+        .unwrap_or(false);
+    let provider_quota = failed
+        && !max_turns
+        && !poisoned
+        && parsed
+            .map(|p| crate::claude_stream_json::is_claude_provider_quota_error(
+                p,
+                input.stdout,
+                input.stderr,
+                input.error_message.unwrap_or(""),
+            ))
+            .unwrap_or(false);
+    let transient_upstream = failed
+        && !max_turns
+        && !poisoned
+        && !provider_quota
+        && parsed
+            .map(|p| crate::claude_stream_json::is_claude_transient_upstream_error(
+                p,
+                input.stdout,
+                input.stderr,
+                input.error_message.unwrap_or(""),
+            ))
+            .unwrap_or(false);
+
+    let error_family = if refusal {
+        ClaudeErrorFamily::Refusal
+    } else if max_turns {
+        ClaudeErrorFamily::MaxTurns
+    } else if poisoned {
+        ClaudeErrorFamily::PoisonedPreviousMessageId
+    } else if provider_quota {
+        ClaudeErrorFamily::ProviderQuota
+    } else if transient_upstream {
+        ClaudeErrorFamily::TransientUpstream
+    } else if unknown_session {
+        ClaudeErrorFamily::UnknownSession
+    } else {
+        ClaudeErrorFamily::None
+    };
+
+    let clear_session = max_turns || poisoned || unknown_session;
+    ClaudeRetryDecision {
+        error_family,
+        clear_session,
+        provider_quota,
+        transient_upstream,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

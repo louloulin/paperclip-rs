@@ -276,12 +276,18 @@ impl Adapter for CodexLocalAdapter {
         result.error_message = parsed
             .error_message
             .or_else(|| (result.exit_code != Some(0)).then(|| execution.stderr.trim().to_owned()));
+        let paperclip_env_note =
+            pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
+        let api_access_note =
+            pc_acpx::session_config_options::render_api_access_note(&context.env);
         result.result_json = Some(serde_json::json!({
             "sawProtocolEvent": parsed.saw_protocol_event,
             "sawProtocolTerminalEvent": parsed.saw_protocol_terminal_event,
             "fastModeRequested": built.fast_mode_requested,
             "fastModeApplied": built.fast_mode_applied,
             "biller": crate::execute_helpers::resolve_codex_biller(&context.env, billing_type),
+            "paperclipEnvNote": paperclip_env_note,
+            "apiAccessNote": api_access_note,
         }));
         Ok(result)
     }
