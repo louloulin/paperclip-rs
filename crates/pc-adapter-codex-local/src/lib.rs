@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod skills;
+pub mod codex_errors;
 
 use async_trait::async_trait;
 use pc_adapter_api::{

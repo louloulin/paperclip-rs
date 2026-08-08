@@ -74,6 +74,7 @@ serde_json = "1"
 
 # 时间 / ID
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 
 # 并发原语

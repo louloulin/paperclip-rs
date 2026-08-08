@@ -14,10 +14,17 @@
 use async_trait::async_trait;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,
-    AdapterExecutionResult, UsageSummary,
+    AdapterExecutionResult,
 };
 use pc_adapter_process::{execute_process_capture, ProcessSpec};
 use serde_json::{json, Value};
+
+pub mod cursor_stream_json;
+
+pub use cursor_stream_json::{
+    is_cursor_unknown_session_error, normalize_cursor_stream_line,
+    parse_cursor_stream_json, ParsedCursorStreamJson,
+};
 
 pub const ADAPTER_TYPE: &str = "cursor_local";
 
@@ -261,26 +268,22 @@ impl Adapter for CursorLocalAdapter {
         let built = build_cursor_exec_args(&context.adapter_config);
         let spec = ProcessSpec::new(&command, &built.args).with_stdin(context.prompt.clone());
         let execution = execute_process_capture(&spec, &context, events).await?;
-        let parsed = parse_cursor_jsonl(&execution.stdout);
+        let parsed = parse_cursor_stream_json(&execution.stdout);
         let mut result = execution.result;
         result.session_id = parsed.session_id.clone();
         result.provider = Some("cursor_local".into());
         result.model = parsed.model.clone().or_else(|| built.model.clone());
         result.billing_type = Some("subscription".into());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary.clone());
-        result.usage = Some(UsageSummary {
-            input_tokens: parsed.input_tokens,
-            output_tokens: parsed.output_tokens,
-            cached_input_tokens: Some(parsed.cache_read_tokens),
-        });
+        result.usage = Some(parsed.usage.clone());
         result.error_message = parsed.error_message.clone().or_else(|| {
             (result.exit_code != Some(0))
                 .then(|| execution.stderr.trim().to_owned())
                 .filter(|s| !s.is_empty())
         });
+        result.cost_usd = parsed.cost_usd;
         result.result_json = Some(json!({
-            "sawProtocolEvent": parsed.saw_protocol_event,
-            "sawProtocolTerminalEvent": parsed.saw_protocol_terminal_event,
+            "cursorResult": parsed.result_json,
             "workspace": built.workspace,
             "sandbox": built.sandbox,
             "force": built.force,

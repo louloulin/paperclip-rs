@@ -4,6 +4,14 @@
 //! output into the shared `AdapterExecutionResult` shape.
 
 pub mod skills;
+pub mod gemini_stream_json;
+
+pub use gemini_stream_json::{
+    detect_gemini_auth_required, detect_gemini_quota_exhausted,
+    describe_gemini_failure, is_gemini_session_unrecoverable_error,
+    is_gemini_transient_network_error, is_gemini_turn_limit_result,
+    parse_gemini_stream_json, GeminiQuestion, GeminiQuestionChoice, ParsedGeminiStreamJson,
+};
 
 use async_trait::async_trait;
 use pc_adapter_api::{
@@ -113,14 +121,18 @@ impl Adapter for GeminiLocalAdapter {
         let model = default_model(&context.adapter_config);
         let spec = ProcessSpec::new(&command, &args).with_stdin(context.prompt.clone());
         let execution = execute_process_capture(&spec, &context, events).await?;
-        let summary = parse_gemini_output(&execution.stdout);
+        let parsed = parse_gemini_stream_json(&execution.stdout);
         let mut result = execution.result;
         result.provider = Some(ADAPTER_TYPE.into());
         result.model = model;
-        result.summary = summary;
-        result.error_message = (result.exit_code != Some(0))
+        result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
+        result.usage = Some(parsed.usage);
+        result.error_message = parsed.error_message.or_else(|| (result.exit_code != Some(0))
             .then(|| execution.stderr.trim().to_owned())
-            .filter(|s| !s.is_empty());
+            .filter(|s| !s.is_empty()));
+        result.session_id = parsed.session_id;
+        result.cost_usd = parsed.cost_usd;
+        result.result_json = parsed.result_json;
         Ok(result)
     }
 }
