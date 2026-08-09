@@ -1,26 +1,25 @@
 {
   "node_unique": 693,
-  "rust_unique": 687,
-  "common": 526,
-  "missing_in_rust": 167,
-  "extra_in_rust": 161,
-  "coverage_method_path": 75.9,
+  "rust_unique": 865,
+  "common": 648,
+  "missing_in_rust": 45,
+  "extra_in_rust": 217,
+  "coverage_method_path": 93.51,
   "missing_by_category": {
-    ":param": 129,
-    "root": 14,
-    "settings": 3,
-    "gateways": 3,
+    ":param": 17,
+    "root": 13,
     "exports": 2,
-    "imports": 2,
     "export": 2,
-    "sessions": 1,
+    "imports": 2,
+    "misc": 1,
     "restart": 1,
-    "artifacts": 1,
-    "users": 1,
     "archive": 1,
-    "branding": 1,
-    "me": 1,
-    "timeline": 1
+    "timeline": 1,
+    "feedback-traces": 1,
+    "preview": 1,
+    "artifacts": 1,
+    "jobs": 1,
+    "branding": 1
   },
   "top_missing": [
     {
@@ -29,95 +28,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/api/adapters/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/agents/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/agents/:param/instructions-bundle/file"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/attachments/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/folders/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/me/user-secrets/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/skill-policy"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/skill-test-run-templates/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/skills/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/skills/:param/comments/:param"
-    },
-    {
-      "method": "DELETE",
       "path": "/api/companies/:param/skills/:param/files"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/skills/:param/star"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/skills/:param/test-inputs/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/companies/:param/tools/policies/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/decision-training/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/environments/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/environments/:param/custom-image-template"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/goals/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/issues/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/issues/:param/comments/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/issues/:param/documents/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/issues/:param/inbox-archive"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/issues/:param/watchdog"
     },
     {
       "method": "DELETE",
@@ -125,51 +36,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/api/pipelines/:param/stages/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/plugins/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/projects/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/projects/:param/workspaces/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/routine-triggers/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/secret-provider-configs/:param"
-    },
-    {
-      "method": "DELETE",
       "path": "/api/secrets/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/status-cards/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/tool-applications/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/tool-connections/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/tool-profile-entries/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/work-products/:param"
     },
     {
       "method": "GET",
@@ -222,6 +89,118 @@
     {
       "method": "GET",
       "path": "/apiaccept"
+    },
+    {
+      "method": "GET",
+      "path": "/apiauthorization"
+    },
+    {
+      "method": "GET",
+      "path": "/apicontent-type"
+    },
+    {
+      "method": "GET",
+      "path": "/apihost"
+    },
+    {
+      "method": "GET",
+      "path": "x-paperclip-dev-server-status-token"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/:param"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/:param/branding"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/companies/:param/skills/:param/files"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/companies/:param/smoke-lab/runs/:param"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/profile"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tool-profiles/:param"
+    },
+    {
+      "method": "POST",
+      "path": "/api/"
+    },
+    {
+      "method": "POST",
+      "path": "/api/:param/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/:param/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/:param/exports"
+    },
+    {
+      "method": "POST",
+      "path": "/api/:param/exports/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/:param/imports/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/:param/imports/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cases/:param/issue-links"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/activity"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/approvals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/decisions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/pipelines"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/teams/catalog/:param/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/import/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/issues/:param/read"
+    },
+    {
+      "method": "POST",
+      "path": "/dev-server/restart"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/cases/:param/documents/:param"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/pipelines/:param/transitions"
     }
   ]
 }

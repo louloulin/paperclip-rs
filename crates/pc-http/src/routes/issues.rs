@@ -86,7 +86,10 @@ pub fn router() -> Router<AppState> {
         // inbox archive
         .route(
             "/api/issues/:issue_id/inbox-archive",
-            get(get_inbox).put(archive_inbox).delete(unarchive_inbox),
+            get(get_inbox)
+                .put(archive_inbox)
+                .post(archive_inbox)
+                .delete(unarchive_inbox),
         )
         // release
         .route("/api/issues/:issue_id/release", post(release))

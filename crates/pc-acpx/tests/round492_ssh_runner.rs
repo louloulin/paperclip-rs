@@ -11,6 +11,9 @@
 //!
 //! sshd / ssh-keygen 缺失时跳过（`SshLabFixture::start` 返回 None）。
 
+mod common;
+use crate::common::{node_available, SshLabFixture};
+
 use pc_acpx::bridge_executor::{
     start_adapter_execution_target_paperclip_bridge, BridgeCommandRunner, StartAdapterBridgeInput,
 };
@@ -24,270 +27,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn command_available(command: &str) -> bool {
-    std::process::Command::new("sh")
-        .args(["-c", &format!("command -v {command}")])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-fn node_available() -> bool {
-    std::process::Command::new("node")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-/// 随机 loopback 端口（对齐 Node `allocateLoopbackPort`：
-/// 先 bind :0 拿空闲端口再释放，测试内小竞态可接受）。
-fn allocate_loopback_port() -> Option<u16> {
-    use std::io::Read;
-    use std::net::TcpListener;
-    let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    // 触发一次 socket 初始化（保持与 Node 行为一致的无害探测）。
-    let _ = std::io::Cursor::new(Vec::new()).read(&mut []).ok();
-    Some(port)
-}
-
-/// 真实 sshd fixture（对齐 Node `startSshEnvLabFixture`）：
-/// 生成 client/host ed25519 密钥、known_hosts、authorized_keys，
-/// 随机端口启动 `sshd -D`，就绪后通过真实 ssh 往返验证。
-struct SshLabFixture {
-    config: SshConnectionConfig,
-    child: Option<tokio::process::Child>,
-    root_dir: PathBuf,
-    pid: u32,
-}
-
-impl SshLabFixture {
-    /// 启动 fixture；sshd/ssh-keygen 缺失时返回 None（测试跳过）。
-    async fn start() -> Option<Self> {
-        if !command_available("ssh") || !command_available("sshd") || !command_available("ssh-keygen") {
-            eprintln!("SKIP: ssh/sshd/ssh-keygen unavailable");
-            return None;
-        }
-        let port = allocate_loopback_port()?;
-        let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-ssh-lab-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(root_dir.join("workspace")).ok()?;
-        let username = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
-        let client_key = root_dir.join("client_key");
-        let host_key = root_dir.join("host_key");
-        let authorized_keys = root_dir.join("authorized_keys");
-        let known_hosts_path = root_dir.join("known_hosts");
-        let sshd_config_path = root_dir.join("sshd_config");
-        let sshd_log_path = root_dir.join("sshd.log");
-        let sshd_pid_path = root_dir.join("sshd.pid");
-
-        if !run_sync(
-            "ssh-keygen",
-            &["-q", "-t", "ed25519", "-N", "", "-f", client_key.to_str().unwrap()],
-        ) || !run_sync(
-            "ssh-keygen",
-            &["-q", "-t", "ed25519", "-N", "", "-f", host_key.to_str().unwrap()],
-        ) {
-            return None;
-        }
-        let _ = std::fs::copy(client_key.with_extension("pub"), &authorized_keys);
-        let host_public_key = run_sync_output(
-            "ssh-keygen",
-            &["-y", "-f", host_key.to_str().unwrap()],
-        )
-        .trim()
-        .to_string();
-        let known_hosts_entry = pc_acpx::ssh::build_known_hosts_entry(
-            pc_acpx::ssh::KnownHostsEntryInput {
-                host: "127.0.0.1".to_string(),
-                port,
-                public_key: host_public_key,
-            },
-        );
-        let _ = std::fs::write(&known_hosts_path, format!("{known_hosts_entry}\n"));
-        let config_text = format!(
-            "Port {port}\n\
-             ListenAddress 127.0.0.1\n\
-             HostKey {}\n\
-             PidFile {}\n\
-             AuthorizedKeysFile {}\n\
-             PasswordAuthentication no\n\
-             ChallengeResponseAuthentication no\n\
-             KbdInteractiveAuthentication no\n\
-             PubkeyAuthentication yes\n\
-             PermitRootLogin no\n\
-             UsePAM no\n\
-             StrictModes no\n\
-             AllowUsers {username}\n\
-             LogLevel VERBOSE\n\
-             PrintMotd no\n\
-             UseDNS no\n\
-             Subsystem sftp internal-sftp\n",
-            host_key.display(),
-            sshd_pid_path.display(),
-            authorized_keys.display(),
-        );
-        let _ = std::fs::write(&sshd_config_path, &config_text);
-        let mut child = tokio::process::Command::new("sshd")
-            .args([
-                "-D",
-                "-f",
-                sshd_config_path.to_str().unwrap(),
-                "-E",
-                sshd_log_path.to_str().unwrap(),
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
-        let pid = child.id().unwrap_or(0);
-        let config = SshConnectionConfig {
-            host: "127.0.0.1".to_string(),
-            port,
-            username,
-            remote_workspace_path: root_dir.join("workspace").to_string_lossy().to_string(),
-            private_key: Some(
-                std::fs::read_to_string(&client_key).unwrap_or_default(),
-            ),
-            known_hosts: Some(known_hosts_entry),
-            strict_host_key_checking: true,
-        };
-        let fixture = Self {
-            config,
-            child: Some(child),
-            root_dir,
-            pid,
-        };
-        // 就绪轮询：真实 ssh 往返 `echo ready`，最长 10s（对齐 Node
-        // `waitForCondition` 10s / 250ms）。
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let result = fixture
-                .run("echo ready")
-                .await;
-            if matches!(result, Ok(ok) if ok.stdout.trim() == "ready") {
-                return Some(fixture);
-            }
-            if std::time::Instant::now() > deadline {
-                eprintln!("sshd fixture failed to become ready");
-                return None;
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-    }
-
-    /// 通过 fixture 跑一条远程命令。
-    async fn run(&self, remote_command: &str) -> Result<pc_acpx::ssh::SshCommandResult, pc_acpx::ssh::SshCommandError> {
-        run_ssh_command(
-            &self.config,
-            remote_command,
-            &SshCommandOptions {
-                timeout_ms: 15_000,
-                ..SshCommandOptions::default()
-            },
-        )
-        .await
-    }
-
-    /// 组装 SSH runner（default cwd = fixture workspace）。
-    fn runner(&self) -> SshCommandManagedRuntimeRunner {
-        SshCommandManagedRuntimeRunner::new(
-            self.spec(),
-            None,
-            None,
-        )
-    }
-
-    fn spec(&self) -> SshRemoteExecutionSpec {
-        SshRemoteExecutionSpec::from_parts(
-            self.config.clone(),
-            self.config.remote_workspace_path.clone(),
-        )
-    }
-
-    /// fixture 的 execution target（transport ssh）。
-    fn target(&self) -> AdapterExecutionTarget {
-        let value = serde_json::json!({
-            "transport": "ssh",
-            "host": self.config.host,
-            "port": self.config.port,
-            "username": self.config.username,
-            "remoteWorkspacePath": self.config.remote_workspace_path,
-            "remoteCwd": self.config.remote_workspace_path,
-            "privateKey": self.config.private_key,
-            "knownHosts": self.config.known_hosts,
-            "strictHostKeyChecking": self.config.strict_host_key_checking,
-        });
-        adapter_execution_target_from_remote_execution(&value, None)
-            .expect("valid ssh execution target")
-    }
-}
-
-impl Drop for SshLabFixture {
-    fn drop(&mut self) {
-        if self.pid != 0 {
-            let _ = std::process::Command::new("kill")
-                .args(["-TERM", &self.pid.to_string()])
-                .status();
-            // 等待 sshd 退出（最多 2s），避免 PID 残留。
-            let deadline = std::time::Instant::now() + Duration::from_secs(2);
-            while std::time::Instant::now() < deadline {
-                let alive = std::process::Command::new("kill")
-                    .args(["-0", &self.pid.to_string()])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                if !alive {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-        if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
-            let _ = child.wait();
-        }
-        let _ = std::fs::remove_dir_all(&self.root_dir);
-    }
-}
-
-fn run_sync(command: &str, args: &[&str]) -> bool {
-    std::process::Command::new(command)
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-fn run_sync_output(command: &str, args: &[&str]) -> String {
-    let output = std::process::Command::new(command)
-        .args(args)
-        .output()
-        .unwrap_or_else(|_| std::process::Output {
-            status: std::process::ExitStatus::default(),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        });
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-// ---------------------------------------------------------------------------
-// 1. run_ssh_command 真实往返
-// ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_run_command_echo_pwd_and_env() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     // 1. echo + 注入 env（env 走 `exec env K=V sh -c`）。
@@ -312,7 +55,7 @@ async fn ssh_run_command_echo_pwd_and_env() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_run_command_stdin_round_trip() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     let payload = "stdin-payload-492\nline2";
@@ -331,7 +74,7 @@ async fn ssh_run_command_stdin_round_trip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_run_command_timeout_kills_remote() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     let started = std::time::Instant::now();
@@ -355,7 +98,7 @@ async fn ssh_run_command_timeout_kills_remote() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_run_command_max_buffer_overflow() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     let error = run_ssh_command(
@@ -381,7 +124,7 @@ async fn ssh_run_command_max_buffer_overflow() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_runner_executes_sh_c_with_export_prefix() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     let runner: Arc<dyn BridgeCommandRunner> = Arc::new(fixture.runner());
@@ -405,7 +148,7 @@ async fn ssh_runner_executes_sh_c_with_export_prefix() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_runner_propagates_exit_code_and_cwd() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     let runner: Arc<dyn BridgeCommandRunner> = Arc::new(fixture.runner());
@@ -566,7 +309,7 @@ async fn http_request(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_bridge_full_round_trip_with_real_sshd() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r492").await else {
         return;
     };
     if !node_available() {
@@ -684,7 +427,10 @@ async fn ssh_bridge_full_round_trip_with_real_sshd() {
     assert!(!Path::new(&pid_file).exists());
     assert!(!Path::new(&format!("{queue_dir}/ready.json")).exists());
     let queue_clean = fixture
-        .run(&format!("find {} -type f | wc -l", shell_quote(&queue_dir)))
+        .run(
+            &format!("find {} -type f | wc -l", shell_quote(&queue_dir)),
+            SshCommandOptions::default(),
+        )
         .await
         .expect("queue scan via ssh");
     assert_eq!(queue_clean.stdout.trim(), "0", "no queue files left");

@@ -531,10 +531,41 @@ pub async fn stream_local_file_to_ssh(
         .take()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stdin pipe unavailable"))?;
 
-    let _ = progress; // v1: progress wired but not yet wrapped for std files
     let mut file = tokio::fs::File::open(local_file).await?;
-    tokio::io::copy(&mut file, &mut stdin).await?;
-    drop(stdin); // close stdin to signal EOF
+    let total_bytes = std::fs::metadata(local_file).map(|m| m.len()).unwrap_or(0);
+
+    // Wrap the local file with a counting reader when a progress sink is
+    // provided. The bundle is a real file of known size, so we use the
+    // exact-percent mode (`estimated = false`); no cap, so the terminal
+    // 100% line is emitted exactly when the last byte is written.
+    let copy_result = if let Some(sink) = progress {
+        let progress_inner = create_transfer_progress(
+            Box::new(file),
+            TransferProgressOptions {
+                on_progress: sink.clone(),
+                phase: RuntimeProgressPhase::ImportingGitHistory,
+                direction: RuntimeProgressDirection::To,
+                label: None,
+                total_bytes: Some(total_bytes),
+                estimated: false,
+            },
+        );
+        let mut counter = progress_inner.counter;
+        let finish = progress_inner.finish;
+        let fail = progress_inner.fail;
+        let copy_result = tokio::io::copy(&mut counter, &mut stdin).await;
+        match &copy_result {
+            Ok(_) => finish().await,
+            Err(_) => fail().await,
+        };
+        drop(stdin); // close stdin to signal EOF
+        copy_result
+    } else {
+        let copy_result = tokio::io::copy(&mut file, &mut stdin).await;
+        drop(stdin); // close stdin to signal EOF
+        copy_result
+    };
+    copy_result?;
 
     let mut stderr_buf = Vec::new();
     if let Some(mut stderr) = child.stderr.take() {
@@ -1723,6 +1754,7 @@ pub async fn prepare_workspace_for_ssh_execution(
     local_dir: &Path,
     remote_dir: &str,
     progress: Option<&RuntimeProgressSink>,
+    _baseline: Option<&DirectorySnapshot>,
 ) -> Result<bool, String> {
     let local_dir_str = local_dir.to_string_lossy();
     let git_snapshot = read_git_workspace_snapshot(&local_dir_str)
@@ -1746,11 +1778,44 @@ pub async fn prepare_workspace_for_ssh_execution(
     }
 }
 
+
+/// Delete any orphan `refs/paperclip/ssh-sync/imported/*` refs left behind by
+/// an earlier export_git_workspace_from_ssh call. Best-effort; errors are
+/// ignored to mirror Node's `catch(() => undefined)` cleanup.
+async fn cleanup_imported_git_refs(local_dir: &str) -> Result<(), String> {
+    let list = run_local_git(
+        local_dir,
+        &["for-each-ref", "--format=%(refname)", "refs/paperclip/ssh-sync/imported"],
+        Some(10_000),
+        Some(64 * 1024),
+    )
+    .await;
+    if let Ok(list) = list {
+        for line in list.stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let _ = delete_local_git_ref(local_dir, line).await;
+        }
+    }
+    Ok(())
+}
+
 /// Restore the local workspace from the remote after SSH execution. Mirrors
-/// the no-`baselineSnapshot` branch of Node
-/// `restoreWorkspaceFromSshExecution`.
+/// the no-`baselineSnapshot` and `baselineSnapshot` branches of Node
+/// `restoreWorkspaceFromSshExecution` (ssh.ts L1559-1647).
 ///
-/// Strategy:
+/// When `baseline` is provided the function takes the early merge path:
+/// - export remote git history (return imported head)
+/// - sync remote tree into a staging directory (no target mutation yet)
+/// - `mergeDirectoryWithBaseline` against `baseline`: deletes files the
+///   remote run removed (and target still matches baseline), copies files
+///   the remote run changed
+/// - `integrateImportedGitHead` inside `before_apply` so dirty remote
+///   edits win for the working tree while git history advances locally
+///
+/// When `baseline` is `None` falls back to the simpler git / non-git branch:
 /// - if local was git-backed → push remote git history + restore working
 ///   tree (preserve `.git` so the just-imported ref stays)
 /// - else → restore working tree only
@@ -1759,8 +1824,77 @@ pub async fn restore_workspace_from_ssh_execution(
     local_dir: &Path,
     remote_dir: &str,
     progress: Option<&RuntimeProgressSink>,
+    baseline: Option<&DirectorySnapshot>,
 ) -> Result<(), String> {
     let local_dir_str = local_dir.to_string_lossy();
+    if let Some(baseline_snapshot) = baseline {
+        // baseline path: export git → sync to staging → merge + integrate.
+        let imported_head = export_git_workspace_from_ssh(
+            spec,
+            remote_dir,
+            local_dir,
+            false,
+            progress,
+        )
+        .await?;
+
+        let staging_dir = std::env::temp_dir().join(format!(
+            "paperclip-ssh-sync-back-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&staging_dir)
+            .map_err(|error| format!("create staging dir: {error}"))?;
+
+        sync_directory_from_ssh(
+            spec,
+            remote_dir,
+            &staging_dir,
+            Some(&baseline_snapshot.exclude),
+            None,
+            progress,
+        )
+        .await?;
+
+        let local_dir_for_merge = local_dir.to_path_buf();
+        let staging_for_merge = staging_dir.clone();
+        let local_str_for_integrate = local_dir.to_string_lossy().into_owned();
+        let imported_head_for_integrate = imported_head.clone();
+        let before_apply: Box<
+            dyn Fn() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>,
+                > + Send
+                + Sync,
+        > = Box::new(move || {
+            let local_str = local_str_for_integrate.clone();
+            let head = imported_head_for_integrate.clone();
+            Box::pin(async move {
+                let _ = integrate_imported_git_head(&local_str, &head).await;
+                Ok(())
+            })
+        });
+        let after_apply: Box<
+            dyn Fn() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>,
+                > + Send
+                + Sync,
+        > = Box::new(|| Box::pin(async { Ok(()) }));
+        let merge_result = merge_directory_with_baseline(MergeDirectoryWithBaselineInput {
+            baseline: baseline_snapshot,
+            source_dir: &staging_for_merge,
+            target_dir: &local_dir_for_merge,
+            before_apply,
+            after_apply,
+        })
+        .await;
+
+        // Cleanup staging + orphan imported refs.
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        let _ = cleanup_imported_git_refs(&local_dir_str).await;
+
+        merge_result.map_err(|error| format!("merge directory with baseline: {error}"))?;
+        return Ok(());
+    }
+
     let git_snapshot = read_git_workspace_snapshot(&local_dir_str)
         .await
         .ok()
@@ -1776,5 +1910,765 @@ pub async fn restore_workspace_from_ssh_execution(
         let exclude = vec![".paperclip-runtime".to_string()];
         sync_directory_from_ssh(spec, remote_dir, local_dir, Some(&exclude), None, progress).await?;
         Ok(())
+    }
+}
+
+// =============================================================================
+// SSH workspace readiness + git history integration + baseline merge
+// (port of Node `ensureSshWorkspaceReady` + `integrateImportedGitHead` +
+// `mergeDirectoryWithBaseline` + `withDirectoryMergeLock`).
+// =============================================================================
+
+/// Ensure the remote SSH workspace exists and return its canonical cwd.
+/// Mirrors Node `ensureSshWorkspaceReady` (L1649-1658 of
+/// `packages/adapter-utils/src/ssh.ts`).
+pub async fn ensure_ssh_workspace_ready(
+    config: &crate::ssh::SshConnectionConfig,
+) -> Result<SshReadyWorkspace, String> {
+    use crate::ssh::run_ssh_command;
+    use std::collections::BTreeMap;
+    let remote_dir = &config.remote_workspace_path;
+    let script = format!(
+        "mkdir -p {} && cd {} && pwd",
+        shell_quote(remote_dir),
+        shell_quote(remote_dir)
+    );
+    let result = run_ssh_command(
+        config,
+        &script,
+        &crate::ssh::SshCommandOptions {
+            env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: 15_000,
+            max_buffer: 64 * 1024,
+        },
+    )
+    .await
+    .map_err(|error| format!("ensure ssh workspace ready: {error}"))?;
+    Ok(SshReadyWorkspace {
+        remote_cwd: result.stdout.trim().to_string(),
+    })
+}
+
+/// Return value of [`ensure_ssh_workspace_ready`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshReadyWorkspace {
+    pub remote_cwd: String,
+}
+
+/// Integrate a remote-imported git head into the local repository.
+///
+/// Mirrors Node `integrateImportedGitHead` (L303-385 of
+/// `packages/adapter-utils/src/git-workspace-sync.ts`):
+/// - up to 5 attempts to resolve concurrent ref updates
+/// - merge-base check: if `importedHead` is already an ancestor of `HEAD`,
+///   fast-forward `HEAD` (or branch ref) to `importedHead`
+/// - if `currentHead` is an ancestor of `importedHead`, fast-forward
+/// - otherwise compute a 3-way merge via `merge-tree` + `commit-tree`
+///   and `update-ref` to the new merge commit
+pub async fn integrate_imported_git_head(
+    local_dir: &str,
+    imported_head: &str,
+) -> Result<(), String> {
+    let head_ref = |snapshot: &GitWorkspaceSnapshot| -> String {
+        match &snapshot.branch_name {
+            Some(branch) => format!("refs/heads/{branch}"),
+            None => "HEAD".to_string(),
+        }
+    };
+
+    for attempt in 0..5 {
+        let snapshot = match read_git_workspace_snapshot(local_dir).await {
+            Ok(Some(snap)) => snap,
+            Ok(None) => return Ok(()),
+            Err(error) => return Err(format!("read snapshot: {error}")),
+        };
+
+        let current_head = &snapshot.head_commit;
+        if current_head.is_empty() || current_head == imported_head {
+            return Ok(());
+        }
+
+        let ref_arg = head_ref(&snapshot);
+
+        // `git merge-base <a> <b>` — if it succeeds and stdout is `importedHead`,
+        // `importedHead` is an ancestor of `currentHead`, so nothing to do.
+        // If merge-base is `currentHead`, `currentHead` is an ancestor of
+        // `importedHead`, so fast-forward.
+        let merge_base_result = run_local_git(
+            local_dir,
+            &["merge-base", current_head, imported_head],
+            Some(10_000),
+            Some(16 * 1024),
+        )
+        .await;
+        let merge_base_head = merge_base_result
+            .ok()
+            .map(|res| res.stdout.trim().to_string())
+            .unwrap_or_default();
+
+        if merge_base_head == imported_head {
+            return Ok(());
+        }
+
+        if merge_base_head == current_head.as_str() {
+            // Fast-forward: update the ref to importedHead. Provide
+            // currentHead as the old value so concurrent updaters retry.
+            match run_local_git(
+                local_dir,
+                &["update-ref", &ref_arg, imported_head, current_head],
+                Some(10_000),
+                Some(16 * 1024),
+            )
+            .await
+            {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    if is_concurrent_ref_update_error(&error) && attempt < 4 {
+                        continue;
+                    }
+                    return Err(format!("fast-forward update-ref: {error:?}"));
+                }
+            }
+        }
+
+        // 3-way merge via `merge-tree --write-tree` + `commit-tree`.
+        let merged_tree = match run_local_git(
+            local_dir,
+            &["merge-tree", "--write-tree", current_head, imported_head],
+            Some(60_000),
+            Some(256 * 1024),
+        )
+        .await
+        {
+            Ok(out) => out,
+            Err(error) => {
+                return Err(format!(
+                    "Failed to merge concurrent remote git histories for {} and {}: {:?}",
+                    &current_head[..current_head.len().min(12)],
+                    &imported_head[..imported_head.len().min(12)],
+                    error
+                ));
+            }
+        };
+        let merged_tree_id = merged_tree
+            .stdout
+            .trim()
+            .lines()
+            .next()
+            .map(|line| line.trim().to_string())
+            .unwrap_or_default();
+        if merged_tree_id.is_empty() {
+            return Err("Failed to compute a merged git tree for workspace restore.".to_string());
+        }
+
+        let merge_message = format!(
+            "Paperclip remote git sync merge {}",
+            &imported_head[..imported_head.len().min(12)]
+        );
+        let merge_commit = match run_local_git(
+            local_dir,
+            &[
+                "commit-tree",
+                &merged_tree_id,
+                "-p",
+                current_head,
+                "-p",
+                imported_head,
+                "-m",
+                &merge_message,
+            ],
+            Some(60_000),
+            Some(64 * 1024),
+        )
+        .await
+        {
+            Ok(out) => out,
+            Err(error) => return Err(format!("commit-tree: {error:?}")),
+        };
+        let merge_commit_id = merge_commit.stdout.trim().to_string();
+        if merge_commit_id.is_empty() {
+            return Err("commit-tree returned empty stdout".to_string());
+        }
+
+        match run_local_git(
+            local_dir,
+            &["update-ref", &ref_arg, &merge_commit_id, current_head],
+            Some(10_000),
+            Some(16 * 1024),
+        )
+        .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                if is_concurrent_ref_update_error(&error) && attempt < 4 {
+                    continue;
+                }
+                return Err(format!("update-ref after merge: {error:?}"));
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed to integrate concurrent remote git history for {} after multiple retries.",
+        &imported_head[..imported_head.len().min(12)]
+    ))
+}
+
+/// Heuristic check for "cannot lock ref" race errors emitted by `git
+/// update-ref` when another process is racing for the same ref.
+fn is_concurrent_ref_update_error(error: &RunLocalGitError) -> bool {
+    let message = format!("{error:?}");
+    message.contains("cannot lock ref") && message.contains("expected")
+}
+
+// =============================================================================
+// Directory baseline snapshot + merge (port of Node
+// `mergeDirectoryWithBaseline` + `captureDirectorySnapshot` +
+// `withDirectoryMergeLock` in `packages/adapter-utils/src/workspace-restore-merge.ts`).
+// =============================================================================
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
+use sha2::{Digest, Sha256};
+
+/// One entry in a directory snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectorySnapshotEntry {
+    Dir,
+    File { mode: u32, hash: String },
+    Symlink { target: String },
+}
+
+/// A snapshot of a directory tree used as a baseline for the merge restore
+/// path. Mirrors Node `DirectorySnapshot` (L20-24 of `workspace-restore-merge.ts`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectorySnapshot {
+    pub exclude: Vec<String>,
+    pub entries: BTreeMap<String, DirectorySnapshotEntry>,
+}
+
+async fn hash_file_sha256(file_path: &std::path::Path) -> std::io::Result<String> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(file_path).await?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Walk `root` recursively, collecting `DirectorySnapshot` entries. Skips
+/// `exclude` patterns at any depth (forward-slash relative path).
+fn should_exclude_relative(rel: &str, exclude: &[String]) -> bool {
+    for pat in exclude {
+        if rel == pat || rel.starts_with(&format!("{pat}/")) {
+            return true;
+        }
+    }
+    false
+}
+
+async fn walk_directory_recursive(
+    root: &std::path::Path,
+    exclude: &[String],
+    relative: &str,
+    out: &mut BTreeMap<String, DirectorySnapshotEntry>,
+) -> std::io::Result<()> {
+    // Iterative stack-based walk to avoid async recursion (Rust 2021 cannot
+    // auto-box recursive async fns without #[recursion_limit]).
+    let mut stack: Vec<String> = vec![relative.to_string()];
+    while let Some(rel) = stack.pop() {
+        let current = if rel.is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(&rel)
+        };
+        let mut entries = match tokio::fs::read_dir(&current).await {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut names = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        names.sort();
+        for name in names {
+            let next_relative = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
+            if should_exclude_relative(&next_relative, exclude) {
+                continue;
+            }
+            let full_path = root.join(&next_relative);
+            let metadata = match tokio::fs::symlink_metadata(&full_path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let file_type = metadata.file_type();
+            if file_type.is_dir() {
+                out.insert(next_relative.clone(), DirectorySnapshotEntry::Dir);
+                stack.push(next_relative);
+            } else if file_type.is_symlink() {
+                let target = tokio::fs::read_link(&full_path)
+                    .await
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                out.insert(next_relative, DirectorySnapshotEntry::Symlink { target });
+            } else if file_type.is_file() {
+                let hash = hash_file_sha256(&full_path).await?;
+                out.insert(
+                    next_relative,
+                    DirectorySnapshotEntry::File {
+                        mode: metadata.permissions().mode(),
+                        hash,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Capture a `DirectorySnapshot` for `root_dir`. Mirrors Node
+/// `captureDirectorySnapshot`.
+pub async fn capture_directory_snapshot(
+    root_dir: &std::path::Path,
+    options: DirectorySnapshotOptions,
+) -> std::io::Result<DirectorySnapshot> {
+    let mut exclude = options.exclude;
+    exclude.sort();
+    exclude.dedup();
+    let mut entries = BTreeMap::new();
+    walk_directory_recursive(root_dir, &exclude, "", &mut entries).await?;
+    Ok(DirectorySnapshot { exclude, entries })
+}
+
+/// Options for [`capture_directory_snapshot`].
+#[derive(Debug, Default, Clone)]
+pub struct DirectorySnapshotOptions {
+    pub exclude: Vec<String>,
+}
+
+fn entries_match(
+    left: Option<&DirectorySnapshotEntry>,
+    right: Option<&DirectorySnapshotEntry>,
+) -> bool {
+    let (Some(l), Some(r)) = (left, right) else { return false };
+    match (l, r) {
+        (DirectorySnapshotEntry::Dir, DirectorySnapshotEntry::Dir) => true,
+        (
+            DirectorySnapshotEntry::Symlink { target: a },
+            DirectorySnapshotEntry::Symlink { target: b },
+        ) => a == b,
+        (
+            DirectorySnapshotEntry::File { mode: am, hash: ah },
+            DirectorySnapshotEntry::File { mode: bm, hash: bh },
+        ) => am == bm && ah == bh,
+        _ => false,
+    }
+}
+
+async fn copy_snapshot_entry(
+    source_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+    relative: &str,
+    entry: &DirectorySnapshotEntry,
+) -> std::io::Result<()> {
+    let source_path = source_dir.join(relative);
+    let target_path = target_dir.join(relative);
+    match entry {
+        DirectorySnapshotEntry::Dir => {
+            if tokio::fs::metadata(&target_path).await.map(|m| m.is_dir()).unwrap_or(false) {
+                return Ok(());
+            }
+            if tokio::fs::metadata(&target_path).await.is_ok() {
+                let _ = tokio::fs::remove_dir_all(&target_path).await;
+            }
+            tokio::fs::create_dir_all(&target_path).await
+        }
+        DirectorySnapshotEntry::Symlink { target } => {
+            if let Some(parent) = target_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            let _ = tokio::fs::remove_file(&target_path).await;
+            std::os::unix::fs::symlink(target, &target_path)
+        }
+        DirectorySnapshotEntry::File { .. } => {
+            if let Some(parent) = target_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            let _ = tokio::fs::remove_file(&target_path).await;
+            tokio::fs::copy(&source_path, &target_path).await.map(|_| ())
+        }
+    }
+}
+
+/// Merge a `sourceDir` snapshot into a `targetDir`, using `baseline` to detect
+/// which target-side entries were deleted in the source so they can be removed
+/// from target. Mirrors Node `mergeDirectoryWithBaseline` (L212-243).
+///
+/// Strategy:
+/// 1. Capture source snapshot (using baseline exclude set).
+/// 2. Acquire `targetDir.paperclip-restore.lock`.
+/// 3. Run `before_apply` callback.
+/// 4. Capture target snapshot (using baseline exclude set).
+/// 5. Remove target entries that exist in baseline but not in source AND
+///    whose current target contents still match baseline (so we don't
+///    delete user edits made during the remote run).
+/// 6. Remove target dirs that exist in baseline but not in source.
+/// 7. Copy source entries whose contents differ from baseline.
+/// 8. Run `after_apply` callback.
+/// 9. Release lock.
+pub async fn merge_directory_with_baseline(input: MergeDirectoryWithBaselineInput<'_>) -> std::io::Result<()> {
+    let baseline = input.baseline;
+    let source_dir = input.source_dir;
+    let target_dir = input.target_dir;
+    let source = capture_directory_snapshot(source_dir, DirectorySnapshotOptions {
+        exclude: baseline.exclude.clone(),
+    })
+    .await?;
+    let lock_path = PathBuf::from(format!("{}.paperclip-restore.lock", target_dir.display()));
+    let _ = acquire_directory_merge_lock(&lock_path).await?;
+    let release_result: std::io::Result<()> = (async {
+        (input.before_apply)().await?;
+        let current = capture_directory_snapshot(target_dir, DirectorySnapshotOptions {
+            exclude: baseline.exclude.clone(),
+        })
+        .await?;
+        let mut deleted_leafs: Vec<(&String, &DirectorySnapshotEntry)> = baseline
+            .entries
+            .iter()
+            .filter(|(_, entry)| !matches!(entry, DirectorySnapshotEntry::Dir))
+            .filter(|(rel, _)| !source.entries.contains_key(*rel))
+            .collect();
+        deleted_leafs.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (relative, baseline_entry) in deleted_leafs {
+            if !entries_match(current.entries.get(relative), Some(baseline_entry)) {
+                continue;
+            }
+            let target_path = target_dir.join(relative);
+            let _ = tokio::fs::remove_dir_all(&target_path).await;
+            let _ = tokio::fs::remove_file(&target_path).await;
+        }
+
+        let mut deleted_dirs: Vec<&String> = baseline
+            .entries
+            .iter()
+            .filter(|(_, entry)| matches!(entry, DirectorySnapshotEntry::Dir))
+            .filter(|(rel, _)| !source.entries.contains_key(*rel))
+            .map(|(rel, _)| rel)
+            .collect();
+        deleted_dirs.sort_by(|a, b| b.len().cmp(&a.len()));
+        for relative in deleted_dirs {
+            let target_path = target_dir.join(relative);
+            let _ = tokio::fs::remove_dir(&target_path).await;
+        }
+
+        let mut changed_source: Vec<(&String, &DirectorySnapshotEntry)> = source
+            .entries
+            .iter()
+            .filter(|(rel, entry)| !entries_match(baseline.entries.get(*rel), Some(*entry)))
+            .collect();
+        changed_source.sort_by(|a, b| a.0.cmp(b.0));
+        for (relative, entry) in changed_source {
+            copy_snapshot_entry(source_dir, target_dir, relative, entry).await?;
+        }
+
+        (input.after_apply)().await?;
+        Ok(())
+    }).await;
+    let _ = tokio::fs::remove_dir(&lock_path).await;
+    release_result
+}
+
+/// Input for [`merge_directory_with_baseline`].
+pub struct MergeDirectoryWithBaselineInput<'a> {
+    pub baseline: &'a DirectorySnapshot,
+    pub source_dir: &'a std::path::Path,
+    pub target_dir: &'a std::path::Path,
+    pub before_apply: Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> + Send + Sync>,
+    pub after_apply: Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> + Send + Sync>,
+}
+
+async fn acquire_directory_merge_lock(lock_dir: &std::path::Path) -> std::io::Result<()> {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(30);
+    for _ in 0..600u32 {
+        match tokio::fs::create_dir(lock_dir).await {
+            Ok(_) => {
+                let owner_path = lock_dir.join("owner.json");
+                let pid = std::process::id();
+                let created_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let payload = format!("{{\"pid\":{pid},\"createdAt\":{created_at}}}\n");
+                let _ = tokio::fs::write(&owner_path, payload).await;
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if !is_holder_alive(lock_dir).await {
+                    let _ = tokio::fs::remove_dir_all(lock_dir).await;
+                    // Loop continues; next iteration tries create_dir again.
+                }
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!(
+                            "Timed out waiting for workspace restore lock at {}",
+                            lock_dir.display()
+                        ),
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!(
+            "Exhausted retries waiting for workspace restore lock at {}",
+            lock_dir.display()
+        ),
+    ))
+}
+
+async fn is_holder_alive(lock_dir: &std::path::Path) -> bool {
+    let owner_path = lock_dir.join("owner.json");
+    let raw = match tokio::fs::read_to_string(&owner_path).await {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let pid = parsed.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+    if pid == 0 {
+        return false;
+    }
+    // Use `kill -0 <pid>` shell command — works on macOS + Linux without
+    // needing libc bindings (which the crate refuses via `-F unsafe-code`).
+    tokio::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Read a single snapshot entry for `relative` under `root_dir`. Mirrors Node
+/// `readSnapshotEntry`.
+pub async fn read_directory_snapshot_entry(
+    root_dir: &std::path::Path,
+    relative: &str,
+) -> std::io::Result<Option<DirectorySnapshotEntry>> {
+    let full_path = root_dir.join(relative);
+    let metadata = match tokio::fs::symlink_metadata(&full_path).await {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
+        Ok(Some(DirectorySnapshotEntry::Dir))
+    } else if file_type.is_symlink() {
+        let target = tokio::fs::read_link(&full_path)
+            .await
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Ok(Some(DirectorySnapshotEntry::Symlink { target }))
+    } else if file_type.is_file() {
+        let hash = hash_file_sha256(&full_path).await?;
+        Ok(Some(DirectorySnapshotEntry::File {
+            mode: metadata.permissions().mode(),
+            hash,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Compare a single directory entry against a baseline entry. Mirrors Node
+/// `directoryEntryMatchesBaseline`.
+pub async fn directory_entry_matches_baseline(
+    root_dir: &std::path::Path,
+    relative: &str,
+    baseline_entry: &DirectorySnapshotEntry,
+) -> std::io::Result<bool> {
+    let current = read_directory_snapshot_entry(root_dir, relative).await?;
+    Ok(entries_match(current.as_ref(), Some(baseline_entry)))
+}
+
+#[cfg(test)]
+mod r506_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "paperclip-r506-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        dir
+    }
+
+    #[tokio::test]
+    async fn capture_directory_snapshot_hashes_files() {
+        let root = tmp_dir("snap");
+        std::fs::write(root.join("a.txt"), "alpha").unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("b.txt"), "beta").unwrap();
+        let snap = capture_directory_snapshot(&root, DirectorySnapshotOptions { exclude: vec![] })
+            .await
+            .expect("snap");
+        assert!(snap.entries.contains_key("a.txt"));
+        assert!(snap.entries.contains_key("sub"));
+        assert!(snap.entries.contains_key("sub/b.txt"));
+        if let Some(DirectorySnapshotEntry::File { hash, .. }) = snap.entries.get("a.txt") {
+            assert!(!hash.is_empty(), "file hash must be non-empty");
+        } else {
+            panic!("a.txt should be a File entry");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn capture_directory_snapshot_respects_exclude() {
+        let root = tmp_dir("snap-excl");
+        std::fs::write(root.join("keep.txt"), "k").unwrap();
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::write(root.join("node_modules").join("x.js"), "x").unwrap();
+        let snap = capture_directory_snapshot(
+            &root,
+            DirectorySnapshotOptions { exclude: vec!["node_modules".to_owned()] },
+        )
+        .await
+        .expect("snap");
+        assert!(snap.entries.contains_key("keep.txt"));
+        assert!(!snap.entries.contains_key("node_modules"));
+        assert!(!snap.entries.contains_key("node_modules/x.js"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn merge_directory_with_baseline_removes_target_deletions() {
+        let baseline_root = tmp_dir("baseline");
+        let source_root = tmp_dir("source");
+        let target_root = tmp_dir("target");
+
+        // baseline: a.txt, b.txt, sub/c.txt
+        std::fs::write(baseline_root.join("a.txt"), "alpha").unwrap();
+        std::fs::write(baseline_root.join("b.txt"), "beta").unwrap();
+        std::fs::create_dir_all(baseline_root.join("sub")).unwrap();
+        std::fs::write(baseline_root.join("sub").join("c.txt"), "gamma").unwrap();
+
+        // source: a.txt, sub/c.txt (b.txt was deleted remotely)
+        std::fs::write(source_root.join("a.txt"), "alpha-new").unwrap();
+        std::fs::create_dir_all(source_root.join("sub")).unwrap();
+        std::fs::write(source_root.join("sub").join("c.txt"), "gamma-new").unwrap();
+
+        // target: a.txt, b.txt, sub/c.txt
+        std::fs::write(target_root.join("a.txt"), "alpha").unwrap();
+        std::fs::write(target_root.join("b.txt"), "beta").unwrap();
+        std::fs::create_dir_all(target_root.join("sub")).unwrap();
+        std::fs::write(target_root.join("sub").join("c.txt"), "gamma").unwrap();
+
+        let baseline = capture_directory_snapshot(
+            &baseline_root,
+            DirectorySnapshotOptions { exclude: vec![] },
+        )
+        .await
+        .expect("baseline");
+
+        merge_directory_with_baseline(MergeDirectoryWithBaselineInput {
+            baseline: &baseline,
+            source_dir: &source_root,
+            target_dir: &target_root,
+            before_apply: Box::new(|| Box::pin(async { Ok(()) })),
+            after_apply: Box::new(|| Box::pin(async { Ok(()) })),
+        })
+        .await
+        .expect("merge");
+
+        // After merge:
+        // a.txt and sub/c.txt should reflect source (changed)
+        let a = std::fs::read_to_string(target_root.join("a.txt")).expect("read a");
+        assert_eq!(a, "alpha-new");
+        let c = std::fs::read_to_string(target_root.join("sub").join("c.txt")).expect("read c");
+        assert_eq!(c, "gamma-new");
+        // b.txt should be removed (deleted remotely and target still matches baseline)
+        assert!(!target_root.join("b.txt").exists(), "b.txt must be removed");
+
+        let _ = std::fs::remove_dir_all(&baseline_root);
+        let _ = std::fs::remove_dir_all(&source_root);
+        let _ = std::fs::remove_dir_all(&target_root);
+    }
+
+    #[tokio::test]
+    async fn merge_directory_with_baseline_preserves_target_edits() {
+        let baseline_root = tmp_dir("baseline-pres");
+        let source_root = tmp_dir("source-pres");
+        let target_root = tmp_dir("target-pres");
+
+        std::fs::write(baseline_root.join("a.txt"), "alpha").unwrap();
+
+        // source: a.txt (unchanged from baseline)
+        std::fs::write(source_root.join("a.txt"), "alpha").unwrap();
+
+        // target: a.txt modified by user during remote run
+        std::fs::write(target_root.join("a.txt"), "USER_LOCAL_EDIT").unwrap();
+
+        let baseline = capture_directory_snapshot(
+            &baseline_root,
+            DirectorySnapshotOptions { exclude: vec![] },
+        )
+        .await
+        .expect("baseline");
+
+        merge_directory_with_baseline(MergeDirectoryWithBaselineInput {
+            baseline: &baseline,
+            source_dir: &source_root,
+            target_dir: &target_root,
+            before_apply: Box::new(|| Box::pin(async { Ok(()) })),
+            after_apply: Box::new(|| Box::pin(async { Ok(()) })),
+        })
+        .await
+        .expect("merge");
+
+        // Target edit must be preserved (source == baseline so no copy applied).
+        let a = std::fs::read_to_string(target_root.join("a.txt")).expect("read a");
+        assert_eq!(a, "USER_LOCAL_EDIT", "target edit must be preserved");
+
+        let _ = std::fs::remove_dir_all(&baseline_root);
+        let _ = std::fs::remove_dir_all(&source_root);
+        let _ = std::fs::remove_dir_all(&target_root);
+    }
+
+    #[test]
+    fn entries_match_file_compare_mode_and_hash() {
+        let a = DirectorySnapshotEntry::File { mode: 0o644, hash: "abc".to_owned() };
+        let b = DirectorySnapshotEntry::File { mode: 0o644, hash: "abc".to_owned() };
+        let c = DirectorySnapshotEntry::File { mode: 0o755, hash: "abc".to_owned() };
+        let d = DirectorySnapshotEntry::File { mode: 0o644, hash: "xyz".to_owned() };
+        assert!(entries_match(Some(&a), Some(&b)));
+        assert!(!entries_match(Some(&a), Some(&c)));
+        assert!(!entries_match(Some(&a), Some(&d)));
+        assert!(!entries_match(Some(&a), None));
+        assert!(!entries_match(None, Some(&a)));
     }
 }

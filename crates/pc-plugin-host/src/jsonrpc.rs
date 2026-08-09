@@ -64,12 +64,12 @@ impl JsonRpcStream {
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_reader = pending.clone();
         let worker_to_host_reader = Arc::new(Mutex::new(None));
-        let stdin_reader = Arc::new(Mutex::new(
-            child
-                .stdin
-                .take()
-                .ok_or_else(|| "worker stdin not available".to_string())?,
-        ));
+        // Share the same stdin between host → worker requests and
+        // worker → host responses. `child.stdin` was already taken
+        // above; reusing it through the shared `Arc<Mutex<…>>` keeps
+        // both write paths talking to the same pipe.
+        let stdin_shared: Arc<Mutex<ChildStdin>> = Arc::new(Mutex::new(stdin));
+        let stdin_reader = stdin_shared.clone();
 
         // Spawn reader task
         let stdout_task = tokio::spawn(async move {
@@ -88,7 +88,7 @@ impl JsonRpcStream {
 
         Ok(Self {
             pending,
-            stdin: Arc::new(Mutex::new(stdin)),
+            stdin: stdin_shared,
             worker_to_host: Arc::new(Mutex::new(None)),
             stdout_task: Some(stdout_task),
         })

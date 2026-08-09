@@ -1530,3 +1530,170 @@ R502 / R504 / R505 已有 `Option<...>` 占位接口但未真正接 sink；本�
 | P2 | `SshLabFixture` 上移 | round492/494/495/496/498/502/504/505 八处重复 ~150 行/处 |
 | P2 | Claude `execute_with_resume_retry` 接生产路径 | 完整 bridge + resume + retry |
 | P3 | 其他 adapter（cursor/gemini/grok/pi/hermes/openclaw）延后 | 用户约束 |
+
+## 44. R504 完成：stream_local_file_to_ssh progress 真正接入
+
+### 动机
+
+R503 把 `stream_local_file_to_ssh` 的 `progress` 参数加进去了，但函数体只
+是 `let _ = progress` —— 占位 no-op。这意味着 git bundle 上传进度（已知精确
+size）从未上报。本轮把 local file 用 `ProgressReader` 包装，接 `total_bytes`
+为 bundle 的真实 size（精确模式），并 `finish()` / `fail()` 真正发终态行。
+
+### 关键改动
+
+`crates/pc-acpx/src/git_workspace_sync.rs` 的 `stream_local_file_to_ssh`：
+
+1. **取 bundle size**：`std::fs::metadata(local_file).map(|m| m.len()).unwrap_or(0)` —— bundle 是真实文件
+2. **包装 `tokio::fs::File` 为 ProgressReader**：
+   ```rust
+   create_transfer_progress(
+       Box::new(file),
+       TransferProgressOptions {
+           on_progress: sink.clone(),
+           phase: RuntimeProgressPhase::ImportingGitHistory,
+           direction: RuntimeProgressDirection::To,
+           total_bytes: Some(total_bytes),
+           estimated: false,  // 精确百分比，不 cap
+       },
+   )
+   ```
+3. **`tokio::io::copy(&mut counter, &mut stdin)`**：计数 + 推送同时进行
+4. **终态处理**：`match &copy_result { Ok(_) => finish().await, Err(_) => fail().await }`
+5. **`None` 路径保留**：调用方不传 progress 时走旧路径（避免不必要的 sink 分配）
+
+### 关键设计要点
+
+- **`estimated=false` 模式无 cap**：bundle size 精确，直接显示 0% → 100%
+- **`progress = None` 零开销**：避免为不需要的 sink 分配 `RuntimeProgressReporter`
+- **测试验证 sink 真收到行**：新加 `tests/round504_stream_local_file_with_progress.rs` 真实 sshd fixture + 捕获 `Importing git history` + `100%` 行
+- **`drop(stdin)` 位置不变**：无论有无 progress，都在 `copy_result` 后 close stdin
+
+### 真实验证
+
+- **`tests/round504_stream_local_file_with_progress.rs`（pc-acpx +1，10.06s）**：
+  - 真实 sshd + git repo + 2 KiB file
+  - 调用 `import_git_workspace_to_ssh` 传 sink
+  - 断言：sink 收到 ≥ 1 行包含 `Importing git history`
+  - 断言：sink 收到至少一行包含 `100%`（终态）
+- **`round498_git_workspace_sync_ssh` 回归（2/2 通过）**：无破坏
+
+### 测试快照
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | 1006 |
+| pc-acpx integration | **1623**（+1 R504） |
+| pc-adapter-codex-local lib | 390 |
+| pc-adapter-claude-local lib | 421 |
+| **本仓合计** | **3440**（含 codex/claude 集成 = 4410） |
+
+### 后续计划（R505+）
+
+| 优先级 | 模块 | 内容 |
+|---|---|---|
+| P1 | R505：把 `prepare/restore_workspace_for_ssh_execution` 接入 Claude/Codex `Adapter::execute()` | 接通最后一公里 |
+| P1 | R506：`ensureSshWorkspaceReady` 端口（10 行）+ `baselineSnapshot` + `integrateImportedGitHead` | 完整 Node ssh.ts 主体 |
+| P2 | `SshLabFixture` 上移 | 8 处重复 ~150 行/处 |
+| P2 | Claude `execute_with_resume_retry` 接生产路径 | 完整 bridge + resume + retry |
+| P3 | 其他 adapter 延后 | 用户约束 |
+
+## 45. R506 完成：ensureSshWorkspaceReady + integrateImportedGitHead + mergeDirectoryWithBaseline + restore baseline 路径
+
+### 动机
+
+Node 端 SSH runtime 复刻只剩 ~5% —— 三个互相关联的小模块：
+- `ensureSshWorkspaceReady` (ssh.ts L1649-1658, 10 行)
+- `integrateImportedGitHead` (git-workspace-sync.ts L303-385, ~80 行)
+- `mergeDirectoryWithBaseline` + 配套 snapshot/walk/lock/copy helpers (workspace-restore-merge.ts, ~259 行)
+
+同时 Node `restoreWorkspaceFromSshExecution` 有两条路径：
+- 无 `baselineSnapshot`（已实现 R505）
+- 有 `baselineSnapshot`：export → staging → merge + integrate git head
+
+本轮把缺失的 ~5% 全部补齐，并接通 restore 的 baseline 路径。
+
+### 关键改动
+
+`crates/pc-acpx/src/git_workspace_sync.rs` 新增：
+
+1. **`ensure_ssh_workspace_ready(config) -> Result<SshReadyWorkspace>`**：
+   - ssh 跑 `mkdir -p <remote> && cd <remote> && pwd`，返回 trimmed stdout 作 remoteCwd
+   - 与 Node 10 行对应
+
+2. **`integrate_imported_git_head(local_dir, imported_head)`**：
+   - 5 次重试循环（应对 concurrent ref update）
+   - 读 snapshot → merge-base 检查
+   - 三种 fast-path / slow-path：
+     - merge-base == imported_head → 无操作（已包含）
+     - merge-base == current_head → `update-ref` fast-forward
+     - 否则 `merge-tree --write-tree` + `commit-tree` 三方合并 + `update-ref`
+   - `is_concurrent_ref_update_error` 启发式：检查 "cannot lock ref" + "expected"
+
+3. **`capture_directory_snapshot(root, options)`** + **`DirectorySnapshot`** + **`DirectorySnapshotEntry`**：
+   - 迭代 stack-based 遍历（避免 async recursion + unsafe）
+   - SHA256 文件哈希（用 `sha2` crate）
+   - `Dir` / `File {mode, hash}` / `Symlink {target}` 三种 entry 类型
+   - exclude 模式按 forward-slash relative 路径前缀匹配
+
+4. **`merge_directory_with_baseline(input)`**：
+   - 三阶段：snapshot → 删除 baseline 里有但 source 里没有且 target 仍匹配 baseline 的项 → 删除 source 里没出现的 dirs → 复制 source 里与 baseline 不同的项
+   - 用 `acquire_directory_merge_lock` 在 `target.paperclip-restore.lock` 互斥
+   - `is_holder_alive` 用 `kill -0 <pid>` shell 命令探测（避免 libc unsafe，被 `-F unsafe-code` 拒绝）
+   - `before_apply` / `after_apply` 回调用于在合并前/后插入动作
+
+5. **`read_directory_snapshot_entry` + `directory_entry_matches_baseline`**：辅助单条 entry 操作
+
+6. **`restore_workspace_from_ssh_execution` 新增 `baseline: Option<&DirectorySnapshot>` 参数**：
+   - `Some(baseline)` → export git → sync 到 staging → merge + integrate git head
+   - `None` → R505 行为（git / 非 git 路径）
+   - `prepare_workspace_for_ssh_execution` 也新增 `_baseline` 参数（v1 unused，留给后续扩展）
+
+7. **`cleanup_imported_git_refs(local_dir)`**：restore 后清理 orphan `refs/paperclip/ssh-sync/imported/*` refs
+
+### 关键设计要点
+
+- **迭代栈遍历代替 async recursion**：`walk_directory_recursive` 用 `Vec<String>` stack + `while let Some(rel) = stack.pop()`，避免 Rust 2021 的 "recursion in async fn requires boxing"
+- **`kill -0` 探测代替 libc `kill(0)`**：被 `-F unsafe-code` flag 拒绝，使用 shell 启动 `kill -0 <pid>` 做 PID 存在检查；macOS + Linux 都 work
+- **`PermissonsExt::mode()` unix-only**：用 `std::os::unix::fs::PermissionsExt` 取 mode 位
+- **`std::os::unix::fs::symlink`** 而不是 tokio 版（避免 module private）
+- **`acquire_directory_merge_lock` 不用 recursion**：用 `for _ in 0..600u32` 循环代替 `loop { ... continue; }`，避免 Rust 编译器的 async recursion 检查
+- **三阶段删除 + 复制**：保留 target 上 user edit（如果 target 仍 match baseline → 删除；如果 source 与 baseline 不同 → 复制；否则跳过）
+- **lock 自动释放**：用 `async { ... }.await` 块返回值，最后无条件 `remove_dir_all(lock_path)`，匹配 Node `try/finally`
+
+### 真实验证
+
+- **`crates/pc-acpx/src/git_workspace_sync.rs` r506_tests 模块（5/5 通过）**：
+  - `capture_directory_snapshot_hashes_files` — 嵌套目录 + 文件哈希
+  - `capture_directory_snapshot_respects_exclude` — `node_modules` 被排除
+  - `merge_directory_with_baseline_removes_target_deletions` — b.txt 在 source 缺失 → target 删除
+  - `merge_directory_with_baseline_preserves_target_edits` — 用户 edit `USER_LOCAL_EDIT` 保留
+  - `entries_match_file_compare_mode_and_hash` — File entry mode + hash 比较
+
+- **跨 round sshd fixture 回归（10/10 通过，零破坏）**：
+  | 套件 | 结果 |
+  |---|---|
+  | round498_git_workspace_sync_ssh | 2 passed |
+  | round502_sync_directory_to_ssh | 2 passed |
+  | round504_sync_directory_from_ssh | 3 passed |
+  | round504_stream_local_file_with_progress | 1 passed |
+  | round505_prepare_restore_workspace | 2 passed |
+
+### 测试快照
+
+| Crate | 测试数 |
+|---|---|
+| pc-acpx lib | **1011**（1006 + 5 R506） |
+| pc-acpx integration | 1623（保持） |
+| pc-adapter-codex-local lib | 390 |
+| pc-adapter-claude-local lib | 421 |
+| **本仓合计** | **3445**（含 codex/claude 集成 = 4415） |
+
+### 后续计划（R507+）
+
+| 优先级 | 模块 | 内容 |
+|---|---|---|
+| P1 | R507：把 `ensure_ssh_workspace_ready` + `restore baseline 路径` 接入 Claude/Codex `Adapter::execute()` | 接通最后一公里 |
+| P2 | `SshLabFixture` 上移 | 9 处重复 ~150 行/处 |
+| P2 | Claude `execute_with_resume_retry` 接生产路径 | 完整 bridge + resume + retry |
+| P3 | 其他 adapter 延后 | 用户约束 |

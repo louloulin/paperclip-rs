@@ -1,73 +1,39 @@
 # M21 — Node ↔ Rust 路由 method+path 重合率
 
 - Node unique routes: **693**
-- Rust unique routes: **687**
-- Common: **526**
-- Missing in Rust: **167**
-- Extra in Rust:   **161**
-- **Coverage (method+path): 75.9%**
+- Rust unique routes: **865**
+- Common: **648**
+- Missing in Rust: **45**
+- Extra in Rust:   **217**
+- **Coverage (method+path): 93.51%**
 
 ## Top missing categories
 
 | Category | Missing count |
 |---|---:|
-| `/api/:param/*` | 129 |
-| `/api/root/*` | 14 |
-| `/api/settings/*` | 3 |
-| `/api/gateways/*` | 3 |
+| `/api/:param/*` | 17 |
+| `/api/root/*` | 13 |
 | `/api/exports/*` | 2 |
-| `/api/imports/*` | 2 |
 | `/api/export/*` | 2 |
-| `/api/sessions/*` | 1 |
+| `/api/imports/*` | 2 |
+| `/api/misc/*` | 1 |
 | `/api/restart/*` | 1 |
-| `/api/artifacts/*` | 1 |
-| `/api/users/*` | 1 |
 | `/api/archive/*` | 1 |
-| `/api/branding/*` | 1 |
-| `/api/me/*` | 1 |
 | `/api/timeline/*` | 1 |
+| `/api/feedback-traces/*` | 1 |
+| `/api/preview/*` | 1 |
+| `/api/artifacts/*` | 1 |
+| `/api/jobs/*` | 1 |
+| `/api/branding/*` | 1 |
 
 ## Top 50 missing method+path
 
 | Method | Path |
 |---|---|
 | DELETE | `/api/:param` |
-| DELETE | `/api/adapters/:param` |
-| DELETE | `/api/agents/:param` |
-| DELETE | `/api/agents/:param/instructions-bundle/file` |
-| DELETE | `/api/attachments/:param` |
-| DELETE | `/api/companies/:param/folders/:param` |
-| DELETE | `/api/companies/:param/me/user-secrets/:param` |
-| DELETE | `/api/companies/:param/skill-policy` |
-| DELETE | `/api/companies/:param/skill-test-run-templates/:param` |
-| DELETE | `/api/companies/:param/skills/:param` |
-| DELETE | `/api/companies/:param/skills/:param/comments/:param` |
 | DELETE | `/api/companies/:param/skills/:param/files` |
-| DELETE | `/api/companies/:param/skills/:param/star` |
-| DELETE | `/api/companies/:param/skills/:param/test-inputs/:param` |
-| DELETE | `/api/companies/:param/tools/policies/:param` |
-| DELETE | `/api/decision-training/:param` |
-| DELETE | `/api/environments/:param` |
-| DELETE | `/api/environments/:param/custom-image-template` |
-| DELETE | `/api/goals/:param` |
-| DELETE | `/api/issues/:param` |
-| DELETE | `/api/issues/:param/comments/:param` |
-| DELETE | `/api/issues/:param/documents/:param` |
-| DELETE | `/api/issues/:param/inbox-archive` |
-| DELETE | `/api/issues/:param/watchdog` |
 | DELETE | `/api/labels/:param` |
-| DELETE | `/api/pipelines/:param/stages/:param` |
-| DELETE | `/api/plugins/:param` |
-| DELETE | `/api/projects/:param` |
-| DELETE | `/api/projects/:param/workspaces/:param` |
-| DELETE | `/api/routine-triggers/:param` |
-| DELETE | `/api/secret-provider-configs/:param` |
 | DELETE | `/api/secrets/:param` |
-| DELETE | `/api/status-cards/:param` |
-| DELETE | `/api/tool-applications/:param` |
-| DELETE | `/api/tool-connections/:param` |
-| DELETE | `/api/tool-profile-entries/:param` |
-| DELETE | `/api/work-products/:param` |
 | GET | `/` |
 | GET | `/api/` |
 | GET | `/api/:param` |
@@ -81,3 +47,31 @@
 | GET | `/apiPrefer` |
 | GET | `/apiX-Paperclip-Run-Id` |
 | GET | `/apiaccept` |
+| GET | `/apiauthorization` |
+| GET | `/apicontent-type` |
+| GET | `/apihost` |
+| GET | `x-paperclip-dev-server-status-token` |
+| PATCH | `/api/:param` |
+| PATCH | `/api/:param/branding` |
+| PATCH | `/api/companies/:param/skills/:param/files` |
+| PATCH | `/api/companies/:param/smoke-lab/runs/:param` |
+| PATCH | `/api/profile` |
+| PATCH | `/api/tool-profiles/:param` |
+| POST | `/api/` |
+| POST | `/api/:param/archive` |
+| POST | `/api/:param/export` |
+| POST | `/api/:param/exports` |
+| POST | `/api/:param/exports/preview` |
+| POST | `/api/:param/imports/apply` |
+| POST | `/api/:param/imports/preview` |
+| POST | `/api/cases/:param/issue-links` |
+| POST | `/api/companies/:param/activity` |
+| POST | `/api/companies/:param/approvals` |
+| POST | `/api/companies/:param/decisions` |
+| POST | `/api/companies/:param/pipelines` |
+| POST | `/api/companies/:param/teams/catalog/:param/preview` |
+| POST | `/api/import/preview` |
+| POST | `/api/issues/:param/read` |
+| POST | `/dev-server/restart` |
+| PUT | `/api/cases/:param/documents/:param` |
+| PUT | `/api/pipelines/:param/transitions` |

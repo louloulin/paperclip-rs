@@ -52,21 +52,49 @@ def extract_node(node_root):
     return routes
 
 def extract_rust(rust_root):
-    """Walk Rust crates/pc-http/src/routes/*.rs and pull .route("/path", get|post|...)."""
+    """Walk Rust crates/pc-http/src/routes/*.rs and pull every verb chained
+    onto a `.route("/path", ...)`. Captures `get/post/put/patch/delete`
+    whether the verb is the first argument or chained via `.verb(...)`.
+    """
     routes = []
-    rx = re.compile(r'\.route\(\s*[\'"`]([^\'"` ]+)[\'"`]\s*,\s*(get|post|put|patch|delete)')
     routes_dir = os.path.join(rust_root, "crates/pc-http/src/routes")
     if not os.path.isdir(routes_dir):
         sys.exit(f"rust routes dir missing: {routes_dir}")
     for fname in sorted(os.listdir(routes_dir)):
-        if not fname.endswith(".rs"): continue
+        if not fname.endswith(".rs"):
+            continue
         fpath = os.path.join(routes_dir, fname)
-        with open(fpath) as f: src = f.read()
-        for m in rx.finditer(src):
-            verb = m.group(2).upper()
-            path = m.group(1)
-            # skip health/utility endpoints that exist on both
-            routes.append((verb, path, fname))
+        with open(fpath) as f:
+            src = f.read()
+        # Strip Rust string-literal escapes so our regex sees the literal text.
+        # We scan for `.route(` invocations and, for each one, harvest every
+        # verb keyword chained onto the matching path. The simple approach
+        # below works because `.route(p, X.Y...)` calls put the verb chain
+        # immediately after the comma, on the same logical block.
+        for chunk in re.split(r"\.route\(", src)[1:]:
+            pm = re.match(r"""\s*['"]([^'"]+)['"]""", chunk)
+            if not pm:
+                continue
+            path = pm.group(1)
+            # Restrict the scan to the same `.route(...)` invocation: stop at
+            # the first top-level close paren. We track paren depth starting
+            # from 1 (we are inside the .route( call already).
+            depth = 1
+            tail_chars = []
+            for ch in chunk:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                tail_chars.append(ch)
+            tail = "".join(tail_chars)
+            verbs = set()
+            for vm in re.finditer(r"\b(get|post|put|patch|delete)\s*\(", tail):
+                verbs.add(vm.group(1).upper())
+            for v in verbs:
+                routes.append((v, path, fname))
     return routes
 
 def normalise_param(p):

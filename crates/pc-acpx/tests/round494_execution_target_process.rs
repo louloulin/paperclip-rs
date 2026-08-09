@@ -10,6 +10,9 @@
 //!
 //! 缺失 sshd / node 时跳过真实部分。
 
+mod common;
+use crate::common::{node_available, SshLabFixture};
+
 use pc_acpx::bridge_executor::{BridgeCommandRunner, LocalProcessBridgeRunner};
 use pc_acpx::execution_target::AdapterExecutionTarget;
 use pc_acpx::execution_target_process::{
@@ -29,82 +32,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-fn command_available(command: &str) -> bool {
-    std::process::Command::new("sh")
-        .args(["-c", &format!("command -v {command}")])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn node_available() -> bool {
-    command_available("node")
-}
-
-fn allocate_loopback_port() -> Option<u16> {
-    use std::net::TcpListener;
-    let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
-}
-
-/// `BridgeCommandRunner`-shaped adapter that runs via the shell helper
-/// (so the runner.execute inside the sandbox branch handles `sh -c`
-/// scripts the same way the real provider runner would).
-struct LocalSandboxRunner;
-
-#[async_trait::async_trait]
-impl BridgeCommandRunner for LocalSandboxRunner {
-    async fn execute(
-        &self,
-        input: &pc_acpx::bridge_executor::RunnerExecuteInput,
-    ) -> Result<pc_acpx::bridge_executor::RunnerCommandResult, String> {
-        LocalProcessBridgeRunner.execute(input).await
-    }
-}
-
-/// `SandboxRunLogRunner` impl that delegates to the shell command via
-/// `LocalProcessBridgeRunner`-equivalent tokio spawn — captures stdout
-/// for the tail parser to consume.
-struct TickRunner;
-
-#[async_trait::async_trait]
-impl SandboxRunLogRunner for TickRunner {
-    async fn execute(
-        &self,
-        input: SandboxRunLogTickInput,
-    ) -> Result<SandboxRunLogTickResult, String> {
-        let mut cmd = tokio::process::Command::new(&input.command);
-        cmd.args(&input.args)
-            .envs(input.env.iter())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
-        if !input.cwd.is_empty() {
-            cmd.current_dir(&input.cwd);
-        }
-        let output = tokio::time::timeout(
-            Duration::from_millis(input.timeout_ms),
-            cmd.output(),
-        )
-        .await
-        .map_err(|_| "tick timeout".to_string())?
-        .map_err(|error| error.to_string())?;
-        Ok(SandboxRunLogTickResult {
-            exit_code: output.status.code(),
-            timed_out: !output.status.success() && output.stdout.is_empty(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 1. local 分支：echo + 退出码 + stdout 捕获 + on_log streaming
-// ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 async fn local_branch_echo_captures_stdout_and_emits_on_log() {
@@ -361,145 +288,11 @@ async fn sandbox_branch_run_log_tail_streams_incremental_output() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. ssh 分支：真实 sshd fixture + build_ssh_spawn_target（spawn 远端
-//    shell 命令），streaming on_log
-// ---------------------------------------------------------------------------
 
-struct SshLabFixture {
-    config: SshConnectionConfig,
-    remote_workspace_path: PathBuf,
-}
-
-impl SshLabFixture {
-    async fn start() -> Option<Self> {
-        if !command_available("ssh") || !command_available("sshd") || !command_available("ssh-keygen") {
-            eprintln!("SKIP: ssh/sshd/ssh-keygen unavailable");
-            return None;
-        }
-        let port = allocate_loopback_port()?;
-        let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-r494-ssh-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let remote_workspace_path = root_dir.join("workspace");
-        std::fs::create_dir_all(&remote_workspace_path).ok()?;
-        let username = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
-        let client_key = root_dir.join("client_key");
-        let host_key = root_dir.join("host_key");
-        let authorized_keys = root_dir.join("authorized_keys");
-        let known_hosts_path = root_dir.join("known_hosts");
-        let sshd_config_path = root_dir.join("sshd_config");
-        let sshd_log_path = root_dir.join("sshd.log");
-        let sshd_pid_path = root_dir.join("sshd.pid");
-
-        let gen = |args: &[&str]| {
-            std::process::Command::new("ssh-keygen")
-                .args(args)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        };
-        if !gen(&["-q", "-t", "ed25519", "-N", "", "-f", client_key.to_str().unwrap()])
-            || !gen(&["-q", "-t", "ed25519", "-N", "", "-f", host_key.to_str().unwrap()])
-        {
-            return None;
-        }
-        let _ = std::fs::copy(client_key.with_extension("pub"), &authorized_keys);
-        let host_public_key = std::process::Command::new("ssh-keygen")
-            .args(["-y", "-f", host_key.to_str().unwrap()])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
-        let known_hosts_entry = pc_acpx::ssh::build_known_hosts_entry(
-            pc_acpx::ssh::KnownHostsEntryInput {
-                host: "127.0.0.1".to_string(),
-                port,
-                public_key: host_public_key,
-            },
-        );
-        let _ = std::fs::write(&known_hosts_path, format!("{known_hosts_entry}\n"));
-        let config_text = format!(
-            "Port {port}\n\
-             ListenAddress 127.0.0.1\n\
-             HostKey {}\n\
-             PidFile {}\n\
-             AuthorizedKeysFile {}\n\
-             PasswordAuthentication no\n\
-             ChallengeResponseAuthentication no\n\
-             KbdInteractiveAuthentication no\n\
-             PubkeyAuthentication yes\n\
-             PermitRootLogin no\n\
-             UsePAM no\n\
-             StrictModes no\n\
-             AllowUsers {username}\n\
-             LogLevel VERBOSE\n\
-             PrintMotd no\n\
-             UseDNS no\n",
-            host_key.display(),
-            sshd_pid_path.display(),
-            authorized_keys.display(),
-        );
-        let _ = std::fs::write(&sshd_config_path, &config_text);
-        let mut child = tokio::process::Command::new("sshd")
-            .args([
-                "-D",
-                "-f",
-                sshd_config_path.to_str().unwrap(),
-                "-E",
-                sshd_log_path.to_str().unwrap(),
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .ok()?;
-        // 等 sshd 就绪（轮询 ssh connect）。
-        let config = SshConnectionConfig {
-            host: "127.0.0.1".to_string(),
-            port,
-            username: username.clone(),
-            private_key: Some(std::fs::read_to_string(&client_key).ok()?),
-            known_hosts: Some(std::fs::read_to_string(&known_hosts_path).ok()?),
-            strict_host_key_checking: true,
-            remote_workspace_path: remote_workspace_path.to_string_lossy().into_owned(),
-        };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut ready = false;
-        while Instant::now() < deadline {
-            let probe = run_ssh_command(
-                &config,
-                "echo probe",
-                &SshCommandOptions {
-                    env: BTreeMap::new(),
-                    stdin: None,
-                    timeout_ms: 1_500,
-                    max_buffer: 64 * 1024,
-                },
-            )
-            .await;
-            if probe.is_ok() {
-                ready = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        if !ready {
-            let _ = child.kill().await;
-            return None;
-        }
-        Some(Self {
-            config,
-            remote_workspace_path,
-        })
-    }
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_branch_runs_remote_command_via_spawn_target() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r494").await else {
         return;
     };
     let ssh_target_json = serde_json::json!({
@@ -601,7 +394,7 @@ async fn execute_command_for_target_local_dispatches_locally() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn execute_command_for_target_ssh_dispatches_remotely() {
-    let Some(fixture) = SshLabFixture::start().await else {
+    let Some(fixture) = SshLabFixture::start("r494").await else {
         return;
     };
     let target = serde_json::json!({
@@ -732,3 +525,56 @@ async fn execute_command_for_target_respects_kill_flag() {
     assert!(result.timed_out, "kill_flag triggers timed_out");
     assert_eq!(result.signal.as_deref(), Some("SIGTERM"));
 }
+
+
+// ---------------------------------------------------------------------------
+// LocalSandboxRunner: BridgeCommandRunner that delegates to LocalProcessBridgeRunner
+// ---------------------------------------------------------------------------
+struct LocalSandboxRunner;
+
+#[async_trait::async_trait]
+impl BridgeCommandRunner for LocalSandboxRunner {
+    async fn execute(
+        &self,
+        input: &pc_acpx::bridge_executor::RunnerExecuteInput,
+    ) -> Result<pc_acpx::bridge_executor::RunnerCommandResult, String> {
+        LocalProcessBridgeRunner.execute(input).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TickRunner: SandboxRunLogRunner that spawns a tokio child to capture stdout
+// ---------------------------------------------------------------------------
+struct TickRunner;
+
+#[async_trait::async_trait]
+impl SandboxRunLogRunner for TickRunner {
+    async fn execute(
+        &self,
+        input: SandboxRunLogTickInput,
+    ) -> Result<SandboxRunLogTickResult, String> {
+        let mut cmd = tokio::process::Command::new(&input.command);
+        cmd.args(&input.args)
+            .envs(input.env.iter())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        if !input.cwd.is_empty() {
+            cmd.current_dir(&input.cwd);
+        }
+        let output = tokio::time::timeout(
+            Duration::from_millis(input.timeout_ms),
+            cmd.output(),
+        )
+        .await
+        .map_err(|_| "tick timeout".to_string())?
+        .map_err(|error| error.to_string())?;
+        Ok(SandboxRunLogTickResult {
+            exit_code: output.status.code(),
+            timed_out: !output.status.success() && output.stdout.is_empty(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        })
+    }
+}
+

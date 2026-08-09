@@ -364,6 +364,23 @@ impl AdapterExecutionTarget {
     /// Mutation-friendly variant mirroring Node's object-spread idiom
     /// in callers that override `remoteCwd`. Mirrors the shallow
     /// copy used by `overrideAdapterExecutionTargetRemoteCwd`.
+    /// Build an `AdapterExecutionTarget` from a [`SshRemoteExecutionSpec`].
+    /// Mirrors the Node object-spread used by codex/claude `execute.ts`
+    /// when the SSH target is materialized at run time.
+    #[must_use]
+    pub fn from_remote_execution_ssh(spec: SshRemoteExecutionSpec) -> Self {
+        let remote_cwd = spec.remote_cwd.clone();
+        Self::Remote(AdapterRemoteExecutionTarget::Ssh(AdapterSshExecutionTarget {
+            kind: "remote".to_string(),
+            transport: "ssh".to_string(),
+            environment_id: None,
+            lease_id: None,
+            remote_cwd,
+            spec,
+            workspace_realization: None,
+        }))
+    }
+
     pub fn set_remote_cwd(&mut self, next_remote_cwd: String) {
         match self {
             Self::Remote(AdapterRemoteExecutionTarget::Ssh(s)) => {
