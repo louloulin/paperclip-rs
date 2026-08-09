@@ -25,11 +25,19 @@
 pub mod builder;
 pub mod http;
 pub mod policy;
+pub mod trust;
 pub mod types;
 
 pub use builder::build_context;
 pub use http::{company_resource, denial_to_string, enforce, enforce_issue, enforce_permission};
 pub use policy::{evaluate, principal_type_of, AuthzError, Context};
+pub use trust::{
+    is_agent_within_boundary, is_issue_within_boundary, is_tool_class_within_boundary,
+    resolve_core_trust_preset, DenyReason as TrustDenyReason, LowTrustBoundary,
+    ResolveInput as TrustResolveInput, TrustError, TrustPreset, TrustPresetResolution,
+    TrustPresetSource, LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH, LOW_TRUST_REVIEW_PRESET,
+    LOW_TRUST_REVIEW_PRESET_VERSION, LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
+};
 pub use types::{
     Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource,
 };

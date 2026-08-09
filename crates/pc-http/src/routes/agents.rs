@@ -44,6 +44,11 @@ use pc_repos::heartbeat::{
 use pc_repos::issue::IssueRepo;
 use pc_repos::skill::SkillRepo;
 
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -257,9 +262,10 @@ fn default_adapter() -> String {
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<LegacyCreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    create_agent(&state, body.company_id, body.agent).await
+    create_agent(&state, &actor, body.company_id, body.agent).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,16 +279,29 @@ struct LegacyCreateBody {
 async fn create_company_agent(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    create_agent(&state, company_id, body).await
+    create_agent(&state, &actor, company_id, body).await
 }
 
 async fn create_agent(
     state: &AppState,
+    actor: &AuthContext,
     company_id: Uuid,
     body: CreateBody,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：创建 agent 需要 AgentsCreate 权限（Operator 角色及以上）
+    if let Err(err) = enforce_permission(
+        &state.db,
+        actor,
+        company_id,
+        PermissionKey::AgentsCreate,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let input = create_agent_input(company_id, body)?;
     let row = state
         .agents
@@ -423,9 +442,22 @@ struct UpdateBody {
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     headers: HeaderMap,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：更新 agent 需要先加载目标 agent 取 company_id
+    let target_for_authz = load_agent(&state, id).await?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target_for_authz.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.permissions.is_some() {
         return Err(ApiError::BadRequest(
             "permissions must be updated through /permissions".into(),
@@ -1045,7 +1077,26 @@ async fn revoke_agent_key(
     Ok(Json(serde_json::to_value(row)?))
 }
 
-async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
+) -> ApiResult<StatusCode> {
+    // pc-authz：删除 agent 需要先加载目标 agent 取 company_id
+    let target_for_authz = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target_for_authz.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let ok = AgentRepo::new(&state.db).delete(id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)

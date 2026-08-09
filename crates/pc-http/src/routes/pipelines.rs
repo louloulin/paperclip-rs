@@ -12,7 +12,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 use std::collections::BTreeMap;
+use sqlx;
 use pc_telemetry::global;
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
 
 use pc_realtime::LiveEvent;
 use pc_repos::case::CaseRepo;
@@ -152,8 +156,20 @@ struct CreateBody {
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：创建 pipeline 需要 PipelinesWrite 权限
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        body.company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.key.trim().is_empty() || body.name.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "key and name must not be empty".into(),
@@ -194,8 +210,29 @@ struct UpdateBody {
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：查公司以做权限检查
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM pipelines WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("pipeline {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = PipelineRepo::new(&state.db)
         .update(id, body.name.as_deref(), body.description.as_deref())
         .await?
@@ -206,7 +243,30 @@ async fn update(
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
-async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
+) -> ApiResult<StatusCode> {
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM pipelines WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("pipeline {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let ok = PipelineRepo::new(&state.db).delete(id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
@@ -628,7 +688,27 @@ async fn unlink_case_issue_route(
 async fn archive_pipeline(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM pipelines WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("pipeline {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = PipelineRepo::new(&state.db)
         .archive_pipeline(id)
         .await?

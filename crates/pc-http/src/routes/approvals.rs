@@ -11,6 +11,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
+use sqlx;
 use std::collections::BTreeMap;
 use pc_telemetry::global;
 use axum::Extension as AxumExtension;
@@ -85,8 +86,20 @@ struct CreateBody {
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：创建 approval 需要 UsersInvite 权限（Operator 角色及以上）
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        body.company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.approval_type.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "approval_type must not be empty".into(),
@@ -205,15 +218,20 @@ async fn approve_approval(
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
     // 先查 row 以取 company_id
-    let preview = ApprovalRepo::new(&state.db)
-        .find_by_id(approval_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let preview_company: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM approvals WHERE id = $1",
+    )
+    .bind(approval_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview_company
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?
+        .0;
     // pc-authz：批准 approval 需要 UsersInvite 权限（Operator 角色及以上）。
     if let Err(err) = enforce_permission(
         &state.db,
         &actor,
-        preview.company_id,
+        preview_company_id,
         PermissionKey::UsersInvite,
     )
     .await
@@ -245,14 +263,19 @@ async fn reject_approval(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
-    let preview = ApprovalRepo::new(&state.db)
-        .find_by_id(approval_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let preview_company: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM approvals WHERE id = $1",
+    )
+    .bind(approval_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview_company
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?
+        .0;
     if let Err(err) = enforce_permission(
         &state.db,
         &actor,
-        preview.company_id,
+        preview_company_id,
         PermissionKey::UsersInvite,
     )
     .await

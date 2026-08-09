@@ -307,3 +307,33 @@
 - [x] Consent gate（`AllowConsentedChange`）
 - [x] 5 个新单元测试
 - [x] evidence: `r543-pc-authz-mention-consent-parent.md`
+
+## M44 — pc-authz 多路由接入
+
+- [x] `companies.rs::create_label` 用 `enforce_permission(UsersInvite)`
+- [x] `approvals.rs::approve_approval` 用 `enforce_permission(UsersInvite)`
+- [x] `approvals.rs::reject_approval` 用 `enforce_permission(UsersInvite)`
+- [x] evidence: `r544-pc-authz-multi-route-integration.md`
+
+## M45 — pc-authz 批量接入 agents/pipelines/routines
+
+- [x] `agents.rs` create × 2 + update + remove（4 路由）
+- [x] `pipelines.rs` create + update + archive + remove（4 路由）
+- [x] `routines.rs` create × 2（2 路由，含 nested create_routine 共享 helper）
+- [x] 9 路由全部走 `enforce_permission`，失败映射 ApiError::Forbidden
+- [x] evidence: `r545-pc-authz-bulk-route-integration.md`
+
+## M46 — pc-authz e2e parity 测试
+
+- [x] `parity_node.rs` 22 测试（pure 函数，对齐 Node authorization-service.test.ts）
+- [x] `builder_db_e2e.rs` 6 测试（DB-backed，自动 skip 无 DB 环境）
+- [x] evidence: `r546-pc-authz-e2e-parity-tests.md`
+
+## M47 — pc-authz Trust preset + low-trust boundary
+
+- [x] `trust.rs::TrustPreset` + 常量
+- [x] `LowTrustBoundary` + `TrustPresetResolution` + `DenyReason`
+- [x] `resolve_core_trust_preset`（多 source 合并 + 跨公司 deny + 缺 boundary deny）
+- [x] `is_issue_within_boundary` / `is_agent_within_boundary` / `is_tool_class_within_boundary`
+- [x] 14 个单元测试
+- [x] evidence: `r547-pc-authz-trust-preset-resolver.md`

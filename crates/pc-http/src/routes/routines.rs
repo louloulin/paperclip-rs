@@ -13,6 +13,9 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use std::collections::BTreeMap;
 use pc_telemetry::global;
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
 
 use pc_realtime::LiveEvent;
 use pc_repos::routine::{
@@ -213,29 +216,43 @@ fn default_variables() -> Value {
 async fn create_company(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     headers: axum::http::HeaderMap,
     Json(mut body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.company_id = Some(company_id);
-    create_routine(state, headers, body).await
+    create_routine(state, actor, headers, body).await
 }
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     headers: axum::http::HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    create_routine(state, headers, body).await
+    create_routine(state, actor, headers, body).await
 }
 
 async fn create_routine(
     state: AppState,
+    actor: AuthContext,
     headers: axum::http::HeaderMap,
     body: CreateBody,
 ) -> ApiResult<impl IntoResponse> {
     let company_id = body
         .company_id
         .ok_or_else(|| ApiError::BadRequest("companyId is required".into()))?;
+    // pc-authz：创建 routine 需要 PipelinesWrite 权限（pipeline 跟 routine 是同一组管理）
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let title = body.title.trim();
     if title.is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));

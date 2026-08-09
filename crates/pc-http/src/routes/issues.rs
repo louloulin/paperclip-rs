@@ -12,6 +12,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
 
 use pc_activity::kinds::ActivityKind;
 use pc_activity::types::{ActivityActor, ActivityEvent};
@@ -759,6 +763,7 @@ struct UpdateIssueFullBody {
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     headers: HeaderMap,
     Json(body): Json<UpdateIssueFullBody>,
 ) -> ApiResult<Json<Value>> {
@@ -766,6 +771,17 @@ async fn update(
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    // pc-authz：更新 issue 需要 TasksAssign 权限
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        previous_issue.company_id,
+        PermissionKey::TasksAssign,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let previous_status = previous_issue.status.clone();
     let actor_agent_id = headers
         .get("x-paperclip-agent-id")
