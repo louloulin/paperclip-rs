@@ -54,7 +54,7 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/companies/:company_id/smoke-lab/runs/:run_id",
-            get(runs_get),
+            get(runs_get).patch(runs_patch),
         )
         .route(
             "/api/companies/:company_id/smoke-lab/runs/:run_id/steps",
@@ -388,6 +388,22 @@ async fn runs_create(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok((StatusCode::ACCEPTED, Json(run_json(&row))))
+}
+
+async fn runs_patch(
+    State(state): State<AppState>,
+    Path((company_id, run_id)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    crate::state::require_user_id(&state, &headers).await?;
+    let status = body.get("status").and_then(|v| v.as_str()).map(str::to_string);
+    let updated = pc_repos::smoke::SmokeRepo::new(&state.db)
+        .patch_run(company_id, run_id, status.as_deref())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("smoke-lab run {run_id}")))?;
+    Ok(Json(serde_json::to_value(updated).unwrap_or_default()))
 }
 
 async fn runs_get(

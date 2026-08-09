@@ -166,8 +166,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:company_id/org.svg", get(get_org_svg))
         .route("/api/companies/:company_id/org.png", get(get_org_png))
         .route(
+            // ── R510: GET aliased to POST for Node parity
+            //   (`/companies/:companyId/search/extract`). Both honour the same
+            //   JSON body — search query + limit. GET is historical.
             "/api/companies/:company_id/search/extract",
-            post(search_extract),
+            post(search_extract).get(search_extract),
         )
         // NOTE: POST `/api/companies/:company_id/finance-events` is registered by
         // costs.rs (the canonical module). The duplicate registration here was
@@ -1967,8 +1970,10 @@ async fn get_org_png(
 async fn search_extract(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-    Json(body): Json<serde_json::Value>,
+    body: Option<Json<serde_json::Value>>,
 ) -> ApiResult<Json<Value>> {
+    // GET requests come with no body; default to empty query / default limit.
+    let body = body.map(|Json(b)| b).unwrap_or(serde_json::json!({}));
     let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let limit = body
         .get("limit")

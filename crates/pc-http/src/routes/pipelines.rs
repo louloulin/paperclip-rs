@@ -35,9 +35,14 @@ pub fn router() -> Router<AppState> {
             get(get_stage).patch(update_stage).delete(remove_stage),
         )
         // transitions
+        // ── R510: PUT aliased to both `/transitions` (Node parity) and
+        // `/transitions/replace` (back-compat for existing Rust callers). Both
+        // hit `replace_transitions` — a transactional DELETE all + INSERT new.
         .route(
             "/api/pipelines/:id/transitions",
-            get(list_transitions).post(create_transition),
+            get(list_transitions)
+                .post(create_transition)
+                .put(replace_transitions),
         )
         // cases
         .route(

@@ -82,7 +82,12 @@ pub fn router() -> Router<AppState> {
             post(assign_label).delete(unassign_label),
         )
         // read state
-        .route("/api/issues/:issue_id/read", get(get_read).put(upsert_read))
+        // ── R510: POST aliased to PUT for Node parity (`/api/issues/:id/read`).
+        // Both call `mark_read_state` with last_read_at = now() when body is empty.
+        .route(
+            "/api/issues/:issue_id/read",
+            get(get_read).put(upsert_read).post(mark_read),
+        )
         // inbox archive
         .route(
             "/api/issues/:issue_id/inbox-archive",
@@ -1542,6 +1547,32 @@ async fn upsert_read(
     let row = IssueRepo::new(&state.db)
         .upsert_read_state(issue.company_id, id, &user, body.last_read_at)
         .await?;
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+/// `POST /api/issues/:issue_id/read` — Node `markRead` parity.
+/// Body is optional; defaults last_read_at to now().
+async fn mark_read(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    body: Option<Json<ReadBody>>,
+) -> ApiResult<Json<Value>> {
+    let user = require_user_id(&state, &headers).await?;
+    let last_read_at = body
+        .as_ref()
+        .and_then(|Json(b)| b.last_read_at)
+        .unwrap_or_else(pc_core::Timestamp::now);
+    let issue = IssueRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
+    let row = IssueRepo::new(&state.db)
+        .upsert_read_state(issue.company_id, id, &user, last_read_at.into())
+        .await?;
+    state
+        .realtime
+        .publish(pc_realtime::LiveEvent::new("issue.read", "issue", id).with_actor(&user));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 

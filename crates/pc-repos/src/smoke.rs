@@ -268,6 +268,27 @@ impl<'a> SmokeRepo<'a> {
             .await?)
     }
 
+    /// R510: PATCH /api/companies/:company_id/smoke-lab/runs/:run_id
+    /// Mirrors Node `routes/smoke-lab.ts` patch_run — update status (free-form).
+    /// Notes column does not exist in the current schema; if a future migration
+    /// adds it, this repo method is the single place to wire it in.
+    pub async fn patch_run(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+        status: Option<&str>,
+    ) -> RepoResult<Option<RunRow>> {
+        let sql = format!(
+            "UPDATE smoke_runs SET status=COALESCE($3, status), updated_at=now()              WHERE company_id=$1 AND id=$2              RETURNING {RUN_COLS}",
+        );
+        Ok(sqlx::query_as::<_, RunRow>(&sql)
+            .bind(company_id)
+            .bind(run_id)
+            .bind(status)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
     pub async fn finish_run(
         &self,
         id: Uuid,
