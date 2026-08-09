@@ -2179,8 +2179,12 @@ name = "pc-authz"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "pc-auth",
  "pc-core",
+ "pc-db",
+ "pc-repos",
  "serde",
+ "sqlx",
  "thiserror 1.0.69",
  "uuid",
 ]

@@ -273,3 +273,11 @@
 - [x] 修复 `pipelines.rs` 中孤儿 `track()` 调用（编译失败）
 - [x] 修复 `routines.rs` / `approvals.rs` 中位于文件末尾的孤儿 `use` 导入
 - [x] evidence: `r539-business-events-completion.md`
+
+## M40 — pc-authz 核心决策引擎
+
+- [x] `types.rs`：PermissionKey (21) / PrincipalType / CompanyRole / Action / Resource / Decision / Reason (23)
+- [x] `policy.rs`：`Context` 注入 + `evaluate` / `check` / `principal_type_of`
+- [x] `lib.rs`：公共 API 导出 + 兼容旧 `DefaultPolicy` stub
+- [x] 决策分支对齐 Node `evaluateAuthorization`：system 短路 / anonymous / instance_admin / local_board / company membership / issue self / grants / role
+- [x] evidence: `r540-pc-authz-core-decision-engine.md`
