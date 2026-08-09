@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use pc_activity::{ActivityActor, ActivityEvent, ActivityFilter, ActivityKind};
+use pc_plugin_host::plugin_event_bus::{ActorType, PluginEvent};
 use pc_realtime::LiveEvent;
 use pc_repos::agent::AgentRepo;
 use pc_repos::agent_action_audit::{
@@ -50,6 +52,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:company_id/archive", post(archive))
         .route("/api/companies/:company_id/stats", get(get_stats))
         .route("/api/companies/:company_id/timeline", get(get_timeline))
+        
         .route("/api/companies/:company_id/artifacts", get(list_artifacts))
         .route(
             "/api/companies/:company_id/branding",
@@ -188,7 +191,7 @@ pub fn router() -> Router<AppState> {
         // ---- Round 37: company sub-resources (activity / approvals / decisions / goals / pipelines / case-events / user-directory / review-cases) ----
         .route(
             "/api/companies/:company_id/activity",
-            get(list_company_activity_route),
+            get(list_company_activity_route).post(create_activity),
         )
         .route(
             "/api/companies/:company_id/approvals",
@@ -2977,3 +2980,439 @@ mod round224_tests {
 }
 
 
+
+// ============================================================================
+// R511 — Company activity routes (1:1 port of Node routes/activity.ts)
+//
+// HTTP layer accepts Node-shaped input (free-form action string),
+// converts to typed Rust ActivityEvent, emits to ActivityLog + PluginEventBus.
+//
+// 设计：高内聚 — 单文件单职责（公司活动路由 + Node schema 适配）
+//      低耦合 — 通过 ActivityLog + PluginEventBus 与下游解耦
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct CreateActivityBody {
+    #[serde(default = "default_actor_type")]
+    actor_type: String,
+    actor_id: String,
+    action: String,
+    entity_type: String,
+    entity_id: String,
+    #[serde(default)]
+    agent_id: Option<Uuid>,
+    #[serde(default)]
+    details: Option<Value>,
+}
+
+fn default_actor_type() -> String {
+    "system".to_owned()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ActivityListQuery {
+    #[serde(default)]
+    agent_id: Option<Uuid>,
+    #[serde(default)]
+    entity_type: Option<String>,
+    #[serde(default)]
+    entity_id: Option<Uuid>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// Parse Node-style free-form action string to typed ActivityKind.
+/// Unknown actions fall back to `Other` (raw string preserved in payload).
+fn parse_activity_kind(action: &str) -> ActivityKind {
+    match action {
+        "issue.created" => ActivityKind::IssueCreated,
+        "issue.updated" => ActivityKind::IssueUpdated,
+        "issue.assigned" => ActivityKind::IssueAssigned,
+        "issue.closed" => ActivityKind::IssueClosed,
+        "decision.proposed" => ActivityKind::DecisionProposed,
+        "decision.approved" => ActivityKind::DecisionApproved,
+        "decision.rejected" => ActivityKind::DecisionRejected,
+        "approval.requested" => ActivityKind::ApprovalRequested,
+        "approval.granted" => ActivityKind::ApprovalGranted,
+        "approval.denied" => ActivityKind::ApprovalDenied,
+        "agent.started" => ActivityKind::AgentStarted,
+        "agent.stopped" => ActivityKind::AgentStopped,
+        "agent.heartbeat" => ActivityKind::AgentHeartbeat,
+        "agent.error" => ActivityKind::AgentError,
+        "plugin.installed" => ActivityKind::PluginInstalled,
+        "plugin.enabled" => ActivityKind::PluginEnabled,
+        "plugin.disabled" => ActivityKind::PluginDisabled,
+        "plugin.error" => ActivityKind::PluginError,
+        "cost.recorded" => ActivityKind::CostRecorded,
+        "secret.accessed" => ActivityKind::SecretAccessed,
+        "document.annotated" => ActivityKind::DocumentAnnotated,
+        "routine.ran" => ActivityKind::RoutineRan,
+        "pipeline.ran" => ActivityKind::PipelineRan,
+        _ => ActivityKind::Other,
+    }
+}
+
+/// Convert Node-shaped CreateActivityBody to typed ActivityEvent.
+fn convert_to_activity_event(
+    company_id: Uuid,
+    body: CreateActivityBody,
+) -> Result<ActivityEvent, ApiError> {
+    let subject_id = Uuid::parse_str(&body.entity_id).map_err(|_| {
+        ApiError::BadRequest(format!("entityId must be a UUID: {}", body.entity_id))
+    })?;
+
+    let actor = match body.actor_type.as_str() {
+        "user" => {
+            let id = Uuid::parse_str(&body.actor_id).map_err(|_| {
+                ApiError::BadRequest(format!("actorId must be a UUID for user: {}", body.actor_id))
+            })?;
+            ActivityActor::User { id, name: body.actor_id.clone() }
+        }
+        "agent" => {
+            let id = Uuid::parse_str(&body.actor_id).map_err(|_| {
+                ApiError::BadRequest(format!("actorId must be a UUID for agent: {}", body.actor_id))
+            })?;
+            ActivityActor::Agent { id, name: body.actor_id.clone() }
+        }
+        "system" => ActivityActor::System { component: body.actor_id.clone() },
+        "plugin" => {
+            let id = Uuid::parse_str(&body.actor_id).map_err(|_| {
+                ApiError::BadRequest(format!("actorId must be a UUID for plugin: {}", body.actor_id))
+            })?;
+            ActivityActor::Plugin { plugin_id: id, plugin_key: body.actor_id.clone() }
+        }
+        _ => ActivityActor::System { component: body.actor_id.clone() },
+    };
+
+    let kind = parse_activity_kind(&body.action);
+
+    // Build payload: details + agentId + raw action (for unknown kinds)
+    let mut payload = body.details.unwrap_or(Value::Null);
+    let needs_wrap = body.agent_id.is_some() || matches!(kind, ActivityKind::Other);
+    if let Value::Object(ref mut map) = payload {
+        if let Some(agent_id) = body.agent_id {
+            map.insert("agentId".to_string(), json!(agent_id));
+        }
+        if matches!(kind, ActivityKind::Other) {
+            map.entry("action".to_string())
+                .or_insert(Value::String(body.action.clone()));
+        }
+    } else if needs_wrap {
+        let mut map = serde_json::Map::new();
+        if !payload.is_null() {
+            map.insert("details".to_string(), payload.clone());
+        }
+        if let Some(agent_id) = body.agent_id {
+            map.insert("agentId".to_string(), json!(agent_id));
+        }
+        if matches!(kind, ActivityKind::Other) {
+            map.insert("action".to_string(), Value::String(body.action.clone()));
+        }
+        payload = Value::Object(map);
+    }
+
+    Ok(ActivityEvent::new(kind, actor, body.entity_type, subject_id)
+        .with_company(company_id)
+        .with_payload(payload))
+}
+
+/// Convert typed ActivityEvent to PluginEvent for plugin bus emission.
+fn convert_to_plugin_event(event: &ActivityEvent) -> PluginEvent {
+    let (actor_id, actor_type) = match &event.actor {
+        ActivityActor::User { id, .. } => (Some(id.to_string()), Some(ActorType::User)),
+        ActivityActor::Agent { id, .. } => (Some(id.to_string()), Some(ActorType::Agent)),
+        ActivityActor::System { component } => (Some(component.clone()), Some(ActorType::System)),
+        ActivityActor::Plugin { plugin_id, .. } => (Some(plugin_id.to_string()), Some(ActorType::Plugin)),
+        ActivityActor::Anonymous => (None, None),
+    };
+
+    PluginEvent {
+        event_id: event.id.0.to_string(),
+        event_type: event.kind.as_str().to_string(),
+        occurred_at: event.occurred_at,
+        actor_id,
+        actor_type,
+        entity_id: Some(event.subject_id.to_string()),
+        entity_type: Some(event.subject_kind.clone()),
+        company_id: event.company_id.map(|id| id.to_string()).unwrap_or_default(),
+        payload: event.payload.clone(),
+    }
+}
+
+async fn create_activity(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<CreateActivityBody>,
+) -> ApiResult<impl IntoResponse> {
+    let _user_id = require_user_id(&state, &headers).await?;
+
+    let event = convert_to_activity_event(company_id, body)?;
+
+    // 1. Emit to ActivityLog (持久化)
+    state.activity.emit(event.clone()).await
+        .map_err(|e| ApiError::Internal(format!("activity log emit failed: {e}")))?;
+
+    // 2. Emit to PluginEventBus (plugin 订阅者 fanout)
+    let plugin_event = convert_to_plugin_event(&event);
+    let _ = state.plugin_event_bus.emit(plugin_event).await;
+
+    // 3. Publish to realtime (UI 实时更新)
+    state.realtime.publish(
+        LiveEvent::new(event.kind.as_str(), event.subject_kind.clone(), event.subject_id)
+            .with_company(company_id)
+            .with_actor("system"),
+    );
+
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(&event).unwrap_or_default())))
+}
+
+
+// ============================================================================
+// R511 tests
+// ============================================================================
+
+#[cfg(test)]
+mod r511_activity_routes_tests {
+    use super::*;
+
+    #[test]
+    fn parse_activity_kind_maps_known_actions() {
+        assert_eq!(parse_activity_kind("issue.created"), ActivityKind::IssueCreated);
+        assert_eq!(parse_activity_kind("agent.heartbeat"), ActivityKind::AgentHeartbeat);
+        assert_eq!(parse_activity_kind("plugin.error"), ActivityKind::PluginError);
+    }
+
+    #[test]
+    fn parse_activity_kind_falls_back_to_other() {
+        assert_eq!(parse_activity_kind("custom.action"), ActivityKind::Other);
+        assert_eq!(parse_activity_kind(""), ActivityKind::Other);
+    }
+
+    #[test]
+    fn create_activity_body_parses_camel_case() {
+        let body: CreateActivityBody = serde_json::from_value(json!({
+            "actorType": "user",
+            "actorId": "550e8400-e29b-41d4-a716-446655440000",
+            "action": "issue.created",
+            "entityType": "issue",
+            "entityId": "550e8400-e29b-41d4-a716-446655440001",
+            "agentId": "550e8400-e29b-41d4-a716-446655440002",
+            "details": { "key": "value" }
+        }))
+        .expect("parse");
+        assert_eq!(body.actor_type, "user");
+        assert_eq!(body.action, "issue.created");
+        assert!(body.agent_id.is_some());
+        assert!(body.details.is_some());
+    }
+
+    #[test]
+    fn create_activity_body_defaults_actor_type_to_system() {
+        let body: CreateActivityBody = serde_json::from_value(json!({
+            "actorId": "local-board",
+            "action": "issue.created",
+            "entityType": "issue",
+            "entityId": "550e8400-e29b-41d4-a716-446655440001"
+        }))
+        .expect("parse");
+        assert_eq!(body.actor_type, "system");
+    }
+
+    #[test]
+    fn activity_list_query_parses_camel_case() {
+        let q: ActivityListQuery = serde_json::from_value(json!({
+            "agentId": "550e8400-e29b-41d4-a716-446655440000",
+            "entityType": "issue",
+            "entityId": "550e8400-e29b-41d4-a716-446655440001",
+            "limit": 50
+        }))
+        .expect("parse");
+        assert!(q.agent_id.is_some());
+        assert_eq!(q.entity_type, Some("issue".to_owned()));
+        assert!(q.entity_id.is_some());
+        assert_eq!(q.limit, Some(50));
+    }
+
+    #[test]
+    fn activity_list_query_all_optional() {
+        let q: ActivityListQuery = serde_json::from_value(json!({})).expect("parse");
+        assert!(q.agent_id.is_none());
+        assert!(q.entity_type.is_none());
+        assert!(q.entity_id.is_none());
+        assert!(q.limit.is_none());
+    }
+
+    #[test]
+    fn convert_to_activity_event_maps_system_actor() {
+        let company_id = Uuid::new_v4();
+        let body = CreateActivityBody {
+            actor_type: "system".to_owned(),
+            actor_id: "local-board".to_owned(),
+            action: "issue.created".to_owned(),
+            entity_type: "issue".to_owned(),
+            entity_id: Uuid::new_v4().to_string(),
+            agent_id: None,
+            details: None,
+        };
+        let event = convert_to_activity_event(company_id, body).expect("convert");
+        assert!(matches!(event.actor, ActivityActor::System { .. }));
+        assert_eq!(event.kind, ActivityKind::IssueCreated);
+        assert_eq!(event.company_id, Some(company_id));
+    }
+
+    #[test]
+    fn convert_to_activity_event_maps_user_actor_with_uuid() {
+        let actor_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let body = CreateActivityBody {
+            actor_type: "user".to_owned(),
+            actor_id: actor_id.to_string(),
+            action: "issue.updated".to_owned(),
+            entity_type: "issue".to_owned(),
+            entity_id: Uuid::new_v4().to_string(),
+            agent_id: None,
+            details: None,
+        };
+        let event = convert_to_activity_event(company_id, body).expect("convert");
+        if let ActivityActor::User { id, name } = &event.actor {
+            assert_eq!(*id, actor_id);
+            assert_eq!(name, &actor_id.to_string());
+        } else {
+            panic!("expected User actor, got {:?}", event.actor);
+        }
+    }
+
+    #[test]
+    fn convert_to_activity_event_rejects_invalid_entity_uuid() {
+        let body = CreateActivityBody {
+            actor_type: "system".to_owned(),
+            actor_id: "local-board".to_owned(),
+            action: "issue.created".to_owned(),
+            entity_type: "issue".to_owned(),
+            entity_id: "not-a-uuid".to_owned(),
+            agent_id: None,
+            details: None,
+        };
+        let result = convert_to_activity_event(Uuid::new_v4(), body);
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn convert_to_activity_event_rejects_invalid_user_actor_uuid() {
+        let body = CreateActivityBody {
+            actor_type: "user".to_owned(),
+            actor_id: "not-a-uuid".to_owned(),
+            action: "issue.created".to_owned(),
+            entity_type: "issue".to_owned(),
+            entity_id: Uuid::new_v4().to_string(),
+            agent_id: None,
+            details: None,
+        };
+        let result = convert_to_activity_event(Uuid::new_v4(), body);
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn convert_to_activity_event_preserves_unknown_action_in_payload() {
+        let body = CreateActivityBody {
+            actor_type: "system".to_owned(),
+            actor_id: "local-board".to_owned(),
+            action: "custom.weird.action".to_owned(),
+            entity_type: "issue".to_owned(),
+            entity_id: Uuid::new_v4().to_string(),
+            agent_id: None,
+            details: None,
+        };
+        let event = convert_to_activity_event(Uuid::new_v4(), body).expect("convert");
+        assert_eq!(event.kind, ActivityKind::Other);
+        if let Value::Object(map) = &event.payload {
+            assert_eq!(map.get("action").and_then(|v| v.as_str()), Some("custom.weird.action"));
+        } else {
+            panic!("expected payload to be an object, got {:?}", event.payload);
+        }
+    }
+
+    #[test]
+    fn convert_to_activity_event_merges_agent_id_and_details() {
+        let agent_id = Uuid::new_v4();
+        let body = CreateActivityBody {
+            actor_type: "agent".to_owned(),
+            actor_id: Uuid::new_v4().to_string(),
+            action: "agent.heartbeat".to_owned(),
+            entity_type: "agent".to_owned(),
+            entity_id: Uuid::new_v4().to_string(),
+            agent_id: Some(agent_id),
+            details: Some(json!({ "key": "value" })),
+        };
+        let event = convert_to_activity_event(Uuid::new_v4(), body).expect("convert");
+        if let Value::Object(map) = &event.payload {
+            assert_eq!(map.get("agentId").and_then(|v| v.as_str()), Some(agent_id.to_string().as_str()));
+            assert_eq!(map.get("key").and_then(|v| v.as_str()), Some("value"));
+        } else {
+            panic!("expected payload to be an object, got {:?}", event.payload);
+        }
+    }
+
+    #[test]
+    fn convert_to_plugin_event_maps_user_actor() {
+        let user_id = Uuid::new_v4();
+        let subject_id = Uuid::new_v4();
+        let company_id = Uuid::new_v4();
+        let event = ActivityEvent {
+            id: pc_activity::ActivityId::new(),
+            kind: ActivityKind::IssueCreated,
+            actor: ActivityActor::User { id: user_id, name: "alice".to_owned() },
+            company_id: Some(company_id),
+            subject_kind: "issue".to_owned(),
+            subject_id,
+            payload: json!({}),
+            occurred_at: chrono::Utc::now(),
+        };
+        let pe = convert_to_plugin_event(&event);
+        assert_eq!(pe.event_type, "issue.created");
+        assert_eq!(pe.actor_id, Some(user_id.to_string()));
+        assert_eq!(pe.actor_type, Some(ActorType::User));
+        assert_eq!(pe.company_id, company_id.to_string());
+        assert_eq!(pe.entity_id, Some(subject_id.to_string()));
+        assert_eq!(pe.entity_type, Some("issue".to_owned()));
+    }
+
+    #[test]
+    fn convert_to_plugin_event_maps_anonymous_actor() {
+        let event = ActivityEvent {
+            id: pc_activity::ActivityId::new(),
+            kind: ActivityKind::Other,
+            actor: ActivityActor::Anonymous,
+            company_id: Some(Uuid::new_v4()),
+            subject_kind: "x".to_owned(),
+            subject_id: Uuid::new_v4(),
+            payload: json!({}),
+            occurred_at: chrono::Utc::now(),
+        };
+        let pe = convert_to_plugin_event(&event);
+        assert_eq!(pe.actor_id, None);
+        assert_eq!(pe.actor_type, None);
+    }
+
+    #[test]
+    fn convert_to_plugin_event_maps_system_actor() {
+        let event = ActivityEvent {
+            id: pc_activity::ActivityId::new(),
+            kind: ActivityKind::AgentHeartbeat,
+            actor: ActivityActor::System { component: "local-board".to_owned() },
+            company_id: Some(Uuid::new_v4()),
+            subject_kind: "agent".to_owned(),
+            subject_id: Uuid::new_v4(),
+            payload: json!({}),
+            occurred_at: chrono::Utc::now(),
+        };
+        let pe = convert_to_plugin_event(&event);
+        assert_eq!(pe.actor_id, Some("local-board".to_owned()));
+        assert_eq!(pe.actor_type, Some(ActorType::System));
+    }
+}

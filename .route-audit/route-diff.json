@@ -1,12 +1,12 @@
 {
   "node_unique": 581,
-  "rust_unique": 869,
-  "common": 567,
-  "missing_in_rust": 14,
+  "rust_unique": 870,
+  "common": 568,
+  "missing_in_rust": 13,
   "extra_in_rust": 302,
-  "coverage_method_path": 97.59,
+  "coverage_method_path": 97.76,
   "missing_by_category": {
-    ":param": 10,
+    ":param": 9,
     "": 2,
     "restart": 1,
     "root": 1
@@ -43,10 +43,6 @@
     {
       "method": "POST",
       "path": "/api/companies/"
-    },
-    {
-      "method": "POST",
-      "path": "/api/companies/:param/activity"
     },
     {
       "method": "POST",

@@ -1,17 +1,17 @@
 # M21 — Node ↔ Rust 路由 method+path 重合率
 
 - Node unique routes: **581**
-- Rust unique routes: **869**
-- Common: **567**
-- Missing in Rust: **14**
+- Rust unique routes: **870**
+- Common: **568**
+- Missing in Rust: **13**
 - Extra in Rust:   **302**
-- **Coverage (method+path): 97.59%**
+- **Coverage (method+path): 97.76%**
 
 ## Top missing categories
 
 | Category | Missing count |
 |---|---:|
-| `/api/:param/*` | 10 |
+| `/api/:param/*` | 9 |
 | `/api//*` | 2 |
 | `/api/restart/*` | 1 |
 | `/api/root/*` | 1 |
@@ -28,7 +28,6 @@
 | GET | `/api/companies/:param/search/extract` |
 | POST | `/api/cases/:param/issue-links` |
 | POST | `/api/companies/` |
-| POST | `/api/companies/:param/activity` |
 | POST | `/api/companies/:param/approvals` |
 | POST | `/api/companies/:param/decisions` |
 | POST | `/api/companies/:param/pipelines` |
