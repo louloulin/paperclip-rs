@@ -14,11 +14,13 @@ PG_BIN="${PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 DATA_DIR="${TMPDIR:-/tmp}/pc-e2e-pgdata-$$"
 PG_PORT="${PAPERCLIP_E2E_PG_PORT:-$(( 55440 + (RANDOM % 200) ))}"
 SRV_PORT="${PAPERCLIP_E2E_HTTP_PORT:-$(( 53200 + (RANDOM % 200) ))}"
+UI_PORT="${PAPERCLIP_E2E_UI_PORT:-$(( 51800 + (RANDOM % 200) ))}"
 LOG_DIR="$ROOT/.e2e-logs"
 mkdir -p "$LOG_DIR"
 
 cleanup() {
   set +e
+  [[ -n "${VITE_PID:-}" ]] && kill -0 "$VITE_PID" 2>/dev/null && kill "$VITE_PID" 2>/dev/null
   [[ -n "${SRV_PID:-}" ]] && kill -0 "$SRV_PID" 2>/dev/null && kill "$SRV_PID" 2>/dev/null
   [[ -n "${PG_PID:-}" ]] && "$PG_BIN/pg_ctl" -D "$DATA_DIR" -m fast stop >/dev/null 2>&1 || true
 }
@@ -39,7 +41,8 @@ PAPERCLIP_DATABASE_URL="$DB_URL" RUST_LOG=info \
   cargo run --quiet -p pc-migrate -- up >"$LOG_DIR/migrate.log" 2>&1
 
 echo "[m18] start pc-server :$SRV_PORT"
-PAPERCLIP_DATABASE_URL="$DB_URL" PAPERCLIP_PORT="$SRV_PORT" RUST_LOG=info \
+PAPERCLIP_DATABASE_URL="$DB_URL" PAPERCLIP_PORT="$SRV_PORT" \
+PAPERCLIP_CORS_ALLOWED_ORIGINS="http://localhost:$UI_PORT,http://127.0.0.1:$UI_PORT" RUST_LOG=info \
   cargo run --quiet -p pc-server -- >"$LOG_DIR/server.log" 2>&1 &
 SRV_PID=$!
 
@@ -54,9 +57,27 @@ for i in $(seq 1 120); do
 done
 [[ $HEALTH_OK -eq 1 ]] || { echo "[m18] FAIL: pc-server /health not 200"; tail -30 "$LOG_DIR/server.log"; exit 1; }
 
-echo "[m18] run Playwright API-flow spec against http://localhost:$SRV_PORT"
+echo "[m18] start vite dev :$UI_PORT (VITE_API_BASE=http://localhost:$SRV_PORT/api)"
+cd "$ROOT/ui"
+( PAPERCLIP_API_TARGET="http://localhost:$SRV_PORT" VITE_API_BASE="http://localhost:$SRV_PORT/api" pnpm dev --port "$UI_PORT" --strictPort ) >"$LOG_DIR/vite.log" 2>&1 &
+VITE_PID=$!
+cd "$ROOT"
+
+VITE_OK=0
+for i in $(seq 1 60); do
+  sleep 0.5
+  if curl -fsS -4 "http://localhost:$UI_PORT" >/dev/null 2>&1 || curl -fsS "http://localhost:$UI_PORT" >/dev/null 2>&1; then
+    VITE_OK=1
+    echo "[m18] vite ready after $((i/2))s"
+    break
+  fi
+done
+[[ $VITE_OK -eq 1 ]] || { echo "[m18] FAIL: vite not ready"; tail -30 "$LOG_DIR/vite.log"; exit 1; }
+
+echo "[m18] run Playwright full-stack spec against http://localhost:$SRV_PORT (UI: http://localhost:$UI_PORT)"
 cd "$ROOT/tests/e2e"
-E2E_SERVER_URL="http://localhost:$SRV_PORT" npx playwright test \
+E2E_SERVER_URL="http://localhost:$SRV_PORT" E2E_UI_URL="http://localhost:$UI_PORT" \
+  npx playwright test \
   --project=chromium --reporter=list 2>&1 | tee "$LOG_DIR/playwright.log"
 TEST_RC=${PIPESTATUS[0]}
 cd "$ROOT"

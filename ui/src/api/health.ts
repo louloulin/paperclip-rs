@@ -1,4 +1,5 @@
 import type { ServerInfoSnapshot } from "@paperclipai/shared";
+import { BASE } from "./client";
 
 export type DevServerHealthStatus = {
   enabled: true;
@@ -31,7 +32,7 @@ export type HealthStatus = {
 
 export const healthApi = {
   get: async (): Promise<HealthStatus> => {
-    const res = await fetch("/api/health", {
+    const res = await fetch(`${BASE}/health`, {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
@@ -42,7 +43,7 @@ export const healthApi = {
     return res.json();
   },
   requestDevServerRestart: async (): Promise<void> => {
-    const res = await fetch("/api/health/dev-server/restart", {
+    const res = await fetch(`${BASE}/health/dev-server/restart`, {
       method: "POST",
       credentials: "include",
       headers: { Accept: "application/json" },

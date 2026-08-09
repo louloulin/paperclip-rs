@@ -30,7 +30,11 @@ export default defineConfig(({ mode }) => ({
     watch: createUiDevWatchOptions(process.cwd()),
     proxy: {
       "/api": {
-        target: "http://localhost:3100",
+        // Default target keeps the legacy single-port dev experience
+        // (Rust server on 3100). Override with PAPERCLIP_API_TARGET when
+        // running on a non-default port — used by `scripts/e2e-full-stack.sh`
+        // and `scripts/ui-happy-path.sh` which pick a random port.
+        target: process.env.PAPERCLIP_API_TARGET ?? "http://localhost:3100",
         ws: true,
       },
     },

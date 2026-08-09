@@ -59,7 +59,7 @@ done
 
 echo "[ui] start vite dev :$UI_PORT (VITE_API_BASE=http://localhost:$SRV_PORT/api)"
 cd "$ROOT/ui"
-( VITE_API_BASE="http://localhost:$SRV_PORT/api" pnpm dev --port "$UI_PORT" --strictPort ) >"$LOG_DIR/vite.log" 2>&1 &
+( PAPERCLIP_API_TARGET="http://localhost:$SRV_PORT" VITE_API_BASE="http://localhost:$SRV_PORT/api" pnpm dev --port "$UI_PORT" --strictPort ) >"$LOG_DIR/vite.log" 2>&1 &
 VITE_PID=$!
 cd "$ROOT"
 
