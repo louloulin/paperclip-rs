@@ -1,25 +1,16 @@
 {
   "node_unique": 581,
-  "rust_unique": 874,
-  "common": 572,
-  "missing_in_rust": 9,
+  "rust_unique": 878,
+  "common": 576,
+  "missing_in_rust": 5,
   "extra_in_rust": 302,
-  "coverage_method_path": 98.45,
+  "coverage_method_path": 99.14,
   "missing_by_category": {
-    ":param": 5,
-    "": 2,
+    ":param": 3,
     "root": 1,
     "restart": 1
   },
   "top_missing": [
-    {
-      "method": "DELETE",
-      "path": "/api/labels/:param"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/secrets/:param"
-    },
     {
       "method": "GET",
       "path": "/"
@@ -30,19 +21,11 @@
     },
     {
       "method": "GET",
-      "path": "/api/companies/"
-    },
-    {
-      "method": "GET",
       "path": "/api/companies/:param/search/extract"
     },
     {
       "method": "POST",
       "path": "/api/cases/:param/issue-links"
-    },
-    {
-      "method": "POST",
-      "path": "/api/companies/"
     },
     {
       "method": "POST",

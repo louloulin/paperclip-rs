@@ -198,7 +198,7 @@ pub fn router() -> Router<AppState> {
             get(my_user_secrets).post(upsert_my_user_secret),
         )
         .route("/api/secrets/:id/rotate", post(rotate_secret))
-        .route("/api/secrets/:id", patch(update_secret))
+        .route("/api/secrets/:id", patch(update_secret).delete(delete_company_secret))
         .route("/api/secrets/:id/usage", get(secret_usage))
         .route("/api/secrets/:id/access-events", get(secret_access_events))
         // ── Round 201: remote import (Node-style alias) ──
@@ -1172,4 +1172,28 @@ async fn remote_import(
             "skipped": skipped,
         })),
     ))
+}
+
+// R515: 删除 company 范围 secret (软删除)。
+// 镜像 Node secrets.ts:857 router.delete("/secrets/:id", ...) 的 board 范围语义。
+// 这里简化为：按 id 软删除 (deleted_at = now())。返回 { deleted: true, id }。
+pub async fn delete_company_secret(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let repo = pc_repos::secret::SecretRepo::new(&state.db);
+    // 获取 secret 确认存在并得到 company_id
+    let existing = repo
+        .get_by_id_global(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("secret {id}")))?;
+    let deleted = repo
+        .soft_delete(existing.company_id, id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !deleted {
+        return Err(ApiError::NotFound(format!("secret {id}")));
+    }
+    Ok(Json(json!({ "deleted": true, "id": id })))
 }

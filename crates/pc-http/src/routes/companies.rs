@@ -45,6 +45,8 @@ use pc_core::Timestamp;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/companies", get(list).post(create))
+        // R515: trailing-slash alias (与 Node 默认行为一致)。
+        .route("/api/companies/", get(list).post(create))
         .route(
             "/api/companies/:company_id",
             get(get_one).patch(update).delete(remove),

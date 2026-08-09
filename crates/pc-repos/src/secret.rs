@@ -445,6 +445,17 @@ impl<'a> SecretRepo<'a> {
             .await?)
     }
 
+    /// R515: 不带 company 上下文的全局查询 (用于 DELETE /api/secrets/:id)。
+    pub async fn get_by_id_global(&self, id: Uuid) -> RepoResult<Option<CompanySecretRow>> {
+        let sql = format!(
+            "SELECT {SECRET_COLS} FROM company_secrets WHERE id = $1 AND deleted_at IS NULL"
+        );
+        Ok(sqlx::query_as::<_, CompanySecretRow>(&sql)
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
     pub async fn get(&self, company_id: Uuid, id: Uuid) -> RepoResult<Option<CompanySecretRow>> {
         let sql = format!(
             "SELECT {SECRET_COLS} FROM company_secrets \
