@@ -281,3 +281,29 @@
 - [x] `lib.rs`：公共 API 导出 + 兼容旧 `DefaultPolicy` stub
 - [x] 决策分支对齐 Node `evaluateAuthorization`：system 短路 / anonymous / instance_admin / local_board / company membership / issue self / grants / role
 - [x] evidence: `r540-pc-authz-core-decision-engine.md`
+
+## M41 — pc-authz DB-backed ContextBuilder
+
+- [x] `builder.rs::build_context` — 从 `company_memberships` + `principal_permission_grants` 加载
+- [x] `parse_permission_key` — 21 个 key 反序列化
+- [x] User / Agent / System / Anonymous 各自的注入路径
+- [x] evidence: `r541-pc-authz-context-builder.md`
+
+## M42 — pc-authz HTTP 集成 + 首个路由接入
+
+- [x] `http.rs`：enforce / enforce_permission / enforce_issue / denial_to_string / company_resource
+- [x] `companies.rs::create_label` 接入 `enforce_permission(UsersInvite)`
+- [x] `pc-http/Cargo.toml` 新增 `pc-authz` 依赖
+- [x] 274 个 pc-http 路由测试无回归
+- [x] evidence: `r542-pc-authz-http-integration.md`
+
+## M43 — pc-authz 补充策略
+
+- [x] `Context` 新增 5 字段（issue_mentioned_agent_ids / issue_parent_id / actor_is_assignee_on_parent / has_consented_change_grant / is_low_trust_create_or_comment）
+- [x] `Context::with_extended_issue` 构造方法
+- [x] User `responsible_user_id` 短路（`AllowDirectChange`）
+- [x] Agent `mention grant`（`AllowIssueMentionGrant`）
+- [x] Agent `parent-report`（`AllowDirectParentReport`）
+- [x] Consent gate（`AllowConsentedChange`）
+- [x] 5 个新单元测试
+- [x] evidence: `r543-pc-authz-mention-consent-parent.md`

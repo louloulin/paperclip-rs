@@ -23,10 +23,12 @@
 //! ```
 
 pub mod builder;
+pub mod http;
 pub mod policy;
 pub mod types;
 
 pub use builder::build_context;
+pub use http::{company_resource, denial_to_string, enforce, enforce_issue, enforce_permission};
 pub use policy::{evaluate, principal_type_of, AuthzError, Context};
 pub use types::{
     Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource,

@@ -19,6 +19,7 @@ pc-heartbeat = { path = "../pc-heartbeat" }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-adapter-quota = { path = "../pc-adapter-quota" }
 pc-auth = { path = "../pc-auth" }
+pc-authz = { path = "../pc-authz" }
 pc-backup = { path = "../pc-backup" }
 pc-repos = { path = "../pc-repos" }
 pc-acpx = { path = "../pc-acpx" }

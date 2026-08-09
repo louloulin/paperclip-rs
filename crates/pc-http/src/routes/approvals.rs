@@ -13,6 +13,9 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use std::collections::BTreeMap;
 use pc_telemetry::global;
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, Action, PermissionKey, Resource};
 
 use pc_realtime::LiveEvent;
 use pc_repos::approval::ApprovalRepo;
@@ -198,8 +201,25 @@ struct ApproveRejectBody {
 async fn approve_approval(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
+    // 先查 row 以取 company_id
+    let preview = ApprovalRepo::new(&state.db)
+        .find_by_id(approval_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    // pc-authz：批准 approval 需要 UsersInvite 权限（Operator 角色及以上）。
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview.company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = ApprovalRepo::new(&state.db)
         .decide_four_args(
             approval_id,
@@ -222,8 +242,23 @@ async fn approve_approval(
 async fn reject_approval(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
+    let preview = ApprovalRepo::new(&state.db)
+        .find_by_id(approval_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview.company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = ApprovalRepo::new(&state.db)
         .decide_four_args(
             approval_id,

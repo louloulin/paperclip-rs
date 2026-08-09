@@ -41,6 +41,9 @@ use pc_repos::work_timeline::{
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, Action, PermissionKey, Resource};
+use axum::Extension as AxumExtension;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -777,8 +780,20 @@ struct LabelBody {
 async fn create_label(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<LabelBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz: 写入公司资源需要 UsersInvite 权限（Operator 角色及以上）。
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let name = body.name.trim();
     if name.is_empty() || name.len() > 64 {
         return Err(ApiError::BadRequest("name length 1..=64".into()));

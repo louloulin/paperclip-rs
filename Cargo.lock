@@ -2357,6 +2357,7 @@ dependencies = [
  "pc-adapter-quota",
  "pc-agent",
  "pc-auth",
+ "pc-authz",
  "pc-backup",
  "pc-core",
  "pc-db",

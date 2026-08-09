@@ -35,10 +35,20 @@ pub struct Context {
     pub issue_responsible_user_id: Option<String>,
     pub issue_mentioned_user_ids: Vec<String>,
     pub issue_assignee_agent_id: Option<Uuid>,
+    /// Issue 中提及的 agent ids（用于 mention-based grant）。
+    pub issue_mentioned_agent_ids: Vec<Uuid>,
     /// Run 是否由 agent 自己触发（self）。
     pub is_self_run: bool,
     /// Run 的 issue 是否已有 explicit grant（mention / assignee）。
     pub has_explicit_grant: bool,
+    /// Issue 的 parent issue id（用于 parent-report grant）。
+    pub issue_parent_id: Option<Uuid>,
+    /// 当前 run 的 issue id（用于 parent-report：判断 actor 是否在 parent 上是 assignee）。
+    pub actor_is_assignee_on_parent: bool,
+    /// Grant scope 中的 `consentedChange` 标志（grant 是否包含 consented change scope）。
+    pub has_consented_change_grant: bool,
+    /// 当前请求是否为 issue create 或 issue comment（low-trust 内允许的操作）。
+    pub is_low_trust_create_or_comment: bool,
 }
 
 impl Context {
@@ -87,6 +97,23 @@ impl Context {
         self.issue_responsible_user_id = responsible_user_id;
         self.issue_mentioned_user_ids = mentioned_user_ids;
         self.issue_assignee_agent_id = assignee_agent_id;
+        self
+    }
+
+    /// M43：注入 mention agent / parent / consent 信息。
+    pub fn with_extended_issue(
+        mut self,
+        mentioned_agent_ids: Vec<Uuid>,
+        parent_id: Option<Uuid>,
+        actor_is_assignee_on_parent: bool,
+        has_consented_change_grant: bool,
+        is_low_trust_create_or_comment: bool,
+    ) -> Self {
+        self.issue_mentioned_agent_ids = mentioned_agent_ids;
+        self.issue_parent_id = parent_id;
+        self.actor_is_assignee_on_parent = actor_is_assignee_on_parent;
+        self.has_consented_change_grant = has_consented_change_grant;
+        self.is_low_trust_create_or_comment = is_low_trust_create_or_comment;
         self
     }
 
@@ -233,6 +260,16 @@ fn evaluate_user(
                 );
             }
         }
+        // responsible user 可以 mutate/comment
+        if let Some(resp) = &ctx.issue_responsible_user_id {
+            if resp == user_id && matches!(action, Action::IssueMutate | Action::IssueComment) {
+                return Decision::allow(
+                    action,
+                    Reason::AllowDirectChange,
+                    "user is the issue responsible user",
+                );
+            }
+        }
         // 提及 grant
         if ctx.issue_mentioned_user_ids.iter().any(|m| m == user_id)
             && matches!(action, Action::IssueComment | Action::IssueMutate)
@@ -241,6 +278,14 @@ fn evaluate_user(
                 action,
                 Reason::AllowIssueMentionGrant,
                 "user has explicit mention grant on issue",
+            );
+        }
+        // Consent gate：grant scope 包含 consentedChange
+        if ctx.has_consented_change_grant && matches!(action, Action::IssueMutate) {
+            return Decision::allow(
+                action,
+                Reason::AllowConsentedChange,
+                "user has consented change grant",
             );
         }
         let _ = assignee_agent_id; // 用于后续 agent 自指派场景
@@ -386,7 +431,7 @@ fn evaluate_agent(
         );
     }
 
-    // Issue 维度：self / assignee
+    // Issue 维度：self / assignee / mention / parent-report / consent
     if let Resource::Issue {
         assignee_agent_id,
         ..
@@ -402,6 +447,36 @@ fn evaluate_agent(
                 );
             }
         }
+        // Mention grant：当前 actor agent 在 issue 中被 @ 到
+        if ctx.issue_mentioned_agent_ids.contains(&agent_id)
+            && matches!(action, Action::IssueComment | Action::IssueMutate)
+        {
+            return Decision::allow(
+                action,
+                Reason::AllowIssueMentionGrant,
+                "agent has mention grant on the issue",
+            );
+        }
+        // Parent-report：actor 在 parent issue 上是 assignee，可以在子 issue 上 comment
+        if ctx.actor_is_assignee_on_parent
+            && ctx.issue_parent_id.is_some()
+            && matches!(action, Action::IssueComment)
+        {
+            return Decision::allow(
+                action,
+                Reason::AllowDirectParentReport,
+                "agent is assignee on parent issue; reporting back is allowed",
+            );
+        }
+        // Consent gate：grant scope 包含 consentedChange
+        if ctx.has_consented_change_grant && matches!(action, Action::IssueMutate) {
+            return Decision::allow(
+                action,
+                Reason::AllowConsentedChange,
+                "agent has consented change grant",
+            );
+        }
+        // Self-run：agent 在自己的 run 上 mutate/comment
         if ctx.is_self_run && matches!(action, Action::IssueComment | Action::IssueMutate) {
             return Decision::allow(
                 action,
@@ -801,6 +876,163 @@ mod tests {
             Action::IssueRead,
         )
         .is_err());
+    }
+
+    #[test]
+    fn user_viewer_cannot_mutate_without_assignment() {
+        let c = Uuid::new_v4();
+        let ctx = Context::for_user(
+            vec![membership(c)],
+            vec![],
+            Some(CompanyRole::Viewer),
+            false,
+        );
+        let d = evaluate(
+            &user_actor("u1", false),
+            &ctx,
+            &Resource::Issue {
+                company_id: c,
+                issue_id: None,
+                project_id: None,
+                parent_issue_id: None,
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                origin_kind: None,
+                origin_id: None,
+                status: None,
+            },
+            Action::IssueMutate,
+        );
+        // viewer 角色无 assignment / responsible / grants 时不能 mutate
+        assert!(!d.allowed, "viewer with no assignment cannot mutate");
+    }
+
+    #[test]
+    fn user_responsible_user_can_mutate() {
+        let c = Uuid::new_v4();
+        let ctx = Context::for_user(
+            vec![membership(c)],
+            vec![],
+            Some(CompanyRole::Viewer),
+            false,
+        );
+        let d = evaluate(
+            &user_actor("u1", false),
+            &ctx.with_issue(
+                None,
+                Some("u1".into()),
+                vec![],
+                None,
+            ),
+            &Resource::Issue {
+                company_id: c,
+                issue_id: None,
+                project_id: None,
+                parent_issue_id: None,
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                origin_kind: None,
+                origin_id: None,
+                status: None,
+            },
+            Action::IssueMutate,
+        );
+        assert!(d.allowed);
+        assert_eq!(d.reason, Reason::AllowDirectChange);
+    }
+
+    #[test]
+    fn agent_mention_grant_allows_comment() {
+        let c = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let ctx = Context::for_agent(vec![membership(c)], vec![]);
+        let d = evaluate(
+            &agent_actor(agent_id, c),
+            &ctx.with_extended_issue(
+                vec![agent_id],
+                None,
+                false,
+                false,
+                false,
+            ),
+            &Resource::Issue {
+                company_id: c,
+                issue_id: None,
+                project_id: None,
+                parent_issue_id: None,
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                origin_kind: None,
+                origin_id: None,
+                status: None,
+            },
+            Action::IssueComment,
+        );
+        assert!(d.allowed);
+        assert_eq!(d.reason, Reason::AllowIssueMentionGrant);
+    }
+
+    #[test]
+    fn agent_parent_report_allows_comment() {
+        let c = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let ctx = Context::for_agent(vec![membership(c)], vec![]);
+        let d = evaluate(
+            &agent_actor(agent_id, c),
+            &ctx.with_extended_issue(
+                vec![],
+                Some(parent_id),
+                true,
+                false,
+                false,
+            ),
+            &Resource::Issue {
+                company_id: c,
+                issue_id: None,
+                project_id: None,
+                parent_issue_id: Some(parent_id),
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                origin_kind: None,
+                origin_id: None,
+                status: None,
+            },
+            Action::IssueComment,
+        );
+        assert!(d.allowed);
+        assert_eq!(d.reason, Reason::AllowDirectParentReport);
+    }
+
+    #[test]
+    fn agent_consent_grant_allows_mutate() {
+        let c = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let ctx = Context::for_agent(vec![membership(c)], vec![]);
+        let d = evaluate(
+            &agent_actor(agent_id, c),
+            &ctx.with_extended_issue(
+                vec![],
+                None,
+                false,
+                true,
+                false,
+            ),
+            &Resource::Issue {
+                company_id: c,
+                issue_id: None,
+                project_id: None,
+                parent_issue_id: None,
+                assignee_agent_id: None,
+                assignee_user_id: None,
+                origin_kind: None,
+                origin_id: None,
+                status: None,
+            },
+            Action::IssueMutate,
+        );
+        assert!(d.allowed);
+        assert_eq!(d.reason, Reason::AllowConsentedChange);
     }
 
     #[test]
