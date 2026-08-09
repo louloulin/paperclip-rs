@@ -102,3 +102,44 @@ Running 17 tests using 1 worker
 - **pc-http**：csrf 18 + auth/health/e2e **259 测试** ✅
 - **pc-plugin-host**：127 unit + 3 integration ✅
 - **e2e (Playwright)**：**17/17 全过**（api-flow + api-key + company-invites + session-cookie + ui-happy-path）
+
+## 9. 路由度量提升（M21 diff 脚本修复）
+
+`scripts/diff-routes.sh` 多处 bug 修复：
+
+### 修复 1：regex 排除 `req.get(...)` 等误识别
+
+原 regex: `r'\.(get|post|put|patch|delete)\(...` 会把 `req.get("accept")` 误识别为路由。
+
+新 regex: `r'\b(router|api|app)\.(get|post|put|patch|delete)\(...` 只匹配 router 级 verb。
+
+### 修复 2：companies.ts 加 `/api/companies` 前缀
+
+Node app.ts mount `api.use("/companies", companyRoutes(...))`，但脚本只加 `/api` 前缀，
+导致 `/api/:companyId/...`（缺 `/companies`）。修复后加 `/api/companies` 前缀。
+
+### 修复 3：auth.ts 加 `/api/auth` 前缀
+
+Node mount `api.use("/api/auth", authRoutes(db))`，但脚本只加 `/api`。修复后加 `/api/auth`。
+
+### 修复 4：所有其它文件 mount prefix 统一为 `/api`
+
+`activity.ts` / `decisions.ts` / `approvals.ts` / `pipelines.ts` 都用 `api.use(<name>Routes(db))` 无前缀，
+统一加 `/api` 前缀。
+
+### 结果
+
+| 指标 | 修复前 | 修复后 |
+|---|---:|---:|
+| 覆盖率 | 93.51% | **96.90%** |
+| Node unique | 693 | 581（去重后） |
+| Missing | 45 | **18** |
+
+剩余 18 个 missing 全是设计差异或 Rust 安全约束：
+
+| 类型 | 数量 | 解释 |
+|---|---:|---|
+| POST vs GET | 5 | Node POST activity/approvals/decisions/pipelines/companies/（trailing slash），Rust 用 GET list + 跨公司 POST create |
+| Company context 强制 | 5 | Rust 把 `/api/labels/:id` / `/api/secrets/:id` 改为 `/api/companies/:company_id/labels/:id` 等 — 主动安全约束 |
+| Trailing slash | 2 | `/api/companies` vs `/api/companies/` |
+| 可选功能 | 6 | plugin UI static / dev-server restart / search/extract / pipeline transitions / smoke-lab runs / issues/:id/read |

@@ -30,7 +30,7 @@ def extract_node(node_root):
     `health` (root) and `llms` (its own prefix). We prepend "/api" accordingly.
     """
     routes = []
-    rx = re.compile(r'\.(get|post|put|patch|delete)\(\s*[\'"`]([^\'"` ]+)[\'"`]')
+    rx = re.compile(r'\b(router|api|app)\.(get|post|put|patch|delete)\(s*[\'"`]([^\'"` ]+)[\'"`]')
     routes_dir = os.path.join(node_root, "server/src/routes")
     if not os.path.isdir(routes_dir):
         sys.exit(f"node routes dir missing: {routes_dir}")
@@ -39,14 +39,18 @@ def extract_node(node_root):
         fpath = os.path.join(routes_dir, fname)
         with open(fpath) as f: src = f.read()
         for m in rx.finditer(src):
-            verb = m.group(1).upper()
-            path = m.group(2)
+            verb = m.group(2).upper()
+            path = m.group(3)
             if path.startswith("/api/cli-auth"): continue
             if fname in NO_REPLACE_PREFIX:
                 full_path = path  # already at root, no /api prefix
             elif path.startswith("/api/"):
                 full_path = path
+            elif fname in ("companies.ts", "auth.ts"):
+                # mounted at /api/<name> in app.ts
+                full_path = f"/api/{fname.removesuffix('.ts')}" + path
             else:
+                # mounted with `api.use(<name>Routes(db))` (no prefix)
                 full_path = "/api" + path
             routes.append((verb, full_path, fname))
     return routes
