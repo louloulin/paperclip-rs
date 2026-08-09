@@ -12,7 +12,7 @@ use pc_core::ActorRegistry;
 use pc_db::Db;
 use pc_feature_flags::{FeatureEvaluator, SharedFeatureEvaluator};
 use pc_heartbeat::HeartbeatSupervisor;
-use pc_plugin_host::{NotificationBus, PluginRegistry, WorkerPool};
+use pc_plugin_host::{NotificationBus, PluginEventBus, PluginRegistry, WorkerPool};
 use pc_realtime::RealtimeHandle;
 use pc_realtime::WsState;
 use pc_secrets::DecisionSigningService;
@@ -48,6 +48,9 @@ pub struct AppState {
     pub plugin_registry: Arc<PluginRegistry>,
     /// Worker -> host notifications bus (stream bridge + plugin event fanout).
     pub plugin_bus: Arc<NotificationBus>,
+    /// Host -> plugin event bus (业务事件 -> plugin 订阅者 fanout).
+    /// Always present; empty by default. Mirrors Node `createPluginEventBus()`.
+    pub plugin_event_bus: Arc<PluginEventBus>,
     /// Workflow definitions registry (routines + pipelines). Always present; empty by default.
     pub workflow_registry: Arc<WorkflowRegistry>,
     /// Routine implementations registry. Always present; empty by default.
@@ -103,6 +106,7 @@ impl AppState {
             plugin_workers: Arc::new(WorkerPool::new()),
             plugin_registry: Arc::new(PluginRegistry::new()),
             plugin_bus: Arc::new(NotificationBus::new()),
+            plugin_event_bus: Arc::new(PluginEventBus::new()),
             workflow_registry: Arc::new(WorkflowRegistry::new()),
             routine_registry: Arc::new(RoutineRegistry::new()),
             workflow_engine: Arc::new(WorkflowEngine::new(
