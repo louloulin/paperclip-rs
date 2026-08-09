@@ -184,6 +184,7 @@ use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use crate::runtime_progress::{create_transfer_progress, TransferProgressOptions, RuntimeProgressPhase, RuntimeProgressDirection, RuntimeProgressSink};
 use crate::ssh::{SshAuthArgs, SshRemoteExecutionSpec};
 
 /// Result of a local `git` invocation (mirrors Node `GitCommandResult`).
@@ -501,6 +502,7 @@ pub async fn stream_local_file_to_ssh(
     spec: &SshRemoteExecutionSpec,
     local_file: &Path,
     remote_script: &str,
+    progress: Option<&RuntimeProgressSink>,
 ) -> Result<(), SshStreamError> {
     use tokio::io::AsyncWriteExt;
 
@@ -529,6 +531,7 @@ pub async fn stream_local_file_to_ssh(
         .take()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stdin pipe unavailable"))?;
 
+    let _ = progress; // v1: progress wired but not yet wrapped for std files
     let mut file = tokio::fs::File::open(local_file).await?;
     tokio::io::copy(&mut file, &mut stdin).await?;
     drop(stdin); // close stdin to signal EOF
@@ -646,6 +649,7 @@ pub async fn import_git_workspace_to_ssh(
     local_dir: &Path,
     remote_dir: &str,
     snapshot: &GitWorkspaceSnapshot,
+    progress: Option<&RuntimeProgressSink>,
 ) -> Result<(), String> {
     let local_dir_str = local_dir.to_string_lossy();
     let bundle_dir = std::env::temp_dir().join(format!(
@@ -753,7 +757,7 @@ pub async fn import_git_workspace_to_ssh(
         .map_err(|error| format!("local git bundle create failed: {error}"))?;
 
         // 3. stream bundle → remote setup script
-        stream_local_file_to_ssh(spec, &bundle_path, &remote_setup_script)
+        stream_local_file_to_ssh(spec, &bundle_path, &remote_setup_script, progress)
             .await
             .map_err(|error| format!("ssh stream to remote failed: {error}"))?;
         Ok(())
@@ -783,6 +787,7 @@ pub async fn export_git_workspace_from_ssh(
     remote_dir: &str,
     local_dir: &Path,
     reset_local_workspace: bool,
+    progress: Option<&RuntimeProgressSink>,
 ) -> Result<String, String> {
     let local_dir_str = local_dir.to_string_lossy();
     let bundle_dir = std::env::temp_dir().join(format!(
@@ -892,6 +897,428 @@ pub async fn export_git_workspace_from_ssh(
 /// Mirrors the Node `shellQuote` helper. We use forward slashes here so
 /// remote shell scripts are portable across platforms.
 // shell_quote is defined at line ~171; we use that one.
+
+
+// =============================================================================
+// Tar-based directory sync to SSH (port of Node `syncDirectoryToSsh`).
+// Pipes `tar -cf -` (local) through `ssh` to `tar -xf - -C <remote>` on
+// the SSH host. Used for non-git-backed workspaces (the common case).
+// =============================================================================
+
+/// Stream a local directory into a remote SSH host's directory by piping
+/// `tar -cf -` through `ssh` to `tar -xf - -C <remote_dir>` on the host.
+/// Mirrors Node `syncDirectoryToSsh` (no progress sink yet — that lands in
+/// R499/R503).
+///
+/// - `exclude` adds `--exclude <pattern>` flags (always prepended with `._*`
+///   via [`crate::ssh::tar_exclude_args`])
+/// - `follow_symlinks=true` passes `-h` so symlinks are followed during the
+///   archive creation (Node's `input.followSymlinks`)
+///
+/// Both processes must exit 0; the error includes the first non-zero exit's
+/// stderr for diagnostics.
+pub async fn sync_directory_to_ssh(
+    spec: &SshRemoteExecutionSpec,
+    local_dir: &Path,
+    remote_dir: &str,
+    exclude: Option<&[String]>,
+    follow_symlinks: bool,
+    progress: Option<&RuntimeProgressSink>,
+) -> Result<(), String> {
+    use crate::ssh::tar_exclude_args;
+    use tokio::io::AsyncReadExt;
+
+    // Build tar argv: tar [-h] -C <local_dir> <exclude args...> -cf - .
+    let mut tar_args: Vec<String> = Vec::new();
+    if follow_symlinks {
+        tar_args.push("-h".to_owned());
+    }
+    tar_args.push("-C".to_owned());
+    tar_args.push(local_dir.to_string_lossy().into_owned());
+    tar_args.extend(tar_exclude_args(exclude));
+    tar_args.push("-cf".to_owned());
+    tar_args.push("-".to_owned());
+    tar_args.push(".".to_owned());
+
+    let mut tar_child = tokio::process::Command::new("tar")
+        .args(&tar_args)
+        .env_clear()
+        .envs(crate::ssh::tar_spawn_env_defaults())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("spawn tar failed: {error}"))?;
+
+    let tar_stdout = tar_child
+        .stdout
+        .take()
+        .ok_or_else(|| "tar stdout pipe unavailable".to_owned())?;
+    let mut tar_stderr = tar_child.stderr.take().ok_or_else(|| "tar stderr pipe unavailable".to_owned())?;
+
+    // Build ssh argv + spawn.
+    let auth = SshAuthArgs::create(&spec.as_connection_config()).map_err(|error| format!("ssh auth: {error}"))?;
+    let remote_script = format!(
+        "mkdir -p {} && tar -xf - -C {}",
+        shell_quote(remote_dir),
+        shell_quote(remote_dir),
+    );
+    let ssh_argv: Vec<String> = auth
+        .args()
+        .iter()
+        .cloned()
+        .chain([
+            "-p".to_owned(),
+            spec.port.to_string(),
+            format!("{}@{}", spec.username, spec.host),
+            format!("sh -c {}", shell_quote(&remote_script)),
+        ])
+        .collect();
+    let mut ssh_child = tokio::process::Command::new("ssh")
+        .args(&ssh_argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("spawn ssh failed: {error}"))?;
+
+    let mut ssh_stdin = ssh_child
+        .stdin
+        .take()
+        .ok_or_else(|| "ssh stdin pipe unavailable".to_owned())?;
+    let mut ssh_stderr = ssh_child.stderr.take().ok_or_else(|| "ssh stderr pipe unavailable".to_owned())?;
+
+    // Pump tar.stdout → ssh.stdin concurrently with stderr drains. When a
+    // progress sink is provided, wrap the tar stdout so every byte that flows
+    // is counted and throttled-emitted.
+    let mut pump = if let Some(sink) = progress {
+        let progress_inner = create_transfer_progress(
+            Box::new(tar_stdout_for_pump(tar_stdout)),
+            TransferProgressOptions {
+                on_progress: sink.clone(),
+                phase: RuntimeProgressPhase::Syncing,
+                direction: RuntimeProgressDirection::To,
+                label: None,
+                total_bytes: None,
+                estimated: true,
+            },
+        );
+        let mut counter = progress_inner.counter;
+        let finish = progress_inner.finish;
+        let fail = progress_inner.fail;
+        tokio::spawn(async move {
+            let result = tokio::io::copy(&mut counter, &mut ssh_stdin).await;
+            match &result {
+                Ok(_) => finish().await,
+                Err(_) => fail().await,
+            };
+            result
+        })
+    } else {
+        tokio::spawn(async move {
+            tokio::io::copy(&mut tar_stdout_for_pump(tar_stdout), &mut ssh_stdin).await
+        })
+    };
+    let tar_stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = tar_stderr.read_to_end(&mut buf).await;
+        buf
+    });
+    let ssh_stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = ssh_stderr.read_to_end(&mut buf).await;
+        buf
+    });
+
+    let tar_status = tar_child.wait().await.map_err(|error| format!("tar wait: {error}"))?;
+    let ssh_status = ssh_child.wait().await.map_err(|error| format!("ssh wait: {error}"))?;
+    let _ = (&mut pump).await;
+    let tar_stderr_bytes = tar_stderr_task.await.unwrap_or_default();
+    let ssh_stderr_bytes = ssh_stderr_task.await.unwrap_or_default();
+
+    let tar_stderr_str = String::from_utf8_lossy(&tar_stderr_bytes).into_owned();
+    let ssh_stderr_str = String::from_utf8_lossy(&ssh_stderr_bytes).into_owned();
+
+    if !tar_status.success() {
+        return Err(format!(
+            "tar exited with code {:?}: {}",
+            tar_status.code(),
+            tar_stderr_str
+        ));
+    }
+    if !ssh_status.success() {
+        return Err(format!(
+            "ssh exited with code {:?}: {}",
+            ssh_status.code(),
+            ssh_stderr_str
+        ));
+    }
+    Ok(())
+}
+
+// Helper: turn `ChildStdout` into a type that `tokio::io::copy` accepts.
+// Both `ChildStdout` and `File` implement `AsyncRead` directly, so we just
+// pass through.
+fn tar_stdout_for_pump(s: tokio::process::ChildStdout) -> tokio::process::ChildStdout {
+    s
+}
+
+
+
+// =============================================================================
+// Tar-based directory sync FROM SSH (port of Node `syncDirectoryFromSsh`).
+// Streams `tar -cf -` on the remote via SSH to `tar -xf -` into a local
+// staging directory, then atomically replaces the destination (clear +
+// copy). Used for restore after remote execution.
+// =============================================================================
+
+/// Stream a remote directory into a local directory by piping the
+/// remote `tar -cf -` through SSH to a local `tar -xf - -C <staging>`,
+/// then atomically replace the destination (clear + copy). Mirrors Node
+/// `syncDirectoryFromSsh` (no progress sink yet — that lands in R503).
+///
+/// - `exclude` adds `--exclude <pattern>` flags (always prepended with `._*`)
+/// - `preserve_local_entries` are local paths kept during the clear step
+///   (e.g. user `.env` files that should survive a restore)
+pub async fn sync_directory_from_ssh(
+    spec: &SshRemoteExecutionSpec,
+    remote_dir: &str,
+    local_dir: &Path,
+    exclude: Option<&[String]>,
+    preserve_local_entries: Option<&[String]>,
+    progress: Option<&RuntimeProgressSink>,
+) -> Result<(), String> {
+    use crate::ssh::tar_exclude_args;
+    use tokio::io::AsyncReadExt;
+
+    // Staging dir: atomic replace via clear + copy (Node `clearLocalDirectory`
+    // + `copyDirectoryContents`).
+    let staging_dir = std::env::temp_dir().join(format!(
+        "paperclip-ssh-sync-back-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&staging_dir)
+        .map_err(|error| format!("create staging dir: {error}"))?;
+
+    // Build remote script (Node joins with ` && ` so the cd applies first).
+    // Avoid Rust 2021 `$identifier` parsing by using runtime concat.
+    let exclude_args = tar_exclude_args(exclude);
+    let mut tar_cmd_parts: Vec<String> = Vec::with_capacity(exclude_args.len() + 3);
+    for arg in &exclude_args {
+        tar_cmd_parts.push(shell_quote(arg));
+    }
+    tar_cmd_parts.push(shell_quote("-cf"));
+    tar_cmd_parts.push(shell_quote("-"));
+    tar_cmd_parts.push(shell_quote("."));
+    let tar_cmd = tar_cmd_parts.join(" ");
+    let remote_script = format!(
+        "cd {} && tar {}",
+        shell_quote(remote_dir),
+        tar_cmd,
+    );
+
+    // Spawn ssh.
+    let auth = SshAuthArgs::create(&spec.as_connection_config())
+        .map_err(|error| format!("ssh auth: {error}"))?;
+    let ssh_argv: Vec<String> = auth
+        .args()
+        .iter()
+        .cloned()
+        .chain([
+            "-p".to_owned(),
+            spec.port.to_string(),
+            format!("{}@{}", spec.username, spec.host),
+            format!("sh -c {}", shell_quote(&remote_script)),
+        ])
+        .collect();
+    let mut ssh_child = tokio::process::Command::new("ssh")
+        .args(&ssh_argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("spawn ssh failed: {error}"))?;
+
+    let ssh_stdout = ssh_child
+        .stdout
+        .take()
+        .ok_or_else(|| "ssh stdout pipe unavailable".to_owned())?;
+    let mut ssh_stderr = ssh_child.stderr.take().ok_or_else(|| "ssh stderr pipe unavailable".to_owned())?;
+
+    // Spawn local tar.
+    let staging_str = staging_dir.to_string_lossy().into_owned();
+    let mut tar_child = tokio::process::Command::new("tar")
+        .args(["-xf", "-", "-C", &staging_str])
+        .env_clear()
+        .envs(crate::ssh::tar_spawn_env_defaults())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("spawn tar failed: {error}"))?;
+
+    let mut tar_stdin = tar_child
+        .stdin
+        .take()
+        .ok_or_else(|| "tar stdin pipe unavailable".to_owned())?;
+    let mut tar_stderr = tar_child.stderr.take().ok_or_else(|| "tar stderr pipe unavailable".to_owned())?;
+
+    // Pump + drain stderr. When a progress sink is provided, wrap the ssh
+    // stdout so every byte received is counted and throttled-emitted.
+    let mut pump = if let Some(sink) = progress {
+        let progress_inner = create_transfer_progress(
+            Box::new(ssh_stdout_for_pump(ssh_stdout)),
+            TransferProgressOptions {
+                on_progress: sink.clone(),
+                phase: RuntimeProgressPhase::Restoring,
+                direction: RuntimeProgressDirection::From,
+                label: None,
+                total_bytes: None,
+                estimated: true,
+            },
+        );
+        let mut counter = progress_inner.counter;
+        let finish = progress_inner.finish;
+        let fail = progress_inner.fail;
+        tokio::spawn(async move {
+            let result = tokio::io::copy(&mut counter, &mut tar_stdin).await;
+            match &result {
+                Ok(_) => finish().await,
+                Err(_) => fail().await,
+            };
+            result
+        })
+    } else {
+        tokio::spawn(async move {
+            tokio::io::copy(&mut ssh_stdout_for_pump(ssh_stdout), &mut tar_stdin).await
+        })
+    };
+    let ssh_stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = ssh_stderr.read_to_end(&mut buf).await;
+        buf
+    });
+    let tar_stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = tar_stderr.read_to_end(&mut buf).await;
+        buf
+    });
+
+    let ssh_status = ssh_child.wait().await.map_err(|error| format!("ssh wait: {error}"))?;
+    let tar_status = tar_child.wait().await.map_err(|error| format!("tar wait: {error}"))?;
+    let _ = (&mut pump).await;
+    let ssh_stderr_bytes = ssh_stderr_task.await.unwrap_or_default();
+    let tar_stderr_bytes = tar_stderr_task.await.unwrap_or_default();
+    let ssh_stderr_str = String::from_utf8_lossy(&ssh_stderr_bytes).into_owned();
+    let tar_stderr_str = String::from_utf8_lossy(&tar_stderr_bytes).into_owned();
+
+    if !ssh_status.success() {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(format!(
+            "ssh exited with code {:?}: {}",
+            ssh_status.code(),
+            ssh_stderr_str
+        ));
+    }
+    if !tar_status.success() {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(format!(
+            "tar exited with code {:?}: {}",
+            tar_status.code(),
+            tar_stderr_str
+        ));
+    }
+
+    // Atomic replace local_dir: clear (preserving entries) + copy staging contents.
+    if let Err(error) = clear_local_directory(local_dir, preserve_local_entries) {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(format!("clear local dir: {error}"));
+    }
+    if let Err(error) = copy_directory_contents(&staging_dir, local_dir) {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(format!("copy staging: {error}"));
+    }
+
+    // Cleanup staging.
+    let _ = std::fs::remove_dir_all(&staging_dir);
+    Ok(())
+}
+
+/// Clear `local_dir` of all entries except those in `preserve_local_entries`.
+/// Mirrors Node `clearLocalDirectory` (fs.mkdir recursive + fs.readdir + filter
+/// + fs.rm recursive).
+fn clear_local_directory(
+    local_dir: &Path,
+    preserve_entries: Option<&[String]>,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(local_dir)?;
+    let preserve: std::collections::HashSet<String> = preserve_entries
+        .map(|entries| entries.iter().cloned().collect())
+        .unwrap_or_default();
+    for entry in std::fs::read_dir(local_dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if preserve.contains(&name) {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy all entries from `source_dir` into `target_dir` (one level deep,
+/// recursive). Mirrors Node `copyDirectoryContents`.
+fn copy_directory_contents(
+    source_dir: &Path,
+    target_dir: &Path,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(target_dir)?;
+    for entry in std::fs::read_dir(source_dir)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let from = entry.path();
+        let to = target_dir.join(&file_name);
+        copy_dir_entry(&from, &to)?;
+    }
+    Ok(())
+}
+
+/// Recursive copy helper (matches Node `fs.cp({ recursive, force,
+/// preserveTimestamps })`). Plain recursive copy is sufficient for our
+/// purposes — `preserveTimestamps` is best-effort.
+fn copy_dir_entry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let from_meta = std::fs::metadata(from)?;
+    if from_meta.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            copy_dir_entry(&entry.path(), &to.join(&name))?;
+        }
+    } else if from_meta.is_file() {
+        std::fs::copy(from, to)?;
+    } else {
+        // Skip symlinks / special files (Node's `fs.cp` would follow by
+        // default, but our tar extraction doesn't create them either).
+    }
+    Ok(())
+}
+
+fn ssh_stdout_for_pump(s: tokio::process::ChildStdout) -> tokio::process::ChildStdout {
+    s
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1192,5 +1619,162 @@ mod async_tests {
             .await
             .expect("delete_local_git_ref must swallow errors");
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+// =============================================================================
+// SSH workspace preparation + restore (port of Node
+// `prepareWorkspaceForSshExecution` + `restoreWorkspaceFromSshExecution` +
+// `clearRemoteDirectory` + `removeDeletedPathsOnSsh`). These are the
+// orchestration entry points the Claude/Codex adapters call before/after a
+// remote run.
+// =============================================================================
+
+/// Recursively remove all entries in `remote_dir` except those whose names
+/// (one level deep) match `preserve_entries`. Mirrors Node
+/// `clearRemoteDirectory`.
+///
+/// We use `find <remote> -mindepth 1 -maxdepth 1 ! -name <p> -exec rm -rf {} +`
+/// over ssh. `preserve_entries` is empty by default; pass `[".paperclip-runtime"]`
+/// to keep runtime state.
+pub async fn clear_remote_directory(
+    spec: &SshRemoteExecutionSpec,
+    remote_dir: &str,
+    preserve_entries: Option<&[String]>,
+) -> Result<(), String> {
+    use crate::ssh::run_ssh_command;
+    use std::collections::BTreeMap;
+    let mut preserve_args = Vec::new();
+    if let Some(entries) = preserve_entries {
+        for entry in entries {
+            preserve_args.push(String::from("!"));
+            preserve_args.push(String::from("-name"));
+            preserve_args.push(shell_quote(entry));
+        }
+    }
+    let find_expr = format!(
+        "find {} -mindepth 1 -maxdepth 1 {} -exec rm -rf -- {{}} +",
+        shell_quote(remote_dir),
+        preserve_args.join(" "),
+    );
+    let script = format!("set -e\nmkdir -p {}\n{}", shell_quote(remote_dir), find_expr);
+    let config = spec.as_connection_config();
+    run_ssh_command(
+        &config,
+        &script,
+        &crate::ssh::SshCommandOptions {
+            env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: 30_000,
+            max_buffer: 256 * 1024,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("clear remote dir: {error}"))
+}
+
+/// On the remote, `rm -rf` each path in `deleted_paths` relative to
+/// `remote_dir`. Mirrors Node `removeDeletedPathsOnSsh`. No-op if
+/// `deleted_paths` is empty.
+pub async fn remove_deleted_paths_on_ssh(
+    spec: &SshRemoteExecutionSpec,
+    remote_dir: &str,
+    deleted_paths: &[String],
+) -> Result<(), String> {
+    use crate::ssh::run_ssh_command;
+    use std::collections::BTreeMap;
+    if deleted_paths.is_empty() {
+        return Ok(());
+    }
+    let quoted_paths = deleted_paths
+        .iter()
+        .map(|p| shell_quote(p))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!(
+        "cd {} && rm -rf -- {}",
+        shell_quote(remote_dir),
+        quoted_paths,
+    );
+    let config = spec.as_connection_config();
+    run_ssh_command(
+        &config,
+        &script,
+        &crate::ssh::SshCommandOptions {
+            env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: 30_000,
+            max_buffer: 256 * 1024,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("remove deleted paths: {error}"))
+}
+
+/// Prepare a remote workspace before SSH execution. Mirrors Node
+/// `prepareWorkspaceForSshExecution`.
+///
+/// Returns `true` if the local workspace is git-backed (so a git bundle
+/// was pushed); `false` if it was treated as a plain directory.
+pub async fn prepare_workspace_for_ssh_execution(
+    spec: &SshRemoteExecutionSpec,
+    local_dir: &Path,
+    remote_dir: &str,
+    progress: Option<&RuntimeProgressSink>,
+) -> Result<bool, String> {
+    let local_dir_str = local_dir.to_string_lossy();
+    let git_snapshot = read_git_workspace_snapshot(&local_dir_str)
+        .await
+        .ok()
+        .flatten();
+    if let Some(snapshot) = git_snapshot {
+        // Git-backed path.
+        import_git_workspace_to_ssh(spec, local_dir, remote_dir, &snapshot, progress).await?;
+        let exclude = vec![".git".to_string(), ".paperclip-runtime".to_string()];
+        sync_directory_to_ssh(spec, local_dir, remote_dir, Some(&exclude), false, progress).await?;
+        remove_deleted_paths_on_ssh(spec, remote_dir, &snapshot.deleted_paths).await?;
+        Ok(true)
+    } else {
+        // Non-git path.
+        let preserve = vec![".paperclip-runtime".to_string()];
+        clear_remote_directory(spec, remote_dir, Some(&preserve)).await?;
+        let exclude = vec![".paperclip-runtime".to_string()];
+        sync_directory_to_ssh(spec, local_dir, remote_dir, Some(&exclude), false, progress).await?;
+        Ok(false)
+    }
+}
+
+/// Restore the local workspace from the remote after SSH execution. Mirrors
+/// the no-`baselineSnapshot` branch of Node
+/// `restoreWorkspaceFromSshExecution`.
+///
+/// Strategy:
+/// - if local was git-backed → push remote git history + restore working
+///   tree (preserve `.git` so the just-imported ref stays)
+/// - else → restore working tree only
+pub async fn restore_workspace_from_ssh_execution(
+    spec: &SshRemoteExecutionSpec,
+    local_dir: &Path,
+    remote_dir: &str,
+    progress: Option<&RuntimeProgressSink>,
+) -> Result<(), String> {
+    let local_dir_str = local_dir.to_string_lossy();
+    let git_snapshot = read_git_workspace_snapshot(&local_dir_str)
+        .await
+        .ok()
+        .flatten();
+    if git_snapshot.is_some() {
+        export_git_workspace_from_ssh(spec, remote_dir, local_dir, false, progress).await?;
+        let exclude = vec![".git".to_string(), ".paperclip-runtime".to_string()];
+        let preserve = vec![".git".to_string()];
+        sync_directory_from_ssh(spec, remote_dir, local_dir, Some(&exclude), Some(&preserve), progress)
+            .await?;
+        Ok(())
+    } else {
+        let exclude = vec![".paperclip-runtime".to_string()];
+        sync_directory_from_ssh(spec, remote_dir, local_dir, Some(&exclude), None, progress).await?;
+        Ok(())
     }
 }

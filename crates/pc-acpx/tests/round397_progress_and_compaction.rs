@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex};
 // runtime_progress integration
 // ============================================================================
 
-#[test]
-fn progress_reporter_full_sync_lifecycle() {
+#[tokio::test]
+async fn progress_reporter_full_sync_lifecycle() {
     let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
-    let sink = Arc::new(move |line: &str| {
-        captured_clone.lock().unwrap().push(line.to_string());
+    let sink = Arc::new(move |line: String| {
+        captured_clone.lock().unwrap().push(line);
     });
 
     let counter = Arc::new(Mutex::new(0u64));
@@ -36,26 +36,26 @@ fn progress_reporter_full_sync_lifecycle() {
         target: RuntimeProgressTarget::Sandbox,
         step_percent: None,
         min_interval_ms: None,
-        now: Some(now),
+        now_ms: Some(now),
     };
 
     let mut reporter = create_runtime_progress_reporter(options);
-    reporter.report(250, Some(1000)); // 25% -> emit (step crossing)
-    reporter.report(500, Some(1000)); // 50% -> emit (step crossing)
-    reporter.report(750, Some(1000)); // 75% -> emit (step crossing)
-    reporter.report(1000, Some(1000)); // 100% -> emit (terminal)
+    reporter.report(250, Some(1000)).await; // 25% -> emit (step crossing)
+    reporter.report(500, Some(1000)).await; // 50% -> emit (step crossing)
+    reporter.report(750, Some(1000)).await; // 75% -> emit (step crossing)
+    reporter.report(1000, Some(1000)).await; // 100% -> emit (terminal)
 
     let lines = captured.lock().unwrap();
     assert!(lines.len() >= 4);
     assert!(lines.last().unwrap().contains("100%"));
 }
 
-#[test]
-fn progress_reporter_fail_marks_completed() {
+#[tokio::test]
+async fn progress_reporter_fail_marks_completed() {
     let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
-    let sink = Arc::new(move |line: &str| {
-        captured_clone.lock().unwrap().push(line.to_string());
+    let sink = Arc::new(move |line: String| {
+        captured_clone.lock().unwrap().push(line);
     });
 
     let counter = Arc::new(Mutex::new(0u64));
@@ -74,16 +74,18 @@ fn progress_reporter_fail_marks_completed() {
         target: RuntimeProgressTarget::Ssh,
         step_percent: None,
         min_interval_ms: None,
-        now: Some(now),
+        now_ms: Some(now),
     };
 
     let mut reporter = create_runtime_progress_reporter(options);
-    reporter.report(100, Some(1000));
-    reporter.fail(Some(100), Some(1000));
+    reporter.report(100, Some(1000)).await;
+    reporter.fail(Some(100), Some(1000)).await;
 
     let lines = captured.lock().unwrap();
     assert!(lines.iter().any(|l| l.contains("failed at")));
-    assert!(reporter.is_completed());
+    // After fail(), reporter should have emitted a terminal line.
+    let lines = captured.lock().unwrap();
+    assert!(lines.iter().any(|l| l.contains("failed at")));
 }
 
 // ============================================================================

@@ -12,21 +12,10 @@
 # Error details
 
 ```
-Error: expect(locator).toBeVisible() failed
-
-Locator: locator('input[name="email"]')
-Expected: visible
-Timeout: 5000ms
-Error: element(s) not found
-
+Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:51826/
 Call log:
-  - Expect "toBeVisible" with timeout 5000ms
-  - waiting for locator('input[name="email"]')
+  - navigating to "http://localhost:51826/", waiting until "domcontentloaded"
 
-```
-
-```yaml
-- text: Failed to load health (500)
 ```
 
 # Test source
@@ -51,11 +40,11 @@ Call log:
   17 |     const email = `ui-${TS}@paperclip.test`;
   18 |     const password = "playwright-ui-pass-42";
   19 | 
-  20 |     await page.goto(UI_BASE, { waitUntil: "domcontentloaded" });
+> 20 |     await page.goto(UI_BASE, { waitUntil: "domcontentloaded" });
+     |                ^ Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:51826/
   21 | 
   22 |     // Wait up to 5s for React to hydrate Auth.tsx.
-> 23 |     await expect(page.locator('input[name="email"]')).toBeVisible({ timeout: 5_000 });
-     |                                                       ^ Error: expect(locator).toBeVisible() failed
+  23 |     await expect(page.locator('input[name="email"]')).toBeVisible({ timeout: 5_000 });
   24 | 
   25 |     // 2. Auth.tsx defaults to sign_in mode. Click "Create one" to switch.
   26 |     await page.getByRole("button", { name: "Create one" }).click();

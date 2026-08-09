@@ -1,17 +1,13 @@
-//! R498 — git workspace import/export via real sshd fixture.
+//! R502 — `sync_directory_to_ssh` end-to-end via real sshd fixture.
 //!
-//! 端到端验证 `pc_acpx::git_workspace_sync` 的 `import_git_workspace_to_ssh`
-//! + `export_git_workspace_from_ssh`：用真实 sshd + 真实 git repo + 真实
-//! `git bundle` 传输 + 远端 `git init` / `fetch` / `checkout` / `bundle create`。
-//!
-//! 缺失 sshd / git / ssh-keygen 时跳过。
+//! 用真实 sshd 验证 tar-based directory sync：本地建一个有多个文件的目录，
+//! 调用 `sync_directory_to_ssh` 后远端应出现同名 + 同内容文件。缺失 sshd/tar
+//! 时跳过。
 
-use pc_acpx::git_workspace_sync::{
-    export_git_workspace_from_ssh, import_git_workspace_to_ssh, read_git_workspace_snapshot,
-};
+use pc_acpx::git_workspace_sync::sync_directory_to_ssh;
 use pc_acpx::ssh::SshRemoteExecutionSpec;
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -43,13 +39,14 @@ impl SshLabFixture {
         if !command_available("ssh")
             || !command_available("sshd")
             || !command_available("ssh-keygen")
+            || !command_available("tar")
         {
-            eprintln!("SKIP: ssh/sshd/ssh-keygen unavailable");
+            eprintln!("SKIP: ssh/sshd/ssh-keygen/tar unavailable");
             return None;
         }
         let port = allocate_loopback_port()?;
         let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-r498-git-sync-{}",
+            "paperclip-r502-sync-{}",
             uuid::Uuid::new_v4()
         ));
         let remote_workspace_path = root_dir.join("workspace");
@@ -143,7 +140,6 @@ impl SshLabFixture {
             .spawn()
             .ok()?;
         let pid = child.id().unwrap_or(0);
-        // Wait for sshd to be ready by polling `echo probe`.
         let config = pc_acpx::ssh::SshConnectionConfig {
             host: "127.0.0.1".to_string(),
             port,
@@ -209,168 +205,81 @@ impl Drop for SshLabFixture {
     }
 }
 
-async fn init_local_repo_with_commit(name: &str, message: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "paperclip-r498-local-{name}-{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&dir).expect("create dir");
-    let dir_str = dir.to_string_lossy().to_string();
-    pc_acpx::git_workspace_sync::run_local_git(&dir_str, &["init", "-q"], None, None)
-        .await
-        .expect("git init");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &dir_str,
-        &["config", "user.email", "test@example.com"],
-        None,
-        None,
-    )
-    .await
-    .expect("git config email");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &dir_str,
-        &["config", "user.name", "Test"],
-        None,
-        None,
-    )
-    .await
-    .expect("git config name");
-    std::fs::write(dir.join("hello.txt"), "hello from local\n").expect("write hello");
-    pc_acpx::git_workspace_sync::run_local_git(&dir_str, &["add", "hello.txt"], None, None)
-        .await
-        .expect("git add");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &dir_str,
-        &["commit", "-q", "-m", message],
-        None,
-        None,
-    )
-    .await
-    .expect("git commit");
-    dir
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn import_git_workspace_to_ssh_runs_remote_git_init_and_checkout() {
-    if !command_available("git") {
-        eprintln!("SKIP: git unavailable");
-        return;
-    }
+async fn sync_directory_to_ssh_pipes_tar_through_ssh_to_remote_extract() {
     let Some(fixture) = SshLabFixture::start().await else {
         return;
     };
-    let local = init_local_repo_with_commit("import", "init commit").await;
-    let snapshot = read_git_workspace_snapshot(&local.to_string_lossy())
-        .await
-        .expect("snapshot")
-        .expect("Some");
-    let remote_dir = format!("{}/remote-workspace", fixture.root_dir.display());
-    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
-
-    import_git_workspace_to_ssh(&fixture.spec, &local, &remote_dir, &snapshot, None)
-        .await
-        .expect("import should succeed");
-
-    // Verify remote: .git created + hello.txt checked out.
-    assert!(
-        std::path::Path::new(&remote_dir).join(".git").exists(),
-        "remote .git must exist after import"
-    );
-    let remote_hello = std::path::Path::new(&remote_dir).join("hello.txt");
-    assert!(
-        remote_hello.exists(),
-        "remote hello.txt must be checked out"
-    );
-    let content = std::fs::read_to_string(&remote_hello).expect("read remote hello");
-    assert!(
-        content.contains("hello from local"),
-        "remote hello.txt must contain local content; got: {content}"
-    );
-
-    let _ = std::fs::remove_dir_all(&local);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn export_git_workspace_from_ssh_runs_remote_bundle_create_and_local_reset() {
-    if !command_available("git") {
-        eprintln!("SKIP: git unavailable");
-        return;
-    }
-    let Some(fixture) = SshLabFixture::start().await else {
-        return;
-    };
-    // Set up remote with a git repo + commit.
-    let remote_dir = format!("{}/remote-export", fixture.root_dir.display());
-    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
-    let remote_str = remote_dir.clone();
-    pc_acpx::git_workspace_sync::run_local_git(&remote_str, &["init", "-q"], None, None)
-        .await
-        .expect("remote git init");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["config", "user.email", "test@example.com"],
-        None,
-        None,
-    )
-    .await
-    .expect("remote git config email");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["config", "user.name", "Test"],
-        None,
-        None,
-    )
-    .await
-    .expect("remote git config name");
-    std::fs::write(std::path::Path::new(&remote_dir).join("world.txt"), "world from remote\n")
-        .expect("write world");
-    pc_acpx::git_workspace_sync::run_local_git(&remote_str, &["add", "world.txt"], None, None)
-        .await
-        .expect("remote git add");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["commit", "-q", "-m", "remote init"],
-        None,
-        None,
-    )
-    .await
-    .expect("remote git commit");
-
-    // Set up local empty repo.
     let local = std::env::temp_dir().join(format!(
-        "paperclip-r498-local-export-{}",
+        "paperclip-r502-local-{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&local).expect("mkdir local");
-    let local_str = local.to_string_lossy().to_string();
-    pc_acpx::git_workspace_sync::run_local_git(&local_str, &["init", "-q"], None, None)
+    std::fs::write(local.join("file1.txt"), "alpha\n").expect("write f1");
+    std::fs::write(local.join("file2.txt"), "beta\n").expect("write f2");
+    std::fs::create_dir_all(local.join("subdir")).expect("mkdir subdir");
+    std::fs::write(local.join("subdir").join("nested.txt"), "gamma\n").expect("write nested");
+
+    let remote_dir = format!("{}/remote-target", fixture.root_dir.display());
+    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
+    // Pre-create a stale file the sync should overwrite.
+    std::fs::write(std::path::Path::new(&remote_dir).join("file1.txt"), "stale\n").expect("write stale");
+
+    sync_directory_to_ssh(&fixture.spec, &local, &remote_dir, None, false, None)
         .await
-        .expect("local git init");
+        .expect("sync should succeed");
 
-    let imported_head =
-        export_git_workspace_from_ssh(&fixture.spec, &remote_dir, &local, true, None)
-            .await
-            .expect("export should succeed");
+    // Verify remote contents.
+    let r1 = std::fs::read_to_string(std::path::Path::new(&remote_dir).join("file1.txt"))
+        .expect("read r1");
+    assert_eq!(r1, "alpha\n", "file1.txt must be overwritten by tar extract");
 
-    // Verify imported head SHA matches remote HEAD.
-    let remote_head = pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["rev-parse", "HEAD"],
-        Some(5_000),
-        None,
+    let r2 = std::fs::read_to_string(std::path::Path::new(&remote_dir).join("file2.txt"))
+        .expect("read r2");
+    assert_eq!(r2, "beta\n");
+
+    let rn = std::fs::read_to_string(
+        std::path::Path::new(&remote_dir).join("subdir").join("nested.txt"),
     )
-    .await
-    .expect("remote rev-parse");
-    assert_eq!(imported_head, remote_head.stdout.trim());
+    .expect("read nested");
+    assert_eq!(rn, "gamma\n");
 
-    // Verify local working tree has world.txt.
-    let local_world = local.join("world.txt");
+    let _ = std::fs::remove_dir_all(&local);
+    let _ = std::fs::remove_dir_all(&remote_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sync_directory_to_ssh_respects_exclude() {
+    let Some(fixture) = SshLabFixture::start().await else {
+        return;
+    };
+    let local = std::env::temp_dir().join(format!(
+        "paperclip-r502-local-excl-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&local).expect("mkdir local");
+    std::fs::write(local.join("keep.txt"), "keep\n").expect("write keep");
+    std::fs::create_dir_all(local.join("node_modules")).expect("mkdir nm");
+    std::fs::write(local.join("node_modules").join("x.js"), "x").expect("write x");
+
+    let remote_dir = format!("{}/remote-excl", fixture.root_dir.display());
+    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
+
+    let exclude = vec!["node_modules".to_owned()];
+    sync_directory_to_ssh(&fixture.spec, &local, &remote_dir, Some(&exclude), false, None)
+        .await
+        .expect("sync should succeed");
+
+    // keep.txt must be there.
     assert!(
-        local_world.exists(),
-        "local world.txt must exist after export"
+        std::path::Path::new(&remote_dir).join("keep.txt").exists(),
+        "keep.txt must be synced"
     );
-    let content = std::fs::read_to_string(&local_world).expect("read world");
-    assert!(content.contains("world from remote"));
+    // node_modules must NOT be there.
+    assert!(
+        !std::path::Path::new(&remote_dir).join("node_modules").exists(),
+        "node_modules must be excluded by --exclude"
+    );
 
     let _ = std::fs::remove_dir_all(&local);
     let _ = std::fs::remove_dir_all(&remote_dir);

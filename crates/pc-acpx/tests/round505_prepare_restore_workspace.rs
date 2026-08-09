@@ -1,13 +1,16 @@
-//! R498 — git workspace import/export via real sshd fixture.
+//! R505 — `prepare_workspace_for_ssh_execution` + `restore_workspace_from_ssh_execution`
+//! end-to-end via real sshd fixture.
 //!
-//! 端到端验证 `pc_acpx::git_workspace_sync` 的 `import_git_workspace_to_ssh`
-//! + `export_git_workspace_from_ssh`：用真实 sshd + 真实 git repo + 真实
-//! `git bundle` 传输 + 远端 `git init` / `fetch` / `checkout` / `bundle create`。
+//! 验证两个 orchestration 入口：
+//! 1. **git-backed 路径**：本地建 git repo + 文件 → prepare → 远端有 `.git` +
+//!    文件 + 在远端改文件 → restore → 本地文件更新
+//! 2. **非 git 路径**：本地无 `.git` → prepare → 远端有文件 → 远端改文件 →
+//!    restore → 本地文件更新
 //!
-//! 缺失 sshd / git / ssh-keygen 时跳过。
+//! 缺失 sshd/git/tar 时跳过。
 
 use pc_acpx::git_workspace_sync::{
-    export_git_workspace_from_ssh, import_git_workspace_to_ssh, read_git_workspace_snapshot,
+    prepare_workspace_for_ssh_execution, restore_workspace_from_ssh_execution,
 };
 use pc_acpx::ssh::SshRemoteExecutionSpec;
 use std::net::TcpListener;
@@ -43,13 +46,15 @@ impl SshLabFixture {
         if !command_available("ssh")
             || !command_available("sshd")
             || !command_available("ssh-keygen")
+            || !command_available("tar")
+            || !command_available("git")
         {
-            eprintln!("SKIP: ssh/sshd/ssh-keygen unavailable");
+            eprintln!("SKIP: ssh/sshd/ssh-keygen/tar/git unavailable");
             return None;
         }
         let port = allocate_loopback_port()?;
         let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-r498-git-sync-{}",
+            "paperclip-r505-orch-{}",
             uuid::Uuid::new_v4()
         ));
         let remote_workspace_path = root_dir.join("workspace");
@@ -143,7 +148,6 @@ impl SshLabFixture {
             .spawn()
             .ok()?;
         let pid = child.id().unwrap_or(0);
-        // Wait for sshd to be ready by polling `echo probe`.
         let config = pc_acpx::ssh::SshConnectionConfig {
             host: "127.0.0.1".to_string(),
             port,
@@ -209,168 +213,166 @@ impl Drop for SshLabFixture {
     }
 }
 
-async fn init_local_repo_with_commit(name: &str, message: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "paperclip-r498-local-{name}-{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&dir).expect("create dir");
-    let dir_str = dir.to_string_lossy().to_string();
-    pc_acpx::git_workspace_sync::run_local_git(&dir_str, &["init", "-q"], None, None)
-        .await
-        .expect("git init");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &dir_str,
-        &["config", "user.email", "test@example.com"],
-        None,
-        None,
-    )
-    .await
-    .expect("git config email");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &dir_str,
-        &["config", "user.name", "Test"],
-        None,
-        None,
-    )
-    .await
-    .expect("git config name");
-    std::fs::write(dir.join("hello.txt"), "hello from local\n").expect("write hello");
-    pc_acpx::git_workspace_sync::run_local_git(&dir_str, &["add", "hello.txt"], None, None)
-        .await
-        .expect("git add");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &dir_str,
-        &["commit", "-q", "-m", message],
-        None,
-        None,
-    )
-    .await
-    .expect("git commit");
-    dir
+fn init_git_repo(local: &Path) {
+    use std::process::Command;
+    let run = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .current_dir(local)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    assert!(run(&["init", "--initial-branch=main"]));
+    assert!(run(&["config", "user.email", "test@example.com"]));
+    assert!(run(&["config", "user.name", "Test"]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn import_git_workspace_to_ssh_runs_remote_git_init_and_checkout() {
-    if !command_available("git") {
-        eprintln!("SKIP: git unavailable");
-        return;
-    }
+async fn prepare_restore_roundtrip_git_backed_workspace() {
     let Some(fixture) = SshLabFixture::start().await else {
         return;
     };
-    let local = init_local_repo_with_commit("import", "init commit").await;
-    let snapshot = read_git_workspace_snapshot(&local.to_string_lossy())
-        .await
-        .expect("snapshot")
-        .expect("Some");
-    let remote_dir = format!("{}/remote-workspace", fixture.root_dir.display());
-    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
 
-    import_git_workspace_to_ssh(&fixture.spec, &local, &remote_dir, &snapshot, None)
-        .await
-        .expect("import should succeed");
-
-    // Verify remote: .git created + hello.txt checked out.
-    assert!(
-        std::path::Path::new(&remote_dir).join(".git").exists(),
-        "remote .git must exist after import"
-    );
-    let remote_hello = std::path::Path::new(&remote_dir).join("hello.txt");
-    assert!(
-        remote_hello.exists(),
-        "remote hello.txt must be checked out"
-    );
-    let content = std::fs::read_to_string(&remote_hello).expect("read remote hello");
-    assert!(
-        content.contains("hello from local"),
-        "remote hello.txt must contain local content; got: {content}"
-    );
-
-    let _ = std::fs::remove_dir_all(&local);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn export_git_workspace_from_ssh_runs_remote_bundle_create_and_local_reset() {
-    if !command_available("git") {
-        eprintln!("SKIP: git unavailable");
-        return;
-    }
-    let Some(fixture) = SshLabFixture::start().await else {
-        return;
-    };
-    // Set up remote with a git repo + commit.
-    let remote_dir = format!("{}/remote-export", fixture.root_dir.display());
-    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
-    let remote_str = remote_dir.clone();
-    pc_acpx::git_workspace_sync::run_local_git(&remote_str, &["init", "-q"], None, None)
-        .await
-        .expect("remote git init");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["config", "user.email", "test@example.com"],
-        None,
-        None,
-    )
-    .await
-    .expect("remote git config email");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["config", "user.name", "Test"],
-        None,
-        None,
-    )
-    .await
-    .expect("remote git config name");
-    std::fs::write(std::path::Path::new(&remote_dir).join("world.txt"), "world from remote\n")
-        .expect("write world");
-    pc_acpx::git_workspace_sync::run_local_git(&remote_str, &["add", "world.txt"], None, None)
-        .await
-        .expect("remote git add");
-    pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["commit", "-q", "-m", "remote init"],
-        None,
-        None,
-    )
-    .await
-    .expect("remote git commit");
-
-    // Set up local empty repo.
+    // Build a git-backed local workspace.
     let local = std::env::temp_dir().join(format!(
-        "paperclip-r498-local-export-{}",
+        "paperclip-r505-git-local-{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&local).expect("mkdir local");
-    let local_str = local.to_string_lossy().to_string();
-    pc_acpx::git_workspace_sync::run_local_git(&local_str, &["init", "-q"], None, None)
-        .await
-        .expect("local git init");
+    init_git_repo(&local);
+    std::fs::write(local.join("README.md"), "# Test\n").expect("write README");
+    std::fs::write(local.join("src.txt"), "alpha\n").expect("write src");
+    let commit = std::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(&local)
+        .status();
+    assert!(commit.unwrap().success());
+    let commit = std::process::Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(&local)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status();
+    assert!(commit.unwrap().success());
 
-    let imported_head =
-        export_git_workspace_from_ssh(&fixture.spec, &remote_dir, &local, true, None)
-            .await
-            .expect("export should succeed");
+    let remote_dir = format!("{}/git-target", fixture.root_dir.display());
+    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
 
-    // Verify imported head SHA matches remote HEAD.
-    let remote_head = pc_acpx::git_workspace_sync::run_local_git(
-        &remote_str,
-        &["rev-parse", "HEAD"],
-        Some(5_000),
+    let git_backed = prepare_workspace_for_ssh_execution(
+        &fixture.spec,
+        &local,
+        &remote_dir,
         None,
     )
     .await
-    .expect("remote rev-parse");
-    assert_eq!(imported_head, remote_head.stdout.trim());
+    .expect("prepare should succeed");
+    assert!(git_backed, "should detect git-backed workspace");
 
-    // Verify local working tree has world.txt.
-    let local_world = local.join("world.txt");
-    assert!(
-        local_world.exists(),
-        "local world.txt must exist after export"
+    // After prepare: remote should have README.md + src.txt + .git/.
+    assert!(Path::new(&remote_dir).join("README.md").exists());
+    assert!(Path::new(&remote_dir).join("src.txt").exists());
+    assert!(Path::new(&remote_dir).join(".git").exists());
+
+    // Simulate remote mutation: change src.txt on remote.
+    std::fs::write(
+        Path::new(&remote_dir).join("src.txt"),
+        "remote-edit\n",
+    )
+    .expect("remote write");
+
+    restore_workspace_from_ssh_execution(
+        &fixture.spec,
+        &local,
+        &remote_dir,
+        None,
+    )
+    .await
+    .expect("restore should succeed");
+
+    // After restore: local src.txt must reflect the remote edit.
+    let got = std::fs::read_to_string(local.join("src.txt")).expect("read local src");
+    assert_eq!(
+        got, "remote-edit\n",
+        "local src.txt must reflect remote edit after restore"
     );
-    let content = std::fs::read_to_string(&local_world).expect("read world");
-    assert!(content.contains("world from remote"));
+    // Local .git must still exist (preserve).
+    assert!(local.join(".git").exists(), ".git must be preserved");
+
+    let _ = std::fs::remove_dir_all(&local);
+    let _ = std::fs::remove_dir_all(&remote_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prepare_restore_roundtrip_non_git_workspace() {
+    let Some(fixture) = SshLabFixture::start().await else {
+        return;
+    };
+
+    let local = std::env::temp_dir().join(format!(
+        "paperclip-r505-nongit-local-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&local).expect("mkdir local");
+    std::fs::write(local.join("config.yaml"), "key: val\n").expect("write config");
+
+    let remote_dir = format!("{}/nongit-target", fixture.root_dir.display());
+    std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
+    // Pre-create stale file the prepare should overwrite.
+    std::fs::write(
+        Path::new(&remote_dir).join("config.yaml"),
+        "stale: yes\n",
+    )
+    .expect("write stale");
+
+    let git_backed = prepare_workspace_for_ssh_execution(
+        &fixture.spec,
+        &local,
+        &remote_dir,
+        None,
+    )
+    .await
+    .expect("prepare should succeed");
+    assert!(!git_backed, "should detect non-git workspace");
+
+    assert!(Path::new(&remote_dir).join("config.yaml").exists());
+    let r = std::fs::read_to_string(Path::new(&remote_dir).join("config.yaml"))
+        .expect("read remote config");
+    assert_eq!(r, "key: val\n", "remote config.yaml must be overwritten");
+
+    // Mutate remote.
+    std::fs::write(
+        Path::new(&remote_dir).join("config.yaml"),
+        "remote-set: 1\n",
+    )
+    .expect("remote edit");
+
+    restore_workspace_from_ssh_execution(
+        &fixture.spec,
+        &local,
+        &remote_dir,
+        None,
+    )
+    .await
+    .expect("restore should succeed");
+
+    let got = std::fs::read_to_string(local.join("config.yaml")).expect("read local");
+    assert_eq!(
+        got, "remote-set: 1\n",
+        "local config.yaml must reflect remote edit"
+    );
 
     let _ = std::fs::remove_dir_all(&local);
     let _ = std::fs::remove_dir_all(&remote_dir);
