@@ -306,3 +306,189 @@ async fn company_pipelines_post_rejects_empty_key() {
     .await;
     assert_eq!(status, 400);
 }
+
+// =============================================================================
+// R514 — `PUT /api/cases/:case_id/documents/:key` contract
+// =============================================================================
+
+async fn insert_case(db: &Db, company_id: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO cases (id, company_id, identifier, case_number, case_type, title, status, fields, created_at, updated_at) \
+         VALUES ($1, $2, $5, $3, 'task', $4, 'draft', '{}'::jsonb, now(), now())",
+    )
+    .bind(id)
+    .bind(company_id)
+    .bind(1_i32)
+    .bind("R514 Case")
+    .bind(format!("r514-{}", &id.simple().to_string()[..6]))
+    .execute(db.pool())
+    .await
+    .expect("insert case");
+    id
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn case_document_put_creates_new_document() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    let case_id = insert_case(&db, company_id).await;
+    let app = routes::cases::router().with_state(test_state(db.clone()));
+
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec",
+            "format": "markdown",
+            "body": "# R514 spec\n\nInitial content.",
+            "changeSummary": "Initial draft"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "case document upsert: {body}");
+    let document_id = body["id"].as_str().expect("document id");
+    assert_eq!(body["latestRevisionNumber"].as_u64(), Some(1));
+
+    let (status, fetched) = call(
+        &app,
+        "GET",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(fetched["documentId"], document_id);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn case_document_put_update_increases_revision_number() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    let case_id = insert_case(&db, company_id).await;
+    let app = routes::cases::router().with_state(test_state(db.clone()));
+
+    let (_, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec",
+            "format": "markdown",
+            "body": "first version"
+        })),
+    )
+    .await;
+    let base_revision_id = body["latestRevisionId"].as_str().expect("latestRevisionId");
+    let first_revision_number = body["latestRevisionNumber"].as_u64().expect("latestRevisionNumber");
+
+    let (status, updated) = call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec v2",
+            "format": "markdown",
+            "body": "second version",
+            "baseRevisionId": base_revision_id
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "second upsert: {updated}");
+    let second_revision_number = updated["latestRevisionNumber"]
+        .as_u64()
+        .expect("latestRevisionNumber");
+    assert!(
+        second_revision_number > first_revision_number,
+        "revision number should advance (first={first_revision_number}, second={second_revision_number})"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn case_document_put_rejects_stale_base_revision() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    let case_id = insert_case(&db, company_id).await;
+    let app = routes::cases::router().with_state(test_state(db.clone()));
+
+    call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec",
+            "format": "markdown",
+            "body": "v1"
+        })),
+    )
+    .await;
+
+    call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec v2",
+            "format": "markdown",
+            "body": "v2"
+        })),
+    )
+    .await;
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec v3",
+            "format": "markdown",
+            "body": "v3",
+            "baseRevisionId": Uuid::new_v4().to_string()
+        })),
+    )
+    .await;
+    assert_eq!(status, 409, "stale baseRevisionId should be rejected");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn case_document_put_rejects_locked_document() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    let case_id = insert_case(&db, company_id).await;
+    let app = routes::cases::router().with_state(test_state(db.clone()));
+
+    call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec",
+            "format": "markdown",
+            "body": "v1"
+        })),
+    )
+    .await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/cases/{case_id}/documents/spec/lock"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        &format!("/api/cases/{case_id}/documents/spec"),
+        Some(json!({
+            "title": "Design Spec v2",
+            "format": "markdown",
+            "body": "v2"
+        })),
+    )
+    .await;
+    assert_eq!(status, 409, "locked document should be rejected");
+}

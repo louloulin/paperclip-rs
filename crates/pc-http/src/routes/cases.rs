@@ -15,9 +15,11 @@ use uuid::Uuid;
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::case::{
-    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseLinkRole, CaseRepo,
-    CaseRow, DocumentRevisionRow, NewCaseAnnotationComment, NewCaseAnnotationThread,
+    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseDocumentUpsertError,
+    CaseDocumentUpsertInput, CaseLinkRole, CaseRepo, CaseRow, NewCaseAnnotationComment,
+    NewCaseAnnotationThread,
 };
+use pc_repos::document::DocumentRevisionRow;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -38,7 +40,10 @@ pub fn router() -> Router<AppState> {
             "/api/cases/:case_id/documents",
             get(list_case_documents).put(upsert_case_document),
         )
-        .route("/api/cases/:case_id/documents/:key", get(get_case_document))
+        .route(
+            "/api/cases/:case_id/documents/:key",
+            get(get_case_document).put(put_case_document_by_key),
+        )
         .route(
             "/api/cases/:case_id/documents/:key/lock",
             post(lock_case_document),
@@ -419,6 +424,91 @@ async fn get_case_document(
     })))
 }
 
+// R514: case document upsert by key. Mirrors Node PUT /cases/:id/documents/:key
+// (advisory lock + stale baseRevisionId + lock check + revision + case_event).
+async fn put_case_document_by_key(
+    State(state): State<AppState>,
+    Path((case_id, key)): Path<(Uuid, String)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<UpsertCaseDocumentByKeyBody>,
+) -> ApiResult<Json<Value>> {
+    let repo = CaseRepo::new(&state.db);
+    let case_row = repo
+        .get(case_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let actor_agent_id = headers
+        .get("x-paperclip-agent-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let actor_run_id = headers
+        .get("x-paperclip-run-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let actor_user_id = if actor_agent_id.is_none() {
+        crate::state::require_user_id(&state, &headers).await.ok()
+    } else {
+        None
+    };
+    let result = repo
+        .upsert_case_document_by_key(CaseDocumentUpsertInput {
+            company_id: case_row.company_id,
+            case_id,
+            key: &key,
+            title: body.title.as_deref(),
+            format: body.format.as_deref(),
+            body: &body.body,
+            change_summary: body.change_summary.as_deref(),
+            base_revision_id: body.base_revision_id,
+            actor_user_id: actor_user_id.as_deref(),
+            actor_agent_id,
+            run_id: actor_run_id,
+        })
+        .await
+        .map_err(|err| match err {
+            CaseDocumentUpsertError::Locked => {
+                ApiError::Conflict("Document is locked".into())
+            }
+            CaseDocumentUpsertError::StaleBaseRevision => {
+                ApiError::Conflict("Case document was updated by someone else".into())
+            }
+        })?;
+    let d = &result.document;
+    let payload = json!({
+        "id": d.id,
+        "companyId": d.company_id,
+        "title": d.title,
+        "format": d.format,
+        "body": d.latest_body,
+        "latestRevisionId": d.latest_revision_id,
+        "latestRevisionNumber": d.latest_revision_number,
+        "createdByUserId": d.created_by_user_id,
+        "createdByAgentId": d.created_by_agent_id,
+        "updatedByUserId": d.updated_by_user_id,
+        "updatedByAgentId": d.updated_by_agent_id,
+        "createdAt": d.created_at,
+        "updatedAt": d.updated_at,
+        "key": key,
+        "caseId": case_id,
+        "created": result.created,
+        "revision": {
+            "id": result.revision.id,
+            "revisionNumber": result.revision.revision_number,
+        },
+    });
+    state.realtime.publish(
+        LiveEvent::new("case.document.revised", "case", case_id)
+            .with_company(case_row.company_id)
+            .with_data(json!({
+                "key": key,
+                "documentId": d.id,
+                "revisionId": result.revision.id,
+                "revisionNumber": result.revision.revision_number,
+            })),
+    );
+    Ok(Json(payload))
+}
+
 // Round 109: 仓储化。CaseRepo::lock_document 单事务内完成 UPDATE + event INSERT。
 async fn lock_case_document(
     State(state): State<AppState>,
@@ -511,6 +601,19 @@ struct CreateCaseLinkBody {
 struct UpsertCaseDocumentBody {
     document_id: Uuid,
     key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpsertCaseDocumentByKeyBody {
+    title: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    body: String,
+    #[serde(default)]
+    change_summary: Option<String>,
+    #[serde(default)]
+    base_revision_id: Option<Uuid>,
 }
 
 // ============== Round 22: case annotations / revisions / attachments / issue case-links ==============

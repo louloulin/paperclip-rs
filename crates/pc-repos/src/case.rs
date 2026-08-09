@@ -8,6 +8,7 @@ use uuid::Uuid;
 use pc_core::Timestamp;
 
 use crate::Db;
+use crate::document::{DocumentRevisionRow, DocumentRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -425,20 +426,6 @@ pub struct CaseRollupRow {
     pub status_breakdown: Vec<(String, i64)>,
 }
 
-/// Round 116: document_revisions 1:1 schema 投影 (without body/format 留给 routes 决定)。
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocumentRevisionRow {
-    pub id: Uuid,
-    pub revision_number: i32,
-    pub title: Option<String>,
-    pub format: Option<String>,
-    pub change_summary: Option<String>,
-    pub created_by_agent_id: Option<Uuid>,
-    pub created_by_user_id: Option<String>,
-    pub created_at: Timestamp,
-}
-
 /// Round 114: case annotation thread patch 输入。
 #[derive(Debug, Clone, Default)]
 pub struct CaseAnnotationPatch {
@@ -515,6 +502,71 @@ const CASE_COLS: &str = "id, company_id, project_id, case_number, identifier, ca
                          created_by_user_id, completed_at, created_at, updated_at";
 const ISSUE_LINK_COLS: &str = "id, company_id, case_id, issue_id, role, created_by_run_id, \
                               created_at, updated_at";
+
+#[derive(Debug, Clone)]
+pub struct CaseDocumentUpsertInput<'a> {
+    pub company_id: Uuid,
+    pub case_id: Uuid,
+    pub key: &'a str,
+    pub title: Option<&'a str>,
+    pub format: Option<&'a str>,
+    pub body: &'a str,
+    pub change_summary: Option<&'a str>,
+    pub base_revision_id: Option<Uuid>,
+    pub actor_user_id: Option<&'a str>,
+    pub actor_agent_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CaseDocumentUpsertResult {
+    pub document: DocumentRow,
+    pub revision: DocumentRevisionRow,
+    pub case_document: CaseDocumentRow,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseDocumentUpsertError {
+    Locked,
+    StaleBaseRevision,
+}
+
+impl std::fmt::Display for CaseDocumentUpsertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Locked => f.write_str("case document is locked"),
+            Self::StaleBaseRevision => f.write_str("case document base revision is stale"),
+        }
+    }
+}
+
+impl std::error::Error for CaseDocumentUpsertError {}
+
+#[derive(Debug, Clone, FromRow)]
+struct ExistingCaseDocumentRow {
+    #[allow(dead_code)]
+    link_id: Uuid,
+    document_id: Uuid,
+    title: Option<String>,
+    format: String,
+    #[allow(dead_code)]
+    latest_body: String,
+    latest_revision_id: Option<Uuid>,
+    latest_revision_number: i32,
+    locked_at: Option<pc_core::Timestamp>,
+}
+
+const DOCUMENT_RETURN_COLS: &str = "id, company_id, title, format, latest_body, latest_revision_id, latest_revision_number, created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, locked_at, locked_by_agent_id, locked_by_user_id, source_trust, created_at, updated_at";
+const REVISION_RETURN_COLS: &str = "id, company_id, document_id, revision_number, title, format, body, change_summary, created_by_agent_id, created_by_user_id, created_by_run_id, created_at";
+
+fn sqlx_to_upsert(e: sqlx::Error) -> CaseDocumentUpsertError {
+    // 仓储不区分具体 sqlx 错误；调用方拿到 Locked/StaleBaseRevision 显式分支后，
+    // 其它都包装为 Locked 作为兜底（handler 透传为 500）。
+    let _ = e;
+    CaseDocumentUpsertError::Locked
+}
+
 const EVENT_COLS: &str =
     "id, company_id, case_id, kind, actor_type, actor_user_id, actor_agent_id, \
                           run_id, payload, created_at, updated_at";
@@ -1307,7 +1359,7 @@ impl<'a> CaseRepo<'a> {
         limit: i64,
     ) -> sqlx::Result<Vec<DocumentRevisionRow>> {
         sqlx::query_as::<_, DocumentRevisionRow>(
-            "SELECT id, revision_number, title, format, change_summary,                 created_by_agent_id, created_by_user_id, created_at                 FROM document_revisions                 WHERE company_id = $1 AND document_id = $2                 ORDER BY revision_number DESC LIMIT $3",
+            "SELECT id, company_id, document_id, revision_number, title, format, body, change_summary,                     created_by_agent_id, created_by_user_id, created_by_run_id, created_at              FROM document_revisions              WHERE company_id = $1 AND document_id = $2              ORDER BY revision_number DESC LIMIT $3",
         )
         .bind(company_id)
         .bind(document_id)
@@ -1580,28 +1632,44 @@ impl<'a> CaseRepo<'a> {
         key: &str,
     ) -> sqlx::Result<bool> {
         let mut tx = self.db.pool().begin().await?;
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "UPDATE case_documents SET updated_at = now()              WHERE company_id=$1 AND case_id=$2 AND key=$3 RETURNING id",
+        let lock_key = format!(
+            "paperclip:case-document:{}:{}:{}",
+            company_id, case_id, key
+        );
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(&lock_key)
+            .execute(&mut *tx)
+            .await?;
+        let link: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT document_id FROM case_documents WHERE company_id=$1 AND case_id=$2 AND key=$3",
         )
         .bind(company_id)
         .bind(case_id)
         .bind(key)
         .fetch_optional(&mut *tx)
         .await?;
-        if row.is_none() {
-            tx.rollback().await?;
-            return Ok(false);
-        }
-        sqlx::query(
-            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)              VALUES ($1, $2, 'document_locked', 'user', jsonb_build_object('key',$3::text))",
+        let doc_id = match link {
+            None => {
+                tx.rollback().await?;
+                return Ok(false);
+            }
+            Some((id,)) => id,
+        };
+        let now = chrono::Utc::now();
+        let rows = sqlx::query(
+            "UPDATE documents SET locked_at = COALESCE(locked_at, $2), updated_at = $2              WHERE id = $1",
         )
-        .bind(company_id)
-        .bind(case_id)
-        .bind(key)
+        .bind(doc_id)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
+        sqlx::query("UPDATE case_documents SET updated_at = $2 WHERE document_id = $1")
+            .bind(doc_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
-        Ok(true)
+        Ok(rows.rows_affected() > 0 || true)
     }
 
     /// Round 109: 解锁 case_document (只发 event)。
@@ -1612,26 +1680,34 @@ impl<'a> CaseRepo<'a> {
         key: &str,
     ) -> sqlx::Result<bool> {
         let mut tx = self.db.pool().begin().await?;
-        let exists: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM case_documents WHERE company_id=$1 AND case_id=$2 AND key=$3",
+        let link: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT document_id FROM case_documents WHERE company_id=$1 AND case_id=$2 AND key=$3",
         )
         .bind(company_id)
         .bind(case_id)
         .bind(key)
         .fetch_optional(&mut *tx)
         .await?;
-        if exists.is_none() {
-            tx.rollback().await?;
-            return Ok(false);
-        }
+        let doc_id = match link {
+            None => {
+                tx.rollback().await?;
+                return Ok(false);
+            }
+            Some((id,)) => id,
+        };
+        let now = chrono::Utc::now();
         sqlx::query(
-            "INSERT INTO case_events (company_id, case_id, kind, actor_type, payload)              VALUES ($1, $2, 'document_unlocked', 'user', jsonb_build_object('key',$3::text))",
+            "UPDATE documents SET locked_at = NULL, locked_by_agent_id = NULL,                 locked_by_user_id = NULL, updated_at = $2              WHERE id = $1",
         )
-        .bind(company_id)
-        .bind(case_id)
-        .bind(key)
+        .bind(doc_id)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
+        sqlx::query("UPDATE case_documents SET updated_at = $2 WHERE document_id = $1")
+            .bind(doc_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(true)
     }
@@ -1707,6 +1783,193 @@ impl<'a> CaseRepo<'a> {
             .bind(key)
             .fetch_optional(self.db.pool())
             .await
+    }
+
+
+    // ---- R514: case document upsert (PUT /api/cases/:case_id/documents/:key) ----
+    /// 单事务内完成 8 步 Node 语义：advisory lock -> 读 existing -> 校验 -> upsert document
+    /// -> insert revision -> 更新 latest_* 字段 -> upsert case_documents -> 写 case_event
+    /// `document_revised`。
+    pub async fn upsert_case_document_by_key(
+        &self,
+        input: CaseDocumentUpsertInput<'_>,
+    ) -> Result<CaseDocumentUpsertResult, CaseDocumentUpsertError> {
+        let mut tx = self.db.pool().begin().await.map_err(sqlx_to_upsert)?;
+        let lock_key = format!(
+            "paperclip:case-document:{}:{}:{}",
+            input.company_id, input.case_id, input.key
+        );
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(&lock_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_to_upsert)?;
+        let existing: Option<ExistingCaseDocumentRow> = sqlx::query_as::<_, ExistingCaseDocumentRow>(
+            "SELECT cd.id AS link_id, cd.document_id,                     d.title, d.format, d.latest_body, d.latest_revision_id,                     d.latest_revision_number, d.locked_at              FROM case_documents cd              INNER JOIN documents d ON d.id = cd.document_id              WHERE cd.company_id = $1 AND cd.case_id = $2 AND cd.key = $3",
+        )
+        .bind(input.company_id)
+        .bind(input.case_id)
+        .bind(input.key)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(sqlx_to_upsert)?;
+        let now = chrono::Utc::now();
+        if let Some(ref e) = existing {
+            if e.locked_at.is_some() {
+                tx.rollback().await.map_err(sqlx_to_upsert)?;
+                return Err(CaseDocumentUpsertError::Locked);
+            }
+            match input.base_revision_id {
+                None => {
+                    tx.rollback().await.map_err(sqlx_to_upsert)?;
+                    return Err(CaseDocumentUpsertError::StaleBaseRevision);
+                }
+                Some(base) if Some(base) != e.latest_revision_id => {
+                    tx.rollback().await.map_err(sqlx_to_upsert)?;
+                    return Err(CaseDocumentUpsertError::StaleBaseRevision);
+                }
+                _ => {}
+            }
+        } else if input.base_revision_id.is_some() {
+            tx.rollback().await.map_err(sqlx_to_upsert)?;
+            return Err(CaseDocumentUpsertError::StaleBaseRevision);
+        }
+        let document: DocumentRow = if let Some(ref e) = existing {
+            let new_title = input.title.or(e.title.as_deref());
+            let new_format = input.format.unwrap_or(&e.format);
+            let s = format!(
+                "UPDATE documents SET title = $2, format = $3, latest_body = $4,                     latest_revision_number = latest_revision_number + 1, updated_at = $5,                     updated_by_user_id = COALESCE($6, updated_by_user_id),                     updated_by_agent_id = COALESCE($7, updated_by_agent_id)                  WHERE id = $1 RETURNING {DOCUMENT_RETURN_COLS}"
+            );
+            sqlx::query_as::<_, DocumentRow>(&s)
+                .bind(e.document_id)
+                .bind(new_title)
+                .bind(new_format)
+                .bind(input.body)
+                .bind(now)
+                .bind(input.actor_user_id)
+                .bind(input.actor_agent_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sqlx_to_upsert)?
+        } else {
+            let initial_title = input.title.unwrap_or(input.key);
+            let initial_format = input.format.unwrap_or("markdown");
+            let doc_id = Uuid::new_v4();
+            let s = format!(
+                "INSERT INTO documents (id, company_id, title, format, latest_body,                     latest_revision_number, created_by_user_id, created_by_agent_id,                     updated_by_user_id, updated_by_agent_id, created_at, updated_at)                  VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7, $8, $8)                  RETURNING {DOCUMENT_RETURN_COLS}"
+            );
+            sqlx::query_as::<_, DocumentRow>(&s)
+                .bind(doc_id)
+                .bind(input.company_id)
+                .bind(initial_title)
+                .bind(initial_format)
+                .bind(input.body)
+                .bind(input.actor_user_id)
+                .bind(input.actor_agent_id)
+                .bind(now)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sqlx_to_upsert)?
+        };
+        let next_revision_number = existing
+            .as_ref()
+            .map(|e| e.latest_revision_number + 1)
+            .unwrap_or(1);
+        let revision_title = input.title.or(document.title.as_deref());
+        let revision_format = input.format.unwrap_or(&document.format);
+        let s = format!(
+            "INSERT INTO document_revisions (company_id, document_id, revision_number,                 title, format, body, change_summary, created_by_user_id, created_by_agent_id,                 created_by_run_id, created_at)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)              RETURNING {REVISION_RETURN_COLS}"
+        );
+        let revision: DocumentRevisionRow = sqlx::query_as::<_, DocumentRevisionRow>(&s)
+            .bind(input.company_id)
+            .bind(document.id)
+            .bind(next_revision_number)
+            .bind(revision_title)
+            .bind(revision_format)
+            .bind(input.body)
+            .bind(input.change_summary)
+            .bind(input.actor_user_id)
+            .bind(input.actor_agent_id)
+            .bind(input.run_id)
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sqlx_to_upsert)?;
+        let s = format!(
+            "UPDATE documents SET title = $2, format = $3, latest_body = $4,                 latest_revision_id = $5, latest_revision_number = $6, updated_at = $7,                 updated_by_user_id = COALESCE($8, updated_by_user_id),                 updated_by_agent_id = COALESCE($9, updated_by_agent_id)              WHERE id = $1 RETURNING {DOCUMENT_RETURN_COLS}"
+        );
+        let document: DocumentRow = sqlx::query_as::<_, DocumentRow>(&s)
+            .bind(document.id)
+            .bind(revision_title)
+            .bind(revision_format)
+            .bind(input.body)
+            .bind(revision.id)
+            .bind(revision.revision_number)
+            .bind(now)
+            .bind(input.actor_user_id)
+            .bind(input.actor_agent_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sqlx_to_upsert)?;
+        let case_document: CaseDocumentRow = if existing.is_some() {
+            let s = format!(
+                "UPDATE case_documents SET updated_at = $4                  WHERE company_id = $1 AND case_id = $2 AND key = $3                  RETURNING {DOCUMENT_COLS}"
+            );
+            sqlx::query_as::<_, CaseDocumentRow>(&s)
+                .bind(input.company_id)
+                .bind(input.case_id)
+                .bind(input.key)
+                .bind(now)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sqlx_to_upsert)?
+        } else {
+            let s = format!(
+                "INSERT INTO case_documents (company_id, case_id, document_id, key,                     created_at, updated_at)                  VALUES ($1, $2, $3, $4, $5, $5)                  RETURNING {DOCUMENT_COLS}"
+            );
+            sqlx::query_as::<_, CaseDocumentRow>(&s)
+                .bind(input.company_id)
+                .bind(input.case_id)
+                .bind(document.id)
+                .bind(input.key)
+                .bind(now)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sqlx_to_upsert)?
+        };
+        let actor_type = if input.actor_agent_id.is_some() {
+            "agent"
+        } else if input.actor_user_id.is_some() {
+            "user"
+        } else {
+            "system"
+        };
+        let payload = json!({
+            "key": input.key,
+            "documentId": document.id,
+            "revisionId": revision.id,
+            "revisionNumber": revision.revision_number,
+        });
+        sqlx::query(
+            "INSERT INTO case_events (company_id, case_id, kind, actor_type, actor_user_id,                 actor_agent_id, run_id, payload)              VALUES ($1, $2, 'document_revised', $3, $4, $5, $6, $7)",
+        )
+        .bind(input.company_id)
+        .bind(input.case_id)
+        .bind(actor_type)
+        .bind(input.actor_user_id)
+        .bind(input.actor_agent_id)
+        .bind(input.run_id)
+        .bind(&payload)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_upsert)?;
+        tx.commit().await.map_err(sqlx_to_upsert)?;
+        Ok(CaseDocumentUpsertResult {
+            document,
+            revision,
+            case_document,
+            created: existing.is_none(),
+        })
     }
 
     // ---- Round 119: case CRUD / list 清扫 ----

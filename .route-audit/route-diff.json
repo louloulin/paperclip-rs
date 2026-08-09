@@ -1,15 +1,15 @@
 {
   "node_unique": 581,
-  "rust_unique": 873,
-  "common": 571,
-  "missing_in_rust": 10,
+  "rust_unique": 874,
+  "common": 572,
+  "missing_in_rust": 9,
   "extra_in_rust": 302,
-  "coverage_method_path": 98.28,
+  "coverage_method_path": 98.45,
   "missing_by_category": {
-    ":param": 6,
+    ":param": 5,
     "": 2,
-    "restart": 1,
-    "root": 1
+    "root": 1,
+    "restart": 1
   },
   "top_missing": [
     {
@@ -47,10 +47,6 @@
     {
       "method": "POST",
       "path": "/dev-server/restart"
-    },
-    {
-      "method": "PUT",
-      "path": "/api/cases/:param/documents/:param"
     }
   ]
 }
