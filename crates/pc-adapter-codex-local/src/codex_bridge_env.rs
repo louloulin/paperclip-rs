@@ -86,8 +86,18 @@ pub fn resolve_bridge_host_api_url(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .or_else(|| runtime_api_url.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
-        .or_else(|| paperclip_api_url.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .or_else(|| {
+            runtime_api_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            paperclip_api_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "http://localhost:3100".to_string())
 }
 
@@ -104,17 +114,20 @@ pub fn bridge_env_from_handle(
     let mut env = BTreeMap::new();
     env.insert("PAPERCLIP_API_URL".to_string(), api_url.to_string());
     env.insert("PAPERCLIP_API_KEY".to_string(), bridge_token.to_string());
-    env.insert("PAPERCLIP_API_BRIDGE_MODE".to_string(), "queue_v1".to_string());
-    env.insert("PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(), queue_dir.to_string());
+    env.insert(
+        "PAPERCLIP_API_BRIDGE_MODE".to_string(),
+        "queue_v1".to_string(),
+    );
+    env.insert(
+        "PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(),
+        queue_dir.to_string(),
+    );
     env
 }
 
 /// 合并 bridge env 到子进程 env（Object.assign 语义：bridge env 覆盖）。
 /// 对齐 Node `Object.assign(env, paperclipBridge.env)`。
-pub fn merge_bridge_env(
-    env: &mut BTreeMap<String, String>,
-    bridge_env: &BTreeMap<String, String>,
-) {
+pub fn merge_bridge_env(env: &mut BTreeMap<String, String>, bridge_env: &BTreeMap<String, String>) {
     for (key, value) in bridge_env {
         env.insert(key.clone(), value.clone());
     }
@@ -162,8 +175,8 @@ pub async fn start_codex_execution_bridge(
     timeout_sec: Option<f64>,
     on_log: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<Option<pc_acpx::bridge_executor::StartedAdapterBridge>, String> {
-    let target = execution_target
-        .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
+    let target =
+        execution_target.and_then(pc_acpx::execution_target::parse_adapter_execution_target);
     if !adapter_execution_target_uses_paperclip_bridge(target.as_ref()) {
         return Ok(None);
     }
@@ -251,8 +264,8 @@ pub async fn start_codex_process_session_bridge(
     runner: Option<Arc<dyn pc_acpx::bridge_executor::BridgeCommandRunner>>,
     on_log: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<Option<pc_acpx::process_session_bridge::ProcessSessionBridgeHandle>, String> {
-    let target = execution_target
-        .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
+    let target =
+        execution_target.and_then(pc_acpx::execution_target::parse_adapter_execution_target);
     let Some(runner) = runner else {
         return Ok(None);
     };
@@ -394,10 +407,16 @@ mod tests {
     #[test]
     fn bridge_env_from_handle_injects_all_vars() {
         let env = bridge_env_from_handle("http://127.0.0.1:4310", "bridge-token", "/bridge/queue");
-        assert_eq!(env.get("PAPERCLIP_API_URL").unwrap(), "http://127.0.0.1:4310");
+        assert_eq!(
+            env.get("PAPERCLIP_API_URL").unwrap(),
+            "http://127.0.0.1:4310"
+        );
         assert_eq!(env.get("PAPERCLIP_API_KEY").unwrap(), "bridge-token");
         assert_eq!(env.get("PAPERCLIP_API_BRIDGE_MODE").unwrap(), "queue_v1");
-        assert_eq!(env.get("PAPERCLIP_BRIDGE_QUEUE_DIR").unwrap(), "/bridge/queue");
+        assert_eq!(
+            env.get("PAPERCLIP_BRIDGE_QUEUE_DIR").unwrap(),
+            "/bridge/queue"
+        );
     }
 
     #[test]
@@ -405,9 +424,13 @@ mod tests {
         let mut env = BTreeMap::new();
         env.insert("PAPERCLIP_API_URL".to_string(), "old".to_string());
         env.insert("CODEX_HOME".to_string(), "/home/codex".to_string());
-        let bridge_env = bridge_env_from_handle("http://127.0.0.1:4310", "bridge-token", "/bridge/queue");
+        let bridge_env =
+            bridge_env_from_handle("http://127.0.0.1:4310", "bridge-token", "/bridge/queue");
         merge_bridge_env(&mut env, &bridge_env);
-        assert_eq!(env.get("PAPERCLIP_API_URL").unwrap(), "http://127.0.0.1:4310");
+        assert_eq!(
+            env.get("PAPERCLIP_API_URL").unwrap(),
+            "http://127.0.0.1:4310"
+        );
         assert_eq!(env.get("CODEX_HOME").unwrap(), "/home/codex");
         assert_eq!(env.len(), 5);
     }
@@ -415,19 +438,25 @@ mod tests {
     #[test]
     fn merge_bridge_env_preserves_non_conflicting_keys() {
         let mut env = BTreeMap::new();
-        env.insert("PAPERCLIP_WORKSPACE_CWD".to_string(), "/remote/workspace".to_string());
-        let bridge_env = bridge_env_from_handle("http://127.0.0.1:4310", "bridge-token", "/bridge/queue");
+        env.insert(
+            "PAPERCLIP_WORKSPACE_CWD".to_string(),
+            "/remote/workspace".to_string(),
+        );
+        let bridge_env =
+            bridge_env_from_handle("http://127.0.0.1:4310", "bridge-token", "/bridge/queue");
         merge_bridge_env(&mut env, &bridge_env);
-        assert_eq!(env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(), "/remote/workspace");
+        assert_eq!(
+            env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(),
+            "/remote/workspace"
+        );
         assert_eq!(env.len(), 5);
     }
 
     #[test]
     fn decide_codex_bridge_plan_returns_none_for_local() {
-        let target = pc_acpx::execution_target::parse_adapter_execution_target(
-            &json!({ "kind": "local" }),
-        )
-        .expect("local target");
+        let target =
+            pc_acpx::execution_target::parse_adapter_execution_target(&json!({ "kind": "local" }))
+                .expect("local target");
         let plan = decide_codex_execution_bridge_plan(
             "run-1",
             Some(&target),
@@ -487,15 +516,9 @@ mod tests {
             None,
         )
         .expect("ssh target");
-        let error = decide_codex_execution_bridge_plan(
-            "run-1",
-            Some(&target),
-            None,
-            None,
-            None,
-            None,
-        )
-        .expect_err("token required");
+        let error =
+            decide_codex_execution_bridge_plan("run-1", Some(&target), None, None, None, None)
+                .expect_err("token required");
         assert!(error.contains("Sandbox bridge mode requires"));
     }
 
@@ -516,9 +539,17 @@ mod tests {
         // Node gate：remote + sandbox + runner + agentCommandShell 全满足。
         assert!(use_codex_remote_process_session(Some(&sandbox), true, true));
         // runner 缺失 → false（Rust adapter 现状）。
-        assert!(!use_codex_remote_process_session(Some(&sandbox), false, true));
+        assert!(!use_codex_remote_process_session(
+            Some(&sandbox),
+            false,
+            true
+        ));
         // agentCommandShell 缺失 → false。
-        assert!(!use_codex_remote_process_session(Some(&sandbox), true, false));
+        assert!(!use_codex_remote_process_session(
+            Some(&sandbox),
+            true,
+            false
+        ));
         // SSH / 本地 → false。
         let ssh = ssh_target("/remote/workspace");
         assert!(!use_codex_remote_process_session(Some(&ssh), true, true));
@@ -568,7 +599,10 @@ mod tests {
         )
         .await
         .expect("gate returns Ok");
-        assert!(bridge.is_none(), "ssh transport ⇒ no process session bridge");
+        assert!(
+            bridge.is_none(),
+            "ssh transport ⇒ no process session bridge"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -80,17 +80,16 @@ impl CodexQuotaErrorFamily {
 /// 配额探测 IO 抽象：HTTP 与子进程均可注入。
 pub trait QuotaIo: Send + Sync {
     /// 发起 GET 请求，返回 (状态码, 响应体前缀)。
-    fn get(&self, url: &str, headers: &BTreeMap<String, String>, timeout: Duration)
-        -> Result<(u16, String), String>;
+    fn get(
+        &self,
+        url: &str,
+        headers: &BTreeMap<String, String>,
+        timeout: Duration,
+    ) -> Result<(u16, String), String>;
     /// 读取本地 auth.json 原文。
     fn read_auth_file(&self, path: &str) -> Result<String, String>;
     /// 执行 codex app-server 的一次 RPC 请求（JSON-Lines 往返），返回响应对象。
-    fn codex_rpc(
-        &self,
-        method: &str,
-        params: &Value,
-        timeout: Duration,
-    ) -> Result<Value, String>;
+    fn codex_rpc(&self, method: &str, params: &Value, timeout: Duration) -> Result<Value, String>;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +138,10 @@ fn nested_string(record: &Value, path_segments: &[&str]) -> Option<String> {
     }
 }
 
-fn plan_and_email_from_token(id_token: Option<&str>, access_token: Option<&str>) -> (Option<String>, Option<String>) {
+fn plan_and_email_from_token(
+    id_token: Option<&str>,
+    access_token: Option<&str>,
+) -> (Option<String>, Option<String>) {
     let mut payloads = Vec::new();
     for token in [id_token, access_token].into_iter().flatten() {
         if let Some(payload) = decode_jwt_payload(Some(token)) {
@@ -147,8 +149,13 @@ fn plan_and_email_from_token(id_token: Option<&str>, access_token: Option<&str>)
         }
     }
     for payload in payloads {
-        let direct_email = payload.get("email").and_then(Value::as_str).map(str::to_owned);
-        let auth_block = payload.get("https://api.openai.com/auth").and_then(Value::as_object);
+        let direct_email = payload
+            .get("email")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let auth_block = payload
+            .get("https://api.openai.com/auth")
+            .and_then(Value::as_object);
         let profile_block = payload
             .get("https://api.openai.com/profile")
             .and_then(Value::as_object);
@@ -201,7 +208,12 @@ pub fn parse_codex_auth_json(raw: &str) -> Option<CodexAuthInfo> {
         .get("accountId")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .or_else(|| modern_tokens.and_then(|t| t.get("account_id")).and_then(Value::as_str).map(str::to_owned))
+        .or_else(|| {
+            modern_tokens
+                .and_then(|t| t.get("account_id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
         .or_else(|| nested_string(&obj, &["tokens", "account_id"]))
         .filter(|v| !v.trim().is_empty());
     let refresh_token = modern_tokens
@@ -221,10 +233,8 @@ pub fn parse_codex_auth_json(raw: &str) -> Option<CodexAuthInfo> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .filter(|v| !v.trim().is_empty());
-    let (email, plan_type) = plan_and_email_from_token(
-        id_token.as_deref(),
-        access_token.as_str().into(),
-    );
+    let (email, plan_type) =
+        plan_and_email_from_token(id_token.as_deref(), access_token.as_str().into());
     Some(CodexAuthInfo {
         access_token,
         account_id,
@@ -297,19 +307,13 @@ pub fn map_wham_usage(body: &Value) -> Vec<QuotaWindow> {
         .and_then(|r| r.get("primary_window"))
         .and_then(Value::as_object)
     {
-        windows.push(build_window(
-            "5h limit".to_owned(),
-            w,
-        ));
+        windows.push(build_window("5h limit".to_owned(), w));
     }
     if let Some(w) = rate_limit
         .and_then(|r| r.get("secondary_window"))
         .and_then(Value::as_object)
     {
-        windows.push(build_window(
-            "Weekly limit".to_owned(),
-            w,
-        ));
+        windows.push(build_window("Weekly limit".to_owned(), w));
     }
     if let Some(credits) = body.get("credits").and_then(Value::as_object) {
         if credits.get("unlimited").and_then(Value::as_bool) != Some(true) {
@@ -338,10 +342,7 @@ fn build_window(label: String, w: &serde_json::Map<String, Value>) -> QuotaWindo
         .or_else(|| w.get("usedPercent"))
         .and_then(Value::as_f64)
         .and_then(|v| normalize_codex_used_percent(Some(v)));
-    let resets_at = match w
-        .get("reset_at")
-        .or_else(|| w.get("resetsAt"))
-    {
+    let resets_at = match w.get("reset_at").or_else(|| w.get("resetsAt")) {
         Some(Value::Number(number)) => number.as_i64().and_then(|v| unix_seconds_to_iso(Some(v))),
         Some(Value::String(raw)) if !raw.trim().is_empty() => Some(raw.trim().to_owned()),
         _ => None,
@@ -394,7 +395,9 @@ pub fn map_codex_rpc_quota(limits: &Value, account: Option<&Value>) -> CodexRpcQ
         }
     }
     for limit_id in order {
-        let Some(limit) = all_limits.get(&limit_id) else { continue };
+        let Some(limit) = all_limits.get(&limit_id) else {
+            continue;
+        };
         let prefix = if limit_id == "codex" {
             String::new()
         } else {
@@ -549,11 +552,7 @@ pub async fn fetch_codex_quota_with<IO: AsyncQuotaIo>(
         let combined = [message.clone(), body_prefix].join("\n");
         let family = classify_quota_error_family(&combined);
         return match family {
-            Some(family) => Err(format!(
-                "{}|family={}",
-                message,
-                family.as_str()
-            )),
+            Some(family) => Err(format!("{}|family={}", message, family.as_str())),
             None => Err(message),
         };
     }
@@ -635,9 +634,7 @@ fn format_extra_usage_label(extra_usage: &serde_json::Map<String, Value>) -> Opt
     if !monthly_limit.is_finite() || !used_credits.is_finite() {
         return None;
     }
-    let currency = extra_usage
-        .get("currency")
-        .and_then(Value::as_str);
+    let currency = extra_usage.get("currency").and_then(Value::as_str);
     Some(format!(
         "{} / {}",
         format_currency_amount(used_credits / 100.0, currency),
@@ -651,9 +648,14 @@ fn format_extra_usage_label(extra_usage: &serde_json::Map<String, Value>) -> Opt
 /// seven_day_sonnet / seven_day_opus / extra_usage。
 pub fn map_anthropic_oauth_usage(body: &Value) -> Vec<QuotaWindow> {
     let mut windows = Vec::new();
-    let push_window = |label: &str, w: Option<&serde_json::Map<String, Value>>, windows: &mut Vec<QuotaWindow>| {
+    let push_window = |label: &str,
+                       w: Option<&serde_json::Map<String, Value>>,
+                       windows: &mut Vec<QuotaWindow>| {
         if let Some(w) = w {
-            let used = w.get("utilization").and_then(Value::as_f64).and_then(claude_to_percent);
+            let used = w
+                .get("utilization")
+                .and_then(Value::as_f64)
+                .and_then(claude_to_percent);
             let resets_at = w
                 .get("resets_at")
                 .and_then(Value::as_str)
@@ -670,10 +672,26 @@ pub fn map_anthropic_oauth_usage(body: &Value) -> Vec<QuotaWindow> {
         }
     };
 
-    push_window("Current session", body.get("five_hour").and_then(Value::as_object), &mut windows);
-    push_window("Current week (all models)", body.get("seven_day").and_then(Value::as_object), &mut windows);
-    push_window("Current week (Sonnet only)", body.get("seven_day_sonnet").and_then(Value::as_object), &mut windows);
-    push_window("Current week (Opus only)", body.get("seven_day_opus").and_then(Value::as_object), &mut windows);
+    push_window(
+        "Current session",
+        body.get("five_hour").and_then(Value::as_object),
+        &mut windows,
+    );
+    push_window(
+        "Current week (all models)",
+        body.get("seven_day").and_then(Value::as_object),
+        &mut windows,
+    );
+    push_window(
+        "Current week (Sonnet only)",
+        body.get("seven_day_sonnet").and_then(Value::as_object),
+        &mut windows,
+    );
+    push_window(
+        "Current week (Opus only)",
+        body.get("seven_day_opus").and_then(Value::as_object),
+        &mut windows,
+    );
 
     if let Some(extra) = body.get("extra_usage").and_then(Value::as_object) {
         let is_enabled = extra.get("is_enabled").and_then(Value::as_bool);
@@ -807,11 +825,19 @@ fn claude_extract_usage_error(text: &str) -> Option<String> {
     if lower.contains("authentication_error") {
         return Some("Claude CLI authentication error. Run `claude login`.".to_owned());
     }
-    if lower.contains("rate_limit_error") || lower.contains("rate limited") || compact.contains("ratelimited") {
-        return Some("Claude CLI usage endpoint is rate limited right now. Please try again later.".to_owned());
+    if lower.contains("rate_limit_error")
+        || lower.contains("rate limited")
+        || compact.contains("ratelimited")
+    {
+        return Some(
+            "Claude CLI usage endpoint is rate limited right now. Please try again later."
+                .to_owned(),
+        );
     }
     if lower.contains("failed to load usage data") || compact.contains("failedtoloadusagedata") {
-        return Some("Claude CLI could not load usage data. Open the CLI and retry `/usage`.".to_owned());
+        return Some(
+            "Claude CLI could not load usage data. Open the CLI and retry `/usage`.".to_owned(),
+        );
     }
     None
 }
@@ -875,9 +901,9 @@ fn claude_format_cli_detail(label: &str, lines: &[String]) -> Option<String> {
         }
         return lines.iter().find(|line| !line.trim().is_empty()).cloned();
     }
-    let reset_line = lines
-        .iter()
-        .find(|line| line.starts_with("resets") || claude_normalize_for_label_search(line).starts_with("resets"));
+    let reset_line = lines.iter().find(|line| {
+        line.starts_with("resets") || claude_normalize_for_label_search(line).starts_with("resets")
+    });
     let reset_line = reset_line?;
     let mut detail = reset_line
         .replacen("Resets", "Resets ", 1)
@@ -1050,7 +1076,10 @@ pub async fn fetch_codex_wham_quota(
 pub async fn fetch_claude_oauth_quota(token: &str) -> Result<Vec<QuotaWindow>, String> {
     let mut headers = BTreeMap::new();
     headers.insert("Authorization".to_owned(), format!("Bearer {token}"));
-    headers.insert("anthropic-beta".to_owned(), ANTHROPIC_OAUTH_BETA_HEADER.to_owned());
+    headers.insert(
+        "anthropic-beta".to_owned(),
+        ANTHROPIC_OAUTH_BETA_HEADER.to_owned(),
+    );
     let (status, body_text) = DefaultQuotaIo
         .get(ANTHROPIC_OAUTH_USAGE_URL, &headers, Duration::from_secs(8))
         .await
@@ -1064,17 +1093,15 @@ pub async fn fetch_claude_oauth_quota(token: &str) -> Result<Vec<QuotaWindow>, S
 
 /// 探测 Codex 本地配额（复刻 Node `getQuotaWindows`：RPC 优先 → WHAM 回退）。
 pub async fn probe_codex_local() -> ProviderQuotaResult {
-    get_quota_windows(
-        fetch_codex_rpc_quota().await,
-        read_codex_auth_info(),
-        {
-            let auth = read_codex_auth_info();
-            match &auth {
-                Some(auth) => fetch_codex_wham_quota(&auth.access_token, auth.account_id.as_deref()).await,
-                None => Err("no local codex auth token".to_owned()),
+    get_quota_windows(fetch_codex_rpc_quota().await, read_codex_auth_info(), {
+        let auth = read_codex_auth_info();
+        match &auth {
+            Some(auth) => {
+                fetch_codex_wham_quota(&auth.access_token, auth.account_id.as_deref()).await
             }
-        },
-    )
+            None => Err("no local codex auth token".to_owned()),
+        }
+    })
     .await
 }
 
@@ -1157,7 +1184,10 @@ pub async fn probe_claude_local() -> ProviderQuotaResult {
             source: None,
             error_family: None,
             error: Some(if !errors.is_empty() {
-                format!("{auth_description}, but quota polling failed ({})", errors.join("; "))
+                format!(
+                    "{auth_description}, but quota polling failed ({})",
+                    errors.join("; ")
+                )
             } else {
                 format!("{auth_description}, but Paperclip could not load subscription quota data")
             }),
@@ -1170,7 +1200,12 @@ pub async fn probe_claude_local() -> ProviderQuotaResult {
         ok: false,
         source: None,
         error_family: None,
-        error: Some(errors.first().cloned().unwrap_or_else(|| "no local claude auth token".to_owned())),
+        error: Some(
+            errors
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "no local claude auth token".to_owned()),
+        ),
         windows: Vec::new(),
     }
 }
@@ -1201,7 +1236,10 @@ async fn read_claude_auth_status() -> Option<ClaudeAuthStatus> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Value = serde_json::from_str(stdout.trim()).ok()?;
     Some(ClaudeAuthStatus {
-        logged_in: parsed.get("loggedIn").and_then(Value::as_bool).unwrap_or(false),
+        logged_in: parsed
+            .get("loggedIn")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         auth_method: parsed
             .get("authMethod")
             .and_then(Value::as_str)
@@ -1248,7 +1286,9 @@ pub async fn capture_claude_cli_quota() -> Result<Vec<QuotaWindow>, String> {
             .output(),
     )
     .await
-    .map_err(|_| format!("Claude CLI usage probe timed out after {CLAUDE_CLI_PROBE_TIMEOUT_SECS}s"))?
+    .map_err(|_| {
+        format!("Claude CLI usage probe timed out after {CLAUDE_CLI_PROBE_TIMEOUT_SECS}s")
+    })?
     .map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1286,9 +1326,17 @@ fn quote_for_shell(value: &str) -> String {
 /// usage 输出是否看起来相关（复刻 Node `usageOutputLooksRelevant`）。
 fn claude_usage_output_looks_relevant(text: &str) -> bool {
     let normalized = claude_normalize_for_label_search(text);
-    ["currentsession", "currentweek", "loadingusage", "failedtoloadusagedata", "tokenexpired", "authenticationerror", "ratelimited"]
-        .iter()
-        .any(|keyword| normalized.contains(keyword))
+    [
+        "currentsession",
+        "currentweek",
+        "loadingusage",
+        "failedtoloadusagedata",
+        "tokenexpired",
+        "authenticationerror",
+        "ratelimited",
+    ]
+    .iter()
+    .any(|keyword| normalized.contains(keyword))
 }
 
 /// usage 输出是否完整（复刻 Node `usageOutputLooksComplete`）。
@@ -1298,9 +1346,14 @@ fn claude_usage_output_looks_relevant(text: &str) -> bool {
 fn claude_usage_output_looks_complete(text: &str) -> bool {
     let cleaned = claude_clean_terminal_text(text);
     let normalized = claude_normalize_for_label_search(&cleaned);
-    if ["failedtoloadusagedata", "tokenexpired", "authenticationerror", "ratelimited"]
-        .iter()
-        .any(|keyword| normalized.contains(keyword))
+    if [
+        "failedtoloadusagedata",
+        "tokenexpired",
+        "authenticationerror",
+        "ratelimited",
+    ]
+    .iter()
+    .any(|keyword| normalized.contains(keyword))
     {
         return true;
     }
@@ -1347,7 +1400,8 @@ pub async fn fetch_all_quota_windows(
     let mut results = Vec::with_capacity(tasks.len());
     for (adapter_type, task) in tasks {
         let provider = provider_slug_for_adapter_type(&adapter_type);
-        let result = tokio::time::timeout(Duration::from_millis(QUOTA_PROVIDER_TIMEOUT_MS), task).await;
+        let result =
+            tokio::time::timeout(Duration::from_millis(QUOTA_PROVIDER_TIMEOUT_MS), task).await;
         let result = match result {
             Ok(result) => result,
             Err(_) => ProviderQuotaResult {
@@ -1410,16 +1464,19 @@ async fn rpc_roundtrip(
     let id = *next_id;
     *next_id += 1;
     let payload = serde_json::json!({ "id": id, "method": method, "params": params });
-    let mut line = serde_json::to_string(&payload).map_err(|e| RpcError { message: e.to_string() })?;
+    let mut line = serde_json::to_string(&payload).map_err(|e| RpcError {
+        message: e.to_string(),
+    })?;
     line.push('\n');
     stdin
         .write_all(line.as_bytes())
         .await
-        .map_err(|e| RpcError { message: format!("write request: {e}") })?;
-    stdin
-        .flush()
-        .await
-        .map_err(|e| RpcError { message: format!("flush request: {e}") })?;
+        .map_err(|e| RpcError {
+            message: format!("write request: {e}"),
+        })?;
+    stdin.flush().await.map_err(|e| RpcError {
+        message: format!("flush request: {e}"),
+    })?;
 
     // 读取直到匹配 id（处理可能的 notifications / 其他响应）。
     let deadline = tokio::time::Instant::now() + timeout;
@@ -1497,17 +1554,15 @@ impl CodexRpcClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        let mut child = command
-            .spawn()
-            .map_err(|e| RpcError { message: format!("spawn codex app-server: {e}") })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| RpcError { message: "app-server stdin unavailable".to_owned() })?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| RpcError { message: "app-server stdout unavailable".to_owned() })?;
+        let mut child = command.spawn().map_err(|e| RpcError {
+            message: format!("spawn codex app-server: {e}"),
+        })?;
+        let stdin = child.stdin.take().ok_or_else(|| RpcError {
+            message: "app-server stdin unavailable".to_owned(),
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| RpcError {
+            message: "app-server stdout unavailable".to_owned(),
+        })?;
         Ok(Self {
             child,
             stdin,
@@ -1534,16 +1589,19 @@ impl CodexRpcClient {
         let _ = response;
         // notify initialized（无响应）
         let payload = serde_json::json!({ "method": "initialized", "params": {} });
-        let mut line = serde_json::to_string(&payload).map_err(|e| RpcError { message: e.to_string() })?;
+        let mut line = serde_json::to_string(&payload).map_err(|e| RpcError {
+            message: e.to_string(),
+        })?;
         line.push('\n');
         self.stdin
             .write_all(line.as_bytes())
             .await
-            .map_err(|e| RpcError { message: format!("notify initialized: {e}") })?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|e| RpcError { message: format!("flush notify: {e}") })?;
+            .map_err(|e| RpcError {
+                message: format!("notify initialized: {e}"),
+            })?;
+        self.stdin.flush().await.map_err(|e| RpcError {
+            message: format!("flush notify: {e}"),
+        })?;
         Ok(())
     }
 
@@ -1677,7 +1735,6 @@ pub async fn get_quota_windows(
     result
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1693,12 +1750,16 @@ mod tests {
     #[test]
     fn decode_jwt_payload_extracts_email_and_plan() {
         // header.payload.signature，payload 为 {"email":"a@b.c","https://api.openai.com/auth":{"chatgpt_plan_type":"plus"}}
-        let payload = r#"{"email":"a@b.c","https://api.openai.com/auth":{"chatgpt_plan_type":"plus"}}"#;
+        let payload =
+            r#"{"email":"a@b.c","https://api.openai.com/auth":{"chatgpt_plan_type":"plus"}}"#;
         let encoded = base64_url_encode(payload.as_bytes());
         let token = format!("x.{encoded}.sig");
         let decoded = decode_jwt_payload(Some(&token)).unwrap();
         assert_eq!(decoded["email"], "a@b.c");
-        assert_eq!(decoded["https://api.openai.com/auth"]["chatgpt_plan_type"], "plus");
+        assert_eq!(
+            decoded["https://api.openai.com/auth"]["chatgpt_plan_type"],
+            "plus"
+        );
     }
 
     fn base64_url_encode(bytes: &[u8]) -> String {
@@ -1717,7 +1778,9 @@ mod tests {
         assert_eq!(modern.account_id.as_deref(), Some("acc-1"));
         assert_eq!(modern.refresh_token.as_deref(), Some("rt-1"));
 
-        let legacy = parse_codex_auth_json(r#"{"accessToken":"at-legacy","accountId":"acc-legacy"}"#).unwrap();
+        let legacy =
+            parse_codex_auth_json(r#"{"accessToken":"at-legacy","accountId":"acc-legacy"}"#)
+                .unwrap();
         assert_eq!(legacy.access_token, "at-legacy");
         assert_eq!(legacy.account_id.as_deref(), Some("acc-legacy"));
         assert!(legacy.refresh_token.is_none());
@@ -1767,7 +1830,10 @@ mod tests {
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].label, "5h limit");
         assert_eq!(windows[0].used_percent, Some(50));
-        assert_eq!(windows[0].resets_at.as_deref(), Some("2024-03-22T12:38:31.000Z"));
+        assert_eq!(
+            windows[0].resets_at.as_deref(),
+            Some("2024-03-22T12:38:31.000Z")
+        );
         assert_eq!(windows[2].value_label.as_deref(), Some("$4.20 remaining"));
     }
 
@@ -1803,7 +1869,10 @@ mod tests {
         assert_eq!(snapshot.windows[0].used_percent, Some(12));
         // codex 优先（含 Credits），sonnet 随后。
         assert_eq!(snapshot.windows[1].label, "Credits");
-        assert_eq!(snapshot.windows[1].value_label.as_deref(), Some("$3.50 remaining"));
+        assert_eq!(
+            snapshot.windows[1].value_label.as_deref(),
+            Some("$3.50 remaining")
+        );
         assert_eq!(snapshot.windows[2].label, "Sonnet · 5h limit");
         assert_eq!(snapshot.windows[2].used_percent, Some(88));
         assert_eq!(snapshot.email.as_deref(), Some("u@x.com"));
@@ -1854,7 +1923,8 @@ mod tests {
             }
         });
         let snapshot = map_codex_rpc_quota(&limits, None);
-        let result = get_quota_windows(Ok(snapshot), None, Err("should not be called".to_owned())).await;
+        let result =
+            get_quota_windows(Ok(snapshot), None, Err("should not be called".to_owned())).await;
         assert_eq!(result.ok, true);
         assert_eq!(result.source.as_deref(), Some("codex-rpc"));
         assert_eq!(result.windows.len(), 1);
@@ -1863,7 +1933,9 @@ mod tests {
 
     #[tokio::test]
     async fn quota_rpc_fails_then_wham_wins() {
-        let rpc_err = RpcError { message: "spawn codex ENOENT".to_owned() };
+        let rpc_err = RpcError {
+            message: "spawn codex ENOENT".to_owned(),
+        };
         let wham = vec![QuotaWindow {
             label: "5h limit".to_owned(),
             used_percent: Some(50),
@@ -1880,7 +1952,9 @@ mod tests {
 
     #[tokio::test]
     async fn quota_wham_auth_error_family() {
-        let rpc_err = RpcError { message: "spawn codex ENOENT".to_owned() };
+        let rpc_err = RpcError {
+            message: "spawn codex ENOENT".to_owned(),
+        };
         let wham_err = "chatgpt wham api returned 401\nOAuth failed: invalid_grant".to_owned();
         let result = get_quota_windows(Err(rpc_err), Some(fake_auth()), Err(wham_err)).await;
         assert_eq!(result.ok, false);
@@ -1889,17 +1963,28 @@ mod tests {
             result.error_family.as_deref(),
             Some("refresh_token_invalidated")
         );
-        assert!(result.error.unwrap_or_default().contains("ChatGPT WHAM usage"));
+        assert!(result
+            .error
+            .unwrap_or_default()
+            .contains("ChatGPT WHAM usage"));
     }
 
     #[tokio::test]
     async fn quota_rpc_auth_family_survives_when_no_token() {
-        let rpc_err = RpcError { message: "OAuth failed: refresh token has expired".to_owned() };
+        let rpc_err = RpcError {
+            message: "OAuth failed: refresh token has expired".to_owned(),
+        };
         let result = get_quota_windows(Err(rpc_err), None, Err("unused".to_owned())).await;
         assert_eq!(result.ok, false);
         assert_eq!(result.source.as_deref(), Some("codex-rpc"));
-        assert_eq!(result.error_family.as_deref(), Some("refresh_token_expired"));
-        assert!(result.error.unwrap_or_default().contains("no local codex auth token"));
+        assert_eq!(
+            result.error_family.as_deref(),
+            Some("refresh_token_expired")
+        );
+        assert!(result
+            .error
+            .unwrap_or_default()
+            .contains("no local codex auth token"));
     }
 
     // -----------------------------------------------------------------
@@ -1940,7 +2025,10 @@ mod tests {
         assert_eq!(windows.len(), 5);
         assert_eq!(windows[0].label, "Current session");
         assert_eq!(windows[0].used_percent, Some(50));
-        assert_eq!(windows[0].resets_at.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(
+            windows[0].resets_at.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
         assert_eq!(windows[1].label, "Current week (all models)");
         assert_eq!(windows[1].used_percent, Some(45));
         assert_eq!(windows[2].label, "Current week (Sonnet only)");
@@ -1949,7 +2037,10 @@ mod tests {
         assert_eq!(windows[4].label, "Extra usage");
         assert_eq!(windows[4].used_percent, Some(42));
         assert_eq!(windows[4].value_label.as_deref(), Some("$4.20 / $10.00"));
-        assert_eq!(windows[4].detail.as_deref(), Some("Monthly extra usage pool"));
+        assert_eq!(
+            windows[4].detail.as_deref(),
+            Some("Monthly extra usage pool")
+        );
     }
 
     #[test]
@@ -1962,7 +2053,10 @@ mod tests {
         assert_eq!(windows[0].label, "Extra usage");
         assert_eq!(windows[0].used_percent, None);
         assert_eq!(windows[0].value_label.as_deref(), Some("Not enabled"));
-        assert_eq!(windows[0].detail.as_deref(), Some("Extra usage not enabled"));
+        assert_eq!(
+            windows[0].detail.as_deref(),
+            Some("Extra usage not enabled")
+        );
     }
 
     #[test]
@@ -1984,7 +2078,11 @@ mod tests {
         assert_eq!(windows[1].label, "Current week (all models)");
         assert_eq!(windows[1].used_percent, Some(25));
         assert_eq!(windows[2].label, "Extra usage");
-        assert!(windows[2].detail.clone().unwrap_or_default().contains("Not enabled"));
+        assert!(windows[2]
+            .detail
+            .clone()
+            .unwrap_or_default()
+            .contains("Not enabled"));
     }
 
     #[test]
@@ -2041,34 +2139,43 @@ mod tests {
                     error: None,
                 }
             });
-        let tasks: Vec<(String, std::pin::Pin<Box<dyn std::future::Future<Output = ProviderQuotaResult> + Send>>)> =
-            vec![
-                ("codex_local".to_owned(), fast),
-                ("claude_local".to_owned(), slow),
-            ];
+        let tasks: Vec<(
+            String,
+            std::pin::Pin<Box<dyn std::future::Future<Output = ProviderQuotaResult> + Send>>,
+        )> = vec![
+            ("codex_local".to_owned(), fast),
+            ("claude_local".to_owned(), slow),
+        ];
         let results = fetch_all_quota_windows(tasks).await;
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].ok, true);
         assert_eq!(results[1].ok, false);
         assert_eq!(results[1].provider, "anthropic");
-        assert!(results[1].error.as_deref().unwrap_or_default().contains("timed out after 20s"));
+        assert!(results[1]
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("timed out after 20s"));
     }
 
     #[tokio::test]
     async fn fetch_all_quota_windows_returns_failure_result_without_blocking() {
-        let failing: std::pin::Pin<Box<dyn std::future::Future<Output = ProviderQuotaResult> + Send>> =
-            Box::pin(async {
-                ProviderQuotaResult {
-                    provider: "openai".to_owned(),
-                    ok: false,
-                    error: Some("boom".to_owned()),
-                    windows: Vec::new(),
-                    source: None,
-                    error_family: None,
-                }
-            });
-        let tasks: Vec<(String, std::pin::Pin<Box<dyn std::future::Future<Output = ProviderQuotaResult> + Send>>)> =
-            vec![("codex_local".to_owned(), failing)];
+        let failing: std::pin::Pin<
+            Box<dyn std::future::Future<Output = ProviderQuotaResult> + Send>,
+        > = Box::pin(async {
+            ProviderQuotaResult {
+                provider: "openai".to_owned(),
+                ok: false,
+                error: Some("boom".to_owned()),
+                windows: Vec::new(),
+                source: None,
+                error_family: None,
+            }
+        });
+        let tasks: Vec<(
+            String,
+            std::pin::Pin<Box<dyn std::future::Future<Output = ProviderQuotaResult> + Send>>,
+        )> = vec![("codex_local".to_owned(), failing)];
         let results = fetch_all_quota_windows(tasks).await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].ok, false);
@@ -2082,14 +2189,20 @@ mod tests {
     #[test]
     fn codex_home_dir_respects_env() {
         std::env::set_var("CODEX_HOME", "/tmp/custom-codex");
-        assert_eq!(codex_home_dir(), std::path::PathBuf::from("/tmp/custom-codex"));
+        assert_eq!(
+            codex_home_dir(),
+            std::path::PathBuf::from("/tmp/custom-codex")
+        );
         std::env::remove_var("CODEX_HOME");
     }
 
     #[test]
     fn claude_config_dir_respects_env() {
         std::env::set_var("CLAUDE_CONFIG_DIR", "/tmp/custom-claude");
-        assert_eq!(claude_config_dir(), std::path::PathBuf::from("/tmp/custom-claude"));
+        assert_eq!(
+            claude_config_dir(),
+            std::path::PathBuf::from("/tmp/custom-claude")
+        );
         std::env::remove_var("CLAUDE_CONFIG_DIR");
     }
 
@@ -2157,12 +2270,16 @@ mod tests {
         assert!(claude_usage_output_looks_complete(
             "Settings:\nCurrent session\n50% used\nCurrent week (all models)\n25% used"
         ));
-        assert!(!claude_usage_output_looks_complete("Settings:\nCurrent session\nno data"));
+        assert!(!claude_usage_output_looks_complete(
+            "Settings:\nCurrent session\nno data"
+        ));
     }
 
     #[test]
     fn claude_usage_output_looks_relevant_detects_keywords() {
-        assert!(claude_usage_output_looks_relevant("failed to load usage data"));
+        assert!(claude_usage_output_looks_relevant(
+            "failed to load usage data"
+        ));
         assert!(!claude_usage_output_looks_relevant("nothing here"));
     }
 
@@ -2182,7 +2299,10 @@ mod tests {
             auth_method: Some("claude.ai".to_owned()),
             subscription_type: None,
         };
-        assert_eq!(describe_claude_subscription_auth(Some(&not_logged_in)), None);
+        assert_eq!(
+            describe_claude_subscription_auth(Some(&not_logged_in)),
+            None
+        );
     }
 
     #[tokio::test]

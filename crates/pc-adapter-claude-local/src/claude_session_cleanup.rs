@@ -67,15 +67,24 @@ mod tests {
     #[test]
     fn encode_project_cwd_preserves_alphanumeric_and_hyphen() {
         assert_eq!(encode_project_cwd("/Users/me/proj"), "-Users-me-proj");
-        assert_eq!(encode_project_cwd("/Users/me/my-proj_v2"), "-Users-me-my-proj-v2");
+        assert_eq!(
+            encode_project_cwd("/Users/me/my-proj_v2"),
+            "-Users-me-my-proj-v2"
+        );
         assert_eq!(encode_project_cwd("simple"), "simple");
     }
 
     #[test]
     fn encode_project_cwd_replaces_whitespace_and_punctuation() {
-        assert_eq!(encode_project_cwd("/Users/has space/proj"), "-Users-has-space-proj");
+        assert_eq!(
+            encode_project_cwd("/Users/has space/proj"),
+            "-Users-has-space-proj"
+        );
         assert_eq!(encode_project_cwd("/Users/a.b.c/proj"), "-Users-a-b-c-proj");
-        assert_eq!(encode_project_cwd("/path/with@special#chars"), "-path-with-special-chars");
+        assert_eq!(
+            encode_project_cwd("/path/with@special#chars"),
+            "-path-with-special-chars"
+        );
     }
 
     #[test]
@@ -139,8 +148,12 @@ mod tests {
         let target = projects_dir.join("s1.jsonl");
         tokio::fs::write(&target, "{}").await.unwrap();
 
-        let r1 = unlink_poisoned_session_file(&config_dir, cwd, "s1").await.unwrap();
-        let r2 = unlink_poisoned_session_file(&config_dir, cwd, "s1").await.unwrap();
+        let r1 = unlink_poisoned_session_file(&config_dir, cwd, "s1")
+            .await
+            .unwrap();
+        let r2 = unlink_poisoned_session_file(&config_dir, cwd, "s1")
+            .await
+            .unwrap();
         assert!(r1);
         assert!(!r2, "第二次调用应当返回 false（已删）");
     }

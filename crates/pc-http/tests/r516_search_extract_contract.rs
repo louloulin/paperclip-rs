@@ -61,15 +61,22 @@ fn test_state(db: Db) -> AppState {
     ))
 }
 
-async fn call_get(
-    app: &axum::Router,
-    path: &str,
-) -> (axum::http::StatusCode, Value) {
-    let req = Request::builder().method("GET").uri(path).body(Body::empty()).unwrap();
+async fn call_get(app: &axum::Router, path: &str) -> (axum::http::StatusCode, Value) {
+    let req = Request::builder()
+        .method("GET")
+        .uri(path)
+        .body(Body::empty())
+        .unwrap();
     let resp = app.clone().oneshot(req).await.expect("oneshot");
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
-    let body: Value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
+    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .unwrap();
+    let body: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
     (status, body)
 }
 
@@ -141,25 +148,36 @@ async fn search_extract_returns_literal_match_in_title() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let _issue = insert_issue(
-        &db, company_id,
+        &db,
+        company_id,
         "Migrate authentication to OIDC",
         "Move from password to corporate OIDC provider",
-    ).await;
+    )
+    .await;
     let app = routes::companies::router().with_state(test_state(db.clone()));
 
     let (status, body) = call_get(
         &app,
-        &format!("/api/companies/{company_id}/search/extract?contains=oidc&kind=literal&scope=issues"),
-    ).await;
+        &format!(
+            "/api/companies/{company_id}/search/extract?contains=oidc&kind=literal&scope=issues"
+        ),
+    )
+    .await;
     assert_eq!(status, 200, "extract: {body}");
     assert_eq!(body["contains"], "oidc");
     assert_eq!(body["kind"], "literal");
     assert_eq!(body["scope"], "issues");
     let results = body["results"].as_array().expect("results array");
-    assert!(results.len() >= 1, "should find at least one matching issue: {body}");
+    assert!(
+        results.len() >= 1,
+        "should find at least one matching issue: {body}"
+    );
     let first = &results[0];
     let matches = first["matches"].as_array().expect("matches");
-    assert!(!matches.is_empty(), "issue should have at least one match: {first}");
+    assert!(
+        !matches.is_empty(),
+        "issue should have at least one match: {first}"
+    );
     // Match should be in title or description field.
     let fields: Vec<&str> = matches.iter().filter_map(|m| m["field"].as_str()).collect();
     assert!(
@@ -175,10 +193,7 @@ async fn search_extract_rejects_missing_contains() {
     let company_id = insert_company(&db).await;
     let app = routes::companies::router().with_state(test_state(db.clone()));
 
-    let (status, _) = call_get(
-        &app,
-        &format!("/api/companies/{company_id}/search/extract"),
-    ).await;
+    let (status, _) = call_get(&app, &format!("/api/companies/{company_id}/search/extract")).await;
     assert_eq!(status, 400, "missing contains should be 400");
 }
 
@@ -188,14 +203,19 @@ async fn search_extract_finds_match_in_comment_body() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let issue_id = insert_issue(
-        &db, company_id,
+        &db,
+        company_id,
         "Refactor cache layer",
         "Switch to Redis with TTL eviction",
-    ).await;
+    )
+    .await;
     let _comment = insert_comment(
-        &db, company_id, issue_id,
+        &db,
+        company_id,
+        issue_id,
         "I checked the bench results — performance improved by 40% in the staging environment",
-    ).await;
+    )
+    .await;
     let app = routes::companies::router().with_state(test_state(db.clone()));
 
     let (status, body) = call_get(
@@ -214,18 +234,24 @@ async fn search_extract_kind_url_matches_url_substring() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let _ = insert_issue(
-        &db, company_id,
+        &db,
+        company_id,
         "Triage upstream bug",
         "See https://github.com/example/repo/pull/1234 for context",
-    ).await;
+    )
+    .await;
     let app = routes::companies::router().with_state(test_state(db.clone()));
 
     let (status, body) = call_get(
         &app,
         &format!("/api/companies/{company_id}/search/extract?contains=github.com/example&kind=url"),
-    ).await;
+    )
+    .await;
     assert_eq!(status, 200, "extract url: {body}");
     assert_eq!(body["kind"], "url");
     let results = body["results"].as_array().expect("results array");
-    assert!(!results.is_empty(), "kind=url should find URL-containing text: {body}");
+    assert!(
+        !results.is_empty(),
+        "kind=url should find URL-containing text: {body}"
+    );
 }

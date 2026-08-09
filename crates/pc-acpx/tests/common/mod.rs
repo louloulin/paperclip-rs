@@ -20,8 +20,8 @@
 use pc_acpx::bridge_executor::BridgeCommandRunner;
 use pc_acpx::execution_target::AdapterExecutionTarget;
 use pc_acpx::ssh::{
-    run_ssh_command, SshCommandManagedRuntimeRunner, SshCommandOptions,
-    SshConnectionConfig, SshRemoteExecutionSpec,
+    run_ssh_command, SshCommandManagedRuntimeRunner, SshCommandOptions, SshConnectionConfig,
+    SshRemoteExecutionSpec,
 };
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -58,7 +58,6 @@ pub fn node_available() -> bool {
     command_available("node")
 }
 
-
 /// Run `git init -q` in the given directory. Returns true if the
 /// command succeeded. Used by tests that already manage their own
 /// commit messages and file seeds.
@@ -81,11 +80,8 @@ pub async fn init_local_repo_with_commit(label: &str, message: &str) -> Option<P
         eprintln!("SKIP: git unavailable");
         return None;
     }
-    let root_dir = std::env::temp_dir().join(format!(
-        "paperclip-{}-{}",
-        label,
-        uuid::Uuid::new_v4()
-    ));
+    let root_dir =
+        std::env::temp_dir().join(format!("paperclip-{}-{}", label, uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root_dir).ok()?;
     let run = |args: &[&str]| {
         std::process::Command::new("git")
@@ -139,11 +135,8 @@ impl SshLabFixture {
             return None;
         }
         let port = allocate_loopback_port()?;
-        let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-{}-{}",
-            name,
-            uuid::Uuid::new_v4()
-        ));
+        let root_dir =
+            std::env::temp_dir().join(format!("paperclip-{}-{}", name, uuid::Uuid::new_v4()));
         let remote_workspace_path = root_dir.join("workspace");
         std::fs::create_dir_all(&remote_workspace_path).ok()?;
         let username = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
@@ -190,13 +183,12 @@ impl SshLabFixture {
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
-        let known_hosts_entry = pc_acpx::ssh::build_known_hosts_entry(
-            pc_acpx::ssh::KnownHostsEntryInput {
+        let known_hosts_entry =
+            pc_acpx::ssh::build_known_hosts_entry(pc_acpx::ssh::KnownHostsEntryInput {
                 host: "127.0.0.1".to_string(),
                 port,
                 public_key: host_public_key,
-            },
-        );
+            });
         let _ = std::fs::write(&known_hosts_path, format!("{known_hosts_entry}\n"));
         let config_text = format!(
             "Port {port}\n\
@@ -282,7 +274,6 @@ impl SshLabFixture {
         })
     }
 }
-
 
 impl SshLabFixture {
     /// Borrow the underlying `SshConnectionConfig` (drops `remote_cwd`).

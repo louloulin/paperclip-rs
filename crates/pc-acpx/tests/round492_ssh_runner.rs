@@ -17,7 +17,9 @@ use crate::common::{node_available, SshLabFixture};
 use pc_acpx::bridge_executor::{
     start_adapter_execution_target_paperclip_bridge, BridgeCommandRunner, StartAdapterBridgeInput,
 };
-use pc_acpx::execution_target::{adapter_execution_target_from_remote_execution, AdapterExecutionTarget};
+use pc_acpx::execution_target::{
+    adapter_execution_target_from_remote_execution, AdapterExecutionTarget,
+};
 use pc_acpx::ssh::{
     run_ssh_command, shell_quote, SshCommandManagedRuntimeRunner, SshCommandOptions,
     SshConnectionConfig, SshRemoteExecutionSpec,
@@ -26,7 +28,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_run_command_echo_pwd_and_env() {
@@ -133,7 +134,10 @@ async fn ssh_runner_executes_sh_c_with_export_prefix() {
     let result = runner
         .execute(&pc_acpx::bridge_executor::RunnerExecuteInput {
             command: "sh".to_string(),
-            args: vec!["-c".to_string(), "printf '%s' \"$R492_INJECTED\"".to_string()],
+            args: vec![
+                "-c".to_string(),
+                "printf '%s' \"$R492_INJECTED\"".to_string(),
+            ],
             cwd: String::new(),
             env,
             stdin: None,
@@ -249,7 +253,10 @@ async fn spawn_echo_server() -> (String, tokio::task::JoinHandle<()>) {
                         }
                     }
                 }
-                let body_start = head_text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(head.len());
+                let body_start = head_text
+                    .find("\r\n\r\n")
+                    .map(|i| i + 4)
+                    .unwrap_or(head.len());
                 let mut body = head[body_start.min(head.len())..].to_vec();
                 while body.len() < content_length {
                     let Ok(n) = socket.read(&mut tmp).await else {
@@ -285,7 +292,10 @@ async fn http_request(
     body: Option<&str>,
 ) -> (u16, BTreeMap<String, String>, String) {
     let mut builder = reqwest::Client::new()
-        .request(reqwest::Method::from_bytes(method.as_bytes()).expect("method"), url)
+        .request(
+            reqwest::Method::from_bytes(method.as_bytes()).expect("method"),
+            url,
+        )
         .timeout(Duration::from_secs(15));
     if let Some(token) = bearer {
         builder = builder.header("authorization", format!("Bearer {token}"));
@@ -301,7 +311,12 @@ async fn http_request(
     let headers = response
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                v.to_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
     let body = response.text().await.unwrap_or_default();
     (status, headers, body)
@@ -381,7 +396,10 @@ async fn ssh_bridge_full_round_trip_with_real_sshd() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
     assert_eq!(parsed["ok"], serde_json::Value::Bool(true));
-    assert_eq!(parsed["method"], serde_json::Value::String("POST".to_string()));
+    assert_eq!(
+        parsed["method"],
+        serde_json::Value::String("POST".to_string())
+    );
     assert_eq!(
         parsed["path"],
         serde_json::Value::String("/api/issues/issue-1/comments".to_string())
@@ -417,8 +435,14 @@ async fn ssh_bridge_full_round_trip_with_real_sshd() {
     .await;
     assert_eq!(status, 200);
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
-    assert_eq!(parsed["method"], serde_json::Value::String("GET".to_string()));
-    assert_eq!(parsed["path"], serde_json::Value::String("/api/agents/me".to_string()));
+    assert_eq!(
+        parsed["method"],
+        serde_json::Value::String("GET".to_string())
+    );
+    assert_eq!(
+        parsed["path"],
+        serde_json::Value::String("/api/agents/me".to_string())
+    );
 
     // 5. teardown：server pid/ready 清理、队列无残留（经 SSH 验证）。
     let pid_file = format!("{queue_dir}/server.pid");

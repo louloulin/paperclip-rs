@@ -18,11 +18,11 @@ fn non_empty(value: Option<&str>) -> Option<String> {
 /// 解析非托管的 Claude config 目录：优先 `env.CLAUDE_CONFIG_DIR`，否则
 /// `<home>/.claude`。对齐 Node `resolveSharedClaudeConfigDir`。
 #[must_use]
-pub fn resolve_shared_claude_config_dir(
-    env: &BTreeMap<String, String>,
-    home_dir: &str,
-) -> String {
-    if let Some(from_env) = env.get("CLAUDE_CONFIG_DIR").and_then(|v| non_empty(Some(v))) {
+pub fn resolve_shared_claude_config_dir(env: &BTreeMap<String, String>, home_dir: &str) -> String {
+    if let Some(from_env) = env
+        .get("CLAUDE_CONFIG_DIR")
+        .and_then(|v| non_empty(Some(v)))
+    {
         let pb = PathBuf::from(&from_env);
         return pb
             .canonicalize()
@@ -30,7 +30,10 @@ pub fn resolve_shared_claude_config_dir(
             .to_string_lossy()
             .to_string();
     }
-    PathBuf::from(home_dir).join(".claude").to_string_lossy().to_string()
+    PathBuf::from(home_dir)
+        .join(".claude")
+        .to_string_lossy()
+        .to_string()
 }
 
 /// 解析 Paperclip 托管 Claude config seed 目录。
@@ -80,9 +83,7 @@ pub fn resolve_managed_claude_runtime_state_dir(
 fn resolve_instance_root(
     env: &BTreeMap<String, String>,
 ) -> Result<String, pc_acpx::instance_root::ResolvePaperclipInstanceRootError> {
-    let home_dir = env
-        .get("PAPERCLIP_HOME")
-        .and_then(|v| non_empty(Some(v)));
+    let home_dir = env.get("PAPERCLIP_HOME").and_then(|v| non_empty(Some(v)));
     let instance_id = env
         .get("PAPERCLIP_INSTANCE_ID")
         .and_then(|v| non_empty(Some(v)));
@@ -147,7 +148,8 @@ mod tests {
     #[test]
     fn runtime_state_dir_contains_company_agent_and_segment() {
         let env = env_with(&[("PAPERCLIP_HOME", "/tmp/pc")]);
-        let dir = resolve_managed_claude_runtime_state_dir(&env, "co_1", "agent_x").expect("resolve");
+        let dir =
+            resolve_managed_claude_runtime_state_dir(&env, "co_1", "agent_x").expect("resolve");
         assert!(dir.contains("companies"));
         assert!(dir.contains("co_1"));
         assert!(dir.contains("agents"));

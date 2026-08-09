@@ -466,7 +466,13 @@ mod build_session_params_tests {
             .get("remoteExecution")
             .and_then(|v| v.as_object())
             .expect("remoteExecution object");
-        assert_eq!(remote.get("hostId").and_then(|v| v.as_str()), Some("host-1"));
-        assert_eq!(remote.get("sessionId").and_then(|v| v.as_str()), Some("sess-1"));
+        assert_eq!(
+            remote.get("hostId").and_then(|v| v.as_str()),
+            Some("host-1")
+        );
+        assert_eq!(
+            remote.get("sessionId").and_then(|v| v.as_str()),
+            Some("sess-1")
+        );
     }
 }

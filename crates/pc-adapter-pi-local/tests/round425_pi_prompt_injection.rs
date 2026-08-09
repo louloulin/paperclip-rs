@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pc_adapter_api::{Adapter, AdapterExecutionContext, AdapterEventSink};
+use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_pi_local::PiLocalAdapter;
 use serde_json::json;
 use uuid::Uuid;
@@ -61,7 +61,10 @@ async fn result_json_carries_prompt_notes() {
     let cmd = write_mock_cli(&tmp.path, "pi-mock", &stdout_lines);
     let env: BTreeMap<String, String> = [
         ("PAPERCLIP_RUN_ID".to_owned(), "run-1".to_owned()),
-        ("PAPERCLIP_API_URL".to_owned(), "https://api.test".to_owned()),
+        (
+            "PAPERCLIP_API_URL".to_owned(),
+            "https://api.test".to_owned(),
+        ),
         ("PAPERCLIP_API_KEY".to_owned(), "sk-test".to_owned()),
     ]
     .into_iter()
@@ -72,7 +75,10 @@ async fn result_json_carries_prompt_notes() {
         .await
         .expect("execute ok");
     let value = result.result_json.expect("result_json present");
-    let note = value.get("paperclipEnvNote").and_then(|v| v.as_str()).unwrap();
+    let note = value
+        .get("paperclipEnvNote")
+        .and_then(|v| v.as_str())
+        .unwrap();
     let api = value.get("apiAccessNote").and_then(|v| v.as_str()).unwrap();
     assert!(note.contains("PAPERCLIP_RUN_ID"));
     assert!(api.contains("curl"));

@@ -130,12 +130,18 @@ mod tests {
 
     #[test]
     fn join_skips_empty_sections() {
-        assert_eq!(join_prompt_sections(&["hello", "", "world"]), "hello\n\nworld");
+        assert_eq!(
+            join_prompt_sections(&["hello", "", "world"]),
+            "hello\n\nworld"
+        );
     }
 
     #[test]
     fn join_skips_whitespace_only_sections() {
-        assert_eq!(join_prompt_sections(&["hello", "   ", "world"]), "hello\n\nworld");
+        assert_eq!(
+            join_prompt_sections(&["hello", "   ", "world"]),
+            "hello\n\nworld"
+        );
     }
 
     #[test]
@@ -148,7 +154,10 @@ mod tests {
 
     #[test]
     fn join_trims_trailing_whitespace() {
-        assert_eq!(join_prompt_sections(&["hello   ", "world  "]), "hello\n\nworld");
+        assert_eq!(
+            join_prompt_sections(&["hello   ", "world  "]),
+            "hello\n\nworld"
+        );
     }
 
     #[test]
@@ -204,9 +213,12 @@ mod tests {
         let mut s = PromptSections::new();
         s.bootstrap_prompt = "## Bootstrap".to_owned();
         s.heartbeat_prompt = "## Heartbeat".to_owned();
-        assert_eq!(s.join(), "## Bootstrap
+        assert_eq!(
+            s.join(),
+            "## Bootstrap
 
-## Heartbeat");
+## Heartbeat"
+        );
         let m = s.metrics();
         assert_eq!(m.prompt_chars, 12 + 2 + 12);
     }

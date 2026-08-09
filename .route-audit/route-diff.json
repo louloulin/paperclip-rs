@@ -1,20 +1,15 @@
 {
   "node_unique": 581,
-  "rust_unique": 878,
-  "common": 576,
-  "missing_in_rust": 5,
+  "rust_unique": 879,
+  "common": 577,
+  "missing_in_rust": 4,
   "extra_in_rust": 302,
-  "coverage_method_path": 99.14,
+  "coverage_method_path": 99.31,
   "missing_by_category": {
     ":param": 3,
-    "root": 1,
     "restart": 1
   },
   "top_missing": [
-    {
-      "method": "GET",
-      "path": "/"
-    },
     {
       "method": "GET",
       "path": "/api/_plugins/:param/ui/*filePath"
@@ -25,7 +20,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/cases/:param/issue-links"
+      "path": "/api/cases/:param/links"
     },
     {
       "method": "POST",

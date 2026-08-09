@@ -534,7 +534,10 @@ async fn sign_in_email(
         csrf_token: csrf_token.clone(),
     };
     let mut out_headers = HeaderMap::new();
-    out_headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie"));
+    out_headers.insert(
+        header::SET_COOKIE,
+        cookie.parse().expect("valid set-cookie"),
+    );
     out_headers.append(
         header::SET_COOKIE,
         csrf_cookie.parse().expect("valid set-cookie"),
@@ -625,7 +628,10 @@ async fn sign_up_email(
         csrf_token: csrf_token.clone(),
     };
     let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie header"));
+    headers.insert(
+        header::SET_COOKIE,
+        cookie.parse().expect("valid set-cookie header"),
+    );
     headers.append(
         header::SET_COOKIE,
         csrf_cookie.parse().expect("valid set-cookie header"),
@@ -710,7 +716,10 @@ async fn refresh_session(
         csrf_token: csrf_token.clone(),
     };
     let mut out_headers = HeaderMap::new();
-    out_headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie"));
+    out_headers.insert(
+        header::SET_COOKIE,
+        cookie.parse().expect("valid set-cookie"),
+    );
     out_headers.append(
         header::SET_COOKIE,
         csrf_cookie.parse().expect("valid set-cookie"),

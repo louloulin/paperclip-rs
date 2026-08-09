@@ -5,11 +5,11 @@
 //! 2. 远程 session resume 决策（身份不匹配 → 拒绝；身份匹配 → 允许）
 //! 3. bridge env 注入 + runtime root 解析
 
-use pc_adapter_claude_local::claude_remote_workspace::{
-    managed_remote_runtime_workspace_dir, remote_env_replaces_workspace_cwd,
-    remote_sync_excludes, resolve_remote_workspace_dir, should_resume_remote_session,
-};
 use pc_acpx::execution_target::adapter_execution_target_from_remote_execution;
+use pc_adapter_claude_local::claude_remote_workspace::{
+    managed_remote_runtime_workspace_dir, remote_env_replaces_workspace_cwd, remote_sync_excludes,
+    resolve_remote_workspace_dir, should_resume_remote_session,
+};
 use serde_json::json;
 
 fn parsed_target(remote_cwd: &str) -> pc_acpx::execution_target::AdapterExecutionTarget {

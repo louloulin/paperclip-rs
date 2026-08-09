@@ -266,10 +266,7 @@ pub fn resolve_claude_acp_billing_identity(
         _ => "api",
     }
     .to_string();
-    let biller = pc_acpx::billing::infer_openai_compatible_biller(
-        env,
-        Some(billing_type.as_str()),
-    );
+    let biller = pc_acpx::billing::infer_openai_compatible_biller(env, Some(billing_type.as_str()));
     (billing_type, biller.unwrap_or_else(|| "openai".to_string()))
 }
 
@@ -441,9 +438,7 @@ pub async fn resolve_claude_acp_command(config: &Value, package_root_dir: &Path)
 ///
 /// 当前简化：AdapterSandboxExecutionTarget 尚未含 runner 字段，恒返回 false。
 #[must_use]
-pub fn sandbox_target_has_process_session_bridge(
-    target: Option<&AdapterExecutionTarget>,
-) -> bool {
+pub fn sandbox_target_has_process_session_bridge(target: Option<&AdapterExecutionTarget>) -> bool {
     if let Some(AdapterExecutionTarget::Remote(
         pc_acpx::execution_target::AdapterRemoteExecutionTarget::Sandbox(_),
     )) = target
@@ -587,7 +582,6 @@ pub fn codex_run_engine_input_from_payload(
 // 测试
 // ============================================================================
 
-
 // ============================================================================
 // 环境探测（test_claude_acp_environment + summarize_status）
 // ============================================================================
@@ -719,8 +713,8 @@ pub async fn test_claude_acp_environment(
     host_env: &serde_json::Map<String, serde_json::Value>,
 ) -> ClaudeEnvironmentTestResult {
     let mut checks: Vec<ClaudeEnvironmentCheck> = Vec::new();
-    let target_is_remote = execution_target
-        .is_some_and(|_| adapter_execution_target_is_remote(execution_target));
+    let target_is_remote =
+        execution_target.is_some_and(|_| adapter_execution_target_is_remote(execution_target));
 
     checks.push(
         ClaudeEnvironmentCheck::new(
@@ -790,9 +784,7 @@ pub async fn test_claude_acp_environment(
                 ClaudeEnvironmentCheckLevel::Info,
                 "AWS Bedrock auth detected. Claude ACP will use Bedrock for inference.",
             )
-            .with_hint(
-                "Ensure AWS credentials and AWS_REGION are configured in this environment.",
-            ),
+            .with_hint("Ensure AWS credentials and AWS_REGION are configured in this environment."),
         );
     } else if config_api_key || host_api_key {
         let source = if config_api_key {
@@ -841,177 +833,172 @@ pub async fn test_claude_acp_environment(
     );
 
     let status = summarize_claude_status(&checks);
-    ClaudeEnvironmentTestResult {
-        status,
-        checks,
-    }
+    ClaudeEnvironmentTestResult { status, checks }
 }
 
 #[cfg(test)]
 mod tests {
-        #[test]
-        fn summarize_claude_status_pass_when_all_info() {
-            let checks = vec![
-                ClaudeEnvironmentCheck::new("a", ClaudeEnvironmentCheckLevel::Info, "msg"),
-                ClaudeEnvironmentCheck::new("b", ClaudeEnvironmentCheckLevel::Info, "msg"),
-            ];
-            assert_eq!(summarize_claude_status(&checks), "pass");
-        }
+    #[test]
+    fn summarize_claude_status_pass_when_all_info() {
+        let checks = vec![
+            ClaudeEnvironmentCheck::new("a", ClaudeEnvironmentCheckLevel::Info, "msg"),
+            ClaudeEnvironmentCheck::new("b", ClaudeEnvironmentCheckLevel::Info, "msg"),
+        ];
+        assert_eq!(summarize_claude_status(&checks), "pass");
+    }
 
-        #[test]
-        fn summarize_claude_status_warn_when_any_warn() {
-            let checks = vec![
-                ClaudeEnvironmentCheck::new("a", ClaudeEnvironmentCheckLevel::Info, "msg"),
-                ClaudeEnvironmentCheck::new("b", ClaudeEnvironmentCheckLevel::Warn, "msg"),
-            ];
-            assert_eq!(summarize_claude_status(&checks), "warn");
-        }
+    #[test]
+    fn summarize_claude_status_warn_when_any_warn() {
+        let checks = vec![
+            ClaudeEnvironmentCheck::new("a", ClaudeEnvironmentCheckLevel::Info, "msg"),
+            ClaudeEnvironmentCheck::new("b", ClaudeEnvironmentCheckLevel::Warn, "msg"),
+        ];
+        assert_eq!(summarize_claude_status(&checks), "warn");
+    }
 
-        #[test]
-        fn summarize_claude_status_fail_when_any_error() {
-            let checks = vec![
-                ClaudeEnvironmentCheck::new("a", ClaudeEnvironmentCheckLevel::Warn, "msg"),
-                ClaudeEnvironmentCheck::new("b", ClaudeEnvironmentCheckLevel::Error, "msg"),
-            ];
-            assert_eq!(summarize_claude_status(&checks), "fail");
-        }
+    #[test]
+    fn summarize_claude_status_fail_when_any_error() {
+        let checks = vec![
+            ClaudeEnvironmentCheck::new("a", ClaudeEnvironmentCheckLevel::Warn, "msg"),
+            ClaudeEnvironmentCheck::new("b", ClaudeEnvironmentCheckLevel::Error, "msg"),
+        ];
+        assert_eq!(summarize_claude_status(&checks), "fail");
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_basic_pass() {
-            let cwd = tempdir();
-            let config = json!({});
-            let host_env = serde_json::Map::new();
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            assert_eq!(result.status, "pass");
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_engine_selected"));
-            assert!(codes.contains(&"claude_acp_cwd_valid"));
-            assert!(codes.contains(&"claude_acp_runtime_scaffold"));
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_basic_pass() {
+        let cwd = tempdir();
+        let config = json!({});
+        let host_env = serde_json::Map::new();
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        assert_eq!(result.status, "pass");
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_engine_selected"));
+        assert!(codes.contains(&"claude_acp_cwd_valid"));
+        assert!(codes.contains(&"claude_acp_runtime_scaffold"));
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_remote_target_adds_remote_check() {
-            let cwd = tempdir();
-            let config = json!({});
-            let target_value = json!({
-                "kind": "remote",
-                "transport": "ssh",
-                "remoteCwd": "/tmp",
-                "spec": {
-                    "kind": "ssh",
-                    "host": "example.com",
-                    "username": "user",
-                    "port": 22,
-                    "remoteCwd": "/tmp"
-                }
-            });
-            let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_value);
-            let host_env = serde_json::Map::new();
-            let result =
-                test_claude_acp_environment(&config, target.as_ref(), &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_acp_remote_target"));
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_remote_target_adds_remote_check() {
+        let cwd = tempdir();
+        let config = json!({});
+        let target_value = json!({
+            "kind": "remote",
+            "transport": "ssh",
+            "remoteCwd": "/tmp",
+            "spec": {
+                "kind": "ssh",
+                "host": "example.com",
+                "username": "user",
+                "port": 22,
+                "remoteCwd": "/tmp"
+            }
+        });
+        let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_value);
+        let host_env = serde_json::Map::new();
+        let result = test_claude_acp_environment(&config, target.as_ref(), &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_acp_remote_target"));
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_warns_when_api_key_set() {
-            let cwd = tempdir();
-            let config = json!({ "env": { "ANTHROPIC_API_KEY": "sk-config" } });
-            let host_env = serde_json::Map::new();
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            assert_eq!(result.status, "warn");
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_acp_anthropic_api_key_detected"));
-            let check = result
-                .checks
-                .iter()
-                .find(|c| c.code == "claude_acp_anthropic_api_key_detected")
-                .expect("present");
-            assert!(check.hint().unwrap().contains("Unset ANTHROPIC_API_KEY"));
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_warns_when_api_key_set() {
+        let cwd = tempdir();
+        let config = json!({ "env": { "ANTHROPIC_API_KEY": "sk-config" } });
+        let host_env = serde_json::Map::new();
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        assert_eq!(result.status, "warn");
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_acp_anthropic_api_key_detected"));
+        let check = result
+            .checks
+            .iter()
+            .find(|c| c.code == "claude_acp_anthropic_api_key_detected")
+            .expect("present");
+        assert!(check.hint().unwrap().contains("Unset ANTHROPIC_API_KEY"));
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_detects_bedrock_from_env_config() {
-            let cwd = tempdir();
-            let config = json!({ "env": { "CLAUDE_CODE_USE_BEDROCK": "1" } });
-            let host_env = serde_json::Map::new();
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_acp_bedrock_auth"));
-            assert_eq!(result.status, "pass");
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_detects_bedrock_from_env_config() {
+        let cwd = tempdir();
+        let config = json!({ "env": { "CLAUDE_CODE_USE_BEDROCK": "1" } });
+        let host_env = serde_json::Map::new();
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_acp_bedrock_auth"));
+        assert_eq!(result.status, "pass");
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_detects_bedrock_from_host_env() {
-            let cwd = tempdir();
-            let config = json!({});
-            let mut host_env = serde_json::Map::new();
-            host_env.insert(
-                "ANTHROPIC_BEDROCK_BASE_URL".to_string(),
-                Value::String("https://bedrock.example.com".to_string()),
-            );
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_acp_bedrock_auth"));
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_detects_bedrock_from_host_env() {
+        let cwd = tempdir();
+        let config = json!({});
+        let mut host_env = serde_json::Map::new();
+        host_env.insert(
+            "ANTHROPIC_BEDROCK_BASE_URL".to_string(),
+            Value::String("https://bedrock.example.com".to_string()),
+        );
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_acp_bedrock_auth"));
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_subscription_mode_possible_without_keys() {
-            let cwd = tempdir();
-            let config = json!({});
-            let host_env = serde_json::Map::new();
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_acp_subscription_mode_possible"));
-            assert_eq!(result.status, "pass");
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_subscription_mode_possible_without_keys() {
+        let cwd = tempdir();
+        let config = json!({});
+        let host_env = serde_json::Map::new();
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_acp_subscription_mode_possible"));
+        assert_eq!(result.status, "pass");
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_runtime_scaffold_detail_format() {
-            let cwd = tempdir();
-            let config = json!({ "mode": "oneshot", "warmHandleIdleMs": 120000 });
-            let host_env = serde_json::Map::new();
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            let check = result
-                .checks
-                .iter()
-                .find(|c| c.code == "claude_acp_runtime_scaffold")
-                .expect("present");
-            let detail = check.detail().unwrap();
-            assert!(detail.contains("mode=oneshot"));
-            assert!(detail.contains("warmHandleIdleMs=120000"));
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_runtime_scaffold_detail_format() {
+        let cwd = tempdir();
+        let config = json!({ "mode": "oneshot", "warmHandleIdleMs": 120000 });
+        let host_env = serde_json::Map::new();
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        let check = result
+            .checks
+            .iter()
+            .find(|c| c.code == "claude_acp_runtime_scaffold")
+            .expect("present");
+        let detail = check.detail().unwrap();
+        assert!(detail.contains("mode=oneshot"));
+        assert!(detail.contains("warmHandleIdleMs=120000"));
+    }
 
-        #[tokio::test]
-        async fn test_claude_acp_environment_api_key_from_host_env() {
-            let cwd = tempdir();
-            let config = json!({});
-            let mut host_env = serde_json::Map::new();
-            host_env.insert(
-                "ANTHROPIC_API_KEY".to_string(),
-                Value::String("sk-host".to_string()),
-            );
-            let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"claude_acp_anthropic_api_key_detected"));
-            let check = result
-                .checks
-                .iter()
-                .find(|c| c.code == "claude_acp_anthropic_api_key_detected")
-                .expect("present");
-            assert_eq!(check.detail(), Some("Detected in server environment."));
-        }
+    #[tokio::test]
+    async fn test_claude_acp_environment_api_key_from_host_env() {
+        let cwd = tempdir();
+        let config = json!({});
+        let mut host_env = serde_json::Map::new();
+        host_env.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            Value::String("sk-host".to_string()),
+        );
+        let result = test_claude_acp_environment(&config, None, &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"claude_acp_anthropic_api_key_detected"));
+        let check = result
+            .checks
+            .iter()
+            .find(|c| c.code == "claude_acp_anthropic_api_key_detected")
+            .expect("present");
+        assert_eq!(check.detail(), Some("Detected in server environment."));
+    }
 
-        #[test]
-        fn claude_environment_check_with_hint_and_detail() {
-            let check = ClaudeEnvironmentCheck::new("c", ClaudeEnvironmentCheckLevel::Warn, "m")
-                .with_hint("h")
-                .with_detail("d");
-            assert_eq!(check.hint(), Some("h"));
-            assert_eq!(check.detail(), Some("d"));
-            assert_eq!(check.level, ClaudeEnvironmentCheckLevel::Warn);
-        }
-
+    #[test]
+    fn claude_environment_check_with_hint_and_detail() {
+        let check = ClaudeEnvironmentCheck::new("c", ClaudeEnvironmentCheckLevel::Warn, "m")
+            .with_hint("h")
+            .with_detail("d");
+        assert_eq!(check.hint(), Some("h"));
+        assert_eq!(check.detail(), Some("d"));
+        assert_eq!(check.level, ClaudeEnvironmentCheckLevel::Warn);
+    }
 
     use super::*;
     use serde_json::json;
@@ -1058,14 +1045,9 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_in_place_workspace_forces_cli() {
         let config = json!({});
-        let sel = resolve_claude_execution_engine_for_run(
-            &config,
-            None,
-            Some("in_place"),
-            None,
-            false,
-        )
-        .await;
+        let sel =
+            resolve_claude_execution_engine_for_run(&config, None, Some("in_place"), None, false)
+                .await;
         assert_eq!(sel.engine, ClaudeExecutionEngine::Cli);
         assert!(sel.fallback_reason.is_some());
     }
@@ -1073,14 +1055,9 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_in_place_with_explicit_acp_returns_alts() {
         let config = json!({ "engine": "acp" });
-        let sel = resolve_claude_execution_engine_for_run(
-            &config,
-            None,
-            Some("in_place"),
-            None,
-            false,
-        )
-        .await;
+        let sel =
+            resolve_claude_execution_engine_for_run(&config, None, Some("in_place"), None, false)
+                .await;
         assert_eq!(sel.engine, ClaudeExecutionEngine::Cli);
         assert!(sel.fallback_reason.is_some());
         let reason = sel.fallback_reason.unwrap();
@@ -1090,14 +1067,8 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_filesystem_scope_forces_cli() {
         let config = json!({ "filesystemScope": "/tmp" });
-        let sel = resolve_claude_execution_engine_for_run(
-            &config,
-            None,
-            None,
-            Some("/tmp"),
-            false,
-        )
-        .await;
+        let sel =
+            resolve_claude_execution_engine_for_run(&config, None, None, Some("/tmp"), false).await;
         assert_eq!(sel.engine, ClaudeExecutionEngine::Cli);
         assert!(sel.fallback_reason.is_some());
     }
@@ -1105,28 +1076,16 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_network_scope_active_forces_cli() {
         let config = json!({});
-        let sel = resolve_claude_execution_engine_for_run(
-            &config,
-            None,
-            None,
-            None,
-            true,
-        )
-        .await;
+        let sel = resolve_claude_execution_engine_for_run(&config, None, None, None, true).await;
         assert_eq!(sel.engine, ClaudeExecutionEngine::Cli);
     }
 
     #[tokio::test]
     async fn resolve_engine_for_run_explicit_cli_preserved() {
         let config = json!({ "engine": "cli" });
-        let sel = resolve_claude_execution_engine_for_run(
-            &config,
-            None,
-            Some("in_place"),
-            None,
-            false,
-        )
-        .await;
+        let sel =
+            resolve_claude_execution_engine_for_run(&config, None, Some("in_place"), None, false)
+                .await;
         assert_eq!(sel.engine, ClaudeExecutionEngine::Cli);
         assert!(sel.explicit);
     }
@@ -1165,7 +1124,9 @@ mod tests {
             Some(DEFAULT_ACP_ENGINE_PERMISSION_MODE)
         );
         assert_eq!(
-            built.get("nonInteractivePermissions").and_then(Value::as_str),
+            built
+                .get("nonInteractivePermissions")
+                .and_then(Value::as_str),
             Some(DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS)
         );
         assert_eq!(
@@ -1218,7 +1179,9 @@ mod tests {
             Some("deny")
         );
         assert_eq!(
-            built.get("nonInteractivePermissions").and_then(Value::as_str),
+            built
+                .get("nonInteractivePermissions")
+                .and_then(Value::as_str),
             Some("fail")
         );
         assert_eq!(
@@ -1374,10 +1337,7 @@ mod tests {
         let config = json!({});
         let pkg_root = tempdir();
         let cmd = resolve_claude_acp_command(&config, &pkg_root).await;
-        let expected = pkg_root
-            .join("node_modules")
-            .join(".bin")
-            .join("codex-acp");
+        let expected = pkg_root.join("node_modules").join(".bin").join("codex-acp");
         assert_eq!(cmd, expected);
     }
 
@@ -1398,7 +1358,9 @@ mod tests {
         });
         let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_value);
         assert!(target.is_some());
-        let cmd = resolve_claude_acp_command_for_target(&config, target.as_ref(), Path::new("/tmp")).await;
+        let cmd =
+            resolve_claude_acp_command_for_target(&config, target.as_ref(), Path::new("/tmp"))
+                .await;
         assert_eq!(cmd.to_string_lossy(), "codex-acp");
     }
 
@@ -1407,10 +1369,7 @@ mod tests {
         let config = json!({});
         let pkg_root = tempdir();
         let cmd = resolve_claude_acp_command_for_target(&config, None, &pkg_root).await;
-        let expected = pkg_root
-            .join("node_modules")
-            .join(".bin")
-            .join("codex-acp");
+        let expected = pkg_root.join("node_modules").join(".bin").join("codex-acp");
         assert_eq!(cmd, expected);
     }
 

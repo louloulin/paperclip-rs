@@ -32,8 +32,8 @@ use crate::{
         AdapterExecutionTarget,
     },
     sandbox_callback_bridge::{
-        bridge_runner_failure_message, bridge_response_body_utf8_len_within_limit,
-        bridge_response_body_within_limit, build_bridge_exec_env, build_bridge_forward_url,
+        bridge_response_body_utf8_len_within_limit, bridge_response_body_within_limit,
+        bridge_runner_failure_message, build_bridge_exec_env, build_bridge_forward_url,
         build_bridge_response_headers, build_bridge_server_stop_script,
         build_list_json_files_script, build_make_dirs_script, build_read_text_file_script,
         build_remove_script, build_rename_script, build_write_response_file_script,
@@ -45,13 +45,12 @@ use crate::{
         invalid_bridge_request_payload_response, parse_bridge_ready_data,
         parse_bridge_request_file, parse_list_json_files_output, parse_sync_text_file_result,
         parse_write_response_file_result, pending_request_failure_bridge_response,
-        preferred_shell_for_sandbox, sanitize_sandbox_callback_bridge_headers,
-        shell_command_args, start_sandbox_callback_bridge_server_plan,
-        BridgeDirectories, BridgeResponseWritePlan, BridgeServerStopScriptInput,
+        preferred_shell_for_sandbox, sanitize_sandbox_callback_bridge_headers, shell_command_args,
+        start_sandbox_callback_bridge_server_plan, BridgeDirectories, BridgeResponseWritePlan,
+        BridgeServerStopScriptInput, SandboxCallbackBridgeRequest, SandboxCallbackBridgeResponse,
         DEFAULT_BRIDGE_POLL_INTERVAL_MS, DEFAULT_BRIDGE_RESPONSE_TIMEOUT_MS,
         DEFAULT_BRIDGE_STOP_TIMEOUT_MS, DEFAULT_SANDBOX_CALLBACK_BRIDGE_MAX_BODY_BYTES,
-        SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT, SandboxCallbackBridgeRequest,
-        SandboxCallbackBridgeResponse,
+        SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT,
     },
 };
 use async_trait::async_trait;
@@ -137,10 +136,7 @@ impl BridgeCommandRunner for LocalProcessBridgeRunner {
                 .write_all(stdin_data.as_bytes())
                 .await
                 .map_err(|error| error.to_string())?;
-            stdin
-                .shutdown()
-                .await
-                .map_err(|error| error.to_string())?;
+            stdin.shutdown().await.map_err(|error| error.to_string())?;
         }
         let mut stdout = child
             .stdout
@@ -217,10 +213,7 @@ pub async fn run_shell(
 
 /// 校验命令成功；失败时抛出 Node 同款消息（对齐
 /// `requireSuccessfulResult(action, result)`）。
-pub fn require_successful_result(
-    action: &str,
-    result: &RunnerCommandResult,
-) -> Result<(), String> {
+pub fn require_successful_result(action: &str, result: &RunnerCommandResult) -> Result<(), String> {
     if result.succeeded() {
         return Ok(());
     }
@@ -264,11 +257,7 @@ pub struct RunnerBridgeQueueClient {
 
 impl RunnerBridgeQueueClient {
     #[must_use]
-    pub fn new(
-        runner: Arc<dyn BridgeCommandRunner>,
-        remote_cwd: String,
-        timeout_ms: u64,
-    ) -> Self {
+    pub fn new(runner: Arc<dyn BridgeCommandRunner>, remote_cwd: String, timeout_ms: u64) -> Self {
         Self {
             runner,
             remote_cwd,
@@ -312,9 +301,8 @@ impl BridgeQueueClient for RunnerBridgeQueueClient {
         let script = build_read_text_file_script(path);
         let result = self.execute_script(&script).await?;
         require_successful_result("read bridge queue file", &result)?;
-        scb::base64_decode_utf8(result.stdout.trim()).map_err(|error| {
-            format!("bridge queue file {path} is not valid base64: {error}")
-        })
+        scb::base64_decode_utf8(result.stdout.trim())
+            .map_err(|error| format!("bridge queue file {path} is not valid base64: {error}"))
     }
 
     async fn write_text_file(&self, path: &str, body: &str) -> Result<(), String> {
@@ -333,9 +321,7 @@ impl BridgeQueueClient for RunnerBridgeQueueClient {
         request_path: Option<&str>,
     ) -> Result<bool, String> {
         let script = build_write_response_file_script(response_path, request_path);
-        let result = self
-            .execute_with_stdin(&script, body.to_string())
-            .await?;
+        let result = self.execute_with_stdin(&script, body.to_string()).await?;
         require_successful_result("write bridge response file", &result)?;
         parse_write_response_file_result(&result.stdout)
     }
@@ -385,10 +371,8 @@ pub struct BridgeAsset {
 impl BridgeAsset {
     /// 创建 asset（mkdtemp + 写 entrypoint 源码）。
     pub fn create(source: &str) -> std::io::Result<Self> {
-        let local_dir = std::env::temp_dir().join(format!(
-            "paperclip-bridge-asset-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let local_dir =
+            std::env::temp_dir().join(format!("paperclip-bridge-asset-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&local_dir)?;
         let entrypoint = local_dir.join(SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT);
         std::fs::write(&entrypoint, source)?;
@@ -473,15 +457,16 @@ impl StartedBridgeServer {
 pub async fn start_bridge_server(
     input: &StartBridgeServerInput<'_>,
 ) -> Result<StartedBridgeServer, String> {
-    let timeout_ms = scb::normalize_timeout_ms(input.timeout_ms, DEFAULT_BRIDGE_RESPONSE_TIMEOUT_MS);
+    let timeout_ms =
+        scb::normalize_timeout_ms(input.timeout_ms, DEFAULT_BRIDGE_RESPONSE_TIMEOUT_MS);
     let shell = preferred_shell_for_sandbox(input.shell);
     let plan = start_sandbox_callback_bridge_server_plan(&scb::StartBridgeServerPlanInput {
         queue_dir: input.queue_dir.to_string(),
         bridge_token: input.bridge_token.to_string(),
         asset_remote_dir: input.asset_remote_dir.to_string(),
-        bridge_asset_source: input.bridge_asset.map(|asset| {
-            std::fs::read_to_string(&asset.entrypoint).unwrap_or_default()
-        }),
+        bridge_asset_source: input
+            .bridge_asset
+            .map(|asset| std::fs::read_to_string(&asset.entrypoint).unwrap_or_default()),
         host: input.host.map(str::to_string),
         port: input.port,
         poll_interval_ms: input.poll_interval_ms,
@@ -585,7 +570,8 @@ pub type BridgeHandleRequestFn = Arc<
 >;
 
 /// 授权函数：返回 `Some(reason)` 表示拒绝。
-pub type BridgeAuthorizeFn = Arc<dyn Fn(&SandboxCallbackBridgeRequest) -> Option<String> + Send + Sync>;
+pub type BridgeAuthorizeFn =
+    Arc<dyn Fn(&SandboxCallbackBridgeRequest) -> Option<String> + Send + Sync>;
 
 /// [`start_bridge_worker`] 输入。
 pub struct StartBridgeWorkerInput {
@@ -618,7 +604,11 @@ impl BridgeWorkerHandle {
         let now = scb::now_unix_ms();
         self.inner.stopping.store(true, Ordering::SeqCst);
         let deadline = decide_bridge_worker_stop_deadline(now, None);
-        *self.inner.stop_deadline_ms.lock().expect("stop deadline lock") = Some(deadline);
+        *self
+            .inner
+            .stop_deadline_ms
+            .lock()
+            .expect("stop deadline lock") = Some(deadline);
         let drain = DEFAULT_BRIDGE_STOP_TIMEOUT_MS;
         let join = self.inner.join.lock().expect("join lock").take();
         if let Some(join) = join {
@@ -636,8 +626,10 @@ pub async fn start_bridge_worker(
 ) -> Result<BridgeWorkerHandle, String> {
     let poll_interval_ms =
         scb::normalize_timeout_ms(input.poll_interval_ms, DEFAULT_BRIDGE_POLL_INTERVAL_MS);
-    let max_body_bytes =
-        scb::normalize_timeout_ms(input.max_body_bytes, DEFAULT_SANDBOX_CALLBACK_BRIDGE_MAX_BODY_BYTES);
+    let max_body_bytes = scb::normalize_timeout_ms(
+        input.max_body_bytes,
+        DEFAULT_SANDBOX_CALLBACK_BRIDGE_MAX_BODY_BYTES,
+    );
     let directories = scb::sandbox_callback_bridge_directories(&input.queue_dir);
     let queue_directories = vec![
         directories.root_dir.clone(),
@@ -664,10 +656,7 @@ pub async fn start_bridge_worker(
     let join = tokio::spawn(async move {
         let loop_result: Result<(), String> = async {
             loop {
-                let file_names = worker_inner
-                    .client
-                    .list_json_files(&requests_dir)
-                    .await?;
+                let file_names = worker_inner.client.list_json_files(&requests_dir).await?;
                 let stopping = worker_inner.stopping.load(Ordering::SeqCst);
                 match decide_bridge_worker_loop_action(file_names.len(), stopping) {
                     scb::BridgeWorkerLoopAction::Stop => break,
@@ -680,8 +669,7 @@ pub async fn start_bridge_worker(
                 }
                 for file_name in file_names {
                     let stopping = worker_inner.stopping.load(Ordering::SeqCst);
-                    let deadline =
-                        *worker_inner.stop_deadline_ms.lock().expect("deadline lock");
+                    let deadline = *worker_inner.stop_deadline_ms.lock().expect("deadline lock");
                     let now = scb::now_unix_ms();
                     if decide_bridge_worker_should_stop_processing(
                         stopping,
@@ -690,10 +678,8 @@ pub async fn start_bridge_worker(
                     ) {
                         break;
                     }
-                    let request_path =
-                        scb::posix_join(&requests_dir, &file_name);
-                    let response_path =
-                        scb::posix_join(&responses_dir, &file_name);
+                    let request_path = scb::posix_join(&requests_dir, &file_name);
+                    let response_path = scb::posix_join(&responses_dir, &file_name);
                     let outcome = process_request_file(
                         &worker_inner.client,
                         &request_path,
@@ -733,12 +719,8 @@ pub async fn start_bridge_worker(
         if let Err(error) = loop_result {
             let message = format!("Sandbox callback bridge worker failed: {error}");
             eprintln!("[paperclip] {message}");
-            let _ = fail_pending_requests(
-                &worker_inner.client,
-                &worker_inner.queue_dir,
-                &message,
-            )
-            .await;
+            let _ = fail_pending_requests(&worker_inner.client, &worker_inner.queue_dir, &message)
+                .await;
         }
         worker_inner.settled.notify_waiters();
     });
@@ -796,11 +778,7 @@ async fn process_request_file(
             client,
             request_path,
             response_path,
-            &denied_bridge_request_response(
-                request.id.clone(),
-                &denial_reason,
-                scb::now_rfc3339(),
-            ),
+            &denied_bridge_request_response(request.id.clone(), &denial_reason, scb::now_rfc3339()),
             true,
         )
         .await?;
@@ -821,14 +799,7 @@ async fn process_request_file(
     };
     match outcome {
         Ok(response) => {
-            write_bridge_response(
-                client,
-                request_path,
-                response_path,
-                &response,
-                true,
-            )
-            .await?;
+            write_bridge_response(client, request_path, response_path, &response, true).await?;
         }
         Err(error) => {
             eprintln!(
@@ -839,11 +810,7 @@ async fn process_request_file(
                 client,
                 request_path,
                 response_path,
-                &handler_failure_bridge_response(
-                    request.id.clone(),
-                    &error,
-                    scb::now_rfc3339(),
-                ),
+                &handler_failure_bridge_response(request.id.clone(), &error, scb::now_rfc3339()),
                 true,
             )
             .await?;
@@ -911,16 +878,13 @@ async fn fail_pending_requests(
             Err(_) => request_id,
         };
         let _ = client.remove(&request_path).await;
-        let response =
-            pending_request_failure_bridge_response(request_id.clone(), message, scb::now_rfc3339());
-        if let Err(error) = write_bridge_response(
-            client,
-            &request_path,
-            &response_path,
-            &response,
-            false,
-        )
-        .await
+        let response = pending_request_failure_bridge_response(
+            request_id.clone(),
+            message,
+            scb::now_rfc3339(),
+        );
+        if let Err(error) =
+            write_bridge_response(client, &request_path, &response_path, &response, false).await
         {
             eprintln!(
                 "[paperclip] sandbox callback bridge failed to abort pending request {request_id}: {error}"
@@ -965,7 +929,10 @@ impl BridgeForwardHandler {
     /// 转发单个请求（对齐 Node L1802-1834：
     /// 30s 超时、授权头 + x-paperclip-run-id、GET/HEAD 无 body、
     /// 响应 headers 透传 + body 限额）。
-    pub async fn handle(&self, request: SandboxCallbackBridgeRequest) -> Result<BridgeHandlerResult, String> {
+    pub async fn handle(
+        &self,
+        request: SandboxCallbackBridgeRequest,
+    ) -> Result<BridgeHandlerResult, String> {
         let url = build_bridge_forward_url(&self.host_api_url, &request.path, &request.query);
         let method = if request.method.trim().is_empty() {
             "GET"
@@ -1083,7 +1050,9 @@ pub async fn start_adapter_execution_target_paperclip_bridge(
     if !adapter_execution_target_uses_paperclip_bridge(input.target) {
         return Ok(None);
     }
-    let target = input.target.ok_or("paperclip bridge requires a remote execution target")?;
+    let target = input
+        .target
+        .ok_or("paperclip bridge requires a remote execution target")?;
     let host_api_token = input
         .host_api_token
         .map(str::trim)
@@ -1092,7 +1061,11 @@ pub async fn start_adapter_execution_target_paperclip_bridge(
             "Sandbox bridge mode requires a host-side Paperclip API token.".to_string()
         })?;
     let remote_cwd = adapter_execution_target_remote_cwd(Some(target), "");
-    let runtime_root_dir = match input.runtime_root_dir.map(str::trim).filter(|s| !s.is_empty()) {
+    let runtime_root_dir = match input
+        .runtime_root_dir
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(dir) => dir.to_string(),
         None => format!("{remote_cwd}/.paperclip-runtime/{}", input.adapter_key),
     };
@@ -1189,8 +1162,14 @@ pub async fn start_adapter_execution_target_paperclip_bridge(
     let mut env = BTreeMap::new();
     env.insert("PAPERCLIP_API_URL".to_string(), server.base_url.clone());
     env.insert("PAPERCLIP_API_KEY".to_string(), bridge_token);
-    env.insert("PAPERCLIP_API_BRIDGE_MODE".to_string(), "queue_v1".to_string());
-    env.insert("PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(), paths.queue_dir.clone());
+    env.insert(
+        "PAPERCLIP_API_BRIDGE_MODE".to_string(),
+        "queue_v1".to_string(),
+    );
+    env.insert(
+        "PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(),
+        paths.queue_dir.clone(),
+    );
     let has_run_log_tail = matches!(
         target,
         AdapterExecutionTarget::Remote(
@@ -1214,9 +1193,8 @@ pub async fn start_adapter_execution_target_paperclip_bridge(
             // Adapt any `BridgeCommandRunner` to the `SandboxRunLogRunner`
             // shape via [`pc_acpx::sandbox_run_log_stream::adapt_bridge_runner`]
             // (avoiding Arc trait-object coercion between independent traits).
-            let tail_runner = crate::sandbox_run_log_stream::adapt_bridge_runner(
-                Arc::clone(&input.runner),
-            );
+            let tail_runner =
+                crate::sandbox_run_log_stream::adapt_bridge_runner(Arc::clone(&input.runner));
             let factory = create_sandbox_run_log_tail_factory(SandboxRunLogTailFactoryOptions {
                 runner: tail_runner,
                 remote_cwd: sandbox.remote_cwd.clone(),
@@ -1228,9 +1206,7 @@ pub async fn start_adapter_execution_target_paperclip_bridge(
                 max_consecutive_failures: None,
             });
             if let Some(on_log) = &input.on_log {
-                on_log(
-                    "[paperclip] Sandbox run log streaming enabled for this run.\n",
-                );
+                on_log("[paperclip] Sandbox run log streaming enabled for this run.\n");
             }
             Some(Arc::new(factory))
         } else {

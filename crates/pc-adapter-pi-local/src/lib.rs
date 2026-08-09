@@ -133,10 +133,7 @@ impl Adapter for PiLocalAdapter {
 
         // 仅在本地 adapter 上做 resume 决策：当前 `AdapterExecutionContext` 不含
         // 远程 runtime session params，因此本地默认没有可 resume 的 session id。
-        let runtime_session_id = context
-            .session_id
-            .as_deref()
-            .unwrap_or("");
+        let runtime_session_id = context.session_id.as_deref().unwrap_or("");
         let effective_cwd = context
             .cwd
             .as_ref()
@@ -202,7 +199,8 @@ impl Adapter for PiLocalAdapter {
             // 第二次 attempt 使用新的 session path：把 prompt 重新投递到同一命令。
             let retry_spec = ProcessSpec::new(&command, &args).with_stdin(context.prompt.clone());
             let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
-            let retry_execution = execute_process_capture(&retry_spec, &context, retry_sink).await?;
+            let retry_execution =
+                execute_process_capture(&retry_spec, &context, retry_sink).await?;
             let _ = retry_execution.result;
             result = retry_execution.result;
             active_session_path = new_path;
@@ -222,8 +220,8 @@ impl Adapter for PiLocalAdapter {
             cached_input_tokens: parsed_final.usage.cached_input_tokens,
         });
         // 错误：parser 内部 errors 优先；非零退出且 stderr 非空时也写入。
-        let parser_error = (!parsed_final.errors.is_empty())
-            .then(|| parsed_final.errors.join("\n"));
+        let parser_error =
+            (!parsed_final.errors.is_empty()).then(|| parsed_final.errors.join("\n"));
         let stderr_error = (result.exit_code != Some(0))
             .then(|| execution.stderr.trim().to_owned())
             .filter(|s| !s.is_empty());
@@ -237,8 +235,7 @@ impl Adapter for PiLocalAdapter {
         result.summary = (!summary_text.is_empty()).then_some(summary_text);
         let paperclip_env_note =
             pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
-        let api_access_note =
-            pc_acpx::session_config_options::render_api_access_note(&context.env);
+        let api_access_note = pc_acpx::session_config_options::render_api_access_note(&context.env);
         result.result_json = Some(serde_json::json!({
             "toolCalls": parsed_final.tool_calls,
             "messages": parsed_final.messages,
@@ -250,10 +247,7 @@ impl Adapter for PiLocalAdapter {
             "retriedAfterUnknownSession": decision.should_retry,
         }));
         result.clear_session = clear_session
-            || crate::execute_helpers::should_clear_session(
-                &execution.stdout,
-                &execution.stderr,
-            );
+            || crate::execute_helpers::should_clear_session(&execution.stdout, &execution.stderr);
         Ok(result)
     }
 }

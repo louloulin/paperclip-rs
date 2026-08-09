@@ -1112,8 +1112,14 @@ mod tests {
             .remote_execution_identity
             .expect("remote_execution_identity should propagate");
         let object = value.as_object().expect("value is object");
-        assert_eq!(object.get("hostId").and_then(|v| v.as_str()), Some("host-1"));
-        assert_eq!(object.get("sessionId").and_then(|v| v.as_str()), Some("sess-1"));
+        assert_eq!(
+            object.get("hostId").and_then(|v| v.as_str()),
+            Some("host-1")
+        );
+        assert_eq!(
+            object.get("sessionId").and_then(|v| v.as_str()),
+            Some("sess-1")
+        );
     }
 
     #[test]

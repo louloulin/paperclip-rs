@@ -60,7 +60,10 @@ pub async fn hash_file(file_path: &Path) -> std::io::Result<String> {
 
 /// Read a single snapshot entry from the filesystem. Returns `Ok(None)`
 /// if the entry does not exist. Mirrors Node `readSnapshotEntry`.
-pub async fn read_snapshot_entry(root: &Path, relative: &str) -> std::io::Result<Option<SnapshotEntry>> {
+pub async fn read_snapshot_entry(
+    root: &Path,
+    relative: &str,
+) -> std::io::Result<Option<SnapshotEntry>> {
     let full_path = root.join(relative);
     let metadata = match fs::symlink_metadata(&full_path).await {
         Ok(m) => m,
@@ -121,7 +124,13 @@ fn walk_directory<'a>(
     exclude: &'a [String],
     relative: &'a str,
     mut out: BTreeMap<String, SnapshotEntry>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<BTreeMap<String, SnapshotEntry>>> + Send + 'a>> {
+) -> std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = std::io::Result<BTreeMap<String, SnapshotEntry>>>
+            + Send
+            + 'a,
+    >,
+> {
     Box::pin(async move {
         let current = if relative.is_empty() {
             root.to_path_buf()
@@ -270,7 +279,9 @@ pub async fn merge_directory_with_baseline(input: MergeInput<'_>) -> std::io::Re
         let mut changed: Vec<(String, SnapshotEntry)> = source
             .entries
             .iter()
-            .filter(|(relative, entry)| !entries_match(input.baseline.entries.get(relative.as_str()), Some(entry)))
+            .filter(|(relative, entry)| {
+                !entries_match(input.baseline.entries.get(relative.as_str()), Some(entry))
+            })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         changed.sort_by(|a, b| a.0.cmp(&b.0));
@@ -292,8 +303,22 @@ pub struct MergeInput<'a> {
     pub baseline: &'a DirectorySnapshot,
     pub source_dir: &'a Path,
     pub target_dir: &'a Path,
-    pub before_apply: Option<Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send + 'a>> + Send + 'a>>,
-    pub after_apply: Option<Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send + 'a>> + Send + 'a>>,
+    pub before_apply: Option<
+        Box<
+            dyn FnOnce() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = std::io::Result<()>> + Send + 'a>,
+                > + Send
+                + 'a,
+        >,
+    >,
+    pub after_apply: Option<
+        Box<
+            dyn FnOnce() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = std::io::Result<()>> + Send + 'a>,
+                > + Send
+                + 'a,
+        >,
+    >,
 }
 
 /// Acquire a directory merge lock and run `f` while holding it.
@@ -314,10 +339,7 @@ async fn acquire_merge_lock(lock_dir: &Path) -> std::io::Result<MergeLockGuard> 
     loop {
         match fs::create_dir(lock_dir).await {
             Ok(()) => {
-                let owner_json = format!(
-                    "{{\"pid\":{}}}\n",
-                    std::process::id()
-                );
+                let owner_json = format!("{{\"pid\":{}}}\n", std::process::id());
                 fs::write(lock_dir.join("owner.json"), owner_json).await?;
                 return Ok(MergeLockGuard {
                     lock_dir: lock_dir.to_path_buf(),
@@ -479,15 +501,18 @@ mod tests {
         std::fs::write(dir.join("a.txt"), b"content a").unwrap();
         std::fs::write(dir.join("subdir/b.txt"), b"content b").unwrap();
 
-        let snap = capture_directory_snapshot(
-            &dir,
-            CaptureOptions { exclude: vec![] },
-        )
-        .await
-        .unwrap();
+        let snap = capture_directory_snapshot(&dir, CaptureOptions { exclude: vec![] })
+            .await
+            .unwrap();
 
-        assert!(matches!(snap.entries.get("a.txt"), Some(SnapshotEntry::File { .. })));
-        assert!(matches!(snap.entries.get("subdir"), Some(SnapshotEntry::Dir)));
+        assert!(matches!(
+            snap.entries.get("a.txt"),
+            Some(SnapshotEntry::File { .. })
+        ));
+        assert!(matches!(
+            snap.entries.get("subdir"),
+            Some(SnapshotEntry::Dir)
+        ));
         assert!(matches!(
             snap.entries.get("subdir/b.txt"),
             Some(SnapshotEntry::File { .. })
@@ -526,7 +551,10 @@ mod tests {
     async fn read_snapshot_entry_returns_file_entry() {
         let dir = tempdir();
         std::fs::write(dir.join("file.txt"), b"hello").unwrap();
-        let entry = read_snapshot_entry(&dir, "file.txt").await.unwrap().unwrap();
+        let entry = read_snapshot_entry(&dir, "file.txt")
+            .await
+            .unwrap()
+            .unwrap();
         match entry {
             SnapshotEntry::File { hash, .. } => {
                 assert_eq!(
@@ -546,8 +574,9 @@ mod tests {
             mode: 0o644,
             hash: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".to_string(),
         };
-        let result =
-            directory_entry_matches_baseline(&dir, "file.txt", &baseline).await.unwrap();
+        let result = directory_entry_matches_baseline(&dir, "file.txt", &baseline)
+            .await
+            .unwrap();
         assert!(result);
     }
 
@@ -559,8 +588,9 @@ mod tests {
             mode: 0o644,
             hash: "oldhash".to_string(),
         };
-        let result =
-            directory_entry_matches_baseline(&dir, "file.txt", &baseline).await.unwrap();
+        let result = directory_entry_matches_baseline(&dir, "file.txt", &baseline)
+            .await
+            .unwrap();
         assert!(!result);
     }
 

@@ -1,15 +1,15 @@
 //! Integration tests for R399: git-workspace-sync + remote-managed-runtime.
 
 use pc_acpx::git_workspace_sync::{
-    build_remote_git_delta_bundle_script, create_imported_git_ref,
-    create_remote_git_export_ref, is_missing_git_prerequisite_error,
-    is_missing_git_prerequisite_error_anyhow, RemoteGitDeltaBundleOptions,
+    build_remote_git_delta_bundle_script, create_imported_git_ref, create_remote_git_export_ref,
+    is_missing_git_prerequisite_error, is_missing_git_prerequisite_error_anyhow,
+    RemoteGitDeltaBundleOptions,
 };
 use pc_acpx::remote_managed_runtime::{
     build_remote_execution_session_identity, expand_heavy_dir_excludes,
-    git_backed_workspace_excludes, remote_execution_session_matches,
-    resolve_asset_remote_dir, resolve_run_workspace_remote_dir,
-    resolve_runtime_root_dir, should_exclude_heavy_dir, SshRemoteExecutionSpec,
+    git_backed_workspace_excludes, remote_execution_session_matches, resolve_asset_remote_dir,
+    resolve_run_workspace_remote_dir, resolve_runtime_root_dir, should_exclude_heavy_dir,
+    SshRemoteExecutionSpec,
 };
 use serde_json::json;
 
@@ -102,9 +102,18 @@ fn remote_runtime_path_layout() {
     let run_ws = resolve_run_workspace_remote_dir(workspace, run_id);
     let asset = resolve_asset_remote_dir(&runtime_root, asset_key);
 
-    assert_eq!(runtime_root, "/home/paperclip/work/.paperclip-runtime/claude_local");
-    assert_eq!(run_ws, "/home/paperclip/work/.paperclip-runtime/runs/run_xyz_123/workspace");
-    assert_eq!(asset, "/home/paperclip/work/.paperclip-runtime/claude_local/auth.json");
+    assert_eq!(
+        runtime_root,
+        "/home/paperclip/work/.paperclip-runtime/claude_local"
+    );
+    assert_eq!(
+        run_ws,
+        "/home/paperclip/work/.paperclip-runtime/runs/run_xyz_123/workspace"
+    );
+    assert_eq!(
+        asset,
+        "/home/paperclip/work/.paperclip-runtime/claude_local/auth.json"
+    );
 }
 
 #[test]
@@ -134,7 +143,9 @@ fn remote_session_identity_round_trip() {
 #[test]
 fn heavy_dir_excludes_block_node_modules_in_nested_paths() {
     assert!(should_exclude_heavy_dir("node_modules/foo"));
-    assert!(should_exclude_heavy_dir("packages/app/node_modules/index.js"));
+    assert!(should_exclude_heavy_dir(
+        "packages/app/node_modules/index.js"
+    ));
     assert!(should_exclude_heavy_dir("a/.cache/data"));
     assert!(should_exclude_heavy_dir("dist/output.txt"));
     assert!(should_exclude_heavy_dir("coverage/lcov.info"));

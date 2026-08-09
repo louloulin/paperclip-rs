@@ -154,7 +154,10 @@ mod tests {
         assert_eq!(session_params_session_id(&params), Some("session-123"));
         assert_eq!(session_params_cwd(&params), Some("/remote/workspace"));
         let remote = session_params_remote_execution(&params).unwrap();
-        assert_eq!(remote.get("host").and_then(Value::as_str), Some("127.0.0.1"));
+        assert_eq!(
+            remote.get("host").and_then(Value::as_str),
+            Some("127.0.0.1")
+        );
         assert_eq!(remote.get("port").and_then(Value::as_u64), Some(2222));
     }
 

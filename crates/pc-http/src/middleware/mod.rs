@@ -20,10 +20,10 @@ pub use access_log::AccessLogLayer;
 pub use auth::{auth_layer, require_auth, require_company_access};
 pub use body_limit::BodyLimitLayer;
 pub use cors::{CorsConfig, CorsLayer, DEFAULT_ALLOWED_ORIGINS};
+pub use csrf::{
+    csrf_decision, csrf_layer, csrf_set_cookie, generate_csrf_token, CsrfDenial, CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME, CSRF_TOKEN_BYTES,
+};
 pub use redaction::{redact_json, redact_text, RedactionConfig};
 pub use request_id::{RequestId, RequestIdLayer, REQUEST_ID_HEADER};
-pub use csrf::{
-    csrf_decision, csrf_layer, csrf_set_cookie, generate_csrf_token, CsrfDenial,
-    CSRF_COOKIE_NAME, CSRF_HEADER_NAME, CSRF_TOKEN_BYTES,
-};
 pub use stack::{apply_default_middleware, default_redaction};

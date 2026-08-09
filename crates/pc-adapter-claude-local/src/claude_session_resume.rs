@@ -180,16 +180,10 @@ pub fn decide_claude_session_resume(input: &SessionResumeInput<'_>) -> SessionRe
         input.effective_execution_cwd,
         input.execution_target_is_remote,
     );
-    let remote_matches = remote_execution_matches(
-        input.runtime_remote_execution,
-        input.execution_target,
-    );
+    let remote_matches =
+        remote_execution_matches(input.runtime_remote_execution, input.execution_target);
 
-    let can_resume = valid_uuid
-        && matching_bundle
-        && matching_mcp
-        && cwd_matches
-        && remote_matches;
+    let can_resume = valid_uuid && matching_bundle && matching_mcp && cwd_matches && remote_matches;
     decision.can_resume = can_resume;
 
     if !valid_uuid {
@@ -361,7 +355,11 @@ mod tests {
 
     #[test]
     fn cwd_match_local_empty_runtime_always_true() {
-        assert!(session_cwd_matches_execution_target("", "/local/cwd", false));
+        assert!(session_cwd_matches_execution_target(
+            "",
+            "/local/cwd",
+            false
+        ));
     }
 
     #[test]
@@ -453,10 +451,7 @@ mod tests {
         assert!(!decision.can_resume);
         assert_eq!(decision.log_lines.len(), 1);
         assert!(decision.log_lines[0].contains("not a valid UUID"));
-        assert_eq!(
-            decision.resume_session_id("not-a-uuid"),
-            None
-        );
+        assert_eq!(decision.resume_session_id("not-a-uuid"), None);
     }
 
     #[test]
@@ -470,7 +465,10 @@ mod tests {
         );
         let decision = decide_claude_session_resume(&input);
         assert!(!decision.can_resume);
-        assert!(decision.log_lines.iter().any(|l| l.contains("prompt bundle")));
+        assert!(decision
+            .log_lines
+            .iter()
+            .any(|l| l.contains("prompt bundle")));
     }
 
     #[test]
@@ -498,7 +496,10 @@ mod tests {
         );
         let decision = decide_claude_session_resume(&input);
         assert!(!decision.can_resume);
-        assert!(decision.log_lines.iter().any(|l| l.contains("does not match")));
+        assert!(decision
+            .log_lines
+            .iter()
+            .any(|l| l.contains("does not match")));
     }
 
     #[test]
@@ -517,7 +518,10 @@ mod tests {
         // 远程 target 且 runtime 端未指定 remoteExecution 时，与 current target 仍视为匹配
         assert!(decision.can_resume);
         // 仍然记录 "does not match ... Starting a fresh remote session" 日志
-        assert!(decision.log_lines.iter().any(|l| l.contains("Starting a fresh remote session")));
+        assert!(decision
+            .log_lines
+            .iter()
+            .any(|l| l.contains("Starting a fresh remote session")));
     }
 
     #[test]

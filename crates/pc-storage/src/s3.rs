@@ -121,11 +121,6 @@ fn amz_date(now: chrono::DateTime<Utc>) -> (String, String) {
     )
 }
 
-struct SignedRequest {
-    url: String,
-    headers: Vec<(String, String)>,
-}
-
 fn build_signed_request(
     method: &str,
     host_value: &str,
@@ -196,16 +191,58 @@ fn build_signed_request(
     (payload_hash.to_string(), all)
 }
 
-#[derive(Debug, Deserialize)]
-struct ListObjectsResponse {
-    #[serde(rename = "Contents", default)]
-    contents: Vec<ListObjectEntry>,
+/// S3 ListObjectsV2 实际返回 XML，不是 JSON。最小化解析：
+/// 抽出所有 `<Contents>...<Key>...</Key>...</Contents>` 块中的 `<Key>` 内容。
+/// 不引入 XML crate 依赖；该实现只处理本工程需要的最小结构。
+fn parse_list_objects_v2_keys(xml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = xml.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // 找 <Contents> 开标签（跳过 <Contents><Key> 自闭合变体如 <ETag>）
+        let start = match find_subslice(&bytes[i..], b"<Contents>") {
+            Some(o) => i + o,
+            None => break,
+        };
+        let after = start + b"<Contents>".len();
+        let end = match find_subslice(&bytes[after..], b"</Contents>") {
+            Some(o) => after + o,
+            None => break,
+        };
+        let block = &bytes[after..end];
+        // 在 block 中找 <Key>...</Key>
+        if let Some(k) = extract_tag(block, b"Key") {
+            out.push(k);
+        }
+        i = end + b"</Contents>".len();
+    }
+    out
 }
 
-#[derive(Debug, Deserialize)]
-struct ListObjectEntry {
-    #[serde(rename = "Key")]
-    key: String,
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn extract_tag(block: &[u8], tag: &[u8]) -> Option<String> {
+    let open = {
+        let mut v = Vec::with_capacity(tag.len() + 1);
+        v.push(b'<');
+        v.extend_from_slice(tag);
+        v.push(b'>');
+        v
+    };
+    let close = {
+        let mut v = Vec::with_capacity(tag.len() + 2);
+        v.push(b'<');
+        v.push(b'/');
+        v.extend_from_slice(tag);
+        v.push(b'>');
+        v
+    };
+    let s = find_subslice(block, &open)?;
+    let after = s + open.len();
+    let e = find_subslice(&block[after..], &close)?;
+    Some(String::from_utf8_lossy(&block[after..after + e]).into_owned())
 }
 
 #[async_trait]
@@ -435,15 +472,12 @@ impl StorageProvider for S3Storage {
                 resp.status()
             )));
         }
-        let body: ListObjectsResponse = resp
-            .json()
+        let text = resp
+            .text()
             .await
-            .map_err(|e| StorageError::Backend(format!("s3 list_prefix decode: {e}")))?;
-        Ok(body
-            .contents
-            .into_iter()
-            .map(|c| ObjectKey::new(c.key))
-            .collect())
+            .map_err(|e| StorageError::Backend(format!("s3 list_prefix body: {e}")))?;
+        let keys = parse_list_objects_v2_keys(&text);
+        Ok(keys.into_iter().map(ObjectKey::new).collect())
     }
 
     async fn presign_get(

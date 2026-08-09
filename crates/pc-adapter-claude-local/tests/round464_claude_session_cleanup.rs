@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pc_adapter_api::{Adapter, AdapterExecutionContext, AdapterEventSink};
+use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_claude_local::claude_session_cleanup::{
     build_poisoned_jsonl_path, encode_project_cwd,
 };
@@ -74,8 +74,8 @@ async fn script_basic_invocation_works() {
 #[tokio::test]
 async fn poisoned_session_unlinks_jsonl_file() {
     let tmp = TempDir::new("cleanup");
-    let counter_path = std::env::temp_dir()
-        .join(format!("paperclip-r464-counter-{}", Uuid::new_v4()));
+    let counter_path =
+        std::env::temp_dir().join(format!("paperclip-r464-counter-{}", Uuid::new_v4()));
     let script = copy_fixture_to_temp("claude_poisoned_session.sh");
     let ctx = make_ctx_with_claude_home(script.to_str().unwrap(), tmp.path.to_str().unwrap());
     let mut ctx = ctx;
@@ -124,8 +124,8 @@ async fn poisoned_session_unlinks_jsonl_file() {
 #[tokio::test]
 async fn poisoned_session_missing_jsonl_is_noop() {
     let tmp = TempDir::new("cleanup-missing");
-    let counter_path = std::env::temp_dir()
-        .join(format!("paperclip-r464-counter-{}", Uuid::new_v4()));
+    let counter_path =
+        std::env::temp_dir().join(format!("paperclip-r464-counter-{}", Uuid::new_v4()));
     let script = copy_fixture_to_temp("claude_poisoned_session.sh");
     let ctx = make_ctx_with_claude_home(script.to_str().unwrap(), tmp.path.to_str().unwrap());
     let mut ctx = ctx;

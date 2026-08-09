@@ -4,7 +4,9 @@ use pc_acpx::runtime_progress::{
     create_runtime_progress_reporter, RuntimeProgressDirection, RuntimeProgressPhase,
     RuntimeProgressReporterOptions, RuntimeProgressTarget,
 };
-use pc_acpx::session_compaction::{has_session_compaction_thresholds, resolve_session_compaction_policy, SessionCompactionSource};
+use pc_acpx::session_compaction::{
+    has_session_compaction_thresholds, resolve_session_compaction_policy, SessionCompactionSource,
+};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 

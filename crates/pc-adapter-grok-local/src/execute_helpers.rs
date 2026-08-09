@@ -49,7 +49,7 @@ mod tests {
         pairs
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-        .collect()
+            .collect()
     }
 
     #[test]
@@ -63,10 +63,7 @@ mod tests {
     #[test]
     fn billing_xai_key_Api() {
         let env = env_from(&[("XAI_API_KEY", "xai-test")]);
-        assert_eq!(
-            resolve_grok_billing_type(&env),
-            GrokBillingType::Api
-        );
+        assert_eq!(resolve_grok_billing_type(&env), GrokBillingType::Api);
     }
 
     #[test]

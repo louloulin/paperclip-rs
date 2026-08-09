@@ -6,9 +6,9 @@
 //! module ports the session-identity type, the equality check, and the
 //! exclude-pattern generator.
 
-use serde::{Deserialize, Serialize};
 use crate::exclude_patterns::exclude_pattern_matches;
 use crate::git_workspace_sync::GIT_ARCHIVE_EXCLUDES;
+use serde::{Deserialize, Serialize};
 
 /// Local mirror of `SshRemoteExecutionSpec` from `ssh.ts`. The full ssh
 /// module is deferred; for now we only need the fields that participate
@@ -115,11 +115,23 @@ pub fn remote_execution_session_matches(
         Some(o) => o,
         None => return false,
     };
-    let transport = saved_obj.get("transport").and_then(|v| v.as_str()).unwrap_or("");
+    let transport = saved_obj
+        .get("transport")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let host = saved_obj.get("host").and_then(|v| v.as_str()).unwrap_or("");
-    let username = saved_obj.get("username").and_then(|v| v.as_str()).unwrap_or("");
-    let remote_cwd = saved_obj.get("remoteCwd").and_then(|v| v.as_str()).unwrap_or("");
-    let port = saved_obj.get("port").and_then(|v| v.as_u64()).map(|p| p as u16);
+    let username = saved_obj
+        .get("username")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let remote_cwd = saved_obj
+        .get("remoteCwd")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let port = saved_obj
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .map(|p| p as u16);
 
     transport == current_identity.transport
         && host == current_identity.host
@@ -236,7 +248,10 @@ pub fn resolve_asset_dirs(
 ) -> std::collections::BTreeMap<String, String> {
     let mut dirs = std::collections::BTreeMap::new();
     for asset in assets {
-        dirs.insert(asset.key.clone(), resolve_asset_remote_dir(runtime_root_dir, &asset.key));
+        dirs.insert(
+            asset.key.clone(),
+            resolve_asset_remote_dir(runtime_root_dir, &asset.key),
+        );
     }
     dirs
 }
@@ -432,8 +447,14 @@ mod tests {
     #[test]
     fn session_match_returns_false_for_non_object_saved() {
         let current = sample_spec();
-        assert!(!remote_execution_session_matches(&json!("not an object"), Some(&current)));
-        assert!(!remote_execution_session_matches(&json!(null), Some(&current)));
+        assert!(!remote_execution_session_matches(
+            &json!("not an object"),
+            Some(&current)
+        ));
+        assert!(!remote_execution_session_matches(
+            &json!(null),
+            Some(&current)
+        ));
     }
 
     #[test]
@@ -479,8 +500,12 @@ mod tests {
 
     #[test]
     fn additional_source_local_path_is_absolute_detects_absolute() {
-        assert!(additional_source_local_path_is_absolute("/workspace/project-a"));
-        assert!(!additional_source_local_path_is_absolute("workspace/project-a"));
+        assert!(additional_source_local_path_is_absolute(
+            "/workspace/project-a"
+        ));
+        assert!(!additional_source_local_path_is_absolute(
+            "workspace/project-a"
+        ));
         assert!(!additional_source_local_path_is_absolute("relative"));
         assert!(!additional_source_local_path_is_absolute(""));
     }
@@ -575,14 +600,8 @@ mod tests {
             },
         ];
         let dirs = resolve_additional_source_dirs("/runtime/root", &sources);
-        assert_eq!(
-            dirs.get("proj-a").unwrap(),
-            "/runtime/root/project-proj-a"
-        );
-        assert_eq!(
-            dirs.get("proj-d").unwrap(),
-            "/runtime/root/project-proj-d"
-        );
+        assert_eq!(dirs.get("proj-a").unwrap(), "/runtime/root/project-proj-a");
+        assert_eq!(dirs.get("proj-d").unwrap(), "/runtime/root/project-proj-d");
         assert!(!dirs.contains_key("proj-b"));
         assert!(!dirs.contains_key("bad/segment"));
         assert_eq!(dirs.len(), 2);

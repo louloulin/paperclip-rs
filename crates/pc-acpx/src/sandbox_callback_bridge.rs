@@ -87,8 +87,7 @@ impl SandboxCallbackBridgeRouteRule {
 
 /// The default route allowlist for the in-sandbox heartbeat skill.
 /// Mirrors Node `DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST`.
-pub fn default_sandbox_callback_bridge_route_allowlist()
--> Vec<SandboxCallbackBridgeRouteRule> {
+pub fn default_sandbox_callback_bridge_route_allowlist() -> Vec<SandboxCallbackBridgeRouteRule> {
     vec![
         // Identity, inbox, agent self-management
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/agents/me$"),
@@ -96,20 +95,11 @@ pub fn default_sandbox_callback_bridge_route_allowlist()
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/agents/me/inbox/mine$"),
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/agents/[^/]+$"),
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/agents/[^/]+/skills$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/agents/[^/]+/skills/sync$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "PATCH",
-            r"^/api/agents/[^/]+/instructions-path$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/agents/[^/]+/skills/sync$"),
+        SandboxCallbackBridgeRouteRule::new("PATCH", r"^/api/agents/[^/]+/instructions-path$"),
         // Company-level reads
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/companies/[^/]+$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/companies/[^/]+/dashboard$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/companies/[^/]+/dashboard$"),
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/companies/[^/]+/agents$"),
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/companies/[^/]+/issues$"),
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/companies/[^/]+/projects$"),
@@ -122,129 +112,59 @@ pub fn default_sandbox_callback_bridge_route_allowlist()
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/goals/[^/]+$"),
         // Issue lifecycle
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/issues/[^/]+/heartbeat-context$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/issues/[^/]+/comments(?:/[^/]+)?$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/issues/[^/]+/comments$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/issues/[^/]+/documents(?:/[^/]+)?$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+/heartbeat-context$"),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+/comments(?:/[^/]+)?$"),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/issues/[^/]+/comments$"),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+/documents(?:/[^/]+)?$"),
         SandboxCallbackBridgeRouteRule::new(
             "GET",
             r"^/api/issues/[^/]+/documents/[^/]+/revisions$",
         ),
-        SandboxCallbackBridgeRouteRule::new(
-            "PUT",
-            r"^/api/issues/[^/]+/documents/[^/]+$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("PUT", r"^/api/issues/[^/]+/documents/[^/]+$"),
         SandboxCallbackBridgeRouteRule::new("POST", r"^/api/issues/[^/]+/checkout$"),
         SandboxCallbackBridgeRouteRule::new("POST", r"^/api/issues/[^/]+/release$"),
         SandboxCallbackBridgeRouteRule::new("PATCH", r"^/api/issues/[^/]+$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/issues/[^/]+/approvals$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+/approvals$"),
         // Work products
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/issues/[^/]+/work-products$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/issues/[^/]+/work-products$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "PATCH",
-            r"^/api/work-products/[^/]+$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+/work-products$"),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/issues/[^/]+/work-products$"),
+        SandboxCallbackBridgeRouteRule::new("PATCH", r"^/api/work-products/[^/]+$"),
         // Issue-thread interactions
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/issues/[^/]+/interactions(?:/[^/]+)?$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/issues/[^/]+/interactions$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/issues/[^/]+/interactions(?:/[^/]+)?$"),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/issues/[^/]+/interactions$"),
         SandboxCallbackBridgeRouteRule::new(
             "POST",
             r"^/api/issues/[^/]+/interactions/[^/]+/(?:accept|reject|respond)$",
         ),
         // Subtasks / delegation
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/companies/[^/]+/issues$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/companies/[^/]+/issues$"),
         // Approvals
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/approvals/[^/]+$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/approvals/[^/]+/issues$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/approvals/[^/]+/comments$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/approvals/[^/]+/comments$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/companies/[^/]+/approvals$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/approvals/[^/]+/issues$"),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/approvals/[^/]+/comments$"),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/approvals/[^/]+/comments$"),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/companies/[^/]+/approvals$"),
         // Execution workspaces
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/execution-workspaces/[^/]+$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/execution-workspaces/[^/]+$"),
         SandboxCallbackBridgeRouteRule::new(
             "POST",
             r"^/api/execution-workspaces/[^/]+/runtime-services/(?:start|stop|restart)$",
         ),
         // Routines
         SandboxCallbackBridgeRouteRule::new("GET", r"^/api/routines/[^/]+$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "GET",
-            r"^/api/routines/[^/]+/runs$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/companies/[^/]+/routines$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("GET", r"^/api/routines/[^/]+/runs$"),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/companies/[^/]+/routines$"),
         SandboxCallbackBridgeRouteRule::new("PATCH", r"^/api/routines/[^/]+$"),
         SandboxCallbackBridgeRouteRule::new("POST", r"^/api/routines/[^/]+/run$"),
-        SandboxCallbackBridgeRouteRule::new(
-            "POST",
-            r"^/api/routines/[^/]+/triggers$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "PATCH",
-            r"^/api/routine-triggers/[^/]+$",
-        ),
-        SandboxCallbackBridgeRouteRule::new(
-            "DELETE",
-            r"^/api/routine-triggers/[^/]+$",
-        ),
+        SandboxCallbackBridgeRouteRule::new("POST", r"^/api/routines/[^/]+/triggers$"),
+        SandboxCallbackBridgeRouteRule::new("PATCH", r"^/api/routine-triggers/[^/]+$"),
+        SandboxCallbackBridgeRouteRule::new("DELETE", r"^/api/routine-triggers/[^/]+$"),
     ]
 }
 
 /// The default header allowlist for the sandbox callback bridge.
-pub const DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST: &[&str] = &[
-    "accept",
-    "content-type",
-    "if-match",
-    "if-none-match",
-];
+pub const DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST: &[&str] =
+    &["accept", "content-type", "if-match", "if-none-match"];
 
 /// Compute the directory layout for a bridge root. Mirrors Node
 /// `sandboxCallbackBridgeDirectories`.
@@ -300,8 +220,7 @@ pub fn now_unix_ms() -> u64 {
 /// 毫秒精度 + `Z` 后缀）。
 #[must_use]
 pub fn now_rfc3339() -> String {
-    chrono::Utc::now()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Authorize a request against the route allowlist. Returns `Ok(())`
@@ -342,12 +261,9 @@ pub fn sanitize_sandbox_callback_bridge_headers(
     headers: &std::collections::BTreeMap<String, String>,
     allowlist: Option<&[&str]>,
 ) -> std::collections::BTreeMap<String, String> {
-    let allowlist: &[&str] =
-        allowlist.unwrap_or(DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST);
-    let allowed: std::collections::HashSet<String> = allowlist
-        .iter()
-        .map(|h| h.to_lowercase())
-        .collect();
+    let allowlist: &[&str] = allowlist.unwrap_or(DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST);
+    let allowed: std::collections::HashSet<String> =
+        allowlist.iter().map(|h| h.to_lowercase()).collect();
     headers
         .iter()
         .filter(|(k, _)| allowed.contains(&k.to_lowercase()))
@@ -460,7 +376,9 @@ pub struct BridgeEnvInput {
 /// Build the env vars that the bridge server / worker consume.
 /// Mirrors Node `buildSandboxCallbackBridgeEnv`.
 #[must_use]
-pub fn build_sandbox_callback_bridge_env(input: &BridgeEnvInput) -> std::collections::BTreeMap<String, String> {
+pub fn build_sandbox_callback_bridge_env(
+    input: &BridgeEnvInput,
+) -> std::collections::BTreeMap<String, String> {
     let host = input
         .host
         .as_deref()
@@ -494,8 +412,14 @@ pub fn build_sandbox_callback_bridge_env(input: &BridgeEnvInput) -> std::collect
         "PAPERCLIP_API_BRIDGE_MODE".to_string(),
         "queue_v1".to_string(),
     );
-    env.insert("PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(), input.queue_dir.clone());
-    env.insert("PAPERCLIP_BRIDGE_TOKEN".to_string(), input.bridge_token.clone());
+    env.insert(
+        "PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(),
+        input.queue_dir.clone(),
+    );
+    env.insert(
+        "PAPERCLIP_BRIDGE_TOKEN".to_string(),
+        input.bridge_token.clone(),
+    );
     env.insert("PAPERCLIP_BRIDGE_HOST".to_string(), host);
     env.insert("PAPERCLIP_BRIDGE_PORT".to_string(), port);
     env.insert(
@@ -804,10 +728,7 @@ pub fn decide_bridge_worker_should_stop_processing(
 /// stopDeadline = Date.now() + drainMs`）。
 /// 用 saturating_add 避免时间戳溢出。
 #[must_use]
-pub fn decide_bridge_worker_stop_deadline(
-    now_ms: u64,
-    drain_timeout_ms: Option<u64>,
-) -> u64 {
+pub fn decide_bridge_worker_stop_deadline(now_ms: u64, drain_timeout_ms: Option<u64>) -> u64 {
     let drain_ms = normalize_timeout_ms(drain_timeout_ms, DEFAULT_BRIDGE_STOP_TIMEOUT_MS);
     now_ms.saturating_add(drain_ms)
 }
@@ -1011,10 +932,7 @@ pub fn build_bridge_server_start_script(input: &BridgeServerStartScriptInput) ->
             shell_quote(&input.log_file)
         ),
         "pid=$!".to_string(),
-        format!(
-            "printf '%s\\n' \"$pid\" > {}",
-            shell_quote(&input.pid_file)
-        ),
+        format!("printf '%s\\n' \"$pid\" > {}", shell_quote(&input.pid_file)),
         "printf '{\"pid\":%s}\\n' \"$pid\"".to_string(),
     ]
     .join("\n")
@@ -1127,9 +1045,7 @@ pub fn parse_bridge_ready_data(raw: &str) -> Result<BridgeReadyData, String> {
         _ => 0,
     };
     if port == 0 {
-        return Err(
-            "Sandbox callback bridge did not report a listening port.".to_string(),
-        );
+        return Err("Sandbox callback bridge did not report a listening port.".to_string());
     }
     let base_url = match value.get("baseUrl") {
         Some(serde_json::Value::String(s)) => {
@@ -1329,9 +1245,7 @@ pub struct SyncTextFileScriptInput {
 /// （对齐 Node L846-904：hash_file 双工具探测、pid 锁、内容哈希跳过、
 /// base64 上传、完整性校验、原子 rename）。
 #[must_use]
-pub fn build_sync_text_file_with_hash_skip_script(
-    input: &SyncTextFileScriptInput,
-) -> String {
+pub fn build_sync_text_file_with_hash_skip_script(input: &SyncTextFileScriptInput) -> String {
     let remote_partial = remote_partial_path(&input.remote_path);
     let remote_upload = remote_upload_path(&input.remote_path);
     let acquire = build_remote_pid_lock_acquire_script(
@@ -1368,7 +1282,8 @@ pub fn build_sync_text_file_with_hash_skip_script(
     lines.extend([
         "current_sha=\"\"".to_string(),
         "if [ -f \"$remote_path\" ]; then".to_string(),
-        "  current_sha=\"$(hash_file \"$remote_path\" 2>/dev/null)\" || current_sha=\"\"".to_string(),
+        "  current_sha=\"$(hash_file \"$remote_path\" 2>/dev/null)\" || current_sha=\"\""
+            .to_string(),
         "fi".to_string().to_string(),
         "if [ -n \"$current_sha\" ] && [ \"$current_sha\" = \"$expected_sha\" ]; then".to_string(),
         "  printf '{\"uploaded\":false}\\n'".to_string(),
@@ -1394,7 +1309,9 @@ pub fn build_sync_text_file_with_hash_skip_script(
             ))
         ),
         "fi".to_string().to_string(),
-        "mv \"$remote_partial\" \"$remote_path\"".to_string().to_string(),
+        "mv \"$remote_partial\" \"$remote_path\""
+            .to_string()
+            .to_string(),
         "printf '{\"uploaded\":true}\\n'".to_string().to_string(),
     ]);
     lines.join("\n")
@@ -1404,9 +1321,8 @@ pub fn build_sync_text_file_with_hash_skip_script(
 /// `null`/缺字段 → false；无效 JSON → `{label} sync wrote invalid result JSON: ...`）。
 pub fn parse_sync_text_file_result(stdout: &str, label: &str) -> Result<bool, String> {
     let trimmed = stdout.trim();
-    let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|error| {
-        format!("{label} sync wrote invalid result JSON: {error}")
-    })?;
+    let value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|error| format!("{label} sync wrote invalid result JSON: {error}"))?;
     Ok(value.get("uploaded").and_then(|v| v.as_bool()) == Some(true))
 }
 
@@ -1507,10 +1423,7 @@ pub fn build_write_text_file_steps(remote_path: &str, body: &str) -> Vec<ClientS
 /// 写响应文件脚本（对齐 Node writeResponseFile：
 /// pid 锁 + requestPath 存在性检查 + 幂等 + temp+mv 原子写）。
 #[must_use]
-pub fn build_write_response_file_script(
-    response_path: &str,
-    request_path: Option<&str>,
-) -> String {
+pub fn build_write_response_file_script(response_path: &str, request_path: Option<&str>) -> String {
     let response_dir = posix_dirname(response_path);
     let temp_path = format!("{response_path}.tmp");
     let lock_dir = format!("{response_path}.paperclip-write.lock");
@@ -1553,9 +1466,7 @@ pub fn build_write_response_file_script(
 /// 解析响应写结果（对齐 Node `JSON.parse(stdout.trim())?.wrote === true`）。
 pub fn parse_write_response_file_result(stdout: &str) -> Result<bool, String> {
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|error| {
-        format!(
-            "Sandbox callback bridge response write wrote invalid result JSON: {error}"
-        )
+        format!("Sandbox callback bridge response write wrote invalid result JSON: {error}")
     })?;
     Ok(value.get("wrote").and_then(|v| v.as_bool()) == Some(true))
 }
@@ -1627,15 +1538,14 @@ pub fn sync_sandbox_callback_bridge_entrypoint_plan(
     let remote_entrypoint = posix_join(asset_remote_dir, SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT);
     let sha256 = sha256_hex_utf8(entrypoint_source);
     let lock_dir = posix_join(asset_remote_dir, ".paperclip-bridge-upload.lock");
-    let uploaded_decision_script = build_sync_text_file_with_hash_skip_script(
-        &SyncTextFileScriptInput {
+    let uploaded_decision_script =
+        build_sync_text_file_with_hash_skip_script(&SyncTextFileScriptInput {
             remote_dir: asset_remote_dir.to_string(),
             remote_path: remote_entrypoint.clone(),
             lock_dir: lock_dir.clone(),
             expected_sha: sha256.clone(),
             label: "Sandbox callback bridge entrypoint".to_string(),
-        },
-    );
+        });
     SyncBridgeEntrypointPlan {
         remote_entrypoint,
         sha256,
@@ -1689,18 +1599,18 @@ pub fn start_sandbox_callback_bridge_server_plan(
     let timeout_ms = normalize_timeout_ms(input.timeout_ms, DEFAULT_BRIDGE_RESPONSE_TIMEOUT_MS);
     let shell_command = preferred_shell_for_sandbox(input.shell_command.as_deref());
     let directories = sandbox_callback_bridge_directories(&input.queue_dir);
-    let (remote_entrypoint, entrypoint_sync) =
-        if let Some(source) = input.bridge_asset_source.as_deref() {
-            let plan =
-                sync_sandbox_callback_bridge_entrypoint_plan(&input.asset_remote_dir, source);
-            let entrypoint = plan.remote_entrypoint.clone();
-            (entrypoint, Some(plan))
-        } else {
-            (
-                posix_join(&input.asset_remote_dir, SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT),
-                None,
-            )
-        };
+    let (remote_entrypoint, entrypoint_sync) = if let Some(source) =
+        input.bridge_asset_source.as_deref()
+    {
+        let plan = sync_sandbox_callback_bridge_entrypoint_plan(&input.asset_remote_dir, source);
+        let entrypoint = plan.remote_entrypoint.clone();
+        (entrypoint, Some(plan))
+    } else {
+        (
+            posix_join(&input.asset_remote_dir, SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT),
+            None,
+        )
+    };
     let env = build_sandbox_callback_bridge_env(&BridgeEnvInput {
         queue_dir: input.queue_dir.clone(),
         bridge_token: input.bridge_token.clone(),
@@ -1764,7 +1674,10 @@ mod tests {
         assert_eq!(DEFAULT_BRIDGE_MAX_QUEUE_DEPTH, 64);
         assert_eq!(DEFAULT_BRIDGE_MAX_BODY_BYTES, 256 * 1024);
         assert_eq!(REMOTE_WRITE_BASE64_CHUNK_SIZE, 32 * 1024);
-        assert_eq!(SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT, "paperclip-bridge-server.mjs");
+        assert_eq!(
+            SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT,
+            "paperclip-bridge-server.mjs"
+        );
     }
 
     #[test]
@@ -1781,9 +1694,12 @@ mod tests {
             "Number(process.env.PAPERCLIP_BRIDGE_MAX_BODY_BYTES || \"{DEFAULT_BRIDGE_MAX_BODY_BYTES}\")"
         )));
         // allowlist 以紧凑 JSON 数组嵌入（对齐 Node JSON.stringify）。
-        let allowlist_json = serde_json::to_string(DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST)
-            .expect("allowlist serializes");
-        assert!(source.contains(&format!("const allowedHeaders = new Set({allowlist_json});")));
+        let allowlist_json =
+            serde_json::to_string(DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST)
+                .expect("allowlist serializes");
+        assert!(source.contains(&format!(
+            "const allowedHeaders = new Set({allowlist_json});"
+        )));
         // 模板关键片段（token 校验 / 队列 / ready.json）。
         assert!(source.contains("timingSafeEqual"));
         assert!(source.contains("Bridge request queue is full."));
@@ -1795,7 +1711,9 @@ mod tests {
     fn server_source_starts_with_imports_and_ends_with_listen() {
         let source = get_sandbox_callback_bridge_server_source();
         assert!(source.starts_with("import { randomUUID, timingSafeEqual }"));
-        assert!(source.trim_end().ends_with("await fs.rename(tempReadyFile, readyFile);\n});"));
+        assert!(source
+            .trim_end()
+            .ends_with("await fs.rename(tempReadyFile, readyFile);\n});"));
     }
 
     #[test]
@@ -1840,31 +1758,24 @@ mod tests {
 
     #[test]
     fn authorize_allows_listed_routes() {
-        assert!(
-            authorize_sandbox_callback_bridge_request_with_routes(
-                "GET",
-                "/api/agents/me",
-                None,
-            )
-            .is_ok()
-        );
-        assert!(
-            authorize_sandbox_callback_bridge_request_with_routes(
-                "POST",
-                "/api/issues/abc/checkout",
-                None,
-            )
-            .is_ok()
-        );
+        assert!(authorize_sandbox_callback_bridge_request_with_routes(
+            "GET",
+            "/api/agents/me",
+            None,
+        )
+        .is_ok());
+        assert!(authorize_sandbox_callback_bridge_request_with_routes(
+            "POST",
+            "/api/issues/abc/checkout",
+            None,
+        )
+        .is_ok());
     }
 
     #[test]
     fn authorize_rejects_unlisted_routes() {
-        let err = authorize_sandbox_callback_bridge_request_with_routes(
-            "GET",
-            "/api/admin/secret",
-            None,
-        );
+        let err =
+            authorize_sandbox_callback_bridge_request_with_routes("GET", "/api/admin/secret", None);
         assert!(err.is_err());
         assert!(err.unwrap_err().contains("Route not allowed"));
     }
@@ -1872,48 +1783,36 @@ mod tests {
     #[test]
     fn authorize_rejects_wrong_method() {
         // /api/agents/me is GET-only
-        let err = authorize_sandbox_callback_bridge_request_with_routes(
-            "DELETE",
-            "/api/agents/me",
-            None,
-        );
+        let err =
+            authorize_sandbox_callback_bridge_request_with_routes("DELETE", "/api/agents/me", None);
         assert!(err.is_err());
     }
 
     #[test]
     fn authorize_normalizes_method_case() {
-        assert!(
-            authorize_sandbox_callback_bridge_request_with_routes(
-                "get",
-                "/api/agents/me",
-                None,
-            )
-            .is_ok()
-        );
+        assert!(authorize_sandbox_callback_bridge_request_with_routes(
+            "get",
+            "/api/agents/me",
+            None,
+        )
+        .is_ok());
     }
 
     #[test]
     fn authorize_with_custom_routes() {
-        let custom = vec![SandboxCallbackBridgeRouteRule::new(
+        let custom = vec![SandboxCallbackBridgeRouteRule::new("GET", r"^/custom/.*$")];
+        assert!(authorize_sandbox_callback_bridge_request_with_routes(
             "GET",
-            r"^/custom/.*$",
-        )];
-        assert!(
-            authorize_sandbox_callback_bridge_request_with_routes(
-                "GET",
-                "/custom/path",
-                Some(&custom),
-            )
-            .is_ok()
-        );
-        assert!(
-            authorize_sandbox_callback_bridge_request_with_routes(
-                "GET",
-                "/api/agents/me",
-                Some(&custom),
-            )
-            .is_err()
-        );
+            "/custom/path",
+            Some(&custom),
+        )
+        .is_ok());
+        assert!(authorize_sandbox_callback_bridge_request_with_routes(
+            "GET",
+            "/api/agents/me",
+            Some(&custom),
+        )
+        .is_err());
     }
 
     #[test]
@@ -2057,7 +1956,10 @@ mod tests {
         let mut headers = std::collections::BTreeMap::new();
         headers.insert("Content-Type".to_string(), " application/json ".to_string());
         headers.insert("Etag".to_string(), "\"abc\"".to_string());
-        headers.insert("Last-Modified".to_string(), "Tue, 15 Nov 1994 12:45:26 GMT".to_string());
+        headers.insert(
+            "Last-Modified".to_string(),
+            "Tue, 15 Nov 1994 12:45:26 GMT".to_string(),
+        );
         headers.insert("X-Other".to_string(), "value".to_string());
         headers.insert("content-length".to_string(), "1024".to_string());
         let result = build_bridge_response_headers(&headers);
@@ -2090,12 +1992,12 @@ mod tests {
     fn bridge_response_body_within_limit_checks_content_length() {
         assert_eq!(
             bridge_response_body_within_limit(Some(2000), 1024),
-            Err("Bridge response body exceeded the configured size limit of 1024 bytes.".to_string())
+            Err(
+                "Bridge response body exceeded the configured size limit of 1024 bytes."
+                    .to_string()
+            )
         );
-        assert_eq!(
-            bridge_response_body_within_limit(Some(1024), 1024),
-            Ok(())
-        );
+        assert_eq!(bridge_response_body_within_limit(Some(1024), 1024), Ok(()));
         assert_eq!(bridge_response_body_within_limit(Some(500), 1024), Ok(()));
         assert_eq!(bridge_response_body_within_limit(None, 1024), Ok(()));
     }
@@ -2153,10 +2055,8 @@ mod tests {
 
     #[test]
     fn invalid_payload_response_matches_node() {
-        let response = invalid_bridge_request_payload_response(
-            "req-1".to_string(),
-            "ts".to_string(),
-        );
+        let response =
+            invalid_bridge_request_payload_response("req-1".to_string(), "ts".to_string());
         assert_eq!(response.status, 400);
         assert_eq!(response.headers["content-type"], "application/json");
         assert_eq!(
@@ -2180,11 +2080,7 @@ mod tests {
             r#"{"error":"Route not allowed: GET /api/secret"}"#
         );
 
-        let failed = handler_failure_bridge_response(
-            "req-1".to_string(),
-            "boom",
-            "ts".to_string(),
-        );
+        let failed = handler_failure_bridge_response("req-1".to_string(), "boom", "ts".to_string());
         assert_eq!(failed.status, 502);
         assert_eq!(failed.body, r#"{"error":"boom"}"#);
 
@@ -2202,10 +2098,8 @@ mod tests {
 
     #[test]
     fn bridge_response_json_line_is_single_line_with_newline() {
-        let response = invalid_bridge_request_payload_response(
-            "req-1".to_string(),
-            "ts".to_string(),
-        );
+        let response =
+            invalid_bridge_request_payload_response("req-1".to_string(), "ts".to_string());
         let line = bridge_response_json_line(&response);
         assert!(line.ends_with('\n'));
         let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -2222,10 +2116,7 @@ mod tests {
 
     #[test]
     fn utf8_body_limit_uses_byte_length() {
-        assert_eq!(
-            bridge_response_body_utf8_len_within_limit("a", 1),
-            Ok(())
-        );
+        assert_eq!(bridge_response_body_utf8_len_within_limit("a", 1), Ok(()));
         // 中文 3 字节：2 个中文字符 = 6 字节。
         assert_eq!(
             bridge_response_body_utf8_len_within_limit("中文", 5),
@@ -2235,10 +2126,7 @@ mod tests {
             bridge_response_body_utf8_len_within_limit("中文", 6),
             Ok(())
         );
-        assert_eq!(
-            bridge_response_body_utf8_len_within_limit("", 0),
-            Ok(())
-        );
+        assert_eq!(bridge_response_body_utf8_len_within_limit("", 0), Ok(()));
     }
 
     #[test]
@@ -2273,16 +2161,17 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err("Bridge response body exceeded the configured size limit of 1024 bytes.".to_string())
+            Err(
+                "Bridge response body exceeded the configured size limit of 1024 bytes."
+                    .to_string()
+            )
         );
     }
 
     #[test]
     fn decide_write_with_direct_support_carries_request_path() {
-        let response = invalid_bridge_request_payload_response(
-            "req-1".to_string(),
-            "ts".to_string(),
-        );
+        let response =
+            invalid_bridge_request_payload_response("req-1".to_string(), "ts".to_string());
         let plan = decide_bridge_response_write(
             "/q/responses/req-1.json",
             Some("/q/requests/req-1.json"),
@@ -2328,17 +2217,10 @@ mod tests {
 
     #[test]
     fn decide_write_falls_back_to_temp_rename() {
-        let response = invalid_bridge_request_payload_response(
-            "req-1".to_string(),
-            "ts".to_string(),
-        );
-        let plan = decide_bridge_response_write(
-            "/q/responses/req-1.json",
-            None,
-            false,
-            true,
-            &response,
-        );
+        let response =
+            invalid_bridge_request_payload_response("req-1".to_string(), "ts".to_string());
+        let plan =
+            decide_bridge_response_write("/q/responses/req-1.json", None, false, true, &response);
         match plan {
             BridgeResponseWritePlan::ViaTemp {
                 temp_path,
@@ -2380,18 +2262,23 @@ mod tests {
     #[test]
     fn worker_should_stop_processing_matches_node() {
         // Node: `stopping && Date.now() >= stopDeadline`
-        assert!(decide_bridge_worker_should_stop_processing(true, 1000, 1000));
-        assert!(decide_bridge_worker_should_stop_processing(true, 2000, 1000));
-        assert!(!decide_bridge_worker_should_stop_processing(true, 999, 1000));
-        assert!(!decide_bridge_worker_should_stop_processing(false, 2000, 1000));
+        assert!(decide_bridge_worker_should_stop_processing(
+            true, 1000, 1000
+        ));
+        assert!(decide_bridge_worker_should_stop_processing(
+            true, 2000, 1000
+        ));
+        assert!(!decide_bridge_worker_should_stop_processing(
+            true, 999, 1000
+        ));
+        assert!(!decide_bridge_worker_should_stop_processing(
+            false, 2000, 1000
+        ));
     }
 
     #[test]
     fn worker_stop_deadline_uses_drain_timeout() {
-        assert_eq!(
-            decide_bridge_worker_stop_deadline(1000, Some(500)),
-            1500
-        );
+        assert_eq!(decide_bridge_worker_stop_deadline(1000, Some(500)), 1500);
         // 默认 DEFAULT_BRIDGE_STOP_TIMEOUT_MS = 2000
         assert_eq!(decide_bridge_worker_stop_deadline(1000, None), 3000);
         // Some(0) 走 normalizeTimeoutMs 回退
@@ -2405,10 +2292,7 @@ mod tests {
 
     #[test]
     fn bearer_token_extraction_matches_node() {
-        assert_eq!(
-            bridge_server_bearer_token(Some("Bearer abc123")),
-            "abc123"
-        );
+        assert_eq!(bridge_server_bearer_token(Some("Bearer abc123")), "abc123");
         assert_eq!(bridge_server_bearer_token(Some("abc123")), "");
         assert_eq!(bridge_server_bearer_token(Some("Bearer ")), "");
         assert_eq!(bridge_server_bearer_token(None), "");
@@ -2436,10 +2320,19 @@ mod tests {
         assert!(bridge_server_accepts_content_type("GET", ""));
         assert!(bridge_server_accepts_content_type("HEAD", ""));
         assert!(bridge_server_accepts_content_type("get", ""));
-        assert!(bridge_server_accepts_content_type("POST", "application/json"));
-        assert!(bridge_server_accepts_content_type("POST", "application/json; charset=utf-8"));
+        assert!(bridge_server_accepts_content_type(
+            "POST",
+            "application/json"
+        ));
+        assert!(bridge_server_accepts_content_type(
+            "POST",
+            "application/json; charset=utf-8"
+        ));
         assert!(bridge_server_accepts_content_type("POST", "text/JSON"));
-        assert!(!bridge_server_accepts_content_type("POST", "application/xml"));
+        assert!(!bridge_server_accepts_content_type(
+            "POST",
+            "application/xml"
+        ));
         assert!(!bridge_server_accepts_content_type("POST", ""));
         assert!(!bridge_server_accepts_content_type("", "text/plain"));
     }
@@ -2454,10 +2347,8 @@ mod tests {
         assert_eq!(full.status, 503);
         assert_eq!(full.body, r#"{"error":"Bridge request queue is full."}"#);
 
-        let unsupported = bridge_server_error_response(
-            415,
-            "Bridge only accepts JSON request bodies.",
-        );
+        let unsupported =
+            bridge_server_error_response(415, "Bridge only accepts JSON request bodies.");
         assert_eq!(unsupported.status, 415);
         assert_eq!(
             unsupported.body,
@@ -2554,10 +2445,7 @@ mod tests {
         let mut env = std::collections::BTreeMap::new();
         env.insert("PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(), "/q".to_string());
         let out = build_bridge_exec_env(&env);
-        assert_eq!(
-            out["PAPERCLIP_SANDBOX_EXEC_CHANNEL"],
-            "bridge"
-        );
+        assert_eq!(out["PAPERCLIP_SANDBOX_EXEC_CHANNEL"], "bridge");
         assert_eq!(out["PAPERCLIP_BRIDGE_QUEUE_DIR"], "/q");
 
         // Node `{ channel, ...env }`：env 同名键覆盖 channel。
@@ -2584,10 +2472,7 @@ mod tests {
         });
         let lines: Vec<&str> = script.lines().collect();
         assert_eq!(lines.len(), 6);
-        assert_eq!(
-            lines[0],
-            "mkdir -p '/q/requests' '/q/responses' '/q/logs'"
-        );
+        assert_eq!(lines[0], "mkdir -p '/q/requests' '/q/responses' '/q/logs'");
         assert_eq!(lines[1], "rm -f '/q/ready.json' '/q/server.pid'");
         assert_eq!(
             lines[2],
@@ -2673,18 +2558,12 @@ mod tests {
         let zero_port = parse_bridge_ready_data(r#"{"port":0}"#);
         assert_eq!(
             zero_port,
-            Err(
-                "Sandbox callback bridge did not report a listening port."
-                    .to_string()
-            )
+            Err("Sandbox callback bridge did not report a listening port.".to_string())
         );
         let no_port = parse_bridge_ready_data(r#"{}"#);
         assert_eq!(
             no_port,
-            Err(
-                "Sandbox callback bridge did not report a listening port."
-                    .to_string()
-            )
+            Err("Sandbox callback bridge did not report a listening port.".to_string())
         );
         let invalid = parse_bridge_ready_data("not-json");
         assert!(invalid
@@ -2695,11 +2574,23 @@ mod tests {
     #[test]
     fn runner_failure_message_matches_node() {
         assert_eq!(
-            bridge_runner_failure_message("start sandbox callback bridge", false, Some(1), "boom", ""),
+            bridge_runner_failure_message(
+                "start sandbox callback bridge",
+                false,
+                Some(1),
+                "boom",
+                ""
+            ),
             "start sandbox callback bridge failed with exit code 1: boom"
         );
         assert_eq!(
-            bridge_runner_failure_message("stop sandbox callback bridge", true, None, "", "detail out"),
+            bridge_runner_failure_message(
+                "stop sandbox callback bridge",
+                true,
+                None,
+                "",
+                "detail out"
+            ),
             "stop sandbox callback bridge timed out: detail out"
         );
         // stderr 优先于 stdout（对齐 `stderr || stdout`）。
@@ -2769,10 +2660,7 @@ mod tests {
 
     #[test]
     fn remote_sync_aux_paths_match_node() {
-        assert_eq!(
-            remote_partial_path("/a/entry.mjs"),
-            "/a/entry.mjs.partial"
-        );
+        assert_eq!(remote_partial_path("/a/entry.mjs"), "/a/entry.mjs.partial");
         assert_eq!(
             remote_upload_path("/a/entry.mjs"),
             "/a/entry.mjs.paperclip-upload.b64"
@@ -2839,9 +2727,9 @@ mod tests {
         assert!(joined.contains("base64 -d < \"$remote_upload\" > \"$remote_partial\""));
         assert!(joined.contains("mv \"$remote_partial\" \"$remote_path\""));
         assert!(joined.contains("printf '{\"uploaded\":true}\\n'"));
-        assert!(joined.contains(
-            "echo 'Sandbox callback bridge entrypoint upload sha mismatch.' >&2"
-        ));
+        assert!(
+            joined.contains("echo 'Sandbox callback bridge entrypoint upload sha mismatch.' >&2")
+        );
         assert!(joined.contains(
             "echo 'Sandbox callback bridge entrypoint sha verify skipped: no sha256sum/shasum on remote.' >&2"
         ));
@@ -2920,9 +2808,7 @@ mod tests {
         assert!(script.starts_with("set -eu\n"));
         assert!(script.contains("lock_dir='/q/responses/req-1.json.paperclip-write.lock'"));
         assert!(script.contains("request_path='/q/requests/req-1.json'"));
-        assert!(script.contains(
-            "if [ -n \"$request_path\" ] && [ ! -f \"$request_path\" ]; then"
-        ));
+        assert!(script.contains("if [ -n \"$request_path\" ] && [ ! -f \"$request_path\" ]; then"));
         assert!(script.contains("if [ -f \"$response_path\" ]; then"));
         assert!(script.contains("cat > \"$temp_path\""));
         assert!(script.contains("mv \"$temp_path\" \"$response_path\""));
@@ -2966,12 +2852,13 @@ mod tests {
             "/assets/bridge/paperclip-bridge-server.mjs"
         );
         assert_eq!(plan.sha256, sha256_hex_utf8(source));
-        assert_eq!(plan.lock_dir, "/assets/bridge/.paperclip-bridge-upload.lock");
+        assert_eq!(
+            plan.lock_dir,
+            "/assets/bridge/.paperclip-bridge-upload.lock"
+        );
         assert_eq!(plan.action, "sync sandbox callback bridge entrypoint");
         assert_eq!(plan.label, "Sandbox callback bridge entrypoint");
-        assert!(plan
-            .uploaded_decision_script
-            .contains(plan.expected_sha()));
+        assert!(plan.uploaded_decision_script.contains(plan.expected_sha()));
     }
 
     #[test]
@@ -3003,8 +2890,12 @@ mod tests {
         assert_eq!(plan.env["PAPERCLIP_BRIDGE_TOKEN"], "tok");
         assert_eq!(plan.directories.requests_dir, "/q/requests");
         assert!(plan.start_script.contains("nohup 'node'"));
-        assert!(plan.ready_script.contains("Timed out waiting for bridge readiness."));
-        assert!(plan.stop_script.contains("rm -f '/q/server.pid' '/q/ready.json'"));
+        assert!(plan
+            .ready_script
+            .contains("Timed out waiting for bridge readiness."));
+        assert!(plan
+            .stop_script
+            .contains("rm -f '/q/server.pid' '/q/ready.json'"));
     }
 
     #[test]

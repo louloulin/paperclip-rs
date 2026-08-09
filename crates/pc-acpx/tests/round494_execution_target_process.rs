@@ -23,22 +23,22 @@ use pc_acpx::sandbox_run_log_stream::{
     create_sandbox_run_log_tail_factory, SandboxRunLogRunner, SandboxRunLogTailFactoryOptions,
     SandboxRunLogTickInput, SandboxRunLogTickResult,
 };
-use pc_acpx::ssh::{
-    run_ssh_command, shell_quote, SshCommandOptions, SshConnectionConfig,
-};
+use pc_acpx::ssh::{run_ssh_command, shell_quote, SshCommandOptions, SshConnectionConfig};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn local_branch_echo_captures_stdout_and_emits_on_log() {
     let chunks = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
     let chunks_for_log = Arc::clone(&chunks);
     let on_log: Arc<dyn Fn(&str, &str) + Send + Sync> = Arc::new(move |stream, chunk| {
-        chunks_for_log.lock().expect("lock").push((stream.to_string(), chunk.to_string()));
+        chunks_for_log
+            .lock()
+            .expect("lock")
+            .push((stream.to_string(), chunk.to_string()));
     });
     let runner: Arc<dyn BridgeCommandRunner> = Arc::new(LocalProcessBridgeRunner);
     let env = BTreeMap::new();
@@ -68,7 +68,9 @@ async fn local_branch_echo_captures_stdout_and_emits_on_log() {
     assert_eq!(result.stdout, "hello-stream\n");
     let observed = chunks.lock().expect("lock").clone();
     assert!(
-        observed.iter().any(|(s, c)| s == "stdout" && c.contains("hello-stream")),
+        observed
+            .iter()
+            .any(|(s, c)| s == "stdout" && c.contains("hello-stream")),
         "on_log received stdout chunk; got {:?}",
         observed
     );
@@ -109,8 +111,14 @@ async fn local_branch_timeout_triggers_sigterm_and_sigkill() {
     // 信号路径：SIGTERM 触发后再 SIGKILL（grace 后）。label 是
     // "SIGTERM" 或 "SIGKILL"（取决于在 SIGKILL 之前是否已读到）。
     let label = result.signal.clone().unwrap_or_default();
-    assert!(label == "SIGTERM" || label == "SIGKILL", "got signal label {label}");
-    assert!(elapsed < Duration::from_secs(3), "process returned quickly (got {elapsed:?})");
+    assert!(
+        label == "SIGTERM" || label == "SIGKILL",
+        "got signal label {label}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "process returned quickly (got {elapsed:?})"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -165,10 +173,8 @@ struct SandboxFixture {
 
 impl SandboxFixture {
     fn new(child_source: &str) -> Self {
-        let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-runlog-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root_dir =
+            std::env::temp_dir().join(format!("paperclip-runlog-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root_dir).expect("root dir");
         let child_path = root_dir.join("child.mjs");
         std::fs::write(&child_path, child_source).expect("child script");
@@ -182,7 +188,11 @@ impl SandboxFixture {
         });
         let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_json)
             .expect("valid sandbox target");
-        Self { root_dir, child_path, target }
+        Self {
+            root_dir,
+            child_path,
+            target,
+        }
     }
 }
 
@@ -289,7 +299,6 @@ async fn sandbox_branch_run_log_tail_streams_incremental_output() {
 
 // ---------------------------------------------------------------------------
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn ssh_branch_runs_remote_command_via_spawn_target() {
     let Some(fixture) = SshLabFixture::start("r494").await else {
@@ -384,8 +393,11 @@ async fn execute_command_for_target_local_dispatches_locally() {
     .expect("local dispatch succeeds");
     assert_eq!(result.exit_code, Some(0));
     assert!(!result.timed_out);
-    assert_eq!(result.stdout, "local-dispatch
-");
+    assert_eq!(
+        result.stdout,
+        "local-dispatch
+"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +451,10 @@ async fn execute_command_for_target_ssh_dispatches_remotely() {
         result.stdout
     );
     let observed = chunks.lock().expect("lock").join("");
-    assert!(observed.contains(remote_marker), "on_log streamed remote output");
+    assert!(
+        observed.contains(remote_marker),
+        "on_log streamed remote output"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -526,7 +541,6 @@ async fn execute_command_for_target_respects_kill_flag() {
     assert_eq!(result.signal.as_deref(), Some("SIGTERM"));
 }
 
-
 // ---------------------------------------------------------------------------
 // LocalSandboxRunner: BridgeCommandRunner that delegates to LocalProcessBridgeRunner
 // ---------------------------------------------------------------------------
@@ -563,13 +577,10 @@ impl SandboxRunLogRunner for TickRunner {
         if !input.cwd.is_empty() {
             cmd.current_dir(&input.cwd);
         }
-        let output = tokio::time::timeout(
-            Duration::from_millis(input.timeout_ms),
-            cmd.output(),
-        )
-        .await
-        .map_err(|_| "tick timeout".to_string())?
-        .map_err(|error| error.to_string())?;
+        let output = tokio::time::timeout(Duration::from_millis(input.timeout_ms), cmd.output())
+            .await
+            .map_err(|_| "tick timeout".to_string())?
+            .map_err(|error| error.to_string())?;
         Ok(SandboxRunLogTickResult {
             exit_code: output.status.code(),
             timed_out: !output.status.success() && output.stdout.is_empty(),
@@ -577,4 +588,3 @@ impl SandboxRunLogRunner for TickRunner {
         })
     }
 }
-

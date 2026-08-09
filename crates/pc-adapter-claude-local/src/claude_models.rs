@@ -104,7 +104,9 @@ pub fn is_bedrock_model_id(model: &str) -> bool {
 /// 当前认证模式下的内置模型目录（不发起远程拉取）。对齐 Node
 /// `loadClaudeModels` 的 fallback 分支。
 #[must_use]
-pub fn builtin_models_for_env(env: &std::collections::BTreeMap<String, String>) -> &'static [ClaudeModel] {
+pub fn builtin_models_for_env(
+    env: &std::collections::BTreeMap<String, String>,
+) -> &'static [ClaudeModel] {
     if is_bedrock_env(env) {
         BEDROCK_MODELS
     } else {
@@ -141,7 +143,10 @@ mod tests {
 
     #[test]
     fn is_bedrock_env_accepts_non_empty_base_url() {
-        let env = env_with(&[("ANTHROPIC_BEDROCK_BASE_URL", "https://bedrock.us-east-1.amazonaws.com")]);
+        let env = env_with(&[(
+            "ANTHROPIC_BEDROCK_BASE_URL",
+            "https://bedrock.us-east-1.amazonaws.com",
+        )]);
         assert!(is_bedrock_env(&env));
     }
 
@@ -160,8 +165,12 @@ mod tests {
     #[test]
     fn is_bedrock_model_id_recognizes_region_qualified_ids() {
         assert!(is_bedrock_model_id("us.anthropic.claude-opus-4-8-v1"));
-        assert!(is_bedrock_model_id("eu.anthropic.claude-haiku-4-5-20251001-v1:0"));
-        assert!(is_bedrock_model_id("ap.anthropic.claude-sonnet-4-5-20250929-v2:0"));
+        assert!(is_bedrock_model_id(
+            "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ));
+        assert!(is_bedrock_model_id(
+            "ap.anthropic.claude-sonnet-4-5-20250929-v2:0"
+        ));
     }
 
     #[test]
@@ -195,7 +204,9 @@ mod tests {
     fn builtin_models_for_bedrock_env() {
         let env = env_with(&[("CLAUDE_CODE_USE_BEDROCK", "1")]);
         let models = builtin_models_for_env(&env);
-        assert!(models.iter().any(|m| m.id == "us.anthropic.claude-opus-4-8-v1"));
+        assert!(models
+            .iter()
+            .any(|m| m.id == "us.anthropic.claude-opus-4-8-v1"));
         // 不应包含直连模型 ID
         assert!(!models.iter().any(|m| m.id == "claude-opus-4-8"));
     }
@@ -206,6 +217,8 @@ mod tests {
         let models = builtin_models_for_env(&env);
         assert!(models.iter().any(|m| m.id == "claude-opus-4-8"));
         // 不应包含 Bedrock-only ID
-        assert!(!models.iter().any(|m| m.id == "us.anthropic.claude-opus-4-8-v1"));
+        assert!(!models
+            .iter()
+            .any(|m| m.id == "us.anthropic.claude-opus-4-8-v1"));
     }
 }

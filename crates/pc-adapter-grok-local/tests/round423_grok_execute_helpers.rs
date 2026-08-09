@@ -13,7 +13,7 @@ fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-    .collect()
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -31,10 +31,7 @@ fn billing_默认subscription() {
 #[test]
 fn billing_xai_key_Api() {
     let env = env_from(&[("XAI_API_KEY", "xai-test-123")]);
-    assert_eq!(
-        resolve_grok_billing_type(&env),
-        GrokBillingType::Api
-    );
+    assert_eq!(resolve_grok_billing_type(&env), GrokBillingType::Api);
 }
 
 #[test]
@@ -59,10 +56,7 @@ fn billing_as_str_映射() {
 #[test]
 fn 综合_企业_xai_api() {
     let env = env_from(&[("XAI_API_KEY", "xai-prod-key")]);
-    assert_eq!(
-        resolve_grok_billing_type(&env),
-        GrokBillingType::Api
-    );
+    assert_eq!(resolve_grok_billing_type(&env), GrokBillingType::Api);
 }
 
 #[test]
@@ -78,8 +72,5 @@ fn 综合_个人_grok订阅() {
 fn 综合_开发_有key默认返回Api() {
     // 模拟开发环境，XAI_API_KEY 已设置。
     let env = env_from(&[("XAI_API_KEY", "xai-test")]);
-    assert_eq!(
-        resolve_grok_billing_type(&env),
-        GrokBillingType::Api
-    );
+    assert_eq!(resolve_grok_billing_type(&env), GrokBillingType::Api);
 }

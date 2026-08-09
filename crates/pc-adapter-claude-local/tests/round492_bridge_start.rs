@@ -9,8 +9,8 @@
 //!
 //! sshd / node 缺失时跳过真实部分。
 
-use pc_adapter_claude_local::claude_remote_workspace::start_claude_execution_bridge;
 use pc_acpx::ssh::{run_ssh_command, shell_quote, SshCommandOptions, SshConnectionConfig};
+use pc_adapter_claude_local::claude_remote_workspace::start_claude_execution_bridge;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,15 +43,16 @@ struct SshLabFixture {
 
 impl SshLabFixture {
     async fn start() -> Option<Self> {
-        if !command_available("ssh") || !command_available("sshd") || !command_available("ssh-keygen") {
+        if !command_available("ssh")
+            || !command_available("sshd")
+            || !command_available("ssh-keygen")
+        {
             eprintln!("SKIP: ssh/sshd/ssh-keygen unavailable");
             return None;
         }
         let port = allocate_loopback_port()?;
-        let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-claude-ssh-lab-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root_dir =
+            std::env::temp_dir().join(format!("paperclip-claude-ssh-lab-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root_dir.join("workspace")).ok()?;
         let username = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
         let client_key = root_dir.join("client_key");
@@ -70,9 +71,23 @@ impl SshLabFixture {
                 .map(|s| s.success())
                 .unwrap_or(false)
         };
-        if !gen(&["-q", "-t", "ed25519", "-N", "", "-f", client_key.to_str().unwrap()])
-            || !gen(&["-q", "-t", "ed25519", "-N", "", "-f", host_key.to_str().unwrap()])
-        {
+        if !gen(&[
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            client_key.to_str().unwrap(),
+        ]) || !gen(&[
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            host_key.to_str().unwrap(),
+        ]) {
             return None;
         }
         let _ = std::fs::copy(client_key.with_extension("pub"), &authorized_keys);
@@ -82,13 +97,12 @@ impl SshLabFixture {
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
-        let known_hosts_entry = pc_acpx::ssh::build_known_hosts_entry(
-            pc_acpx::ssh::KnownHostsEntryInput {
+        let known_hosts_entry =
+            pc_acpx::ssh::build_known_hosts_entry(pc_acpx::ssh::KnownHostsEntryInput {
                 host: "127.0.0.1".to_string(),
                 port,
                 public_key: host_public_key,
-            },
-        );
+            });
         let config_text = format!(
             "Port {port}\n\
              ListenAddress 127.0.0.1\n\
@@ -135,13 +149,18 @@ impl SshLabFixture {
             known_hosts: Some(known_hosts_entry),
             strict_host_key_checking: true,
         };
-        let fixture = Self { config, root_dir, pid };
+        let fixture = Self {
+            config,
+            root_dir,
+            pid,
+        };
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let ready = run_ssh_command(&fixture.config, "echo ready", &SshCommandOptions::default())
-                .await
-                .map(|ok| ok.stdout.trim() == "ready")
-                .unwrap_or(false);
+            let ready =
+                run_ssh_command(&fixture.config, "echo ready", &SshCommandOptions::default())
+                    .await
+                    .map(|ok| ok.stdout.trim() == "ready")
+                    .unwrap_or(false);
             if ready {
                 return Some(fixture);
             }
@@ -181,7 +200,10 @@ fn base_env() -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert("PAPERCLIP_RUN_ID".to_string(), "run-492".to_string());
     env.insert("PAPERCLIP_API_KEY".to_string(), "host-token".to_string());
-    env.insert("PAPERCLIP_API_URL".to_string(), "http://host:3100".to_string());
+    env.insert(
+        "PAPERCLIP_API_URL".to_string(),
+        "http://host:3100".to_string(),
+    );
     env
 }
 
@@ -251,7 +273,10 @@ async fn ssh_target_starts_real_bridge_with_claude_adapter_key() {
     .await;
     assert_eq!(status, 200, "body: {body}");
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
-    assert_eq!(parsed["path"], serde_json::Value::String("/api/agents/me".to_string()));
+    assert_eq!(
+        parsed["path"],
+        serde_json::Value::String("/api/agents/me".to_string())
+    );
 
     // teardown：经 SSH 验证队列无残留。
     bridge.stop().await;
@@ -341,7 +366,10 @@ async fn spawn_echo_server() -> (String, tokio::task::JoinHandle<()>) {
                         }
                     }
                 }
-                let body_start = head_text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(head.len());
+                let body_start = head_text
+                    .find("\r\n\r\n")
+                    .map(|i| i + 4)
+                    .unwrap_or(head.len());
                 let mut body = head[body_start.min(head.len())..].to_vec();
                 while body.len() < content_length {
                     let Ok(n) = socket.read(&mut tmp).await else {
@@ -377,7 +405,10 @@ async fn http_request(
     body: Option<&str>,
 ) -> (u16, BTreeMap<String, String>, String) {
     let mut builder = reqwest::Client::new()
-        .request(reqwest::Method::from_bytes(method.as_bytes()).expect("method"), url)
+        .request(
+            reqwest::Method::from_bytes(method.as_bytes()).expect("method"),
+            url,
+        )
         .timeout(Duration::from_secs(15));
     if let Some(token) = bearer {
         builder = builder.header("authorization", format!("Bearer {token}"));
@@ -393,7 +424,12 @@ async fn http_request(
     let headers = response
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                v.to_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
     let body = response.text().await.unwrap_or_default();
     (status, headers, body)

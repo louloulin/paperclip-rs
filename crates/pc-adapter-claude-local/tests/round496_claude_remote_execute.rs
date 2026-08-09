@@ -77,9 +77,23 @@ impl SshLabFixture {
                 .map(|s| s.success())
                 .unwrap_or(false)
         };
-        if !gen(&["-q", "-t", "ed25519", "-N", "", "-f", client_key.to_str().unwrap()])
-            || !gen(&["-q", "-t", "ed25519", "-N", "", "-f", host_key.to_str().unwrap()])
-        {
+        if !gen(&[
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            client_key.to_str().unwrap(),
+        ]) || !gen(&[
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            host_key.to_str().unwrap(),
+        ]) {
             return None;
         }
         let _ = std::fs::copy(client_key.with_extension("pub"), &authorized_keys);
@@ -89,13 +103,12 @@ impl SshLabFixture {
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
-        let known_hosts_entry = pc_acpx::ssh::build_known_hosts_entry(
-            pc_acpx::ssh::KnownHostsEntryInput {
+        let known_hosts_entry =
+            pc_acpx::ssh::build_known_hosts_entry(pc_acpx::ssh::KnownHostsEntryInput {
                 host: "127.0.0.1".to_string(),
                 port,
                 public_key: host_public_key,
-            },
-        );
+            });
         let _ = std::fs::write(&known_hosts_path, format!("{known_hosts_entry}\n"));
         let config_text = format!(
             "Port {port}\n\
@@ -215,11 +228,7 @@ fn ssh_target_json(fixture: &SshLabFixture) -> serde_json::Value {
 fn make_context(fixture: &SshLabFixture) -> AdapterExecutionContext {
     // `command` 指向 `/bin/echo`，adapter_config 让 build_claude_exec_args 不展开
     // 任何 CLI 子命令之外的副作用（model / chrome / effort 等留空）。
-    let mut ctx = AdapterExecutionContext::new(
-        uuid::Uuid::new_v4(),
-        uuid::Uuid::new_v4(),
-        "",
-    );
+    let mut ctx = AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "");
     ctx.adapter_config = serde_json::json!({
         "command": "/bin/echo",
         // 极简 args：echo "r496-claude-ssh-marker"

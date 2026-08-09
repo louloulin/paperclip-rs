@@ -7,6 +7,7 @@
 //! 4. 远程 session resume 决策（身份匹配 / 不匹配 / 本地执行）
 //! 5. SSH 同步排除项（git 快照 / 非 git）
 
+use pc_acpx::execution_target::adapter_execution_target_from_remote_execution;
 use pc_adapter_codex_local::codex_bridge_env::{
     bridge_env_from_handle, merge_bridge_env, resolve_bridge_host_api_url,
     resolve_bridge_runtime_root_dir, should_start_paperclip_bridge,
@@ -15,7 +16,6 @@ use pc_adapter_codex_local::codex_remote_workspace::{
     codex_home_sync_allowlist, managed_remote_runtime_workspace_dir, remote_codex_home_dir,
     remote_sync_excludes, should_resume_remote_session,
 };
-use pc_acpx::execution_target::adapter_execution_target_from_remote_execution;
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -70,20 +70,32 @@ fn bridge_env_injection_matches_node_handle() {
     );
     assert_eq!(env.get("PAPERCLIP_API_KEY").unwrap(), "bridge-token");
     assert_eq!(env.get("PAPERCLIP_API_BRIDGE_MODE").unwrap(), "queue_v1");
-    assert_eq!(env.get("PAPERCLIP_BRIDGE_QUEUE_DIR").unwrap(), "/bridge/queue");
+    assert_eq!(
+        env.get("PAPERCLIP_BRIDGE_QUEUE_DIR").unwrap(),
+        "/bridge/queue"
+    );
 }
 
 #[test]
 fn bridge_env_merged_into_process_env_matches_object_assign() {
     let mut env = BTreeMap::new();
     env.insert("CODEX_HOME".to_string(), "/home/codex".to_string());
-    env.insert("PAPERCLIP_WORKSPACE_CWD".to_string(), "/remote/workspace".to_string());
+    env.insert(
+        "PAPERCLIP_WORKSPACE_CWD".to_string(),
+        "/remote/workspace".to_string(),
+    );
     let bridge_env =
         bridge_env_from_handle("http://127.0.0.1:4310", "bridge-token", "/bridge/queue");
     merge_bridge_env(&mut env, &bridge_env);
-    assert_eq!(env.get("PAPERCLIP_API_URL").unwrap(), "http://127.0.0.1:4310");
+    assert_eq!(
+        env.get("PAPERCLIP_API_URL").unwrap(),
+        "http://127.0.0.1:4310"
+    );
     assert_eq!(env.get("CODEX_HOME").unwrap(), "/home/codex");
-    assert_eq!(env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(), "/remote/workspace");
+    assert_eq!(
+        env.get("PAPERCLIP_WORKSPACE_CWD").unwrap(),
+        "/remote/workspace"
+    );
     assert_eq!(env.len(), 6);
 }
 
@@ -157,7 +169,13 @@ fn codex_home_sync_allowlist_matches_node() {
     // Node CODEX_SYNC_ALLOWLIST = COPIED_SHARED_FILES + SYMLINKED_SHARED_FILES + skills
     assert_eq!(
         codex_home_sync_allowlist(),
-        &["config.json", "config.toml", "instructions.md", "auth.json", "skills"]
+        &[
+            "config.json",
+            "config.toml",
+            "instructions.md",
+            "auth.json",
+            "skills"
+        ]
     );
 }
 

@@ -293,9 +293,7 @@ impl ProcessExecution {
 }
 
 /// 等待 kill_flag 置位；flag 为 None 时永久挂起。
-async fn wait_for_kill_flag(
-    flag: Option<Arc<std::sync::atomic::AtomicBool>>,
-) {
+async fn wait_for_kill_flag(flag: Option<Arc<std::sync::atomic::AtomicBool>>) {
     let Some(flag) = flag else {
         std::future::pending::<()>().await;
         return;
@@ -341,7 +339,6 @@ async fn forward_output_streaming<R: tokio::io::AsyncRead + Unpin>(
     Ok(text)
 }
 
-
 #[cfg(unix)]
 fn exit_signal(status: std::process::ExitStatus) -> Option<String> {
     use std::os::unix::process::ExitStatusExt;
@@ -368,9 +365,7 @@ fn send_sigterm(pid: u32) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "kill -TERM {pid} exited with {status:?}"
-        ))
+        Err(format!("kill -TERM {pid} exited with {status:?}"))
     }
 }
 
@@ -511,11 +506,8 @@ mod tests {
     async fn execute_process_capture_with_invokes_chunk_callback() {
         let spec = ProcessSpec::new("/bin/sh", ["-c", "printf 'hello\n'; printf 'world' >&2"]);
         let (sink, _receiver) = AdapterEventSink::channel(8);
-        let context = AdapterExecutionContext::new(
-            uuid::Uuid::new_v4(),
-            uuid::Uuid::new_v4(),
-            "ignored",
-        );
+        let context =
+            AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "ignored");
         let chunks: Arc<std::sync::Mutex<Vec<(String, String)>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let chunks_for_closure = Arc::clone(&chunks);

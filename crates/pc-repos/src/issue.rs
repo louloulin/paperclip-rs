@@ -36,7 +36,9 @@ pub struct ExtractIssueFieldMatchRow {
 }
 
 fn make_excerpt(text: &str, contains: &str, kind: &str) -> Option<String> {
-    if contains.is_empty() { return None; }
+    if contains.is_empty() {
+        return None;
+    }
     let lower = text.to_lowercase();
     let lower_contains = contains.to_lowercase();
     let bytes = text.as_bytes();
@@ -47,14 +49,22 @@ fn make_excerpt(text: &str, contains: &str, kind: &str) -> Option<String> {
         while i + needle.len() <= lc_bytes.len() {
             if &lc_bytes[i..i + needle.len()] == needle {
                 let mut start = i;
-                while start > 0 && is_url_char(bytes[start - 1]) { start -= 1; }
+                while start > 0 && is_url_char(bytes[start - 1]) {
+                    start -= 1;
+                }
                 let mut end = i + needle.len();
-                while end < bytes.len() && is_url_char(bytes[end]) { end += 1; }
+                while end < bytes.len() && is_url_char(bytes[end]) {
+                    end += 1;
+                }
                 let lo = start.saturating_sub(80);
                 let hi = (end + 80).min(text.len());
                 let mut snippet = text[lo..hi].to_string();
-                if lo > 0 { snippet = format!("…{snippet}", snippet = snippet); }
-                if hi < text.len() { snippet.push('…'); }
+                if lo > 0 {
+                    snippet = format!("…{snippet}", snippet = snippet);
+                }
+                if hi < text.len() {
+                    snippet.push('…');
+                }
                 return Some(snippet);
             }
             i += 1;
@@ -66,8 +76,12 @@ fn make_excerpt(text: &str, contains: &str, kind: &str) -> Option<String> {
                 let lo = idx.saturating_sub(80);
                 let hi = (idx + contains.len() + 80).min(text.len());
                 let mut snippet = text[lo..hi].to_string();
-                if lo > 0 { snippet = format!("…{snippet}", snippet = snippet); }
-                if hi < text.len() { snippet.push('…'); }
+                if lo > 0 {
+                    snippet = format!("…{snippet}", snippet = snippet);
+                }
+                if hi < text.len() {
+                    snippet.push('…');
+                }
                 Some(snippet)
             }
             None => None,
@@ -77,7 +91,24 @@ fn make_excerpt(text: &str, contains: &str, kind: &str) -> Option<String> {
 
 fn is_url_char(b: u8) -> bool {
     b.is_ascii_alphanumeric()
-        || matches!(b, b'.' | b'/' | b'-' | b'_' | b':' | b'%' | b'?' | b'#' | b'=' | b'&' | b'~' | b'+' | b'@' | b'!' | b',' | b';')
+        || matches!(
+            b,
+            b'.' | b'/'
+                | b'-'
+                | b'_'
+                | b':'
+                | b'%'
+                | b'?'
+                | b'#'
+                | b'='
+                | b'&'
+                | b'~'
+                | b'+'
+                | b'@'
+                | b'!'
+                | b','
+                | b';'
+        )
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -837,13 +868,14 @@ impl<'a> IssueRepo<'a> {
         matches_per_issue: i64,
     ) -> sqlx::Result<Vec<ExtractIssueFieldMatchRow>> {
         let m = matches_per_issue.clamp(1, 50);
-        let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT title, description FROM issues WHERE id = $1",
-        )
-        .bind(issue_id)
-        .fetch_optional(self.db.pool())
-        .await?;
-        let Some((title, description)) = row else { return Ok(Vec::new()); };
+        let row: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT title, description FROM issues WHERE id = $1")
+                .bind(issue_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        let Some((title, description)) = row else {
+            return Ok(Vec::new());
+        };
         let mut out = Vec::new();
         for (field, label, text) in [
             ("title", "title", title),
@@ -859,7 +891,9 @@ impl<'a> IssueRepo<'a> {
                         source_kind: "issue".to_string(),
                         source_id: issue_id.to_string(),
                     });
-                    if out.len() as i64 >= m { return Ok(out); }
+                    if out.len() as i64 >= m {
+                        return Ok(out);
+                    }
                 }
             }
         }
@@ -894,7 +928,9 @@ impl<'a> IssueRepo<'a> {
                     source_kind: "comment".to_string(),
                     source_id: cid.to_string(),
                 });
-                if out.len() as i64 >= m { return Ok(out); }
+                if out.len() as i64 >= m {
+                    return Ok(out);
+                }
             }
         }
         Ok(out)
@@ -933,7 +969,9 @@ impl<'a> IssueRepo<'a> {
                             source_kind: "document".to_string(),
                             source_id: did.to_string(),
                         });
-                        if out.len() as i64 >= m { return Ok(out); }
+                        if out.len() as i64 >= m {
+                            return Ok(out);
+                        }
                     }
                 }
             }

@@ -184,8 +184,8 @@ impl RuntimeProgressReporter {
         self.last_emit_at = Some((self.now_ms)());
         if let Some(total) = total {
             if total > 0 {
-                self.last_step =
-                    ((done as f64 / total as f64) * 100.0).floor() as i64 / self.step_percent as i64;
+                self.last_step = ((done as f64 / total as f64) * 100.0).floor() as i64
+                    / self.step_percent as i64;
             }
         }
         let line = self.build_line(done, total);
@@ -210,8 +210,8 @@ impl RuntimeProgressReporter {
         if let Some(total) = total_bytes {
             if total > 0 {
                 let terminal = done_bytes >= total;
-                let step =
-                    ((done_bytes as f64 / total as f64) * 100.0).floor() as i64 / self.step_percent as i64;
+                let step = ((done_bytes as f64 / total as f64) * 100.0).floor() as i64
+                    / self.step_percent as i64;
                 let step_ok = step > self.last_step;
                 if terminal || step_ok || elapsed_ok {
                     self.emit(done_bytes, Some(total)).await;
@@ -266,14 +266,8 @@ impl RuntimeProgressReporter {
 pub fn create_runtime_progress_reporter(
     options: RuntimeProgressReporterOptions,
 ) -> RuntimeProgressReporter {
-    let step_percent = options
-        .step_percent
-        .filter(|s| *s > 0)
-        .unwrap_or(10);
-    let min_interval_ms = options
-        .min_interval_ms
-        .filter(|m| *m > 0)
-        .unwrap_or(2000);
+    let step_percent = options.step_percent.filter(|s| *s > 0).unwrap_or(10);
+    let min_interval_ms = options.min_interval_ms.filter(|m| *m > 0).unwrap_or(2000);
     let label_suffix = options
         .label
         .as_ref()
@@ -335,17 +329,11 @@ pub struct TransferProgress {
     pub counter: ProgressReader,
     /// Emit the terminal completion line. Idempotent.
     pub finish: std::sync::Arc<
-        dyn Fn() -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = ()> + Send>,
-            > + Send
-            + Sync,
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
     >,
     /// Emit a terminal failure marker. Idempotent.
     pub fail: std::sync::Arc<
-        dyn Fn() -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = ()> + Send>,
-            > + Send
-            + Sync,
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
     >,
 }
 
@@ -383,17 +371,14 @@ impl ProgressReader {
     /// from the new total.
     pub async fn set_total(&self, total: Option<u64>) {
         let mut t = self.total_bytes.lock().await;
-            *t = total;
+        *t = total;
         let mut r = self.reporter.lock().await;
-            r.last_total_bytes = total;
+        r.last_total_bytes = total;
     }
 
     /// Last cumulative byte count observed by the counter.
     pub async fn transferred(&self) -> u64 {
-        self.reporter
-            .lock()
-            .await
-            .last_done_bytes
+        self.reporter.lock().await.last_done_bytes
     }
 }
 
@@ -490,10 +475,7 @@ pub fn create_transfer_progress(
     let reporter_for_finish = std::sync::Arc::clone(&counter.reporter);
     let reporter_for_fail = std::sync::Arc::clone(&counter.reporter);
     let finish: std::sync::Arc<
-        dyn Fn() -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = ()> + Send>,
-            > + Send
-            + Sync,
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
     > = std::sync::Arc::new(move || {
         let reporter_arc = std::sync::Arc::clone(&reporter_for_finish);
         Box::pin(async move {
@@ -502,10 +484,7 @@ pub fn create_transfer_progress(
         })
     });
     let fail: std::sync::Arc<
-        dyn Fn() -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = ()> + Send>,
-            > + Send
-            + Sync,
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
     > = std::sync::Arc::new(move || {
         let reporter_arc = std::sync::Arc::clone(&reporter_for_fail);
         Box::pin(async move {
@@ -616,7 +595,11 @@ mod tests {
         reporter.report(95, Some(1000)).await;
         let lines = buf.lock().unwrap();
         // Only the first call should emit (5% < 10%).
-        assert_eq!(lines.len(), 1, "throttle should suppress intermediate steps");
+        assert_eq!(
+            lines.len(),
+            1,
+            "throttle should suppress intermediate steps"
+        );
         assert!(lines[0].contains("5%"));
     }
 

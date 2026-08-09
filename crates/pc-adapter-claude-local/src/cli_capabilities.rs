@@ -17,9 +17,7 @@ pub fn claude_command_looks_like(command: &str, expected: &str) -> bool {
         .and_then(|n| n.to_str())
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
-    base == expected
-        || base == format!("{expected}.cmd")
-        || base == format!("{expected}.exe")
+    base == expected || base == format!("{expected}.cmd") || base == format!("{expected}.exe")
 }
 
 /// 生成缓存 key。对齐 Node `cacheKeyForTarget`。
@@ -90,9 +88,7 @@ impl<T: Clone> ClaudeCapabilityCache<T> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            inner: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -104,13 +100,25 @@ impl<T: Clone> ClaudeCapabilityCache<T> {
         Fut: std::future::Future<Output = Result<T, E>>,
     {
         // fast path
-        if let Some(entry) = self.inner.lock().expect("capability cache lock").get(key).cloned() {
+        if let Some(entry) = self
+            .inner
+            .lock()
+            .expect("capability cache lock")
+            .get(key)
+            .cloned()
+        {
             match entry {
                 CacheEntry::Done(value) => return Ok(value),
                 CacheEntry::InFlight(notify) => {
                     drop(notify.notified());
                     // re-check after notify
-                    if let Some(entry) = self.inner.lock().expect("capability cache lock").get(key).cloned() {
+                    if let Some(entry) = self
+                        .inner
+                        .lock()
+                        .expect("capability cache lock")
+                        .get(key)
+                        .cloned()
+                    {
                         if let CacheEntry::Done(value) = entry {
                             return Ok(value);
                         }
@@ -120,10 +128,10 @@ impl<T: Clone> ClaudeCapabilityCache<T> {
             }
         }
         let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-        self.inner
-            .lock()
-            .expect("capability cache lock")
-            .insert(key.to_string(), CacheEntry::InFlight(std::sync::Arc::clone(&notify)));
+        self.inner.lock().expect("capability cache lock").insert(
+            key.to_string(),
+            CacheEntry::InFlight(std::sync::Arc::clone(&notify)),
+        );
         let result = probe().await;
         match &result {
             Ok(value) => {
@@ -144,10 +152,7 @@ impl<T: Clone> ClaudeCapabilityCache<T> {
     }
 
     pub fn reset(&self) {
-        self.inner
-            .lock()
-            .expect("capability cache lock")
-            .clear();
+        self.inner.lock().expect("capability cache lock").clear();
     }
 }
 
@@ -171,7 +176,10 @@ mod tests {
         // .exe 后缀在 Unix 上能正确处理；.cmd 后缀的 Windows 路径测试
         // 需要 cfg(windows)，此处仅覆盖可移植部分。
         assert!(claude_command_looks_like("/opt/claude.exe", "claude"));
-        assert!(claude_command_looks_like("/usr/local/bin/claude.exe", "claude"));
+        assert!(claude_command_looks_like(
+            "/usr/local/bin/claude.exe",
+            "claude"
+        ));
     }
 
     #[test]

@@ -349,10 +349,7 @@ async fn stop_cleans_session_proxy_and_connections() {
         .collect();
     assert_eq!(session_dirs.len(), 1, "one session subdirectory");
     bridge.stop().await;
-    assert!(
-        !session_dirs[0].exists(),
-        "session dir removed after stop"
-    );
+    assert!(!session_dirs[0].exists(), "session dir removed after stop");
     assert!(!proxy_path.exists(), "proxy dir removed after stop");
 }
 
@@ -365,8 +362,8 @@ async fn ssh_target_returns_none() {
     let runner: Arc<dyn BridgeCommandRunner> = Arc::new(LocalProcessBridgeRunner);
     let target = ssh_target();
     let env = BTreeMap::new();
-    let bridge = start_adapter_execution_target_process_session_bridge(
-        &StartProcessSessionBridgeInput {
+    let bridge =
+        start_adapter_execution_target_process_session_bridge(&StartProcessSessionBridgeInput {
             run_id: "run-493",
             target: Some(&target),
             runtime_root_dir: None,
@@ -378,11 +375,13 @@ async fn ssh_target_returns_none() {
             timeout_sec: Some(5.0),
             runner,
             on_log: None,
-        },
-    )
-    .await
-    .expect("gate returns Ok");
-    assert!(bridge.is_none(), "ssh transport does not start process session bridge");
+        })
+        .await
+        .expect("gate returns Ok");
+    assert!(
+        bridge.is_none(),
+        "ssh transport does not start process session bridge"
+    );
 }
 
 fn extract_proxy_port(source: &str) -> Option<u16> {

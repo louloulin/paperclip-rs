@@ -30,8 +30,8 @@ use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::folder::{FolderKind, FolderPatch, FolderRepo, NewFolder};
 use pc_repos::folder::{MoveFolderItem, MoveFolderItemKind};
 use pc_repos::goal::GoalRepo;
-use pc_repos::invite::{InviteRepo, NewInvite};
 use pc_repos::heartbeat::HeartbeatRepo;
+use pc_repos::invite::{InviteRepo, NewInvite};
 use pc_repos::issue::IssueRepo;
 use pc_repos::label::{LabelPatch, LabelRepo, NewLabel};
 use pc_repos::pipeline::PipelineRepo;
@@ -54,7 +54,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/companies/:company_id/archive", post(archive))
         .route("/api/companies/:company_id/stats", get(get_stats))
         .route("/api/companies/:company_id/timeline", get(get_timeline))
-        
         .route("/api/companies/:company_id/artifacts", get(list_artifacts))
         .route(
             "/api/companies/:company_id/branding",
@@ -84,7 +83,7 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/export",
             post(start_company_export),
         )
-    // ── Round 45: cross-company aggregation + export plural alias ──
+        // ── Round 45: cross-company aggregation + export plural alias ──
         .route("/api/companies/stats", get(get_companies_stats))
         .route("/api/companies/issues", get(get_companies_issues_malformed))
         .route(
@@ -197,13 +196,11 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/companies/:company_id/approvals",
-            get(list_company_approvals_route)
-                .post(create_company_approval_route),
+            get(list_company_approvals_route).post(create_company_approval_route),
         )
         .route(
             "/api/companies/:company_id/decisions",
-            get(list_company_decisions_route)
-                .post(create_company_decision_route),
+            get(list_company_decisions_route).post(create_company_decision_route),
         )
         // NOTE: `/api/companies/:company_id/goals` is registered by goals.rs (the
         // canonical goals router module). The duplicate registration here was removed
@@ -212,8 +209,7 @@ pub fn router() -> Router<AppState> {
         // remains as dead code (kept for reference).
         .route(
             "/api/companies/:company_id/pipelines",
-            get(list_company_pipelines_route)
-                .post(create_company_pipeline_route),
+            get(list_company_pipelines_route).post(create_company_pipeline_route),
         )
         .route(
             "/api/companies/:company_id/case-events",
@@ -1989,9 +1985,11 @@ async fn search_extract(
     let body = body.map(|Json(b)| b).unwrap_or(serde_json::json!({}));
     // 优先 query string, 然后 body。
     let pick = |k: &str| -> Option<String> {
-        query.0.get(k).cloned().or_else(|| {
-            body.get(k).and_then(|v| v.as_str().map(String::from))
-        })
+        query
+            .0
+            .get(k)
+            .cloned()
+            .or_else(|| body.get(k).and_then(|v| v.as_str().map(String::from)))
     };
     let contains = pick("contains")
         .or_else(|| pick("query"))
@@ -2015,7 +2013,9 @@ async fn search_extract(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(100)
         .clamp(1, 200);
-    let _offset = pick("offset").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    let _offset = pick("offset")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
     let matches_per_issue = pick("matchesPerIssue")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(10)
@@ -2076,7 +2076,9 @@ async fn search_extract(
             }
         }
         let matches_truncated = matches.len() as i64 >= matches_per_issue;
-        if matches_truncated { truncated = true; }
+        if matches_truncated {
+            truncated = true;
+        }
         results.push(json!({
             "issueId": hit.id,
             "identifier": hit.identifier,
@@ -2507,7 +2509,9 @@ async fn create_company_approval_route(
 ) -> ApiResult<axum::response::Response> {
     ensure_company_exists(&state, company_id).await?;
     if body.approval_type.trim().is_empty() {
-        return Err(ApiError::BadRequest("approval_type must not be empty".into()));
+        return Err(ApiError::BadRequest(
+            "approval_type must not be empty".into(),
+        ));
     }
     let payload = if body.payload.is_null() {
         Value::Object(Default::default())
@@ -2529,10 +2533,14 @@ async fn create_company_approval_route(
         payload,
     };
     let row = ApprovalRepo::new(&state.db).create(&new_approval).await?;
-    state
-        .realtime
-        .publish(LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id));
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(&row).unwrap_or(Value::Null))).into_response())
+    state.realtime.publish(
+        LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id),
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&row).unwrap_or(Value::Null)),
+    )
+        .into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -2591,7 +2599,11 @@ async fn create_company_decision_route(
     state
         .realtime
         .publish(LiveEvent::new("decision.created", "decision", row.id).with_company(company_id));
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(&row).unwrap_or(Value::Null))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&row).unwrap_or(Value::Null)),
+    )
+        .into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -2629,7 +2641,11 @@ async fn create_company_pipeline_route(
     state
         .realtime
         .publish(LiveEvent::new("pipeline.created", "pipeline", row.id).with_company(company_id));
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(&row).unwrap_or(Value::Null))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&row).unwrap_or(Value::Null)),
+    )
+        .into_response())
 }
 /// `GET /api/companies/stats` — board-only cross-company aggregated stats.
 ///
@@ -3230,8 +3246,6 @@ mod round224_tests {
     }
 }
 
-
-
 // ============================================================================
 // R511 — Company activity routes (1:1 port of Node routes/activity.ts)
 //
@@ -3319,24 +3333,46 @@ fn convert_to_activity_event(
     let actor = match body.actor_type.as_str() {
         "user" => {
             let id = Uuid::parse_str(&body.actor_id).map_err(|_| {
-                ApiError::BadRequest(format!("actorId must be a UUID for user: {}", body.actor_id))
+                ApiError::BadRequest(format!(
+                    "actorId must be a UUID for user: {}",
+                    body.actor_id
+                ))
             })?;
-            ActivityActor::User { id, name: body.actor_id.clone() }
+            ActivityActor::User {
+                id,
+                name: body.actor_id.clone(),
+            }
         }
         "agent" => {
             let id = Uuid::parse_str(&body.actor_id).map_err(|_| {
-                ApiError::BadRequest(format!("actorId must be a UUID for agent: {}", body.actor_id))
+                ApiError::BadRequest(format!(
+                    "actorId must be a UUID for agent: {}",
+                    body.actor_id
+                ))
             })?;
-            ActivityActor::Agent { id, name: body.actor_id.clone() }
+            ActivityActor::Agent {
+                id,
+                name: body.actor_id.clone(),
+            }
         }
-        "system" => ActivityActor::System { component: body.actor_id.clone() },
+        "system" => ActivityActor::System {
+            component: body.actor_id.clone(),
+        },
         "plugin" => {
             let id = Uuid::parse_str(&body.actor_id).map_err(|_| {
-                ApiError::BadRequest(format!("actorId must be a UUID for plugin: {}", body.actor_id))
+                ApiError::BadRequest(format!(
+                    "actorId must be a UUID for plugin: {}",
+                    body.actor_id
+                ))
             })?;
-            ActivityActor::Plugin { plugin_id: id, plugin_key: body.actor_id.clone() }
+            ActivityActor::Plugin {
+                plugin_id: id,
+                plugin_key: body.actor_id.clone(),
+            }
         }
-        _ => ActivityActor::System { component: body.actor_id.clone() },
+        _ => ActivityActor::System {
+            component: body.actor_id.clone(),
+        },
     };
 
     let kind = parse_activity_kind(&body.action);
@@ -3366,9 +3402,11 @@ fn convert_to_activity_event(
         payload = Value::Object(map);
     }
 
-    Ok(ActivityEvent::new(kind, actor, body.entity_type, subject_id)
-        .with_company(company_id)
-        .with_payload(payload))
+    Ok(
+        ActivityEvent::new(kind, actor, body.entity_type, subject_id)
+            .with_company(company_id)
+            .with_payload(payload),
+    )
 }
 
 /// Convert typed ActivityEvent to PluginEvent for plugin bus emission.
@@ -3377,7 +3415,9 @@ fn convert_to_plugin_event(event: &ActivityEvent) -> PluginEvent {
         ActivityActor::User { id, .. } => (Some(id.to_string()), Some(ActorType::User)),
         ActivityActor::Agent { id, .. } => (Some(id.to_string()), Some(ActorType::Agent)),
         ActivityActor::System { component } => (Some(component.clone()), Some(ActorType::System)),
-        ActivityActor::Plugin { plugin_id, .. } => (Some(plugin_id.to_string()), Some(ActorType::Plugin)),
+        ActivityActor::Plugin { plugin_id, .. } => {
+            (Some(plugin_id.to_string()), Some(ActorType::Plugin))
+        }
         ActivityActor::Anonymous => (None, None),
     };
 
@@ -3389,7 +3429,10 @@ fn convert_to_plugin_event(event: &ActivityEvent) -> PluginEvent {
         actor_type,
         entity_id: Some(event.subject_id.to_string()),
         entity_type: Some(event.subject_kind.clone()),
-        company_id: event.company_id.map(|id| id.to_string()).unwrap_or_default(),
+        company_id: event
+            .company_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
         payload: event.payload.clone(),
     }
 }
@@ -3405,7 +3448,10 @@ async fn create_activity(
     let event = convert_to_activity_event(company_id, body)?;
 
     // 1. Emit to ActivityLog (持久化)
-    state.activity.emit(event.clone()).await
+    state
+        .activity
+        .emit(event.clone())
+        .await
         .map_err(|e| ApiError::Internal(format!("activity log emit failed: {e}")))?;
 
     // 2. Emit to PluginEventBus (plugin 订阅者 fanout)
@@ -3414,14 +3460,20 @@ async fn create_activity(
 
     // 3. Publish to realtime (UI 实时更新)
     state.realtime.publish(
-        LiveEvent::new(event.kind.as_str(), event.subject_kind.clone(), event.subject_id)
-            .with_company(company_id)
-            .with_actor("system"),
+        LiveEvent::new(
+            event.kind.as_str(),
+            event.subject_kind.clone(),
+            event.subject_id,
+        )
+        .with_company(company_id)
+        .with_actor("system"),
     );
 
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(&event).unwrap_or_default())))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&event).unwrap_or_default()),
+    ))
 }
-
 
 // ============================================================================
 // R511 tests
@@ -3433,9 +3485,18 @@ mod r511_activity_routes_tests {
 
     #[test]
     fn parse_activity_kind_maps_known_actions() {
-        assert_eq!(parse_activity_kind("issue.created"), ActivityKind::IssueCreated);
-        assert_eq!(parse_activity_kind("agent.heartbeat"), ActivityKind::AgentHeartbeat);
-        assert_eq!(parse_activity_kind("plugin.error"), ActivityKind::PluginError);
+        assert_eq!(
+            parse_activity_kind("issue.created"),
+            ActivityKind::IssueCreated
+        );
+        assert_eq!(
+            parse_activity_kind("agent.heartbeat"),
+            ActivityKind::AgentHeartbeat
+        );
+        assert_eq!(
+            parse_activity_kind("plugin.error"),
+            ActivityKind::PluginError
+        );
     }
 
     #[test]
@@ -3582,7 +3643,10 @@ mod r511_activity_routes_tests {
         let event = convert_to_activity_event(Uuid::new_v4(), body).expect("convert");
         assert_eq!(event.kind, ActivityKind::Other);
         if let Value::Object(map) = &event.payload {
-            assert_eq!(map.get("action").and_then(|v| v.as_str()), Some("custom.weird.action"));
+            assert_eq!(
+                map.get("action").and_then(|v| v.as_str()),
+                Some("custom.weird.action")
+            );
         } else {
             panic!("expected payload to be an object, got {:?}", event.payload);
         }
@@ -3602,7 +3666,10 @@ mod r511_activity_routes_tests {
         };
         let event = convert_to_activity_event(Uuid::new_v4(), body).expect("convert");
         if let Value::Object(map) = &event.payload {
-            assert_eq!(map.get("agentId").and_then(|v| v.as_str()), Some(agent_id.to_string().as_str()));
+            assert_eq!(
+                map.get("agentId").and_then(|v| v.as_str()),
+                Some(agent_id.to_string().as_str())
+            );
             assert_eq!(map.get("key").and_then(|v| v.as_str()), Some("value"));
         } else {
             panic!("expected payload to be an object, got {:?}", event.payload);
@@ -3617,7 +3684,10 @@ mod r511_activity_routes_tests {
         let event = ActivityEvent {
             id: pc_activity::ActivityId::new(),
             kind: ActivityKind::IssueCreated,
-            actor: ActivityActor::User { id: user_id, name: "alice".to_owned() },
+            actor: ActivityActor::User {
+                id: user_id,
+                name: "alice".to_owned(),
+            },
             company_id: Some(company_id),
             subject_kind: "issue".to_owned(),
             subject_id,
@@ -3655,7 +3725,9 @@ mod r511_activity_routes_tests {
         let event = ActivityEvent {
             id: pc_activity::ActivityId::new(),
             kind: ActivityKind::AgentHeartbeat,
-            actor: ActivityActor::System { component: "local-board".to_owned() },
+            actor: ActivityActor::System {
+                component: "local-board".to_owned(),
+            },
             company_id: Some(Uuid::new_v4()),
             subject_kind: "agent".to_owned(),
             subject_id: Uuid::new_v4(),

@@ -1,8 +1,7 @@
 use pc_adapter_gemini_local::{
-    detect_gemini_auth_required, detect_gemini_quota_exhausted,
-    describe_gemini_failure, is_gemini_session_unrecoverable_error,
-    is_gemini_transient_network_error, is_gemini_turn_limit_result,
-    parse_gemini_stream_json,
+    describe_gemini_failure, detect_gemini_auth_required, detect_gemini_quota_exhausted,
+    is_gemini_session_unrecoverable_error, is_gemini_transient_network_error,
+    is_gemini_turn_limit_result, parse_gemini_stream_json,
 };
 
 #[test]
@@ -48,27 +47,60 @@ fn 错误事件和失败描述() {
         r#"{"type":"result","status":"error","error":{"message":"quota exceeded"}}"#,
     );
     assert_eq!(parsed.error_message.as_deref(), Some("quota exceeded"));
-    assert_eq!(describe_gemini_failure(&serde_json::json!({"status":"error","error":"boom"})).as_deref(), Some("Gemini run failed: status=error: boom"));
+    assert_eq!(
+        describe_gemini_failure(&serde_json::json!({"status":"error","error":"boom"})).as_deref(),
+        Some("Gemini run failed: status=error: boom")
+    );
 }
 
 #[test]
 fn auth和quota分类互不混淆() {
-    assert!(detect_gemini_auth_required(None, "", "Manual authorization is required but session is non-interactive"));
-    assert!(!detect_gemini_auth_required(None, "authenticated", "normal output"));
-    assert!(detect_gemini_quota_exhausted(None, "", "RESOURCE_EXHAUSTED: quota"));
+    assert!(detect_gemini_auth_required(
+        None,
+        "",
+        "Manual authorization is required but session is non-interactive"
+    ));
+    assert!(!detect_gemini_auth_required(
+        None,
+        "authenticated",
+        "normal output"
+    ));
+    assert!(detect_gemini_quota_exhausted(
+        None,
+        "",
+        "RESOURCE_EXHAUSTED: quota"
+    ));
 }
 
 #[test]
 fn session不可恢复和网络瞬态分类() {
-    assert!(is_gemini_session_unrecoverable_error("", "input token count exceeds maximum"));
-    assert!(!is_gemini_session_unrecoverable_error("", "Some other error"));
-    assert!(is_gemini_transient_network_error("", "getaddrinfo ENOTFOUND oauth2.googleapis.com"));
-    assert!(!is_gemini_transient_network_error("", "unknown session abc"));
+    assert!(is_gemini_session_unrecoverable_error(
+        "",
+        "input token count exceeds maximum"
+    ));
+    assert!(!is_gemini_session_unrecoverable_error(
+        "",
+        "Some other error"
+    ));
+    assert!(is_gemini_transient_network_error(
+        "",
+        "getaddrinfo ENOTFOUND oauth2.googleapis.com"
+    ));
+    assert!(!is_gemini_transient_network_error(
+        "",
+        "unknown session abc"
+    ));
 }
 
 #[test]
 fn turn_limit支持退出码和结构化原因() {
     assert!(is_gemini_turn_limit_result(None, Some(53)));
-    assert!(is_gemini_turn_limit_result(Some(&serde_json::json!({"stopReason":"max_turns_exhausted"})), Some(0)));
-    assert!(!is_gemini_turn_limit_result(Some(&serde_json::json!({"status":"success"})), Some(0)));
+    assert!(is_gemini_turn_limit_result(
+        Some(&serde_json::json!({"stopReason":"max_turns_exhausted"})),
+        Some(0)
+    ));
+    assert!(!is_gemini_turn_limit_result(
+        Some(&serde_json::json!({"status":"success"})),
+        Some(0)
+    ));
 }

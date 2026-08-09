@@ -122,13 +122,20 @@ fn build_tag_list(paths: &BTreeMap<String, Value>) -> Vec<Value> {
     for value in paths.values() {
         if let Some(obj) = value.as_object() {
             for (_method, op) in obj {
-                if let Some(tag) = op.get("tags").and_then(|t| t.as_array()).and_then(|a| a.first()).and_then(|v| v.as_str()) {
+                if let Some(tag) = op
+                    .get("tags")
+                    .and_then(|t| t.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                {
                     tags.insert(tag.to_string());
                 }
             }
         }
     }
-    tags.into_iter().map(|name| json!({ "name": name })).collect()
+    tags.into_iter()
+        .map(|name| json!({ "name": name }))
+        .collect()
 }
 
 /// Strip Rust line comments (`//...`) and block comments (`/* ... */`)
@@ -238,7 +245,8 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
             // Find chained methods in the tail.
             let mut verbs = std::collections::BTreeSet::new();
             // Also include the leading verb (after the comma).
-            for token in tail.split(|c: char| c == '(' || c == ')' || c == ',' || c.is_whitespace()) {
+            for token in tail.split(|c: char| c == '(' || c == ')' || c == ',' || c.is_whitespace())
+            {
                 if matches!(token, "get" | "post" | "put" | "patch" | "delete") {
                     verbs.insert(token.to_string());
                 }
@@ -249,7 +257,9 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
             }
             let normalized_path = normalize_path(raw_path);
             let tag = infer_tag(raw_path);
-            let entry = paths.entry(normalized_path.clone()).or_insert_with(|| json!({}));
+            let entry = paths
+                .entry(normalized_path.clone())
+                .or_insert_with(|| json!({}));
             if let Some(obj) = entry.as_object_mut() {
                 for verb in &verbs {
                     let method = verb.to_lowercase();
@@ -301,15 +311,27 @@ mod tests {
 
     #[test]
     fn normalize_path_converts_param_style() {
-        assert_eq!(normalize_path("/api/companies/:company_id"), "/api/companies/{company_id}");
-        assert_eq!(normalize_path("/api/issues/:id/comments/:comment_id"), "/api/issues/{id}/comments/{comment_id}");
+        assert_eq!(
+            normalize_path("/api/companies/:company_id"),
+            "/api/companies/{company_id}"
+        );
+        assert_eq!(
+            normalize_path("/api/issues/:id/comments/:comment_id"),
+            "/api/issues/{id}/comments/{comment_id}"
+        );
         assert_eq!(normalize_path("/api/health"), "/api/health");
     }
 
     #[test]
     fn operation_id_is_stable() {
-        assert_eq!(operation_id("GET", "/api/companies/{id}"), "get_api_companies_id");
-        assert_eq!(operation_id("POST", "/api/issues/{id}/comments"), "post_api_issues_id_comments");
+        assert_eq!(
+            operation_id("GET", "/api/companies/{id}"),
+            "get_api_companies_id"
+        );
+        assert_eq!(
+            operation_id("POST", "/api/issues/{id}/comments"),
+            "post_api_issues_id_comments"
+        );
     }
 
     #[test]

@@ -32,7 +32,10 @@ pub fn router() -> Router<AppState> {
         // company 上下文之外删除 label。删除只能走
         // `/api/companies/:company_id/labels/:label_id`（在 companies.rs）。
         // 这是 paperclip API 的强制安全约束：必须携带 company context。
-        .route("/api/labels/:label_id", patch(patch_label).delete(delete_label))
+        .route(
+            "/api/labels/:label_id",
+            patch(patch_label).delete(delete_label),
+        )
 }
 
 #[derive(Debug, Deserialize)]

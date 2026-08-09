@@ -5,6 +5,7 @@ use serde_json::json;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/", get(handler))
         .route("/health", get(handler))
         // ── Round 44: /api root index alias (node health mounted at /api) ──
         .route("/api", get(handler))

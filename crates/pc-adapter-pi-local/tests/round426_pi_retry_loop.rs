@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pc_adapter_api::{Adapter, AdapterExecutionContext, AdapterEventSink};
+use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_pi_local::PiLocalAdapter;
 use serde_json::json;
 use uuid::Uuid;
@@ -74,7 +74,11 @@ async fn successful_first_attempt_does_not_retry() {
         .await
         .expect("execute ok");
     let json = result.result_json.expect("result_json");
-    assert_eq!(json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
     assert!(!result.clear_session);
 }
 
@@ -85,7 +89,10 @@ async fn unknown_session_failure_triggers_retry() {
     let session_path = tmp.path.join("old-session.jsonl");
     std::fs::write(
         &session_path,
-        format!("{{\"type\":\"session\",\"cwd\":\"{}\"}}", tmp.path.display()),
+        format!(
+            "{{\"type\":\"session\",\"cwd\":\"{}\"}}",
+            tmp.path.display()
+        ),
     )
     .expect("write session header");
     let lines = [
@@ -98,14 +105,21 @@ async fn unknown_session_failure_triggers_retry() {
     ctx.session_id = Some(session_path.to_string_lossy().into_owned());
     ctx.cwd = Some(tmp.path.clone());
     let (sink, _rx) = AdapterEventSink::channel(8);
-    let result = PiLocalAdapter::new().execute(ctx, sink).await.expect("execute ok");
+    let result = PiLocalAdapter::new()
+        .execute(ctx, sink)
+        .await
+        .expect("execute ok");
     let json = result.result_json.expect("result_json");
     assert_eq!(
-        json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()),
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
         Some(true)
     );
     assert!(result.clear_session);
-    let path_now = json.get("sessionPath").and_then(|v| v.as_str()).unwrap_or("");
+    let path_now = json
+        .get("sessionPath")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert!(path_now.contains(".jsonl"));
     assert_ne!(path_now, session_path.to_string_lossy());
 }
@@ -122,6 +136,10 @@ async fn unrelated_failure_does_not_retry() {
         .await
         .expect("execute ok");
     let json = result.result_json.expect("result_json");
-    assert_eq!(json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
     assert!(!result.clear_session);
 }

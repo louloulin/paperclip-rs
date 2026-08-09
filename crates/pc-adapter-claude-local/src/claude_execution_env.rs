@@ -81,8 +81,14 @@ mod tests {
         let mut env = BTreeMap::new();
         env.insert("PAPERCLIP_RUN_ID".to_string(), "run-1".to_string());
         env.insert("PAPERCLIP_API_KEY".to_string(), "host-token".to_string());
-        env.insert("PAPERCLIP_API_URL".to_string(), "http://host:3100".to_string());
-        env.insert("CLAUDE_CONFIG_DIR".to_string(), "/home/claude/config".to_string());
+        env.insert(
+            "PAPERCLIP_API_URL".to_string(),
+            "http://host:3100".to_string(),
+        );
+        env.insert(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            "/home/claude/config".to_string(),
+        );
         env
     }
 
@@ -120,11 +126,9 @@ mod tests {
     #[test]
     fn remote_target_merges_four_bridge_keys() {
         let base = base_env();
-        let merged = build_claude_execution_env(&input(
-            &base,
-            Some(&ssh_target_value("/remote/workspace")),
-        ))
-        .expect("remote ok");
+        let merged =
+            build_claude_execution_env(&input(&base, Some(&ssh_target_value("/remote/workspace"))))
+                .expect("remote ok");
         let plan = merged.bridge_plan.as_ref().expect("plan present");
         assert_eq!(merged.env["PAPERCLIP_API_URL"], plan.host_api_url);
         assert_eq!(merged.env["PAPERCLIP_API_KEY"], plan.bridge_token);
@@ -141,11 +145,9 @@ mod tests {
     fn remote_target_without_token_errors() {
         let mut base = base_env();
         base.remove("PAPERCLIP_API_KEY");
-        let error = build_claude_execution_env(&input(
-            &base,
-            Some(&ssh_target_value("/remote/workspace")),
-        ))
-        .expect_err("token required");
+        let error =
+            build_claude_execution_env(&input(&base, Some(&ssh_target_value("/remote/workspace"))))
+                .expect_err("token required");
         assert!(error.contains("Sandbox bridge mode requires"));
     }
 

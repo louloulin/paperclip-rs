@@ -122,13 +122,19 @@ pub fn should_resume_remote_session(
         || canonicalize_like_resolve(runtime_session_cwd)
             == canonicalize_like_resolve(effective_execution_cwd);
     if !cwd_matches {
-        return (false, Some("saved session cwd does not match execution cwd"));
+        return (
+            false,
+            Some("saved session cwd does not match execution cwd"),
+        );
     }
     let Some(saved) = saved_remote_execution else {
         return (false, Some("no saved remote execution identity"));
     };
     if !remote_session_identity_matches(saved, target) {
-        return (false, Some("saved session identity does not match current target"));
+        return (
+            false,
+            Some("saved session identity does not match current target"),
+        );
     }
     (true, None)
 }
@@ -210,7 +216,10 @@ mod tests {
 
     #[test]
     fn resolve_remote_workspace_dir_falls_back_to_remote_cwd() {
-        assert_eq!(resolve_remote_workspace_dir(None, "/remote/cwd"), "/remote/cwd");
+        assert_eq!(
+            resolve_remote_workspace_dir(None, "/remote/cwd"),
+            "/remote/cwd"
+        );
     }
 
     #[test]
@@ -249,7 +258,13 @@ mod tests {
     fn codex_home_sync_allowlist_matches_node() {
         assert_eq!(
             codex_home_sync_allowlist(),
-            &["config.json", "config.toml", "instructions.md", "auth.json", "skills"]
+            &[
+                "config.json",
+                "config.toml",
+                "instructions.md",
+                "auth.json",
+                "skills"
+            ]
         );
     }
 
@@ -266,7 +281,8 @@ mod tests {
 
     #[test]
     fn remote_session_identity_matches_saved_ssh_identity() {
-        let target = ssh_target("/remote/workspace/.paperclip-runtime/runs/run-ssh-resume/workspace");
+        let target =
+            ssh_target("/remote/workspace/.paperclip-runtime/runs/run-ssh-resume/workspace");
         let saved = json!({
             "transport": "ssh",
             "host": "127.0.0.1",
@@ -306,8 +322,13 @@ mod tests {
             "port": 2222,
             "remoteCwd": managed,
         });
-        let (allow, reason) =
-            should_resume_remote_session(Some("session-123"), Some(managed), Some(managed), Some(&saved), Some(&target));
+        let (allow, reason) = should_resume_remote_session(
+            Some("session-123"),
+            Some(managed),
+            Some(managed),
+            Some(&saved),
+            Some(&target),
+        );
         assert!(allow);
         assert!(reason.is_none());
     }
@@ -372,7 +393,10 @@ mod tests {
             Some(&target),
         );
         assert!(!allow);
-        assert_eq!(reason, Some("saved session cwd does not match execution cwd"));
+        assert_eq!(
+            reason,
+            Some("saved session cwd does not match execution cwd")
+        );
     }
 
     #[test]

@@ -54,7 +54,10 @@ fn command_looks_like_real_paths() {
     assert!(command_looks_like("./bin/codex", "codex"));
     assert!(command_looks_like("codex", "codex"));
     assert!(command_looks_like("/usr/bin/codex.cmd", "codex"));
-    assert!(command_looks_like("C:\\Program Files\\Codex\\codex.exe", "codex"));
+    assert!(command_looks_like(
+        "C:\\Program Files\\Codex\\codex.exe",
+        "codex"
+    ));
 }
 
 #[test]
@@ -231,8 +234,7 @@ fn real_fixture_outputs_login_required() {
 
 #[test]
 fn summarize_probe_detail_collapses_multiline() {
-    let detail =
-        summarize_probe_detail("line1\n\nline2\t\tline3\n\n\n", "", None).expect("detail");
+    let detail = summarize_probe_detail("line1\n\nline2\t\tline3\n\n\n", "", None).expect("detail");
     assert_eq!(detail, "line1 line2 line3");
 }
 
@@ -269,17 +271,15 @@ fn has_hello_in_text_handles_punctuation() {
 fn decide_test_env_with_real_temp_cwd() {
     let tmp = TempDir::new("cwd");
     let cfg = serde_json::Map::new();
-    let decision = decide_test_environment_checks(&pc_adapter_codex_local::codex_test::TestEnvironmentInput {
-        config: &cfg,
-        execution_target: None,
-        cwd: tmp.path.to_str().unwrap(),
-        host_env: None,
-    });
+    let decision =
+        decide_test_environment_checks(&pc_adapter_codex_local::codex_test::TestEnvironmentInput {
+            config: &cfg,
+            execution_target: None,
+            cwd: tmp.path.to_str().unwrap(),
+            host_env: None,
+        });
     // 真实 cwd 应该 info 而非 error
-    assert!(decision
-        .checks
-        .iter()
-        .any(|c| c.code == "codex_cwd_valid"));
+    assert!(decision.checks.iter().any(|c| c.code == "codex_cwd_valid"));
     assert!(!decision
         .checks
         .iter()
@@ -291,12 +291,13 @@ fn decide_test_env_with_real_temp_cwd() {
 #[test]
 fn decide_test_env_aggregates_status_to_warn_without_api_key() {
     let cfg = serde_json::Map::new();
-    let decision = decide_test_environment_checks(&pc_adapter_codex_local::codex_test::TestEnvironmentInput {
-        config: &cfg,
-        execution_target: None,
-        cwd: "/workspace",
-        host_env: None,
-    });
+    let decision =
+        decide_test_environment_checks(&pc_adapter_codex_local::codex_test::TestEnvironmentInput {
+            config: &cfg,
+            execution_target: None,
+            cwd: "/workspace",
+            host_env: None,
+        });
     // 有 warn（api_key_missing），无 error → 状态是 warn
     let has_error = decision
         .checks

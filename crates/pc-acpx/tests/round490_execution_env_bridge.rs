@@ -33,7 +33,10 @@ fn base_env() -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert("PAPERCLIP_RUN_ID".to_string(), "run-1".to_string());
     env.insert("PAPERCLIP_API_KEY".to_string(), "host-token".to_string());
-    env.insert("PAPERCLIP_API_URL".to_string(), "http://host:3100".to_string());
+    env.insert(
+        "PAPERCLIP_API_URL".to_string(),
+        "http://host:3100".to_string(),
+    );
     env.insert("CODEX_HOME".to_string(), "/home/codex".to_string());
     env
 }
@@ -58,8 +61,13 @@ fn merge<'a>(
 #[test]
 fn local_target_passthrough() {
     let base = base_env();
-    let merged = merge(&base, Some(&serde_json::json!({ "kind": "local" })), "codex", None)
-        .expect("local no error");
+    let merged = merge(
+        &base,
+        Some(&serde_json::json!({ "kind": "local" })),
+        "codex",
+        None,
+    )
+    .expect("local no error");
     assert_eq!(merged.env, base);
     assert!(merged.bridge_plan.is_none());
     assert!(merged.start_log_line.is_none());
@@ -79,7 +87,10 @@ fn remote_merge_four_bridge_keys_with_log_line() {
     assert_eq!(merged.env["PAPERCLIP_API_URL"], plan.host_api_url);
     assert_eq!(merged.env["PAPERCLIP_API_KEY"], plan.bridge_token);
     assert_eq!(merged.env["PAPERCLIP_API_BRIDGE_MODE"], "queue_v1");
-    assert_eq!(merged.env["PAPERCLIP_BRIDGE_QUEUE_DIR"], plan.paths.queue_dir);
+    assert_eq!(
+        merged.env["PAPERCLIP_BRIDGE_QUEUE_DIR"],
+        plan.paths.queue_dir
+    );
     assert_eq!(merged.env["CODEX_HOME"], "/home/codex");
     assert_eq!(merged.env.len(), 6);
     assert_eq!(plan.timeout_ms, Some(45_000));
@@ -93,8 +104,13 @@ fn remote_merge_four_bridge_keys_with_log_line() {
 fn remote_missing_token_errors() {
     let mut base = base_env();
     base.remove("PAPERCLIP_API_KEY");
-    let error = merge(&base, Some(&ssh_target_json("/remote/workspace")), "claude", None)
-        .expect_err("token required");
+    let error = merge(
+        &base,
+        Some(&ssh_target_json("/remote/workspace")),
+        "claude",
+        None,
+    )
+    .expect_err("token required");
     assert!(error.contains("Sandbox bridge mode requires"));
 }
 

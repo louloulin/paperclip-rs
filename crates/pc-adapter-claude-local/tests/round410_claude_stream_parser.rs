@@ -1,7 +1,6 @@
 use pc_adapter_claude_local::{
     claude_model_usage_totals, detect_claude_login_required, extract_claude_login_url,
-    is_claude_image_processing_error, is_claude_unknown_session_error,
-    parse_claude_stream_json,
+    is_claude_image_processing_error, is_claude_unknown_session_error, parse_claude_stream_json,
 };
 
 #[test]
@@ -47,8 +46,16 @@ fn model_usage跨模型汇总并把cache_creation计入输入() {
 
 #[test]
 fn 登录检测和登录链接提取() {
-    assert!(detect_claude_login_required(None, "", "Please run claude login"));
-    assert!(!detect_claude_login_required(None, "authenticated", "network timeout"));
+    assert!(detect_claude_login_required(
+        None,
+        "",
+        "Please run claude login"
+    ));
+    assert!(!detect_claude_login_required(
+        None,
+        "authenticated",
+        "network timeout"
+    ));
     assert_eq!(
         extract_claude_login_url("Open https://console.anthropic.com/login for auth."),
         Some("https://console.anthropic.com/login".into())
@@ -60,7 +67,9 @@ fn 未知session与图片处理错误识别() {
     assert!(is_claude_unknown_session_error(&serde_json::json!({
         "errors": [{"message": "--resume requires a valid session ID"}]
     })));
-    assert!(!is_claude_unknown_session_error(&serde_json::json!({"result": "Network timeout"})));
+    assert!(!is_claude_unknown_session_error(
+        &serde_json::json!({"result": "Network timeout"})
+    ));
     assert!(is_claude_image_processing_error(&serde_json::json!({
         "errors": [{"message": "400 Could not process image"}]
     })));

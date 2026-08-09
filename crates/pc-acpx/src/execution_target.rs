@@ -45,10 +45,10 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::execution_target_decision::{
-    AdapterExecutionTargetDecision, AdapterExecutionTargetKind, AdapterManagedRuntimeStrategy,
-    ResolveAdapterExecutionTargetDecisionInput, resolve_adapter_execution_target_decision,
+    resolve_adapter_execution_target_decision, AdapterExecutionTargetDecision,
+    AdapterExecutionTargetKind, AdapterManagedRuntimeStrategy,
+    ResolveAdapterExecutionTargetDecisionInput,
 };
-
 
 // =============================================================================
 // Constants
@@ -139,9 +139,7 @@ pub fn resolve_default_paperclip_api_url_from(
     fallback_host: Option<&str>,
     fallback_port: Option<&str>,
 ) -> String {
-    let raw = listen_host
-        .or(fallback_host)
-        .unwrap_or("localhost");
+    let raw = listen_host.or(fallback_host).unwrap_or("localhost");
     let host = resolve_host_for_url(raw);
     let port = listen_host
         .map(|_| listen_port.unwrap_or("3100"))
@@ -249,7 +247,7 @@ pub struct AdapterLocalExecutionTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterSshExecutionTarget {
-    pub kind: String, // "remote"
+    pub kind: String,      // "remote"
     pub transport: String, // "ssh"
     pub environment_id: Option<String>,
     pub lease_id: Option<String>,
@@ -263,7 +261,7 @@ pub struct AdapterSshExecutionTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterSandboxExecutionTarget {
-    pub kind: String, // "remote"
+    pub kind: String,      // "remote"
     pub transport: String, // "sandbox"
     pub provider_key: Option<String>,
     pub shell_command: Option<String>,
@@ -375,15 +373,17 @@ impl AdapterExecutionTarget {
     #[must_use]
     pub fn from_remote_execution_ssh(spec: SshRemoteExecutionSpec) -> Self {
         let remote_cwd = spec.remote_cwd.clone();
-        Self::Remote(AdapterRemoteExecutionTarget::Ssh(AdapterSshExecutionTarget {
-            kind: "remote".to_string(),
-            transport: "ssh".to_string(),
-            environment_id: None,
-            lease_id: None,
-            remote_cwd,
-            spec,
-            workspace_realization: None,
-        }))
+        Self::Remote(AdapterRemoteExecutionTarget::Ssh(
+            AdapterSshExecutionTarget {
+                kind: "remote".to_string(),
+                transport: "ssh".to_string(),
+                environment_id: None,
+                lease_id: None,
+                remote_cwd,
+                spec,
+                workspace_realization: None,
+            },
+        ))
     }
 
     pub fn set_remote_cwd(&mut self, next_remote_cwd: String) {
@@ -430,7 +430,7 @@ pub struct AdapterManagedRuntimeAsset {
 // =============================================================================
 
 /// Re-export of `sanitize_remote_execution_env` for parity with Node.
-pub use crate::remote_execution_env::sanitize_remote_execution_env as sanitize_remote_execution_env;
+pub use crate::remote_execution_env::sanitize_remote_execution_env;
 
 /// Top-level descriptor returned by
 /// `prepareAdapterExecutionTargetRuntime`. Mirrors Node
@@ -443,7 +443,8 @@ pub struct PreparedAdapterExecutionTargetRuntime {
     pub runtime_root_dir: Option<String>,
     pub asset_dirs: std::collections::BTreeMap<String, String>,
     pub additional_source_dirs: std::collections::BTreeMap<String, String>,
-    pub additional_source_failures: Vec<crate::sandbox_managed_runtime::AdditionalSourceStagingFailure>,
+    pub additional_source_failures:
+        Vec<crate::sandbox_managed_runtime::AdditionalSourceStagingFailure>,
     /// Async builder captured as a flag for parity.
     pub has_restore_workspace: bool,
 }
@@ -512,9 +513,7 @@ pub fn adapter_execution_target_to_remote_spec(
     target: Option<&AdapterExecutionTarget>,
 ) -> Option<&SshRemoteExecutionSpec> {
     match target {
-        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(s))) => {
-            Some(&s.spec)
-        }
+        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(s))) => Some(&s.spec),
         _ => None,
     }
 }
@@ -529,12 +528,12 @@ pub fn adapter_execution_target_is_remote(target: Option<&AdapterExecutionTarget
 /// `true` only for Sandbox-backed targets. Mirrors Node
 /// `adapterExecutionTargetUsesManagedHome`.
 #[must_use]
-pub fn adapter_execution_target_uses_managed_home(
-    target: Option<&AdapterExecutionTarget>,
-) -> bool {
+pub fn adapter_execution_target_uses_managed_home(target: Option<&AdapterExecutionTarget>) -> bool {
     matches!(
         target,
-        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Sandbox(_)))
+        Some(AdapterExecutionTarget::Remote(
+            AdapterRemoteExecutionTarget::Sandbox(_)
+        ))
     )
 }
 
@@ -713,7 +712,9 @@ fn describe_adapter_execution_timeout_source(
     source: &AdapterExecutionTargetTimeoutSource,
 ) -> &'static str {
     match source {
-        AdapterExecutionTargetTimeoutSource::Configured => "configured via adapterConfig.timeoutSec",
+        AdapterExecutionTargetTimeoutSource::Configured => {
+            "configured via adapterConfig.timeoutSec"
+        }
         AdapterExecutionTargetTimeoutSource::SandboxDefault => "sandbox default",
         AdapterExecutionTargetTimeoutSource::Unlimited => "no adapter wall-clock timeout",
     }
@@ -773,25 +774,23 @@ pub fn adapter_execution_target_session_identity(
     match target {
         None => None,
         Some(AdapterExecutionTarget::Local(_)) => None,
-        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(s))) => {
-            Some(AdapterExecutionTargetSessionIdentity::Ssh(SshSessionIdentity {
+        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(s))) => Some(
+            AdapterExecutionTargetSessionIdentity::Ssh(SshSessionIdentity {
                 transport: "ssh".to_string(),
                 host: s.spec.host.clone(),
                 username: s.spec.username.clone(),
                 port: s.spec.port,
-            }))
-        }
-        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Sandbox(s))) => {
-            Some(AdapterExecutionTargetSessionIdentity::Sandbox(
-                SandboxSessionIdentity {
-                    transport: "sandbox".to_string(),
-                    provider_key: s.provider_key.clone(),
-                    environment_id: s.environment_id.clone(),
-                    lease_id: s.lease_id.clone(),
-                    remote_cwd: s.remote_cwd.clone(),
-                },
-            ))
-        }
+            }),
+        ),
+        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Sandbox(s))) => Some(
+            AdapterExecutionTargetSessionIdentity::Sandbox(SandboxSessionIdentity {
+                transport: "sandbox".to_string(),
+                provider_key: s.provider_key.clone(),
+                environment_id: s.environment_id.clone(),
+                lease_id: s.lease_id.clone(),
+                remote_cwd: s.remote_cwd.clone(),
+            }),
+        ),
     }
 }
 
@@ -848,22 +847,17 @@ pub fn adapter_execution_target_session_matches(
         Some(AdapterExecutionTarget::Local(_)) => parsed.is_empty(),
         Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(s))) => {
             let parsed = parse_object(saved);
-            let Some(current_id) =
-                adapter_execution_target_session_identity(target)
-            else {
+            let Some(current_id) = adapter_execution_target_session_identity(target) else {
                 return false;
             };
             let AdapterExecutionTargetSessionIdentity::Ssh(current_id) = current_id else {
                 return false;
             };
-            read_string_meta(&parsed, "transport").as_deref()
-                == Some(current_id.transport.as_str())
+            read_string_meta(&parsed, "transport").as_deref() == Some(current_id.transport.as_str())
                 && read_string_meta(&parsed, "host").as_deref() == Some(current_id.host.as_str())
                 && read_string_meta(&parsed, "username").as_deref()
                     == Some(current_id.username.as_str())
-                && parsed
-                    .get("port")
-                    .and_then(serde_json::Value::as_u64)
+                && parsed.get("port").and_then(serde_json::Value::as_u64)
                     == Some(u64::from(current_id.port))
                 && read_string_meta(&parsed, "remoteCwd").as_deref()
                     == Some(s.spec.remote_cwd.as_str())
@@ -912,10 +906,13 @@ pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<Adapt
     let remote_cwd = read_string_meta(&parsed, "remoteCwd").unwrap_or_default();
     match transport.as_str() {
         "ssh" => {
-            let spec_obj = parsed.get("spec").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            let spec_obj = parsed
+                .get("spec")
+                .cloned()
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             let spec = parse_ssh_remote_execution_spec(&spec_obj)?;
-            Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(
-                AdapterSshExecutionTarget {
+            Some(AdapterExecutionTarget::Remote(
+                AdapterRemoteExecutionTarget::Ssh(AdapterSshExecutionTarget {
                     kind: "remote".to_string(),
                     transport: "ssh".to_string(),
                     environment_id: read_string_meta(&parsed, "environmentId"),
@@ -923,8 +920,8 @@ pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<Adapt
                     remote_cwd: spec.remote_cwd.clone(),
                     spec,
                     workspace_realization,
-                },
-            )))
+                }),
+            ))
         }
         "sandbox" => {
             if remote_cwd.is_empty() {
@@ -934,9 +931,11 @@ pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<Adapt
                 Some(serde_json::Value::Number(n)) => n.as_u64(),
                 _ => None,
             };
-            let stream_run_logs = parsed.get("streamRunLogs").and_then(serde_json::Value::as_bool);
-            Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Sandbox(
-                AdapterSandboxExecutionTarget {
+            let stream_run_logs = parsed
+                .get("streamRunLogs")
+                .and_then(serde_json::Value::as_bool);
+            Some(AdapterExecutionTarget::Remote(
+                AdapterRemoteExecutionTarget::Sandbox(AdapterSandboxExecutionTarget {
                     kind: "remote".to_string(),
                     transport: "sandbox".to_string(),
                     provider_key: read_string_meta(&parsed, "providerKey"),
@@ -947,8 +946,8 @@ pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<Adapt
                     timeout_ms,
                     stream_run_logs,
                     workspace_realization,
-                },
-            )))
+                }),
+            ))
         }
         _ => None,
     }
@@ -965,19 +964,17 @@ pub fn adapter_execution_target_from_remote_execution(
 ) -> Option<AdapterExecutionTarget> {
     let parsed = parse_object(remote_execution);
     let ssh = parse_ssh_remote_execution_spec(&serde_json::Value::Object(parsed.clone()))?;
-    Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(
-        AdapterSshExecutionTarget {
+    Some(AdapterExecutionTarget::Remote(
+        AdapterRemoteExecutionTarget::Ssh(AdapterSshExecutionTarget {
             kind: "remote".to_string(),
             transport: "ssh".to_string(),
-            environment_id: metadata
-                .as_ref()
-                .and_then(|m| m.environment_id.clone()),
+            environment_id: metadata.as_ref().and_then(|m| m.environment_id.clone()),
             lease_id: metadata.as_ref().and_then(|m| m.lease_id.clone()),
             remote_cwd: ssh.remote_cwd.clone(),
             spec: ssh,
             workspace_realization: None,
-        },
-    )))
+        }),
+    ))
 }
 
 /// Tiny shape carrying the metadata `adapterExecutionTargetFromRemoteExecution` accepts.
@@ -1257,7 +1254,10 @@ pub fn build_bridge_proxy_request_plan(
         }
         headers.insert(key.clone(), value.clone());
     }
-    headers.insert("authorization".to_string(), format!("Bearer {host_api_token}"));
+    headers.insert(
+        "authorization".to_string(),
+        format!("Bearer {host_api_token}"),
+    );
     headers.insert("x-paperclip-run-id".to_string(), run_id.to_string());
     let url = crate::sandbox_callback_bridge::build_bridge_forward_url(
         host_api_url,
@@ -1298,9 +1298,7 @@ pub struct StartPaperclipBridgePlan {
 pub fn bridge_host_api_token_or_error(host_api_token: Option<&str>) -> Result<String, String> {
     match host_api_token.map(str::trim).filter(|s| !s.is_empty()) {
         Some(token) => Ok(token.to_string()),
-        None => Err(
-            "Sandbox bridge mode requires a host-side Paperclip API token.".to_string(),
-        ),
+        None => Err("Sandbox bridge mode requires a host-side Paperclip API token.".to_string()),
     }
 }
 
@@ -1323,8 +1321,7 @@ pub fn start_adapter_execution_target_paperclip_bridge_plan(
         None => format!("{remote_cwd}/.paperclip-runtime/{adapter_key}"),
     };
     let paths = bridge_handle_paths(&runtime_root_dir);
-    let bridge_token =
-        crate::sandbox_callback_bridge::create_sandbox_callback_bridge_token(None);
+    let bridge_token = crate::sandbox_callback_bridge::create_sandbox_callback_bridge_token(None);
     let max_body_bytes = resolve_bridge_max_body_bytes(max_body_bytes);
     let host_api_url = host_api_url
         .map(str::trim)
@@ -1335,8 +1332,14 @@ pub fn start_adapter_execution_target_paperclip_bridge_plan(
     let mut env = std::collections::BTreeMap::new();
     env.insert("PAPERCLIP_API_URL".to_string(), host_api_url.clone());
     env.insert("PAPERCLIP_API_KEY".to_string(), bridge_token.clone());
-    env.insert("PAPERCLIP_API_BRIDGE_MODE".to_string(), "queue_v1".to_string());
-    env.insert("PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(), paths.queue_dir.clone());
+    env.insert(
+        "PAPERCLIP_API_BRIDGE_MODE".to_string(),
+        "queue_v1".to_string(),
+    );
+    env.insert(
+        "PAPERCLIP_BRIDGE_QUEUE_DIR".to_string(),
+        paths.queue_dir.clone(),
+    );
     let has_run_log_tail = match target {
         Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Sandbox(s))) => {
             s.stream_run_logs != Some(false)
@@ -1530,7 +1533,10 @@ pub const PROCESS_SESSION_AUTH_TIMEOUT_MS: u64 = 5_000;
 /// 单行 JSON + 换行（对齐 Node `jsonLine`）。
 #[must_use]
 pub fn json_line(value: &serde_json::Value) -> String {
-    format!("{}\n", serde_json::to_string(value).unwrap_or_else(|_| "null".to_string()))
+    format!(
+        "{}\n",
+        serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+    )
 }
 
 /// 按 `\n` 拆分 JSON 行流（对齐 Node `splitJsonLines`：
@@ -1735,7 +1741,10 @@ pub fn build_process_session_command_payload(
     cwd: &str,
     env: &std::collections::BTreeMap<String, String>,
 ) -> String {
-    let sanitized = crate::remote_execution_env::sanitize_remote_execution_env(env, &std::collections::BTreeMap::new());
+    let sanitized = crate::remote_execution_env::sanitize_remote_execution_env(
+        env,
+        &std::collections::BTreeMap::new(),
+    );
     let payload = serde_json::json!({
         "command": command,
         "args": args,
@@ -1853,12 +1862,8 @@ pub fn start_adapter_execution_target_process_session_bridge_plan(
     } else {
         cwd.to_string()
     };
-    let command_payload = build_process_session_command_payload(
-        command,
-        args,
-        &effective_cwd,
-        launch_env,
-    );
+    let command_payload =
+        build_process_session_command_payload(command, args, &effective_cwd, launch_env);
     let start_script = build_process_session_bridge_start_script(
         &stdin_dir,
         &events_dir,
@@ -1866,7 +1871,8 @@ pub fn start_adapter_execution_target_process_session_bridge_plan(
         &command_payload,
         &remote_script_path,
     );
-    let proxy_token = crate::sandbox_callback_bridge::create_sandbox_callback_bridge_token(Some(18));
+    let proxy_token =
+        crate::sandbox_callback_bridge::create_sandbox_callback_bridge_token(Some(18));
     Some(ProcessSessionBridgePlan {
         bridge_runtime_dir,
         session_id: session_id.to_string(),
@@ -2017,12 +2023,8 @@ pub fn proxy_error_message_line(message: &str) -> String {
 /// error 销毁）；无 socket → 入缓冲，exit/error 停止后续轮询）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteEventDeliveryDecision {
-    WriteToSocket {
-        action: RemoteEventSocketAction,
-    },
-    QueuePending {
-        stop_loop: bool,
-    },
+    WriteToSocket { action: RemoteEventSocketAction },
+    QueuePending { stop_loop: bool },
 }
 
 /// 决策远端事件投递方式。
@@ -2169,7 +2171,10 @@ mod tests {
     #[test]
     fn read_string_returns_trimmed_non_empty() {
         assert_eq!(read_string(&json!("hi")), Some("hi".to_string()));
-        assert_eq!(read_string(&json!("  spaced  ")), Some("spaced".to_string()));
+        assert_eq!(
+            read_string(&json!("  spaced  ")),
+            Some("spaced".to_string())
+        );
         assert_eq!(read_string(&json!("")), None);
         assert_eq!(read_string(&json!("   ")), None);
         assert_eq!(read_string(&json!(42)), None);
@@ -2222,15 +2227,21 @@ mod tests {
 
     #[test]
     fn is_adapter_execution_target_instance_accepts_valid_shapes() {
-        assert!(is_adapter_execution_target_instance(&json!({"kind": "local"})));
+        assert!(is_adapter_execution_target_instance(
+            &json!({"kind": "local"})
+        ));
         assert!(is_adapter_execution_target_instance(
             &json!({"kind": "remote", "transport": "ssh", "spec": {"host": "h", "username": "u", "remoteCwd": "/w", "port": 22}})
         ));
         assert!(is_adapter_execution_target_instance(
             &json!({"kind": "remote", "transport": "sandbox", "remoteCwd": "/w"})
         ));
-        assert!(!is_adapter_execution_target_instance(&json!({"kind": "remote"})));
-        assert!(!is_adapter_execution_target_instance(&json!({"kind": "alien"})));
+        assert!(!is_adapter_execution_target_instance(
+            &json!({"kind": "remote"})
+        ));
+        assert!(!is_adapter_execution_target_instance(
+            &json!({"kind": "alien"})
+        ));
     }
 
     // ---- to_remote_spec / is_remote / uses_managed_home ----
@@ -2264,9 +2275,15 @@ mod tests {
 
     #[test]
     fn uses_managed_home_only_sandbox() {
-        assert!(!adapter_execution_target_uses_managed_home(Some(&ssh_target())));
-        assert!(adapter_execution_target_uses_managed_home(Some(&sandbox_target())));
-        assert!(!adapter_execution_target_uses_managed_home(Some(&local_target())));
+        assert!(!adapter_execution_target_uses_managed_home(Some(
+            &ssh_target()
+        )));
+        assert!(adapter_execution_target_uses_managed_home(Some(
+            &sandbox_target()
+        )));
+        assert!(!adapter_execution_target_uses_managed_home(Some(
+            &local_target()
+        )));
     }
 
     #[test]
@@ -2338,14 +2355,21 @@ mod tests {
 
     #[test]
     fn uses_paperclip_bridge_is_remote_alias() {
-        assert!(!adapter_execution_target_uses_paperclip_bridge(Some(&local_target())));
-        assert!(adapter_execution_target_uses_paperclip_bridge(Some(&ssh_target())));
+        assert!(!adapter_execution_target_uses_paperclip_bridge(Some(
+            &local_target()
+        )));
+        assert!(adapter_execution_target_uses_paperclip_bridge(Some(
+            &ssh_target()
+        )));
     }
 
     #[test]
     fn describe_returns_human_readable_strings() {
         assert_eq!(describe_adapter_execution_target(None), "local environment");
-        assert_eq!(describe_adapter_execution_target(Some(&local_target())), "local environment");
+        assert_eq!(
+            describe_adapter_execution_target(Some(&local_target())),
+            "local environment"
+        );
         assert_eq!(
             describe_adapter_execution_target(Some(&ssh_target())),
             "SSH environment u@host:22"
@@ -2375,8 +2399,14 @@ mod tests {
     #[test]
     fn resolve_timeout_zero_falls_to_sandbox_default() {
         let r = resolve_adapter_execution_target_timeout(Some(&sandbox_target()), Some(0.0));
-        assert_eq!(r.source, AdapterExecutionTargetTimeoutSource::SandboxDefault);
-        assert_eq!(r.timeout_sec as u64, DEFAULT_REMOTE_SANDBOX_ADAPTER_TIMEOUT_SEC);
+        assert_eq!(
+            r.source,
+            AdapterExecutionTargetTimeoutSource::SandboxDefault
+        );
+        assert_eq!(
+            r.timeout_sec as u64,
+            DEFAULT_REMOTE_SANDBOX_ADAPTER_TIMEOUT_SEC
+        );
     }
 
     #[test]
@@ -2538,8 +2568,14 @@ mod tests {
 
     #[test]
     fn session_match_local_with_empty_saved() {
-        assert!(adapter_execution_target_session_matches(&json!({}), Some(&local_target())));
-        assert!(!adapter_execution_target_session_matches(&json!({"x": 1}), Some(&local_target())));
+        assert!(adapter_execution_target_session_matches(
+            &json!({}),
+            Some(&local_target())
+        ));
+        assert!(!adapter_execution_target_session_matches(
+            &json!({"x": 1}),
+            Some(&local_target())
+        ));
     }
 
     // ---- fromRemoteExecution / readAdapterExecutionTarget ----
@@ -2594,7 +2630,10 @@ mod tests {
     #[test]
     fn runtime_asset_dir_uses_map_when_present() {
         let mut dirs = std::collections::BTreeMap::new();
-        dirs.insert("skill-1".to_string(), "/sandbox/runtime/skill-1".to_string());
+        dirs.insert(
+            "skill-1".to_string(),
+            "/sandbox/runtime/skill-1".to_string(),
+        );
         let p = PreparedAdapterExecutionTargetRuntime {
             target: local_target(),
             workspace_remote_dir: None,
@@ -2667,33 +2706,21 @@ mod tests {
     #[test]
     fn effective_execution_cwd_uses_in_place_authoritative_root() {
         let realization = workspace_realization_in_place("/remote/in_place");
-        let cwd = effective_execution_cwd(
-            Some(&realization),
-            Some(&ssh_target()),
-            "/local/cwd",
-        );
+        let cwd = effective_execution_cwd(Some(&realization), Some(&ssh_target()), "/local/cwd");
         assert_eq!(cwd, "/remote/in_place");
     }
 
     #[test]
     fn effective_execution_cwd_falls_back_to_remote_cwd_when_copy() {
         let realization = workspace_realization_copy();
-        let cwd = effective_execution_cwd(
-            Some(&realization),
-            Some(&ssh_target()),
-            "/local/cwd",
-        );
+        let cwd = effective_execution_cwd(Some(&realization), Some(&ssh_target()), "/local/cwd");
         // copy mode → 不使用 authoritative_root，回退到 target.remote_cwd
         assert_eq!(cwd, "/workspace");
     }
 
     #[test]
     fn effective_execution_cwd_falls_back_to_local_when_no_realization() {
-        let cwd = effective_execution_cwd(
-            None,
-            Some(&ssh_target()),
-            "/local/cwd",
-        );
+        let cwd = effective_execution_cwd(None, Some(&ssh_target()), "/local/cwd");
         assert_eq!(cwd, "/workspace");
     }
 
@@ -2754,7 +2781,10 @@ mod tests {
 
     #[test]
     fn shell_command_selects_by_transport() {
-        assert_eq!(adapter_execution_target_shell_command(Some(&ssh_target())), "sh");
+        assert_eq!(
+            adapter_execution_target_shell_command(Some(&ssh_target())),
+            "sh"
+        );
         assert_eq!(
             adapter_execution_target_shell_command(Some(&sandbox_target())),
             "sh"
@@ -2842,12 +2872,8 @@ mod tests {
             body: r#"{"text":"hi"}"#.to_string(),
             created_at: "ts".to_string(),
         };
-        let plan = build_bridge_proxy_request_plan(
-            &request,
-            "http://host:3100",
-            "host-token",
-            "run-1",
-        );
+        let plan =
+            build_bridge_proxy_request_plan(&request, "http://host:3100", "host-token", "run-1");
         assert_eq!(plan.method, "POST");
         assert_eq!(plan.url, "http://host:3100/api/issues/i-1/comments?a=1");
         assert_eq!(plan.headers["accept"], "application/json");
@@ -2917,10 +2943,7 @@ mod tests {
         assert!(!plan.bridge_token.is_empty());
         assert_eq!(plan.env["PAPERCLIP_API_BRIDGE_MODE"], "queue_v1");
         assert_eq!(plan.env["PAPERCLIP_API_KEY"], plan.bridge_token);
-        assert_eq!(
-            plan.env["PAPERCLIP_BRIDGE_QUEUE_DIR"],
-            plan.paths.queue_dir
-        );
+        assert_eq!(plan.env["PAPERCLIP_BRIDGE_QUEUE_DIR"], plan.paths.queue_dir);
         assert_eq!(plan.env["PAPERCLIP_API_URL"], plan.host_api_url);
         assert!(!plan.has_run_log_tail, "ssh 无 run log 流");
         assert_eq!(plan.run_id, "run-1");
@@ -3002,10 +3025,7 @@ mod tests {
         );
         assert_eq!(
             error,
-            Err(
-                "Sandbox bridge mode requires a host-side Paperclip API token."
-                    .to_string()
-            )
+            Err("Sandbox bridge mode requires a host-side Paperclip API token.".to_string())
         );
     }
 
@@ -3041,7 +3061,10 @@ mod tests {
         let mut env = std::collections::BTreeMap::new();
         env.insert("PAPERCLIP_RUN_ID".to_string(), "run-1".to_string());
         env.insert("PAPERCLIP_API_KEY".to_string(), "host-token".to_string());
-        env.insert("PAPERCLIP_API_URL".to_string(), "http://host:3100".to_string());
+        env.insert(
+            "PAPERCLIP_API_URL".to_string(),
+            "http://host:3100".to_string(),
+        );
         env.insert("CODEX_HOME".to_string(), "/home/codex".to_string());
         env
     }
@@ -3079,8 +3102,8 @@ mod tests {
     #[test]
     fn merge_execution_bridge_env_none_target_is_local() {
         let base = base_env_with_token();
-        let merged = merge_execution_bridge_env(&merge_input(&base, None, "codex"))
-            .expect("no error");
+        let merged =
+            merge_execution_bridge_env(&merge_input(&base, None, "codex")).expect("no error");
         assert!(merged.bridge_plan.is_none());
         assert_eq!(merged.env, base);
     }
@@ -3098,7 +3121,10 @@ mod tests {
         assert_eq!(merged.env["PAPERCLIP_API_URL"], plan.host_api_url);
         assert_eq!(merged.env["PAPERCLIP_API_KEY"], plan.bridge_token);
         assert_eq!(merged.env["PAPERCLIP_API_BRIDGE_MODE"], "queue_v1");
-        assert_eq!(merged.env["PAPERCLIP_BRIDGE_QUEUE_DIR"], plan.paths.queue_dir);
+        assert_eq!(
+            merged.env["PAPERCLIP_BRIDGE_QUEUE_DIR"],
+            plan.paths.queue_dir
+        );
         assert_eq!(merged.env["CODEX_HOME"], "/home/codex");
         assert_eq!(merged.env["PAPERCLIP_RUN_ID"], "run-1");
         assert_eq!(plan.host_api_url, "http://host:3100");
@@ -3176,7 +3202,8 @@ mod tests {
         assert!(source.contains("type: \"stdin\", data: Buffer.from(chunk).toString(\"base64\")"));
         assert!(source.contains("type: \"stdinEnd\""));
         assert!(source.contains("message.stream === \"stderr\" ? process.stderr : process.stdout"));
-        assert!(source.contains("process.exitCode = typeof message.code === \"number\" ? message.code : 1;"));
+        assert!(source
+            .contains("process.exitCode = typeof message.code === \"number\" ? message.code : 1;"));
         assert!(source.contains("if (!exiting) process.exit(1);"));
         // 模板插值未残留未转义的大括号。
         assert!(!source.contains("{{"));
@@ -3209,13 +3236,9 @@ mod tests {
         );
         assert_eq!(
             plan.sha256,
-            crate::sandbox_callback_bridge::sha256_hex_utf8(
-                &get_process_session_remote_source()
-            )
+            crate::sandbox_callback_bridge::sha256_hex_utf8(&get_process_session_remote_source())
         );
-        assert!(plan
-            .uploaded_decision_script
-            .contains(plan.expected_sha()));
+        assert!(plan.uploaded_decision_script.contains(plan.expected_sha()));
     }
 
     #[test]
@@ -3229,8 +3252,8 @@ mod tests {
             "/remote/cwd",
             &env,
         );
-        let decoded = crate::sandbox_callback_bridge::base64_decode_utf8(&payload)
-            .expect("valid payload");
+        let decoded =
+            crate::sandbox_callback_bridge::base64_decode_utf8(&payload).expect("valid payload");
         let value: serde_json::Value = serde_json::from_str(&decoded).unwrap();
         assert_eq!(value["command"], "claude");
         assert_eq!(value["args"], serde_json::json!(["-p", "hi"]));
@@ -3260,13 +3283,22 @@ mod tests {
 
     #[test]
     fn remote_event_socket_action_matches_node() {
-        assert_eq!(remote_event_socket_action("exit"), RemoteEventSocketAction::End);
+        assert_eq!(
+            remote_event_socket_action("exit"),
+            RemoteEventSocketAction::End
+        );
         assert_eq!(
             remote_event_socket_action("error"),
             RemoteEventSocketAction::Destroy
         );
-        assert_eq!(remote_event_socket_action("data"), RemoteEventSocketAction::Write);
-        assert_eq!(remote_event_socket_action("hello"), RemoteEventSocketAction::Write);
+        assert_eq!(
+            remote_event_socket_action("data"),
+            RemoteEventSocketAction::Write
+        );
+        assert_eq!(
+            remote_event_socket_action("hello"),
+            RemoteEventSocketAction::Write
+        );
     }
 
     #[test]
@@ -3314,9 +3346,18 @@ mod tests {
             plan.bridge_runtime_dir,
             "/workspace/.paperclip-runtime/codex/process-sessions"
         );
-        assert_eq!(plan.session_dir, "/workspace/.paperclip-runtime/codex/process-sessions/session-uuid");
-        assert_eq!(plan.stdin_dir, "/workspace/.paperclip-runtime/codex/process-sessions/session-uuid/stdin");
-        assert_eq!(plan.events_dir, "/workspace/.paperclip-runtime/codex/process-sessions/session-uuid/events");
+        assert_eq!(
+            plan.session_dir,
+            "/workspace/.paperclip-runtime/codex/process-sessions/session-uuid"
+        );
+        assert_eq!(
+            plan.stdin_dir,
+            "/workspace/.paperclip-runtime/codex/process-sessions/session-uuid/stdin"
+        );
+        assert_eq!(
+            plan.events_dir,
+            "/workspace/.paperclip-runtime/codex/process-sessions/session-uuid/events"
+        );
         assert_eq!(
             plan.remote_script_path,
             "/workspace/.paperclip-runtime/codex/process-sessions/paperclip-process-session-remote.mjs"
@@ -3326,8 +3367,8 @@ mod tests {
         // proxy token 18 bytes → 24 chars base64url。
         assert_eq!(plan.proxy_token.len(), 24);
         // cwd 为空 → target.remoteCwd。
-        let decoded = crate::sandbox_callback_bridge::base64_decode_utf8(&plan.command_payload)
-            .unwrap();
+        let decoded =
+            crate::sandbox_callback_bridge::base64_decode_utf8(&plan.command_payload).unwrap();
         let value: serde_json::Value = serde_json::from_str(&decoded).unwrap();
         assert_eq!(value["cwd"], "/workspace");
         assert_eq!(value["command"], "node");
@@ -3403,10 +3444,8 @@ mod tests {
 
     #[test]
     fn proxy_message_line_parsing() {
-        let parsed = parse_proxy_message_line(
-            r#"{"token":"t","type":"stdin","data":"aGk="}"#,
-        )
-        .expect("valid");
+        let parsed = parse_proxy_message_line(r#"{"token":"t","type":"stdin","data":"aGk="}"#)
+            .expect("valid");
         assert_eq!(parsed["type"], "stdin");
         assert!(parse_proxy_message_line("not-json").is_err());
     }
@@ -3415,16 +3454,14 @@ mod tests {
     fn proxy_stdin_write_matches_node_branches() {
         let stdin = build_proxy_stdin_write(3, Some("stdin"), Some("aGk=")).unwrap();
         assert_eq!(stdin.file_name, "000000000003.json");
-        let stdin_value: serde_json::Value =
-            serde_json::from_str(stdin.body.trim_end()).unwrap();
+        let stdin_value: serde_json::Value = serde_json::from_str(stdin.body.trim_end()).unwrap();
         assert_eq!(stdin_value["type"], "stdin");
         assert_eq!(stdin_value["data"], "aGk=");
 
         let end = build_proxy_stdin_write(4, Some("stdinEnd"), None).unwrap();
         assert_eq!(end.file_name, "000000000004.json");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(end.body.trim_end())
-                .unwrap()["type"],
+            serde_json::from_str::<serde_json::Value>(end.body.trim_end()).unwrap()["type"],
             "stdinEnd"
         );
 
@@ -3445,8 +3482,7 @@ mod tests {
         let stop = build_proxy_stop_stdin_end_write(5);
         assert_eq!(stop.file_name, "000000000006.json");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(stop.body.trim_end())
-                .unwrap()["type"],
+            serde_json::from_str::<serde_json::Value>(stop.body.trim_end()).unwrap()["type"],
             "stdinEnd"
         );
     }

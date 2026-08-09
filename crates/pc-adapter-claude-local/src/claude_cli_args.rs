@@ -125,7 +125,6 @@ pub fn build_claude_args_v2(input: &ClaudeArgsInput<'_>) -> Vec<String> {
     args
 }
 
-
 /// 从 adapter_config + context 构造 `ClaudeArgsInput`。
 ///
 /// 把 Node `buildClaudeArgs` 闭包的所有外部依赖都打包到这个函数中，
@@ -211,7 +210,9 @@ mod tests {
         let mut input = base_input();
         input.resume_session_id = Some("abc-123");
         let args = build_claude_args_v2(&input);
-        assert!(args.windows(2).any(|w| w[0] == "--resume" && w[1] == "abc-123"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--resume" && w[1] == "abc-123"));
     }
 
     #[test]

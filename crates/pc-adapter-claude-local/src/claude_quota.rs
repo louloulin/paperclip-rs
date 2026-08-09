@@ -19,9 +19,8 @@
 //! claude-local 配额结果。
 
 pub use pc_adapter_quota::{
-    claude_config_dir, claude_to_percent, map_anthropic_oauth_usage,
-    parse_claude_cli_usage_text, probe_claude_local, read_claude_token,
-    ProviderQuotaResult, QuotaWindow,
+    claude_config_dir, claude_to_percent, map_anthropic_oauth_usage, parse_claude_cli_usage_text,
+    probe_claude_local, read_claude_token, ProviderQuotaResult, QuotaWindow,
 };
 
 /// Claude 配额探测源常量（对齐 Node `CLAUDE_USAGE_SOURCE_OAUTH` / `_CLI`）。
@@ -85,7 +84,10 @@ mod tests {
         assert_eq!(windows.len(), 5);
         assert_eq!(windows[0].label, "Current session");
         assert_eq!(windows[0].used_percent, Some(42));
-        assert_eq!(windows[0].resets_at.as_deref(), Some("2026-08-08T12:00:00Z"));
+        assert_eq!(
+            windows[0].resets_at.as_deref(),
+            Some("2026-08-08T12:00:00Z")
+        );
         assert_eq!(windows[4].label, "Extra usage");
         assert_eq!(windows[4].value_label.as_deref(), Some("$2.50 / $10.00"));
     }

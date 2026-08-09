@@ -144,13 +144,19 @@ pub fn should_resume_remote_session(
         && canonicalize_like_resolve(runtime_session_cwd)
             != canonicalize_like_resolve(effective_execution_cwd)
     {
-        return (false, Some("saved session cwd does not match execution cwd"));
+        return (
+            false,
+            Some("saved session cwd does not match execution cwd"),
+        );
     }
     let Some(saved) = saved_remote_execution else {
         return (false, Some("no saved remote execution identity"));
     };
     if !remote_session_identity_matches(saved, target) {
-        return (false, Some("saved session identity does not match current target"));
+        return (
+            false,
+            Some("saved session identity does not match current target"),
+        );
     }
     (true, None)
 }
@@ -278,8 +284,8 @@ pub async fn start_claude_execution_bridge(
     timeout_sec: Option<f64>,
     on_log: Option<std::sync::Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<Option<pc_acpx::bridge_executor::StartedAdapterBridge>, String> {
-    let target = execution_target
-        .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
+    let target =
+        execution_target.and_then(pc_acpx::execution_target::parse_adapter_execution_target);
     if !adapter_execution_target_uses_paperclip_bridge(target.as_ref()) {
         return Ok(None);
     }
@@ -367,8 +373,8 @@ pub async fn start_claude_process_session_bridge(
     runner: Option<std::sync::Arc<dyn pc_acpx::bridge_executor::BridgeCommandRunner>>,
     on_log: Option<std::sync::Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<Option<pc_acpx::process_session_bridge::ProcessSessionBridgeHandle>, String> {
-    let target = execution_target
-        .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
+    let target =
+        execution_target.and_then(pc_acpx::execution_target::parse_adapter_execution_target);
     let Some(runner) = runner else {
         return Ok(None);
     };
@@ -429,7 +435,10 @@ mod tests {
 
     #[test]
     fn resolve_remote_workspace_dir_falls_back_to_remote_cwd() {
-        assert_eq!(resolve_remote_workspace_dir(None, "/remote/cwd"), "/remote/cwd");
+        assert_eq!(
+            resolve_remote_workspace_dir(None, "/remote/cwd"),
+            "/remote/cwd"
+        );
     }
 
     #[test]
@@ -469,7 +478,8 @@ mod tests {
 
     #[test]
     fn remote_session_identity_matches_saved_ssh_identity() {
-        let target = ssh_target("/remote/workspace/.paperclip-runtime/runs/run-ssh-resume/workspace");
+        let target =
+            ssh_target("/remote/workspace/.paperclip-runtime/runs/run-ssh-resume/workspace");
         let saved = json!({
             "transport": "ssh",
             "host": "127.0.0.1",
@@ -631,7 +641,10 @@ mod tests {
             Some(&target),
         );
         assert!(!allow);
-        assert_eq!(reason, Some("saved session cwd does not match execution cwd"));
+        assert_eq!(
+            reason,
+            Some("saved session cwd does not match execution cwd")
+        );
     }
 
     #[test]
@@ -819,15 +832,9 @@ mod tests {
             None,
         )
         .expect("ssh target");
-        let error = decide_claude_execution_bridge_plan(
-            "run-1",
-            Some(&target),
-            None,
-            None,
-            None,
-            None,
-        )
-        .expect_err("token required");
+        let error =
+            decide_claude_execution_bridge_plan("run-1", Some(&target), None, None, None, None)
+                .expect_err("token required");
         assert!(error.contains("Sandbox bridge mode requires"));
     }
 
@@ -845,9 +852,21 @@ mod tests {
     #[test]
     fn use_remote_process_session_gate_matches_node() {
         let sandbox = sandbox_target("/sandbox/w");
-        assert!(use_claude_remote_process_session(Some(&sandbox), true, true));
-        assert!(!use_claude_remote_process_session(Some(&sandbox), false, true));
-        assert!(!use_claude_remote_process_session(Some(&sandbox), true, false));
+        assert!(use_claude_remote_process_session(
+            Some(&sandbox),
+            true,
+            true
+        ));
+        assert!(!use_claude_remote_process_session(
+            Some(&sandbox),
+            false,
+            true
+        ));
+        assert!(!use_claude_remote_process_session(
+            Some(&sandbox),
+            true,
+            false
+        ));
         let ssh = ssh_target("/remote/workspace");
         assert!(!use_claude_remote_process_session(Some(&ssh), true, true));
         assert!(!use_claude_remote_process_session(None, true, true));
@@ -896,7 +915,10 @@ mod tests {
         )
         .await
         .expect("gate returns Ok");
-        assert!(bridge.is_none(), "ssh transport ⇒ no process session bridge");
+        assert!(
+            bridge.is_none(),
+            "ssh transport ⇒ no process session bridge"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

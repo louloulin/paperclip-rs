@@ -10,16 +10,12 @@ use crate::common::SshLabFixture;
 use pc_acpx::git_workspace_sync::sync_directory_to_ssh;
 use pc_acpx::ssh::SshRemoteExecutionSpec;
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn sync_directory_to_ssh_pipes_tar_through_ssh_to_remote_extract() {
     let Some(fixture) = SshLabFixture::start("r502").await else {
         return;
     };
-    let local = std::env::temp_dir().join(format!(
-        "paperclip-r502-local-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let local = std::env::temp_dir().join(format!("paperclip-r502-local-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&local).expect("mkdir local");
     std::fs::write(local.join("file1.txt"), "alpha\n").expect("write f1");
     std::fs::write(local.join("file2.txt"), "beta\n").expect("write f2");
@@ -29,7 +25,11 @@ async fn sync_directory_to_ssh_pipes_tar_through_ssh_to_remote_extract() {
     let remote_dir = format!("{}/remote-target", fixture.root_dir.display());
     std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
     // Pre-create a stale file the sync should overwrite.
-    std::fs::write(std::path::Path::new(&remote_dir).join("file1.txt"), "stale\n").expect("write stale");
+    std::fs::write(
+        std::path::Path::new(&remote_dir).join("file1.txt"),
+        "stale\n",
+    )
+    .expect("write stale");
 
     sync_directory_to_ssh(&fixture.spec, &local, &remote_dir, None, false, None)
         .await
@@ -38,14 +38,19 @@ async fn sync_directory_to_ssh_pipes_tar_through_ssh_to_remote_extract() {
     // Verify remote contents.
     let r1 = std::fs::read_to_string(std::path::Path::new(&remote_dir).join("file1.txt"))
         .expect("read r1");
-    assert_eq!(r1, "alpha\n", "file1.txt must be overwritten by tar extract");
+    assert_eq!(
+        r1, "alpha\n",
+        "file1.txt must be overwritten by tar extract"
+    );
 
     let r2 = std::fs::read_to_string(std::path::Path::new(&remote_dir).join("file2.txt"))
         .expect("read r2");
     assert_eq!(r2, "beta\n");
 
     let rn = std::fs::read_to_string(
-        std::path::Path::new(&remote_dir).join("subdir").join("nested.txt"),
+        std::path::Path::new(&remote_dir)
+            .join("subdir")
+            .join("nested.txt"),
     )
     .expect("read nested");
     assert_eq!(rn, "gamma\n");
@@ -72,9 +77,16 @@ async fn sync_directory_to_ssh_respects_exclude() {
     std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
 
     let exclude = vec!["node_modules".to_owned()];
-    sync_directory_to_ssh(&fixture.spec, &local, &remote_dir, Some(&exclude), false, None)
-        .await
-        .expect("sync should succeed");
+    sync_directory_to_ssh(
+        &fixture.spec,
+        &local,
+        &remote_dir,
+        Some(&exclude),
+        false,
+        None,
+    )
+    .await
+    .expect("sync should succeed");
 
     // keep.txt must be there.
     assert!(
@@ -83,7 +95,9 @@ async fn sync_directory_to_ssh_respects_exclude() {
     );
     // node_modules must NOT be there.
     assert!(
-        !std::path::Path::new(&remote_dir).join("node_modules").exists(),
+        !std::path::Path::new(&remote_dir)
+            .join("node_modules")
+            .exists(),
         "node_modules must be excluded by --exclude"
     );
 

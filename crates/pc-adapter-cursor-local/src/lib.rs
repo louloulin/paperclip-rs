@@ -28,8 +28,8 @@ pub use execute_helpers::{
 };
 
 pub use cursor_stream_json::{
-    is_cursor_unknown_session_error, normalize_cursor_stream_line,
-    parse_cursor_stream_json, ParsedCursorStreamJson,
+    is_cursor_unknown_session_error, normalize_cursor_stream_line, parse_cursor_stream_json,
+    ParsedCursorStreamJson,
 };
 
 pub const ADAPTER_TYPE: &str = "cursor_local";
@@ -280,12 +280,10 @@ impl Adapter for CursorLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
-        let initial_built = build_cursor_exec_args(
-            &context.adapter_config,
-            context.session_id.as_deref(),
-        );
-        let initial_spec = ProcessSpec::new(&command, &initial_built.args)
-            .with_stdin(context.prompt.clone());
+        let initial_built =
+            build_cursor_exec_args(&context.adapter_config, context.session_id.as_deref());
+        let initial_spec =
+            ProcessSpec::new(&command, &initial_built.args).with_stdin(context.prompt.clone());
         let initial_execution =
             execute_process_capture(&initial_spec, &context, events.clone()).await?;
         let initial_parsed = parse_cursor_stream_json(&initial_execution.stdout);
@@ -296,7 +294,11 @@ impl Adapter for CursorLocalAdapter {
         let mut active_execution = initial_execution;
         let mut active_parsed = initial_parsed;
         let mut active_built = initial_built;
-        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        if let Some(sid) = context
+            .session_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
             if !active_execution.result.timed_out
                 && active_execution.result.exit_code.unwrap_or(0) != 0
                 && is_cursor_unknown_session_error(
@@ -334,14 +336,12 @@ impl Adapter for CursorLocalAdapter {
         result.model = parsed.model.clone().or_else(|| built.model.clone());
         let billing_type = crate::execute_helpers::resolve_cursor_billing_type(&context.env);
         let model_for_provider = context.adapter_config.get("model").and_then(Value::as_str);
-        let provider = crate::execute_helpers::resolve_provider_from_model(
-            model_for_provider.unwrap_or(""),
-        );
+        let provider =
+            crate::execute_helpers::resolve_provider_from_model(model_for_provider.unwrap_or(""));
         result.billing_type = Some(billing_type.as_str().to_owned());
         let paperclip_env_note =
             pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
-        let api_access_note =
-            pc_acpx::session_config_options::render_api_access_note(&context.env);
+        let api_access_note = pc_acpx::session_config_options::render_api_access_note(&context.env);
         result.result_json = Some(json!({
             "biller": crate::execute_helpers::resolve_cursor_biller(
                 &context.env,

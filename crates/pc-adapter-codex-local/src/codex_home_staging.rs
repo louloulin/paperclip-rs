@@ -241,35 +241,31 @@ fn stage_contained_subtree<'a>(
             Err(e) => return Err(e),
         };
         while let Some(entry) = entries.next_entry().await? {
-        let entry_source = source_dir.join(entry.file_name());
-        let entry_target = target_dir.join(entry.file_name());
-        let resolved = match fs::canonicalize(&entry_source).await {
-            Ok(p) => p,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) if e.raw_os_error() == Some(62) => continue,
-            Err(e) => return Err(e),
-        };
-        // 越出 containment root → 跳过（防止 host 文件被拖入 staging）
-        if !is_resolved_path_inside(&resolved, containment_root) {
-            continue;
-        }
-        let entry_stat = match fs::metadata(&resolved).await {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-        };
+            let entry_source = source_dir.join(entry.file_name());
+            let entry_target = target_dir.join(entry.file_name());
+            let resolved = match fs::canonicalize(&entry_source).await {
+                Ok(p) => p,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) if e.raw_os_error() == Some(62) => continue,
+                Err(e) => return Err(e),
+            };
+            // 越出 containment root → 跳过（防止 host 文件被拖入 staging）
+            if !is_resolved_path_inside(&resolved, containment_root) {
+                continue;
+            }
+            let entry_stat = match fs::metadata(&resolved).await {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
             if entry_stat.is_dir() {
                 if active_path.contains(&resolved) {
                     continue;
                 }
                 active_path.push(resolved.clone());
-                if let Err(e) = stage_contained_subtree(
-                    &resolved,
-                    &entry_target,
-                    containment_root,
-                    active_path,
-                )
-                .await
+                if let Err(e) =
+                    stage_contained_subtree(&resolved, &entry_target, containment_root, active_path)
+                        .await
                 {
                     active_path.pop();
                     return Err(e);
@@ -300,9 +296,7 @@ fn is_resolved_path_inside(candidate: &Path, root: &Path) -> bool {
         Ok(rel) => {
             let s = rel.to_string_lossy();
             // 防止 /tmp/skills vs /tmp/skills-evil 这种 collision
-            !s.is_empty()
-                && !s.starts_with("..")
-                && !std::path::Path::new(s.as_ref()).has_root()
+            !s.is_empty() && !s.starts_with("..") && !std::path::Path::new(s.as_ref()).has_root()
         }
         Err(_) => false,
     }
@@ -368,7 +362,9 @@ mod tests {
             seq
         );
         let dir = base.join(unique);
-        tokio::fs::create_dir_all(&dir).await.expect("create tempdir");
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create tempdir");
         dir
     }
 
@@ -400,9 +396,13 @@ mod tests {
         let home = root.join("codex-home");
         let auth_source = root.join("shared/auth.json");
         let skill_source = root.join("shared/skill-src.md");
-        tokio::fs::create_dir_all(root.join("shared")).await.unwrap();
+        tokio::fs::create_dir_all(root.join("shared"))
+            .await
+            .unwrap();
         tokio::fs::write(&auth_source, auth_bytes()).await.unwrap();
-        tokio::fs::write(&skill_source, skill_bytes()).await.unwrap();
+        tokio::fs::write(&skill_source, skill_bytes())
+            .await
+            .unwrap();
 
         tokio::fs::create_dir_all(&home).await.unwrap();
         // auth.json 软链到 shared source
@@ -410,11 +410,17 @@ mod tests {
         tokio::fs::symlink(&auth_source, home.join("auth.json"))
             .await
             .unwrap();
-        write_file(&home.join("config.toml"), "model_provider = \"paperclip\"\n").await;
+        write_file(
+            &home.join("config.toml"),
+            "model_provider = \"paperclip\"\n",
+        )
+        .await;
         write_file(&home.join("config.json"), "{}\n").await;
         write_file(&home.join("instructions.md"), "hi\n").await;
         // skills/ 目录含 symlink
-        tokio::fs::create_dir_all(home.join("skills")).await.unwrap();
+        tokio::fs::create_dir_all(home.join("skills"))
+            .await
+            .unwrap();
         #[cfg(unix)]
         tokio::fs::symlink(&skill_source, home.join("skills/demo.md"))
             .await
@@ -423,9 +429,13 @@ mod tests {
         // decoys: 应被白名单排除
         write_file(&home.join("logs_2.sqlite"), "x").await;
         write_file(&home.join("state_5.sqlite"), "x").await;
-        tokio::fs::create_dir_all(home.join("plugins/cache")).await.unwrap();
+        tokio::fs::create_dir_all(home.join("plugins/cache"))
+            .await
+            .unwrap();
         write_file(&home.join("plugins/cache/x"), "x").await;
-        tokio::fs::create_dir_all(home.join("sessions")).await.unwrap();
+        tokio::fs::create_dir_all(home.join("sessions"))
+            .await
+            .unwrap();
         write_file(&home.join("sessions/y"), "x").await;
         tokio::fs::create_dir_all(home.join("tmp")).await.unwrap();
         #[cfg(unix)]
@@ -461,7 +471,13 @@ mod tests {
         .unwrap();
         // dir name 应包含 run-123
         // run_id 在父目录的 prefix 中（staged 本身是 uuid 后缀）
-        let parent_name = staged.parent().unwrap().file_name().unwrap().to_string_lossy().to_string();
+        let parent_name = staged
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         assert!(
             parent_name.contains("run-123"),
             "parent dir {} not contain run-123",
@@ -479,11 +495,18 @@ mod tests {
             .unwrap();
         let mut entries = collect_entries(&staged).await;
         entries.sort();
-        let mut expected: Vec<String> = CODEX_SYNC_ALLOWLIST.iter().map(|s| s.to_string()).collect();
+        let mut expected: Vec<String> =
+            CODEX_SYNC_ALLOWLIST.iter().map(|s| s.to_string()).collect();
         expected.sort();
         assert_eq!(entries, expected);
         // decoys 都不应出现
-        for decoy in ["logs_2.sqlite", "state_5.sqlite", "plugins", "sessions", "tmp"] {
+        for decoy in [
+            "logs_2.sqlite",
+            "state_5.sqlite",
+            "plugins",
+            "sessions",
+            "tmp",
+        ] {
             assert!(!entries.contains(&decoy.to_string()));
         }
         let _ = fs::remove_dir_all(&staged).await;
@@ -531,11 +554,17 @@ mod tests {
         let staged = stage_codex_home_for_sync(&home, StageCodexHomeForSyncOptions::default())
             .await
             .unwrap();
-        let toml = fs::read_to_string(staged.join("config.toml")).await.unwrap();
+        let toml = fs::read_to_string(staged.join("config.toml"))
+            .await
+            .unwrap();
         assert!(toml.contains("model_provider"));
-        let json = fs::read_to_string(staged.join("config.json")).await.unwrap();
+        let json = fs::read_to_string(staged.join("config.json"))
+            .await
+            .unwrap();
         assert!(json.contains("{}") || json.trim().is_empty());
-        let instr = fs::read_to_string(staged.join("instructions.md")).await.unwrap();
+        let instr = fs::read_to_string(staged.join("instructions.md"))
+            .await
+            .unwrap();
         assert_eq!(instr, "hi\n");
         let _ = fs::remove_dir_all(&staged).await;
     }
@@ -561,7 +590,11 @@ mod tests {
             .await
             .unwrap();
         let perm = fs::metadata(&staged).await.unwrap().permissions().mode() & 0o777;
-        assert_eq!(perm, 0o700, "staging dir mode should be 0700, got {:o}", perm);
+        assert_eq!(
+            perm, 0o700,
+            "staging dir mode should be 0700, got {:o}",
+            perm
+        );
         let _ = fs::remove_dir_all(&staged).await;
     }
 
@@ -608,8 +641,12 @@ mod tests {
         let root = temp_root().await;
         let home = root.join("codex-home");
         let shared_skill = root.join("shared-skill.md");
-        tokio::fs::create_dir_all(home.join("skills")).await.unwrap();
-        tokio::fs::write(&shared_skill, "shared-skill-content").await.unwrap();
+        tokio::fs::create_dir_all(home.join("skills"))
+            .await
+            .unwrap();
+        tokio::fs::write(&shared_skill, "shared-skill-content")
+            .await
+            .unwrap();
         #[cfg(unix)]
         tokio::fs::symlink(&shared_skill, home.join("skills/shared.md"))
             .await
@@ -630,7 +667,9 @@ mod tests {
         let home = root.join("codex-home");
         let secret = root.join("secret.txt");
         // skills/sub 是真正的目录（会进入 stage_contained_subtree）
-        tokio::fs::create_dir_all(home.join("skills/sub")).await.unwrap();
+        tokio::fs::create_dir_all(home.join("skills/sub"))
+            .await
+            .unwrap();
         tokio::fs::write(&secret, "secret-host-file").await.unwrap();
         // skills/sub/secret.md 指向 <root>/secret.txt  (escape)
         #[cfg(unix)]
@@ -650,10 +689,14 @@ mod tests {
     async fn stage_circular_skill_dir_handled() {
         let root = temp_root().await;
         let home = root.join("codex-home");
-        tokio::fs::create_dir_all(home.join("skills")).await.unwrap();
+        tokio::fs::create_dir_all(home.join("skills"))
+            .await
+            .unwrap();
         // skills/back -> .（自指）
         #[cfg(unix)]
-        tokio::fs::symlink(".", home.join("skills/back")).await.unwrap();
+        tokio::fs::symlink(".", home.join("skills/back"))
+            .await
+            .unwrap();
         let staged = stage_codex_home_for_sync(&home, StageCodexHomeForSyncOptions::default())
             .await
             .unwrap();
@@ -707,6 +750,9 @@ mod tests {
         let result = is_resolved_path_inside(evil, root);
         // 我们接受 false 或 true，关键是 trailing-separator-prefix
         // collision 不会逃过检测
-        assert!(!result, "trailing-prefix collision should not be classified as inside");
+        assert!(
+            !result,
+            "trailing-prefix collision should not be classified as inside"
+        );
     }
 }

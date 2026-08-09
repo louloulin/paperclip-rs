@@ -30,10 +30,7 @@ pub fn model_id(model: Option<&str>) -> Option<String> {
 /// 解析 biller：env 中 OpenAI 兼容 hint 优先，否则 fallback 到 provider，最后 "unknown"。
 ///
 /// Node 等价：`resolvePiBiller`。
-pub fn resolve_pi_biller(
-    env: &BTreeMap<String, String>,
-    provider: Option<&str>,
-) -> String {
+pub fn resolve_pi_biller(env: &BTreeMap<String, String>, provider: Option<&str>) -> String {
     infer_openai_compatible_biller(env, None)
         .or_else(|| provider.map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned())
@@ -89,7 +86,11 @@ pub fn build_session_path(sessions_dir: &str, agent_id: &str, timestamp: &str) -
 /// 生成 `<runtime_root>/sessions/<safe_timestamp>-<agent_id>.jsonl` 形式的远程 session 路径。
 ///
 /// Node 等价：`buildRemoteSessionPath`。无论本地 OS，路径都用 POSIX 分隔符。
-pub fn build_remote_session_path(runtime_root_dir: &str, agent_id: &str, timestamp: &str) -> String {
+pub fn build_remote_session_path(
+    runtime_root_dir: &str,
+    agent_id: &str,
+    timestamp: &str,
+) -> String {
     let safe_timestamp = sanitize_session_timestamp(timestamp);
     format!("{runtime_root_dir}/sessions/{safe_timestamp}-{agent_id}.jsonl")
 }
@@ -166,8 +167,8 @@ pub fn retry_after_unknown_session<F>(
 where
     F: FnOnce() -> String,
 {
-    let initial_failed = !input.timed_out
-        && (input.exit_code.unwrap_or(0) != 0 || !input.parsed_errors.is_empty());
+    let initial_failed =
+        !input.timed_out && (input.exit_code.unwrap_or(0) != 0 || !input.parsed_errors.is_empty());
     if !input.can_resume_session
         || !initial_failed
         || !is_pi_unknown_session_error(input.stdout, input.stderr)
@@ -308,7 +309,10 @@ mod tests {
     #[test]
     fn parse_session_header_cwd_合法() {
         let raw = "{\"type\":\"session\",\"cwd\":\"/home/u/proj\",\"timestamp\":\"2026-08-08T00:00:00Z\"}\n";
-        assert_eq!(parse_session_header_cwd(raw).as_deref(), Some("/home/u/proj"));
+        assert_eq!(
+            parse_session_header_cwd(raw).as_deref(),
+            Some("/home/u/proj")
+        );
     }
 
     #[test]
@@ -358,7 +362,10 @@ mod tests {
     fn should_resume_cwd匹配() {
         assert!(should_resume(Some("/home/u/proj"), "/home/u/proj"));
         assert!(should_resume(Some("/home/u/proj/."), "/home/u/proj"));
-        assert!(!should_resume(Some("/home/u/proj/sub"), "/home/u/proj/sub/.."));
+        assert!(!should_resume(
+            Some("/home/u/proj/sub"),
+            "/home/u/proj/sub/.."
+        ));
     }
 
     #[test]
@@ -379,7 +386,10 @@ mod tests {
     #[test]
     fn build_session_path_替换不安全字符() {
         let path = build_session_path("/home/u/.pi/paperclips", "agent-1", "2026:08:08T10.00.00Z");
-        assert_eq!(path, "/home/u/.pi/paperclips/2026-08-08T10-00-00Z-agent-1.jsonl");
+        assert_eq!(
+            path,
+            "/home/u/.pi/paperclips/2026-08-08T10-00-00Z-agent-1.jsonl"
+        );
     }
 
     #[test]
@@ -391,7 +401,10 @@ mod tests {
     #[test]
     fn build_remote_session_path_posix分隔() {
         let path = build_remote_session_path("/srv/runtime", "agent-3", "2026:08:08T10.00.00Z");
-        assert_eq!(path, "/srv/runtime/sessions/2026-08-08T10-00-00Z-agent-3.jsonl");
+        assert_eq!(
+            path,
+            "/srv/runtime/sessions/2026-08-08T10-00-00Z-agent-3.jsonl"
+        );
     }
 
     // decide_resume
@@ -502,10 +515,7 @@ mod tests {
         input.stderr = "unknown session id: abc";
         let decision = retry_after_unknown_session(input, || "/tmp/new.jsonl".to_owned());
         assert_eq!(decision.should_retry, true);
-        assert_eq!(
-            decision.new_session_path.as_deref(),
-            Some("/tmp/new.jsonl")
-        );
+        assert_eq!(decision.new_session_path.as_deref(), Some("/tmp/new.jsonl"));
         assert_eq!(decision.clear_session_on_retry, true);
     }
 }

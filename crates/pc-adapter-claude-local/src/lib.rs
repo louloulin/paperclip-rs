@@ -13,24 +13,24 @@
 //! 本适配器在 adapter_config 提供 `effort` 时尝试加 `--effort <level>`，被 CLI 拒绝时
 //! 由 stderr 反映，agent.run 会回退处理（与 Node 行为对齐）。
 
-pub mod skills;
-pub mod claude_stream_json;
-pub mod claude_test;
+pub mod acp;
 pub mod claude_config;
+pub mod claude_errors;
 pub mod claude_models;
 pub mod claude_permissions;
 pub mod claude_prompt_cache;
-pub mod cli_capabilities;
-pub mod claude_errors;
-pub mod execute_helpers;
-pub mod acp;
-pub mod config_schema;
 pub mod claude_session_resume;
+pub mod claude_stream_json;
+pub mod claude_test;
+pub mod cli_capabilities;
+pub mod config_schema;
+pub mod execute_helpers;
+pub mod skills;
 
 pub use claude_stream_json::{
     claude_model_usage_totals, detect_claude_login_required, extract_claude_login_url,
-    is_claude_image_processing_error, is_claude_unknown_session_error,
-    parse_claude_stream_json, ParsedClaudeStreamJson,
+    is_claude_image_processing_error, is_claude_unknown_session_error, parse_claude_stream_json,
+    ParsedClaudeStreamJson,
 };
 pub use execute_helpers::{
     claude_session_cwd_matches_execution_target, is_bedrock_auth, resolve_claude_billing_type,
@@ -248,7 +248,6 @@ pub fn build_claude_exec_args_v2(
     }
 }
 
-
 fn default_command(config: &Value) -> String {
     config
         .get("command")
@@ -432,10 +431,7 @@ impl ClaudeLocalAdapter {
             .adapter_config
             .get("timeoutSec")
             .and_then(Value::as_f64);
-        let configured_cwd = context
-            .adapter_config
-            .get("cwd")
-            .and_then(Value::as_str);
+        let configured_cwd = context.adapter_config.get("cwd").and_then(Value::as_str);
         let local_fallback_cwd = context
             .cwd
             .as_ref()
@@ -501,9 +497,7 @@ impl ClaudeLocalAdapter {
                     let sink = events_for_bridge_log.clone();
                     let line = line.to_string();
                     tokio::spawn(async move {
-                        let _ = sink
-                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
-                            .await;
+                        let _ = sink.emit(pc_adapter_api::AdapterEvent::stdout(line)).await;
                     });
                 })),
             )
@@ -558,9 +552,7 @@ impl ClaudeLocalAdapter {
                     let sink = events_for_bridge_log.clone();
                     let line = line.to_string();
                     tokio::spawn(async move {
-                        let _ = sink
-                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
-                            .await;
+                        let _ = sink.emit(pc_adapter_api::AdapterEvent::stdout(line)).await;
                     });
                 })),
             )
@@ -596,14 +588,10 @@ impl ClaudeLocalAdapter {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let runtime_session_params = context.session_params.as_ref();
-        let (
-            runtime_prompt_bundle_key,
-            runtime_mcp_server_identity,
-            runtime_remote_execution,
-        ) = extract_runtime_session_params(runtime_session_params);
+        let (runtime_prompt_bundle_key, runtime_mcp_server_identity, runtime_remote_execution) =
+            extract_runtime_session_params(runtime_session_params);
 
-        let prompt_bundle_key =
-            compute_prompt_bundle_key(&context.prompt, &context.adapter_config);
+        let prompt_bundle_key = compute_prompt_bundle_key(&context.prompt, &context.adapter_config);
         let mcp_server_identity = String::new();
         let effective_execution_cwd = execution_target_decision.execution_cwd.clone();
 
@@ -698,9 +686,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-fn extract_runtime_session_params(
-    params: Option<&Value>,
-) -> (String, String, Option<&Value>) {
+fn extract_runtime_session_params(params: Option<&Value>) -> (String, String, Option<&Value>) {
     let Some(value) = params else {
         return (String::new(), String::new(), None);
     };
@@ -777,10 +763,9 @@ impl Adapter for ClaudeLocalAdapter {
         });
         let paperclip_env_note =
             pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
-        let api_access_note =
-            pc_acpx::session_config_options::render_api_access_note(&context.env);
-        let decision = crate::execute_helpers::decide_retry(
-            crate::execute_helpers::ClaudeRetryInput {
+        let api_access_note = pc_acpx::session_config_options::render_api_access_note(&context.env);
+        let decision =
+            crate::execute_helpers::decide_retry(crate::execute_helpers::ClaudeRetryInput {
                 session_id: result.session_id.as_deref().unwrap_or(""),
                 timed_out: result.timed_out,
                 exit_code: result.exit_code,
@@ -788,8 +773,7 @@ impl Adapter for ClaudeLocalAdapter {
                 stdout: &execution.stdout,
                 stderr: &execution.stderr,
                 error_message: result.error_message.as_deref(),
-            },
-        );
+            });
         let mut stop_reason = parsed.stop_reason.clone();
         if matches!(
             decision.error_family,
@@ -1022,7 +1006,10 @@ mod tests {
             "dangerouslySkipPermissions": true,
         });
 
-        let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
+        let result = adapter
+            .execute_with_resume_retry(context, sink)
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, Some(0));
         assert_eq!(result.session_id.as_deref(), Some("v2_sess"));
         assert_eq!(result.summary.as_deref(), Some("v2 done"));
@@ -1036,17 +1023,16 @@ mod tests {
     /// v2 execute：第一次 attempt 返回 unknown session → 自动 fresh 重试 → 成功。
     #[tokio::test(flavor = "multi_thread")]
     async fn execute_with_resume_retry_unknown_session_triggers_fresh_retry() {
-        let counter_path = std::env::temp_dir()
-            .join(format!("paperclip-claude-retry-{}.counter", uuid::Uuid::new_v4()));
+        let counter_path = std::env::temp_dir().join(format!(
+            "paperclip-claude-retry-{}.counter",
+            uuid::Uuid::new_v4()
+        ));
         let path = copy_fixture_to_temp("claude_retry_unknown_session.sh");
 
         let adapter = ClaudeLocalAdapter::new();
         let (sink, _receiver) = AdapterEventSink::channel(8);
-        let mut context = AdapterExecutionContext::new(
-            uuid::Uuid::new_v4(),
-            uuid::Uuid::new_v4(),
-            "prompt",
-        );
+        let mut context =
+            AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "prompt");
         context.adapter_config = serde_json::json!({
             "command": path.to_string_lossy(),
             "model": "claude-opus-4-7",
@@ -1058,7 +1044,10 @@ mod tests {
         // 显式传 session_id 触发 resume 路径
         context.session_id = Some("550e8400-e29b-41d4-a716-446655440000".to_owned());
 
-        let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
+        let result = adapter
+            .execute_with_resume_retry(context, sink)
+            .await
+            .unwrap();
         // 重试后应该 fresh session
         assert_eq!(result.session_id.as_deref(), Some("fresh_sess"));
         assert_eq!(result.summary.as_deref(), Some("fresh done"));
@@ -1083,7 +1072,10 @@ mod tests {
         });
         context.session_id = Some("not-a-uuid".to_owned());
 
-        let result = adapter.execute_with_resume_retry(context, sink).await.unwrap();
+        let result = adapter
+            .execute_with_resume_retry(context, sink)
+            .await
+            .unwrap();
         assert_eq!(result.session_id.as_deref(), Some("sess1"));
         let _ = std::fs::remove_file(&path);
     }
@@ -1093,8 +1085,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let src = manifest_dir.join("tests").join("fixtures").join(name);
-        let dest = std::env::temp_dir()
-            .join(format!("paperclip-claude-{}-{}", uuid::Uuid::new_v4(), name));
+        let dest = std::env::temp_dir().join(format!(
+            "paperclip-claude-{}-{}",
+            uuid::Uuid::new_v4(),
+            name
+        ));
         std::fs::copy(&src, &dest).expect("copy fixture");
         let mut perms = std::fs::metadata(&dest).expect("stat").permissions();
         perms.set_mode(0o755);
@@ -1210,7 +1205,9 @@ mod tests {
         });
         let built = build_claude_exec_args_v2(&config, "/cwd", Some("abc-123"), false);
         // resume 时不应传 --append-system-prompt-file
-        assert!(!built.args.contains(&"--append-system-prompt-file".to_owned()));
+        assert!(!built
+            .args
+            .contains(&"--append-system-prompt-file".to_owned()));
         // 但应传 --resume
         let idx = built.args.iter().position(|a| a == "--resume").unwrap();
         assert_eq!(built.args[idx + 1], "abc-123");
@@ -1243,12 +1240,12 @@ mod tests {
     }
 }
 pub mod claude_cli_args;
-pub mod claude_session_params;
-pub mod claude_result_builder;
-pub mod claude_prompt_sections;
-pub mod claude_mcp_config;
-pub mod claude_session_cleanup;
-pub mod claude_resume_loop;
-pub mod claude_remote_workspace;
 pub mod claude_execution_env;
+pub mod claude_mcp_config;
+pub mod claude_prompt_sections;
 pub mod claude_quota;
+pub mod claude_remote_workspace;
+pub mod claude_result_builder;
+pub mod claude_resume_loop;
+pub mod claude_session_cleanup;
+pub mod claude_session_params;

@@ -48,10 +48,7 @@ fn shell_quote(value: &str) -> String {
 /// Build the shell command that extracts a tarball into a target
 /// directory. Mirrors Node `buildSyncInExtractDirectoryCommand`.
 #[must_use]
-pub fn build_sync_in_extract_directory_command(
-    remote_tar_path: &str,
-    target_dir: &str,
-) -> String {
+pub fn build_sync_in_extract_directory_command(remote_tar_path: &str, target_dir: &str) -> String {
     format!(
         "rm -rf {target} && mkdir -p {target} && tar -xf {tar} -C {target} && rm -f {tar}",
         tar = shell_quote(remote_tar_path),

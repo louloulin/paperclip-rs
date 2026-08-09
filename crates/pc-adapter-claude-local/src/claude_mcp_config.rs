@@ -123,10 +123,7 @@ mod tests {
     #[test]
     fn resolve_mcp_config_path_joins_components() {
         let path = resolve_mcp_config_path(Path::new("/state"), "run-1");
-        assert_eq!(
-            path,
-            PathBuf::from("/state/runs/run-1/mcp/mcp-config.json")
-        );
+        assert_eq!(path, PathBuf::from("/state/runs/run-1/mcp/mcp-config.json"));
     }
 
     #[test]
@@ -161,10 +158,7 @@ mod tests {
 
     #[test]
     fn collect_runtime_mcp_identity_stable_for_same_input() {
-        let servers = vec![
-            server("a", "u1", "t", "c"),
-            server("b", "u2", "t", "c"),
-        ];
+        let servers = vec![server("a", "u1", "t", "c"), server("b", "u2", "t", "c")];
         assert_eq!(
             collect_runtime_mcp_identity(&servers),
             collect_runtime_mcp_identity(&servers)
@@ -173,15 +167,12 @@ mod tests {
 
     #[test]
     fn collect_runtime_mcp_identity_deterministic_regardless_of_input_order() {
-        let a = vec![
-            server("a", "u1", "t", "c"),
-            server("b", "u2", "t", "c"),
-        ];
-        let b = vec![
-            server("b", "u2", "t", "c"),
-            server("a", "u1", "t", "c"),
-        ];
-        assert_eq!(collect_runtime_mcp_identity(&a), collect_runtime_mcp_identity(&b));
+        let a = vec![server("a", "u1", "t", "c"), server("b", "u2", "t", "c")];
+        let b = vec![server("b", "u2", "t", "c"), server("a", "u1", "t", "c")];
+        assert_eq!(
+            collect_runtime_mcp_identity(&a),
+            collect_runtime_mcp_identity(&b)
+        );
     }
 
     #[test]

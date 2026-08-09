@@ -24,14 +24,20 @@ pub const GIT_MISSING_PREREQUISITE_MARKERS: &[&str] = &[
 /// stored. Mirrors Node `createImportedGitRef`.
 #[must_use]
 pub fn create_imported_git_ref(scope: &str) -> String {
-    format!("refs/paperclip/git-sync/imported/{scope}/{}", uuid::Uuid::new_v4())
+    format!(
+        "refs/paperclip/git-sync/imported/{scope}/{}",
+        uuid::Uuid::new_v4()
+    )
 }
 
 /// Create a git ref name used by the remote to export its current
 /// `HEAD`. Mirrors Node `createRemoteGitExportRef`.
 #[must_use]
 pub fn create_remote_git_export_ref(scope: &str) -> String {
-    format!("refs/paperclip/git-sync/export/{scope}/{}", uuid::Uuid::new_v4())
+    format!(
+        "refs/paperclip/git-sync/export/{scope}/{}",
+        uuid::Uuid::new_v4()
+    )
 }
 
 /// True when a bundle import failed because the importer lacks a
@@ -89,18 +95,13 @@ pub fn build_remote_git_delta_bundle_script(input: &RemoteGitDeltaBundleOptions)
             .as_ref()
             .map(|s| format!("rm -f {s}"))
             .unwrap_or_default(),
-        format!(
-            "git -C {remote_dir} update-ref -d {export_ref} >/dev/null 2>&1 || true"
-        ),
+        format!("git -C {remote_dir} update-ref -d {export_ref} >/dev/null 2>&1 || true"),
     ];
 
     let mut lines: Vec<String> = Vec::new();
     lines.push("set -e".to_string());
     if input.cleanup_bundle {
-        lines.push(format!(
-            "cleanup() {{ {}; }}",
-            cleanup_parts.join("; ")
-        ));
+        lines.push(format!("cleanup() {{ {}; }}", cleanup_parts.join("; ")));
         lines.push("trap cleanup EXIT".to_string());
     }
     let parent_dir = std::path::Path::new(&input.bundle_path)
@@ -179,13 +180,16 @@ fn shell_quote(value: &str) -> String {
 // workspace-sync layer can stay synchronous / pure.
 // =============================================================================
 
+use crate::runtime_progress::{
+    create_transfer_progress, RuntimeProgressDirection, RuntimeProgressPhase, RuntimeProgressSink,
+    TransferProgressOptions,
+};
+use crate::ssh::{SshAuthArgs, SshRemoteExecutionSpec};
 use std::path::Path;
 use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use crate::runtime_progress::{create_transfer_progress, TransferProgressOptions, RuntimeProgressPhase, RuntimeProgressDirection, RuntimeProgressSink};
-use crate::ssh::{SshAuthArgs, SshRemoteExecutionSpec};
 
 /// Result of a local `git` invocation (mirrors Node `GitCommandResult`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,10 +204,7 @@ pub enum RunLocalGitError {
     #[error("git command timed out after {timeout_ms} ms")]
     Timeout { timeout_ms: u64 },
     #[error("git command exited with status {status:?}: {stderr}")]
-    NonZeroExit {
-        status: Option<i32>,
-        stderr: String,
-    },
+    NonZeroExit { status: Option<i32>, stderr: String },
     #[error("git command output exceeded maxBuffer of {max_buffer_bytes} bytes")]
     OutputOverflow { max_buffer_bytes: usize },
     #[error("failed to spawn git: {0}")]
@@ -286,11 +287,8 @@ pub async fn run_local_git(
         buf
     });
 
-    let status_res = tokio::time::timeout(
-        std::time::Duration::from_millis(timeout_ms),
-        child.wait(),
-    )
-    .await;
+    let status_res =
+        tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), child.wait()).await;
 
     let status = match status_res {
         Err(_elapsed) => {
@@ -304,7 +302,11 @@ pub async fn run_local_git(
 
     let stdout_bytes = match read_stdout.await {
         Ok(Ok(bytes)) => bytes,
-        Ok(Err(limit)) => return Err(RunLocalGitError::OutputOverflow { max_buffer_bytes: limit }),
+        Ok(Err(limit)) => {
+            return Err(RunLocalGitError::OutputOverflow {
+                max_buffer_bytes: limit,
+            })
+        }
         Err(_) => Vec::new(),
     };
     let stderr_bytes = stderr_bytes.await.unwrap_or_default();
@@ -464,7 +466,6 @@ pub async fn read_git_workspace_snapshot_path(
     read_git_workspace_snapshot(&local_dir_str).await
 }
 
-
 // =============================================================================
 // SSH streaming helpers (port of Node `streamLocalFileToSsh` +
 // `streamSshToLocalFile`). These spawn an `ssh` child with stdin/stdout
@@ -481,10 +482,7 @@ pub enum SshStreamError {
     #[error("failed to spawn ssh: {0}")]
     Spawn(#[from] std::io::Error),
     #[error("ssh exited with status {status:?}: {stderr}")]
-    NonZeroExit {
-        status: Option<i32>,
-        stderr: String,
-    },
+    NonZeroExit { status: Option<i32>, stderr: String },
     #[error("local file not found: {0}")]
     LocalFileMissing(String),
     #[error("local file output write failed: {0}")]
@@ -632,7 +630,9 @@ pub async fn stream_ssh_to_local_file(
     if let Err(error) = tokio::io::copy(&mut stdout, &mut file).await {
         return Err(SshStreamError::LocalFileWrite(error.to_string()));
     }
-    file.flush().await.map_err(|error| SshStreamError::LocalFileWrite(error.to_string()))?;
+    file.flush()
+        .await
+        .map_err(|error| SshStreamError::LocalFileWrite(error.to_string()))?;
     drop(file);
 
     let mut stderr_buf = Vec::new();
@@ -687,14 +687,10 @@ pub async fn import_git_workspace_to_ssh(
         "paperclip-ssh-bundle-import-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir_all(&bundle_dir)
-        .map_err(|error| format!("create bundle dir: {error}"))?;
+    std::fs::create_dir_all(&bundle_dir).map_err(|error| format!("create bundle dir: {error}"))?;
     let bundle_path = bundle_dir.join("workspace.bundle");
     let bundle_path_str = bundle_path.to_string_lossy().into_owned();
-    let temp_ref = format!(
-        "refs/paperclip/ssh-sync/import/{}",
-        uuid::Uuid::new_v4()
-    );
+    let temp_ref = format!("refs/paperclip/ssh-sync/import/{}", uuid::Uuid::new_v4());
 
     // Build remote script. Use string concatenation (via Vec<String>) to
     // avoid Rust 2021's reserved `$identifier` syntax in string literals.
@@ -710,8 +706,7 @@ pub async fn import_git_workspace_to_ssh(
         ),
         None => format!(
             "git -C {} -c advice.detachedHead=false checkout --force --detach {} >/dev/null",
-            remote_dir_quoted,
-            head_quoted,
+            remote_dir_quoted, head_quoted,
         ),
     };
     let mut script_lines: Vec<String> = vec![
@@ -724,13 +719,9 @@ pub async fn import_git_workspace_to_ssh(
         // Build the trap line by concatenating at runtime; this keeps the
         // shell variable literal (`$` + `tmp_bundle`) out of any single
         // Rust string/format literal where `$identifier` would be reserved.
-        String::from("trap 'rm -f \"")
-            + "$" + "tmp_bundle"
-            + &String::from("\"' EXIT"),
+        String::from("trap 'rm -f \"") + "$" + "tmp_bundle" + &String::from("\"' EXIT"),
         // cat > "$tmp_bundle"
-        String::from("cat > \"")
-            + "$" + "tmp_bundle"
-            + &String::from("\""),
+        String::from("cat > \"") + "$" + "tmp_bundle" + &String::from("\""),
         format!(
             "if [ ! -d {0}/.git ]; then git init {0} >/dev/null; fi",
             remote_dir_quoted,
@@ -766,7 +757,7 @@ pub async fn import_git_workspace_to_ssh(
     ];
     let remote_setup_script = script_lines.join("\n");
 
-        let result: Result<(), String> = async {
+    let result: Result<(), String> = async {
         // 1. update-ref
         run_local_git(
             &local_dir_str,
@@ -825,16 +816,12 @@ pub async fn export_git_workspace_from_ssh(
         "paperclip-ssh-bundle-export-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir_all(&bundle_dir)
-        .map_err(|error| format!("create bundle dir: {error}"))?;
+    std::fs::create_dir_all(&bundle_dir).map_err(|error| format!("create bundle dir: {error}"))?;
     let bundle_path = bundle_dir.join("workspace.bundle");
     let bundle_path_str = bundle_path.to_string_lossy().into_owned();
-    let imported_ref = format!(
-        "refs/paperclip/ssh-sync/imported/{}",
-        uuid::Uuid::new_v4()
-    );
+    let imported_ref = format!("refs/paperclip/ssh-sync/imported/{}", uuid::Uuid::new_v4());
 
-        // Build export script. Use string concatenation to avoid Rust 2021
+    // Build export script. Use string concatenation to avoid Rust 2021
     // reserved `$identifier` syntax in single string literals.
     let remote_dir_quoted = shell_quote(remote_dir);
     let runtime_dir_quoted = shell_quote(&format!("{remote_dir}/.paperclip-runtime"));
@@ -851,7 +838,8 @@ pub async fn export_git_workspace_from_ssh(
         ),
         // cleanup() body — assemble at runtime to avoid reserved prefix.
         String::from("cleanup() { rm -f \"")
-            + "$" + "tmp_bundle"
+            + "$"
+            + "tmp_bundle"
             + &String::from("\"; git -C ")
             + &remote_dir_quoted
             + " update-ref -d refs/paperclip/ssh-sync/export >/dev/null 2>&1 || true; }",
@@ -860,7 +848,8 @@ pub async fn export_git_workspace_from_ssh(
         String::from("git -C ")
             + &remote_dir_quoted
             + " bundle create \""
-            + "$" + "tmp_bundle"
+            + "$"
+            + "tmp_bundle"
             + "\" refs/paperclip/ssh-sync/export >/dev/null",
         // cat "$tmp_bundle"
         String::from("cat \"") + "$" + "tmp_bundle" + "\"",
@@ -929,7 +918,6 @@ pub async fn export_git_workspace_from_ssh(
 /// remote shell scripts are portable across platforms.
 // shell_quote is defined at line ~171; we use that one.
 
-
 // =============================================================================
 // Tar-based directory sync to SSH (port of Node `syncDirectoryToSsh`).
 // Pipes `tar -cf -` (local) through `ssh` to `tar -xf - -C <remote>` on
@@ -987,10 +975,14 @@ pub async fn sync_directory_to_ssh(
         .stdout
         .take()
         .ok_or_else(|| "tar stdout pipe unavailable".to_owned())?;
-    let mut tar_stderr = tar_child.stderr.take().ok_or_else(|| "tar stderr pipe unavailable".to_owned())?;
+    let mut tar_stderr = tar_child
+        .stderr
+        .take()
+        .ok_or_else(|| "tar stderr pipe unavailable".to_owned())?;
 
     // Build ssh argv + spawn.
-    let auth = SshAuthArgs::create(&spec.as_connection_config()).map_err(|error| format!("ssh auth: {error}"))?;
+    let auth = SshAuthArgs::create(&spec.as_connection_config())
+        .map_err(|error| format!("ssh auth: {error}"))?;
     let remote_script = format!(
         "mkdir -p {} && tar -xf - -C {}",
         shell_quote(remote_dir),
@@ -1020,7 +1012,10 @@ pub async fn sync_directory_to_ssh(
         .stdin
         .take()
         .ok_or_else(|| "ssh stdin pipe unavailable".to_owned())?;
-    let mut ssh_stderr = ssh_child.stderr.take().ok_or_else(|| "ssh stderr pipe unavailable".to_owned())?;
+    let mut ssh_stderr = ssh_child
+        .stderr
+        .take()
+        .ok_or_else(|| "ssh stderr pipe unavailable".to_owned())?;
 
     // Pump tar.stdout → ssh.stdin concurrently with stderr drains. When a
     // progress sink is provided, wrap the tar stdout so every byte that flows
@@ -1064,8 +1059,14 @@ pub async fn sync_directory_to_ssh(
         buf
     });
 
-    let tar_status = tar_child.wait().await.map_err(|error| format!("tar wait: {error}"))?;
-    let ssh_status = ssh_child.wait().await.map_err(|error| format!("ssh wait: {error}"))?;
+    let tar_status = tar_child
+        .wait()
+        .await
+        .map_err(|error| format!("tar wait: {error}"))?;
+    let ssh_status = ssh_child
+        .wait()
+        .await
+        .map_err(|error| format!("ssh wait: {error}"))?;
     let _ = (&mut pump).await;
     let tar_stderr_bytes = tar_stderr_task.await.unwrap_or_default();
     let ssh_stderr_bytes = ssh_stderr_task.await.unwrap_or_default();
@@ -1097,8 +1098,6 @@ fn tar_stdout_for_pump(s: tokio::process::ChildStdout) -> tokio::process::ChildS
     s
 }
 
-
-
 // =============================================================================
 // Tar-based directory sync FROM SSH (port of Node `syncDirectoryFromSsh`).
 // Streams `tar -cf -` on the remote via SSH to `tar -xf -` into a local
@@ -1127,10 +1126,8 @@ pub async fn sync_directory_from_ssh(
 
     // Staging dir: atomic replace via clear + copy (Node `clearLocalDirectory`
     // + `copyDirectoryContents`).
-    let staging_dir = std::env::temp_dir().join(format!(
-        "paperclip-ssh-sync-back-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let staging_dir =
+        std::env::temp_dir().join(format!("paperclip-ssh-sync-back-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&staging_dir)
         .map_err(|error| format!("create staging dir: {error}"))?;
 
@@ -1145,11 +1142,7 @@ pub async fn sync_directory_from_ssh(
     tar_cmd_parts.push(shell_quote("-"));
     tar_cmd_parts.push(shell_quote("."));
     let tar_cmd = tar_cmd_parts.join(" ");
-    let remote_script = format!(
-        "cd {} && tar {}",
-        shell_quote(remote_dir),
-        tar_cmd,
-    );
+    let remote_script = format!("cd {} && tar {}", shell_quote(remote_dir), tar_cmd,);
 
     // Spawn ssh.
     let auth = SshAuthArgs::create(&spec.as_connection_config())
@@ -1178,7 +1171,10 @@ pub async fn sync_directory_from_ssh(
         .stdout
         .take()
         .ok_or_else(|| "ssh stdout pipe unavailable".to_owned())?;
-    let mut ssh_stderr = ssh_child.stderr.take().ok_or_else(|| "ssh stderr pipe unavailable".to_owned())?;
+    let mut ssh_stderr = ssh_child
+        .stderr
+        .take()
+        .ok_or_else(|| "ssh stderr pipe unavailable".to_owned())?;
 
     // Spawn local tar.
     let staging_str = staging_dir.to_string_lossy().into_owned();
@@ -1198,7 +1194,10 @@ pub async fn sync_directory_from_ssh(
         .stdin
         .take()
         .ok_or_else(|| "tar stdin pipe unavailable".to_owned())?;
-    let mut tar_stderr = tar_child.stderr.take().ok_or_else(|| "tar stderr pipe unavailable".to_owned())?;
+    let mut tar_stderr = tar_child
+        .stderr
+        .take()
+        .ok_or_else(|| "tar stderr pipe unavailable".to_owned())?;
 
     // Pump + drain stderr. When a progress sink is provided, wrap the ssh
     // stdout so every byte received is counted and throttled-emitted.
@@ -1241,8 +1240,14 @@ pub async fn sync_directory_from_ssh(
         buf
     });
 
-    let ssh_status = ssh_child.wait().await.map_err(|error| format!("ssh wait: {error}"))?;
-    let tar_status = tar_child.wait().await.map_err(|error| format!("tar wait: {error}"))?;
+    let ssh_status = ssh_child
+        .wait()
+        .await
+        .map_err(|error| format!("ssh wait: {error}"))?;
+    let tar_status = tar_child
+        .wait()
+        .await
+        .map_err(|error| format!("tar wait: {error}"))?;
     let _ = (&mut pump).await;
     let ssh_stderr_bytes = ssh_stderr_task.await.unwrap_or_default();
     let tar_stderr_bytes = tar_stderr_task.await.unwrap_or_default();
@@ -1310,10 +1315,7 @@ fn clear_local_directory(
 
 /// Copy all entries from `source_dir` into `target_dir` (one level deep,
 /// recursive). Mirrors Node `copyDirectoryContents`.
-fn copy_directory_contents(
-    source_dir: &Path,
-    target_dir: &Path,
-) -> std::io::Result<()> {
+fn copy_directory_contents(source_dir: &Path, target_dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(target_dir)?;
     for entry in std::fs::read_dir(source_dir)? {
         let entry = entry?;
@@ -1350,7 +1352,6 @@ fn ssh_stdout_for_pump(s: tokio::process::ChildStdout) -> tokio::process::ChildS
     s
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1365,7 +1366,10 @@ mod tests {
         let ref_name = create_imported_git_ref("remote");
         assert!(ref_name.starts_with("refs/paperclip/git-sync/imported/remote/"));
         // UUID v4 is 36 chars
-        assert_eq!(ref_name.len(), "refs/paperclip/git-sync/imported/remote/".len() + 36);
+        assert_eq!(
+            ref_name.len(),
+            "refs/paperclip/git-sync/imported/remote/".len() + 36
+        );
     }
 
     #[test]
@@ -1514,22 +1518,22 @@ mod async_tests {
         )
         .await
         .expect("git config email");
-        run_local_git(
-            &dir_str,
-            &["config", "user.name", "Test"],
-            None,
-            None,
-        )
-        .await
-        .expect("git config name");
+        run_local_git(&dir_str, &["config", "user.name", "Test"], None, None)
+            .await
+            .expect("git config name");
         let readme = dir.join("README.md");
         std::fs::write(&readme, "# Hello\n").expect("write readme");
         run_local_git(&dir_str, &["add", "README.md"], None, None)
             .await
             .expect("git add");
-        run_local_git(&dir_str, &["commit", "-q", "-m", commit_message], None, None)
-            .await
-            .expect("git commit");
+        run_local_git(
+            &dir_str,
+            &["commit", "-q", "-m", commit_message],
+            None,
+            None,
+        )
+        .await
+        .expect("git commit");
         dir
     }
 
@@ -1583,10 +1587,8 @@ mod async_tests {
             eprintln!("SKIP: git unavailable");
             return;
         }
-        let dir = std::env::temp_dir().join(format!(
-            "paperclip-r497-nongit-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("paperclip-r497-nongit-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create dir");
         let result = read_git_workspace_snapshot(&dir.to_string_lossy())
             .await
@@ -1688,7 +1690,11 @@ pub async fn clear_remote_directory(
         shell_quote(remote_dir),
         preserve_args.join(" "),
     );
-    let script = format!("set -e\nmkdir -p {}\n{}", shell_quote(remote_dir), find_expr);
+    let script = format!(
+        "set -e\nmkdir -p {}\n{}",
+        shell_quote(remote_dir),
+        find_expr
+    );
     let config = spec.as_connection_config();
     run_ssh_command(
         &config,
@@ -1778,14 +1784,17 @@ pub async fn prepare_workspace_for_ssh_execution(
     }
 }
 
-
 /// Delete any orphan `refs/paperclip/ssh-sync/imported/*` refs left behind by
 /// an earlier export_git_workspace_from_ssh call. Best-effort; errors are
 /// ignored to mirror Node's `catch(() => undefined)` cleanup.
 async fn cleanup_imported_git_refs(local_dir: &str) -> Result<(), String> {
     let list = run_local_git(
         local_dir,
-        &["for-each-ref", "--format=%(refname)", "refs/paperclip/ssh-sync/imported"],
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/paperclip/ssh-sync/imported",
+        ],
         Some(10_000),
         Some(64 * 1024),
     )
@@ -1829,19 +1838,11 @@ pub async fn restore_workspace_from_ssh_execution(
     let local_dir_str = local_dir.to_string_lossy();
     if let Some(baseline_snapshot) = baseline {
         // baseline path: export git → sync to staging → merge + integrate.
-        let imported_head = export_git_workspace_from_ssh(
-            spec,
-            remote_dir,
-            local_dir,
-            false,
-            progress,
-        )
-        .await?;
+        let imported_head =
+            export_git_workspace_from_ssh(spec, remote_dir, local_dir, false, progress).await?;
 
-        let staging_dir = std::env::temp_dir().join(format!(
-            "paperclip-ssh-sync-back-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let staging_dir =
+            std::env::temp_dir().join(format!("paperclip-ssh-sync-back-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&staging_dir)
             .map_err(|error| format!("create staging dir: {error}"))?;
 
@@ -1903,12 +1904,20 @@ pub async fn restore_workspace_from_ssh_execution(
         export_git_workspace_from_ssh(spec, remote_dir, local_dir, false, progress).await?;
         let exclude = vec![".git".to_string(), ".paperclip-runtime".to_string()];
         let preserve = vec![".git".to_string()];
-        sync_directory_from_ssh(spec, remote_dir, local_dir, Some(&exclude), Some(&preserve), progress)
-            .await?;
+        sync_directory_from_ssh(
+            spec,
+            remote_dir,
+            local_dir,
+            Some(&exclude),
+            Some(&preserve),
+            progress,
+        )
+        .await?;
         Ok(())
     } else {
         let exclude = vec![".paperclip-runtime".to_string()];
-        sync_directory_from_ssh(spec, remote_dir, local_dir, Some(&exclude), None, progress).await?;
+        sync_directory_from_ssh(spec, remote_dir, local_dir, Some(&exclude), None, progress)
+            .await?;
         Ok(())
     }
 }
@@ -2128,10 +2137,10 @@ fn is_concurrent_ref_update_error(error: &RunLocalGitError) -> bool {
 // `withDirectoryMergeLock` in `packages/adapter-utils/src/workspace-restore-merge.ts`).
 // =============================================================================
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::os::unix::fs::PermissionsExt;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 
 /// One entry in a directory snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2263,7 +2272,9 @@ fn entries_match(
     left: Option<&DirectorySnapshotEntry>,
     right: Option<&DirectorySnapshotEntry>,
 ) -> bool {
-    let (Some(l), Some(r)) = (left, right) else { return false };
+    let (Some(l), Some(r)) = (left, right) else {
+        return false;
+    };
     match (l, r) {
         (DirectorySnapshotEntry::Dir, DirectorySnapshotEntry::Dir) => true,
         (
@@ -2288,7 +2299,11 @@ async fn copy_snapshot_entry(
     let target_path = target_dir.join(relative);
     match entry {
         DirectorySnapshotEntry::Dir => {
-            if tokio::fs::metadata(&target_path).await.map(|m| m.is_dir()).unwrap_or(false) {
+            if tokio::fs::metadata(&target_path)
+                .await
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+            {
                 return Ok(());
             }
             if tokio::fs::metadata(&target_path).await.is_ok() {
@@ -2308,7 +2323,9 @@ async fn copy_snapshot_entry(
                 tokio::fs::create_dir_all(parent).await?;
             }
             let _ = tokio::fs::remove_file(&target_path).await;
-            tokio::fs::copy(&source_path, &target_path).await.map(|_| ())
+            tokio::fs::copy(&source_path, &target_path)
+                .await
+                .map(|_| ())
         }
     }
 }
@@ -2329,21 +2346,29 @@ async fn copy_snapshot_entry(
 /// 7. Copy source entries whose contents differ from baseline.
 /// 8. Run `after_apply` callback.
 /// 9. Release lock.
-pub async fn merge_directory_with_baseline(input: MergeDirectoryWithBaselineInput<'_>) -> std::io::Result<()> {
+pub async fn merge_directory_with_baseline(
+    input: MergeDirectoryWithBaselineInput<'_>,
+) -> std::io::Result<()> {
     let baseline = input.baseline;
     let source_dir = input.source_dir;
     let target_dir = input.target_dir;
-    let source = capture_directory_snapshot(source_dir, DirectorySnapshotOptions {
-        exclude: baseline.exclude.clone(),
-    })
+    let source = capture_directory_snapshot(
+        source_dir,
+        DirectorySnapshotOptions {
+            exclude: baseline.exclude.clone(),
+        },
+    )
     .await?;
     let lock_path = PathBuf::from(format!("{}.paperclip-restore.lock", target_dir.display()));
     let _ = acquire_directory_merge_lock(&lock_path).await?;
     let release_result: std::io::Result<()> = (async {
         (input.before_apply)().await?;
-        let current = capture_directory_snapshot(target_dir, DirectorySnapshotOptions {
-            exclude: baseline.exclude.clone(),
-        })
+        let current = capture_directory_snapshot(
+            target_dir,
+            DirectorySnapshotOptions {
+                exclude: baseline.exclude.clone(),
+            },
+        )
         .await?;
         let mut deleted_leafs: Vec<(&String, &DirectorySnapshotEntry)> = baseline
             .entries
@@ -2386,7 +2411,8 @@ pub async fn merge_directory_with_baseline(input: MergeDirectoryWithBaselineInpu
 
         (input.after_apply)().await?;
         Ok(())
-    }).await;
+    })
+    .await;
     let _ = tokio::fs::remove_dir(&lock_path).await;
     release_result
 }
@@ -2396,8 +2422,16 @@ pub struct MergeDirectoryWithBaselineInput<'a> {
     pub baseline: &'a DirectorySnapshot,
     pub source_dir: &'a std::path::Path,
     pub target_dir: &'a std::path::Path,
-    pub before_apply: Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> + Send + Sync>,
-    pub after_apply: Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> + Send + Sync>,
+    pub before_apply: Box<
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>
+            + Send
+            + Sync,
+    >,
+    pub after_apply: Box<
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>
+            + Send
+            + Sync,
+    >,
 }
 
 async fn acquire_directory_merge_lock(lock_dir: &std::path::Path) -> std::io::Result<()> {
@@ -2519,10 +2553,8 @@ mod r506_tests {
     use std::path::PathBuf;
 
     fn tmp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "paperclip-r506-{name}-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("paperclip-r506-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create dir");
         dir
     }
@@ -2555,7 +2587,9 @@ mod r506_tests {
         std::fs::write(root.join("node_modules").join("x.js"), "x").unwrap();
         let snap = capture_directory_snapshot(
             &root,
-            DirectorySnapshotOptions { exclude: vec!["node_modules".to_owned()] },
+            DirectorySnapshotOptions {
+                exclude: vec!["node_modules".to_owned()],
+            },
         )
         .await
         .expect("snap");
@@ -2661,10 +2695,22 @@ mod r506_tests {
 
     #[test]
     fn entries_match_file_compare_mode_and_hash() {
-        let a = DirectorySnapshotEntry::File { mode: 0o644, hash: "abc".to_owned() };
-        let b = DirectorySnapshotEntry::File { mode: 0o644, hash: "abc".to_owned() };
-        let c = DirectorySnapshotEntry::File { mode: 0o755, hash: "abc".to_owned() };
-        let d = DirectorySnapshotEntry::File { mode: 0o644, hash: "xyz".to_owned() };
+        let a = DirectorySnapshotEntry::File {
+            mode: 0o644,
+            hash: "abc".to_owned(),
+        };
+        let b = DirectorySnapshotEntry::File {
+            mode: 0o644,
+            hash: "abc".to_owned(),
+        };
+        let c = DirectorySnapshotEntry::File {
+            mode: 0o755,
+            hash: "abc".to_owned(),
+        };
+        let d = DirectorySnapshotEntry::File {
+            mode: 0o644,
+            hash: "xyz".to_owned(),
+        };
         assert!(entries_match(Some(&a), Some(&b)));
         assert!(!entries_match(Some(&a), Some(&c)));
         assert!(!entries_match(Some(&a), Some(&d)));

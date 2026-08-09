@@ -37,9 +37,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::sleep;
 
-use crate::sandbox_callback_bridge::{
-    SANDBOX_EXEC_CHANNEL_BRIDGE, SANDBOX_EXEC_CHANNEL_ENV,
-};
+use crate::sandbox_callback_bridge::{SANDBOX_EXEC_CHANNEL_BRIDGE, SANDBOX_EXEC_CHANNEL_ENV};
 use crate::sandbox_shell::{preferred_shell_for_sandbox, shell_command_args};
 
 // =============================================================================
@@ -100,9 +98,8 @@ impl SandboxRunLogStream {
 /// `SandboxRunLogSink`. Stored as `Arc<dyn Fn ...>` so callers can hold
 /// their own `Arc` reference and dispose of it independently of the
 /// tail handle.
-pub type SandboxRunLogSink = Arc<
-    dyn Fn(SandboxRunLogStream, String) -> BoxFuture<'static, ()> + Send + Sync + 'static,
->;
+pub type SandboxRunLogSink =
+    Arc<dyn Fn(SandboxRunLogStream, String) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
 
 // =============================================================================
 // Runner trait - minimal subset of Node `CommandManagedRuntimeRunner.execute`
@@ -266,14 +263,20 @@ fn shell_quote(value: &str) -> String {
 ///   5. emit end marker.
 fn build_tick_script(stdout_log: &str, stderr_log: &str, max_chunk_bytes: u64) -> String {
     let mut lines: Vec<String> = Vec::with_capacity(8);
-    lines.push(format!("printf '%s\\n' {}", shell_quote(TAIL_MARKER_STDOUT)));
+    lines.push(format!(
+        "printf '%s\\n' {}",
+        shell_quote(TAIL_MARKER_STDOUT)
+    ));
     lines.push(format!(
         "if [ -f {} ]; then tail -c +1 {} | head -c {} | base64; fi",
         shell_quote(stdout_log),
         shell_quote(stdout_log),
         max_chunk_bytes,
     ));
-    lines.push(format!("printf '%s\\n' {}", shell_quote(TAIL_MARKER_STDERR)));
+    lines.push(format!(
+        "printf '%s\\n' {}",
+        shell_quote(TAIL_MARKER_STDERR)
+    ));
     lines.push(format!(
         "if [ -f {} ]; then tail -c +1 {} | head -c {} | base64; fi",
         shell_quote(stderr_log),
@@ -297,7 +300,10 @@ pub fn parse_tick_output(stdout: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     }
     let stdout_b64: Vec<&str> = lines[stdout_index + 1..stderr_index].to_vec();
     let stderr_b64: Vec<&str> = lines[stderr_index + 1..end_index].to_vec();
-    Some((decode_base64_section(&stdout_b64), decode_base64_section(&stderr_b64)))
+    Some((
+        decode_base64_section(&stdout_b64),
+        decode_base64_section(&stderr_b64),
+    ))
 }
 
 // =============================================================================
@@ -575,7 +581,10 @@ impl SandboxRunLogTailFactory {
     /// `SandboxRunLogTailFactory.create()`.
     #[must_use]
     pub fn create(&self) -> SandboxRunLogTailHandle {
-        let mut seq = self.sequence.try_lock().expect("sequence mutex uncontended");
+        let mut seq = self
+            .sequence
+            .try_lock()
+            .expect("sequence mutex uncontended");
         *seq += 1;
         let n = *seq;
         drop(seq);

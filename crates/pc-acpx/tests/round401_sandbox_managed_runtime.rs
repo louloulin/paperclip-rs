@@ -234,11 +234,7 @@ fn extract_runtime_asset_command_emits_full_rm_mkdir_tar_sequence() {
 #[test]
 fn workspace_tar_extract_overlay_form_used_for_git_overlay() {
     // No wipeExceptNames -> overlay on top of existing tree
-    let cmd = build_workspace_tar_extract_command(
-        "/sandbox/ws",
-        "/sandbox/staging/ws.tar",
-        None,
-    );
+    let cmd = build_workspace_tar_extract_command("/sandbox/ws", "/sandbox/staging/ws.tar", None);
     assert!(!cmd.contains("find"));
     assert!(cmd.contains("mkdir -p '/sandbox/ws'"));
     assert!(cmd.contains("tar -xf '/sandbox/staging/ws.tar' -C '/sandbox/ws'"));
@@ -386,8 +382,16 @@ fn prepared_runtime_round_trip_with_collection() {
     let json = serde_json::to_string(&prep).unwrap();
     let back: pc_acpx::sandbox_managed_runtime::PreparedSandboxManagedRuntime =
         serde_json::from_str(&json).unwrap();
-    assert_eq!(back.asset_dirs.get("skill-1").map(String::as_str), Some("/sandbox/skill-1"));
-    assert_eq!(back.additional_source_dirs.get("proj-1").map(String::as_str), Some("/sandbox/proj-proj-1"));
+    assert_eq!(
+        back.asset_dirs.get("skill-1").map(String::as_str),
+        Some("/sandbox/skill-1")
+    );
+    assert_eq!(
+        back.additional_source_dirs
+            .get("proj-1")
+            .map(String::as_str),
+        Some("/sandbox/proj-proj-1")
+    );
 }
 
 #[test]
@@ -440,18 +444,14 @@ fn cross_module_smoke_full_sync_in_pipeline() {
     // 4. Generate the staging tarball command for the runtime
     let staging_path = build_unique_staging_path("/sandbox/runtime/staging", ".tar");
     let archive_path = format!("{staging_path}.tar");
-    let tar_cmd =
-        create_remote_tarball_from_directory_command("/host/ws", &archive_path, None);
+    let tar_cmd = create_remote_tarball_from_directory_command("/host/ws", &archive_path, None);
     assert!(tar_cmd.contains("cd '/host/ws'"));
     assert!(tar_cmd.contains("tar -cf"));
     assert!(tar_cmd.contains(&archive_path));
 
     // 5. Build the extract command that lands the workspace into the sandbox
-    let extract_cmd = build_workspace_tar_extract_command(
-        "/sandbox/ws",
-        &archive_path,
-        Some(&[".git".into()]),
-    );
+    let extract_cmd =
+        build_workspace_tar_extract_command("/sandbox/ws", &archive_path, Some(&[".git".into()]));
     assert!(extract_cmd.contains("find '/sandbox/ws'"));
     assert!(extract_cmd.contains("! -name '.git'"));
     assert!(extract_cmd.contains("tar -xf"));

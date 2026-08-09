@@ -22,13 +22,12 @@ use crate::bridge_executor::{
     RunnerBridgeQueueClient,
 };
 use crate::execution_target::{
-    build_proxy_stop_stdin_end_write, build_proxy_stdin_write, decide_proxy_connection_message,
-    decide_proxy_poll_should_stop, decide_remote_event_delivery, parse_proxy_message_line,
-    get_process_session_remote_source, process_session_listen_port_or_error,
-    proxy_error_message_line, start_adapter_execution_target_process_session_bridge_plan,
-    sync_process_session_remote_script_plan, AdapterExecutionTarget,
-    AdapterRemoteExecutionTarget, PROCESS_SESSION_AUTH_TIMEOUT_MS,
-    PROCESS_SESSION_PROXY_SCRIPT,
+    build_proxy_stdin_write, build_proxy_stop_stdin_end_write, decide_proxy_connection_message,
+    decide_proxy_poll_should_stop, decide_remote_event_delivery, get_process_session_remote_source,
+    parse_proxy_message_line, process_session_listen_port_or_error, proxy_error_message_line,
+    start_adapter_execution_target_process_session_bridge_plan,
+    sync_process_session_remote_script_plan, AdapterExecutionTarget, AdapterRemoteExecutionTarget,
+    PROCESS_SESSION_AUTH_TIMEOUT_MS, PROCESS_SESSION_PROXY_SCRIPT,
 };
 use crate::sandbox_callback_bridge::{
     base64_encode_utf8, parse_sync_text_file_result, preferred_shell_for_sandbox,
@@ -181,7 +180,9 @@ pub async fn start_adapter_execution_target_process_session_bridge(
 ) -> Result<Option<ProcessSessionBridgeHandle>, String> {
     if !matches!(
         input.target,
-        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Sandbox(_)))
+        Some(AdapterExecutionTarget::Remote(
+            AdapterRemoteExecutionTarget::Sandbox(_)
+        ))
     ) {
         return Ok(None);
     }
@@ -213,10 +214,8 @@ pub async fn start_adapter_execution_target_process_session_bridge(
 
     // 1. 远端脚本 sha 门控同步（对齐 Node syncProcessSessionRemoteScript：
     // 内容 hash 相同则跳过 base64 上传）。
-    let sync_plan = sync_process_session_remote_script_plan(
-        &plan.bridge_runtime_dir,
-        &plan.remote_script_path,
-    );
+    let sync_plan =
+        sync_process_session_remote_script_plan(&plan.bridge_runtime_dir, &plan.remote_script_path);
     let sync_result = run_shell(
         &input.runner,
         &remote_cwd,
@@ -262,9 +261,12 @@ pub async fn start_adapter_execution_target_process_session_bridge(
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
         .map_err(|error| format!("process session bridge listen failed: {error}"))?;
-    let port = process_session_listen_port_or_error(
-        Some(listener.local_addr().map_err(|error| error.to_string())?.port()),
-    )?;
+    let port = process_session_listen_port_or_error(Some(
+        listener
+            .local_addr()
+            .map_err(|error| error.to_string())?
+            .port(),
+    ))?;
 
     // 4. proxy 脚本（本地 mkdtemp + 0700，对齐 writeProcessSessionProxyScript）。
     let proxy_dir = std::env::temp_dir().join(format!(
@@ -281,18 +283,17 @@ pub async fn start_adapter_execution_target_process_session_bridge(
         let write_result = (|| -> std::io::Result<()> {
             let mut file = std::fs::File::create(&proxy_path)?;
             file.write_all(
-                crate::execution_target::get_process_session_proxy_source(
-                    port,
-                    &plan.proxy_token,
-                )
-                .as_bytes(),
+                crate::execution_target::get_process_session_proxy_source(port, &plan.proxy_token)
+                    .as_bytes(),
             )?;
             file.sync_all()?;
             Ok(())
         })();
         if let Err(error) = write_result {
             let _ = std::fs::remove_dir_all(&proxy_dir);
-            return Err(format!("write process session proxy script failed: {error}"));
+            return Err(format!(
+                "write process session proxy script failed: {error}"
+            ));
         }
         let _ = std::fs::set_permissions(&proxy_path, std::fs::Permissions::from_mode(0o700));
     }

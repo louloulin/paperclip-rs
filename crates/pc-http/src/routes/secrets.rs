@@ -198,7 +198,10 @@ pub fn router() -> Router<AppState> {
             get(my_user_secrets).post(upsert_my_user_secret),
         )
         .route("/api/secrets/:id/rotate", post(rotate_secret))
-        .route("/api/secrets/:id", patch(update_secret).delete(delete_company_secret))
+        .route(
+            "/api/secrets/:id",
+            patch(update_secret).delete(delete_company_secret),
+        )
         .route("/api/secrets/:id/usage", get(secret_usage))
         .route("/api/secrets/:id/access-events", get(secret_access_events))
         // ── Round 201: remote import (Node-style alias) ──

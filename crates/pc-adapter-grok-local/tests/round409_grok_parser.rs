@@ -1,6 +1,4 @@
-use pc_adapter_grok_local::{
-    is_grok_unknown_session_error, parse_grok_jsonl, parse_grok_output,
-};
+use pc_adapter_grok_local::{is_grok_unknown_session_error, parse_grok_jsonl, parse_grok_output};
 
 #[test]
 fn 流式文本和推理按事件顺序聚合() {
@@ -63,14 +61,23 @@ fn 回合边界只作用于thought不改变用户可见文本() {
 
 #[test]
 fn 未知会话检测只匹配明确的恢复错误() {
-    assert!(is_grok_unknown_session_error("", "resume session not found"));
+    assert!(is_grok_unknown_session_error(
+        "",
+        "resume session not found"
+    ));
     assert!(is_grok_unknown_session_error("invalid session", ""));
-    assert!(!is_grok_unknown_session_error("session started", "not found in output file"));
+    assert!(!is_grok_unknown_session_error(
+        "session started",
+        "not found in output file"
+    ));
 }
 
 #[test]
 fn legacy输出仍保持兼容而新协议走结构化解析() {
-    assert_eq!(parse_grok_output("plain final\n").as_deref(), Some("plain final"));
+    assert_eq!(
+        parse_grok_output("plain final\n").as_deref(),
+        Some("plain final")
+    );
     assert_eq!(
         parse_grok_output(r#"{"type":"text","data":"structured"}"#).as_deref(),
         Some("structured")

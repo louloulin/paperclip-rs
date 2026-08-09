@@ -128,10 +128,10 @@ fn extract_text_content(content: &Value) -> String {
 }
 
 fn accumulate_usage(target: &mut PiUsage, usage_obj: &serde_json::Map<String, Value>) {
-    target.input_tokens += number_field(usage_obj, "inputTokens")
-        + number_field(usage_obj, "input");
-    target.output_tokens += number_field(usage_obj, "outputTokens")
-        + number_field(usage_obj, "output");
+    target.input_tokens +=
+        number_field(usage_obj, "inputTokens") + number_field(usage_obj, "input");
+    target.output_tokens +=
+        number_field(usage_obj, "outputTokens") + number_field(usage_obj, "output");
     let cached = target.cached_input_tokens.unwrap_or(0)
         + number_field(usage_obj, "cachedInputTokens")
         + number_field(usage_obj, "cacheRead");
@@ -225,8 +225,7 @@ pub fn parse_pi_jsonl(stdout: &str) -> ParsedPiOutput {
                 let final_error = string_field(&event, "finalError");
                 if final_error.is_empty() {
                     parsed.errors.push(
-                        "Pi exhausted automatic retries without producing a response."
-                            .to_owned(),
+                        "Pi exhausted automatic retries without producing a response.".to_owned(),
                     );
                 } else {
                     parsed.errors.push(final_error);
@@ -279,9 +278,7 @@ pub fn parse_pi_jsonl(stdout: &str) -> ParsedPiOutput {
         }
 
         if event_type == "message_update" {
-            if let Some(assistant_event) =
-                event.get("assistantMessageEvent").and_then(as_record)
-            {
+            if let Some(assistant_event) = event.get("assistantMessageEvent").and_then(as_record) {
                 let msg_type = string_field(assistant_event, "type");
                 if msg_type == "text_delta" {
                     let delta = raw_string_field(assistant_event, "delta");
@@ -514,7 +511,10 @@ mod tests {
         assert!(is_pi_unknown_session_error("Session not found: abc123", ""));
         assert!(is_pi_unknown_session_error("", "unknown session id: s1"));
         assert!(is_pi_unknown_session_error("", "no session available"));
-        assert!(is_pi_unknown_session_error("there is a session X not found", ""));
+        assert!(is_pi_unknown_session_error(
+            "there is a session X not found",
+            ""
+        ));
         assert!(!is_pi_unknown_session_error("all good", ""));
         assert!(!is_pi_unknown_session_error("", ""));
     }
@@ -543,6 +543,4 @@ mod tests {
         assert_eq!(usage.output_tokens, 3);
         assert_eq!(usage.cached_input_tokens, Some(2));
     }
-    
-
 }

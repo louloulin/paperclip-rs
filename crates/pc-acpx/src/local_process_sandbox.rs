@@ -153,18 +153,22 @@ pub fn parse_local_process_network_allowlist(value: &serde_json::Value) -> Vec<S
                 .ok_or_else(|| format!("networkAllowlist[{index}] must be a string."))?;
             parse_network_allowlist_entry(s, index)
         })
-    .collect::<Result<Vec<_>, _>>()
-    .unwrap_or_default()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_default()
 }
 
 /// Parse a network scope from an unknown config value.
 /// Mirrors Node `parseLocalProcessNetworkScope`.
-pub fn parse_local_process_network_scope(value: &serde_json::Value) -> Option<LocalProcessNetworkScope> {
+pub fn parse_local_process_network_scope(
+    value: &serde_json::Value,
+) -> Option<LocalProcessNetworkScope> {
     match value {
         serde_json::Value::Null => None,
         serde_json::Value::String(s) if s.is_empty() => None,
         serde_json::Value::String(s) if s == "deny" => Some(LocalProcessNetworkScope::Deny),
-        serde_json::Value::String(s) if s == "allowlist" => Some(LocalProcessNetworkScope::Allowlist),
+        serde_json::Value::String(s) if s == "allowlist" => {
+            Some(LocalProcessNetworkScope::Allowlist)
+        }
         _ => None,
     }
 }
@@ -182,7 +186,9 @@ pub fn parse_local_process_filesystem_scope(value: &serde_json::Value) -> Option
 
 /// Parse extra paths from an unknown config value.
 /// Mirrors Node `parseLocalProcessSandboxExtraPaths`.
-pub fn parse_local_process_sandbox_extra_paths(value: &serde_json::Value) -> Vec<LocalProcessSandboxPath> {
+pub fn parse_local_process_sandbox_extra_paths(
+    value: &serde_json::Value,
+) -> Vec<LocalProcessSandboxPath> {
     let Some(arr) = value.as_array() else {
         return Vec::new();
     };
@@ -205,7 +211,9 @@ pub fn parse_local_process_sandbox_extra_paths(value: &serde_json::Value) -> Vec
                     _ => return None,
                 };
                 let path = obj.get("path").and_then(|v| v.as_str())?;
-                let p = normalize_absolute_path(path, &format!("filesystemExtraPaths[{index}].path")).ok()?;
+                let p =
+                    normalize_absolute_path(path, &format!("filesystemExtraPaths[{index}].path"))
+                        .ok()?;
                 Some(LocalProcessSandboxPath { path: p, access })
             } else {
                 None
@@ -312,26 +320,17 @@ mod tests {
 
     #[test]
     fn parse_network_scope_null_returns_none() {
-        assert_eq!(
-            parse_local_process_network_scope(&json!(null)),
-            None
-        );
+        assert_eq!(parse_local_process_network_scope(&json!(null)), None);
     }
 
     #[test]
     fn parse_network_scope_empty_string_returns_none() {
-        assert_eq!(
-            parse_local_process_network_scope(&json!("")),
-            None
-        );
+        assert_eq!(parse_local_process_network_scope(&json!("")), None);
     }
 
     #[test]
     fn parse_network_scope_invalid_returns_none() {
-        assert_eq!(
-            parse_local_process_network_scope(&json!("invalid")),
-            None
-        );
+        assert_eq!(parse_local_process_network_scope(&json!("invalid")), None);
     }
 
     #[test]

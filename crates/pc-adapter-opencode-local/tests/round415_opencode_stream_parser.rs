@@ -1,6 +1,4 @@
-use pc_adapter_opencode_local::{
-    is_opencode_unknown_session_error, parse_opencode_stream_json,
-};
+use pc_adapter_opencode_local::{is_opencode_unknown_session_error, parse_opencode_stream_json};
 
 #[test]
 fn 解析_text_step_finish和error() {
@@ -26,24 +24,34 @@ fn 工具错误与主错误分离() {
     );
     assert_eq!(parsed.summary, "Recovered and completed the task");
     assert!(parsed.error_message.is_none());
-    assert_eq!(parsed.tool_errors, vec!["File not found: e2b-adapter-result.txt"]);
+    assert_eq!(
+        parsed.tool_errors,
+        vec!["File not found: e2b-adapter-result.txt"]
+    );
 }
 
 #[test]
 fn 嵌套data_message可作为错误文本() {
-    let parsed = parse_opencode_stream_json(r#"{"type":"error","error":{"data":{"message":"nested failure"}}}"#);
+    let parsed = parse_opencode_stream_json(
+        r#"{"type":"error","error":{"data":{"message":"nested failure"}}}"#,
+    );
     assert_eq!(parsed.error_message.as_deref(), Some("nested failure"));
 }
 
 #[test]
 fn 未知session识别() {
-    assert!(is_opencode_unknown_session_error("Session not found: s_123", ""));
+    assert!(is_opencode_unknown_session_error(
+        "Session not found: s_123",
+        ""
+    ));
     assert!(is_opencode_unknown_session_error("", "unknown session id"));
     assert!(!is_opencode_unknown_session_error("all good", ""));
 }
 
 #[test]
 fn 非json行被安全忽略() {
-    let parsed = parse_opencode_stream_json("not-json\n{\"type\":\"text\",\"sessionID\":\"s\",\"part\":{\"text\":\"ok\"}}");
+    let parsed = parse_opencode_stream_json(
+        "not-json\n{\"type\":\"text\",\"sessionID\":\"s\",\"part\":{\"text\":\"ok\"}}",
+    );
     assert_eq!(parsed.summary, "ok");
 }

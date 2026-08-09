@@ -3,9 +3,9 @@
 //! `gemini_local` local CLI adapter: spawns `gemini`, parses its JSONL
 //! output into the shared `AdapterExecutionResult` shape.
 
-pub mod skills;
-pub mod gemini_stream_json;
 pub mod execute_helpers;
+pub mod gemini_stream_json;
+pub mod skills;
 
 pub use execute_helpers::{
     build_gemini_headless_env, gemini_skills_home, render_api_access_note,
@@ -13,10 +13,10 @@ pub use execute_helpers::{
 };
 
 pub use gemini_stream_json::{
-    detect_gemini_auth_required, detect_gemini_quota_exhausted,
-    describe_gemini_failure, is_gemini_session_unrecoverable_error,
-    is_gemini_transient_network_error, is_gemini_turn_limit_result,
-    parse_gemini_stream_json, GeminiQuestion, GeminiQuestionChoice, ParsedGeminiStreamJson,
+    describe_gemini_failure, detect_gemini_auth_required, detect_gemini_quota_exhausted,
+    is_gemini_session_unrecoverable_error, is_gemini_transient_network_error,
+    is_gemini_turn_limit_result, parse_gemini_stream_json, GeminiQuestion, GeminiQuestionChoice,
+    ParsedGeminiStreamJson,
 };
 
 use async_trait::async_trait;
@@ -130,8 +130,8 @@ impl Adapter for GeminiLocalAdapter {
         let model = default_model(&context.adapter_config);
         let initial_args =
             build_gemini_exec_args(&context.adapter_config, context.session_id.as_deref());
-        let initial_spec = ProcessSpec::new(&command, &initial_args)
-            .with_stdin(context.prompt.clone());
+        let initial_spec =
+            ProcessSpec::new(&command, &initial_args).with_stdin(context.prompt.clone());
         let initial_execution =
             execute_process_capture(&initial_spec, &context, events.clone()).await?;
         let initial_parsed = parse_gemini_stream_json(&initial_execution.stdout);
@@ -141,7 +141,11 @@ impl Adapter for GeminiLocalAdapter {
         let mut clear_session_on_retry = false;
         let mut active_execution = initial_execution;
         let mut active_parsed = initial_parsed;
-        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        if let Some(sid) = context
+            .session_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
             if !active_execution.result.timed_out
                 && active_execution.result.exit_code.unwrap_or(0) != 0
                 && is_gemini_session_unrecoverable_error(
@@ -156,8 +160,8 @@ impl Adapter for GeminiLocalAdapter {
                     )))
                     .await;
                 let retry_args = build_gemini_exec_args(&context.adapter_config, None);
-                let retry_spec = ProcessSpec::new(&command, &retry_args)
-                    .with_stdin(context.prompt.clone());
+                let retry_spec =
+                    ProcessSpec::new(&command, &retry_args).with_stdin(context.prompt.clone());
                 let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
                 let retry_execution =
                     execute_process_capture(&retry_spec, &context, retry_sink).await?;
@@ -178,16 +182,20 @@ impl Adapter for GeminiLocalAdapter {
         result.billing_type = Some(billing_type.as_str().to_owned());
         result.summary = (!parsed.summary.is_empty()).then_some(parsed.summary);
         result.usage = Some(parsed.usage);
-        result.error_message = parsed.error_message.or_else(|| (result.exit_code != Some(0))
-            .then(|| execution.stderr.trim().to_owned())
-            .filter(|s| !s.is_empty()));
+        result.error_message = parsed.error_message.or_else(|| {
+            (result.exit_code != Some(0))
+                .then(|| execution.stderr.trim().to_owned())
+                .filter(|s| !s.is_empty())
+        });
         result.session_id = parsed.session_id;
         result.cost_usd = parsed.cost_usd;
         let mut result_json = parsed.result_json.unwrap_or_else(|| serde_json::json!({}));
         if let Value::Object(ref mut map) = result_json {
             map.insert(
                 "paperclipEnvNote".to_owned(),
-                Value::String(crate::execute_helpers::render_paperclip_env_note(&context.env)),
+                Value::String(crate::execute_helpers::render_paperclip_env_note(
+                    &context.env,
+                )),
             );
             map.insert(
                 "apiAccessNote".to_owned(),
@@ -203,7 +211,8 @@ impl Adapter for GeminiLocalAdapter {
             result.clear_session = true;
         }
         Ok(result)
-    }}
+    }
+}
 
 #[cfg(test)]
 mod tests {

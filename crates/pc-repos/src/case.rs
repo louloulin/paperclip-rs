@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use pc_core::Timestamp;
 
-use crate::Db;
 use crate::document::{DocumentRevisionRow, DocumentRow};
+use crate::Db;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1632,10 +1632,7 @@ impl<'a> CaseRepo<'a> {
         key: &str,
     ) -> sqlx::Result<bool> {
         let mut tx = self.db.pool().begin().await?;
-        let lock_key = format!(
-            "paperclip:case-document:{}:{}:{}",
-            company_id, case_id, key
-        );
+        let lock_key = format!("paperclip:case-document:{}:{}:{}", company_id, case_id, key);
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(&lock_key)
             .execute(&mut *tx)
@@ -1784,7 +1781,6 @@ impl<'a> CaseRepo<'a> {
             .fetch_optional(self.db.pool())
             .await
     }
-
 
     // ---- R514: case document upsert (PUT /api/cases/:case_id/documents/:key) ----
     /// 单事务内完成 8 步 Node 语义：advisory lock -> 读 existing -> 校验 -> upsert document

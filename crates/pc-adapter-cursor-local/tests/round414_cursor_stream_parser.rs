@@ -1,12 +1,17 @@
 use pc_adapter_cursor_local::{
-    is_cursor_unknown_session_error, normalize_cursor_stream_line,
-    parse_cursor_stream_json,
+    is_cursor_unknown_session_error, normalize_cursor_stream_line, parse_cursor_stream_json,
 };
 
 #[test]
 fn stream_prefix会去掉stdout标签并解析json() {
-    assert_eq!(normalize_cursor_stream_line("stdout: {\"x\":1}"), "{\"x\":1}");
-    assert_eq!(normalize_cursor_stream_line("stderr {\"y\":2}"), "{\"y\":2}");
+    assert_eq!(
+        normalize_cursor_stream_line("stdout: {\"x\":1}"),
+        "{\"x\":1}"
+    );
+    assert_eq!(
+        normalize_cursor_stream_line("stderr {\"y\":2}"),
+        "{\"y\":2}"
+    );
     assert_eq!(normalize_cursor_stream_line("noise"), "noise");
 }
 
@@ -43,8 +48,14 @@ fn 错误事件支持message和嵌套error() {
 
 #[test]
 fn session不可恢复错误识别() {
-    assert!(is_cursor_unknown_session_error("", "Error: unknown session abc"));
-    assert!(is_cursor_unknown_session_error("", "Resume chat abc-123 not found on disk"));
+    assert!(is_cursor_unknown_session_error(
+        "",
+        "Error: unknown session abc"
+    ));
+    assert!(is_cursor_unknown_session_error(
+        "",
+        "Resume chat abc-123 not found on disk"
+    ));
     assert!(!is_cursor_unknown_session_error("", "Network timeout"));
 }
 

@@ -154,9 +154,7 @@ pub fn csrf_decision(method: &str, path: &str, headers: &HeaderMap) -> Result<()
         .map(|(_, v)| *v);
 
     // 提取 header 中的 csrf token
-    let header_token = headers
-        .get(CSRF_HEADER_NAME)
-        .and_then(|v| v.to_str().ok());
+    let header_token = headers.get(CSRF_HEADER_NAME).and_then(|v| v.to_str().ok());
 
     let cookie = cookie_token.ok_or(CsrfDenial::MissingCookie)?;
     let header = header_token.ok_or(CsrfDenial::MissingHeader)?;
@@ -295,7 +293,7 @@ mod tests {
         assert!(c.contains("Max-Age=3600"));
     }
 
-        #[test]
+    #[test]
     fn get_request_passes_through_without_csrf() {
         let headers = h(&[]);
         assert_allowed("GET", "/api/companies", &headers);
@@ -312,13 +310,23 @@ mod tests {
     #[test]
     fn post_with_session_but_no_csrf_returns_missing_cookie() {
         let headers = h(&[("cookie", "paperclip_session=abc")]);
-        assert_denied("POST", "/api/companies", &headers, CsrfDenial::MissingCookie);
+        assert_denied(
+            "POST",
+            "/api/companies",
+            &headers,
+            CsrfDenial::MissingCookie,
+        );
     }
 
     #[test]
     fn post_with_cookie_but_no_header_returns_missing_header() {
         let headers = h(&[("cookie", "paperclip_session=abc; paperclip_csrf=token")]);
-        assert_denied("POST", "/api/companies", &headers, CsrfDenial::MissingHeader);
+        assert_denied(
+            "POST",
+            "/api/companies",
+            &headers,
+            CsrfDenial::MissingHeader,
+        );
     }
 
     #[test]
@@ -327,7 +335,12 @@ mod tests {
             ("cookie", "paperclip_session=abc"),
             ("x-csrf-token", "abc123"),
         ]);
-        assert_denied("POST", "/api/companies", &headers, CsrfDenial::MissingCookie);
+        assert_denied(
+            "POST",
+            "/api/companies",
+            &headers,
+            CsrfDenial::MissingCookie,
+        );
     }
 
     #[test]
@@ -341,7 +354,10 @@ mod tests {
     #[test]
     fn post_with_mismatched_csrf_returns_mismatch() {
         let headers = h(&[
-            ("cookie", "paperclip_session=xyz; paperclip_csrf=cookie_token"),
+            (
+                "cookie",
+                "paperclip_session=xyz; paperclip_csrf=cookie_token",
+            ),
             ("x-csrf-token", "different_header_token"),
         ]);
         assert_denied("POST", "/api/companies", &headers, CsrfDenial::Mismatch);
@@ -391,7 +407,17 @@ mod tests {
         assert_allowed("Post", "/api/companies", &headers);
         // DELETE with session cookie but no CSRF → 403 missing cookie.
         let auth_headers = h(&[("cookie", "paperclip_session=xyz")]);
-        assert_denied("delete", "/api/companies", &auth_headers, CsrfDenial::MissingCookie);
-        assert_denied("Delete", "/api/companies", &auth_headers, CsrfDenial::MissingCookie);
+        assert_denied(
+            "delete",
+            "/api/companies",
+            &auth_headers,
+            CsrfDenial::MissingCookie,
+        );
+        assert_denied(
+            "Delete",
+            "/api/companies",
+            &auth_headers,
+            CsrfDenial::MissingCookie,
+        );
     }
 }

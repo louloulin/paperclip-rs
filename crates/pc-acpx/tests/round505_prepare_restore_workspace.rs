@@ -19,7 +19,6 @@ use pc_acpx::ssh::SshRemoteExecutionSpec;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn prepare_restore_roundtrip_git_backed_workspace() {
     let Some(fixture) = SshLabFixture::start("r505").await else {
@@ -27,10 +26,8 @@ async fn prepare_restore_roundtrip_git_backed_workspace() {
     };
 
     // Build a git-backed local workspace.
-    let local = std::env::temp_dir().join(format!(
-        "paperclip-r505-git-local-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let local =
+        std::env::temp_dir().join(format!("paperclip-r505-git-local-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&local).expect("mkdir local");
     init_git_repo(&local);
     std::fs::write(local.join("README.md"), "# Test\n").expect("write README");
@@ -55,15 +52,10 @@ async fn prepare_restore_roundtrip_git_backed_workspace() {
     let remote_dir = format!("{}/git-target", fixture.root_dir.display());
     std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
 
-    let git_backed = prepare_workspace_for_ssh_execution(
-        &fixture.spec,
-        &local,
-        &remote_dir,
-        None,
-        None,
-    )
-    .await
-    .expect("prepare should succeed");
+    let git_backed =
+        prepare_workspace_for_ssh_execution(&fixture.spec, &local, &remote_dir, None, None)
+            .await
+            .expect("prepare should succeed");
     assert!(git_backed, "should detect git-backed workspace");
 
     // After prepare: remote should have README.md + src.txt + .git/.
@@ -72,21 +64,11 @@ async fn prepare_restore_roundtrip_git_backed_workspace() {
     assert!(Path::new(&remote_dir).join(".git").exists());
 
     // Simulate remote mutation: change src.txt on remote.
-    std::fs::write(
-        Path::new(&remote_dir).join("src.txt"),
-        "remote-edit\n",
-    )
-    .expect("remote write");
+    std::fs::write(Path::new(&remote_dir).join("src.txt"), "remote-edit\n").expect("remote write");
 
-    restore_workspace_from_ssh_execution(
-        &fixture.spec,
-        &local,
-        &remote_dir,
-        None,
-        None,
-    )
-    .await
-    .expect("restore should succeed");
+    restore_workspace_from_ssh_execution(&fixture.spec, &local, &remote_dir, None, None)
+        .await
+        .expect("restore should succeed");
 
     // After restore: local src.txt must reflect the remote edit.
     let got = std::fs::read_to_string(local.join("src.txt")).expect("read local src");
@@ -117,21 +99,13 @@ async fn prepare_restore_roundtrip_non_git_workspace() {
     let remote_dir = format!("{}/nongit-target", fixture.root_dir.display());
     std::fs::create_dir_all(&remote_dir).expect("mkdir remote");
     // Pre-create stale file the prepare should overwrite.
-    std::fs::write(
-        Path::new(&remote_dir).join("config.yaml"),
-        "stale: yes\n",
-    )
-    .expect("write stale");
+    std::fs::write(Path::new(&remote_dir).join("config.yaml"), "stale: yes\n")
+        .expect("write stale");
 
-    let git_backed = prepare_workspace_for_ssh_execution(
-        &fixture.spec,
-        &local,
-        &remote_dir,
-        None,
-        None,
-    )
-    .await
-    .expect("prepare should succeed");
+    let git_backed =
+        prepare_workspace_for_ssh_execution(&fixture.spec, &local, &remote_dir, None, None)
+            .await
+            .expect("prepare should succeed");
     assert!(!git_backed, "should detect non-git workspace");
 
     assert!(Path::new(&remote_dir).join("config.yaml").exists());
@@ -146,15 +120,9 @@ async fn prepare_restore_roundtrip_non_git_workspace() {
     )
     .expect("remote edit");
 
-    restore_workspace_from_ssh_execution(
-        &fixture.spec,
-        &local,
-        &remote_dir,
-        None,
-        None,
-    )
-    .await
-    .expect("restore should succeed");
+    restore_workspace_from_ssh_execution(&fixture.spec, &local, &remote_dir, None, None)
+        .await
+        .expect("restore should succeed");
 
     let got = std::fs::read_to_string(local.join("config.yaml")).expect("read local");
     assert_eq!(

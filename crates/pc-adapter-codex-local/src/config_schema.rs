@@ -12,13 +12,11 @@
 //!   5. `stateDir` (text, 仅 acp)
 //!   6. `warmHandleIdleMs` (number, 仅 acp)
 
-use pc_adapter_api::{
-    AdapterConfigSchema, ConfigFieldOption, ConfigFieldSchema, ConfigFieldType,
-};
 use pc_acpx::constants::{
     DEFAULT_ACP_ENGINE_MODE, DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS,
     DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS,
 };
+use pc_adapter_api::{AdapterConfigSchema, ConfigFieldOption, ConfigFieldSchema, ConfigFieldType};
 use serde_json::json;
 
 /// 仅当 `engine == "acp"` 时显示的字段元数据（对齐 Node `acpVisible`）。
@@ -187,11 +185,7 @@ mod tests {
     #[test]
     fn acp_only_fields_have_visibility_meta() {
         let schema = get_config_schema();
-        for field in schema
-            .fields
-            .iter()
-            .filter(|f| f.key != "engine")
-        {
+        for field in schema.fields.iter().filter(|f| f.key != "engine") {
             let meta = field.meta.as_ref().expect("acp field meta present");
             let visible_when = meta.get("visibleWhen").expect("visibleWhen present");
             assert_eq!(

@@ -16,7 +16,7 @@ fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-    .collect()
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -39,10 +39,7 @@ fn biller_provider作为fallback() {
         resolve_opencode_biller(&env, Some("anthropic")),
         "anthropic"
     );
-    assert_eq!(
-        resolve_opencode_biller(&env, Some("google")),
-        "google"
-    );
+    assert_eq!(resolve_opencode_biller(&env, Some("google")), "google");
 }
 
 #[test]
@@ -54,10 +51,7 @@ fn biller_默认unknown() {
 #[test]
 fn biller_openrouter_env空不触发() {
     let env = env_from(&[("OPENROUTER_API_KEY", "")]);
-    assert_eq!(
-        resolve_opencode_biller(&env, Some("google")),
-        "google"
-    );
+    assert_eq!(resolve_opencode_biller(&env, Some("google")), "google");
 }
 
 #[test]
@@ -75,18 +69,12 @@ fn biller_openrouter_via_base_url() {
 
 #[test]
 fn skills_home_标准路径() {
-    assert_eq!(
-        claude_skills_home("/home/u"),
-        "/home/u/.claude/skills"
-    );
+    assert_eq!(claude_skills_home("/home/u"), "/home/u/.claude/skills");
 }
 
 #[test]
 fn skills_home_尾斜杠() {
-    assert_eq!(
-        claude_skills_home("/home/u/"),
-        "/home/u/.claude/skills"
-    );
+    assert_eq!(claude_skills_home("/home/u/"), "/home/u/.claude/skills");
 }
 
 #[test]
@@ -140,10 +128,7 @@ fn provider_空前缀_None() {
 
 #[test]
 fn provider_多斜杠只切第一个() {
-    assert_eq!(
-        parse_model_provider(Some("a/b/c")),
-        Some("a".to_owned())
-    );
+    assert_eq!(parse_model_provider(Some("a/b/c")), Some("a".to_owned()));
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +154,10 @@ fn 综合_默认未指定_走unknown() {
     let env = env_from(&[]);
     let provider = parse_model_provider(None);
     assert_eq!(provider, None);
-    assert_eq!(resolve_opencode_biller(&env, provider.as_deref()), "unknown");
+    assert_eq!(
+        resolve_opencode_biller(&env, provider.as_deref()),
+        "unknown"
+    );
 }
 
 #[test]

@@ -10,6 +10,7 @@
 //! 5. env 重写（PAPERCLIP_WORKSPACE_CWD → managedRemoteWorkspace）
 
 use pc_acpx::execution_target::adapter_execution_target_from_remote_execution;
+use pc_acpx::remote_managed_runtime::prepare_remote_managed_runtime_layout;
 use pc_adapter_codex_local::codex_bridge_env::{
     bridge_env_from_handle, resolve_bridge_host_api_url, resolve_bridge_runtime_root_dir,
     should_start_paperclip_bridge,
@@ -19,7 +20,6 @@ use pc_adapter_codex_local::codex_remote_workspace::{
 };
 use pc_adapter_codex_local::codex_session_params::build_resolved_session_params;
 use pc_adapter_codex_local::codex_session_resume::decide_codex_session_resume;
-use pc_acpx::remote_managed_runtime::prepare_remote_managed_runtime_layout;
 use serde_json::json;
 
 fn ssh_target(remote_cwd: &str) -> pc_acpx::execution_target::AdapterExecutionTarget {
@@ -97,15 +97,17 @@ fn session_params_serialization_includes_remote_identity() {
     let identity = pc_acpx::execution_target::adapter_execution_target_session_identity(Some(
         &ssh_target(&managed),
     ));
-    let params = build_resolved_session_params(&pc_adapter_codex_local::codex_session_params::ResolvedSessionParamsInput {
-        session_id: Some("session-123"),
-        cwd: &managed,
-        execution_target_is_remote: true,
-        remote_execution_identity: identity.map(serde_json::to_value).transpose().unwrap(),
-        workspace_id: Some("workspace-1"),
-        repo_url: Some("https://github.com/paperclipai/paperclip.git"),
-        repo_ref: Some("main"),
-    })
+    let params = build_resolved_session_params(
+        &pc_adapter_codex_local::codex_session_params::ResolvedSessionParamsInput {
+            session_id: Some("session-123"),
+            cwd: &managed,
+            execution_target_is_remote: true,
+            remote_execution_identity: identity.map(serde_json::to_value).transpose().unwrap(),
+            workspace_id: Some("workspace-1"),
+            repo_url: Some("https://github.com/paperclipai/paperclip.git"),
+            repo_ref: Some("main"),
+        },
+    )
     .unwrap();
     assert_eq!(
         pc_adapter_codex_local::codex_session_params::session_params_session_id(&params),
@@ -115,9 +117,17 @@ fn session_params_serialization_includes_remote_identity() {
         pc_adapter_codex_local::codex_session_params::session_params_cwd(&params),
         Some(managed.as_str())
     );
-    let remote = pc_adapter_codex_local::codex_session_params::session_params_remote_execution(&params).unwrap();
-    assert_eq!(remote.get("host").and_then(serde_json::Value::as_str), Some("127.0.0.1"));
-    assert_eq!(remote.get("port").and_then(serde_json::Value::as_u64), Some(2222));
+    let remote =
+        pc_adapter_codex_local::codex_session_params::session_params_remote_execution(&params)
+            .unwrap();
+    assert_eq!(
+        remote.get("host").and_then(serde_json::Value::as_str),
+        Some("127.0.0.1")
+    );
+    assert_eq!(
+        remote.get("port").and_then(serde_json::Value::as_u64),
+        Some(2222)
+    );
 }
 
 #[test]
@@ -171,7 +181,10 @@ fn resume_flow_denies_without_identity() {
 fn env_cwd_rewrite_uses_managed_remote_dir() {
     // Node：PAPERCLIP_WORKSPACE_CWD → managedRemoteWorkspace
     let managed = managed_remote_runtime_workspace_dir("/remote/workspace", "run-1");
-    assert_eq!(managed, "/remote/workspace/.paperclip-runtime/runs/run-1/workspace");
+    assert_eq!(
+        managed,
+        "/remote/workspace/.paperclip-runtime/runs/run-1/workspace"
+    );
     // PAPERCLIP_WORKSPACE_WORKTREE_PATH 在远程被清除（shape 函数语义）
     assert!(remote_codex_home_dir(&managed).ends_with(".paperclip-runtime/codex/home"));
 }

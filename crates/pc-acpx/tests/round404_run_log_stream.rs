@@ -20,11 +20,11 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use pc_acpx::sandbox_run_log_stream::{
-    create_sandbox_run_log_tail_factory, parse_tick_output, SandboxRunLogStream, SandboxRunLogSink,
-    SandboxRunLogTailFactoryOptions, SandboxRunLogTickInput, SandboxRunLogTickResult,
-    SandboxRunLogRunner, DEFAULT_TAIL_MAX_CHUNK_BYTES, DEFAULT_TAIL_MAX_CONSECUTIVE_FAILURES,
-    DEFAULT_TAIL_POLL_INTERVAL_MS, DEFAULT_TAIL_TICK_TIMEOUT_MS, TAIL_MARKER_END, TAIL_MARKER_STDERR,
-    TAIL_MARKER_STDOUT,
+    create_sandbox_run_log_tail_factory, parse_tick_output, SandboxRunLogRunner, SandboxRunLogSink,
+    SandboxRunLogStream, SandboxRunLogTailFactoryOptions, SandboxRunLogTickInput,
+    SandboxRunLogTickResult, DEFAULT_TAIL_MAX_CHUNK_BYTES, DEFAULT_TAIL_MAX_CONSECUTIVE_FAILURES,
+    DEFAULT_TAIL_POLL_INTERVAL_MS, DEFAULT_TAIL_TICK_TIMEOUT_MS, TAIL_MARKER_END,
+    TAIL_MARKER_STDERR, TAIL_MARKER_STDOUT,
 };
 
 // ===========================================================================
@@ -148,13 +148,9 @@ async fn tick_streams_stdout_and_stderr_chunks() {
     let runner = Arc::new(MockRunner::default());
     let stdout_bytes = b"hello stdout\n";
     let stderr_bytes = b"warning stderr\n";
-    runner
-        .queue
-        .lock()
-        .await
-        .push(TickSpec::Ok {
-            stdout: tick_output(stdout_bytes, stderr_bytes),
-        });
+    runner.queue.lock().await.push(TickSpec::Ok {
+        stdout: tick_output(stdout_bytes, stderr_bytes),
+    });
     let factory = make_factory(runner.clone(), 10, 5);
     let handle = factory.create();
     let collected: Collected = Arc::new(Mutex::new(Vec::new()));
@@ -166,11 +162,15 @@ async fn tick_streams_stdout_and_stderr_chunks() {
     handle.finish((String::new(), String::new())).await;
     let chunks = collected.lock().await.clone();
     assert!(
-        chunks.iter().any(|(s, c)| *s == SandboxRunLogStream::Stdout && c.contains("hello stdout")),
+        chunks
+            .iter()
+            .any(|(s, c)| *s == SandboxRunLogStream::Stdout && c.contains("hello stdout")),
         "missing stdout chunk in {chunks:?}"
     );
     assert!(
-        chunks.iter().any(|(s, c)| *s == SandboxRunLogStream::Stderr && c.contains("warning stderr")),
+        chunks
+            .iter()
+            .any(|(s, c)| *s == SandboxRunLogStream::Stderr && c.contains("warning stderr")),
         "missing stderr chunk in {chunks:?}"
     );
 }
@@ -183,20 +183,12 @@ async fn finish_emits_only_suffix_past_streamed_offset() {
     // Tick 1 streams "abc"; tick 2 streams "def". Final batch is the
     // full "abcdef" - finish() should only emit the "def" suffix that
     // wasn't streamed by tick 2.
-    runner
-        .queue
-        .lock()
-        .await
-        .push(TickSpec::Ok {
-            stdout: tick_output(b"abc", b""),
-        });
-    runner
-        .queue
-        .lock()
-        .await
-        .push(TickSpec::Ok {
-            stdout: tick_output(b"abcdef", b""),
-        });
+    runner.queue.lock().await.push(TickSpec::Ok {
+        stdout: tick_output(b"abc", b""),
+    });
+    runner.queue.lock().await.push(TickSpec::Ok {
+        stdout: tick_output(b"abcdef", b""),
+    });
     let factory = make_factory(runner.clone(), 10, 5);
     let handle = factory.create();
     let collected: Collected = Arc::new(Mutex::new(Vec::new()));
@@ -230,13 +222,9 @@ async fn finish_emits_only_suffix_past_streamed_offset() {
 #[tokio::test]
 async fn abort_stops_loop_without_flushing() {
     let runner = Arc::new(MockRunner::default());
-    runner
-        .queue
-        .lock()
-        .await
-        .push(TickSpec::Ok {
-            stdout: tick_output(b"x", b""),
-        });
+    runner.queue.lock().await.push(TickSpec::Ok {
+        stdout: tick_output(b"x", b""),
+    });
     let factory = make_factory(runner.clone(), 10, 5);
     let handle = factory.create();
     let collected: Collected = Arc::new(Mutex::new(Vec::new()));
@@ -299,13 +287,9 @@ async fn consecutive_failures_mark_degraded_and_finish_emits_message() {
 #[tokio::test]
 async fn start_is_idempotent() {
     let runner = Arc::new(MockRunner::default());
-    runner
-        .queue
-        .lock()
-        .await
-        .push(TickSpec::Ok {
-            stdout: tick_output(b"a", b""),
-        });
+    runner.queue.lock().await.push(TickSpec::Ok {
+        stdout: tick_output(b"a", b""),
+    });
     let factory = create_sandbox_run_log_tail_factory(SandboxRunLogTailFactoryOptions {
         runner: runner.clone(),
         remote_cwd: "/workspace".to_string(),
@@ -377,9 +361,7 @@ fn parse_tick_output_rejects_malformed_input() {
     // End before stderr marker -> invalid order.
     let bad = format!(
         "{}\n{}\n{}\n",
-        TAIL_MARKER_STDOUT,
-        TAIL_MARKER_END,
-        TAIL_MARKER_STDERR,
+        TAIL_MARKER_STDOUT, TAIL_MARKER_END, TAIL_MARKER_STDERR,
     );
     assert!(parse_tick_output(&bad).is_none());
 }

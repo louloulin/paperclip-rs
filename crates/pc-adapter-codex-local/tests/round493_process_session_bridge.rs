@@ -11,8 +11,8 @@
 //!
 //! node 缺失时跳过真实部分。
 
-use pc_adapter_codex_local::codex_bridge_env::start_codex_process_session_bridge;
 use pc_acpx::bridge_executor::{BridgeCommandRunner, LocalProcessBridgeRunner};
+use pc_adapter_codex_local::codex_bridge_env::start_codex_process_session_bridge;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -168,7 +168,10 @@ async fn sandbox_target_without_runner_returns_none() {
     )
     .await
     .expect("gate returns Ok");
-    assert!(bridge.is_none(), "no provider runner ⇒ no process session bridge");
+    assert!(
+        bridge.is_none(),
+        "no provider runner ⇒ no process session bridge"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +197,10 @@ async fn ssh_target_with_runner_returns_none() {
     )
     .await
     .expect("gate returns Ok");
-    assert!(bridge.is_none(), "ssh transport ⇒ no process session bridge");
+    assert!(
+        bridge.is_none(),
+        "ssh transport ⇒ no process session bridge"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -240,8 +246,5 @@ async fn sandbox_target_starts_real_bridge_via_local_runner() {
     assert_eq!(stdout, "out:hello\n");
     assert_eq!(stderr, "err:hello\n");
     bridge.stop().await;
-    assert!(
-        !proxy_path.exists(),
-        "proxy dir removed after stop"
-    );
+    assert!(!proxy_path.exists(), "proxy dir removed after stop");
 }

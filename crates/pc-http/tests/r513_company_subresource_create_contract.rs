@@ -381,7 +381,9 @@ async fn case_document_put_update_increases_revision_number() {
     )
     .await;
     let base_revision_id = body["latestRevisionId"].as_str().expect("latestRevisionId");
-    let first_revision_number = body["latestRevisionNumber"].as_u64().expect("latestRevisionNumber");
+    let first_revision_number = body["latestRevisionNumber"]
+        .as_u64()
+        .expect("latestRevisionNumber");
 
     let (status, updated) = call(
         &app,

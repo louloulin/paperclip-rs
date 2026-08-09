@@ -33,7 +33,10 @@ fn agent_end取最后_assistant_content() {
     let parsed = parse_pi_jsonl(
         r#"{"type":"agent_end","sessionId":"s-final","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"reply from agent_end"}]}"#,
     );
-    assert_eq!(parsed.final_message.as_deref(), Some("reply from agent_end"));
+    assert_eq!(
+        parsed.final_message.as_deref(),
+        Some("reply from agent_end")
+    );
     assert_eq!(parsed.session_id.as_deref(), Some("s-final"));
 }
 
@@ -248,7 +251,10 @@ fn unknown_session_识别_no_session() {
 
 #[test]
 fn unknown_session_识别_session_x_not_found() {
-    assert!(is_pi_unknown_session_error("error: session abcdef not found", ""));
+    assert!(is_pi_unknown_session_error(
+        "error: session abcdef not found",
+        ""
+    ));
 }
 
 #[test]
@@ -291,12 +297,16 @@ fn content数组提取_text_合并() {
 
 #[test]
 fn sessionId_顶层兼容_sessionId() {
-    let parsed = parse_pi_jsonl(r#"{"type":"turn_end","sessionId":"abc","message":{"role":"assistant","content":"x"}}"#);
+    let parsed = parse_pi_jsonl(
+        r#"{"type":"turn_end","sessionId":"abc","message":{"role":"assistant","content":"x"}}"#,
+    );
     assert_eq!(parsed.session_id.as_deref(), Some("abc"));
 }
 
 #[test]
 fn sessionId_顶层兼容_sessionID() {
-    let parsed = parse_pi_jsonl(r#"{"type":"turn_end","sessionID":"xyz","message":{"role":"assistant","content":"x"}}"#);
+    let parsed = parse_pi_jsonl(
+        r#"{"type":"turn_end","sessionID":"xyz","message":{"role":"assistant","content":"x"}}"#,
+    );
     assert_eq!(parsed.session_id.as_deref(), Some("xyz"));
 }

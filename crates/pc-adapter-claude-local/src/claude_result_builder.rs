@@ -231,9 +231,7 @@ pub fn resolve_error_code(
     if login_required {
         return ResolvedErrorCode::ClaudeAuthRequired;
     }
-    if failed
-        && is_claude_model_not_found_error(Some(parsed), stdout, stderr, error_message)
-    {
+    if failed && is_claude_model_not_found_error(Some(parsed), stdout, stderr, error_message) {
         return ResolvedErrorCode::ModelNotFound;
     }
     if failed && max_turns {
@@ -319,10 +317,7 @@ pub fn merge_result_json(
             Value::String(iso.clone()),
         );
         if provider_quota {
-            map.insert(
-                "providerQuotaRetryNotBefore".to_owned(),
-                Value::String(iso),
-            );
+            map.insert("providerQuotaRetryNotBefore".to_owned(), Value::String(iso));
         }
     }
     if let Some(cleanup) = terminal_result_cleanup {
@@ -350,9 +345,7 @@ fn format_iso8601(secs: i64, nanos: u32) -> String {
     let minute = (secs_in_day % 3600) / 60;
     let second = secs_in_day % 60;
     let millis = nanos / 1_000_000;
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
 }
 
 // Howard Hinnant 的 civil_from_days 算法（与 chrono 一致）。
@@ -372,16 +365,19 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 
 /// 计算 usage（对齐 Node L1019-1035）。
 #[must_use]
-pub fn resolve_usage(parsed: &Value, parsed_stream_usage: Option<&UsageSummary>) -> UsageResolution {
+pub fn resolve_usage(
+    parsed: &Value,
+    parsed_stream_usage: Option<&UsageSummary>,
+) -> UsageResolution {
     if let Some(usage) = parsed_stream_usage {
         return UsageResolution {
             usage: Some(usage.clone()),
             basis: UsageBasis::PerRun,
         };
     }
-    if let Some(totals) = crate::claude_stream_json::claude_model_usage_totals(
-        parsed.get("modelUsage"),
-    ) {
+    if let Some(totals) =
+        crate::claude_stream_json::claude_model_usage_totals(parsed.get("modelUsage"))
+    {
         return UsageResolution {
             usage: Some(totals),
             basis: UsageBasis::PerRun,
@@ -491,8 +487,6 @@ impl Default for AssembleInput<'_> {
         }
     }
 }
-
-
 
 /// 顶部整合入口（Node toAdapterResult L959-1199 的纯函数版本）。
 #[must_use]
@@ -842,17 +836,24 @@ mod tests {
     #[test]
     fn resolve_session_id_none_input_returns_none() {
         let parsed = json!({"subtype": "success"});
-        assert_eq!(
-            resolve_session_id_with_poison_drop(None, &parsed),
-            None
-        );
+        assert_eq!(resolve_session_id_with_poison_drop(None, &parsed), None);
     }
 
     #[test]
     fn resolve_error_code_login_required_takes_priority() {
         assert_eq!(
             resolve_error_code(
-                true, true, &json!({}), "", "", Some("err"), false, false, false, false, false,
+                true,
+                true,
+                &json!({}),
+                "",
+                "",
+                Some("err"),
+                false,
+                false,
+                false,
+                false,
+                false,
             ),
             ResolvedErrorCode::ClaudeAuthRequired
         );
@@ -862,8 +863,17 @@ mod tests {
     fn resolve_error_code_model_not_found() {
         assert_eq!(
             resolve_error_code(
-                false, true, &json!({}), "", "model not found: x", Some("err"),
-                false, false, false, false, false,
+                false,
+                true,
+                &json!({}),
+                "",
+                "model not found: x",
+                Some("err"),
+                false,
+                false,
+                false,
+                false,
+                false,
             ),
             ResolvedErrorCode::ModelNotFound
         );
@@ -874,8 +884,17 @@ mod tests {
         let parsed = json!({"is_error": true, "subtype": "max_turns_exhausted"});
         assert_eq!(
             resolve_error_code(
-                false, true, &parsed, "", "", Some("err"),
-                true, false, false, false, false,
+                false,
+                true,
+                &parsed,
+                "",
+                "",
+                Some("err"),
+                true,
+                false,
+                false,
+                false,
+                false,
             ),
             ResolvedErrorCode::MaxTurnsExhausted
         );
@@ -886,8 +905,17 @@ mod tests {
         let parsed = json!({"errors": [{"message": "diagnostics.previous_message_id 'x' starts with `msg_` invalid"}]});
         assert_eq!(
             resolve_error_code(
-                false, true, &parsed, "", "", Some("err"),
-                false, true, false, false, false,
+                false,
+                true,
+                &parsed,
+                "",
+                "",
+                Some("err"),
+                false,
+                true,
+                false,
+                false,
+                false,
             ),
             ResolvedErrorCode::ClaudePoisonedPreviousMessageId
         );
@@ -898,8 +926,17 @@ mod tests {
         let parsed = json!({"is_error": true, "errors": [{"message": "weekly limit reached"}]});
         assert_eq!(
             resolve_error_code(
-                false, true, &parsed, "", "weekly limit reached", Some("err"),
-                false, false, true, false, false,
+                false,
+                true,
+                &parsed,
+                "",
+                "weekly limit reached",
+                Some("err"),
+                false,
+                false,
+                true,
+                false,
+                false,
             ),
             ResolvedErrorCode::ProviderQuota
         );
@@ -910,8 +947,17 @@ mod tests {
         let parsed = json!({"is_error": true, "errors": [{"message": "529 overloaded"}]});
         assert_eq!(
             resolve_error_code(
-                false, true, &parsed, "", "529 overloaded", Some("err"),
-                false, false, false, true, false,
+                false,
+                true,
+                &parsed,
+                "",
+                "529 overloaded",
+                Some("err"),
+                false,
+                false,
+                false,
+                true,
+                false,
             ),
             ResolvedErrorCode::ClaudeTransientUpstream
         );
@@ -922,8 +968,7 @@ mod tests {
         let parsed = json!({"subtype": "refusal", "is_error": false});
         assert_eq!(
             resolve_error_code(
-                false, false, &parsed, "", "", None,
-                false, false, false, false, true,
+                false, false, &parsed, "", "", None, false, false, false, false, true,
             ),
             ResolvedErrorCode::ClaudeRefusal
         );
@@ -933,8 +978,17 @@ mod tests {
     fn resolve_error_code_none_when_no_match() {
         assert_eq!(
             resolve_error_code(
-                false, false, &json!({}), "", "", None,
-                false, false, false, false, false,
+                false,
+                false,
+                &json!({}),
+                "",
+                "",
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
             ),
             ResolvedErrorCode::None
         );
@@ -976,7 +1030,15 @@ mod tests {
     fn merge_result_json_keeps_parsed_fields() {
         let parsed = json!({"session_id": "x", "model": "y"});
         let merged = merge_result_json(
-            &parsed, false, false, false, false, ErrorFamily::None, None, false, None,
+            &parsed,
+            false,
+            false,
+            false,
+            false,
+            ErrorFamily::None,
+            None,
+            false,
+            None,
         );
         assert_eq!(merged.get("session_id").and_then(|v| v.as_str()), Some("x"));
         assert_eq!(merged.get("model").and_then(|v| v.as_str()), Some("y"));
@@ -986,7 +1048,15 @@ mod tests {
     fn merge_result_json_includes_max_turns_stop_reason() {
         let parsed = json!({});
         let merged = merge_result_json(
-            &parsed, true, true, false, false, ErrorFamily::None, None, false, None,
+            &parsed,
+            true,
+            true,
+            false,
+            false,
+            ErrorFamily::None,
+            None,
+            false,
+            None,
         );
         assert_eq!(
             merged.get("stopReason").and_then(|v| v.as_str()),
@@ -998,7 +1068,15 @@ mod tests {
     fn merge_result_json_includes_poisoned_stop_reason() {
         let parsed = json!({});
         let merged = merge_result_json(
-            &parsed, true, false, true, false, ErrorFamily::None, None, false, None,
+            &parsed,
+            true,
+            false,
+            true,
+            false,
+            ErrorFamily::None,
+            None,
+            false,
+            None,
         );
         assert_eq!(
             merged.get("stopReason").and_then(|v| v.as_str()),
@@ -1010,7 +1088,15 @@ mod tests {
     fn merge_result_json_refusal_includes_stop_reason_and_family() {
         let parsed = json!({});
         let merged = merge_result_json(
-            &parsed, false, false, false, true, ErrorFamily::None, None, false, None,
+            &parsed,
+            false,
+            false,
+            false,
+            true,
+            ErrorFamily::None,
+            None,
+            false,
+            None,
         );
         assert_eq!(
             merged.get("stopReason").and_then(|v| v.as_str()),
@@ -1188,7 +1274,14 @@ mod tests {
         assert!(result.error_message.is_none() || result.error_message.as_deref() == Some(""));
         assert_eq!(result.session_id.as_deref(), Some("abc-123"));
         assert_eq!(result.provider.as_deref(), Some("anthropic"));
-        assert_eq!(result.result_json.as_ref().and_then(|v| v.get("biller")).and_then(|v| v.as_str()), Some("anthropic"));
+        assert_eq!(
+            result
+                .result_json
+                .as_ref()
+                .and_then(|v| v.get("biller"))
+                .and_then(|v| v.as_str()),
+            Some("anthropic")
+        );
         assert_eq!(result.model.as_deref(), Some("claude-opus-4-7"));
         assert!(result.session_params.is_some());
         assert!(!result.clear_session);
@@ -1398,7 +1491,14 @@ mod tests {
             now,
         };
         let result = assemble_claude_result(&input);
-        assert_eq!(result.result_json.as_ref().and_then(|v| v.get("biller")).and_then(|v| v.as_str()), Some("aws_bedrock"));
+        assert_eq!(
+            result
+                .result_json
+                .as_ref()
+                .and_then(|v| v.get("biller"))
+                .and_then(|v| v.as_str()),
+            Some("aws_bedrock")
+        );
     }
 
     #[test]

@@ -25,9 +25,7 @@
 //! `force_fresh_session`（fallback 模式）在调用方传入，决策结果可以直接
 //! 用于 `session_id = can_resume && !force_fresh ? runtime : None`。
 
-use pc_acpx::execution_target::{
-    adapter_execution_target_session_matches, AdapterExecutionTarget,
-};
+use pc_acpx::execution_target::{adapter_execution_target_session_matches, AdapterExecutionTarget};
 use std::path::Path;
 
 /// session resume 决策的输入参数。
@@ -86,10 +84,7 @@ pub fn remote_execution_matches_target(
     let Some(saved) = runtime_remote_execution else {
         // Node parseObject(null) = {}；sessionMatches({}, local target) = true
         return execution_target.is_none()
-            || matches!(
-                execution_target,
-                Some(AdapterExecutionTarget::Local(_))
-            );
+            || matches!(execution_target, Some(AdapterExecutionTarget::Local(_)));
     };
     adapter_execution_target_session_matches(saved, execution_target)
 }
@@ -213,8 +208,14 @@ mod tests {
 
     #[test]
     fn session_cwd_matches_when_empty() {
-        assert!(session_cwd_matches_execution_target("", "/remote/workspace"));
-        assert!(session_cwd_matches_execution_target("  ", "/remote/workspace"));
+        assert!(session_cwd_matches_execution_target(
+            "",
+            "/remote/workspace"
+        ));
+        assert!(session_cwd_matches_execution_target(
+            "  ",
+            "/remote/workspace"
+        ));
     }
 
     #[test]
@@ -245,7 +246,10 @@ mod tests {
     fn remote_mismatches_ssh_identity() {
         let target = ssh_target("/remote/workspace");
         let saved = matching_remote_execution("/remote/other");
-        assert!(!remote_execution_matches_target(Some(&saved), Some(&target)));
+        assert!(!remote_execution_matches_target(
+            Some(&saved),
+            Some(&target)
+        ));
     }
 
     #[test]
@@ -259,7 +263,10 @@ mod tests {
         let managed = managed_remote();
         let saved = matching_remote_execution(&managed);
         let target: Option<AdapterExecutionTarget> = None;
-        assert!(!remote_execution_matches_target(Some(&saved), target.as_ref()));
+        assert!(!remote_execution_matches_target(
+            Some(&saved),
+            target.as_ref()
+        ));
     }
 
     #[test]
@@ -300,7 +307,9 @@ mod tests {
         assert!(!decision.can_resume);
         assert_eq!(decision.session_id, None);
         assert_eq!(decision.log_lines.len(), 1);
-        assert!(decision.log_lines[0].contains("does not match the current remote execution identity"));
+        assert!(
+            decision.log_lines[0].contains("does not match the current remote execution identity")
+        );
         assert!(decision.log_lines[0].contains("Starting a fresh remote session"));
     }
 

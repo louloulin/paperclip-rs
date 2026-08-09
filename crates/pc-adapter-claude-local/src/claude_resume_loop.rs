@@ -18,20 +18,20 @@
 use crate::claude_errors::{
     is_claude_poisoned_previous_message_id_error, is_claude_unknown_session_error,
 };
-use crate::claude_stream_json::is_claude_image_processing_error;
 use crate::claude_result_builder::{assemble_claude_result, AssembleInput};
 use crate::claude_session_params::ResolvedSessionParamsInput;
 use crate::claude_session_resume::{
     decide_claude_session_resume, SessionResumeDecision, SessionResumeInput,
 };
+use crate::claude_stream_json::is_claude_image_processing_error;
 use crate::claude_stream_json::{parse_claude_stream_json, ParsedClaudeStreamJson};
 use crate::execute_helpers::resolve_claude_billing_type;
 use pc_adapter_api::{
-    AdapterError, AdapterExecutionContext, AdapterExecutionResult, AdapterEventSink,
+    AdapterError, AdapterEventSink, AdapterExecutionContext, AdapterExecutionResult,
 };
-use std::sync::Arc;
 use pc_adapter_process::{ProcessExecution, ProcessSpec};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 /// session resume 错误类型（对齐 Node L1212-1222）。
@@ -78,7 +78,10 @@ pub fn detect_session_error_kind(
     }
     // 退而求其次：从 stdout 字符串扫描（用于 stream-json 解析失败时）
     let lower = stdout.to_ascii_lowercase();
-    if lower.contains("no conversation found") || lower.contains("session not found") || lower.contains("unknown session") {
+    if lower.contains("no conversation found")
+        || lower.contains("session not found")
+        || lower.contains("unknown session")
+    {
         return Some(SessionErrorKind::Unknown);
     }
     if lower.contains("previous_message_id") && lower.contains("starts with `msg_`") {
@@ -95,7 +98,10 @@ pub fn detect_session_error_kind(
 /// 当前实现只关注 resume flag；permission / chrome / model / effort 等其他参数
 /// 由 `build_claude_exec_args` 提供，本函数只追加 --resume。
 #[must_use]
-pub fn build_resume_claude_args(base_args: &[String], resume_session_id: Option<&str>) -> Vec<String> {
+pub fn build_resume_claude_args(
+    base_args: &[String],
+    resume_session_id: Option<&str>,
+) -> Vec<String> {
     let mut args = base_args.to_vec();
     if let Some(sid) = resume_session_id {
         args.push("--resume".to_owned());
@@ -235,7 +241,10 @@ pub(crate) async fn execute_claude_attempt_for_target(
             });
         })
     };
-    let cwd_owned = context.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
+    let cwd_owned = context
+        .cwd
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
     let cwd = cwd_owned.as_deref().unwrap_or("");
     let target_json = context.execution_target.clone();
 
@@ -270,16 +279,28 @@ pub async fn run_resume_retry_loop(
     input: &ResumeRetryInput<'_>,
 ) -> Result<AdapterExecutionResult, pc_adapter_api::AdapterError> {
     let args = build_resume_claude_args(input.base_args, input.resume_session_id);
-    let stdin = if input.context.prompt.is_empty() { None } else { Some(input.context.prompt.as_str()) };
-    let initial_execution =
-        execute_claude_attempt_for_target(input.command, &args, stdin, input.context, input.events.clone())
-            .await?;
+    let stdin = if input.context.prompt.is_empty() {
+        None
+    } else {
+        Some(input.context.prompt.as_str())
+    };
+    let initial_execution = execute_claude_attempt_for_target(
+        input.command,
+        &args,
+        stdin,
+        input.context,
+        input.events.clone(),
+    )
+    .await?;
     let initial_stdout = initial_execution.stdout.clone();
     let initial_stderr = initial_execution.stderr.clone();
     let initial_exit = initial_execution.result.exit_code;
     let initial_parsed_stream = parse_claude_stream_json(&initial_stdout);
     drop(initial_execution);
-    let initial_parsed_json = initial_parsed_stream.result_json.clone().unwrap_or(json!({}));
+    let initial_parsed_json = initial_parsed_stream
+        .result_json
+        .clone()
+        .unwrap_or(json!({}));
 
     let session_error = detect_session_error_kind(
         &initial_stdout,
@@ -287,76 +308,92 @@ pub async fn run_resume_retry_loop(
         initial_exit,
     );
 
-    let (final_stdout, final_stderr, final_exit, final_parsed_stream, clear_on_missing) = if session_error.is_some() && input.resume_session_id.is_some() {
-        // Poisoned session：先清理 Claude CLI 缓存的 jsonl 文件，避免下次 --resume 仍然命中坏状态。
-        // 仅在本地执行时执行（远程执行 target 的 jsonl 在远端 host 上）。
-        if matches!(session_error, Some(SessionErrorKind::Poisoned)) && !input.execution_target_is_remote {
-            let claude_config_dir = crate::claude_config::resolve_shared_claude_config_dir(
-                &input.context.env,
-                &std::env::var("HOME").unwrap_or_default(),
-            );
-            let session_id = input.resume_session_id.unwrap_or("");
-            if !session_id.is_empty() {
-                match crate::claude_session_cleanup::unlink_poisoned_session_file(
-                    &claude_config_dir,
-                    input.effective_execution_cwd,
-                    session_id,
-                )
-                .await
-                {
-                    Ok(true) => {
-                        let path = crate::claude_session_cleanup::build_poisoned_jsonl_path(
-                            &claude_config_dir,
-                            input.effective_execution_cwd,
-                            session_id,
-                        );
-                        let _ = input
-                            .events
-                            .clone()
-                            .emit(pc_adapter_api::AdapterEvent::stdout(format!(
-                                "[paperclip] Removed poisoned session file: {}\n",
-                                path.display()
-                            )))
-                            .await;
+    let (final_stdout, final_stderr, final_exit, final_parsed_stream, clear_on_missing) =
+        if session_error.is_some() && input.resume_session_id.is_some() {
+            // Poisoned session：先清理 Claude CLI 缓存的 jsonl 文件，避免下次 --resume 仍然命中坏状态。
+            // 仅在本地执行时执行（远程执行 target 的 jsonl 在远端 host 上）。
+            if matches!(session_error, Some(SessionErrorKind::Poisoned))
+                && !input.execution_target_is_remote
+            {
+                let claude_config_dir = crate::claude_config::resolve_shared_claude_config_dir(
+                    &input.context.env,
+                    &std::env::var("HOME").unwrap_or_default(),
+                );
+                let session_id = input.resume_session_id.unwrap_or("");
+                if !session_id.is_empty() {
+                    match crate::claude_session_cleanup::unlink_poisoned_session_file(
+                        &claude_config_dir,
+                        input.effective_execution_cwd,
+                        session_id,
+                    )
+                    .await
+                    {
+                        Ok(true) => {
+                            let path = crate::claude_session_cleanup::build_poisoned_jsonl_path(
+                                &claude_config_dir,
+                                input.effective_execution_cwd,
+                                session_id,
+                            );
+                            let _ = input
+                                .events
+                                .clone()
+                                .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                                    "[paperclip] Removed poisoned session file: {}\n",
+                                    path.display()
+                                )))
+                                .await;
+                        }
+                        Ok(false) => { /* 文件不存在，不是错误 */ }
+                        Err(_e) => { /* best-effort：清理失败不阻断重试 */ }
                     }
-                    Ok(false) => { /* 文件不存在，不是错误 */ }
-                    Err(_e) => { /* best-effort：清理失败不阻断重试 */ }
                 }
             }
-        }
 
-        // 重试：fresh session
-        let retry_args = build_resume_claude_args(input.base_args, None);
-        let stdin = if input.context.prompt.is_empty() { None } else { Some(input.context.prompt.as_str()) };
-        let retry_execution =
-            execute_claude_attempt_for_target(input.command, &retry_args, stdin, input.context, input.events.clone())
-                .await?;
-        let retry_stdout = retry_execution.stdout.clone();
-        let retry_stderr = retry_execution.stderr.clone();
-        let retry_exit = retry_execution.result.exit_code;
-        let retry_parsed_stream = parse_claude_stream_json(&retry_execution.stdout);
-        // Note: retry_execution is dropped here, no longer needed
-        (
-            retry_stdout,
-            retry_stderr,
-            retry_exit,
-            retry_parsed_stream,
-            true,
-        )
-    } else {
-        (
-            initial_stdout,
-            initial_stderr,
-            initial_exit,
-            initial_parsed_stream,
-            false,
-        )
-    };
+            // 重试：fresh session
+            let retry_args = build_resume_claude_args(input.base_args, None);
+            let stdin = if input.context.prompt.is_empty() {
+                None
+            } else {
+                Some(input.context.prompt.as_str())
+            };
+            let retry_execution = execute_claude_attempt_for_target(
+                input.command,
+                &retry_args,
+                stdin,
+                input.context,
+                input.events.clone(),
+            )
+            .await?;
+            let retry_stdout = retry_execution.stdout.clone();
+            let retry_stderr = retry_execution.stderr.clone();
+            let retry_exit = retry_execution.result.exit_code;
+            let retry_parsed_stream = parse_claude_stream_json(&retry_execution.stdout);
+            // Note: retry_execution is dropped here, no longer needed
+            (
+                retry_stdout,
+                retry_stderr,
+                retry_exit,
+                retry_parsed_stream,
+                true,
+            )
+        } else {
+            (
+                initial_stdout,
+                initial_stderr,
+                initial_exit,
+                initial_parsed_stream,
+                false,
+            )
+        };
 
     let final_parsed_json = final_parsed_stream.result_json.clone().unwrap_or(json!({}));
 
     // 检测 login_required
-    let (login_required, login_url) = detect_login(&final_stdout, &final_stderr, final_parsed_stream.result_json.as_ref());
+    let (login_required, login_url) = detect_login(
+        &final_stdout,
+        &final_stderr,
+        final_parsed_stream.result_json.as_ref(),
+    );
 
     let fallback_session_id = if session_error.is_some() {
         None
@@ -403,7 +440,13 @@ fn detect_login(stdout: &str, stderr: &str, parsed: Option<&Value>) -> (bool, Op
     let url = if required {
         extract_claude_login_url(stdout)
             .or_else(|| extract_claude_login_url(stderr))
-            .or_else(|| parsed.and_then(|p| crate::claude_stream_json::extract_claude_login_url(p.get("message").and_then(|m| m.as_str()).unwrap_or(""))))
+            .or_else(|| {
+                parsed.and_then(|p| {
+                    crate::claude_stream_json::extract_claude_login_url(
+                        p.get("message").and_then(|m| m.as_str()).unwrap_or(""),
+                    )
+                })
+            })
     } else {
         None
     };
@@ -414,9 +457,7 @@ fn detect_login(stdout: &str, stderr: &str, parsed: Option<&Value>) -> (bool, Op
 ///
 /// 接受外部传入的 stdout + parsed + session_id decision，
 /// 复用 resume decision 的日志逻辑。
-pub fn format_session_resume_log(
-    decision: &SessionResumeDecision,
-) -> Vec<String> {
+pub fn format_session_resume_log(decision: &SessionResumeDecision) -> Vec<String> {
     decision.log_lines.clone()
 }
 
@@ -478,7 +519,8 @@ mod tests {
 
     #[test]
     fn detect_session_error_kind_image() {
-        let parsed = json!({"errors": [{"message": "could not process image (unprocessable entity)"}]});
+        let parsed =
+            json!({"errors": [{"message": "could not process image (unprocessable entity)"}]});
         assert_eq!(
             detect_session_error_kind("", Some(&parsed), Some(1)),
             Some(SessionErrorKind::Image)
@@ -489,27 +531,25 @@ mod tests {
     fn detect_session_error_kind_none_for_zero_exit() {
         // exit_code = 0 表示 CLI 报告成功，跳过 session error 检测
         let parsed = json!({"subtype": "success"});
-        assert_eq!(
-            detect_session_error_kind("", Some(&parsed), Some(0)),
-            None
-        );
+        assert_eq!(detect_session_error_kind("", Some(&parsed), Some(0)), None);
     }
 
     #[test]
     fn detect_session_error_kind_none_for_nonzero_but_no_marker() {
         // exit_code != 0 但 parsed 没有 unknown/poisoned/image marker
         let parsed = json!({"errors": [{"message": "something else"}]});
-        assert_eq!(
-            detect_session_error_kind("", Some(&parsed), Some(1)),
-            None
-        );
+        assert_eq!(detect_session_error_kind("", Some(&parsed), Some(1)), None);
     }
 
     #[test]
     fn detect_session_error_kind_from_stdout_only() {
         // 没有 parsed 但 stdout 包含 "No conversation found"
         assert_eq!(
-            detect_session_error_kind("Error: No conversation found with session ID", None, Some(1)),
+            detect_session_error_kind(
+                "Error: No conversation found with session ID",
+                None,
+                Some(1)
+            ),
             Some(SessionErrorKind::Unknown)
         );
     }

@@ -15,8 +15,8 @@ use pc_acpx::server_utils::{
     append_with_byte_cap, append_with_cap, as_boolean, as_number, as_string, as_string_array,
     is_forbidden_config_env_key, is_paperclip_runtime_env_key, is_sensitive_env_key,
     is_valid_path_segment, join_prompt_sections, parse_json, parse_object, render_template,
-    resolve_path_value, signal_decision, TerminalResultCleanupEvidence, REDACTED_LOG_VALUE,
-    MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, PATH_SEGMENT_RE_SRC, SENSITIVE_ENV_KEY_RE_SRC,
+    resolve_path_value, signal_decision, TerminalResultCleanupEvidence, MAX_CAPTURE_BYTES,
+    MAX_EXCERPT_BYTES, PATH_SEGMENT_RE_SRC, REDACTED_LOG_VALUE, SENSITIVE_ENV_KEY_RE_SRC,
     UNMANAGED_BACKGROUND_TASK_LIVENESS_REASON, UNMANAGED_BACKGROUND_TASK_STOP_REASON,
 };
 use pc_acpx::server_utils::{RunningProcessSignalInfo, SignalTarget};
@@ -48,10 +48,7 @@ fn sensitive_env_key_detects_full_keyword_set() {
         "AUTHORIZATION",
         "USER_COOKIE",
     ] {
-        assert!(
-            is_sensitive_env_key(k),
-            "expected sensitive match for {k}"
-        );
+        assert!(is_sensitive_env_key(k), "expected sensitive match for {k}");
     }
     assert!(!is_sensitive_env_key("PAPERCLIP_AGENT_ID"));
     assert!(!is_sensitive_env_key("HOME"));
@@ -104,9 +101,9 @@ fn json_coercers_handle_all_value_kinds() {
     assert!(as_boolean(&obj["active"], false));
     // null → fallback (Node: typeof !== "boolean").
     assert!(as_boolean(&obj["missing"], true)); // null → fallback true
-    // string → fallback (false here, since fallback arg is false).
+                                                // string → fallback (false here, since fallback arg is false).
     assert!(!as_boolean(&obj["name"], false)); // string → fallback false
-    // number → fallback.
+                                               // number → fallback.
     assert!(!as_boolean(&obj["score"], false)); // number → fallback false
 
     // asStringArray: only string elements survive.
@@ -272,10 +269,7 @@ fn signal_decision_canonical_matrix() {
         process_group_id: Some(0),
         already_exited: false,
     };
-    assert_eq!(
-        signal_decision(zero_pgid, false),
-        SignalTarget::DirectChild
-    );
+    assert_eq!(signal_decision(zero_pgid, false), SignalTarget::DirectChild);
     // POSIX + negative pgid → DirectChild (pgid must be > 0).
     let neg_pgid = RunningProcessSignalInfo {
         process_group_id: Some(-1),

@@ -150,10 +150,7 @@ pub fn normalize_cwd(candidate: &str) -> String {
             }
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                let can_pop = segments
-                    .last()
-                    .map(|last| last != "..")
-                    .unwrap_or(false);
+                let can_pop = segments.last().map(|last| last != "..").unwrap_or(false);
                 if can_pop {
                     segments.pop();
                 } else if !absolute {
@@ -167,7 +164,11 @@ pub fn normalize_cwd(candidate: &str) -> String {
         }
     }
     if segments.is_empty() {
-        if absolute { "/".to_owned() } else { ".".to_owned() }
+        if absolute {
+            "/".to_owned()
+        } else {
+            ".".to_owned()
+        }
     } else if absolute {
         format!("/{}", segments.join("/"))
     } else {

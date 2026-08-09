@@ -20,7 +20,7 @@ fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-    .collect()
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -72,10 +72,7 @@ fn billing_as_str_映射() {
 
 #[test]
 fn biller_openrouter_优先() {
-    let env = env_from(&[
-        ("CURSOR_API_KEY", "key"),
-        ("OPENROUTER_API_KEY", "or-key"),
-    ]);
+    let env = env_from(&[("CURSOR_API_KEY", "key"), ("OPENROUTER_API_KEY", "or-key")]);
     assert_eq!(
         resolve_cursor_biller(&env, CursorBillingType::Api, Some("anthropic")),
         "openrouter"
@@ -219,18 +216,12 @@ fn provider_斜杠开头_None() {
 
 #[test]
 fn skills_home_标准路径() {
-    assert_eq!(
-        cursor_skills_home("/home/u"),
-        "/home/u/.cursor/skills"
-    );
+    assert_eq!(cursor_skills_home("/home/u"), "/home/u/.cursor/skills");
 }
 
 #[test]
 fn skills_home_尾斜杠() {
-    assert_eq!(
-        cursor_skills_home("/home/u/"),
-        "/home/u/.cursor/skills"
-    );
+    assert_eq!(cursor_skills_home("/home/u/"), "/home/u/.cursor/skills");
 }
 
 #[test]
@@ -249,14 +240,8 @@ fn skills_home_空输入() {
 
 #[test]
 fn 综合_企业_anthropic_via_openrouter() {
-    let env = env_from(&[
-        ("CURSOR_API_KEY", "key"),
-        ("OPENROUTER_API_KEY", "or-key"),
-    ]);
-    assert_eq!(
-        resolve_cursor_billing_type(&env),
-        CursorBillingType::Api
-    );
+    let env = env_from(&[("CURSOR_API_KEY", "key"), ("OPENROUTER_API_KEY", "or-key")]);
+    assert_eq!(resolve_cursor_billing_type(&env), CursorBillingType::Api);
     let provider = resolve_provider_from_model("anthropic/claude-sonnet-4");
     assert_eq!(provider.as_deref(), Some("anthropic"));
     assert_eq!(
@@ -281,10 +266,7 @@ fn 综合_个人_cursor订阅() {
 #[test]
 fn 综合_开发_openai_api() {
     let env = env_from(&[("OPENAI_API_KEY", "sk-test")]);
-    assert_eq!(
-        resolve_cursor_billing_type(&env),
-        CursorBillingType::Api
-    );
+    assert_eq!(resolve_cursor_billing_type(&env), CursorBillingType::Api);
     let provider = resolve_provider_from_model("openai/gpt-4o");
     assert_eq!(provider.as_deref(), Some("openai"));
     assert_eq!(

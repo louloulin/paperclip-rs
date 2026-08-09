@@ -17,15 +17,14 @@ use pc_acpx::server_utils::{
     canonicalize_desired_paperclip_skill_reference, expand_home_prefix,
     is_maintainer_only_skill_target, is_paperclip_skill_source_missing,
     normalize_configured_paperclip_runtime_skills, normalize_path_slashes,
-    read_paperclip_skill_sync_preference, resolve_paperclip_desired_skill_names,
-    resolve_paperclip_instance_root_for_adapter, resolve_paperclip_skill_missing_detail,
-    resolve_installed_entry_target, resolve_skill_detail, skill_location_label,
+    read_paperclip_skill_sync_preference, resolve_installed_entry_target,
+    resolve_paperclip_desired_skill_names, resolve_paperclip_instance_root_for_adapter,
+    resolve_paperclip_skill_missing_detail, resolve_skill_detail, skill_location_label,
     write_paperclip_skill_sync_preference, AdapterSkillEntry, AdapterSkillOrigin,
-    AdapterSkillSnapshot, AdapterSkillState, AdapterSkillSyncMode,
-    AvailableSkillRef, InstalledSkillTarget, InstalledSkillTargetKind,
-    PaperclipDesiredSkillEntry, PaperclipSkillEntry, PaperclipSkillSourceStatus,
-    PersistentSkillSnapshotOptions, ResolveInstanceRootInput,
-    RuntimeMountedSkillSnapshotOptions, SkillDetail, SkillSyncWrite,
+    AdapterSkillSnapshot, AdapterSkillState, AdapterSkillSyncMode, AvailableSkillRef,
+    InstalledSkillTarget, InstalledSkillTargetKind, PaperclipDesiredSkillEntry,
+    PaperclipSkillEntry, PaperclipSkillSourceStatus, PersistentSkillSnapshotOptions,
+    ResolveInstanceRootInput, RuntimeMountedSkillSnapshotOptions, SkillDetail, SkillSyncWrite,
 };
 
 // ===========================================================================
@@ -34,19 +33,37 @@ use pc_acpx::server_utils::{
 
 #[test]
 fn path_helpers_normalize_windows_paths_and_detect_maintainer_root() {
-    assert_eq!(normalize_path_slashes(r"C:\Users\agent\.paperclip\skills"), "C:/Users/agent/.paperclip/skills");
+    assert_eq!(
+        normalize_path_slashes(r"C:\Users\agent\.paperclip\skills"),
+        "C:/Users/agent/.paperclip/skills"
+    );
     // Already POSIX → unchanged.
-    assert_eq!(normalize_path_slashes("/home/agent/.paperclip/skills"), "/home/agent/.paperclip/skills");
+    assert_eq!(
+        normalize_path_slashes("/home/agent/.paperclip/skills"),
+        "/home/agent/.paperclip/skills"
+    );
     // Maintainer-only detection on POSIX + Windows paths.
-    assert!(is_maintainer_only_skill_target("/home/agent/.agents/skills/foo"));
-    assert!(is_maintainer_only_skill_target(r"C:\home\.agents\skills\foo"));
-    assert!(!is_maintainer_only_skill_target("/home/agent/.paperclip/skills/foo"));
+    assert!(is_maintainer_only_skill_target(
+        "/home/agent/.agents/skills/foo"
+    ));
+    assert!(is_maintainer_only_skill_target(
+        r"C:\home\.agents\skills\foo"
+    ));
+    assert!(!is_maintainer_only_skill_target(
+        "/home/agent/.paperclip/skills/foo"
+    ));
 }
 
 #[test]
 fn skill_location_label_round_trips_through_trim() {
-    assert_eq!(skill_location_label(Some("/home/agent")), Some("/home/agent".to_string()));
-    assert_eq!(skill_location_label(Some("  /home  ")), Some("/home".to_string()));
+    assert_eq!(
+        skill_location_label(Some("/home/agent")),
+        Some("/home/agent".to_string())
+    );
+    assert_eq!(
+        skill_location_label(Some("  /home  ")),
+        Some("/home".to_string())
+    );
     assert_eq!(skill_location_label(None), None);
     assert_eq!(skill_location_label(Some("")), None);
 }
@@ -54,7 +71,10 @@ fn skill_location_label_round_trips_through_trim() {
 #[test]
 fn expand_home_prefix_supports_tilde_and_absolute_paths() {
     assert_eq!(expand_home_prefix("~", "/home/agent"), "/home/agent");
-    assert_eq!(expand_home_prefix("~/skills", "/home/agent"), "/home/agent/skills");
+    assert_eq!(
+        expand_home_prefix("~/skills", "/home/agent"),
+        "/home/agent/skills"
+    );
     assert_eq!(expand_home_prefix("/abs/path", "/home/agent"), "/abs/path");
     assert_eq!(expand_home_prefix("relative", "/home/agent"), "relative");
     // Plain `~user` is not supported (Node behavior); passed through unchanged.
@@ -168,10 +188,7 @@ fn write_skill_sync_preserves_other_config_keys() {
         "agent": { "id": "a1" },
         "skillsHome": "/home/skills"
     });
-    let out = write_paperclip_skill_sync_preference(
-        &cfg,
-        &[SkillSyncWrite::Key("k1")],
-    );
+    let out = write_paperclip_skill_sync_preference(&cfg, &[SkillSyncWrite::Key("k1")]);
     // Other top-level keys are untouched.
     assert_eq!(out.get("agent"), cfg.get("agent"));
     assert_eq!(out.get("skillsHome"), cfg.get("skillsHome"));
@@ -187,9 +204,18 @@ fn resolve_desired_skill_names_canonicalizes_across_modes() {
         }
     });
     let avail = vec![
-        AvailableSkillRef { key: "owner/k1", runtime_name: Some("k1") },
-        AvailableSkillRef { key: "owner/k2", runtime_name: Some("k2") },
-        AvailableSkillRef { key: "owner/k3", runtime_name: Some("k3") },
+        AvailableSkillRef {
+            key: "owner/k1",
+            runtime_name: Some("k1"),
+        },
+        AvailableSkillRef {
+            key: "owner/k2",
+            runtime_name: Some("k2"),
+        },
+        AvailableSkillRef {
+            key: "owner/k3",
+            runtime_name: Some("k3"),
+        },
     ];
     let names = resolve_paperclip_desired_skill_names(&cfg, &avail);
     assert_eq!(
@@ -206,7 +232,10 @@ fn resolve_desired_skill_names_canonicalizes_across_modes() {
 #[test]
 fn resolve_desired_skill_names_returns_empty_when_not_explicit() {
     let cfg = serde_json::json!({ "other": "key" });
-    let avail = vec![AvailableSkillRef { key: "owner/k1", runtime_name: Some("k1") }];
+    let avail = vec![AvailableSkillRef {
+        key: "owner/k1",
+        runtime_name: Some("k1"),
+    }];
     assert!(resolve_paperclip_desired_skill_names(&cfg, &avail).is_empty());
 }
 
@@ -291,7 +320,10 @@ fn resolve_installed_entry_target_symlink_resolves_relative_path() {
         InstalledSkillTargetKind::Directory,
         None,
     );
-    assert_eq!(dir.target_path.as_deref(), Some("/home/agent/skills/my-skill"));
+    assert_eq!(
+        dir.target_path.as_deref(),
+        Some("/home/agent/skills/my-skill")
+    );
     assert_eq!(dir.kind, InstalledSkillTargetKind::Directory);
 }
 
@@ -422,7 +454,11 @@ fn persistent_snapshot_marks_installed_external_stale_and_missing() {
             kind: InstalledSkillTargetKind::Directory,
         },
     );
-    let desired = vec!["owner/k1".to_string(), "owner/k2".to_string(), "owner/k3".to_string()];
+    let desired = vec![
+        "owner/k1".to_string(),
+        "owner/k2".to_string(),
+        "owner/k3".to_string(),
+    ];
     let snap = build_persistent_skill_snapshot(PersistentSkillSnapshotOptions {
         adapter_type: "acpx",
         available_entries: &avail,
@@ -492,7 +528,10 @@ fn normalize_configured_runtime_skills_handles_alternate_field_names() {
     assert_eq!(entries.len(), 3);
     let keys: Vec<&str> = entries.iter().map(|e| e.key.as_str()).collect();
     assert_eq!(keys, vec!["owner/k1", "owner/k2", "owner/k5"]);
-    assert_eq!(entries[2].source_status, Some(PaperclipSkillSourceStatus::Missing));
+    assert_eq!(
+        entries[2].source_status,
+        Some(PaperclipSkillSourceStatus::Missing)
+    );
     assert_eq!(entries[2].missing_detail.as_deref(), Some("explicit"));
     assert_eq!(entries[2].current_version_id.as_deref(), Some("v5-current"));
 }
@@ -513,8 +552,14 @@ fn canonicalize_handles_ambiguous_runtime_names_by_falling_through() {
     // Two entries with the same runtime name → ambiguity, fall through
     // to slug matching.
     let avail = vec![
-        AvailableSkillRef { key: "owner/x", runtime_name: Some("shared") },
-        AvailableSkillRef { key: "owner/y", runtime_name: Some("shared") },
+        AvailableSkillRef {
+            key: "owner/x",
+            runtime_name: Some("shared"),
+        },
+        AvailableSkillRef {
+            key: "owner/y",
+            runtime_name: Some("shared"),
+        },
     ];
     // Exact key match wins.
     assert_eq!(
@@ -598,7 +643,10 @@ fn adapter_skill_snapshot_serializes_to_camelcase_wire_shape() {
 
 #[test]
 fn skill_constants_match_node() {
-    assert_eq!(MATERIALIZED_SKILL_SENTINEL, ".paperclip-materialized-skill.json");
+    assert_eq!(
+        MATERIALIZED_SKILL_SENTINEL,
+        ".paperclip-materialized-skill.json"
+    );
     assert_eq!(MATERIALIZED_SKILL_LOCK_OWNER, "owner.json");
     assert_eq!(MATERIALIZED_SKILL_LOCK_STALE_MS, 30_000);
     assert_eq!(
@@ -609,6 +657,6 @@ fn skill_constants_match_node() {
 
 // Re-export the constants for the parity test
 use pc_acpx::server_utils::{
-    MATERIALIZED_SKILL_LOCK_OWNER, MATERIALIZED_SKILL_LOCK_STALE_MS,
-    MATERIALIZED_SKILL_SENTINEL, PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES,
+    MATERIALIZED_SKILL_LOCK_OWNER, MATERIALIZED_SKILL_LOCK_STALE_MS, MATERIALIZED_SKILL_SENTINEL,
+    PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES,
 };

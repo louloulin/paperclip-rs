@@ -72,7 +72,9 @@ async fn call(
     };
     let resp = app.clone().oneshot(req).await.expect("oneshot");
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .unwrap();
     let body: Value = if bytes.is_empty() {
         Value::Null
     } else {
@@ -133,13 +135,7 @@ async fn delete_label_route_removes_label() {
     let label_id = insert_label(&db, company_id, "r515-del-label").await;
     let app = routes::labels::router().with_state(test_state(db.clone()));
 
-    let (status, body) = call(
-        &app,
-        "DELETE",
-        &format!("/api/labels/{label_id}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "DELETE", &format!("/api/labels/{label_id}"), None).await;
     assert_eq!(status, 200, "delete label: {body}");
     assert_eq!(body["labelId"], label_id.to_string());
 
@@ -174,13 +170,7 @@ async fn delete_secret_route_soft_deletes_secret() {
     let secret_id = insert_company_secret(&db, company_id, "r515-del-secret").await;
     let app = routes::secrets::router().with_state(test_state(db.clone()));
 
-    let (status, body) = call(
-        &app,
-        "DELETE",
-        &format!("/api/secrets/{secret_id}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "DELETE", &format!("/api/secrets/{secret_id}"), None).await;
     assert_eq!(status, 200, "delete secret: {body}");
 
     let deleted_at: Option<chrono::DateTime<chrono::Utc>> =
@@ -199,13 +189,7 @@ async fn companies_trailing_slash_lists_companies() {
     let company_id = insert_company(&db).await;
     let app = routes::companies::router().with_state(test_state(db.clone()));
 
-    let (status, body) = call(
-        &app,
-        "GET",
-        "/api/companies/",
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "GET", "/api/companies/", None).await;
     assert_eq!(status, 200, "list companies /: {body}");
     let items = body
         .as_array()
@@ -215,5 +199,8 @@ async fn companies_trailing_slash_lists_companies() {
         item["id"].as_str() == Some(company_id.to_string().as_str())
             || item["id"] == json!(company_id.to_string())
     });
-    assert!(has_company, "items should contain the just-created company: {body}");
+    assert!(
+        has_company,
+        "items should contain the just-created company: {body}"
+    );
 }

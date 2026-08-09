@@ -8,13 +8,17 @@
 //! 503（停止时未决请求）。
 
 use pc_acpx::bridge_executor::{
-    start_adapter_execution_target_paperclip_bridge, start_bridge_worker,
-    BridgeCommandRunner, BridgeForwardHandler, BridgeHandlerResult, BridgeHandleRequestFn,
-    BridgeQueueClient, LocalProcessBridgeRunner, RunnerBridgeQueueClient, StartAdapterBridgeInput,
+    start_adapter_execution_target_paperclip_bridge, start_bridge_worker, BridgeCommandRunner,
+    BridgeForwardHandler, BridgeHandleRequestFn, BridgeHandlerResult, BridgeQueueClient,
+    LocalProcessBridgeRunner, RunnerBridgeQueueClient, StartAdapterBridgeInput,
     StartBridgeWorkerInput, StartedAdapterBridge,
 };
-use pc_acpx::execution_target::{adapter_execution_target_from_remote_execution, AdapterExecutionTarget};
-use pc_acpx::sandbox_callback_bridge::{SandboxCallbackBridgeRequest, SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT};
+use pc_acpx::execution_target::{
+    adapter_execution_target_from_remote_execution, AdapterExecutionTarget,
+};
+use pc_acpx::sandbox_callback_bridge::{
+    SandboxCallbackBridgeRequest, SANDBOX_CALLBACK_BRIDGE_ENTRYPOINT,
+};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
@@ -102,7 +106,10 @@ async fn spawn_echo_server() -> (String, tokio::task::JoinHandle<()>) {
                         }
                     }
                 }
-                let body_start = head_text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(head.len());
+                let body_start = head_text
+                    .find("\r\n\r\n")
+                    .map(|i| i + 4)
+                    .unwrap_or(head.len());
                 let mut body = head[body_start.min(head.len())..].to_vec();
                 while body.len() < content_length {
                     let Ok(n) = socket.read(&mut tmp).await else {
@@ -159,7 +166,12 @@ async fn http_request(
     let headers = response
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                v.to_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
     let body = response.text().await.unwrap_or_default();
     (status, headers, body)
@@ -178,7 +190,11 @@ fn request_file_exists(dir: &str, id_prefix: &str) -> Option<String> {
     None
 }
 
-async fn wait_for_response_file(dir: &str, id_prefix: &str, timeout_ms: u64) -> Option<(String, serde_json::Value)> {
+async fn wait_for_response_file(
+    dir: &str,
+    id_prefix: &str,
+    timeout_ms: u64,
+) -> Option<(String, serde_json::Value)> {
     let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         if let Some(name) = request_file_exists(dir, id_prefix) {
@@ -227,7 +243,11 @@ fn make_echo_handler() -> (BridgeHandleRequestFn, Arc<std::sync::atomic::AtomicB
 async fn start_test_bridge(
     remote_cwd: &Path,
     host_api_url: &str,
-) -> (StartedAdapterBridge, Arc<dyn BridgeCommandRunner>, Vec<String>) {
+) -> (
+    StartedAdapterBridge,
+    Arc<dyn BridgeCommandRunner>,
+    Vec<String>,
+) {
     let runner: Arc<dyn BridgeCommandRunner> = Arc::new(LocalProcessBridgeRunner);
     let target = ssh_target(&remote_cwd.to_string_lossy());
     let logs: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -242,7 +262,10 @@ async fn start_test_bridge(
         host_api_url: Some(host_api_url),
         runner: runner.clone(),
         on_log: Some(Arc::new(move |line: &str| {
-            logs_for_hook.lock().expect("log lock").push(line.to_string());
+            logs_for_hook
+                .lock()
+                .expect("log lock")
+                .push(line.to_string());
         })),
     })
     .await
@@ -258,7 +281,8 @@ async fn bridge_full_round_trip_with_real_node() {
         eprintln!("SKIP: node not available");
         return;
     }
-    let temp_dir = std::env::temp_dir().join(format!("paperclip-bridge-e2e-{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("paperclip-bridge-e2e-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).expect("temp dir");
     let (echo_url, _echo_task) = spawn_echo_server().await;
     let (bridge, _runner, log_lines) = start_test_bridge(&temp_dir, &echo_url).await;
@@ -295,11 +319,20 @@ async fn bridge_full_round_trip_with_real_node() {
     )
     .await;
     assert_eq!(status, 200, "body: {body}");
-    assert_eq!(headers.get("content-type").map(String::as_str), Some("application/json"));
-    assert_eq!(headers.get("etag").map(String::as_str), Some("\"round491\""));
+    assert_eq!(
+        headers.get("content-type").map(String::as_str),
+        Some("application/json")
+    );
+    assert_eq!(
+        headers.get("etag").map(String::as_str),
+        Some("\"round491\"")
+    );
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
     assert_eq!(parsed["ok"], serde_json::Value::Bool(true));
-    assert_eq!(parsed["method"], serde_json::Value::String("POST".to_string()));
+    assert_eq!(
+        parsed["method"],
+        serde_json::Value::String("POST".to_string())
+    );
     assert_eq!(
         parsed["path"],
         serde_json::Value::String("/api/issues/issue-1/comments".to_string())
@@ -345,8 +378,14 @@ async fn bridge_full_round_trip_with_real_node() {
     .await;
     assert_eq!(status, 200);
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
-    assert_eq!(parsed["method"], serde_json::Value::String("GET".to_string()));
-    assert_eq!(parsed["path"], serde_json::Value::String("/api/agents/me".to_string()));
+    assert_eq!(
+        parsed["method"],
+        serde_json::Value::String("GET".to_string())
+    );
+    assert_eq!(
+        parsed["path"],
+        serde_json::Value::String("/api/agents/me".to_string())
+    );
 
     // 5. teardown：server pid 文件被清理、进程已停止、worker 停止。
     let pid_file = format!("{queue_dir}/server.pid");
@@ -358,11 +397,15 @@ async fn bridge_full_round_trip_with_real_node() {
     let requests_dir = format!("{queue_dir}/requests");
     let responses_dir = format!("{queue_dir}/responses");
     assert!(
-        std::fs::read_dir(&requests_dir).map(|mut it| it.next().is_none()).unwrap_or(true),
+        std::fs::read_dir(&requests_dir)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(true),
         "no request files left"
     );
     assert!(
-        std::fs::read_dir(&responses_dir).map(|mut it| it.next().is_none()).unwrap_or(true),
+        std::fs::read_dir(&responses_dir)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(true),
         "no response files left"
     );
 
@@ -375,7 +418,8 @@ async fn worker_handles_bad_payload_denied_route_and_stop_503() {
         eprintln!("SKIP: node not available");
         return;
     }
-    let temp_dir = std::env::temp_dir().join(format!("paperclip-bridge-worker-{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("paperclip-bridge-worker-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).expect("temp dir");
     let queue_dir = format!("{}/queue", temp_dir.to_string_lossy());
     let runner: Arc<dyn BridgeCommandRunner> = Arc::new(LocalProcessBridgeRunner);
@@ -474,7 +518,10 @@ async fn worker_handles_bad_payload_denied_route_and_stop_503() {
             .expect("200 body json");
     assert_eq!(body["method"], "POST");
     assert_eq!(body["path"], "/api/issues/issue-1/comments");
-    assert!(body["body"].as_str().unwrap_or_default().contains("\"hi\":1"));
+    assert!(body["body"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("\"hi\":1"));
 
     // 4. stop 时未决请求 → 503：handler 对 /slow 阻塞 3s，期间写入
     // /api/threads 请求，stop 的 drain（2s）到期后 failPending 补写 503。
@@ -500,7 +547,10 @@ async fn worker_handles_bad_payload_denied_route_and_stop_503() {
     {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(slow_started.load(std::sync::atomic::Ordering::SeqCst), "/slow picked up by worker");
+    assert!(
+        slow_started.load(std::sync::atomic::Ordering::SeqCst),
+        "/slow picked up by worker"
+    );
     let pending_id = "pending-503";
     let pending_request = serde_json::json!({
         "id": pending_id,
@@ -564,7 +614,10 @@ async fn bridge_forward_handler_forwards_to_host_api() {
     };
     let result = handler.handle(request).await.expect("forward succeeds");
     assert_eq!(result.status, 200);
-    assert_eq!(result.headers.get("etag").map(String::as_str), Some("\"round491\""));
+    assert_eq!(
+        result.headers.get("etag").map(String::as_str),
+        Some("\"round491\"")
+    );
     let parsed: serde_json::Value = serde_json::from_str(&result.body).expect("json");
     assert_eq!(parsed["method"], "POST");
     assert_eq!(parsed["path"], "/api/issues/issue-1/comments");

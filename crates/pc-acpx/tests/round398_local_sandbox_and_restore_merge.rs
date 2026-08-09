@@ -6,9 +6,8 @@ use pc_acpx::local_process_sandbox::{
     LocalProcessSandboxAccess,
 };
 use pc_acpx::workspace_restore_merge::{
-    capture_directory_snapshot, directory_entry_matches_baseline,
-    merge_directory_with_baseline, CaptureOptions, DirectorySnapshot, MergeInput,
-    SnapshotEntry,
+    capture_directory_snapshot, directory_entry_matches_baseline, merge_directory_with_baseline,
+    CaptureOptions, DirectorySnapshot, MergeInput, SnapshotEntry,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -75,12 +74,9 @@ async fn merge_round_trip_full_lifecycle() {
     std::fs::write(baseline_dir.join("data/file.txt"), b"original data").unwrap();
 
     // Capture baseline
-    let baseline = capture_directory_snapshot(
-        &baseline_dir,
-        CaptureOptions { exclude: vec![] },
-    )
-    .await
-    .unwrap();
+    let baseline = capture_directory_snapshot(&baseline_dir, CaptureOptions { exclude: vec![] })
+        .await
+        .unwrap();
 
     // Simulate remote sync: source has changed config and new file
     let source_dir = tempdir();
@@ -121,12 +117,9 @@ async fn merge_preserves_target_local_files() {
     let baseline_dir = tempdir();
     std::fs::write(baseline_dir.join("file.txt"), b"baseline").unwrap();
 
-    let baseline = capture_directory_snapshot(
-        &baseline_dir,
-        CaptureOptions { exclude: vec![] },
-    )
-    .await
-    .unwrap();
+    let baseline = capture_directory_snapshot(&baseline_dir, CaptureOptions { exclude: vec![] })
+        .await
+        .unwrap();
 
     // Source: file.txt deleted, new.txt added
     let source_dir = tempdir();
@@ -164,8 +157,9 @@ async fn directory_entry_matches_baseline_works_for_changed_files() {
         mode: 0o644,
         hash: "different_hash".to_string(),
     };
-    let result =
-        directory_entry_matches_baseline(&dir, "file.txt", &baseline_entry).await.unwrap();
+    let result = directory_entry_matches_baseline(&dir, "file.txt", &baseline_entry)
+        .await
+        .unwrap();
     assert!(!result);
 }
 

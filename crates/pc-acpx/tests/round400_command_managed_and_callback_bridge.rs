@@ -13,14 +13,12 @@
 use pc_acpx::command_managed_runtime::{
     assert_post_upload_commands_confined, build_sync_in_chmod_command,
     build_sync_in_extract_directory_command, build_sync_in_rename_command,
-    build_unique_staging_path, PostUploadCommand, SandboxFileMapping,
-    SandboxSyncOperation,
+    build_unique_staging_path, PostUploadCommand, SandboxFileMapping, SandboxSyncOperation,
 };
 use pc_acpx::sandbox_callback_bridge::{
-    authorize_sandbox_callback_bridge_request_with_routes,
-    build_sandbox_callback_bridge_env, create_sandbox_callback_bridge_token,
-    default_sandbox_callback_bridge_route_allowlist, sandbox_callback_bridge_directories,
-    sanitize_sandbox_callback_bridge_headers, BridgeEnvInput,
+    authorize_sandbox_callback_bridge_request_with_routes, build_sandbox_callback_bridge_env,
+    create_sandbox_callback_bridge_token, default_sandbox_callback_bridge_route_allowlist,
+    sandbox_callback_bridge_directories, sanitize_sandbox_callback_bridge_headers, BridgeEnvInput,
 };
 use std::collections::BTreeMap;
 
@@ -81,7 +79,10 @@ fn happy_path_full_sync_in_flow() {
 
 #[test]
 fn confinement_rejects_cwd_outside_target_root() {
-    let ops = vec![op_with(Some("/workspace/other"), vec![mapping("/workspace/target")])];
+    let ops = vec![op_with(
+        Some("/workspace/other"),
+        vec![mapping("/workspace/target")],
+    )];
     let err = assert_post_upload_commands_confined(&ops).unwrap_err();
     assert!(
         err.contains("escapes the operation"),
@@ -133,7 +134,12 @@ fn unique_staging_paths_are_unique_under_concurrent_invocations() {
     let mut sorted = paths.clone();
     sorted.sort();
     sorted.dedup();
-    assert_eq!(sorted.len(), n, "expected {n} unique paths, got {}", sorted.len());
+    assert_eq!(
+        sorted.len(),
+        n,
+        "expected {n} unique paths, got {}",
+        sorted.len()
+    );
 }
 
 #[test]
@@ -175,64 +181,58 @@ fn directories_compute_correct_layout() {
 #[test]
 fn default_route_allowlist_includes_agents_endpoint() {
     let routes = default_sandbox_callback_bridge_route_allowlist();
-    assert!(
-        authorize_sandbox_callback_bridge_request_with_routes("GET", "/api/agents/me", Some(&routes))
-            .is_ok()
-    );
-    assert!(
-        authorize_sandbox_callback_bridge_request_with_routes(
-            "GET",
-            "/api/agents/abc",
-            Some(&routes),
-        )
-        .is_ok()
-    );
+    assert!(authorize_sandbox_callback_bridge_request_with_routes(
+        "GET",
+        "/api/agents/me",
+        Some(&routes)
+    )
+    .is_ok());
+    assert!(authorize_sandbox_callback_bridge_request_with_routes(
+        "GET",
+        "/api/agents/abc",
+        Some(&routes),
+    )
+    .is_ok());
     // POST /api/issues/abc/checkout is in the default allowlist
-    assert!(
-        authorize_sandbox_callback_bridge_request_with_routes(
-            "POST",
-            "/api/issues/abc/checkout",
-            Some(&routes),
-        )
-        .is_ok()
-    );
+    assert!(authorize_sandbox_callback_bridge_request_with_routes(
+        "POST",
+        "/api/issues/abc/checkout",
+        Some(&routes),
+    )
+    .is_ok());
 }
 
 #[test]
 fn default_route_allowlist_rejects_arbitrary_path() {
-    let err = authorize_sandbox_callback_bridge_request_with_routes(
-        "GET",
-        "/etc/passwd",
-        None,
-    )
-    .unwrap_err();
+    let err = authorize_sandbox_callback_bridge_request_with_routes("GET", "/etc/passwd", None)
+        .unwrap_err();
     assert!(err.contains("Route not allowed"));
 }
 
 #[test]
 fn default_route_allowlist_rejects_wrong_method() {
-    let err = authorize_sandbox_callback_bridge_request_with_routes(
-        "DELETE",
-        "/api/agents/abc",
-        None,
-    )
-    .unwrap_err();
+    let err =
+        authorize_sandbox_callback_bridge_request_with_routes("DELETE", "/api/agents/abc", None)
+            .unwrap_err();
     assert!(err.contains("Route not allowed"));
 }
 
 #[test]
 fn default_route_allowlist_method_case_normalized() {
     assert!(
-        authorize_sandbox_callback_bridge_request_with_routes("get", "/api/agents/me", None).is_ok()
+        authorize_sandbox_callback_bridge_request_with_routes("get", "/api/agents/me", None)
+            .is_ok()
     );
 }
 
 #[test]
 fn custom_routes_can_replace_defaults() {
-    let custom = vec![pc_acpx::sandbox_callback_bridge::SandboxCallbackBridgeRouteRule::new(
-        "POST",
-        r"^/custom/endpoint$",
-    )];
+    let custom = vec![
+        pc_acpx::sandbox_callback_bridge::SandboxCallbackBridgeRouteRule::new(
+            "POST",
+            r"^/custom/endpoint$",
+        ),
+    ];
     assert!(authorize_sandbox_callback_bridge_request_with_routes(
         "POST",
         "/custom/endpoint",
@@ -257,7 +257,10 @@ fn sanitize_headers_preserves_allowed_keys() {
 
     let out = sanitize_sandbox_callback_bridge_headers(&headers, None);
 
-    assert_eq!(out.get("Content-Type").map(String::as_str), Some("application/json"));
+    assert_eq!(
+        out.get("Content-Type").map(String::as_str),
+        Some("application/json")
+    );
     assert_eq!(out.get("Accept").map(String::as_str), Some("*/*"));
     assert_eq!(out.get("If-Match").map(String::as_str), Some("etag"));
     assert!(!out.contains_key("X-Custom"));
@@ -269,10 +272,8 @@ fn sanitize_headers_with_custom_allowlist() {
     headers.insert("Content-Type".to_string(), "v".to_string());
     headers.insert("X-Special".to_string(), "v".to_string());
 
-    let out = sanitize_sandbox_callback_bridge_headers(
-        &headers,
-        Some(&["content-type", "x-special"]),
-    );
+    let out =
+        sanitize_sandbox_callback_bridge_headers(&headers, Some(&["content-type", "x-special"]));
 
     assert!(out.contains_key("Content-Type"));
     assert!(out.contains_key("X-Special"));
@@ -315,22 +316,32 @@ fn bridge_env_uses_overrides_for_tuning() {
     };
     let env = build_sandbox_callback_bridge_env(&input);
 
-    assert_eq!(env.get("PAPERCLIP_BRIDGE_HOST").map(String::as_str), Some("0.0.0.0"));
-    assert_eq!(env.get("PAPERCLIP_BRIDGE_PORT").map(String::as_str), Some("9123"));
     assert_eq!(
-        env.get("PAPERCLIP_BRIDGE_POLL_INTERVAL_MS").map(String::as_str),
+        env.get("PAPERCLIP_BRIDGE_HOST").map(String::as_str),
+        Some("0.0.0.0")
+    );
+    assert_eq!(
+        env.get("PAPERCLIP_BRIDGE_PORT").map(String::as_str),
+        Some("9123")
+    );
+    assert_eq!(
+        env.get("PAPERCLIP_BRIDGE_POLL_INTERVAL_MS")
+            .map(String::as_str),
         Some("250")
     );
     assert_eq!(
-        env.get("PAPERCLIP_BRIDGE_RESPONSE_TIMEOUT_MS").map(String::as_str),
+        env.get("PAPERCLIP_BRIDGE_RESPONSE_TIMEOUT_MS")
+            .map(String::as_str),
         Some("15000")
     );
     assert_eq!(
-        env.get("PAPERCLIP_BRIDGE_MAX_QUEUE_DEPTH").map(String::as_str),
+        env.get("PAPERCLIP_BRIDGE_MAX_QUEUE_DEPTH")
+            .map(String::as_str),
         Some("8")
     );
     assert_eq!(
-        env.get("PAPERCLIP_BRIDGE_MAX_BODY_BYTES").map(String::as_str),
+        env.get("PAPERCLIP_BRIDGE_MAX_BODY_BYTES")
+            .map(String::as_str),
         Some("1024")
     );
 }
@@ -350,7 +361,8 @@ fn cross_module_smoke_confined_sync_in_with_authorized_bridge_ping() {
     let token = create_sandbox_callback_bridge_token(None);
     assert!(!token.is_empty());
     assert!(
-        authorize_sandbox_callback_bridge_request_with_routes("GET", "/api/agents/me", None).is_ok()
+        authorize_sandbox_callback_bridge_request_with_routes("GET", "/api/agents/me", None)
+            .is_ok()
     );
 
     let env_input = BridgeEnvInput {
@@ -364,7 +376,16 @@ fn cross_module_smoke_confined_sync_in_with_authorized_bridge_ping() {
         max_body_bytes: None,
     };
     let env = build_sandbox_callback_bridge_env(&env_input);
-    assert_eq!(env.get("PAPERCLIP_BRIDGE_QUEUE_DIR").map(String::as_str), Some("/bridge/queue"));
-    assert_eq!(env.get("PAPERCLIP_BRIDGE_HOST").map(String::as_str), Some("127.0.0.1"));
-    assert_eq!(env.get("PAPERCLIP_BRIDGE_PORT").map(String::as_str), Some("7777"));
+    assert_eq!(
+        env.get("PAPERCLIP_BRIDGE_QUEUE_DIR").map(String::as_str),
+        Some("/bridge/queue")
+    );
+    assert_eq!(
+        env.get("PAPERCLIP_BRIDGE_HOST").map(String::as_str),
+        Some("127.0.0.1")
+    );
+    assert_eq!(
+        env.get("PAPERCLIP_BRIDGE_PORT").map(String::as_str),
+        Some("7777")
+    );
 }

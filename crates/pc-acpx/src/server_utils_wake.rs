@@ -28,7 +28,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::server_utils::{
-    as_boolean, as_number, as_string, parse_object, is_paperclip_runtime_env_key,
+    as_boolean, as_number, as_string, is_paperclip_runtime_env_key, parse_object,
 };
 
 // =============================================================================
@@ -237,54 +237,98 @@ pub struct PaperclipWakePayload {
 /// Return a `PaperclipWakeRecovery` parsed from `value`, or `None` when
 /// no `cause` is present. Mirrors Node `normalizePaperclipWakeRecovery`.
 #[must_use]
-pub fn normalize_paperclip_wake_recovery(value: &serde_json::Value) -> Option<PaperclipWakeRecovery> {
+pub fn normalize_paperclip_wake_recovery(
+    value: &serde_json::Value,
+) -> Option<PaperclipWakeRecovery> {
     let recovery = parse_object(value);
-    let cause = as_string(recovery.get("cause").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let cause = as_string(
+        recovery.get("cause").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     if cause.is_empty() {
         return None;
     }
-    let original_assignee_obj = parse_object(recovery.get("originalAssignee").unwrap_or(&serde_json::Value::Null));
-    let original_assignee_id = as_string(original_assignee_obj.get("id").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let original_assignee_name = as_string(original_assignee_obj.get("name").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let original_assignee = if !original_assignee_id.is_empty() || !original_assignee_name.is_empty() {
-        Some(PaperclipWakeRecoveryAssignee {
-            id: if original_assignee_id.is_empty() { None } else { Some(original_assignee_id) },
-            name: if original_assignee_name.is_empty() { None } else { Some(original_assignee_name) },
-        })
-    } else {
-        None
-    };
-    let attempt_count = recovery
-        .get("attemptCount")
-        .and_then(|v| v.as_i64());
-    let max_attempts = recovery
-        .get("maxAttempts")
-        .and_then(|v| v.as_i64());
-    let failure_summary = as_string(recovery.get("failureSummary").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let next_action = as_string(recovery.get("nextAction").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let original_assignee_obj = parse_object(
+        recovery
+            .get("originalAssignee")
+            .unwrap_or(&serde_json::Value::Null),
+    );
+    let original_assignee_id = as_string(
+        original_assignee_obj
+            .get("id")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let original_assignee_name = as_string(
+        original_assignee_obj
+            .get("name")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let original_assignee =
+        if !original_assignee_id.is_empty() || !original_assignee_name.is_empty() {
+            Some(PaperclipWakeRecoveryAssignee {
+                id: if original_assignee_id.is_empty() {
+                    None
+                } else {
+                    Some(original_assignee_id)
+                },
+                name: if original_assignee_name.is_empty() {
+                    None
+                } else {
+                    Some(original_assignee_name)
+                },
+            })
+        } else {
+            None
+        };
+    let attempt_count = recovery.get("attemptCount").and_then(|v| v.as_i64());
+    let max_attempts = recovery.get("maxAttempts").and_then(|v| v.as_i64());
+    let failure_summary = as_string(
+        recovery
+            .get("failureSummary")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let next_action = as_string(
+        recovery
+            .get("nextAction")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     let routing_fallback_reason = as_string(
-        recovery.get("routingFallbackReason").unwrap_or(&serde_json::Value::Null),
+        recovery
+            .get("routingFallbackReason")
+            .unwrap_or(&serde_json::Value::Null),
         "",
     )
     .trim()
     .to_string();
     Some(PaperclipWakeRecovery {
         cause,
-        failure_summary: if failure_summary.is_empty() { None } else { Some(failure_summary) },
+        failure_summary: if failure_summary.is_empty() {
+            None
+        } else {
+            Some(failure_summary)
+        },
         original_assignee,
         attempt_count,
         max_attempts,
-        next_action: if next_action.is_empty() { None } else { Some(next_action) },
+        next_action: if next_action.is_empty() {
+            None
+        } else {
+            Some(next_action)
+        },
         routing_fallback_reason: if routing_fallback_reason.is_empty() {
             None
         } else {
@@ -299,7 +343,9 @@ pub fn normalize_paperclip_wake_recovery(value: &serde_json::Value) -> Option<Pa
 /// `[\u0000-\u0008\u000b-\u001f\u007f]` strip is mirrored as a Rust
 /// regex on the same byte ranges).
 #[must_use]
-pub fn normalize_paperclip_wake_agent_message(value: &serde_json::Value) -> Option<PaperclipWakeAgentMessage> {
+pub fn normalize_paperclip_wake_agent_message(
+    value: &serde_json::Value,
+) -> Option<PaperclipWakeAgentMessage> {
     let message = parse_object(value);
     let raw_text = as_string(message.get("text").unwrap_or(&serde_json::Value::Null), "");
     // Strip terminal-control bytes / NULs / other non-printable controls.
@@ -310,20 +356,41 @@ pub fn normalize_paperclip_wake_agent_message(value: &serde_json::Value) -> Opti
     if text.trim().is_empty() {
         return None;
     }
-    let source = as_string(message.get("source").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let plugin_key = as_string(message.get("pluginKey").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let session_id = as_string(message.get("sessionId").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let source = as_string(
+        message.get("source").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let plugin_key = as_string(
+        message.get("pluginKey").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let session_id = as_string(
+        message.get("sessionId").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     Some(PaperclipWakeAgentMessage {
         text,
-        source: if source.is_empty() { None } else { Some(source) },
-        plugin_key: if plugin_key.is_empty() { None } else { Some(plugin_key) },
-        session_id: if session_id.is_empty() { None } else { Some(session_id) },
+        source: if source.is_empty() {
+            None
+        } else {
+            Some(source)
+        },
+        plugin_key: if plugin_key.is_empty() {
+            None
+        } else {
+            Some(plugin_key)
+        },
+        session_id: if session_id.is_empty() {
+            None
+        } else {
+            Some(session_id)
+        },
     })
 }
 
@@ -336,15 +403,21 @@ pub fn normalize_paperclip_wake_issue(value: &serde_json::Value) -> Option<Paper
     let id = as_string(issue.get("id").unwrap_or(&serde_json::Value::Null), "")
         .trim()
         .to_string();
-    let identifier = as_string(issue.get("identifier").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let identifier = as_string(
+        issue.get("identifier").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     let title = as_string(issue.get("title").unwrap_or(&serde_json::Value::Null), "")
         .trim()
         .to_string();
-    let work_mode = as_string(issue.get("workMode").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let work_mode = as_string(
+        issue.get("workMode").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     if id.is_empty() && identifier.is_empty() && title.is_empty() && work_mode.is_empty() {
         return None;
     }
@@ -360,21 +433,42 @@ pub fn normalize_paperclip_wake_issue(value: &serde_json::Value) -> Option<Paper
     let status = as_string(issue.get("status").unwrap_or(&serde_json::Value::Null), "")
         .trim()
         .to_string();
-    let priority = as_string(issue.get("priority").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let priority = as_string(
+        issue.get("priority").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     Some(PaperclipWakeIssue {
         id: if id.is_empty() { None } else { Some(id) },
-        identifier: if identifier.is_empty() { None } else { Some(identifier) },
+        identifier: if identifier.is_empty() {
+            None
+        } else {
+            Some(identifier)
+        },
         title: if title.is_empty() { None } else { Some(title) },
         description,
         description_truncated: as_boolean(
-            issue.get("descriptionTruncated").unwrap_or(&serde_json::Value::Null),
+            issue
+                .get("descriptionTruncated")
+                .unwrap_or(&serde_json::Value::Null),
             false,
         ),
-        status: if status.is_empty() { None } else { Some(status) },
-        work_mode: if work_mode.is_empty() { None } else { Some(work_mode) },
-        priority: if priority.is_empty() { None } else { Some(priority) },
+        status: if status.is_empty() {
+            None
+        } else {
+            Some(status)
+        },
+        work_mode: if work_mode.is_empty() {
+            None
+        } else {
+            Some(work_mode)
+        },
+        priority: if priority.is_empty() {
+            None
+        } else {
+            Some(priority)
+        },
     })
 }
 
@@ -413,19 +507,21 @@ pub fn normalize_paperclip_wake_payload(value: &serde_json::Value) -> Option<Pap
             .collect(),
         _ => Vec::new(),
     };
-    let unresolved_blocker_summaries: Vec<serde_json::Value> = match payload
-        .get("unresolvedBlockerSummaries")
-    {
-        Some(serde_json::Value::Array(arr)) => arr.clone(),
-        _ => Vec::new(),
-    };
+    let unresolved_blocker_summaries: Vec<serde_json::Value> =
+        match payload.get("unresolvedBlockerSummaries") {
+            Some(serde_json::Value::Array(arr)) => arr.clone(),
+            _ => Vec::new(),
+        };
 
     let recovery = normalize_paperclip_wake_recovery(
         payload.get("recovery").unwrap_or(&serde_json::Value::Null),
     );
-    let issue = normalize_paperclip_wake_issue(payload.get("issue").unwrap_or(&serde_json::Value::Null));
+    let issue =
+        normalize_paperclip_wake_issue(payload.get("issue").unwrap_or(&serde_json::Value::Null));
     let agent_message = normalize_paperclip_wake_agent_message(
-        payload.get("agentMessage").unwrap_or(&serde_json::Value::Null),
+        payload
+            .get("agentMessage")
+            .unwrap_or(&serde_json::Value::Null),
     );
     let execution_stage = payload.get("executionStage").cloned();
     let continuation_summary = payload.get("continuationSummary").cloned();
@@ -437,9 +533,12 @@ pub fn normalize_paperclip_wake_payload(value: &serde_json::Value) -> Option<Pap
     let active_tree_hold = payload.get("activeTreeHold").cloned();
 
     // Node short-circuits when every optional field is absent.
-    let reason = as_string(payload.get("reason").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let reason = as_string(
+        payload.get("reason").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     let empty = comments_v.is_empty()
         && comment_ids_v.is_empty()
         && annotation_deltas_v.is_empty()
@@ -462,47 +561,79 @@ pub fn normalize_paperclip_wake_payload(value: &serde_json::Value) -> Option<Pap
         return None;
     }
 
-    let interaction_kind = as_string(payload.get("interactionKind").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let interaction_status = as_string(
-        payload.get("interactionStatus").unwrap_or(&serde_json::Value::Null),
+    let interaction_kind = as_string(
+        payload
+            .get("interactionKind")
+            .unwrap_or(&serde_json::Value::Null),
         "",
     )
     .trim()
     .to_string();
-    let latest_comment_id = as_string(payload.get("latestCommentId").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
-    let comment_window = parse_object(payload.get("commentWindow").unwrap_or(&serde_json::Value::Null));
+    let interaction_status = as_string(
+        payload
+            .get("interactionStatus")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let latest_comment_id = as_string(
+        payload
+            .get("latestCommentId")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
+    let comment_window = parse_object(
+        payload
+            .get("commentWindow")
+            .unwrap_or(&serde_json::Value::Null),
+    );
     let requested_count = as_number(
-        comment_window.get("requestedCount").unwrap_or(&serde_json::Value::Null),
+        comment_window
+            .get("requestedCount")
+            .unwrap_or(&serde_json::Value::Null),
         (comments_v.len() as f64).max(comment_ids_v.len() as f64),
     ) as i64;
     let included_count = as_number(
-        comment_window.get("includedCount").unwrap_or(&serde_json::Value::Null),
+        comment_window
+            .get("includedCount")
+            .unwrap_or(&serde_json::Value::Null),
         comments_v.len() as f64,
     ) as i64;
     let missing_count = as_number(
-        comment_window.get("missingCount").unwrap_or(&serde_json::Value::Null),
+        comment_window
+            .get("missingCount")
+            .unwrap_or(&serde_json::Value::Null),
         0.0,
     ) as i64;
 
     Some(PaperclipWakePayload {
-        reason: if reason.is_empty() { None } else { Some(reason) },
+        reason: if reason.is_empty() {
+            None
+        } else {
+            Some(reason)
+        },
         recovery,
         issue,
         agent_message,
         checked_out_by_harness: as_boolean(
-            payload.get("checkedOutByHarness").unwrap_or(&serde_json::Value::Null),
+            payload
+                .get("checkedOutByHarness")
+                .unwrap_or(&serde_json::Value::Null),
             false,
         ),
         dependency_blocked_interaction: as_boolean(
-            payload.get("dependencyBlockedInteraction").unwrap_or(&serde_json::Value::Null),
+            payload
+                .get("dependencyBlockedInteraction")
+                .unwrap_or(&serde_json::Value::Null),
             false,
         ),
         tree_hold_interaction: as_boolean(
-            payload.get("treeHoldInteraction").unwrap_or(&serde_json::Value::Null),
+            payload
+                .get("treeHoldInteraction")
+                .unwrap_or(&serde_json::Value::Null),
             false,
         ),
         active_tree_hold,
@@ -528,7 +659,9 @@ pub fn normalize_paperclip_wake_payload(value: &serde_json::Value) -> Option<Pap
         execution_workspace,
         child_issue_summaries: child_issue_summaries_v,
         child_issue_summary_truncated: as_boolean(
-            payload.get("childIssueSummaryTruncated").unwrap_or(&serde_json::Value::Null),
+            payload
+                .get("childIssueSummaryTruncated")
+                .unwrap_or(&serde_json::Value::Null),
             false,
         ),
         comment_ids: comment_ids_v,
@@ -541,9 +674,14 @@ pub fn normalize_paperclip_wake_payload(value: &serde_json::Value) -> Option<Pap
         requested_count,
         included_count,
         missing_count,
-        truncated: as_boolean(payload.get("truncated").unwrap_or(&serde_json::Value::Null), false),
+        truncated: as_boolean(
+            payload.get("truncated").unwrap_or(&serde_json::Value::Null),
+            false,
+        ),
         fallback_fetch_needed: as_boolean(
-            payload.get("fallbackFetchNeeded").unwrap_or(&serde_json::Value::Null),
+            payload
+                .get("fallbackFetchNeeded")
+                .unwrap_or(&serde_json::Value::Null),
             false,
         ),
     })
@@ -580,7 +718,9 @@ pub struct StringifyWakePayloadOptions {
 #[must_use]
 pub fn is_paperclip_recovery_wake_payload(value: &serde_json::Value) -> bool {
     match normalize_paperclip_wake_payload(value) {
-        Some(p) => p.recovery.is_some() || p.reason.as_deref() == Some("source_scoped_recovery_action"),
+        Some(p) => {
+            p.recovery.is_some() || p.reason.as_deref() == Some("source_scoped_recovery_action")
+        }
         None => false,
     }
 }
@@ -591,15 +731,24 @@ pub fn is_paperclip_recovery_wake_payload(value: &serde_json::Value) -> bool {
 #[must_use]
 pub fn read_paperclip_issue_work_mode_from_context(value: &serde_json::Value) -> Option<String> {
     let context = parse_object(value);
-    let issue = parse_object(context.get("paperclipIssue").unwrap_or(&serde_json::Value::Null));
-    let direct = as_string(issue.get("workMode").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let issue = parse_object(
+        context
+            .get("paperclipIssue")
+            .unwrap_or(&serde_json::Value::Null),
+    );
+    let direct = as_string(
+        issue.get("workMode").unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     if !direct.is_empty() {
         return Some(direct);
     }
     let wake = normalize_paperclip_wake_payload(
-        context.get("paperclipWake").unwrap_or(&serde_json::Value::Null),
+        context
+            .get("paperclipWake")
+            .unwrap_or(&serde_json::Value::Null),
     );
     wake.and_then(|w| w.issue).and_then(|i| i.work_mode)
 }
@@ -641,16 +790,22 @@ pub fn select_paperclip_task_markdown(
         Some(c) => c,
         None => return String::new(),
     };
-    let full = as_string(ctx.get("paperclipTaskMarkdown").unwrap_or(&serde_json::Value::Null), "")
-        .trim()
-        .to_string();
+    let full = as_string(
+        ctx.get("paperclipTaskMarkdown")
+            .unwrap_or(&serde_json::Value::Null),
+        "",
+    )
+    .trim()
+    .to_string();
     if full.is_empty() {
         return String::new();
     }
     if !options.resumed_session {
         return full;
     }
-    let wake = normalize_paperclip_wake_payload(ctx.get("paperclipWake").unwrap_or(&serde_json::Value::Null));
+    let wake = normalize_paperclip_wake_payload(
+        ctx.get("paperclipWake").unwrap_or(&serde_json::Value::Null),
+    );
     let Some(wake) = wake else {
         return full;
     };
@@ -661,7 +816,8 @@ pub fn select_paperclip_task_markdown(
         return full;
     }
     let compact = as_string(
-        ctx.get("paperclipTaskMarkdownCompact").unwrap_or(&serde_json::Value::Null),
+        ctx.get("paperclipTaskMarkdownCompact")
+            .unwrap_or(&serde_json::Value::Null),
         "",
     )
     .trim()
@@ -728,7 +884,10 @@ mod tests {
         let r = normalize_paperclip_wake_recovery(&v).unwrap();
         assert_eq!(r.cause, "process_lost");
         assert_eq!(r.failure_summary.as_deref(), Some("killed by signal"));
-        assert_eq!(r.original_assignee.as_ref().unwrap().id.as_deref(), Some("agent-1"));
+        assert_eq!(
+            r.original_assignee.as_ref().unwrap().id.as_deref(),
+            Some("agent-1")
+        );
         assert_eq!(r.attempt_count, Some(3));
         assert_eq!(r.max_attempts, Some(5));
         assert_eq!(r.next_action.as_deref(), Some("retry"));
@@ -806,7 +965,9 @@ mod tests {
         });
         let s = stringify_paperclip_wake_payload(
             &v,
-            StringifyWakePayloadOptions { omit_issue_description: true },
+            StringifyWakePayloadOptions {
+                omit_issue_description: true,
+            },
         )
         .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
@@ -839,7 +1000,9 @@ mod tests {
         for r in ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS {
             assert!(is_assignment_shaped_paperclip_wake_reason(Some(r)));
         }
-        assert!(!is_assignment_shaped_paperclip_wake_reason(Some("unrelated")));
+        assert!(!is_assignment_shaped_paperclip_wake_reason(Some(
+            "unrelated"
+        )));
         assert!(!is_assignment_shaped_paperclip_wake_reason(None));
     }
 
@@ -887,7 +1050,9 @@ mod tests {
         });
         let s = select_paperclip_task_markdown(
             Some(&ctx),
-            SelectTaskMarkdownOptions { resumed_session: true },
+            SelectTaskMarkdownOptions {
+                resumed_session: true,
+            },
         );
         assert_eq!(s, "# Full");
     }
@@ -901,7 +1066,9 @@ mod tests {
         });
         let s = select_paperclip_task_markdown(
             Some(&ctx),
-            SelectTaskMarkdownOptions { resumed_session: true },
+            SelectTaskMarkdownOptions {
+                resumed_session: true,
+            },
         );
         assert_eq!(s, "# Compact");
     }
@@ -914,7 +1081,9 @@ mod tests {
         });
         let s = select_paperclip_task_markdown(
             Some(&ctx),
-            SelectTaskMarkdownOptions { resumed_session: true },
+            SelectTaskMarkdownOptions {
+                resumed_session: true,
+            },
         );
         assert_eq!(s, "# Full");
     }

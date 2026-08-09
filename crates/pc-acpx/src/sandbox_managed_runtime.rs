@@ -325,7 +325,7 @@ pub fn posix_normalize(path: &str) -> String {
     for segment in path.split('/').filter(|s| !s.is_empty()) {
         match segment {
             "." => {}
-".." => {
+            ".." => {
                 segments.pop();
             }
             _ => segments.push(segment),
@@ -399,7 +399,9 @@ pub fn tar_exclude_flags(exclude: Option<&[String]>) -> String {
 /// field is missing/invalid. Mirrors Node
 /// `parseSandboxRemoteExecutionSpec`.
 #[must_use]
-pub fn parse_sandbox_remote_execution_spec(value: &serde_json::Value) -> Option<SandboxRemoteExecutionSpec> {
+pub fn parse_sandbox_remote_execution_spec(
+    value: &serde_json::Value,
+) -> Option<SandboxRemoteExecutionSpec> {
     let parsed = as_object(value);
 
     fn get_str_field(parsed: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
@@ -416,10 +418,7 @@ pub fn parse_sandbox_remote_execution_spec(value: &serde_json::Value) -> Option<
     let sandbox_id = get_str_field(&parsed, "sandboxId");
     let remote_cwd = get_str_field(&parsed, "remoteCwd");
     let api_key_raw = get_str_field(&parsed, "apiKey");
-    let timeout_ms_val = parsed
-        .get("timeoutMs")
-        .map(as_number)
-        .unwrap_or(f64::NAN);
+    let timeout_ms_val = parsed.get("timeoutMs").map(as_number).unwrap_or(f64::NAN);
 
     if transport != "sandbox"
         || provider.is_empty()
@@ -527,11 +526,7 @@ pub fn assert_sync_operations_confined(
     operations: &[SandboxSyncOperation],
     roots: &SyncConfinementRoots,
 ) -> Result<(), String> {
-    fn confine(
-        candidate: &str,
-        allowed: &[String],
-        label: &str,
-    ) -> Result<(), String> {
+    fn confine(candidate: &str, allowed: &[String], label: &str) -> Result<(), String> {
         let normalized = posix_normalize(candidate);
         if !posix_is_absolute(&normalized)
             || normalized == ".."
@@ -581,9 +576,7 @@ pub fn build_default_extract_runtime_asset_command(
 ) -> String {
     let dir = shell_quote(remote_asset_dir);
     let tar = shell_quote(remote_asset_tar);
-    format!(
-        "rm -rf {dir} && mkdir -p {dir} && tar -xf {tar} -C {dir} && rm -f {tar}"
-    )
+    format!("rm -rf {dir} && mkdir -p {dir} && tar -xf {tar} -C {dir} && rm -f {tar}")
 }
 
 /// Build a workspace-tar extract command. Mirrors Node
@@ -607,9 +600,7 @@ pub fn build_workspace_tar_extract_command(
             )
         })
         .unwrap_or_default();
-    format!(
-        "mkdir -p {dir}{wipe} && tar -xf {tar} -C {dir} && rm -f {tar}"
-    )
+    format!("mkdir -p {dir}{wipe} && tar -xf {tar} -C {dir} && rm -f {tar}")
 }
 
 /// Build a remove-deleted-paths command. Mirrors Node
@@ -772,7 +763,10 @@ mod tests {
         let a = vec!["node_modules".to_string()];
         let b = vec!["target".to_string(), "node_modules".to_string()];
         let merged = merge_excludes(&[Some(&a), Some(&b)]);
-        assert_eq!(merged, vec!["node_modules".to_string(), "target".to_string()]);
+        assert_eq!(
+            merged,
+            vec!["node_modules".to_string(), "target".to_string()]
+        );
     }
 
     #[test]
@@ -1040,7 +1034,8 @@ mod tests {
 
     #[test]
     fn build_default_extract_runtime_asset_command_emits_full_sequence() {
-        let cmd = build_default_extract_runtime_asset_command("/sandbox/asset", "/sandbox/asset.tar");
+        let cmd =
+            build_default_extract_runtime_asset_command("/sandbox/asset", "/sandbox/asset.tar");
         assert!(cmd.contains("rm -rf '/sandbox/asset'"));
         assert!(cmd.contains("mkdir -p '/sandbox/asset'"));
         assert!(cmd.contains("tar -xf '/sandbox/asset.tar'"));

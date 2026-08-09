@@ -8,8 +8,8 @@
 //! 3. 启动编排：entrypoint 同步计划 → 启动/就绪/停止脚本 → ready 解析
 //! 4. 文本同步：sha256 门控 + base64 上传往返
 
-use pc_acpx::sandbox_callback_bridge::*;
 use base64::Engine as _;
+use pc_acpx::sandbox_callback_bridge::*;
 use std::collections::BTreeMap;
 
 const TS: &str = "2026-08-09T00:00:00.000Z";
@@ -29,11 +29,8 @@ fn headers(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 fn worker_flow_serves_allowlisted_request() {
     let raw = r#"{"id":"req-1","method":"GET","path":"/api/agents/me","query":"","headers":{},"body":"","createdAt":"2026-08-09T00:00:00.000Z"}"#;
     let request = parse_bridge_request_file(raw).expect("valid request");
-    let denial = authorize_sandbox_callback_bridge_request_with_routes(
-        &request.method,
-        &request.path,
-        None,
-    );
+    let denial =
+        authorize_sandbox_callback_bridge_request_with_routes(&request.method, &request.path, None);
     assert_eq!(denial, Ok(()), "白名单路由放行");
 
     let response = decide_bridge_handler_response(
@@ -55,10 +52,11 @@ fn worker_flow_serves_allowlisted_request() {
         &response,
     );
     match plan {
-        BridgeResponseWritePlan::Direct { request_path, body, .. } => {
+        BridgeResponseWritePlan::Direct {
+            request_path, body, ..
+        } => {
             assert_eq!(request_path, Some("/q/requests/req-1.json".to_string()));
-            let parsed: serde_json::Value =
-                serde_json::from_str(body.trim_end()).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
             assert_eq!(parsed["status"], 200);
             assert_eq!(parsed["body"], r#"{"ok":true}"#);
         }
@@ -70,22 +68,25 @@ fn worker_flow_serves_allowlisted_request() {
 fn worker_flow_rejects_disallowed_and_invalid() {
     let raw = r#"{"id":"req-1","method":"GET","path":"/api/secret","query":"","headers":{},"body":"","createdAt":"2026-08-09T00:00:00.000Z"}"#;
     let request = parse_bridge_request_file(raw).unwrap();
-    let denial = authorize_sandbox_callback_bridge_request_with_routes(
-        &request.method,
-        &request.path,
-        None,
-    )
-    .expect_err("非白名单拒绝");
+    let denial =
+        authorize_sandbox_callback_bridge_request_with_routes(&request.method, &request.path, None)
+            .expect_err("非白名单拒绝");
     assert_eq!(denial, "Route not allowed: GET /api/secret");
     let denied = denied_bridge_request_response(request.id, &denial, TS.to_string());
     assert_eq!(denied.status, 403);
-    assert_eq!(denied.body, r#"{"error":"Route not allowed: GET /api/secret"}"#);
+    assert_eq!(
+        denied.body,
+        r#"{"error":"Route not allowed: GET /api/secret"}"#
+    );
 
     // 非法 JSON → 400（id 从文件名提取）。
     let request_id = bridge_request_id_from_file_name("req-9.json").unwrap();
     let invalid = invalid_bridge_request_payload_response(request_id, TS.to_string());
     assert_eq!(invalid.status, 400);
-    assert_eq!(invalid.body, r#"{"error":"Invalid bridge request payload."}"#);
+    assert_eq!(
+        invalid.body,
+        r#"{"error":"Invalid bridge request payload."}"#
+    );
     assert!(parse_bridge_request_file("not-json").is_err());
 }
 
@@ -108,7 +109,9 @@ fn worker_flow_turns_oversized_body_into_502() {
         TS.to_string(),
     );
     assert_eq!(failed.status, 502);
-    assert!(failed.body.contains("exceeded the configured size limit of 1024 bytes"));
+    assert!(failed
+        .body
+        .contains("exceeded the configured size limit of 1024 bytes"));
 }
 
 // =============================================================================
@@ -130,16 +133,19 @@ fn server_flow_auth_queue_content_type() {
     assert_eq!(full.status, 503);
 
     // 415：非 GET/HEAD 且 content-type 不含 json。
-    assert!(!bridge_server_accepts_content_type("POST", "application/xml"));
-    let unsupported = bridge_server_error_response(
-        415,
-        "Bridge only accepts JSON request bodies.",
-    );
+    assert!(!bridge_server_accepts_content_type(
+        "POST",
+        "application/xml"
+    ));
+    let unsupported = bridge_server_error_response(415, "Bridge only accepts JSON request bodies.");
     assert_eq!(unsupported.status, 415);
 
     // 放行路径：GET + 任意 content-type；POST + json。
     assert!(bridge_server_accepts_content_type("GET", ""));
-    assert!(bridge_server_accepts_content_type("POST", "Application/JSON; charset=utf-8"));
+    assert!(bridge_server_accepts_content_type(
+        "POST",
+        "Application/JSON; charset=utf-8"
+    ));
     assert!(bridge_server_token_matches(
         &bridge_server_bearer_token(Some("Bearer secret-token")),
         token,
@@ -159,8 +165,7 @@ fn server_flow_payload_wait_and_response_normalization() {
         created_at: TS.to_string(),
     };
     let line = bridge_request_json_line(&request);
-    let parsed: SandboxCallbackBridgeRequest =
-        serde_json::from_str(line.trim_end()).unwrap();
+    let parsed: SandboxCallbackBridgeRequest = serde_json::from_str(line.trim_end()).unwrap();
     assert_eq!(parsed, request);
     assert!(line.contains("\"query\":\"?a=1&b=2\""));
 
@@ -206,13 +211,13 @@ fn start_ready_stop_lifecycle() {
     // entrypoint 已纳入同步计划，sha256 门控值注入脚本。
     let sync = plan.entrypoint_sync.as_ref().unwrap();
     assert_eq!(sync.sha256, sha256_hex_utf8(source));
-    assert!(sync
-        .uploaded_decision_script
-        .contains("expected_sha="));
+    assert!(sync.uploaded_decision_script.contains("expected_sha="));
     assert_eq!(plan.remote_entrypoint, sync.remote_entrypoint);
 
     // 启动脚本包含队列目录与 nohup。
-    assert!(plan.start_script.contains("mkdir -p '/bridge/queue/requests'"));
+    assert!(plan
+        .start_script
+        .contains("mkdir -p '/bridge/queue/requests'"));
     assert!(plan.start_script.contains("nohup 'node'"));
     // 就绪脚本轮询 ready.json。
     assert!(plan.ready_script.contains("'/bridge/queue/ready.json'"));
@@ -255,8 +260,14 @@ fn sync_roundtrip_sha_gate_and_base64() {
     assert_eq!(String::from_utf8(decoded).unwrap(), source);
 
     // 同步结果解析：uploaded 判定与无效 JSON 报错。
-    assert_eq!(parse_sync_text_file_result(r#"{"uploaded":true}"#, "E"), Ok(true));
-    assert_eq!(parse_sync_text_file_result(r#"{"uploaded":false}"#, "E"), Ok(false));
+    assert_eq!(
+        parse_sync_text_file_result(r#"{"uploaded":true}"#, "E"),
+        Ok(true)
+    );
+    assert_eq!(
+        parse_sync_text_file_result(r#"{"uploaded":false}"#, "E"),
+        Ok(false)
+    );
     assert!(parse_sync_text_file_result("nope", "E").is_err());
 
     // 写响应文件脚本：request 不存在 → wrote:false 分支存在。

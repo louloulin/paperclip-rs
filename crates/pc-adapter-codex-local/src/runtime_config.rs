@@ -75,7 +75,11 @@ where
                             let close = abs + close_rel;
                             let name = &s[abs + 5..close];
                             if !name.is_empty()
-                                && name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+                                && name
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.is_ascii_alphabetic() || c == '_')
+                                    .unwrap_or(false)
                                 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                             {
                                 if let Some(resolved) = resolve(name) {
@@ -99,9 +103,7 @@ where
                 }
                 Value::String(out)
             }
-            Value::Array(arr) => {
-                Value::Array(arr.iter().map(|v| walk(v, resolve)).collect())
-            }
+            Value::Array(arr) => Value::Array(arr.iter().map(|v| walk(v, resolve)).collect()),
             Value::Object(map) => {
                 let mut out = serde_json::Map::new();
                 for (k, v) in map {
@@ -168,9 +170,7 @@ pub fn is_valid_env_name(name: &str) -> bool {
             .next()
             .map(|c| c.is_ascii_alphabetic() || c == '_')
             .unwrap_or(false)
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]
@@ -188,11 +188,7 @@ key2 = 2
 # <<< block end <<<
 key3 = 3
 ";
-        let stripped = strip_managed_block(
-            content,
-            "# >>> block begin >>>",
-            "# <<< block end <<<",
-        );
+        let stripped = strip_managed_block(content, "# >>> block begin >>>", "# <<< block end <<<");
         assert!(stripped.contains("key1 = 1"));
         assert!(stripped.contains("key3 = 3"));
         assert!(!stripped.contains("key2 = 2"));
@@ -207,11 +203,7 @@ key1 = 1
 key2 = 2
 key3 = 3
 ";
-        let stripped = strip_managed_block(
-            content,
-            "# >>> block begin >>>",
-            "# <<< block end <<<",
-        );
+        let stripped = strip_managed_block(content, "# >>> block begin >>>", "# <<< block end <<<");
         assert!(stripped.contains("key1 = 1"));
         assert!(!stripped.contains("key2 = 2"));
         assert!(!stripped.contains("key3 = 3"));
@@ -352,10 +344,7 @@ key3 = 3
             _ => None,
         };
         let result = expand_env_placeholders(&v, resolver);
-        assert_eq!(
-            result,
-            serde_json::json!(["a-X-val", "b-{env:Y}", "c"])
-        );
+        assert_eq!(result, serde_json::json!(["a-X-val", "b-{env:Y}", "c"]));
     }
 
     #[test]

@@ -138,7 +138,9 @@ pub fn can_run_probe(checks: &[AdapterEnvironmentCheck]) -> bool {
     !checks.iter().any(|c| {
         matches!(
             c.code.as_str(),
-            "claude_cwd_invalid" | "claude_command_unresolvable" | "claude_managed_config_dir_failed"
+            "claude_cwd_invalid"
+                | "claude_command_unresolvable"
+                | "claude_managed_config_dir_failed"
         )
     })
 }
@@ -147,7 +149,10 @@ pub fn can_run_probe(checks: &[AdapterEnvironmentCheck]) -> bool {
 ///
 /// 检查 `CLAUDE_CODE_USE_BEDROCK`、`ANTHROPIC_BEDROCK_BASE_URL` 等环境变量；
 /// 当 `consider_host_env` 为 false（target 是 remote）时不读 host env。
-pub fn detect_bedrock_auth(env: &std::collections::BTreeMap<String, String>, consider_host_env: bool) -> bool {
+pub fn detect_bedrock_auth(
+    env: &std::collections::BTreeMap<String, String>,
+    consider_host_env: bool,
+) -> bool {
     use std::collections::BTreeMap;
     fn truthy(v: Option<&str>) -> bool {
         matches!(v.map(str::trim), Some(s) if matches!(s.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
@@ -163,7 +168,11 @@ pub fn detect_bedrock_auth(env: &std::collections::BTreeMap<String, String>, con
         if truthy(host_env.get("CLAUDE_CODE_USE_BEDROCK").map(|s| s.as_str())) {
             return true;
         }
-        if is_non_empty(host_env.get("ANTHROPIC_BEDROCK_BASE_URL").map(|s| s.as_str())) {
+        if is_non_empty(
+            host_env
+                .get("ANTHROPIC_BEDROCK_BASE_URL")
+                .map(|s| s.as_str()),
+        ) {
             return true;
         }
     }
@@ -173,7 +182,10 @@ pub fn detect_bedrock_auth(env: &std::collections::BTreeMap<String, String>, con
 /// 是否有 ANTHROPIC_API_KEY（api key 模式）。
 ///
 /// 与 bedrock 类似，远程 target 不读 host env。
-pub fn detect_anthropic_api_key(env: &std::collections::BTreeMap<String, String>, consider_host_env: bool) -> bool {
+pub fn detect_anthropic_api_key(
+    env: &std::collections::BTreeMap<String, String>,
+    consider_host_env: bool,
+) -> bool {
     if is_non_empty(env.get("ANTHROPIC_API_KEY").map(|s| s.as_str())) {
         return true;
     }
@@ -226,13 +238,9 @@ pub fn hello_probe_outcome(input: HelloProbeInput, login_url: Option<String>) ->
         let summary = input.result_text.trim().to_string();
         let has_hello = summary.to_lowercase().contains("hello");
         if has_hello {
-            return HelloProbeOutcome::Passed {
-                detail: summary,
-            };
+            return HelloProbeOutcome::Passed { detail: summary };
         } else {
-            return HelloProbeOutcome::UnexpectedOutput {
-                detail: summary,
-            };
+            return HelloProbeOutcome::UnexpectedOutput { detail: summary };
         }
     }
     let detail = input.result_text;
@@ -459,7 +467,9 @@ mod tests {
     // ---- detect_bedrock_auth ----
 
     fn env_with(kv: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
-        kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        kv.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -520,7 +530,10 @@ mod tests {
             result_text: String::new(),
             transient: false,
         };
-        assert_eq!(hello_probe_outcome(input, None), HelloProbeOutcome::TimedOut);
+        assert_eq!(
+            hello_probe_outcome(input, None),
+            HelloProbeOutcome::TimedOut
+        );
     }
 
     #[test]

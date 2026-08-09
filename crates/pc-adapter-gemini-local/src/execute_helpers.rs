@@ -49,9 +49,7 @@ pub fn resolve_gemini_billing_type(env: &BTreeMap<String, String>) -> GeminiBill
 /// - 强制 `NO_BROWSER=1`。
 /// - 删除 `NO_COLOR`。
 /// - `GEMINI_CLI_HOME` 转绝对路径（如已设置）。
-pub fn build_gemini_headless_env(
-    env: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
+pub fn build_gemini_headless_env(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     let mut next: BTreeMap<String, String> = env.clone();
 
     let term = env
@@ -94,4 +92,3 @@ pub fn gemini_skills_home(homedir: &str) -> String {
 /// 在 `pc_acpx::session_config_options` 中已有权威实现，这里直接 re-export，
 /// 保持 `pc-acapter-gemini-local` API surface 不变。
 pub use pc_acpx::session_config_options::{render_api_access_note, render_paperclip_env_note};
-

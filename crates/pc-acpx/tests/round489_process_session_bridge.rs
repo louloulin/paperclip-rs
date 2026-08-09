@@ -65,7 +65,10 @@ fn start_plan_full_flow() {
     let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
     assert_eq!(payload["command"], "claude");
     assert_eq!(payload["args"], serde_json::json!(["-p", "hello"]));
-    assert_eq!(payload["cwd"], "/sandbox/workspace", "cwd 缺省回退 remoteCwd");
+    assert_eq!(
+        payload["cwd"], "/sandbox/workspace",
+        "cwd 缺省回退 remoteCwd"
+    );
     assert_eq!(payload["env"]["FOO"], "bar");
 
     // start 脚本（对齐 Node execute）。
@@ -73,15 +76,15 @@ fn start_plan_full_flow() {
         "mkdir -p '/sandbox/workspace/.paperclip-runtime/claude/process-sessions/session-1/stdin'"
     ));
     assert!(plan.start_script.contains("PAPERCLIP_PROCESS_SESSION_DIR="));
-    assert!(plan.start_script.contains("PAPERCLIP_PROCESS_SESSION_COMMAND_B64="));
+    assert!(plan
+        .start_script
+        .contains("PAPERCLIP_PROCESS_SESSION_COMMAND_B64="));
     assert!(plan.start_script.contains("nohup node"));
     assert!(plan.start_script.contains("printf '%s\\n' \"$!\""));
 
     // 远端脚本同步计划（sha 门控 + 专用 lock）。
-    let sync = sync_process_session_remote_script_plan(
-        &plan.bridge_runtime_dir,
-        &plan.remote_script_path,
-    );
+    let sync =
+        sync_process_session_remote_script_plan(&plan.bridge_runtime_dir, &plan.remote_script_path);
     assert_eq!(sync.label, "Process session remote script");
     assert_eq!(sync.action, "sync process session remote script");
     assert!(sync
@@ -144,12 +147,11 @@ fn connection_handshake_full_flow() {
 
     // stdin 事件流：hello → stdin → stdinEnd。
     let mut seq = 0u64;
-    let stdin_write = build_proxy_stdin_write(seq + 1, Some("stdin"), Some("aGVsbG8="))
-        .expect("stdin write");
+    let stdin_write =
+        build_proxy_stdin_write(seq + 1, Some("stdin"), Some("aGVsbG8=")).expect("stdin write");
     seq += 1;
     assert_eq!(stdin_write.file_name, "000000000001.json");
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdin_write.body.trim_end()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdin_write.body.trim_end()).unwrap();
     assert_eq!(parsed["type"], "stdin");
     assert_eq!(parsed["data"], "aGVsbG8=");
 

@@ -12,9 +12,7 @@
 //! sshd 缺失时跳过真实部分。
 
 use pc_acpx::ssh::SshConnectionConfig;
-use pc_adapter_api::{
-    AdapterEventSink, AdapterExecutionContext,
-};
+use pc_adapter_api::{AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_codex_local::{execute_codex_with_monitor, CodexExecArgs};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -55,10 +53,8 @@ impl SshLabFixture {
             return None;
         }
         let port = allocate_loopback_port()?;
-        let root_dir = std::env::temp_dir().join(format!(
-            "paperclip-r495-codex-ssh-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root_dir =
+            std::env::temp_dir().join(format!("paperclip-r495-codex-ssh-{}", uuid::Uuid::new_v4()));
         let remote_workspace_path = root_dir.join("workspace");
         std::fs::create_dir_all(&remote_workspace_path).ok()?;
         let username = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
@@ -79,9 +75,23 @@ impl SshLabFixture {
                 .map(|s| s.success())
                 .unwrap_or(false)
         };
-        if !gen(&["-q", "-t", "ed25519", "-N", "", "-f", client_key.to_str().unwrap()])
-            || !gen(&["-q", "-t", "ed25519", "-N", "", "-f", host_key.to_str().unwrap()])
-        {
+        if !gen(&[
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            client_key.to_str().unwrap(),
+        ]) || !gen(&[
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            host_key.to_str().unwrap(),
+        ]) {
             return None;
         }
         let _ = std::fs::copy(client_key.with_extension("pub"), &authorized_keys);
@@ -91,13 +101,12 @@ impl SshLabFixture {
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
-        let known_hosts_entry = pc_acpx::ssh::build_known_hosts_entry(
-            pc_acpx::ssh::KnownHostsEntryInput {
+        let known_hosts_entry =
+            pc_acpx::ssh::build_known_hosts_entry(pc_acpx::ssh::KnownHostsEntryInput {
                 host: "127.0.0.1".to_string(),
                 port,
                 public_key: host_public_key,
-            },
-        );
+            });
         let _ = std::fs::write(&known_hosts_path, format!("{known_hosts_entry}\n"));
         let config_text = format!(
             "Port {port}\n\
@@ -221,19 +230,12 @@ async fn codex_execute_codex_with_monitor_dispatches_to_ssh_and_returns_remote_s
     let Some(fixture) = SshLabFixture::start().await else {
         return;
     };
-    let mut context = AdapterExecutionContext::new(
-        uuid::Uuid::new_v4(),
-        uuid::Uuid::new_v4(),
-        "",
-    );
+    let mut context = AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "");
     context.execution_target = Some(ssh_target_json(&fixture));
 
     let marker = "r495-codex-ssh-marker";
     let built = CodexExecArgs {
-        args: vec![
-            "-c".to_owned(),
-            format!("printf '{marker}\\n'"),
-        ],
+        args: vec!["-c".to_owned(), format!("printf '{marker}\\n'")],
         model: "gpt-5.6-sol".to_owned(),
         fast_mode_requested: false,
         fast_mode_applied: false,
@@ -254,18 +256,16 @@ async fn codex_execute_codex_with_monitor_dispatches_to_ssh_and_returns_remote_s
         }
     });
 
-    let (execution, monitor_outcome) = execute_codex_with_monitor(
-        "/bin/sh",
-        &built,
-        &context,
-        sink,
-        None,
-    )
-    .await
-    .expect("execute should succeed via SSH");
+    let (execution, monitor_outcome) =
+        execute_codex_with_monitor("/bin/sh", &built, &context, sink, None)
+            .await
+            .expect("execute should succeed via SSH");
 
     // monitor 未启用，应为 None
-    assert!(monitor_outcome.is_none(), "monitor must not fire when disabled");
+    assert!(
+        monitor_outcome.is_none(),
+        "monitor must not fire when disabled"
+    );
     // 退出码 0
     assert_eq!(execution.result.exit_code, Some(0));
     // stdout 含远端 marker

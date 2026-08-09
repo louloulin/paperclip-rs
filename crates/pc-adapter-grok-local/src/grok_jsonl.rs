@@ -62,7 +62,9 @@ fn string_value(value: Option<&Value>) -> String {
 }
 
 fn error_text(value: Option<&Value>) -> String {
-    let Some(value) = value else { return String::new() };
+    let Some(value) = value else {
+        return String::new();
+    };
     if let Some(text) = value.as_str() {
         return text.to_owned();
     }
@@ -143,13 +145,16 @@ pub fn parse_grok_jsonl(stdout: &str) -> ParsedGrokJsonl {
 pub fn is_grok_unknown_session_error(stdout: &str, stderr: &str) -> bool {
     let haystack = format!("{stdout}\n{stderr}");
     let lower = haystack.to_ascii_lowercase();
-    lower.lines().filter(|line| !line.trim().is_empty()).any(|line| {
-        let line = line.trim();
-        line.contains("unknown session")
-            || line.contains("session") && line.contains("not found")
-            || line.contains("resume") && line.contains("not found")
-            || line.contains("invalid session")
-    })
+    lower
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .any(|line| {
+            let line = line.trim();
+            line.contains("unknown session")
+                || line.contains("session") && line.contains("not found")
+                || line.contains("resume") && line.contains("not found")
+                || line.contains("invalid session")
+        })
 }
 
 #[allow(dead_code)]
@@ -174,8 +179,12 @@ mod tests {
 
     #[test]
     fn 结构化错误优先读取_message() {
-        let parsed = parse_grok_jsonl(r#"{"type":"error","error":{"message":"Authentication required"}}"#);
-        assert_eq!(parsed.error_message.as_deref(), Some("Authentication required"));
+        let parsed =
+            parse_grok_jsonl(r#"{"type":"error","error":{"message":"Authentication required"}}"#);
+        assert_eq!(
+            parsed.error_message.as_deref(),
+            Some("Authentication required")
+        );
     }
 
     #[test]

@@ -67,7 +67,10 @@ pub fn resolve_shared_codex_home_dir(env: &BTreeMap<String, String>, home_dir: &
         let resolved = pb.canonicalize().unwrap_or(pb);
         return resolved.to_string_lossy().to_string();
     }
-    PathBuf::from(home_dir).join(".codex").to_string_lossy().to_string()
+    PathBuf::from(home_dir)
+        .join(".codex")
+        .to_string_lossy()
+        .to_string()
 }
 
 /// 解析 Paperclip 托管 codex home 目录：`<instanceRoot>/companies/<companyId>/codex-home`。
@@ -102,13 +105,10 @@ pub fn is_managed_codex_home_path(
         return Ok(false);
     };
     let instance_root = resolve_instance_root(env)?;
-    let company_root = PathBuf::from(instance_root)
-        .join("companies")
-        .join(cid);
+    let company_root = PathBuf::from(instance_root).join("companies").join(cid);
     let resolved_home = normalize_lexically(home_path);
     let resolved_root = normalize_lexically(&company_root.to_string_lossy());
-    Ok(resolved_home == resolved_root
-        || resolved_home.starts_with(&format!("{resolved_root}/")))
+    Ok(resolved_home == resolved_root || resolved_home.starts_with(&format!("{resolved_root}/")))
 }
 
 /// 异步检查路径是否存在（follows symlinks，行为同 Node `fs.access`）。
@@ -182,7 +182,6 @@ fn resolve_instance_root(
         },
     )
 }
-
 
 fn strip_private_prefix(p: String) -> String {
     if let Some(rest) = p.strip_prefix("/private/") {
@@ -267,7 +266,10 @@ mod tests {
 
     #[test]
     fn is_managed_codex_home_path_requires_company_id() {
-        let env = env_with(&[("PAPERCLIP_HOME", "/tmp"), ("PAPERCLIP_INSTANCE_ID", "default")]);
+        let env = env_with(&[
+            ("PAPERCLIP_HOME", "/tmp"),
+            ("PAPERCLIP_INSTANCE_ID", "default"),
+        ]);
         let result = is_managed_codex_home_path(&env, None, "/anything");
         assert_eq!(result.unwrap(), false);
     }
@@ -345,11 +347,7 @@ mod tests {
     async fn codex_home_has_usable_auth_returns_true_for_valid_auth() {
         let dir = std::env::temp_dir().join(format!("paperclip-auth-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("auth.json"),
-            r#"{"OPENAI_API_KEY": "sk-test"}"#,
-        )
-        .unwrap();
+        std::fs::write(dir.join("auth.json"), r#"{"OPENAI_API_KEY": "sk-test"}"#).unwrap();
         assert!(codex_home_has_usable_auth(&dir).await);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -629,12 +627,13 @@ fn build_managed_mcp_block(
     let mut used_names = std::collections::HashSet::new();
     let mut lines = vec![
         MANAGED_MCP_BLOCK_START.to_string(),
-        "# Written by Paperclip for governed MCP gateway access. Do not edit this block by hand.".to_string(),
+        "# Written by Paperclip for governed MCP gateway access. Do not edit this block by hand."
+            .to_string(),
     ];
     for (index, gateway) in gateways.iter().enumerate() {
         let base_name = sanitize_mcp_server_name(&gateway.name, &format!("gateway-{}", index + 1));
-        let direct_overlap = existing_names.contains(&gateway.name)
-            || existing_names.contains(&base_name);
+        let direct_overlap =
+            existing_names.contains(&gateway.name) || existing_names.contains(&base_name);
         let mut managed_name = if direct_overlap {
             format!("paperclip-{}", base_name)
         } else {
@@ -864,7 +863,9 @@ pub async fn reconcile_managed_codex_home(
         });
     }
     let configured = configured.unwrap();
-    let resolved = std::path::Path::new(&configured).canonicalize().unwrap_or_else(|_| std::path::Path::new(&configured).to_path_buf());
+    let resolved = std::path::Path::new(&configured)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::Path::new(&configured).to_path_buf());
     // macOS 上 canonicalize 会插入 /private 前缀；normalize_lexically
     // 只做词法规范化，不会去 /private。这里统一做去前缀处理：
     let resolved_str = strip_private_prefix(resolved.to_string_lossy().to_string());
@@ -950,7 +951,9 @@ mod tests_extra {
             seq
         );
         let dir = base.join(unique);
-        tokio::fs::create_dir_all(&dir).await.expect("create tempdir");
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create tempdir");
         dir
     }
 
@@ -1048,7 +1051,12 @@ mod tests_extra {
         let content = tokio::fs::read_to_string(&auth).await.unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["OPENAI_API_KEY"], "sk-test-123");
-        let perm = tokio::fs::metadata(&auth).await.unwrap().permissions().mode() & 0o777;
+        let perm = tokio::fs::metadata(&auth)
+            .await
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(perm, 0o600);
     }
 
@@ -1057,9 +1065,13 @@ mod tests_extra {
         let root = temp_root().await;
         let home = root.join("codex-home");
         tokio::fs::create_dir_all(&home).await.unwrap();
-        tokio::fs::write(home.join("auth.json"), "{\"OLD\":\"yes\"}").await.unwrap();
+        tokio::fs::write(home.join("auth.json"), "{\"OLD\":\"yes\"}")
+            .await
+            .unwrap();
         write_api_key_auth_json(&home, "sk-new").await.unwrap();
-        let content = tokio::fs::read_to_string(home.join("auth.json")).await.unwrap();
+        let content = tokio::fs::read_to_string(home.join("auth.json"))
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["OPENAI_API_KEY"], "sk-new");
     }
@@ -1075,9 +1087,10 @@ mod tests_extra {
             endpoint_path: "/mcp/primary".to_string(),
             bearer_token: "token-abc".to_string(),
         }];
-        let (path, warnings) = write_managed_codex_mcp_config(&home, "https://api.example.com", &gateways)
-            .await
-            .unwrap();
+        let (path, warnings) =
+            write_managed_codex_mcp_config(&home, "https://api.example.com", &gateways)
+                .await
+                .unwrap();
         assert!(warnings.is_empty());
         let content = tokio::fs::read_to_string(&path).await.unwrap();
         assert!(content.contains(MANAGED_MCP_BLOCK_START));
@@ -1096,17 +1109,22 @@ mod tests_extra {
 [mcp_servers.primary]
 url = "https://user-defined"
 "#;
-        tokio::fs::write(home.join("config.toml"), existing).await.unwrap();
+        tokio::fs::write(home.join("config.toml"), existing)
+            .await
+            .unwrap();
         let gateways = vec![ManagedCodexMcpGateway {
             name: "primary".to_string(),
             endpoint_path: "/mcp/primary".to_string(),
             bearer_token: "token-abc".to_string(),
         }];
-        let (_path, warnings) = write_managed_codex_mcp_config(&home, "https://api.example.com", &gateways)
+        let (_path, warnings) =
+            write_managed_codex_mcp_config(&home, "https://api.example.com", &gateways)
+                .await
+                .unwrap();
+        assert!(!warnings.is_empty(), "overlap should produce warning");
+        let content = tokio::fs::read_to_string(home.join("config.toml"))
             .await
             .unwrap();
-        assert!(!warnings.is_empty(), "overlap should produce warning");
-        let content = tokio::fs::read_to_string(home.join("config.toml")).await.unwrap();
         assert!(content.contains("[mcp_servers.\"paperclip-primary\"]"));
         // 原 unmanaged entry 保留
         assert!(content.contains("[mcp_servers.primary]"));
@@ -1117,7 +1135,9 @@ url = "https://user-defined"
         let root = temp_root().await;
         let home = root.join("codex-home");
         tokio::fs::create_dir_all(&home).await.unwrap();
-        tokio::fs::write(home.join("config.toml"), "model = \"gpt\"\n").await.unwrap();
+        tokio::fs::write(home.join("config.toml"), "model = \"gpt\"\n")
+            .await
+            .unwrap();
         let gateways = vec![ManagedCodexMcpGateway {
             name: "g".to_string(),
             endpoint_path: "/mcp".to_string(),
@@ -1126,7 +1146,9 @@ url = "https://user-defined"
         write_managed_codex_mcp_config(&home, "https://api.example.com", &gateways)
             .await
             .unwrap();
-        let content = tokio::fs::read_to_string(home.join("config.toml")).await.unwrap();
+        let content = tokio::fs::read_to_string(home.join("config.toml"))
+            .await
+            .unwrap();
         assert!(content.contains("model = \"gpt\""));
         assert!(content.contains("# BEGIN PAPERCLIP MANAGED MCP"));
     }
@@ -1140,7 +1162,9 @@ url = "https://user-defined"
             "model = \"gpt\"\n\n{}\nfirst\n{}\n",
             MANAGED_MCP_BLOCK_START, MANAGED_MCP_BLOCK_END
         );
-        tokio::fs::write(home.join("config.toml"), &old).await.unwrap();
+        tokio::fs::write(home.join("config.toml"), &old)
+            .await
+            .unwrap();
         let gateways = vec![ManagedCodexMcpGateway {
             name: "second".to_string(),
             endpoint_path: "/mcp2".to_string(),
@@ -1149,7 +1173,9 @@ url = "https://user-defined"
         write_managed_codex_mcp_config(&home, "https://api.example.com", &gateways)
             .await
             .unwrap();
-        let content = tokio::fs::read_to_string(home.join("config.toml")).await.unwrap();
+        let content = tokio::fs::read_to_string(home.join("config.toml"))
+            .await
+            .unwrap();
         // 旧 block 已完全移除
         assert!(!content.contains("first"));
         // 新 block 写入
@@ -1173,9 +1199,14 @@ url = "https://user-defined"
         let on_log = move |msg: &str| {
             captured_log.lock().unwrap().push(msg.to_string());
         };
-        seed_managed_codex_home(&agent, &env, &on_log, SeedManagedCodexHomeOptions::default())
-            .await
-            .unwrap();
+        seed_managed_codex_home(
+            &agent,
+            &env,
+            &on_log,
+            SeedManagedCodexHomeOptions::default(),
+        )
+        .await
+        .unwrap();
         let auth = agent.join("auth.json");
         let meta = tokio::fs::symlink_metadata(&auth).await.unwrap();
         assert!(meta.file_type().is_symlink());
@@ -1201,7 +1232,9 @@ url = "https://user-defined"
         )
         .await
         .unwrap();
-        let content = tokio::fs::read_to_string(agent.join("auth.json")).await.unwrap();
+        let content = tokio::fs::read_to_string(agent.join("auth.json"))
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["OPENAI_API_KEY"], "sk-test");
     }
@@ -1212,7 +1245,9 @@ url = "https://user-defined"
         let shared = root.join("shared");
         let agent = root.join("agent");
         tokio::fs::create_dir_all(&shared).await.unwrap();
-        tokio::fs::write(shared.join("auth.json"), "{}").await.unwrap();
+        tokio::fs::write(shared.join("auth.json"), "{}")
+            .await
+            .unwrap();
         let mut env = env_with_home(shared.to_str().unwrap());
         env.insert("PAPERCLIP_WORKTREE_HOME".to_string(), "true".to_string());
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
@@ -1220,9 +1255,14 @@ url = "https://user-defined"
         let on_log = move |msg: &str| {
             captured_log.lock().unwrap().push(msg.to_string());
         };
-        seed_managed_codex_home(&agent, &env, &on_log, SeedManagedCodexHomeOptions::default())
-            .await
-            .unwrap();
+        seed_managed_codex_home(
+            &agent,
+            &env,
+            &on_log,
+            SeedManagedCodexHomeOptions::default(),
+        )
+        .await
+        .unwrap();
         let log = captured.lock().unwrap();
         assert!(log.iter().any(|m| m.contains("worktree-isolated")));
     }
@@ -1236,7 +1276,10 @@ url = "https://user-defined"
             ..Default::default()
         };
         let result = reconcile_managed_codex_home(input).await.unwrap();
-        assert_eq!(result.status, ReconcileManagedCodexHomeStatus::NoManagedHome);
+        assert_eq!(
+            result.status,
+            ReconcileManagedCodexHomeStatus::NoManagedHome
+        );
         assert!(result.home.is_none());
     }
 
@@ -1255,10 +1298,7 @@ url = "https://user-defined"
             "PAPERCLIP_HOME".to_string(),
             std::env::temp_dir().to_string_lossy().to_string(),
         );
-        env.insert(
-            "PAPERCLIP_INSTANCE_ID".to_string(),
-            "default".to_string(),
-        );
+        env.insert("PAPERCLIP_INSTANCE_ID".to_string(), "default".to_string());
         let input = ReconcileManagedCodexHomeInput {
             company_id: Some("company-1".to_string()),
             configured_codex_home: Some(home.to_string_lossy().to_string()),
@@ -1267,9 +1307,14 @@ url = "https://user-defined"
             env: Some(env),
         };
         let result = reconcile_managed_codex_home(input).await.unwrap();
-        assert_eq!(result.status, ReconcileManagedCodexHomeStatus::ExternalOverride);
+        assert_eq!(
+            result.status,
+            ReconcileManagedCodexHomeStatus::ExternalOverride
+        );
         // 用户的 auth.json 保持原样
-        let content = tokio::fs::read_to_string(home.join("auth.json")).await.unwrap();
+        let content = tokio::fs::read_to_string(home.join("auth.json"))
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["OPENAI_API_KEY"], "u");
     }
@@ -1298,10 +1343,7 @@ url = "https://user-defined"
             "PAPERCLIP_HOME".to_string(),
             root.to_string_lossy().to_string(),
         );
-        env.insert(
-            "PAPERCLIP_INSTANCE_ID".to_string(),
-            "default".to_string(),
-        );
+        env.insert("PAPERCLIP_INSTANCE_ID".to_string(), "default".to_string());
         let input = ReconcileManagedCodexHomeInput {
             company_id: Some(company_id.to_string()),
             configured_codex_home: Some(home.to_string_lossy().to_string()),
@@ -1320,7 +1362,9 @@ url = "https://user-defined"
             "unexpected status: {:?}",
             result.status
         );
-        let content = tokio::fs::read_to_string(home.join("auth.json")).await.unwrap();
+        let content = tokio::fs::read_to_string(home.join("auth.json"))
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(json["OPENAI_API_KEY"], "sk-existing");
     }

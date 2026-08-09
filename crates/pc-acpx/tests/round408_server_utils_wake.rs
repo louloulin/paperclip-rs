@@ -2,10 +2,9 @@ use pc_acpx::server_utils_wake::{
     is_assignment_shaped_paperclip_wake_reason, is_paperclip_recovery_wake_payload,
     normalize_paperclip_wake_agent_message, normalize_paperclip_wake_issue,
     normalize_paperclip_wake_payload, read_paperclip_issue_work_mode_from_context,
-    select_paperclip_task_markdown, stringify_paperclip_wake_payload,
-    SelectTaskMarkdownOptions, StringifyWakePayloadOptions,
-    ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS, DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-    WATCHDOG_DEFAULT_MANDATE,
+    select_paperclip_task_markdown, stringify_paperclip_wake_payload, SelectTaskMarkdownOptions,
+    StringifyWakePayloadOptions, ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS,
+    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE, WATCHDOG_DEFAULT_MANDATE,
 };
 
 #[test]
@@ -23,9 +22,15 @@ fn 恢复与问题可从真实唤醒载荷归一化() {
         "issue": {"identifier": "PC-42", "workMode": "implementation"}
     });
     let normalized = normalize_paperclip_wake_payload(&payload).unwrap();
-    assert_eq!(normalized.reason.as_deref(), Some("issue_recovery_action_restored"));
+    assert_eq!(
+        normalized.reason.as_deref(),
+        Some("issue_recovery_action_restored")
+    );
     assert_eq!(normalized.recovery.unwrap().attempt_count, Some(2));
-    assert_eq!(normalized.issue.unwrap().identifier.as_deref(), Some("PC-42"));
+    assert_eq!(
+        normalized.issue.unwrap().identifier.as_deref(),
+        Some("PC-42")
+    );
 }
 
 #[test]
@@ -62,13 +67,19 @@ fn 工作模式优先使用直接上下文() {
         "paperclipIssue": {"workMode": "direct"},
         "paperclipWake": {"issue": {"workMode": "wake"}}
     });
-    assert_eq!(read_paperclip_issue_work_mode_from_context(&context).as_deref(), Some("direct"));
+    assert_eq!(
+        read_paperclip_issue_work_mode_from_context(&context).as_deref(),
+        Some("direct")
+    );
 }
 
 #[test]
 fn 工作模式可回退到唤醒问题() {
     let context = serde_json::json!({"paperclipWake": {"issue": {"workMode": "wake"}}});
-    assert_eq!(read_paperclip_issue_work_mode_from_context(&context).as_deref(), Some("wake"));
+    assert_eq!(
+        read_paperclip_issue_work_mode_from_context(&context).as_deref(),
+        Some("wake")
+    );
 }
 
 #[test]
@@ -77,7 +88,10 @@ fn 任务摘要按新会话和唤醒类型选择() {
         "paperclipTaskMarkdown": "FULL",
         "paperclipTaskMarkdownCompact": "COMPACT"
     });
-    assert_eq!(select_paperclip_task_markdown(Some(&fresh), SelectTaskMarkdownOptions::default()), "FULL");
+    assert_eq!(
+        select_paperclip_task_markdown(Some(&fresh), SelectTaskMarkdownOptions::default()),
+        "FULL"
+    );
 
     let delta = serde_json::json!({
         "paperclipTaskMarkdown": "FULL",
@@ -85,7 +99,12 @@ fn 任务摘要按新会话和唤醒类型选择() {
         "paperclipWake": {"reason": "issue_commented"}
     });
     assert_eq!(
-        select_paperclip_task_markdown(Some(&delta), SelectTaskMarkdownOptions { resumed_session: true }),
+        select_paperclip_task_markdown(
+            Some(&delta),
+            SelectTaskMarkdownOptions {
+                resumed_session: true
+            }
+        ),
         "COMPACT"
     );
 }
@@ -98,7 +117,12 @@ fn 指派和恢复唤醒在恢复会话仍返回完整摘要() {
         "paperclipWake": {"reason": "issue_assigned"}
     });
     assert_eq!(
-        select_paperclip_task_markdown(Some(&context), SelectTaskMarkdownOptions { resumed_session: true }),
+        select_paperclip_task_markdown(
+            Some(&context),
+            SelectTaskMarkdownOptions {
+                resumed_session: true
+            }
+        ),
         "FULL"
     );
     for reason in ASSIGNMENT_SHAPED_PAPERCLIP_WAKE_REASONS {
@@ -114,7 +138,9 @@ fn 字符串化可省略问题描述并保留其他字段() {
     });
     let text = stringify_paperclip_wake_payload(
         &payload,
-        StringifyWakePayloadOptions { omit_issue_description: true },
+        StringifyWakePayloadOptions {
+            omit_issue_description: true,
+        },
     )
     .unwrap();
     let value: serde_json::Value = serde_json::from_str(&text).unwrap();

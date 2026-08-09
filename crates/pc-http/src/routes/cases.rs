@@ -15,9 +15,9 @@ use uuid::Uuid;
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::case::{
-    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseDocumentUpsertError,
-    CaseDocumentUpsertInput, CaseLinkRole, CaseRepo, CaseRow, NewCaseAnnotationComment,
-    NewCaseAnnotationThread,
+    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow,
+    CaseDocumentUpsertError, CaseDocumentUpsertInput, CaseLinkRole, CaseRepo, CaseRow,
+    NewCaseAnnotationComment, NewCaseAnnotationThread,
 };
 use pc_repos::document::DocumentRevisionRow;
 
@@ -35,7 +35,7 @@ pub fn router() -> Router<AppState> {
             get(list_company_cases).post(create_company_case),
         )
         .route("/api/cases/:case_id/events", get(list_case_events))
-        .route("/api/cases/:case_id/links", post(create_case_link))
+        .route("/api/cases/:case_id/issue-links", post(create_case_link))
         .route(
             "/api/cases/:case_id/documents",
             get(list_case_documents).put(upsert_case_document),
@@ -319,6 +319,25 @@ async fn list_case_events(
 }
 
 // Round 113: 仓储化。CaseRepo::link_issue + record_issue_linked_event。
+//
+// R518: 对齐 Node `POST /api/cases/:caseId/issue-links` 契约。
+// Node 端 role ∈ {origin, conversation, work, automation}（见
+// paperclip/server/src/routes/pipelines.ts::issueLinkRoleSchema）。
+// Rust 端 DB CHECK 约束为 {origin, work, reference}（见
+// pc-db/migrations/drizzle/0143_cases_foundation.sql 的
+// case_issue_links_role_check），因此 `conversation` / `automation` 在
+// 边界处降级映射为 `reference`，DB 写入仍保持一致。
+fn normalize_case_issue_link_role(input: Option<String>) -> (String, CaseLinkRole) {
+    let raw = input.unwrap_or_else(|| "reference".to_string());
+    let role = match raw.as_str() {
+        "origin" => CaseLinkRole::Origin,
+        "work" => CaseLinkRole::Work,
+        // conversation / automation / reference / unknown → reference
+        _ => CaseLinkRole::Reference,
+    };
+    (role.as_str().to_string(), role)
+}
+
 async fn create_case_link(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
@@ -328,8 +347,7 @@ async fn create_case_link(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let role_str = body.role.clone().unwrap_or_else(|| "reference".to_string());
-    let role: CaseLinkRole = role_str.parse().unwrap_or(CaseLinkRole::Reference);
+    let (role_str, role) = normalize_case_issue_link_role(body.role.clone());
     let link = CaseRepo::new(&state.db)
         .link_issue(case_row.company_id, case_id, body.issue_id, role, None)
         .await?;
@@ -466,9 +484,7 @@ async fn put_case_document_by_key(
         })
         .await
         .map_err(|err| match err {
-            CaseDocumentUpsertError::Locked => {
-                ApiError::Conflict("Document is locked".into())
-            }
+            CaseDocumentUpsertError::Locked => ApiError::Conflict("Document is locked".into()),
             CaseDocumentUpsertError::StaleBaseRevision => {
                 ApiError::Conflict("Case document was updated by someone else".into())
             }

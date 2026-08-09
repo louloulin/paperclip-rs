@@ -427,10 +427,7 @@ pub async fn apply_codex_auth_merge(
     // 决定 outcome
     let outcome = if keep_sandbox {
         CodexAuthMergeExtractOutcome::RetainedSandboxAuth
-    } else if image_auth
-        .map(|p| p == source.as_path())
-        .unwrap_or(false)
-    {
+    } else if image_auth.map(|p| p == source.as_path()).unwrap_or(false) {
         CodexAuthMergeExtractOutcome::InstalledImageAuth
     } else {
         CodexAuthMergeExtractOutcome::InstalledHostAuth
@@ -459,10 +456,7 @@ async fn copy_with_umask_077(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// 直接写入字节（生产路径：直接给 host auth bytes 的场景）。
-pub async fn write_codex_auth_atomic(
-    asset_dir: &Path,
-    bytes: &[u8],
-) -> std::io::Result<PathBuf> {
+pub async fn write_codex_auth_atomic(asset_dir: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
     let final_path = asset_dir.join("auth.json");
     let tmp = asset_dir.join(format!(".auth.json.paperclip.{}.tmp", std::process::id()));
     if let Some(parent) = tmp.parent() {
@@ -586,42 +580,35 @@ mod tests {
 
     #[test]
     fn parse_kind_subscription_with_only_id_token() {
-        let snap = parse_auth_bytes(
-            br#"{"tokens": {"account_id": "acct-1", "id_token": "id"}}"#,
-        );
+        let snap = parse_auth_bytes(br#"{"tokens": {"account_id": "acct-1", "id_token": "id"}}"#);
         assert_eq!(snap.kind, CodexAuthKind::Subscription);
         assert_eq!(snap.account_id.as_deref(), Some("acct-1"));
     }
 
     #[test]
     fn parse_kind_subscription_with_access_token() {
-        let snap = parse_auth_bytes(
-            br#"{"tokens": {"account_id": "acct-2", "access_token": "acc"}}"#,
-        );
+        let snap =
+            parse_auth_bytes(br#"{"tokens": {"account_id": "acct-2", "access_token": "acc"}}"#);
         assert_eq!(snap.kind, CodexAuthKind::Subscription);
     }
 
     #[test]
     fn parse_kind_subscription_with_refresh_token() {
-        let snap = parse_auth_bytes(
-            br#"{"tokens": {"account_id": "acct-3", "refresh_token": "ref"}}"#,
-        );
+        let snap =
+            parse_auth_bytes(br#"{"tokens": {"account_id": "acct-3", "refresh_token": "ref"}}"#);
         assert_eq!(snap.kind, CodexAuthKind::Subscription);
     }
 
     #[test]
     fn parse_trims_account_id_whitespace() {
-        let snap = parse_auth_bytes(
-            br#"{"tokens": {"account_id": "  acct-trim  ", "id_token": "x"}}"#,
-        );
+        let snap =
+            parse_auth_bytes(br#"{"tokens": {"account_id": "  acct-trim  ", "id_token": "x"}}"#);
         assert_eq!(snap.account_id.as_deref(), Some("acct-trim"));
     }
 
     #[test]
     fn parse_unusable_when_account_id_only_whitespace() {
-        let snap = parse_auth_bytes(
-            br#"{"tokens": {"account_id": "   ", "id_token": "x"}}"#,
-        );
+        let snap = parse_auth_bytes(br#"{"tokens": {"account_id": "   ", "id_token": "x"}}"#);
         assert_eq!(snap.kind, CodexAuthKind::Unusable);
     }
 
@@ -655,9 +642,7 @@ mod tests {
 
     #[test]
     fn parse_last_refresh_missing_yields_none() {
-        let snap = parse_auth_bytes(
-            br#"{"tokens": {"account_id": "a", "id_token": "x"}}"#,
-        );
+        let snap = parse_auth_bytes(br#"{"tokens": {"account_id": "a", "id_token": "x"}}"#);
         assert_eq!(snap.last_refresh_ms, None);
     }
 
@@ -883,7 +868,9 @@ mod tests {
             seq
         );
         let dir = base.join(unique);
-        tokio::fs::create_dir_all(&dir).await.expect("create tempdir");
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create tempdir");
         dir
     }
 
@@ -1040,14 +1027,13 @@ mod tests {
             json!({"tokens": {"account_id": "a", "id_token": "host-id"}}),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::InstalledHostAuth);
         let final_bytes = tokio::fs::read(dir.join("auth.json")).await.unwrap();
         let final_json: serde_json::Value = serde_json::from_slice(&final_bytes).unwrap();
-        assert_eq!(
-            final_json["tokens"]["id_token"].as_str(),
-            Some("host-id")
-        );
+        assert_eq!(final_json["tokens"]["id_token"].as_str(), Some("host-id"));
     }
 
     #[tokio::test]
@@ -1072,7 +1058,9 @@ mod tests {
             }),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::RetainedSandboxAuth);
         let final_bytes = tokio::fs::read(dir.join("auth.json")).await.unwrap();
         let final_json: serde_json::Value = serde_json::from_slice(&final_bytes).unwrap();
@@ -1091,14 +1079,13 @@ mod tests {
             json!({"tokens": {"account_id": "a", "id_token": "image-id"}}),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, None, Some(&image)).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, None, Some(&image))
+            .await
+            .unwrap();
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::InstalledImageAuth);
         let final_bytes = tokio::fs::read(dir.join("auth.json")).await.unwrap();
         let final_json: serde_json::Value = serde_json::from_slice(&final_bytes).unwrap();
-        assert_eq!(
-            final_json["tokens"]["id_token"].as_str(),
-            Some("image-id")
-        );
+        assert_eq!(final_json["tokens"]["id_token"].as_str(), Some("image-id"));
     }
 
     #[tokio::test]
@@ -1131,15 +1118,14 @@ mod tests {
             }),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         // sandbox is older → host wins (but our source is host, so InstalledHostAuth)
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::InstalledHostAuth);
         let final_bytes = tokio::fs::read(dir.join("auth.json")).await.unwrap();
         let final_json: serde_json::Value = serde_json::from_slice(&final_bytes).unwrap();
-        assert_eq!(
-            final_json["tokens"]["id_token"].as_str(),
-            Some("host-new")
-        );
+        assert_eq!(final_json["tokens"]["id_token"].as_str(), Some("host-new"));
     }
 
     #[tokio::test]
@@ -1166,7 +1152,9 @@ mod tests {
             }),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::InstalledHostAuth);
         let final_bytes = tokio::fs::read(dir.join("auth.json")).await.unwrap();
         let final_json: serde_json::Value = serde_json::from_slice(&final_bytes).unwrap();
@@ -1178,12 +1166,7 @@ mod tests {
         // 语义：sandbox 是 apikey, host 是 subscription → kind 不一致 →
         // KeepDestination → 写 host。
         let dir = tempdir().await;
-        let _ = write_auth(
-            &dir,
-            "auth.json",
-            json!({"OPENAI_API_KEY": "sk-sandbox"}),
-        )
-        .await;
+        let _ = write_auth(&dir, "auth.json", json!({"OPENAI_API_KEY": "sk-sandbox"})).await;
         let host = write_auth(
             &dir,
             "host.json",
@@ -1193,7 +1176,9 @@ mod tests {
             }),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::InstalledHostAuth);
     }
 
@@ -1203,14 +1188,18 @@ mod tests {
         // 第 2 条 KeepDestination → keep_sandbox=false → 写 host。
         let dir = tempdir().await;
         let sandbox_auth = dir.join("auth.json");
-        tokio::fs::write(&sandbox_auth, b"{not valid json").await.unwrap();
+        tokio::fs::write(&sandbox_auth, b"{not valid json")
+            .await
+            .unwrap();
         let host = write_auth(
             &dir,
             "host.json",
             json!({"tokens": {"account_id": "a", "id_token": "host"}}),
         )
         .await;
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         assert_eq!(outcome, CodexAuthMergeExtractOutcome::InstalledHostAuth);
     }
 
@@ -1230,7 +1219,9 @@ mod tests {
         .await;
         let host = dir.join("host.json");
         tokio::fs::write(&host, b"not json").await.unwrap();
-        let outcome = apply_codex_auth_merge(&dir, Some(&host), None).await.unwrap();
+        let outcome = apply_codex_auth_merge(&dir, Some(&host), None)
+            .await
+            .unwrap();
         // host 解析为 Unusable → decide.source.kind=Unusable → KeepDestination → keep_sandbox=false
         // 但 host 路径存在 → 我们仍尝试写入 host → 最终是 host bytes
         // 真实 .sh 流程：host 不可用 → 直接走 sandbox → outcome RetainedSandboxAuth

@@ -40,10 +40,7 @@ fn billing_默认subscription() {
 #[test]
 fn billing_api_key_有值_Api() {
     let env = env_from(&[("OPENAI_API_KEY", "sk-test")]);
-    assert_eq!(
-        resolve_codex_billing_type(&env),
-        CodexBillingType::Api
-    );
+    assert_eq!(resolve_codex_billing_type(&env), CodexBillingType::Api);
 }
 
 #[test]
@@ -90,10 +87,7 @@ fn biller_subscription_chatgpt() {
 #[test]
 fn biller_api_openai_fallback() {
     let env = env_from(&[("OPENAI_API_KEY", "sk-test")]);
-    assert_eq!(
-        resolve_codex_biller(&env, CodexBillingType::Api),
-        "openai"
-    );
+    assert_eq!(resolve_codex_biller(&env, CodexBillingType::Api), "openai");
 }
 
 #[test]
@@ -171,9 +165,7 @@ fn fallback_mode_非法值_None() {
         None
     );
     assert_eq!(
-        read_codex_transient_fallback_mode(
-            &serde_json::json!({"codexTransientFallbackMode": ""})
-        ),
+        read_codex_transient_fallback_mode(&serde_json::json!({"codexTransientFallbackMode": ""})),
         None
     );
 }
@@ -193,9 +185,7 @@ fn fallback_mode_字段缺失() {
 #[test]
 fn fallback_mode_非字符串() {
     assert_eq!(
-        read_codex_transient_fallback_mode(
-            &serde_json::json!({"codexTransientFallbackMode": 123})
-        ),
+        read_codex_transient_fallback_mode(&serde_json::json!({"codexTransientFallbackMode": 123})),
         None
     );
     assert_eq!(
@@ -208,7 +198,10 @@ fn fallback_mode_非字符串() {
 
 #[test]
 fn fallback_mode_as_str_映射() {
-    assert_eq!(CodexTransientFallbackMode::SameSession.as_str(), "same_session");
+    assert_eq!(
+        CodexTransientFallbackMode::SameSession.as_str(),
+        "same_session"
+    );
     assert_eq!(
         CodexTransientFallbackMode::SaferInvocation.as_str(),
         "safer_invocation"
@@ -304,14 +297,8 @@ fn skills_dir_空输入() {
 
 #[test]
 fn skills_dir_相对路径() {
-    assert_eq!(
-        resolve_codex_skills_dir(".codex"),
-        ".codex/skills"
-    );
-    assert_eq!(
-        resolve_codex_skills_dir(".codex/"),
-        ".codex/skills"
-    );
+    assert_eq!(resolve_codex_skills_dir(".codex"), ".codex/skills");
+    assert_eq!(resolve_codex_skills_dir(".codex/"), ".codex/skills");
 }
 
 // ---------------------------------------------------------------------------
@@ -326,11 +313,11 @@ fn 综合_企业_api_via_openrouter() {
         ("OPENAI_API_KEY", "sk-test"),
         ("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
     ]);
+    assert_eq!(resolve_codex_billing_type(&env), CodexBillingType::Api);
     assert_eq!(
-        resolve_codex_billing_type(&env),
-        CodexBillingType::Api
+        resolve_codex_biller(&env, CodexBillingType::Api),
+        "openrouter"
     );
-    assert_eq!(resolve_codex_biller(&env, CodexBillingType::Api), "openrouter");
 }
 
 #[test]
@@ -349,9 +336,6 @@ fn 综合_个人_chatgpt订阅() {
 #[test]
 fn 综合_开发_openai_api() {
     let env = env_from(&[("OPENAI_API_KEY", "sk-test")]);
-    assert_eq!(
-        resolve_codex_billing_type(&env),
-        CodexBillingType::Api
-    );
+    assert_eq!(resolve_codex_billing_type(&env), CodexBillingType::Api);
     assert_eq!(resolve_codex_biller(&env, CodexBillingType::Api), "openai");
 }

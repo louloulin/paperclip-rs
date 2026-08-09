@@ -28,7 +28,11 @@ pub struct ProcessActivitySnapshot {
 
 /// 平台相关：`Some` 当快照可读，`None` 当不可读（非 Linux / 进程已退）。
 pub type SampleFn = std::pin::Pin<
-    Box<dyn Fn() -> futures_core::future::BoxFuture<'static, Option<ProcessActivitySnapshot>> + Send + Sync>,
+    Box<
+        dyn Fn() -> futures_core::future::BoxFuture<'static, Option<ProcessActivitySnapshot>>
+            + Send
+            + Sync,
+    >,
 >;
 
 /// 监控选项。
@@ -50,7 +54,8 @@ pub struct ProcessActivityMonitorHandle {
 
 impl ProcessActivityMonitorHandle {
     pub fn stop(mut self) {
-        self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some(handle) = self.join.take() {
             handle.abort();
         }
@@ -61,7 +66,10 @@ impl ProcessActivityMonitorHandle {
 /// 最后一个 `)` 切片。对齐 Node `parseProcStat`。
 fn parse_proc_stat(stat: &str) -> Option<(u32, u64)> {
     let command_end = stat.rfind(')')?;
-    let fields = stat[command_end + 2..].trim().split_whitespace().collect::<Vec<_>>();
+    let fields = stat[command_end + 2..]
+        .trim()
+        .split_whitespace()
+        .collect::<Vec<_>>();
     if fields.len() < 13 {
         return None;
     }
@@ -175,9 +183,9 @@ pub async fn sample_process_activity(
 pub fn spawn_process_activity_monitor(
     options: ProcessActivityMonitorOptions,
 ) -> ProcessActivityMonitorHandle {
-    let interval = options
-        .interval
-        .unwrap_or(Duration::from_millis(DEFAULT_PROCESS_ACTIVITY_POLL_INTERVAL_MS));
+    let interval = options.interval.unwrap_or(Duration::from_millis(
+        DEFAULT_PROCESS_ACTIVITY_POLL_INTERVAL_MS,
+    ));
     let minimum_cpu_tick_delta = std::cmp::max(1, (interval.as_millis() / 1000) as u64);
     let on_activity = options.on_activity;
     let sample: SampleFn = options.sample.unwrap_or_else(|| {
@@ -256,16 +264,18 @@ write_bytes: 2048
     #[test]
     fn parse_proc_io_handles_empty_and_garbage() {
         assert_eq!(parse_proc_io(""), 0);
-        assert_eq!(parse_proc_io("foo: bar
-baz: qux"), 0);
+        assert_eq!(
+            parse_proc_io(
+                "foo: bar
+baz: qux"
+            ),
+            0
+        );
     }
 
     #[test]
     fn default_interval_is_15_seconds() {
-        assert_eq!(
-            DEFAULT_PROCESS_ACTIVITY_POLL_INTERVAL_MS,
-            15_000
-        );
+        assert_eq!(DEFAULT_PROCESS_ACTIVITY_POLL_INTERVAL_MS, 15_000);
     }
 
     #[tokio::test]
@@ -329,9 +339,7 @@ baz: qux"), 0);
     async fn monitor_stops_when_handle_dropped_via_stop() {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
-        let sample: SampleFn = Box::pin(|| {
-            Box::pin(async { None })
-        });
+        let sample: SampleFn = Box::pin(|| Box::pin(async { None }));
         let handle = spawn_process_activity_monitor(ProcessActivityMonitorOptions {
             pid: 1,
             process_group_id: None,

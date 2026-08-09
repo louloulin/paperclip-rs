@@ -16,7 +16,6 @@ use pc_acpx::ssh::SshRemoteExecutionSpec;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn import_git_workspace_to_ssh_runs_remote_git_init_and_checkout() {
     if !command_available("git") {
@@ -91,8 +90,11 @@ async fn export_git_workspace_from_ssh_runs_remote_bundle_create_and_local_reset
     )
     .await
     .expect("remote git config name");
-    std::fs::write(std::path::Path::new(&remote_dir).join("world.txt"), "world from remote\n")
-        .expect("write world");
+    std::fs::write(
+        std::path::Path::new(&remote_dir).join("world.txt"),
+        "world from remote\n",
+    )
+    .expect("write world");
     pc_acpx::git_workspace_sync::run_local_git(&remote_str, &["add", "world.txt"], None, None)
         .await
         .expect("remote git add");

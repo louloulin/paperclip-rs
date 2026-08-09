@@ -1,23 +1,23 @@
 #![forbid(unsafe_code)]
 
-pub mod skills;
-pub mod codex_errors;
-pub mod execute_helpers;
-pub mod output_inactivity_monitor;
-pub mod auth_precedence;
+pub mod acp;
 pub mod auth_copyback;
+pub mod auth_precedence;
 pub mod codex_auth_merge;
-pub mod runtime_config;
+pub mod codex_bridge_env;
+pub mod codex_errors;
+pub mod codex_execution_env;
 pub mod codex_home;
 pub mod codex_home_staging;
-pub mod acp;
-pub mod codex_test;
-pub mod config_schema;
 pub mod codex_remote_workspace;
-pub mod codex_bridge_env;
-pub mod codex_execution_env;
 pub mod codex_session_params;
 pub mod codex_session_resume;
+pub mod codex_test;
+pub mod config_schema;
+pub mod execute_helpers;
+pub mod output_inactivity_monitor;
+pub mod runtime_config;
+pub mod skills;
 
 pub use execute_helpers::{
     fallback_mode_uses_fresh_session, fallback_mode_uses_safer_invocation,
@@ -33,9 +33,9 @@ use pc_adapter_api::{
 use pc_adapter_process::{
     execute_process_capture, execute_process_capture_with_options, ProcessSpec,
 };
+use serde_json::Value;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use serde_json::Value;
 
 pub const ADAPTER_TYPE: &str = "codex_local";
 pub const DEFAULT_MODEL: &str = "gpt-5.6-sol";
@@ -131,7 +131,13 @@ fn format_fast_mode_ignored_reason(model: &str) -> String {
 }
 
 fn fast_mode_supported_models_label() -> String {
-    const FAST: &[&str] = &["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"];
+    const FAST: &[&str] = &[
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4",
+    ];
     FAST.join(", ")
 }
 
@@ -297,17 +303,30 @@ pub async fn execute_codex_with_monitor(
     context: &AdapterExecutionContext,
     events: AdapterEventSink,
     monitor_timeout_ms: Option<u64>,
-) -> Result<(pc_adapter_process::StreamingProcessExecution, Option<MonitorOutcome>), AdapterError> {
+) -> Result<
+    (
+        pc_adapter_process::StreamingProcessExecution,
+        Option<MonitorOutcome>,
+    ),
+    AdapterError,
+> {
     use pc_acpx::execution_target_process::execute_command_for_target;
 
     let args = built.args.clone();
-    let stdin: Option<&str> = if context.prompt.is_empty() { None } else { Some(&context.prompt) };
+    let stdin: Option<&str> = if context.prompt.is_empty() {
+        None
+    } else {
+        Some(&context.prompt)
+    };
     // 执行超时独立于 monitor 的不活动窗口：执行超时默认 15min（对齐 Node
     // `runChildProcess` 默认；spec.timeout 在 pc-adapter-process 中也是
     // 15min 默认），monitor 的 `kill_flag` 才是短超时（300ms）触发点。
     let timeout_sec = 900.0_f64;
     let grace_sec = 5.0_f64;
-    let cwd_owned = context.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
+    let cwd_owned = context
+        .cwd
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
     let cwd: &str = cwd_owned.as_deref().unwrap_or("");
     let env = context.env.clone();
     let target_json = context.execution_target.clone();
@@ -351,21 +370,18 @@ pub async fn execute_codex_with_monitor(
         Arc::new(std::sync::Mutex::new(None));
     let outcome_for_monitor = Arc::clone(&outcome);
     let kill_flag_for_monitor = Arc::clone(&kill_flag);
-    let monitor = crate::output_inactivity_monitor::spawn_monitor(
-        timeout_ms,
-        move |state| {
-            let elapsed = state
-                .fired_at
-                .unwrap_or(state.last_event_at)
-                .saturating_sub(state.last_event_at);
-            *outcome_for_monitor.lock().expect("monitor outcome lock") = Some(MonitorOutcome {
-                termination_signal: "SIGTERM".to_owned(),
-                elapsed_ms_since_last_event: elapsed,
-                timeout_ms,
-            });
-            kill_flag_for_monitor.store(true, std::sync::atomic::Ordering::SeqCst);
-        },
-    )
+    let monitor = crate::output_inactivity_monitor::spawn_monitor(timeout_ms, move |state| {
+        let elapsed = state
+            .fired_at
+            .unwrap_or(state.last_event_at)
+            .saturating_sub(state.last_event_at);
+        *outcome_for_monitor.lock().expect("monitor outcome lock") = Some(MonitorOutcome {
+            termination_signal: "SIGTERM".to_owned(),
+            elapsed_ms_since_last_event: elapsed,
+            timeout_ms,
+        });
+        kill_flag_for_monitor.store(true, std::sync::atomic::Ordering::SeqCst);
+    })
     .map_err(AdapterError::Process)?;
 
     let monitor_for_chunk = Arc::new(monitor);
@@ -407,8 +423,8 @@ pub async fn execute_codex_with_monitor(
     if result.killed_by_flag {
         let outcome_locked = outcome.lock().expect("monitor outcome lock").clone();
         if outcome_locked.is_some() {
-            let error_message = crate::output_inactivity_monitor::
-                format_output_inactivity_monitor_error_message(
+            let error_message =
+                crate::output_inactivity_monitor::format_output_inactivity_monitor_error_message(
                     outcome_locked.as_ref().unwrap().elapsed_ms_since_last_event,
                 );
             drop(monitor_for_chunk_cb);
@@ -450,10 +466,7 @@ pub async fn execute_codex_with_monitor(
     let outcome = outcome.lock().expect("monitor outcome lock").clone();
     drop(activity_monitor);
     drop(monitor_for_chunk_cb);
-    Ok((
-        run_process_result_to_streaming(result),
-        outcome,
-    ))
+    Ok((run_process_result_to_streaming(result), outcome))
 }
 
 /// `RunProcessResult` → `StreamingProcessExecution`（对齐
@@ -499,9 +512,8 @@ fn build_resolved_session_params(
     // 复用 codex_session_params 模块（对齐 Node resolvedSessionParams：
     // sessionId / cwd / remoteExecution? / workspaceId? / repoUrl? / repoRef?）
     let cwd_str = cwd.as_ref().map(|p| p.to_string_lossy().to_string());
-    let target = execution_target.and_then(|v| {
-        pc_acpx::execution_target::parse_adapter_execution_target(v)
-    });
+    let target =
+        execution_target.and_then(|v| pc_acpx::execution_target::parse_adapter_execution_target(v));
     let is_remote = pc_acpx::execution_target::adapter_execution_target_is_remote(target.as_ref());
     let identity = if is_remote {
         pc_acpx::execution_target::adapter_execution_target_session_identity(target.as_ref())
@@ -516,12 +528,9 @@ fn build_resolved_session_params(
         cwd: cwd_str.as_deref().unwrap_or(""),
         execution_target_is_remote: is_remote,
         remote_execution_identity: identity,
-        workspace_id: workspace_context
-            .and_then(|w| w.get("workspaceId").and_then(|v| v.as_str())),
-        repo_url: workspace_context
-            .and_then(|w| w.get("repoUrl").and_then(|v| v.as_str())),
-        repo_ref: workspace_context
-            .and_then(|w| w.get("repoRef").and_then(|v| v.as_str())),
+        workspace_id: workspace_context.and_then(|w| w.get("workspaceId").and_then(|v| v.as_str())),
+        repo_url: workspace_context.and_then(|w| w.get("repoUrl").and_then(|v| v.as_str())),
+        repo_ref: workspace_context.and_then(|w| w.get("repoRef").and_then(|v| v.as_str())),
     };
     crate::codex_session_params::build_resolved_session_params(&input)
 }
@@ -622,9 +631,7 @@ impl Adapter for CodexLocalAdapter {
                     let sink = events_for_bridge_log.clone();
                     let line = line.to_string();
                     tokio::spawn(async move {
-                        let _ = sink
-                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
-                            .await;
+                        let _ = sink.emit(pc_adapter_api::AdapterEvent::stdout(line)).await;
                     });
                 })),
             )
@@ -679,9 +686,7 @@ impl Adapter for CodexLocalAdapter {
                     let sink = events_for_bridge_log.clone();
                     let line = line.to_string();
                     tokio::spawn(async move {
-                        let _ = sink
-                            .emit(pc_adapter_api::AdapterEvent::stdout(line))
-                            .await;
+                        let _ = sink.emit(pc_adapter_api::AdapterEvent::stdout(line)).await;
                     });
                 })),
             )
@@ -871,17 +876,17 @@ impl Adapter for CodexLocalAdapter {
         Ok(result)
     }
     .await;
-    // R492+R493 teardown：双 bridge 在所有出口停止（对齐 Node
-    // `cleanupRemoteBridges` 的
-    // `Promise.allSettled([processSessionBridge?.stop(), paperclipBridge?.stop()])`：
-    // 先停 process session bridge，再停 paperclip bridge，全部 best-effort）。
-    if let Some(bridge) = &started_process_session_bridge {
-        bridge.stop().await;
-    }
-    if let Some(bridge) = &started_bridge {
-        bridge.stop().await;
-    }
-    outcome
+        // R492+R493 teardown：双 bridge 在所有出口停止（对齐 Node
+        // `cleanupRemoteBridges` 的
+        // `Promise.allSettled([processSessionBridge?.stop(), paperclipBridge?.stop()])`：
+        // 先停 process session bridge，再停 paperclip bridge，全部 best-effort）。
+        if let Some(bridge) = &started_process_session_bridge {
+            bridge.stop().await;
+        }
+        if let Some(bridge) = &started_bridge {
+            bridge.stop().await;
+        }
+        outcome
     }
 }
 
@@ -929,7 +934,10 @@ mod tests {
             None,
         )
         .expect("params should be present");
-        assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
+        assert_eq!(
+            params.get("workspaceId").and_then(|v| v.as_str()),
+            Some("ws_1")
+        );
         assert_eq!(
             params.get("repoUrl").and_then(|v| v.as_str()),
             Some("git@github.com:foo/bar.git")
@@ -946,14 +954,12 @@ mod tests {
                 "repoRef": "main",
             }
         });
-        let params = build_resolved_session_params(
-            Some("thread_x"),
-            None,
-            &config,
-            None,
-        )
-        .expect("params should be present");
-        assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
+        let params = build_resolved_session_params(Some("thread_x"), None, &config, None)
+            .expect("params should be present");
+        assert_eq!(
+            params.get("workspaceId").and_then(|v| v.as_str()),
+            Some("ws_1")
+        );
         assert_eq!(params.get("repoRef").and_then(|v| v.as_str()), Some("main"));
         assert!(params.get("repoUrl").is_none());
         // Node codex resolvedSessionParams 始终写 cwd（cwd: effectiveExecutionCwd）
@@ -963,12 +969,8 @@ mod tests {
     #[test]
     fn build_resolved_session_params_none_when_session_id_missing() {
         let config = serde_json::json!({});
-        let params = build_resolved_session_params(
-            None,
-            Some(std::path::Path::new("/repo")),
-            &config,
-            None,
-        );
+        let params =
+            build_resolved_session_params(None, Some(std::path::Path::new("/repo")), &config, None);
         assert!(params.is_none());
     }
 
@@ -999,17 +1001,33 @@ mod tests {
         });
         let params = build_resolved_session_params(
             Some("thread_remote"),
-            Some(std::path::Path::new("/remote/workspace/.paperclip-runtime/runs/run-1/workspace")),
+            Some(std::path::Path::new(
+                "/remote/workspace/.paperclip-runtime/runs/run-1/workspace",
+            )),
             &config,
             Some(&target),
         )
         .expect("params should be present");
-        let remote = params.get("remoteExecution").expect("remoteExecution present");
-        assert_eq!(remote.get("transport").and_then(|v| v.as_str()), Some("ssh"));
-        assert_eq!(remote.get("host").and_then(|v| v.as_str()), Some("127.0.0.1"));
-        assert_eq!(remote.get("username").and_then(|v| v.as_str()), Some("fixture"));
+        let remote = params
+            .get("remoteExecution")
+            .expect("remoteExecution present");
+        assert_eq!(
+            remote.get("transport").and_then(|v| v.as_str()),
+            Some("ssh")
+        );
+        assert_eq!(
+            remote.get("host").and_then(|v| v.as_str()),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            remote.get("username").and_then(|v| v.as_str()),
+            Some("fixture")
+        );
         assert_eq!(remote.get("port").and_then(|v| v.as_u64()), Some(2222));
-        assert_eq!(params.get("workspaceId").and_then(|v| v.as_str()), Some("ws_1"));
+        assert_eq!(
+            params.get("workspaceId").and_then(|v| v.as_str()),
+            Some("ws_1")
+        );
     }
 
     #[test]
@@ -1210,7 +1228,6 @@ mod tests {
         assert!(!built.fast_mode_applied);
         assert!(built.fast_mode_ignored_reason.is_none());
     }
-
 }
 
 #[cfg(test)]
@@ -1234,15 +1251,10 @@ mod monitor_integration_tests {
             fast_mode_ignored_reason: None,
         };
         let (sink, _rx) = AdapterEventSink::channel(8);
-        let (execution, outcome) = execute_codex_with_monitor(
-            "sleep",
-            &built,
-            &context,
-            sink,
-            Some(300),
-        )
-        .await
-        .expect("execute should complete after monitor kill");
+        let (execution, outcome) =
+            execute_codex_with_monitor("sleep", &built, &context, sink, Some(300))
+                .await
+                .expect("execute should complete after monitor kill");
 
         let outcome = outcome.expect("monitor must fire on silent process");
         assert_eq!(outcome.termination_signal, "SIGTERM");
@@ -1266,11 +1278,8 @@ mod monitor_integration_tests {
     /// monitor 禁用时不创建监控，正常执行。
     #[tokio::test(flavor = "multi_thread")]
     async fn monitor_disabled_returns_no_outcome() {
-        let context = AdapterExecutionContext::new(
-            uuid::Uuid::new_v4(),
-            uuid::Uuid::new_v4(),
-            "ignored",
-        );
+        let context =
+            AdapterExecutionContext::new(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "ignored");
         let built = CodexExecArgs {
             args: vec![].to_vec(),
             model: "gpt-5.6-sol".to_owned(),
@@ -1279,15 +1288,10 @@ mod monitor_integration_tests {
             fast_mode_ignored_reason: None,
         };
         let (sink, _rx) = AdapterEventSink::channel(8);
-        let (_execution, outcome) = execute_codex_with_monitor(
-            "/bin/echo",
-            &built,
-            &context,
-            sink,
-            None,
-        )
-        .await
-        .expect("execute should succeed");
+        let (_execution, outcome) =
+            execute_codex_with_monitor("/bin/echo", &built, &context, sink, None)
+                .await
+                .expect("execute should succeed");
         assert!(outcome.is_none());
     }
 }

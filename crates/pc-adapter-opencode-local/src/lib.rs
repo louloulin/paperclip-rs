@@ -3,17 +3,14 @@
 //! `opencode_local` local CLI adapter: spawns `opencode`, parses its JSONL
 //! output into the shared `AdapterExecutionResult` shape.
 
-pub mod skills;
 pub mod execute_helpers;
+pub mod skills;
 
-pub use execute_helpers::{
-    claude_skills_home, resolve_opencode_biller,
-};
+pub use execute_helpers::{claude_skills_home, resolve_opencode_biller};
 pub mod opencode_stream_json;
 
 pub use opencode_stream_json::{
-    is_opencode_unknown_session_error, parse_opencode_stream_json,
-    ParsedOpenCodeStreamJson,
+    is_opencode_unknown_session_error, parse_opencode_stream_json, ParsedOpenCodeStreamJson,
 };
 
 use async_trait::async_trait;
@@ -127,8 +124,8 @@ impl Adapter for OpencodeLocalAdapter {
         let model = default_model(&context.adapter_config);
         let initial_args =
             build_opencode_exec_args(&context.adapter_config, context.session_id.as_deref());
-        let initial_spec = ProcessSpec::new(&command, &initial_args)
-            .with_stdin(context.prompt.clone());
+        let initial_spec =
+            ProcessSpec::new(&command, &initial_args).with_stdin(context.prompt.clone());
         let initial_execution =
             execute_process_capture(&initial_spec, &context, events.clone()).await?;
         let initial_parsed = parse_opencode_stream_json(&initial_execution.stdout);
@@ -138,7 +135,11 @@ impl Adapter for OpencodeLocalAdapter {
         let mut clear_session_on_retry = false;
         let mut active_execution = initial_execution;
         let mut active_parsed = initial_parsed;
-        if let Some(sid) = context.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        if let Some(sid) = context
+            .session_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
             let initial_failed = !active_execution.result.timed_out
                 && (active_execution.result.exit_code.unwrap_or(0) != 0
                     || active_parsed.error_message.is_some());
@@ -155,8 +156,8 @@ impl Adapter for OpencodeLocalAdapter {
                     )))
                     .await;
                 let retry_args = build_opencode_exec_args(&context.adapter_config, None);
-                let retry_spec = ProcessSpec::new(&command, &retry_args)
-                    .with_stdin(context.prompt.clone());
+                let retry_spec =
+                    ProcessSpec::new(&command, &retry_args).with_stdin(context.prompt.clone());
                 let (retry_sink, _rx) = pc_adapter_api::AdapterEventSink::channel(8);
                 let retry_execution =
                     execute_process_capture(&retry_spec, &context, retry_sink).await?;
@@ -180,13 +181,14 @@ impl Adapter for OpencodeLocalAdapter {
         result.session_id = parsed.session_id;
         result.cost_usd = parsed.cost_usd;
         result.usage = Some(parsed.usage.clone());
-        result.error_message = parsed.error_message.or_else(|| (result.exit_code != Some(0))
-            .then(|| execution.stderr.trim().to_owned())
-            .filter(|s| !s.is_empty()));
+        result.error_message = parsed.error_message.or_else(|| {
+            (result.exit_code != Some(0))
+                .then(|| execution.stderr.trim().to_owned())
+                .filter(|s| !s.is_empty())
+        });
         let paperclip_env_note =
             pc_acpx::session_config_options::render_paperclip_env_note(&context.env);
-        let api_access_note =
-            pc_acpx::session_config_options::render_api_access_note(&context.env);
+        let api_access_note = pc_acpx::session_config_options::render_api_access_note(&context.env);
         result.result_json = Some(serde_json::json!({
             "toolErrors": parsed.tool_errors,
             "biller": crate::execute_helpers::resolve_opencode_biller(&context.env, provider.as_deref()),

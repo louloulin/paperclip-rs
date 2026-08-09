@@ -167,7 +167,10 @@ fn apply_paperclip_workspace_env_handles_partial_inputs() {
             agent_home: Some("/home/agent"),
         },
     );
-    assert_eq!(env.get("PAPERCLIP_WORKSPACE_CWD"), Some(&"/workspace".to_string()));
+    assert_eq!(
+        env.get("PAPERCLIP_WORKSPACE_CWD"),
+        Some(&"/workspace".to_string())
+    );
     assert_eq!(env.get("PAPERCLIP_WORKSPACE_ID"), Some(&"ws-1".to_string()));
     assert_eq!(env.get("AGENT_HOME"), Some(&"/home/agent".to_string()));
     // Empty / None values were skipped.
@@ -198,16 +201,14 @@ fn shape_workspace_env_remote_repoints_all_hints_to_staged_dirs() {
     let mut staged = HashMap::new();
     staged.insert("p-1".to_string(), "/sandbox/p-1".to_string());
     staged.insert("p-2".to_string(), "/sandbox/p-2".to_string());
-    let out = shape_paperclip_workspace_env_for_execution(
-        ShapePaperclipWorkspaceEnvInput {
-            workspace_cwd: Some("/workspace"),
-            workspace_workspace_worktree_path: None,
-            workspace_hints: Some(&hints),
-            execution_target_is_remote: true,
-            execution_cwd: Some("/workspace"),
-            staged_project_dirs: Some(&staged),
-        },
-    );
+    let out = shape_paperclip_workspace_env_for_execution(ShapePaperclipWorkspaceEnvInput {
+        workspace_cwd: Some("/workspace"),
+        workspace_workspace_worktree_path: None,
+        workspace_hints: Some(&hints),
+        execution_target_is_remote: true,
+        execution_cwd: Some("/workspace"),
+        staged_project_dirs: Some(&staged),
+    });
     // Hint 1 and 2 → repointed to staged dirs.
     assert_eq!(
         out.workspace_hints[0].get("cwd"),
@@ -223,16 +224,14 @@ fn shape_workspace_env_remote_repoints_all_hints_to_staged_dirs() {
 
 #[test]
 fn shape_workspace_env_remote_trims_workspace_cwd() {
-    let out = shape_paperclip_workspace_env_for_execution(
-        ShapePaperclipWorkspaceEnvInput {
-            workspace_cwd: Some("  /workspace  "),
-            workspace_workspace_worktree_path: None,
-            workspace_hints: None,
-            execution_target_is_remote: true,
-            execution_cwd: Some("/workspace"),
-            staged_project_dirs: None,
-        },
-    );
+    let out = shape_paperclip_workspace_env_for_execution(ShapePaperclipWorkspaceEnvInput {
+        workspace_cwd: Some("  /workspace  "),
+        workspace_workspace_worktree_path: None,
+        workspace_hints: None,
+        execution_target_is_remote: true,
+        execution_cwd: Some("/workspace"),
+        staged_project_dirs: None,
+    });
     assert_eq!(out.workspace_cwd.as_deref(), Some("/workspace"));
 }
 
@@ -243,16 +242,18 @@ fn shape_workspace_env_remote_trims_workspace_cwd() {
 #[test]
 fn rewrite_remote_only_rewrites_when_target_is_remote() {
     let mut env = HashMap::new();
-    env.insert("AGENT_WORKSPACE_CWD".to_string(), serde_json::json!("/local"));
+    env.insert(
+        "AGENT_WORKSPACE_CWD".to_string(),
+        serde_json::json!("/local"),
+    );
     env.insert("PATH".to_string(), serde_json::json!("/usr/bin"));
-    let out = rewrite_workspace_cwd_env_vars_for_execution(
-        RewriteWorkspaceCwdEnvVarsForExecutionInput {
+    let out =
+        rewrite_workspace_cwd_env_vars_for_execution(RewriteWorkspaceCwdEnvVarsForExecutionInput {
             env: Some(&env),
             workspace_cwd: Some("/local"),
             execution_cwd: Some("/remote"),
             execution_target_is_remote: true,
-        },
-    );
+        });
     assert_eq!(out["AGENT_WORKSPACE_CWD"], "/remote");
     // Non *_WORKSPACE_CWD keys untouched.
     assert_eq!(out["PATH"], "/usr/bin");
@@ -262,15 +263,17 @@ fn rewrite_remote_only_rewrites_when_target_is_remote() {
 fn rewrite_filters_non_string_env_values() {
     let mut env = HashMap::new();
     env.insert("NUMERIC".to_string(), serde_json::json!(42)); // filtered out
-    env.insert("AGENT_WORKSPACE_CWD".to_string(), serde_json::json!("/local"));
-    let out = rewrite_workspace_cwd_env_vars_for_execution(
-        RewriteWorkspaceCwdEnvVarsForExecutionInput {
+    env.insert(
+        "AGENT_WORKSPACE_CWD".to_string(),
+        serde_json::json!("/local"),
+    );
+    let out =
+        rewrite_workspace_cwd_env_vars_for_execution(RewriteWorkspaceCwdEnvVarsForExecutionInput {
             env: Some(&env),
             workspace_cwd: Some("/local"),
             execution_cwd: Some("/remote"),
             execution_target_is_remote: true,
-        },
-    );
+        });
     // Numeric value is filtered (Node `Object.fromEntries` string-only).
     assert!(!out.contains_key("NUMERIC"));
     assert_eq!(out["AGENT_WORKSPACE_CWD"], "/remote");
@@ -288,10 +291,7 @@ fn refresh_clears_stale_workspace_env_then_applies_shaped() {
         "PAPERCLIP_WORKSPACE_WORKTREE_PATH".to_string(),
         "stale-wt".to_string(),
     );
-    env.insert(
-        "PAPERCLIP_WORKSPACES_JSON".to_string(),
-        "[]".to_string(),
-    );
+    env.insert("PAPERCLIP_WORKSPACES_JSON".to_string(), "[]".to_string());
     env.insert("UNRELATED".to_string(), "keep".to_string());
 
     let out = refresh_paperclip_workspace_env_for_execution(
@@ -342,7 +342,9 @@ fn refresh_serializes_workspace_hints_as_json() {
             staged_project_dirs: None,
         },
     );
-    let json = env.get("PAPERCLIP_WORKSPACES_JSON").expect("hints serialized");
+    let json = env
+        .get("PAPERCLIP_WORKSPACES_JSON")
+        .expect("hints serialized");
     let parsed: serde_json::Value = serde_json::from_str(json).expect("valid json");
     let arr = parsed.as_array().expect("array");
     assert_eq!(arr.len(), 1);

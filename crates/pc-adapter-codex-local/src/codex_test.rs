@@ -23,10 +23,18 @@ use std::path::Path;
 
 /// 复刻 Node `summarizeStatus`。
 #[must_use]
-pub fn summarize_codex_probe_status(checks: &[crate::acp::CodexEnvironmentCheck]) -> crate::acp::CodexEnvironmentCheckLevel {
-    if checks.iter().any(|c| c.level == crate::acp::CodexEnvironmentCheckLevel::Error) {
+pub fn summarize_codex_probe_status(
+    checks: &[crate::acp::CodexEnvironmentCheck],
+) -> crate::acp::CodexEnvironmentCheckLevel {
+    if checks
+        .iter()
+        .any(|c| c.level == crate::acp::CodexEnvironmentCheckLevel::Error)
+    {
         crate::acp::CodexEnvironmentCheckLevel::Error
-    } else if checks.iter().any(|c| c.level == crate::acp::CodexEnvironmentCheckLevel::Warn) {
+    } else if checks
+        .iter()
+        .any(|c| c.level == crate::acp::CodexEnvironmentCheckLevel::Warn)
+    {
         crate::acp::CodexEnvironmentCheckLevel::Warn
     } else {
         crate::acp::CodexEnvironmentCheckLevel::Info
@@ -176,8 +184,9 @@ pub fn classify_codex_hello_probe(input: &CodexHelloProbeInput) -> CodexHelloPro
     if is_codex_login_required(&evidence) {
         return CodexHelloProbeOutcome::AuthRequired;
     }
-    let detail = summarize_probe_detail(&input.stdout, &input.stderr, input.error_message.as_deref())
-        .unwrap_or_default();
+    let detail =
+        summarize_probe_detail(&input.stdout, &input.stderr, input.error_message.as_deref())
+            .unwrap_or_default();
     CodexHelloProbeOutcome::Failed { detail }
 }
 
@@ -236,9 +245,9 @@ pub fn resolve_probe_api_key<'a>(
 /// - command unresolvable（error）
 #[must_use]
 pub fn should_skip_hello_probe(checks: &[crate::acp::CodexEnvironmentCheck]) -> bool {
-    !checks.iter().all(|c| {
-        c.code != "codex_cwd_invalid" && c.code != "codex_command_unresolvable"
-    })
+    !checks
+        .iter()
+        .all(|c| c.code != "codex_cwd_invalid" && c.code != "codex_command_unresolvable")
 }
 
 /// 探测 token 来自 config vs host 的标识。
@@ -266,7 +275,6 @@ pub fn probe_api_key_source(
     }
     ProbeApiKeySource::NotProvided
 }
-
 
 /// Codex testEnvironment 主入口决策（对齐 Node test.ts testEnvironment）。
 ///
@@ -297,32 +305,36 @@ pub struct TestEnvironmentInput<'a> {
 pub fn decide_test_environment_checks(input: &TestEnvironmentInput<'_>) -> TestEnvironmentDecision {
     let mut checks: Vec<crate::acp::CodexEnvironmentCheck> = Vec::new();
 
-    let target_is_remote = input
-        .execution_target
-        .is_some_and(|_| pc_acpx::execution_target::adapter_execution_target_is_remote(input.execution_target));
+    let target_is_remote = input.execution_target.is_some_and(|_| {
+        pc_acpx::execution_target::adapter_execution_target_is_remote(input.execution_target)
+    });
     let target_is_sandbox = target_is_remote
         && input
             .execution_target
             .and_then(|t| t.as_remote())
-            .is_some_and(|r| matches!(r, pc_acpx::execution_target::AdapterRemoteExecutionTarget::Sandbox(_)));
+            .is_some_and(|r| {
+                matches!(
+                    r,
+                    pc_acpx::execution_target::AdapterRemoteExecutionTarget::Sandbox(_)
+                )
+            });
 
     // target label
     let target_label = if target_is_remote {
-        input.execution_target.cloned().map(
-            |t| pc_acpx::execution_target::describe_adapter_execution_target(Some(&t)),
-        )
+        input
+            .execution_target
+            .cloned()
+            .map(|t| pc_acpx::execution_target::describe_adapter_execution_target(Some(&t)))
     } else {
         None
     };
 
     if let Some(label) = &target_label {
-        checks.push(
-            crate::acp::CodexEnvironmentCheck::new(
-                "codex_environment_target",
-                crate::acp::CodexEnvironmentCheckLevel::Info,
-                format!("Probing inside environment: {label}"),
-            ),
-        );
+        checks.push(crate::acp::CodexEnvironmentCheck::new(
+            "codex_environment_target",
+            crate::acp::CodexEnvironmentCheckLevel::Info,
+            format!("Probing inside environment: {label}"),
+        ));
     }
 
     // cwd 校验：调用方负责实际 fs 检查，本决策只声明"应当 valid"
@@ -336,13 +348,11 @@ pub fn decide_test_environment_checks(input: &TestEnvironmentInput<'_>) -> TestE
             .with_detail(input.cwd.to_string()),
         );
     } else {
-        checks.push(
-            crate::acp::CodexEnvironmentCheck::new(
-                "codex_cwd_valid",
-                crate::acp::CodexEnvironmentCheckLevel::Info,
-                format!("Working directory is valid: {}", input.cwd),
-            ),
-        );
+        checks.push(crate::acp::CodexEnvironmentCheck::new(
+            "codex_cwd_valid",
+            crate::acp::CodexEnvironmentCheckLevel::Info,
+            format!("Working directory is valid: {}", input.cwd),
+        ));
     }
 
     // command 从 config 中提取
@@ -406,7 +416,8 @@ pub fn decide_test_environment_checks(input: &TestEnvironmentInput<'_>) -> TestE
         }
     }
 
-    let should_run_probe = !should_skip_hello_probe(&checks) && command_looks_like(command, "codex");
+    let should_run_probe =
+        !should_skip_hello_probe(&checks) && command_looks_like(command, "codex");
 
     if !command_looks_like(command, "codex") && !input.cwd.is_empty() {
         checks.push(
@@ -416,7 +427,9 @@ pub fn decide_test_environment_checks(input: &TestEnvironmentInput<'_>) -> TestE
                 "Skipped hello probe because command is not `codex`.",
             )
             .with_detail(command.to_string())
-            .with_hint("Use the `codex` CLI command to run the automatic login and installation probe."),
+            .with_hint(
+                "Use the `codex` CLI command to run the automatic login and installation probe.",
+            ),
         );
     }
 
@@ -427,7 +440,9 @@ pub fn decide_test_environment_checks(input: &TestEnvironmentInput<'_>) -> TestE
                 crate::acp::CodexEnvironmentCheckLevel::Info,
                 "Added --skip-git-repo-check for sandbox hello probes.",
             )
-            .with_hint("Codex requires an explicit trust bypass in headless remote sandbox workspaces."),
+            .with_hint(
+                "Codex requires an explicit trust bypass in headless remote sandbox workspaces.",
+            ),
         );
     }
 
@@ -863,7 +878,6 @@ mod tests {
         assert!(!should_skip_hello_probe(&checks));
     }
 
-
     // ---- decide_test_environment_checks ----
 
     fn empty_config() -> serde_json::Map<String, serde_json::Value> {
@@ -895,10 +909,7 @@ mod tests {
             cwd: "/workspace",
             host_env: None,
         });
-        assert!(decision
-            .checks
-            .iter()
-            .any(|c| c.code == "codex_cwd_valid"));
+        assert!(decision.checks.iter().any(|c| c.code == "codex_cwd_valid"));
     }
 
     #[test]

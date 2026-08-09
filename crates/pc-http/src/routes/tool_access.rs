@@ -64,7 +64,9 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/tool-profiles/:profile_id",
-            get(get_tool_profile).patch(patch_tool_profile).delete(delete_tool_profile),
+            get(get_tool_profile)
+                .patch(patch_tool_profile)
+                .delete(delete_tool_profile),
         )
         .route(
             "/api/companies/:company_id/tools/policies",
@@ -1246,14 +1248,13 @@ async fn get_tool_profile(
     // Profiles are looked up by id alone; the company context is derived from the row.
     // Use a fallback company_id fetch if the repo requires it.
     let pool = &state.db;
-    let company_id: Uuid = sqlx::query_scalar::<_, Uuid>(
-        "SELECT company_id FROM tool_profiles WHERE id=$1",
-    )
-    .bind(profile_id)
-    .fetch_optional(pool.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
+    let company_id: Uuid =
+        sqlx::query_scalar::<_, Uuid>("SELECT company_id FROM tool_profiles WHERE id=$1")
+            .bind(profile_id)
+            .fetch_optional(pool.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
     let row = pc_repos::tool::ToolRepo::new(pool)
         .get_profile(company_id, profile_id)
         .await?
@@ -1269,16 +1270,21 @@ async fn patch_tool_profile(
 ) -> ApiResult<Json<Value>> {
     crate::state::require_user_id(&state, &headers).await?;
     let pool = &state.db;
-    let company_id: Uuid = sqlx::query_scalar::<_, Uuid>(
-        "SELECT company_id FROM tool_profiles WHERE id=$1",
-    )
-    .bind(profile_id)
-    .fetch_optional(pool.pool())
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
-    let name = body.get("name").and_then(|v| v.as_str()).map(str::to_string);
-    let description = body.get("description").and_then(|v| v.as_str()).map(str::to_string);
+    let company_id: Uuid =
+        sqlx::query_scalar::<_, Uuid>("SELECT company_id FROM tool_profiles WHERE id=$1")
+            .bind(profile_id)
+            .fetch_optional(pool.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let description = body
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     // Two-phase update: rename + describe are separate columns on tool_profiles.
     if let Some(ref n) = name {
         sqlx::query("UPDATE tool_profiles SET name=$1 WHERE id=$2")

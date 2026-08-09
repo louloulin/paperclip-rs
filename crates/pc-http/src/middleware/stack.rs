@@ -1,11 +1,11 @@
 //! 默认 middleware 装配。
 use crate::AppState;
-use axum::{middleware::from_fn, Extension};
 use axum::Router;
+use axum::{middleware::from_fn, Extension};
 
 use super::{
-    access_log::access_log_layer, body_limit::body_limit_layer, cors::cors_layer,
-    cors::CorsConfig, redaction::RedactionConfig, request_id::request_id_layer,
+    access_log::access_log_layer, body_limit::body_limit_layer, cors::cors_layer, cors::CorsConfig,
+    redaction::RedactionConfig, request_id::request_id_layer,
 };
 
 /// 给定 router 套上默认 middleware 栈（与原 server middleware stack 等价）。

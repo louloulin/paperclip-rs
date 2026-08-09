@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pc_adapter_api::{Adapter, AdapterExecutionContext, AdapterEventSink};
+use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_cursor_local::CursorLocalAdapter;
 use serde_json::json;
 use uuid::Uuid;
@@ -46,7 +46,11 @@ fn write_mock(dir: &std::path::Path, body: &str) -> PathBuf {
     script
 }
 
-fn make_ctx(command: &str, session_id: Option<&str>, env: BTreeMap<String, String>) -> AdapterExecutionContext {
+fn make_ctx(
+    command: &str,
+    session_id: Option<&str>,
+    env: BTreeMap<String, String>,
+) -> AdapterExecutionContext {
     let mut ctx = AdapterExecutionContext::new(Uuid::new_v4(), Uuid::new_v4(), "prompt");
     ctx.env = env;
     ctx.adapter_config = json!({ "command": command });
@@ -87,14 +91,27 @@ async fn unknown_session_triggers_real_retry_without_resume() {
     assert!(!result.clear_session);
     let json = result.result_json.expect("result_json");
     assert_eq!(
-        json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()),
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
         Some(true)
     );
     let calls = call_log(&tmp.path);
     assert_eq!(calls.len(), 2, "应被调用两次；calls={calls:?}");
-    assert!(calls[0].contains("--resume"), "首次应带 --resume: {}", calls[0]);
-    assert!(calls[0].contains("sess-a"), "首次应带 session id: {}", calls[0]);
-    assert!(!calls[1].contains("--resume"), "重试必须去掉 --resume: {}", calls[1]);
+    assert!(
+        calls[0].contains("--resume"),
+        "首次应带 --resume: {}",
+        calls[0]
+    );
+    assert!(
+        calls[0].contains("sess-a"),
+        "首次应带 session id: {}",
+        calls[0]
+    );
+    assert!(
+        !calls[1].contains("--resume"),
+        "重试必须去掉 --resume: {}",
+        calls[1]
+    );
     assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.session_id.as_deref(), Some("sess-fresh"));
     assert_eq!(result.summary.as_deref(), Some("Recovered"));
@@ -120,7 +137,8 @@ async fn unrelated_failure_does_not_retry() {
     assert!(!result.clear_session);
     let json = result.result_json.expect("result_json");
     assert_eq!(
-        json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()),
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
         Some(false)
     );
     assert_eq!(call_log(&tmp.path).len(), 1);
@@ -143,7 +161,10 @@ async fn unknown_session_retry_still_fails_clears_session() {
         )
         .await
         .expect("execute ok");
-    assert!(result.clear_session, "重试仍失败且无新 session → clear_session");
+    assert!(
+        result.clear_session,
+        "重试仍失败且无新 session → clear_session"
+    );
     assert_eq!(
         result
             .result_json

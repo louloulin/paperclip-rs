@@ -62,7 +62,9 @@ pub fn resolve_cursor_biller(
     if billing_type == CursorBillingType::Subscription {
         return "cursor".to_owned();
     }
-    provider.map(str::to_owned).unwrap_or_else(|| "cursor".to_owned())
+    provider
+        .map(str::to_owned)
+        .unwrap_or_else(|| "cursor".to_owned())
 }
 
 /// Cursor 的执行模式。
@@ -145,7 +147,7 @@ mod tests {
         pairs
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-        .collect()
+            .collect()
     }
 
     // -----------------------------------------------------------------
@@ -197,10 +199,7 @@ mod tests {
 
     #[test]
     fn biller_openrouter_优先() {
-        let env = env_from(&[
-            ("CURSOR_API_KEY", "key"),
-            ("OPENROUTER_API_KEY", "or-key"),
-        ]);
+        let env = env_from(&[("CURSOR_API_KEY", "key"), ("OPENROUTER_API_KEY", "or-key")]);
         assert_eq!(
             resolve_cursor_biller(&env, CursorBillingType::Api, Some("anthropic")),
             "openrouter"
@@ -347,18 +346,12 @@ mod tests {
 
     #[test]
     fn skills_home_标准路径() {
-        assert_eq!(
-            cursor_skills_home("/home/u"),
-            "/home/u/.cursor/skills"
-        );
+        assert_eq!(cursor_skills_home("/home/u"), "/home/u/.cursor/skills");
     }
 
     #[test]
     fn skills_home_尾斜杠() {
-        assert_eq!(
-            cursor_skills_home("/home/u/"),
-            "/home/u/.cursor/skills"
-        );
+        assert_eq!(cursor_skills_home("/home/u/"), "/home/u/.cursor/skills");
     }
 
     #[test]

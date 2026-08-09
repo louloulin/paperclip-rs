@@ -124,13 +124,7 @@ mod tests {
 
     #[test]
     fn 多斜杠只切第一个() {
-        assert_eq!(
-            parse_model_provider(Some("a/b/c")),
-            Some("a".to_owned())
-        );
-        assert_eq!(
-            parse_model_id(Some("a/b/c")),
-            Some("b/c".to_owned())
-        );
+        assert_eq!(parse_model_provider(Some("a/b/c")), Some("a".to_owned()));
+        assert_eq!(parse_model_id(Some("a/b/c")), Some("b/c".to_owned()));
     }
 }

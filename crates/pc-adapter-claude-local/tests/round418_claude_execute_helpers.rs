@@ -76,7 +76,7 @@ fn bedrock_都未设置_不触发() {
 #[test]
 fn bedrock_多个env任意一个触发() {
     let env = env_from(&[
-        ("CLAUDE_CODE_USE_BEDROCK", "false"), // 假信号
+        ("CLAUDE_CODE_USE_BEDROCK", "false"),              // 假信号
         ("ANTHROPIC_BEDROCK_BASE_URL", "https://bedrock"), // 真信号
     ]);
     assert!(is_bedrock_auth(&env));
@@ -97,10 +97,7 @@ fn billing_默认subscription() {
 #[test]
 fn billing_api_key_有值_Api() {
     let env = env_from(&[("ANTHROPIC_API_KEY", "sk-test")]);
-    assert_eq!(
-        resolve_claude_billing_type(&env),
-        ClaudeBillingType::Api
-    );
+    assert_eq!(resolve_claude_billing_type(&env), ClaudeBillingType::Api);
 }
 
 #[test]
@@ -160,8 +157,16 @@ fn session_cwd_remote_总是true() {
 
 #[test]
 fn session_cwd_空cwd_总是true() {
-    assert!(claude_session_cwd_matches_execution_target("", "/current/here", false));
-    assert!(claude_session_cwd_matches_execution_target("   ", "/current/here", false));
+    assert!(claude_session_cwd_matches_execution_target(
+        "",
+        "/current/here",
+        false
+    ));
+    assert!(claude_session_cwd_matches_execution_target(
+        "   ",
+        "/current/here",
+        false
+    ));
 }
 
 #[test]
@@ -220,7 +225,10 @@ fn 综合_企业环境_bedrock优先级() {
     // 模拟企业部署：使用 AWS Bedrock，无 API key。
     let env = env_from(&[
         ("CLAUDE_CODE_USE_BEDROCK", "1"),
-        ("ANTHROPIC_BEDROCK_BASE_URL", "https://bedrock.us-east-1.amazonaws.com"),
+        (
+            "ANTHROPIC_BEDROCK_BASE_URL",
+            "https://bedrock.us-east-1.amazonaws.com",
+        ),
     ]);
     assert!(is_bedrock_auth(&env));
     assert_eq!(
@@ -234,10 +242,7 @@ fn 综合_个人开发_api() {
     // 模拟个人开发：直接 API key。
     let env = env_from(&[("ANTHROPIC_API_KEY", "sk-ant-test-123")]);
     assert!(!is_bedrock_auth(&env));
-    assert_eq!(
-        resolve_claude_billing_type(&env),
-        ClaudeBillingType::Api
-    );
+    assert_eq!(resolve_claude_billing_type(&env), ClaudeBillingType::Api);
 }
 
 #[test]
@@ -268,10 +273,7 @@ fn 综合_resume_决策() {
 fn 综合_resume_cwd_改变_不匹配() {
     let saved_session_cwd = "/work/proj";
     let current_cwd = "/work/other"; // cwd 改了
-    let can_resume = claude_session_cwd_matches_execution_target(
-        saved_session_cwd,
-        current_cwd,
-        false,
-    );
+    let can_resume =
+        claude_session_cwd_matches_execution_target(saved_session_cwd, current_cwd, false);
     assert!(!can_resume);
 }

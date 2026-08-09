@@ -15,14 +15,14 @@ use pc_acpx::execution_target::{
     describe_adapter_execution_target, format_adapter_execution_timeout_error_message,
     format_adapter_execution_timeout_start_log_line, is_adapter_execution_target_instance,
     is_bridge_debug_enabled_from, override_adapter_execution_target_remote_cwd,
-    parse_adapter_execution_target, parse_ssh_remote_execution_spec,
-    read_adapter_execution_target, resolve_adapter_execution_target_cwd,
-    resolve_adapter_execution_target_timeout,
-    resolve_adapter_execution_target_timeout_sec, resolve_host_for_url,
-    runtime_asset_dir, AdapterExecutionTarget, AdapterExecutionTargetTimeoutResolution,
+    parse_adapter_execution_target, parse_ssh_remote_execution_spec, read_adapter_execution_target,
+    resolve_adapter_execution_target_cwd, resolve_adapter_execution_target_timeout,
+    resolve_adapter_execution_target_timeout_sec, resolve_host_for_url, runtime_asset_dir,
+    AdapterExecutionTarget, AdapterExecutionTargetTimeoutResolution,
     AdapterExecutionTargetTimeoutSource, AdapterLocalExecutionTarget,
     AdapterLocalExecutionTargetMetadata, AdapterRemoteExecutionTarget,
-    AdapterSandboxExecutionTarget, AdapterSshExecutionTarget, PreparedAdapterExecutionTargetRuntime,
+    AdapterSandboxExecutionTarget, AdapterSshExecutionTarget,
+    PreparedAdapterExecutionTargetRuntime,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -41,24 +41,26 @@ fn local() -> AdapterExecutionTarget {
 }
 
 fn ssh() -> AdapterExecutionTarget {
-    AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(AdapterSshExecutionTarget {
-        kind: "remote".to_string(),
-        transport: "ssh".to_string(),
-        environment_id: None,
-        lease_id: None,
-        remote_cwd: "/workspace/ssh".to_string(),
-        spec: pc_acpx::execution_target::SshRemoteExecutionSpec {
-            host: "host.example".to_string(),
-            port: 2222,
-            username: "alice".to_string(),
+    AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(
+        AdapterSshExecutionTarget {
+            kind: "remote".to_string(),
+            transport: "ssh".to_string(),
+            environment_id: None,
+            lease_id: None,
             remote_cwd: "/workspace/ssh".to_string(),
-            remote_workspace_path: "/workspace/ssh".to_string(),
-            private_key: Some("fake-key".to_string()),
-            known_hosts: None,
-            strict_host_key_checking: true,
+            spec: pc_acpx::execution_target::SshRemoteExecutionSpec {
+                host: "host.example".to_string(),
+                port: 2222,
+                username: "alice".to_string(),
+                remote_cwd: "/workspace/ssh".to_string(),
+                remote_workspace_path: "/workspace/ssh".to_string(),
+                private_key: Some("fake-key".to_string()),
+                known_hosts: None,
+                strict_host_key_checking: true,
+            },
+            workspace_realization: None,
         },
-        workspace_realization: None,
-    }))
+    ))
 }
 
 fn sandbox() -> AdapterExecutionTarget {
@@ -105,10 +107,16 @@ fn url_helpers_normalize_wildcards_to_localhost() {
 #[test]
 fn bridge_debug_flag_detects_truthy_values() {
     for v in ["1", "true", "YES", "Yes", "TrUe"] {
-        assert!(is_bridge_debug_enabled_from(Some(v)), "expected truthy for {v}");
+        assert!(
+            is_bridge_debug_enabled_from(Some(v)),
+            "expected truthy for {v}"
+        );
     }
     for v in ["0", "false", "no", "off", "garbage", ""] {
-        assert!(!is_bridge_debug_enabled_from(Some(v)), "expected falsy for {v}");
+        assert!(
+            !is_bridge_debug_enabled_from(Some(v)),
+            "expected falsy for {v}"
+        );
     }
     assert!(!is_bridge_debug_enabled_from(None));
 }
@@ -119,14 +127,14 @@ fn bridge_debug_flag_detects_truthy_values() {
 
 #[test]
 fn is_instance_accepts_all_three_target_shapes() {
-    assert!(is_adapter_execution_target_instance(&json!({"kind": "local"})));
     assert!(is_adapter_execution_target_instance(
-        &json!({
-            "kind": "remote",
-            "transport": "ssh",
-            "spec": {"host": "h", "username": "u", "remoteCwd": "/w", "port": 22},
-        })
+        &json!({"kind": "local"})
     ));
+    assert!(is_adapter_execution_target_instance(&json!({
+        "kind": "remote",
+        "transport": "ssh",
+        "spec": {"host": "h", "username": "u", "remoteCwd": "/w", "port": 22},
+    })));
     assert!(is_adapter_execution_target_instance(
         &json!({"kind": "remote", "transport": "sandbox", "remoteCwd": "/w"})
     ));
@@ -135,8 +143,12 @@ fn is_instance_accepts_all_three_target_shapes() {
 #[test]
 fn is_instance_rejects_alien_shapes() {
     assert!(!is_adapter_execution_target_instance(&json!({})));
-    assert!(!is_adapter_execution_target_instance(&json!({"kind": "alien"})));
-    assert!(!is_adapter_execution_target_instance(&json!({"kind": "remote", "transport": "ssh"})));
+    assert!(!is_adapter_execution_target_instance(
+        &json!({"kind": "alien"})
+    ));
+    assert!(!is_adapter_execution_target_instance(
+        &json!({"kind": "remote", "transport": "ssh"})
+    ));
     assert!(!is_adapter_execution_target_instance(
         &json!({"kind": "remote", "transport": "sandbox"})
     ));
@@ -163,9 +175,13 @@ fn uses_managed_home_only_sandbox() {
 
 #[test]
 fn uses_paperclip_bridge_alias_of_is_remote() {
-    assert!(!adapter_execution_target_uses_paperclip_bridge(Some(&local())));
+    assert!(!adapter_execution_target_uses_paperclip_bridge(Some(
+        &local()
+    )));
     assert!(adapter_execution_target_uses_paperclip_bridge(Some(&ssh())));
-    assert!(adapter_execution_target_uses_paperclip_bridge(Some(&sandbox())));
+    assert!(adapter_execution_target_uses_paperclip_bridge(Some(
+        &sandbox()
+    )));
 }
 
 #[test]
@@ -283,8 +299,14 @@ fn resolve_timeout_negative_disabled() {
 #[test]
 fn resolve_timeout_zero_sandbox_falls_to_default() {
     let r = resolve_adapter_execution_target_timeout(Some(&sandbox()), Some(0.0));
-    assert_eq!(r.source, AdapterExecutionTargetTimeoutSource::SandboxDefault);
-    assert_eq!(r.timeout_sec as u64, pc_acpx::execution_target::DEFAULT_REMOTE_SANDBOX_ADAPTER_TIMEOUT_SEC);
+    assert_eq!(
+        r.source,
+        AdapterExecutionTargetTimeoutSource::SandboxDefault
+    );
+    assert_eq!(
+        r.timeout_sec as u64,
+        pc_acpx::execution_target::DEFAULT_REMOTE_SANDBOX_ADAPTER_TIMEOUT_SEC
+    );
 }
 
 #[test]
@@ -297,7 +319,10 @@ fn resolve_timeout_zero_local_is_unlimited() {
 #[test]
 fn resolve_timeout_none_sandbox_picks_default() {
     let r = resolve_adapter_execution_target_timeout(Some(&sandbox()), None);
-    assert_eq!(r.source, AdapterExecutionTargetTimeoutSource::SandboxDefault);
+    assert_eq!(
+        r.source,
+        AdapterExecutionTargetTimeoutSource::SandboxDefault
+    );
 }
 
 #[test]
@@ -392,9 +417,10 @@ fn parse_round_trip_sandbox_target() {
 fn parse_rejects_missing_required_fields() {
     assert!(parse_adapter_execution_target(&json!({})).is_none());
     assert!(parse_adapter_execution_target(&json!({"kind": "remote"})).is_none());
-    assert!(parse_adapter_execution_target(
-        &json!({"kind": "remote", "transport": "sandbox"})
-    ).is_none());
+    assert!(
+        parse_adapter_execution_target(&json!({"kind": "remote", "transport": "sandbox"}))
+            .is_none()
+    );
 }
 
 #[test]
@@ -495,7 +521,10 @@ fn session_match_sandbox_round_trip_ignores_extra() {
 
 #[test]
 fn session_match_local_empty_saved() {
-    assert!(adapter_execution_target_session_matches(&json!({}), Some(&local())));
+    assert!(adapter_execution_target_session_matches(
+        &json!({}),
+        Some(&local())
+    ));
     assert!(!adapter_execution_target_session_matches(
         &json!({"x": 1}),
         Some(&local())
@@ -509,10 +538,16 @@ fn session_match_local_empty_saved() {
 #[test]
 fn runtime_asset_dir_picks_map_value_when_present() {
     let mut dirs = BTreeMap::new();
-    dirs.insert("skill-1".to_string(), "/sandbox/runtime/skill-1".to_string());
+    dirs.insert(
+        "skill-1".to_string(),
+        "/sandbox/runtime/skill-1".to_string(),
+    );
     let mut p = prepared(sandbox());
     p.asset_dirs = dirs;
-    assert_eq!(runtime_asset_dir(&p, "skill-1", "/fallback"), "/sandbox/runtime/skill-1");
+    assert_eq!(
+        runtime_asset_dir(&p, "skill-1", "/fallback"),
+        "/sandbox/runtime/skill-1"
+    );
 }
 
 #[test]

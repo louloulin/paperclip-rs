@@ -148,13 +148,8 @@ pub async fn copy_back_codex_auth(
             }
 
             // 3. 决策
-            let decide_result = decide_and_apply(
-                decider.as_ref(),
-                &staged_temp_path,
-                &host_path,
-                &log,
-            )
-            .await;
+            let decide_result =
+                decide_and_apply(decider.as_ref(), &staged_temp_path, &host_path, &log).await;
             let outcome = match decide_result {
                 Ok(o) => o,
                 Err(e) => {
@@ -226,11 +221,7 @@ mod tests {
     /// 决策器固定返回 10 (USE_SOURCE)。
     struct AlwaysUseSource;
     impl CopyBackCodexAuthDecider for AlwaysUseSource {
-        fn decide<'a>(
-            &'a self,
-            _s: &'a Path,
-            _d: &'a Path,
-        ) -> BoxFuture<'a, std::io::Result<i32>> {
+        fn decide<'a>(&'a self, _s: &'a Path, _d: &'a Path) -> BoxFuture<'a, std::io::Result<i32>> {
             Box::pin(async { Ok(USE_SOURCE_EXIT) })
         }
     }
@@ -238,11 +229,7 @@ mod tests {
     /// 决策器固定返回 20 (KEEP_DESTINATION)。
     struct AlwaysKeepDest;
     impl CopyBackCodexAuthDecider for AlwaysKeepDest {
-        fn decide<'a>(
-            &'a self,
-            _s: &'a Path,
-            _d: &'a Path,
-        ) -> BoxFuture<'a, std::io::Result<i32>> {
+        fn decide<'a>(&'a self, _s: &'a Path, _d: &'a Path) -> BoxFuture<'a, std::io::Result<i32>> {
             Box::pin(async { Ok(KEEP_DESTINATION_EXIT) })
         }
     }
@@ -250,11 +237,7 @@ mod tests {
     /// 决策器返回未预期的 exit code。
     struct Unexpected;
     impl CopyBackCodexAuthDecider for Unexpected {
-        fn decide<'a>(
-            &'a self,
-            _s: &'a Path,
-            _d: &'a Path,
-        ) -> BoxFuture<'a, std::io::Result<i32>> {
+        fn decide<'a>(&'a self, _s: &'a Path, _d: &'a Path) -> BoxFuture<'a, std::io::Result<i32>> {
             Box::pin(async { Ok(99) })
         }
     }
@@ -299,7 +282,9 @@ mod tests {
             host_auth_path,
             log: silent_log(),
         };
-        let outcome = copy_back_codex_auth(input, Box::new(DefaultDecider)).await.unwrap();
+        let outcome = copy_back_codex_auth(input, Box::new(DefaultDecider))
+            .await
+            .unwrap();
         assert_eq!(outcome, CopyBackCodexAuthOutcome::KeptHost);
         std::fs::remove_dir_all(&host_dir).unwrap();
     }
@@ -316,7 +301,9 @@ mod tests {
             host_auth_path: host_auth_path.to_string_lossy().to_string(),
             log: silent_log(),
         };
-        let outcome = copy_back_codex_auth(input, Box::new(AlwaysUseSource)).await.unwrap();
+        let outcome = copy_back_codex_auth(input, Box::new(AlwaysUseSource))
+            .await
+            .unwrap();
         assert_eq!(outcome, CopyBackCodexAuthOutcome::Copied);
 
         let final_content = std::fs::read(&host_auth_path).unwrap();
@@ -337,7 +324,9 @@ mod tests {
             host_auth_path: host_auth_path.to_string_lossy().to_string(),
             log: silent_log(),
         };
-        let outcome = copy_back_codex_auth(input, Box::new(AlwaysKeepDest)).await.unwrap();
+        let outcome = copy_back_codex_auth(input, Box::new(AlwaysKeepDest))
+            .await
+            .unwrap();
         assert_eq!(outcome, CopyBackCodexAuthOutcome::KeptHost);
 
         let content = std::fs::read(&host_auth_path).unwrap();
@@ -377,7 +366,9 @@ mod tests {
             host_auth_path: host_auth_path.to_string_lossy().to_string(),
             log: silent_log(),
         };
-        let _ = copy_back_codex_auth(input, Box::new(AlwaysKeepDest)).await.unwrap();
+        let _ = copy_back_codex_auth(input, Box::new(AlwaysKeepDest))
+            .await
+            .unwrap();
 
         // 检查目录里没有遗留 .tmp 文件
         let leftover: Vec<_> = std::fs::read_dir(&host_dir)

@@ -13,9 +13,9 @@ use pc_acpx::execution_target::{
     AdapterExecutionTarget, AdapterRemoteExecutionTarget,
 };
 use pc_acpx::ssh::{
-    build_known_hosts_entry, is_valid_shell_env_key, parse_ssh_remote_execution_spec,
-    shell_quote, tar_exclude_args, tar_pattern_to_regexp, tar_spawn_env_defaults,
-    KnownHostsEntryInput, SshConnectionConfig, SshRemoteExecutionSpec,
+    build_known_hosts_entry, is_valid_shell_env_key, parse_ssh_remote_execution_spec, shell_quote,
+    tar_exclude_args, tar_pattern_to_regexp, tar_spawn_env_defaults, KnownHostsEntryInput,
+    SshConnectionConfig, SshRemoteExecutionSpec,
 };
 use serde_json::json;
 
@@ -68,7 +68,7 @@ fn ssh_spec_parser_rejects_partial_payload() {
         json!(42),
         json!([1, 2]),
         json!({}),
-        json!({"host": "h", "port": 22}),  // missing username, remoteCwd
+        json!({"host": "h", "port": 22}), // missing username, remoteCwd
         json!({"host": "h", "username": "u", "remoteCwd": "/w", "port": 0}),
         json!({"host": "h", "username": "u", "remoteCwd": "/w", "port": 70_000}),
     ];
@@ -108,9 +108,12 @@ fn tar_exclude_args_prepends_resource_fork_pattern() {
     assert_eq!(
         args,
         vec![
-            "--exclude", "._*",
-            "--exclude", "node_modules",
-            "--exclude", "target",
+            "--exclude",
+            "._*",
+            "--exclude",
+            "node_modules",
+            "--exclude",
+            "target",
         ]
     );
 }
@@ -162,7 +165,6 @@ fn tar_pattern_to_regexp_escapes_regex_metachars() {
     assert!(!re.is_match("fileXtxt"));
 }
 
-
 // -------------------------------------------------------------------
 // shell_quote
 // -------------------------------------------------------------------
@@ -186,8 +188,6 @@ fn shell_quote_handles_embedded_quote() {
     let q = shell_quote("name'with'quote");
     assert_eq!(q.chars().filter(|c| *c == '\'').count(), 8);
 }
-
-
 
 // -------------------------------------------------------------------
 // shell env keys
@@ -254,10 +254,12 @@ fn cross_module_smoke_ssh_target_full_flow() {
     //    shape used by execution_target's parser.
     let target = adapter_execution_target_from_remote_execution(
         &payload,
-        Some(pc_acpx::execution_target::AdapterLocalExecutionTargetMetadata {
-            environment_id: Some("env-1".to_string()),
-            lease_id: Some("lease-1".to_string()),
-        }),
+        Some(
+            pc_acpx::execution_target::AdapterLocalExecutionTargetMetadata {
+                environment_id: Some("env-1".to_string()),
+                lease_id: Some("lease-1".to_string()),
+            },
+        ),
     )
     .expect("target");
     assert!(matches!(
@@ -278,9 +280,12 @@ fn cross_module_smoke_ssh_target_full_flow() {
     assert_eq!(
         args,
         vec![
-            "--exclude", "._*",
-            "--exclude", "node_modules",
-            "--exclude", ".git",
+            "--exclude",
+            "._*",
+            "--exclude",
+            "node_modules",
+            "--exclude",
+            ".git",
         ]
     );
 

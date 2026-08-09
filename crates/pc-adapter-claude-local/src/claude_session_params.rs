@@ -79,10 +79,7 @@ pub fn build_resolved_session_params(input: &ResolvedSessionParamsInput<'_>) -> 
     if let Some(workspace_id) = input.workspace_id {
         let trimmed = workspace_id.trim();
         if !trimmed.is_empty() {
-            map.insert(
-                "workspaceId".to_owned(),
-                Value::String(trimmed.to_owned()),
-            );
+            map.insert("workspaceId".to_owned(), Value::String(trimmed.to_owned()));
         }
     }
 
@@ -219,13 +216,9 @@ mod tests {
 
     #[test]
     fn minimal_session_params_only_required_fields() {
-        let params = build_quick_session_params(
-            Some("session-1"),
-            "/workspace",
-            "bundle-key",
-            "[]",
-        )
-        .expect("Some expected");
+        let params =
+            build_quick_session_params(Some("session-1"), "/workspace", "bundle-key", "[]")
+                .expect("Some expected");
         assert_eq!(params["sessionId"], "session-1");
         assert_eq!(params["cwd"], "/workspace");
         assert_eq!(params["promptBundleKey"], "bundle-key");
@@ -379,13 +372,8 @@ mod tests {
 
     #[test]
     fn accessor_helpers_return_fields() {
-        let params = build_quick_session_params(
-            Some("session-x"),
-            "/x",
-            "bk-x",
-            "[{\"n\":\"a\"}]",
-        )
-        .expect("Some expected");
+        let params = build_quick_session_params(Some("session-x"), "/x", "bk-x", "[{\"n\":\"a\"}]")
+            .expect("Some expected");
         assert_eq!(session_params_session_id(&params), Some("session-x"));
         assert_eq!(session_params_cwd(&params), Some("/x"));
         assert_eq!(session_params_prompt_bundle_key(&params), Some("bk-x"));

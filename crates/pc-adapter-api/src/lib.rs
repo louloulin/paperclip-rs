@@ -442,5 +442,4 @@ mod tests {
             AdapterRegistryError::AlreadyRegistered("fake".into())
         );
     }
-
 }

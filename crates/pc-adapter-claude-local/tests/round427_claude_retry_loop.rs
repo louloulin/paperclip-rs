@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pc_adapter_api::{Adapter, AdapterExecutionContext, AdapterEventSink};
+use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_claude_local::ClaudeLocalAdapter;
 use serde_json::json;
 use uuid::Uuid;
@@ -93,7 +93,10 @@ async fn provider_quota_sets_error_family_without_clearing_session() {
         .await
         .expect("execute ok");
     let json = result.result_json.expect("result_json");
-    let family = json.get("errorFamily").and_then(|v| v.as_str()).unwrap_or("");
+    let family = json
+        .get("errorFamily")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert!(
         family == "provider_quota" || family == "transient_upstream",
         "expected provider_quota/transient_upstream, got {family:?}"
@@ -113,7 +116,10 @@ async fn unknown_session_error_sets_clear_session() {
     let mut ctx = make_ctx(cmd.to_str().unwrap(), env);
     ctx.session_id = Some("s1".to_owned());
     let (sink, _rx) = AdapterEventSink::channel(8);
-    let result = ClaudeLocalAdapter::new().execute(ctx, sink).await.expect("execute ok");
+    let result = ClaudeLocalAdapter::new()
+        .execute(ctx, sink)
+        .await
+        .expect("execute ok");
     assert!(result.clear_session, "unknown_session 应清 session");
     let json = result.result_json.expect("result_json");
     assert_eq!(

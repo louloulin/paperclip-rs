@@ -155,24 +155,28 @@ pub fn decide_retry(input: ClaudeRetryInput<'_>) -> ClaudeRetryDecision {
         && !max_turns
         && !poisoned
         && parsed_ref
-            .map(|v| is_claude_provider_quota_error(
-                Some(v),
-                input.stdout,
-                input.stderr,
-                input.error_message,
-            ))
+            .map(|v| {
+                is_claude_provider_quota_error(
+                    Some(v),
+                    input.stdout,
+                    input.stderr,
+                    input.error_message,
+                )
+            })
             .unwrap_or(false);
     let transient_upstream = failed
         && !max_turns
         && !poisoned
         && !provider_quota
         && parsed_ref
-            .map(|v| is_claude_transient_upstream_error(
-                Some(v),
-                input.stdout,
-                input.stderr,
-                input.error_message,
-            ))
+            .map(|v| {
+                is_claude_transient_upstream_error(
+                    Some(v),
+                    input.stdout,
+                    input.stderr,
+                    input.error_message,
+                )
+            })
             .unwrap_or(false);
 
     let error_family = if refusal {
@@ -203,7 +207,6 @@ pub fn decide_retry(input: ClaudeRetryInput<'_>) -> ClaudeRetryDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     fn env_from(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -268,10 +271,7 @@ mod tests {
     #[test]
     fn billing_type_api有api_key() {
         let env = env_from(&[("ANTHROPIC_API_KEY", "sk-test")]);
-        assert_eq!(
-            resolve_claude_billing_type(&env),
-            ClaudeBillingType::Api
-        );
+        assert_eq!(resolve_claude_billing_type(&env), ClaudeBillingType::Api);
     }
 
     #[test]
@@ -383,7 +383,10 @@ mod tests {
         let mut input = base_failed();
         input.parsed = Some(&parsed_value);
         let decision = super::decide_retry(input);
-        assert_eq!(decision.error_family, super::ClaudeErrorFamily::UnknownSession);
+        assert_eq!(
+            decision.error_family,
+            super::ClaudeErrorFamily::UnknownSession
+        );
         assert!(decision.clear_session);
     }
 
@@ -394,7 +397,10 @@ mod tests {
         let mut input = base_failed();
         input.parsed = Some(&parsed_value);
         let decision = super::decide_retry(input);
-        assert_eq!(decision.error_family, super::ClaudeErrorFamily::ProviderQuota);
+        assert_eq!(
+            decision.error_family,
+            super::ClaudeErrorFamily::ProviderQuota
+        );
         assert!(!decision.clear_session);
         assert!(decision.provider_quota);
     }
@@ -406,7 +412,10 @@ mod tests {
         let mut input = base_failed();
         input.parsed = Some(&parsed_value);
         let decision = super::decide_retry(input);
-        assert_eq!(decision.error_family, super::ClaudeErrorFamily::TransientUpstream);
+        assert_eq!(
+            decision.error_family,
+            super::ClaudeErrorFamily::TransientUpstream
+        );
         assert!(!decision.clear_session);
         assert!(decision.transient_upstream);
     }
@@ -421,5 +430,4 @@ mod tests {
         assert_eq!(decision.error_family, super::ClaudeErrorFamily::MaxTurns);
         assert!(decision.clear_session);
     }
-
 }

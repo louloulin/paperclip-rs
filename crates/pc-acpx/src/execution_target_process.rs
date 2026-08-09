@@ -30,9 +30,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::bridge_executor::{BridgeCommandRunner, RunnerExecuteInput};
-use crate::execution_target::{
-    AdapterExecutionTarget, AdapterRemoteExecutionTarget,
-};
+use crate::execution_target::{AdapterExecutionTarget, AdapterRemoteExecutionTarget};
 use crate::sandbox_run_log_stream::{
     SandboxRunLogStream, SandboxRunLogTailFactory, SandboxRunLogTailHandle,
 };
@@ -119,24 +117,25 @@ pub async fn run_adapter_execution_target_process(
     options: &RunAdapterExecutionTargetProcessOptions<'_>,
 ) -> Result<RunProcessResult, String> {
     match target {
-        None => Err("run_adapter_execution_target_process: target is required for process execution".to_string()),
-        Some(AdapterExecutionTarget::Local(_)) => {
-            spawn_stream_capture(
-                command,
-                args,
-                options.cwd,
-                options.env,
-                options.stdin,
-                options.timeout_sec,
-                options.grace_sec,
-                options.on_log.clone(),
-                options.kill_flag.as_deref(),
-                options.stdout_cap_bytes.unwrap_or(DEFAULT_OUTPUT_CAP_BYTES),
-                options.stderr_cap_bytes.unwrap_or(DEFAULT_OUTPUT_CAP_BYTES),
-            )
-            .await
-            .map_err(|error| format!("local process failed: {error}"))
-        }
+        None => Err(
+            "run_adapter_execution_target_process: target is required for process execution"
+                .to_string(),
+        ),
+        Some(AdapterExecutionTarget::Local(_)) => spawn_stream_capture(
+            command,
+            args,
+            options.cwd,
+            options.env,
+            options.stdin,
+            options.timeout_sec,
+            options.grace_sec,
+            options.on_log.clone(),
+            options.kill_flag.as_deref(),
+            options.stdout_cap_bytes.unwrap_or(DEFAULT_OUTPUT_CAP_BYTES),
+            options.stderr_cap_bytes.unwrap_or(DEFAULT_OUTPUT_CAP_BYTES),
+        )
+        .await
+        .map_err(|error| format!("local process failed: {error}")),
         Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(ssh))) => {
             run_ssh_branch(&ssh.spec, command, args, options).await
         }
@@ -185,18 +184,25 @@ async fn run_sandbox_branch(
     } else {
         sandbox.timeout_ms.unwrap_or(60_000)
     };
-    let tail = options.run_log_tail.as_ref().map(|factory| factory.create());
+    let tail = options
+        .run_log_tail
+        .as_ref()
+        .map(|factory| factory.create());
 
     let (exec_command, exec_args): (String, Vec<String>) = match &tail {
-        Some(tail_handle) => tail_handle.wrap_command(command, args.iter().map(String::as_str).collect::<Vec<_>>().as_slice()),
+        Some(tail_handle) => tail_handle.wrap_command(
+            command,
+            args.iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice(),
+        ),
         None => (command.to_string(), args.to_vec()),
     };
 
     if let Some(tail_handle) = &tail {
         let on_log = options.on_log.clone();
-        tail_handle
-            .start(make_tail_sink(on_log))
-            .await;
+        tail_handle.start(make_tail_sink(on_log)).await;
     }
 
     let result = options
@@ -214,7 +220,9 @@ async fn run_sandbox_branch(
     match result {
         Ok(result) => {
             if let Some(tail_handle) = &tail {
-                tail_handle.finish((result.stdout.clone(), result.stderr.clone())).await;
+                tail_handle
+                    .finish((result.stdout.clone(), result.stderr.clone()))
+                    .await;
             }
             Ok(RunProcessResult {
                 exit_code: result.exit_code,
@@ -240,7 +248,12 @@ async fn run_sandbox_branch(
 /// `SandboxRunLogSink` shape the tail handle expects.
 fn make_tail_sink(
     on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
-) -> Arc<dyn Fn(SandboxRunLogStream, String) -> futures::future::BoxFuture<'static, ()> + Send + Sync + 'static> {
+) -> Arc<
+    dyn Fn(SandboxRunLogStream, String) -> futures::future::BoxFuture<'static, ()>
+        + Send
+        + Sync
+        + 'static,
+> {
     use futures::future::{self, BoxFuture};
     Arc::new(move |stream, chunk| -> BoxFuture<'static, ()> {
         let stream_label = match stream {
@@ -278,8 +291,16 @@ async fn spawn_stream_capture(
     stderr_cap_bytes: usize,
 ) -> std::io::Result<RunProcessResult> {
     let started_at = system_now_iso();
-    let timeout_ms = if timeout_sec > 0.0 { (timeout_sec * 1000.0) as u64 } else { 0 };
-    let grace_ms = if grace_sec > 0.0 { (grace_sec * 1000.0) as u64 } else { 5_000 };
+    let timeout_ms = if timeout_sec > 0.0 {
+        (timeout_sec * 1000.0) as u64
+    } else {
+        0
+    };
+    let grace_ms = if grace_sec > 0.0 {
+        (grace_sec * 1000.0) as u64
+    } else {
+        5_000
+    };
     let use_timeout = timeout_ms > 0;
     let needs_watch = use_timeout || kill_flag.is_some();
 
@@ -287,7 +308,11 @@ async fn spawn_stream_capture(
     cmd.args(args)
         .envs(env.iter())
         .kill_on_drop(true)
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if !cwd.is_empty() {
@@ -301,25 +326,42 @@ async fn spawn_stream_capture(
 
     let mut child = cmd.spawn()?;
     if let Some(data) = stdin {
-        let mut s = child
-            .stdin
-            .take()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stdin pipe unavailable"))?;
+        let mut s = child.stdin.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "stdin pipe unavailable")
+        })?;
         s.write_all(data.as_bytes()).await?;
         drop(s);
     }
     let pid = child.id().unwrap_or(0);
 
-    let stdout = child.stdout.take().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stdout pipe unavailable"))?;
-    let stderr = child.stderr.take().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stderr pipe unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stdout pipe unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "stderr pipe unavailable"))?;
 
     let stdout_state = Arc::new(Mutex::new(String::new()));
     let stderr_state = Arc::new(Mutex::new(String::new()));
 
     let stdout_on_log = on_log.clone();
     let stderr_on_log = on_log.clone();
-    let stdout_task = spawn_reader(ReaderStream::Stdout(stdout), "stdout", Arc::clone(&stdout_state), stdout_on_log, stdout_cap_bytes);
-    let stderr_task = spawn_reader(ReaderStream::Stderr(stderr), "stderr", Arc::clone(&stderr_state), stderr_on_log, stderr_cap_bytes);
+    let stdout_task = spawn_reader(
+        ReaderStream::Stdout(stdout),
+        "stdout",
+        Arc::clone(&stdout_state),
+        stdout_on_log,
+        stdout_cap_bytes,
+    );
+    let stderr_task = spawn_reader(
+        ReaderStream::Stderr(stderr),
+        "stderr",
+        Arc::clone(&stderr_state),
+        stderr_on_log,
+        stderr_cap_bytes,
+    );
 
     let mut timed_out = false;
     let mut killed_by_flag = false;
@@ -517,12 +559,11 @@ pub async fn execute_command_for_target(
     // bridge_executor / process_session_bridge sandbox branches).
     let has_runner = matches!(
         target,
-        Some(AdapterExecutionTarget::Remote(AdapterRemoteExecutionTarget::Ssh(_)))
+        Some(AdapterExecutionTarget::Remote(
+            AdapterRemoteExecutionTarget::Ssh(_)
+        ))
     );
-    let wants_remote = matches!(
-        target,
-        Some(AdapterExecutionTarget::Remote(_))
-    );
+    let wants_remote = matches!(target, Some(AdapterExecutionTarget::Remote(_)));
     let fallback = !wants_remote || !has_runner;
     if fallback {
         if let Some(on_log) = &on_log {

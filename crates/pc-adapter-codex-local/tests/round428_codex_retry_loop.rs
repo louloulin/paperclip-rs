@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pc_adapter_api::{Adapter, AdapterExecutionContext, AdapterEventSink};
+use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
 use pc_adapter_codex_local::CodexLocalAdapter;
 use serde_json::json;
 use uuid::Uuid;
@@ -37,7 +37,11 @@ impl Drop for TempDir {
     }
 }
 
-fn make_ctx(command: &str, session_id: Option<&str>, env: BTreeMap<String, String>) -> AdapterExecutionContext {
+fn make_ctx(
+    command: &str,
+    session_id: Option<&str>,
+    env: BTreeMap<String, String>,
+) -> AdapterExecutionContext {
     let mut ctx = AdapterExecutionContext::new(Uuid::new_v4(), Uuid::new_v4(), "prompt");
     ctx.env = env;
     ctx.adapter_config = json!({ "command": command });
@@ -80,16 +84,17 @@ async fn unknown_session_triggers_real_retry_without_resume() {
     let env: BTreeMap<String, String> = BTreeMap::new();
     let (sink, _rx) = AdapterEventSink::channel(8);
     let result = CodexLocalAdapter::new()
-        .execute(
-            make_ctx(script.to_str().unwrap(), Some("th-1"), env),
-            sink,
-        )
+        .execute(make_ctx(script.to_str().unwrap(), Some("th-1"), env), sink)
         .await
         .expect("execute ok");
-    assert!(result.clear_session, "unknown-session 重跑后必须 clear_session");
+    assert!(
+        result.clear_session,
+        "unknown-session 重跑后必须 clear_session"
+    );
     let json = result.result_json.expect("result_json");
     assert_eq!(
-        json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()),
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
         Some(true)
     );
     // 成功重试后 Node 把 errorFamily 重置为 null；这里映射为 ""。
@@ -101,8 +106,16 @@ async fn unknown_session_triggers_real_retry_without_resume() {
     let calls = call_log(&tmp.path);
     assert_eq!(calls.len(), 2, "应被调用两次；calls={calls:?}");
     assert!(calls[0].contains("resume"), "首次应带 resume: {}", calls[0]);
-    assert!(calls[0].contains("th-1"), "首次应带 session id: {}", calls[0]);
-    assert!(!calls[1].contains("resume"), "重试必须去掉 resume: {}", calls[1]);
+    assert!(
+        calls[0].contains("th-1"),
+        "首次应带 session id: {}",
+        calls[0]
+    );
+    assert!(
+        !calls[1].contains("resume"),
+        "重试必须去掉 resume: {}",
+        calls[1]
+    );
     assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.summary.as_deref(), Some("Recovered"));
     assert_eq!(result.session_id.as_deref(), Some("th-fresh"));
@@ -132,7 +145,8 @@ async fn unknown_session_retry_still_fails_keeps_family_label() {
         Some("unknown_session")
     );
     assert_eq!(
-        json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()),
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
         Some(true)
     );
     assert!(result.clear_session);
@@ -163,7 +177,8 @@ async fn transient_upstream_labels_family_without_retry() {
         Some("transient_upstream")
     );
     assert_eq!(
-        json.get("retriedAfterUnknownSession").and_then(|v| v.as_bool()),
+        json.get("retriedAfterUnknownSession")
+            .and_then(|v| v.as_bool()),
         Some(false)
     );
     assert!(!result.clear_session);

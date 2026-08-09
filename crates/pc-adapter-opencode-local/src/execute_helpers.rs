@@ -17,10 +17,7 @@ use pc_acpx::model_id::parse_model_provider;
 /// - OpenAI-compatible hint 命中 → 例如 `"openrouter"` / `"openai"`。
 /// - 否则 provider 字符串 → 例如 `"anthropic"`。
 /// - 都没有 → `"unknown"`。
-pub fn resolve_opencode_biller(
-    env: &BTreeMap<String, String>,
-    provider: Option<&str>,
-) -> String {
+pub fn resolve_opencode_biller(env: &BTreeMap<String, String>, provider: Option<&str>) -> String {
     infer_openai_compatible_biller(env, None)
         .or_else(|| provider.map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned())
@@ -46,7 +43,7 @@ mod tests {
         pairs
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-        .collect()
+            .collect()
     }
 
     // -----------------------------------------------------------------
@@ -80,10 +77,7 @@ mod tests {
     #[test]
     fn biller_openrouter_env空不触发() {
         let env = env_from(&[("OPENROUTER_API_KEY", "")]);
-        assert_eq!(
-            resolve_opencode_biller(&env, Some("google")),
-            "google"
-        );
+        assert_eq!(resolve_opencode_biller(&env, Some("google")), "google");
     }
 
     // -----------------------------------------------------------------
@@ -92,18 +86,12 @@ mod tests {
 
     #[test]
     fn skills_home_标准路径() {
-        assert_eq!(
-            claude_skills_home("/home/u"),
-            "/home/u/.claude/skills"
-        );
+        assert_eq!(claude_skills_home("/home/u"), "/home/u/.claude/skills");
     }
 
     #[test]
     fn skills_home_尾斜杠() {
-        assert_eq!(
-            claude_skills_home("/home/u/"),
-            "/home/u/.claude/skills"
-        );
+        assert_eq!(claude_skills_home("/home/u/"), "/home/u/.claude/skills");
     }
 
     #[test]

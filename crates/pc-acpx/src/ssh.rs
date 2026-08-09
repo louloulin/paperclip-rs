@@ -155,7 +155,9 @@ pub fn is_valid_shell_env_key(value: &str) -> bool {
 /// Returns `None` when any required field is missing/invalid.
 /// Mirrors Node `parseSshRemoteExecutionSpec`.
 #[must_use]
-pub fn parse_ssh_remote_execution_spec(value: &serde_json::Value) -> Option<SshRemoteExecutionSpec> {
+pub fn parse_ssh_remote_execution_spec(
+    value: &serde_json::Value,
+) -> Option<SshRemoteExecutionSpec> {
     let parsed = match value {
         serde_json::Value::Object(m) => m,
         _ => return None,
@@ -341,14 +343,21 @@ impl SshAuthArgs {
             "-o".to_string(),
             format!(
                 "StrictHostKeyChecking={}",
-                if config.strict_host_key_checking { "yes" } else { "no" }
+                if config.strict_host_key_checking {
+                    "yes"
+                } else {
+                    "no"
+                }
             ),
         ];
         if config.strict_host_key_checking {
             if let Some(known_hosts) = config.known_hosts.as_deref().filter(|s| !s.is_empty()) {
                 let dir = write_temp_secure_file("paperclip-ssh-known-hosts-", known_hosts)?;
                 args.push("-o".to_string());
-                args.push(format!("UserKnownHostsFile={}", dir.join("payload").display()));
+                args.push(format!(
+                    "UserKnownHostsFile={}",
+                    dir.join("payload").display()
+                ));
                 temp_dirs.push(dir);
             }
         } else {
@@ -563,16 +572,15 @@ pub async fn run_ssh_command(
         timed_out: false,
         message: error,
     })?;
-    let script = build_ssh_login_script(remote_command, &options.env).map_err(|error| {
-        SshCommandError {
+    let script =
+        build_ssh_login_script(remote_command, &options.env).map_err(|error| SshCommandError {
             stdout: String::new(),
             stderr: error.clone(),
             exit_code: None,
             signal: None,
             timed_out: false,
             message: error,
-        }
-    })?;
+        })?;
     let mut ssh_args: Vec<String> = auth.args().to_vec();
     ssh_args.push("-p".to_string());
     ssh_args.push(config.port.to_string());
@@ -687,9 +695,7 @@ async fn spawn_ssh_capture(
                 timed_out = true;
                 // SIGTERM，5s 宽限后 SIGKILL（对齐 Node killEscalation）。
                 let _ = child.kill().await;
-                let escalated = timeout(Duration::from_secs(5), child.wait())
-                    .await
-                    .is_err();
+                let escalated = timeout(Duration::from_secs(5), child.wait()).await.is_err();
                 if escalated {
                     let _ = child.start_kill();
                     let _ = child.wait().await;
@@ -787,7 +793,11 @@ impl crate::bridge_executor::BridgeCommandRunner for SshCommandManagedRuntimeRun
         // `command` trim；`cwd` trim 后为空 → defaultCwd；env 全部注入。
         let command = input.command.trim();
         let cwd = input.cwd.trim();
-        let cwd = if cwd.is_empty() { &self.default_cwd } else { cwd };
+        let cwd = if cwd.is_empty() {
+            &self.default_cwd
+        } else {
+            cwd
+        };
         // 对齐 Node：`Object.entries(env).filter(v => typeof v === "string")`
         // —— Rust 的 BTreeMap<String,String> 天然全是字符串，原样保留
         // 空值（`KEY=''` 也会注入）。
@@ -821,8 +831,10 @@ impl crate::bridge_executor::BridgeCommandRunner for SshCommandManagedRuntimeRun
             )
         };
         let command_script = if command == "sh" || command == "bash" {
-            if matches!(input.args.first().map(String::as_str), Some("-c") | Some("-lc"))
-                && input.args.len() >= 2
+            if matches!(
+                input.args.first().map(String::as_str),
+                Some("-c") | Some("-lc")
+            ) && input.args.len() >= 2
             {
                 format!("{export_prefix}{}", input.args[1])
             } else {
@@ -995,10 +1007,7 @@ mod tests {
 
     #[test]
     fn shell_quote_handles_spaces() {
-        assert_eq!(
-            shell_quote("/tmp/with space/dir"),
-            "'/tmp/with space/dir'"
-        );
+        assert_eq!(shell_quote("/tmp/with space/dir"), "'/tmp/with space/dir'");
     }
 
     // ---- is_valid_shell_env_key ----
@@ -1113,9 +1122,12 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "--exclude", "._*",
-                "--exclude", "node_modules",
-                "--exclude", "target",
+                "--exclude",
+                "._*",
+                "--exclude",
+                "node_modules",
+                "--exclude",
+                "target",
             ]
         );
     }
@@ -1181,10 +1193,7 @@ mod tests {
             port: 2222,
             public_key: "ssh-ed25519 AAAA...rest".to_string(),
         });
-        assert_eq!(
-            entry,
-            "[h.example]:2222 ssh-ed25519 AAAA...rest"
-        );
+        assert_eq!(entry, "[h.example]:2222 ssh-ed25519 AAAA...rest");
     }
 
     #[test]
@@ -1251,8 +1260,12 @@ mod tests {
         let args = auth.args().to_vec();
         assert!(args.contains(&"-o".to_string()));
         let flags: Vec<&String> = args.iter().collect();
-        assert!(flags.windows(2).any(|w| w[0] == "-o" && w[1] == "BatchMode=yes"));
-        assert!(flags.windows(2).any(|w| w[0] == "-o" && w[1] == "ConnectTimeout=10"));
+        assert!(flags
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "BatchMode=yes"));
+        assert!(flags
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "ConnectTimeout=10"));
         assert!(flags
             .windows(2)
             .any(|w| w[0] == "-o" && w[1] == "StrictHostKeyChecking=yes"));
@@ -1322,20 +1335,21 @@ mod tests {
 
     #[test]
     fn runner_defaults_fall_back_to_remote_cwd_and_1mib() {
-        let runner =
-            SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), None, None);
+        let runner = SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), None, None);
         assert_eq!(runner.default_cwd, "/w");
         assert_eq!(runner.max_buffer_bytes, 1024 * 1024);
-        let runner =
-            SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), Some("  /x  ".into()), Some(0));
+        let runner = SshCommandManagedRuntimeRunner::new(
+            spec_for_runner("/w"),
+            Some("  /x  ".into()),
+            Some(0),
+        );
         assert_eq!(runner.default_cwd, "/x");
         assert_eq!(runner.max_buffer_bytes, 1024 * 1024);
     }
 
     #[test]
     fn runner_builds_remote_command_with_cd_and_exec() {
-        let runner =
-            SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), None, None);
+        let runner = SshCommandManagedRuntimeRunner::new(spec_for_runner("/w"), None, None);
         let input = crate::bridge_executor::RunnerExecuteInput {
             command: "printf".into(),
             args: vec!["%s".into(), "hi".into()],
@@ -1346,7 +1360,9 @@ mod tests {
         };
         // execute 会尝试真实 ssh；这里只验证失败路径的 exit_code 传播
         // 语义（本机无可用 sshd 时 ssh 命令会立即失败，返回非 0）。
-        let result = tokio_test_runtime().block_on(runner.execute(&input)).expect("runner err is Ok result");
+        let result = tokio_test_runtime()
+            .block_on(runner.execute(&input))
+            .expect("runner err is Ok result");
         assert!(result.exit_code != Some(0));
     }
 
@@ -1359,14 +1375,22 @@ mod tests {
         env.insert("A".to_string(), "1".to_string());
         let target = build_ssh_spawn_target(&spec, "node", &["--version".into()], &env)
             .expect("spawn target");
-        assert!(target.args.windows(2).any(|w| w[0] == "-p" && w[1] == "2222"));
+        assert!(target
+            .args
+            .windows(2)
+            .any(|w| w[0] == "-p" && w[1] == "2222"));
         assert!(target.args.contains(&"u@h".to_string()));
-        let sh_idx = target.args.iter().position(|a| a == "sh -c").expect("sh -c");
+        let sh_idx = target
+            .args
+            .iter()
+            .position(|a| a == "sh -c")
+            .expect("sh -c");
         let script_arg = &target.args[sh_idx + 1];
         // 整个 remote_script 被 shell_quote 包裹，内部单引号会被转义为
         // `"'"'"`，因此按转义后的形式断言。
         assert!(script_arg.contains("cd '\"'\"'/w'\"'\"'"));
-        assert!(script_arg.contains("exec env A='\"'\"'1'\"'\"' '\"'\"'node'\"'\"' '\"'\"'--version'\"'\"'"));
+        assert!(script_arg
+            .contains("exec env A='\"'\"'1'\"'\"' '\"'\"'node'\"'\"' '\"'\"'--version'\"'\"'"));
         // 外层仍由单个 `sh -c` 包裹
         assert!(script_arg.starts_with("'if [ -f /etc/profile"));
         assert!(script_arg.ends_with("version'\"'\"''"));

@@ -41,8 +41,16 @@ impl CorsConfig {
     pub fn from_environment() -> Self {
         let mut config = Self::default();
         if let Ok(origins) = std::env::var("PAPERCLIP_CORS_ALLOWED_ORIGINS") {
-            for origin in origins.split(',').map(str::trim).filter(|value| !value.is_empty()) {
-                if !config.allowed_origins.iter().any(|allowed| allowed == origin) {
+            for origin in origins
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if !config
+                    .allowed_origins
+                    .iter()
+                    .any(|allowed| allowed == origin)
+                {
                     config.allowed_origins.push(origin.to_owned());
                 }
             }
@@ -104,7 +112,9 @@ pub async fn cors_layer(req: Request, next: Next) -> Response {
     response
         .headers_mut()
         .entry(header::VARY)
-        .or_insert(HeaderValue::from_static("Origin, Access-Control-Request-Method, Access-Control-Request-Headers"));
+        .or_insert(HeaderValue::from_static(
+            "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        ));
     response
 }
 

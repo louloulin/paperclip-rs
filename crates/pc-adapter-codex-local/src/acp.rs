@@ -266,10 +266,7 @@ pub fn resolve_codex_acp_billing_identity(
         _ => "api",
     }
     .to_string();
-    let biller = pc_acpx::billing::infer_openai_compatible_biller(
-        env,
-        Some(billing_type.as_str()),
-    );
+    let biller = pc_acpx::billing::infer_openai_compatible_biller(env, Some(billing_type.as_str()));
     (billing_type, biller.unwrap_or_else(|| "openai".to_string()))
 }
 
@@ -299,18 +296,23 @@ pub fn with_codex_auth_refresh_failure_classification(
     stdout: &str,
     stderr: &str,
 ) -> pc_adapter_api::AdapterExecutionResult {
-    let classification = crate::codex_errors::classify_codex_auth_refresh_failure(
-        Some(stdout),
-        Some(stderr),
-        None,
-    );
+    let classification =
+        crate::codex_errors::classify_codex_auth_refresh_failure(Some(stdout), Some(stderr), None);
     if let Some(family) = classification {
         let family_str = match family {
-            crate::codex_errors::CodexAuthRefreshFailureClass::RefreshTokenReused => "refresh_token_reused",
-            crate::codex_errors::CodexAuthRefreshFailureClass::RefreshTokenExpired => "refresh_token_expired",
-            crate::codex_errors::CodexAuthRefreshFailureClass::RefreshTokenInvalidated => "refresh_token_invalidated",
+            crate::codex_errors::CodexAuthRefreshFailureClass::RefreshTokenReused => {
+                "refresh_token_reused"
+            }
+            crate::codex_errors::CodexAuthRefreshFailureClass::RefreshTokenExpired => {
+                "refresh_token_expired"
+            }
+            crate::codex_errors::CodexAuthRefreshFailureClass::RefreshTokenInvalidated => {
+                "refresh_token_invalidated"
+            }
         };
-        let payload = result.result_json.get_or_insert_with(|| Value::Object(Map::new()));
+        let payload = result
+            .result_json
+            .get_or_insert_with(|| Value::Object(Map::new()));
         if let Value::Object(map) = payload {
             map.insert(
                 "codexAuthRefreshFailure".to_string(),
@@ -461,9 +463,7 @@ pub async fn resolve_codex_acp_command(config: &Value, package_root_dir: &Path) 
 ///
 /// 当前简化：AdapterSandboxExecutionTarget 尚未含 runner 字段，恒返回 false。
 #[must_use]
-pub fn sandbox_target_has_process_session_bridge(
-    _target: Option<&AdapterExecutionTarget>,
-) -> bool {
+pub fn sandbox_target_has_process_session_bridge(_target: Option<&AdapterExecutionTarget>) -> bool {
     false
 }
 
@@ -600,7 +600,6 @@ pub fn codex_run_engine_input_from_payload(
 // ============================================================================
 // 测试
 // ============================================================================
-
 
 // ============================================================================
 // 环境探测（test_codex_acp_environment + has_codex_native_credentials + summarize）
@@ -749,8 +748,8 @@ pub async fn test_codex_acp_environment(
     host_env: &serde_json::Map<String, serde_json::Value>,
 ) -> CodexEnvironmentTestResult {
     let mut checks: Vec<CodexEnvironmentCheck> = Vec::new();
-    let target_is_remote = execution_target
-        .is_some_and(|_| adapter_execution_target_is_remote(execution_target));
+    let target_is_remote =
+        execution_target.is_some_and(|_| adapter_execution_target_is_remote(execution_target));
 
     checks.push(
         CodexEnvironmentCheck::new(
@@ -840,7 +839,10 @@ pub async fn test_codex_acp_environment(
                         CodexEnvironmentCheckLevel::Info,
                         "Codex ACP can use Codex native authentication.",
                     )
-                    .with_detail(format!("Credentials found in {}/auth.json.", home.display())),
+                    .with_detail(format!(
+                        "Credentials found in {}/auth.json.",
+                        home.display()
+                    )),
                 );
             } else {
                 checks.push(
@@ -879,213 +881,206 @@ pub async fn test_codex_acp_environment(
     );
 
     let status = summarize_codex_status(&checks);
-    CodexEnvironmentTestResult {
-        status,
-        checks,
-    }
+    CodexEnvironmentTestResult { status, checks }
 }
 
 #[cfg(test)]
 mod tests {
 
-        #[test]
-        fn summarize_codex_status_pass_when_all_info() {
-            let checks = vec![
-                CodexEnvironmentCheck::new("a", CodexEnvironmentCheckLevel::Info, "msg"),
-                CodexEnvironmentCheck::new("b", CodexEnvironmentCheckLevel::Info, "msg"),
-            ];
-            assert_eq!(summarize_codex_status(&checks), "pass");
-        }
+    #[test]
+    fn summarize_codex_status_pass_when_all_info() {
+        let checks = vec![
+            CodexEnvironmentCheck::new("a", CodexEnvironmentCheckLevel::Info, "msg"),
+            CodexEnvironmentCheck::new("b", CodexEnvironmentCheckLevel::Info, "msg"),
+        ];
+        assert_eq!(summarize_codex_status(&checks), "pass");
+    }
 
-        #[test]
-        fn summarize_codex_status_warn_when_any_warn() {
-            let checks = vec![
-                CodexEnvironmentCheck::new("a", CodexEnvironmentCheckLevel::Info, "msg"),
-                CodexEnvironmentCheck::new("b", CodexEnvironmentCheckLevel::Warn, "msg"),
-            ];
-            assert_eq!(summarize_codex_status(&checks), "warn");
-        }
+    #[test]
+    fn summarize_codex_status_warn_when_any_warn() {
+        let checks = vec![
+            CodexEnvironmentCheck::new("a", CodexEnvironmentCheckLevel::Info, "msg"),
+            CodexEnvironmentCheck::new("b", CodexEnvironmentCheckLevel::Warn, "msg"),
+        ];
+        assert_eq!(summarize_codex_status(&checks), "warn");
+    }
 
-        #[test]
-        fn summarize_codex_status_fail_when_any_error() {
-            let checks = vec![
-                CodexEnvironmentCheck::new("a", CodexEnvironmentCheckLevel::Warn, "msg"),
-                CodexEnvironmentCheck::new("b", CodexEnvironmentCheckLevel::Error, "msg"),
-            ];
-            assert_eq!(summarize_codex_status(&checks), "fail");
-        }
+    #[test]
+    fn summarize_codex_status_fail_when_any_error() {
+        let checks = vec![
+            CodexEnvironmentCheck::new("a", CodexEnvironmentCheckLevel::Warn, "msg"),
+            CodexEnvironmentCheck::new("b", CodexEnvironmentCheckLevel::Error, "msg"),
+        ];
+        assert_eq!(summarize_codex_status(&checks), "fail");
+    }
 
-        #[tokio::test]
-        async fn has_codex_native_credentials_returns_false_when_missing() {
-            let dir = tempdir();
-            assert!(!has_codex_native_credentials(&dir).await);
-        }
+    #[tokio::test]
+    async fn has_codex_native_credentials_returns_false_when_missing() {
+        let dir = tempdir();
+        assert!(!has_codex_native_credentials(&dir).await);
+    }
 
-        #[tokio::test]
-        async fn has_codex_native_credentials_returns_false_for_malformed() {
-            let dir = tempdir();
-            tokio::fs::write(dir.join("auth.json"), b"not json").await.unwrap();
-            assert!(!has_codex_native_credentials(&dir).await);
-        }
-
-        #[tokio::test]
-        async fn has_codex_native_credentials_returns_false_for_array_root() {
-            let dir = tempdir();
-            tokio::fs::write(dir.join("auth.json"), b"[1,2,3]").await.unwrap();
-            assert!(!has_codex_native_credentials(&dir).await);
-        }
-
-        #[tokio::test]
-        async fn has_codex_native_credentials_detects_openai_api_key() {
-            let dir = tempdir();
-            tokio::fs::write(
-                dir.join("auth.json"),
-                br#"{"OPENAI_API_KEY": "sk-test"}"#,
-            )
+    #[tokio::test]
+    async fn has_codex_native_credentials_returns_false_for_malformed() {
+        let dir = tempdir();
+        tokio::fs::write(dir.join("auth.json"), b"not json")
             .await
             .unwrap();
-            assert!(has_codex_native_credentials(&dir).await);
-        }
+        assert!(!has_codex_native_credentials(&dir).await);
+    }
 
-        #[tokio::test]
-        async fn has_codex_native_credentials_detects_refresh_token() {
-            let dir = tempdir();
-            tokio::fs::write(
-                dir.join("auth.json"),
-                br#"{"refresh_token": "rt-abc"}"#,
-            )
+    #[tokio::test]
+    async fn has_codex_native_credentials_returns_false_for_array_root() {
+        let dir = tempdir();
+        tokio::fs::write(dir.join("auth.json"), b"[1,2,3]")
             .await
             .unwrap();
-            assert!(has_codex_native_credentials(&dir).await);
-        }
+        assert!(!has_codex_native_credentials(&dir).await);
+    }
 
-        #[tokio::test]
-        async fn has_codex_native_credentials_ignores_blank_values() {
-            let dir = tempdir();
-            tokio::fs::write(
-                dir.join("auth.json"),
-                br#"{"OPENAI_API_KEY": "  ", "refresh_token": ""}"#,
-            )
+    #[tokio::test]
+    async fn has_codex_native_credentials_detects_openai_api_key() {
+        let dir = tempdir();
+        tokio::fs::write(dir.join("auth.json"), br#"{"OPENAI_API_KEY": "sk-test"}"#)
             .await
             .unwrap();
-            assert!(!has_codex_native_credentials(&dir).await);
-        }
+        assert!(has_codex_native_credentials(&dir).await);
+    }
 
-        #[tokio::test]
-        async fn test_codex_acp_environment_basic_pass() {
-            let cwd = tempdir();
-            let config = json!({});
-            let host_env = serde_json::Map::new();
-            let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
-            assert_eq!(result.status, "pass");
-            assert!(!result.checks.is_empty());
-            // 必须包含 engine_selected 和 runtime_scaffold
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"codex_engine_selected"));
-            assert!(codes.contains(&"codex_acp_runtime_scaffold"));
-            assert!(codes.contains(&"codex_acp_cwd_valid"));
-        }
-
-        #[tokio::test]
-        async fn test_codex_acp_environment_remote_target_adds_remote_check() {
-            let cwd = tempdir();
-            let config = json!({});
-            let target_value = json!({
-                "kind": "remote",
-                "transport": "ssh",
-                "remoteCwd": "/tmp",
-                "spec": {
-                    "kind": "ssh",
-                    "host": "example.com",
-                    "username": "user",
-                    "port": 22,
-                    "remoteCwd": "/tmp"
-                }
-            });
-            let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_value);
-            let host_env = serde_json::Map::new();
-            let result =
-                test_codex_acp_environment(&config, target.as_ref(), &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"codex_acp_remote_target"));
-        }
-
-        #[tokio::test]
-        async fn test_codex_acp_environment_warns_when_no_credentials() {
-            let cwd = tempdir();
-            let home = tempdir(); // 不含 auth.json
-            let config = json!({});
-            let mut host_env = serde_json::Map::new();
-            host_env.insert(
-                "HOME".to_string(),
-                Value::String(home.to_string_lossy().to_string()),
-            );
-            let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
-            assert_eq!(result.status, "warn");
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"codex_acp_credentials_missing"));
-        }
-
-        #[tokio::test]
-        async fn test_codex_acp_environment_detects_native_auth_json() {
-            let codex_home = tempdir();
-            tokio::fs::write(
-                codex_home.join("auth.json"),
-                br#"{"OPENAI_API_KEY": "sk-123"}"#,
-            )
+    #[tokio::test]
+    async fn has_codex_native_credentials_detects_refresh_token() {
+        let dir = tempdir();
+        tokio::fs::write(dir.join("auth.json"), br#"{"refresh_token": "rt-abc"}"#)
             .await
             .unwrap();
-            let cwd = tempdir();
-            let config = json!({ "env": { "CODEX_HOME": codex_home.to_string_lossy() } });
-            let host_env = serde_json::Map::new();
-            let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"codex_acp_native_auth_detected"));
-            assert_eq!(result.status, "pass");
-        }
+        assert!(has_codex_native_credentials(&dir).await);
+    }
 
-        #[tokio::test]
-        async fn test_codex_acp_environment_detects_config_api_key() {
-            let cwd = tempdir();
-            let config = json!({ "env": { "OPENAI_API_KEY": "sk-config" } });
-            let host_env = serde_json::Map::new();
-            let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
-            let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
-            assert!(codes.contains(&"codex_acp_openai_api_key_detected"));
-            let check = result
-                .checks
-                .iter()
-                .find(|c| c.code == "codex_acp_openai_api_key_detected")
-                .expect("present");
-            assert_eq!(check.detail(), Some("Detected in adapter config env."));
-        }
+    #[tokio::test]
+    async fn has_codex_native_credentials_ignores_blank_values() {
+        let dir = tempdir();
+        tokio::fs::write(
+            dir.join("auth.json"),
+            br#"{"OPENAI_API_KEY": "  ", "refresh_token": ""}"#,
+        )
+        .await
+        .unwrap();
+        assert!(!has_codex_native_credentials(&dir).await);
+    }
 
-        #[tokio::test]
-        async fn test_codex_acp_environment_runtime_scaffold_detail_format() {
-            let cwd = tempdir();
-            let config = json!({ "mode": "oneshot", "warmHandleIdleMs": 60000 });
-            let host_env = serde_json::Map::new();
-            let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
-            let check = result
-                .checks
-                .iter()
-                .find(|c| c.code == "codex_acp_runtime_scaffold")
-                .expect("present");
-            let detail = check.detail().unwrap();
-            assert!(detail.contains("mode=oneshot"));
-            assert!(detail.contains("warmHandleIdleMs=60000"));
-        }
+    #[tokio::test]
+    async fn test_codex_acp_environment_basic_pass() {
+        let cwd = tempdir();
+        let config = json!({});
+        let host_env = serde_json::Map::new();
+        let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
+        assert_eq!(result.status, "pass");
+        assert!(!result.checks.is_empty());
+        // 必须包含 engine_selected 和 runtime_scaffold
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"codex_engine_selected"));
+        assert!(codes.contains(&"codex_acp_runtime_scaffold"));
+        assert!(codes.contains(&"codex_acp_cwd_valid"));
+    }
 
-        #[test]
-        fn codex_environment_check_with_hint_and_detail() {
-            let check = CodexEnvironmentCheck::new("c", CodexEnvironmentCheckLevel::Info, "m")
-                .with_hint("h")
-                .with_detail("d");
-            assert_eq!(check.hint(), Some("h"));
-            assert_eq!(check.detail(), Some("d"));
-            assert_eq!(check.level, CodexEnvironmentCheckLevel::Info);
-        }
+    #[tokio::test]
+    async fn test_codex_acp_environment_remote_target_adds_remote_check() {
+        let cwd = tempdir();
+        let config = json!({});
+        let target_value = json!({
+            "kind": "remote",
+            "transport": "ssh",
+            "remoteCwd": "/tmp",
+            "spec": {
+                "kind": "ssh",
+                "host": "example.com",
+                "username": "user",
+                "port": 22,
+                "remoteCwd": "/tmp"
+            }
+        });
+        let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_value);
+        let host_env = serde_json::Map::new();
+        let result = test_codex_acp_environment(&config, target.as_ref(), &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"codex_acp_remote_target"));
+    }
 
+    #[tokio::test]
+    async fn test_codex_acp_environment_warns_when_no_credentials() {
+        let cwd = tempdir();
+        let home = tempdir(); // 不含 auth.json
+        let config = json!({});
+        let mut host_env = serde_json::Map::new();
+        host_env.insert(
+            "HOME".to_string(),
+            Value::String(home.to_string_lossy().to_string()),
+        );
+        let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
+        assert_eq!(result.status, "warn");
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"codex_acp_credentials_missing"));
+    }
+
+    #[tokio::test]
+    async fn test_codex_acp_environment_detects_native_auth_json() {
+        let codex_home = tempdir();
+        tokio::fs::write(
+            codex_home.join("auth.json"),
+            br#"{"OPENAI_API_KEY": "sk-123"}"#,
+        )
+        .await
+        .unwrap();
+        let cwd = tempdir();
+        let config = json!({ "env": { "CODEX_HOME": codex_home.to_string_lossy() } });
+        let host_env = serde_json::Map::new();
+        let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"codex_acp_native_auth_detected"));
+        assert_eq!(result.status, "pass");
+    }
+
+    #[tokio::test]
+    async fn test_codex_acp_environment_detects_config_api_key() {
+        let cwd = tempdir();
+        let config = json!({ "env": { "OPENAI_API_KEY": "sk-config" } });
+        let host_env = serde_json::Map::new();
+        let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
+        let codes: Vec<&str> = result.checks.iter().map(|c| c.code.as_str()).collect();
+        assert!(codes.contains(&"codex_acp_openai_api_key_detected"));
+        let check = result
+            .checks
+            .iter()
+            .find(|c| c.code == "codex_acp_openai_api_key_detected")
+            .expect("present");
+        assert_eq!(check.detail(), Some("Detected in adapter config env."));
+    }
+
+    #[tokio::test]
+    async fn test_codex_acp_environment_runtime_scaffold_detail_format() {
+        let cwd = tempdir();
+        let config = json!({ "mode": "oneshot", "warmHandleIdleMs": 60000 });
+        let host_env = serde_json::Map::new();
+        let result = test_codex_acp_environment(&config, None, &cwd, &host_env).await;
+        let check = result
+            .checks
+            .iter()
+            .find(|c| c.code == "codex_acp_runtime_scaffold")
+            .expect("present");
+        let detail = check.detail().unwrap();
+        assert!(detail.contains("mode=oneshot"));
+        assert!(detail.contains("warmHandleIdleMs=60000"));
+    }
+
+    #[test]
+    fn codex_environment_check_with_hint_and_detail() {
+        let check = CodexEnvironmentCheck::new("c", CodexEnvironmentCheckLevel::Info, "m")
+            .with_hint("h")
+            .with_detail("d");
+        assert_eq!(check.hint(), Some("h"));
+        assert_eq!(check.detail(), Some("d"));
+        assert_eq!(check.level, CodexEnvironmentCheckLevel::Info);
+    }
 
     use super::*;
     use serde_json::json;
@@ -1132,14 +1127,9 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_in_place_workspace_forces_cli() {
         let config = json!({});
-        let sel = resolve_codex_execution_engine_for_run(
-            &config,
-            None,
-            Some("in_place"),
-            None,
-            false,
-        )
-        .await;
+        let sel =
+            resolve_codex_execution_engine_for_run(&config, None, Some("in_place"), None, false)
+                .await;
         assert_eq!(sel.engine, CodexExecutionEngine::Cli);
         assert!(sel.fallback_reason.is_some());
     }
@@ -1147,14 +1137,9 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_in_place_with_explicit_acp_returns_alts() {
         let config = json!({ "engine": "acp" });
-        let sel = resolve_codex_execution_engine_for_run(
-            &config,
-            None,
-            Some("in_place"),
-            None,
-            false,
-        )
-        .await;
+        let sel =
+            resolve_codex_execution_engine_for_run(&config, None, Some("in_place"), None, false)
+                .await;
         assert_eq!(sel.engine, CodexExecutionEngine::Cli);
         assert!(sel.fallback_reason.is_some());
         let reason = sel.fallback_reason.unwrap();
@@ -1164,14 +1149,8 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_filesystem_scope_forces_cli() {
         let config = json!({ "filesystemScope": "/tmp" });
-        let sel = resolve_codex_execution_engine_for_run(
-            &config,
-            None,
-            None,
-            Some("/tmp"),
-            false,
-        )
-        .await;
+        let sel =
+            resolve_codex_execution_engine_for_run(&config, None, None, Some("/tmp"), false).await;
         assert_eq!(sel.engine, CodexExecutionEngine::Cli);
         assert!(sel.fallback_reason.is_some());
     }
@@ -1179,28 +1158,16 @@ mod tests {
     #[tokio::test]
     async fn resolve_engine_for_run_network_scope_active_forces_cli() {
         let config = json!({});
-        let sel = resolve_codex_execution_engine_for_run(
-            &config,
-            None,
-            None,
-            None,
-            true,
-        )
-        .await;
+        let sel = resolve_codex_execution_engine_for_run(&config, None, None, None, true).await;
         assert_eq!(sel.engine, CodexExecutionEngine::Cli);
     }
 
     #[tokio::test]
     async fn resolve_engine_for_run_explicit_cli_preserved() {
         let config = json!({ "engine": "cli" });
-        let sel = resolve_codex_execution_engine_for_run(
-            &config,
-            None,
-            Some("in_place"),
-            None,
-            false,
-        )
-        .await;
+        let sel =
+            resolve_codex_execution_engine_for_run(&config, None, Some("in_place"), None, false)
+                .await;
         assert_eq!(sel.engine, CodexExecutionEngine::Cli);
         assert!(sel.explicit);
     }
@@ -1239,7 +1206,9 @@ mod tests {
             Some(DEFAULT_ACP_ENGINE_PERMISSION_MODE)
         );
         assert_eq!(
-            built.get("nonInteractivePermissions").and_then(Value::as_str),
+            built
+                .get("nonInteractivePermissions")
+                .and_then(Value::as_str),
             Some(DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS)
         );
         assert_eq!(
@@ -1292,7 +1261,9 @@ mod tests {
             Some("deny")
         );
         assert_eq!(
-            built.get("nonInteractivePermissions").and_then(Value::as_str),
+            built
+                .get("nonInteractivePermissions")
+                .and_then(Value::as_str),
             Some("fail")
         );
         assert_eq!(
@@ -1448,10 +1419,7 @@ mod tests {
         let config = json!({});
         let pkg_root = tempdir();
         let cmd = resolve_codex_acp_command(&config, &pkg_root).await;
-        let expected = pkg_root
-            .join("node_modules")
-            .join(".bin")
-            .join("codex-acp");
+        let expected = pkg_root.join("node_modules").join(".bin").join("codex-acp");
         assert_eq!(cmd, expected);
     }
 
@@ -1472,7 +1440,8 @@ mod tests {
         });
         let target = pc_acpx::execution_target::parse_adapter_execution_target(&target_value);
         assert!(target.is_some());
-        let cmd = resolve_codex_acp_command_for_target(&config, target.as_ref(), Path::new("/tmp")).await;
+        let cmd =
+            resolve_codex_acp_command_for_target(&config, target.as_ref(), Path::new("/tmp")).await;
         assert_eq!(cmd.to_string_lossy(), "codex-acp");
     }
 
@@ -1481,10 +1450,7 @@ mod tests {
         let config = json!({});
         let pkg_root = tempdir();
         let cmd = resolve_codex_acp_command_for_target(&config, None, &pkg_root).await;
-        let expected = pkg_root
-            .join("node_modules")
-            .join(".bin")
-            .join("codex-acp");
+        let expected = pkg_root.join("node_modules").join(".bin").join("codex-acp");
         assert_eq!(cmd, expected);
     }
 

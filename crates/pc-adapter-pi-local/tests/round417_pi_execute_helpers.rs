@@ -88,14 +88,8 @@ fn model_provider_id_空输入() {
 #[test]
 fn model_provider_id_多斜杠() {
     // 只取第一个 "/" 切分。
-    assert_eq!(
-        model_provider(Some("a/b/c")),
-        Some("a".to_owned())
-    );
-    assert_eq!(
-        model_id(Some("a/b/c")),
-        Some("b/c".to_owned())
-    );
+    assert_eq!(model_provider(Some("a/b/c")), Some("a".to_owned()));
+    assert_eq!(model_id(Some("a/b/c")), Some("b/c".to_owned()));
 }
 
 // ---------------------------------------------------------------------------
@@ -118,19 +112,13 @@ fn biller_provider_fallback() {
 #[test]
 fn biller_openrouter_env优先() {
     let env = env_from(&[("OPENROUTER_API_KEY", "sk-or-test")]);
-    assert_eq!(
-        resolve_pi_biller(&env, Some("anthropic")),
-        "openrouter"
-    );
+    assert_eq!(resolve_pi_biller(&env, Some("anthropic")), "openrouter");
 }
 
 #[test]
 fn biller_openrouter_env空值不触发() {
     let env = env_from(&[("OPENROUTER_API_KEY", "")]);
-    assert_eq!(
-        resolve_pi_biller(&env, Some("anthropic")),
-        "anthropic"
-    );
+    assert_eq!(resolve_pi_biller(&env, Some("anthropic")), "anthropic");
 }
 
 // ---------------------------------------------------------------------------
@@ -180,10 +168,7 @@ fn session_header_空输入与全空行() {
 #[test]
 fn session_header_忽略前导空行() {
     let raw = "\n\n  {\"type\":\"session\",\"cwd\":\"/a\"}  \n";
-    assert_eq!(
-        parse_session_header_cwd(raw).as_deref(),
-        Some("/a")
-    );
+    assert_eq!(parse_session_header_cwd(raw).as_deref(), Some("/a"));
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +286,8 @@ fn resume_完整决策流程() {
     assert!(can_resume);
 
     // 假设首次 --resume 成功，无 unknown session error：
-    let stdout = r#"{"type":"turn_end","sessionId":"abc","message":{"role":"assistant","content":"ok"}}"#;
+    let stdout =
+        r#"{"type":"turn_end","sessionId":"abc","message":{"role":"assistant","content":"ok"}}"#;
     let stderr = "";
     assert!(!should_clear_session(stdout, stderr));
 }

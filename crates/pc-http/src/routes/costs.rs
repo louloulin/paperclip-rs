@@ -328,7 +328,9 @@ async fn quota_windows() -> Json<Vec<Value>> {
     use pc_adapter_quota::{fetch_all_quota_windows, probe_claude_local, probe_codex_local};
     let tasks: Vec<(
         String,
-        std::pin::Pin<Box<dyn std::future::Future<Output = pc_adapter_quota::ProviderQuotaResult> + Send>>,
+        std::pin::Pin<
+            Box<dyn std::future::Future<Output = pc_adapter_quota::ProviderQuotaResult> + Send>,
+        >,
     )> = vec![
         ("codex_local".to_owned(), Box::pin(probe_codex_local())),
         ("claude_local".to_owned(), Box::pin(probe_claude_local())),

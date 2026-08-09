@@ -51,7 +51,9 @@ impl CodexOutputInactivityResolution {
 /// - 数字 > 0 → configured；
 /// - 数字 ≤ 0 → 默认 30m（non_positive 备注）。
 #[must_use]
-pub fn resolve_codex_inactivity_timeout(raw_value: Option<&serde_json::Value>) -> CodexOutputInactivityResolution {
+pub fn resolve_codex_inactivity_timeout(
+    raw_value: Option<&serde_json::Value>,
+) -> CodexOutputInactivityResolution {
     match raw_value {
         Some(serde_json::Value::Null) => CodexOutputInactivityResolution::Disabled {
             reason: "explicit_null",
@@ -495,22 +497,22 @@ mod tests {
     fn monitor_fires_after_silence_and_counts_parsed_events() {
         let fires: Arc<Mutex<Vec<(u64, u64)>>> = Arc::new(Mutex::new(Vec::new()));
         let fires_for_closure = Arc::clone(&fires);
-        let mut monitor = OutputInactivityMonitor::new(
-            7 * 60 * 1000,
-            0,
-            move |state| {
-                fires_for_closure
-                    .lock()
-                    .unwrap()
-                    .push((
-                        state.fired_at.unwrap_or(0).saturating_sub(state.last_event_at),
-                        state.parsed_event_count,
-                    ));
-            },
-        )
+        let mut monitor = OutputInactivityMonitor::new(7 * 60 * 1000, 0, move |state| {
+            fires_for_closure.lock().unwrap().push((
+                state
+                    .fired_at
+                    .unwrap_or(0)
+                    .saturating_sub(state.last_event_at),
+                state.parsed_event_count,
+            ));
+        })
         .unwrap();
 
-        monitor.note_output_chunk("stdout", "{\"type\":\"thread.started\",\"thread_id\":\"abc\"}\n", 50);
+        monitor.note_output_chunk(
+            "stdout",
+            "{\"type\":\"thread.started\",\"thread_id\":\"abc\"}\n",
+            50,
+        );
         assert_eq!(monitor.state().parsed_event_count, 1);
         assert!(fires.lock().unwrap().is_empty());
 
@@ -570,9 +572,21 @@ mod tests {
         })
         .unwrap();
 
-        monitor.note_output_chunk("stdout", "packages/server: typecheck passed\n", timeout_ms - 1_000);
-        monitor.note_output_chunk("stderr", "packages/ui: build still running\n", (timeout_ms - 1_000) * 2);
-        monitor.note_output_chunk("stdout", "packages/ui: build passed\n", (timeout_ms - 1_000) * 3);
+        monitor.note_output_chunk(
+            "stdout",
+            "packages/server: typecheck passed\n",
+            timeout_ms - 1_000,
+        );
+        monitor.note_output_chunk(
+            "stderr",
+            "packages/ui: build still running\n",
+            (timeout_ms - 1_000) * 2,
+        );
+        monitor.note_output_chunk(
+            "stdout",
+            "packages/ui: build passed\n",
+            (timeout_ms - 1_000) * 3,
+        );
 
         assert_eq!(*fire_count.lock().unwrap(), 0);
         assert_eq!(monitor.state().output_chunk_count, 3);

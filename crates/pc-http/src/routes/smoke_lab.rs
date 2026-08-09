@@ -397,7 +397,10 @@ async fn runs_patch(
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     crate::state::require_user_id(&state, &headers).await?;
-    let status = body.get("status").and_then(|v| v.as_str()).map(str::to_string);
+    let status = body
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let updated = pc_repos::smoke::SmokeRepo::new(&state.db)
         .patch_run(company_id, run_id, status.as_deref())
         .await

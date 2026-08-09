@@ -2509,7 +2509,10 @@ mod heartbeat_route_tests {
             }
         });
         let result = resolve_execution_target_for_agent(&empty_obj(), &runtime_config);
-        assert!(result.is_some(), "legacy remoteExecution should produce a target");
+        assert!(
+            result.is_some(),
+            "legacy remoteExecution should produce a target"
+        );
         let parsed = result.unwrap();
         assert_eq!(parsed["kind"], "remote");
         assert_eq!(parsed["transport"], "ssh");

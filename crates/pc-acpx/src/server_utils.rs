@@ -54,16 +54,15 @@ pub const REDACTED_LOG_VALUE: &str = "***REDACTED***";
 /// Path segment pattern (1:1 of Node `PATH_SEGMENT_RE`).
 pub const PATH_SEGMENT_RE_SRC: &str = "^[a-zA-Z0-9_-]+$";
 /// Sensitive env-key pattern (1:1 of Node `SENSITIVE_ENV_KEY`).
-pub const SENSITIVE_ENV_KEY_RE_SRC: &str = "(?i)(key|token|secret|password|passwd|authorization|cookie)";
+pub const SENSITIVE_ENV_KEY_RE_SRC: &str =
+    "(?i)(key|token|secret|password|passwd|authorization|cookie)";
 
-static PATH_SEGMENT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(PATH_SEGMENT_RE_SRC).expect("PATH_SEGMENT_RE_SRC is a valid regex")
-});
+static PATH_SEGMENT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(PATH_SEGMENT_RE_SRC).expect("PATH_SEGMENT_RE_SRC is a valid regex"));
 
 /// Static empty `HashMap<String, String>` for borrow-friendly default
 /// arguments (avoids temporary-value lifetime issues).
-static EMPTY_HASHMAP_STR: std::sync::OnceLock<HashMap<String, String>> =
-    std::sync::OnceLock::new();
+static EMPTY_HASHMAP_STR: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
 
 fn empty_hashmap_str() -> &'static HashMap<String, String> {
     EMPTY_HASHMAP_STR.get_or_init(HashMap::new)
@@ -116,8 +115,7 @@ pub struct RunProcessResult {
 pub struct TerminalResultCleanupOptions {
     /// Closure that inspects the latest captured stdout/stderr and
     /// returns `true` once a terminal-result marker has been seen.
-    pub has_terminal_result:
-        Arc<dyn Fn(RunProcessOutput<'_>) -> bool + Send + Sync + 'static>,
+    pub has_terminal_result: Arc<dyn Fn(RunProcessOutput<'_>) -> bool + Send + Sync + 'static>,
     /// Grace period (ms) before escalating the stop signal.
     pub grace_ms: Option<u64>,
 }
@@ -149,11 +147,7 @@ impl TerminalResultCleanupEvidence {
     /// Build the canonical evidence payload. Mirrors the Node default
     /// constructor.
     #[must_use]
-    pub fn new(
-        terminal_result_seen: bool,
-        signal: Option<String>,
-        force_killed: bool,
-    ) -> Self {
+    pub fn new(terminal_result_seen: bool, signal: Option<String>, force_killed: bool) -> Self {
         Self {
             kind: "terminal_result_cleanup".to_string(),
             stopped: true,
@@ -224,10 +218,7 @@ pub enum SignalTarget {
 /// step 2 should be skipped because the child has already exited).
 /// The actual `kill` syscall is deferred to the async spawn layer.
 #[must_use]
-pub fn signal_decision(
-    info: RunningProcessSignalInfo,
-    is_windows: bool,
-) -> SignalTarget {
+pub fn signal_decision(info: RunningProcessSignalInfo, is_windows: bool) -> SignalTarget {
     if info.already_exited {
         return SignalTarget::None;
     }
@@ -448,7 +439,6 @@ where
         .join(separator)
 }
 
-
 // =============================================================================
 // Env helpers (R406) - mirrors Node `redactEnvForLogs`,
 // `redactCommandTextForLogs`, `buildInvocationEnvForLogs`,
@@ -494,13 +484,16 @@ pub fn build_invocation_env_for_logs(
     options: BuildInvocationEnvForLogsOptions<'_>,
 ) -> HashMap<String, String> {
     let mut merged = env.clone();
-    let runtime_env: &HashMap<String, String> = options.runtime_env.unwrap_or_else(|| empty_hashmap_str());
+    let runtime_env: &HashMap<String, String> =
+        options.runtime_env.unwrap_or_else(|| empty_hashmap_str());
     if let Some(keys) = options.include_runtime_keys {
         for key in keys {
             if merged.contains_key(*key) {
                 continue;
             }
-            let Some(value) = runtime_env.get(*key) else { continue };
+            let Some(value) = runtime_env.get(*key) else {
+                continue;
+            };
             if value.is_empty() {
                 continue;
             }
@@ -515,10 +508,7 @@ pub fn build_invocation_env_for_logs(
         let key = options
             .resolved_command_env_key
             .unwrap_or("PAPERCLIP_RESOLVED_COMMAND");
-        merged.insert(
-            key.to_string(),
-            redact_command_text_for_logs(resolved),
-        );
+        merged.insert(key.to_string(), redact_command_text_for_logs(resolved));
     }
     redact_env_for_logs(&merged)
 }
@@ -665,13 +655,20 @@ pub fn shape_paperclip_workspace_env_for_execution(
         return ShapePaperclipWorkspaceEnvOutput {
             workspace_cwd,
             workspace_worktree_path,
-            workspace_hints: input.workspace_hints.map(|h| h.to_vec()).unwrap_or_default(),
+            workspace_hints: input
+                .workspace_hints
+                .map(|h| h.to_vec())
+                .unwrap_or_default(),
         };
     }
 
-    let realized_workspace_cwd = workspace_cwd
-        .clone()
-        .or_else(|| input.execution_cwd.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string));
+    let realized_workspace_cwd = workspace_cwd.clone().or_else(|| {
+        input
+            .execution_cwd
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    });
 
     let hints_in = input.workspace_hints.unwrap_or(&[]);
     let mut shaped_hints: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
@@ -679,14 +676,20 @@ pub fn shape_paperclip_workspace_env_for_execution(
         let mut next = hint.clone();
         let project_id = next.get("projectId").and_then(|v| v.as_str()).unwrap_or("");
         let staged = if !project_id.is_empty() {
-            input.staged_project_dirs.and_then(|m| m.get(project_id)).map(String::as_str)
+            input
+                .staged_project_dirs
+                .and_then(|m| m.get(project_id))
+                .map(String::as_str)
         } else {
             None
         };
         if let Some(staged) = staged {
             let staged = staged.trim();
             if !staged.is_empty() {
-                next.insert("cwd".to_string(), serde_json::Value::String(staged.to_string()));
+                next.insert(
+                    "cwd".to_string(),
+                    serde_json::Value::String(staged.to_string()),
+                );
                 shaped_hints.push(next);
                 continue;
             }
@@ -731,7 +734,8 @@ pub fn rewrite_workspace_cwd_env_vars_for_execution(
     input: RewriteWorkspaceCwdEnvVarsForExecutionInput<'_>,
 ) -> HashMap<String, String> {
     // Filter env down to string-only entries (mirrors Node `Object.fromEntries` filter).
-    let env_src: &HashMap<String, serde_json::Value> = input.env.unwrap_or_else(|| empty_hashmap_value());
+    let env_src: &HashMap<String, serde_json::Value> =
+        input.env.unwrap_or_else(|| empty_hashmap_value());
     let mut next_env: HashMap<String, String> = env_src
         .iter()
         .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
@@ -748,7 +752,10 @@ pub fn rewrite_workspace_cwd_env_vars_for_execution(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    if !input.execution_target_is_remote || local_workspace_cwd.is_none() || remote_workspace_cwd.is_none() {
+    if !input.execution_target_is_remote
+        || local_workspace_cwd.is_none()
+        || remote_workspace_cwd.is_none()
+    {
         return next_env;
     }
     let local_workspace_cwd = local_workspace_cwd.unwrap();
@@ -810,16 +817,14 @@ pub fn refresh_paperclip_workspace_env_for_execution(
     env: &mut HashMap<String, String>,
     input: RefreshPaperclipWorkspaceEnvInput<'_>,
 ) -> ShapePaperclipWorkspaceEnvOutput {
-    let shaped = shape_paperclip_workspace_env_for_execution(
-        ShapePaperclipWorkspaceEnvInput {
-            workspace_cwd: input.workspace_cwd,
-            workspace_workspace_worktree_path: input.workspace_worktree_path,
-            workspace_hints: input.workspace_hints,
-            execution_target_is_remote: input.execution_target_is_remote,
-            execution_cwd: input.execution_cwd,
-            staged_project_dirs: input.staged_project_dirs,
-        },
-    );
+    let shaped = shape_paperclip_workspace_env_for_execution(ShapePaperclipWorkspaceEnvInput {
+        workspace_cwd: input.workspace_cwd,
+        workspace_workspace_worktree_path: input.workspace_worktree_path,
+        workspace_hints: input.workspace_hints,
+        execution_target_is_remote: input.execution_target_is_remote,
+        execution_cwd: input.execution_cwd,
+        staged_project_dirs: input.staged_project_dirs,
+    });
 
     env.remove("PAPERCLIP_WORKSPACE_CWD");
     env.remove("PAPERCLIP_WORKSPACE_WORKTREE_PATH");
@@ -846,15 +851,15 @@ pub fn refresh_paperclip_workspace_env_for_execution(
         env.insert("PAPERCLIP_WORKSPACES_JSON".to_string(), serialized);
     }
 
-    let env_config_src: &HashMap<String, serde_json::Value> = input.env_config.unwrap_or_else(|| empty_hashmap_value());
-    let shaped_env_config = rewrite_workspace_cwd_env_vars_for_execution(
-        RewriteWorkspaceCwdEnvVarsForExecutionInput {
+    let env_config_src: &HashMap<String, serde_json::Value> =
+        input.env_config.unwrap_or_else(|| empty_hashmap_value());
+    let shaped_env_config =
+        rewrite_workspace_cwd_env_vars_for_execution(RewriteWorkspaceCwdEnvVarsForExecutionInput {
             env: Some(env_config_src),
             workspace_cwd: input.workspace_cwd,
             execution_cwd: shaped.workspace_cwd.as_deref(),
             execution_target_is_remote: input.execution_target_is_remote,
-        },
-    );
+        });
 
     for (key, value) in shaped_env_config {
         if is_forbidden_config_env_key(&key) {
@@ -932,8 +937,12 @@ pub fn sanitize_ssh_remote_env(
     env: &HashMap<String, String>,
     inherited_env: &HashMap<String, String>,
 ) -> HashMap<String, String> {
-    let env_bt: std::collections::BTreeMap<String, String> = env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let inherited_bt: std::collections::BTreeMap<String, String> = inherited_env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let env_bt: std::collections::BTreeMap<String, String> =
+        env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let inherited_bt: std::collections::BTreeMap<String, String> = inherited_env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     let out = crate::remote_execution_env::sanitize_remote_execution_env(&env_bt, &inherited_bt);
     out.into_iter().collect()
 }
@@ -941,7 +950,10 @@ pub fn sanitize_ssh_remote_env(
 /// Ensure `env` has a non-empty `PATH` (or `Path` on Windows) entry.
 /// Mirrors Node `ensurePathInEnv`.
 #[must_use]
-pub fn ensure_path_in_env(env: &HashMap<String, String>, is_windows: bool) -> HashMap<String, String> {
+pub fn ensure_path_in_env(
+    env: &HashMap<String, String>,
+    is_windows: bool,
+) -> HashMap<String, String> {
     let path_key = if is_windows { "Path" } else { "PATH" };
     if let Some(v) = env.get(path_key) {
         if !v.is_empty() {
@@ -949,11 +961,12 @@ pub fn ensure_path_in_env(env: &HashMap<String, String>, is_windows: bool) -> Ha
         }
     }
     let mut out = env.clone();
-    out.insert("PATH".to_string(), default_path_for_platform(false).to_string());
+    out.insert(
+        "PATH".to_string(),
+        default_path_for_platform(false).to_string(),
+    );
     out
 }
-
-
 
 // =============================================================================
 // Skill entries (R407) - mirrors Node `PaperclipSkillEntry`,
@@ -1149,7 +1162,10 @@ pub fn is_maintainer_only_skill_target(candidate: &str) -> bool {
 /// Node `skillLocationLabel`.
 #[must_use]
 pub fn skill_location_label(value: Option<&str>) -> Option<String> {
-    value.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Default origin tuple for Paperclip-managed skills. Mirrors Node
@@ -1184,7 +1200,10 @@ impl From<ManagedSkillOrigin> for (Option<AdapterSkillOrigin>, Option<String>, O
 /// `isPaperclipSkillSourceMissing`.
 #[must_use]
 pub fn is_paperclip_skill_source_missing(entry: &PaperclipSkillEntry) -> bool {
-    matches!(entry.source_status, Some(PaperclipSkillSourceStatus::Missing))
+    matches!(
+        entry.source_status,
+        Some(PaperclipSkillSourceStatus::Missing)
+    )
 }
 
 /// Resolve a missing-detail string for the entry, falling back to the
@@ -1352,7 +1371,10 @@ pub fn resolve_paperclip_instance_root_for_adapter(input: ResolveInstanceRootInp
             "invalid",
         ));
     }
-    posix_resolve_v2(&posix_join(&posix_join(&home_resolved, "instances"), &instance_id))
+    posix_resolve_v2(&posix_join(
+        &posix_join(&home_resolved, "instances"),
+        &instance_id,
+    ))
 }
 
 #[derive(Default)]
@@ -1379,12 +1401,18 @@ pub struct PaperclipSkillSyncPreference {
 /// Read the `paperclipSkillSync` block from a config object. Mirrors
 /// Node `readPaperclipSkillSyncPreference`.
 #[must_use]
-pub fn read_paperclip_skill_sync_preference(config: &serde_json::Value) -> PaperclipSkillSyncPreference {
+pub fn read_paperclip_skill_sync_preference(
+    config: &serde_json::Value,
+) -> PaperclipSkillSyncPreference {
     let raw = config.get("paperclipSkillSync");
     let Some(obj) = raw.and_then(|v| v.as_object()) else {
         return PaperclipSkillSyncPreference::default();
     };
-    let desired_values = obj.get("desiredSkills").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let desired_values = obj
+        .get("desiredSkills")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let mut desired: Vec<PaperclipDesiredSkillEntry> = Vec::new();
     for value in desired_values {
         if let Some(s) = value.as_str() {
@@ -1425,7 +1453,10 @@ pub fn read_paperclip_skill_sync_preference(config: &serde_json::Value) -> Paper
     }
     PaperclipSkillSyncPreference {
         explicit: obj.contains_key("desiredSkills"),
-        desired_skills: desired_skill_entries.iter().map(|e| e.key.clone()).collect(),
+        desired_skills: desired_skill_entries
+            .iter()
+            .map(|e| e.key.clone())
+            .collect(),
         desired_skill_entries,
     }
 }
@@ -1521,7 +1552,10 @@ pub fn write_paperclip_skill_sync_preference(
     desired_skills: &[SkillSyncWrite<'_>],
 ) -> serde_json::Value {
     let mut next = config.clone();
-    let raw = next.get("paperclipSkillSync").cloned().unwrap_or(serde_json::Value::Null);
+    let raw = next
+        .get("paperclipSkillSync")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let mut current = match raw {
         serde_json::Value::Object(m) => m,
         _ => serde_json::Map::new(),
@@ -1564,17 +1598,15 @@ pub fn write_paperclip_skill_sync_preference(
     let desired_value = if has_versions {
         serde_json::to_value(&normalized).unwrap_or(serde_json::Value::Array(Vec::new()))
     } else {
-        serde_json::to_value(
-            normalized
-                .iter()
-                .map(|e| e.key.clone())
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or(serde_json::Value::Array(Vec::new()))
+        serde_json::to_value(normalized.iter().map(|e| e.key.clone()).collect::<Vec<_>>())
+            .unwrap_or(serde_json::Value::Array(Vec::new()))
     };
     current.insert("desiredSkills".to_string(), desired_value);
     if let serde_json::Value::Object(ref mut m) = next {
-        m.insert("paperclipSkillSync".to_string(), serde_json::Value::Object(current));
+        m.insert(
+            "paperclipSkillSync".to_string(),
+            serde_json::Value::Object(current),
+        );
     }
     next
 }
@@ -1636,7 +1668,9 @@ pub fn build_runtime_mounted_skill_snapshot(
 ) -> AdapterSkillSnapshot {
     let adapter_type = options.adapter_type.to_string();
     let mode = options.mode.unwrap_or(AdapterSkillSyncMode::Ephemeral);
-    let supported = options.supported.unwrap_or(matches!(mode, AdapterSkillSyncMode::Ephemeral));
+    let supported = options
+        .supported
+        .unwrap_or(matches!(mode, AdapterSkillSyncMode::Ephemeral));
     let missing_detail = options
         .missing_detail
         .unwrap_or("Paperclip cannot find this skill in the local runtime skills directory.");
@@ -1649,7 +1683,8 @@ pub fn build_runtime_mounted_skill_snapshot(
     for entry in options.available_entries {
         by_key.insert(entry.key.as_str(), entry);
     }
-    let desired_set: std::collections::HashSet<&str> = options.desired_skills.iter().map(String::as_str).collect();
+    let desired_set: std::collections::HashSet<&str> =
+        options.desired_skills.iter().map(String::as_str).collect();
     let managed_origin = build_managed_skill_origin();
     let mut entries: Vec<AdapterSkillEntry> = Vec::new();
     for available in options.available_entries {
@@ -1665,7 +1700,10 @@ pub fn build_runtime_mounted_skill_snapshot(
                 state: AdapterSkillState::Missing,
                 source_path: None,
                 target_path: None,
-                detail: Some(resolve_paperclip_skill_missing_detail(available, missing_detail)),
+                detail: Some(resolve_paperclip_skill_missing_detail(
+                    available,
+                    missing_detail,
+                )),
                 origin: Some(managed_origin.origin),
                 origin_label: Some(managed_origin.origin_label.clone()),
                 read_only: Some(managed_origin.read_only),
@@ -1818,11 +1856,14 @@ pub fn build_persistent_skill_snapshot(
     for entry in options.available_entries {
         by_key.insert(entry.key.as_str(), entry);
     }
-    let desired_set: std::collections::HashSet<&str> = options.desired_skills.iter().map(String::as_str).collect();
+    let desired_set: std::collections::HashSet<&str> =
+        options.desired_skills.iter().map(String::as_str).collect();
     let managed_origin = build_managed_skill_origin();
     let mut entries: Vec<AdapterSkillEntry> = Vec::new();
     for available in options.available_entries {
-        let installed_map = options.installed.unwrap_or_else(|| empty_hashmap_str_installed());
+        let installed_map = options
+            .installed
+            .unwrap_or_else(|| empty_hashmap_str_installed());
         let installed_entry = installed_map.get(&available.runtime_name);
         let desired = desired_set.contains(available.key.as_str());
         if is_paperclip_skill_source_missing(available) {
@@ -1836,7 +1877,10 @@ pub fn build_persistent_skill_snapshot(
                 state: AdapterSkillState::Missing,
                 source_path: None,
                 target_path: Some(posix_join(options.skills_home, &available.runtime_name)),
-                detail: Some(resolve_paperclip_skill_missing_detail(available, options.missing_detail)),
+                detail: Some(resolve_paperclip_skill_missing_detail(
+                    available,
+                    options.missing_detail,
+                )),
                 origin: Some(managed_origin.origin),
                 origin_label: Some(managed_origin.origin_label.clone()),
                 read_only: Some(managed_origin.read_only),
@@ -1858,13 +1902,11 @@ pub fn build_persistent_skill_snapshot(
                 detail = options.installed_detail.map(str::to_string);
             } else {
                 state = AdapterSkillState::External;
-                detail = Some(
-                    if desired {
-                        options.external_conflict_detail.to_string()
-                    } else {
-                        options.external_detail.to_string()
-                    },
-                );
+                detail = Some(if desired {
+                    options.external_conflict_detail.to_string()
+                } else {
+                    options.external_detail.to_string()
+                });
             }
         } else if desired {
             state = AdapterSkillState::Missing;
@@ -1904,15 +1946,25 @@ pub fn build_persistent_skill_snapshot(
             state: AdapterSkillState::Missing,
             source_path: None,
             target_path: None,
-            detail: Some("Paperclip cannot find this skill in the local runtime skills directory.".to_string()),
+            detail: Some(
+                "Paperclip cannot find this skill in the local runtime skills directory."
+                    .to_string(),
+            ),
             origin: Some(AdapterSkillOrigin::ExternalUnknown),
             origin_label: Some("External or unavailable".to_string()),
             read_only: Some(false),
             location_label: None,
         });
     }
-    for (name, installed_entry) in options.installed.unwrap_or_else(|| empty_hashmap_str_installed()) {
-        if options.available_entries.iter().any(|e| e.runtime_name == *name) {
+    for (name, installed_entry) in options
+        .installed
+        .unwrap_or_else(|| empty_hashmap_str_installed())
+    {
+        if options
+            .available_entries
+            .iter()
+            .any(|e| e.runtime_name == *name)
+        {
             continue;
         }
         let target_path = installed_entry
@@ -1963,10 +2015,14 @@ pub fn build_persistent_skill_snapshot(
 pub fn normalize_configured_paperclip_runtime_skills(
     value: &serde_json::Value,
 ) -> Vec<PaperclipSkillEntry> {
-    let Some(arr) = value.as_array() else { return Vec::new() };
+    let Some(arr) = value.as_array() else {
+        return Vec::new();
+    };
     let mut out: Vec<PaperclipSkillEntry> = Vec::new();
     for raw in arr {
-        let Some(entry) = raw.as_object() else { continue };
+        let Some(entry) = raw.as_object() else {
+            continue;
+        };
         let key = entry
             .get("key")
             .and_then(as_string_opt)
@@ -2033,7 +2089,6 @@ static EMPTY_HASHMAP_INSTALLED: std::sync::OnceLock<HashMap<String, InstalledSki
 fn empty_hashmap_str_installed() -> &'static HashMap<String, InstalledSkillTarget> {
     EMPTY_HASHMAP_INSTALLED.get_or_init(HashMap::new)
 }
-
 
 // =============================================================================
 // Unit tests
@@ -2183,11 +2238,11 @@ mod tests {
             as_string_array(&json!(["a", "b", "c"])),
             vec!["a", "b", "c"]
         );
+        assert_eq!(as_string_array(&json!(["a", 1, null, "b"])), vec!["a", "b"]);
         assert_eq!(
-            as_string_array(&json!(["a", 1, null, "b"])),
-            vec!["a", "b"]
+            as_string_array(&json!("not-an-array")),
+            Vec::<String>::new()
         );
-        assert_eq!(as_string_array(&json!("not-an-array")), Vec::<String>::new());
         assert_eq!(as_string_array(&json!(null)), Vec::<String>::new());
     }
 
@@ -2378,7 +2433,10 @@ mod tests {
         // placeholder through.
         let cmd = "agent run --api-key=hunter2 --verbose";
         let redacted = redact_command_text_for_logs(cmd);
-        assert!(redacted.contains("hunter2") == false, "secret leaked: {redacted}");
+        assert!(
+            redacted.contains("hunter2") == false,
+            "secret leaked: {redacted}"
+        );
         assert!(redacted.contains("REDACTED"));
     }
 
@@ -2404,7 +2462,10 @@ mod tests {
         assert!(merged["PAPERCLIP_RESOLVED_COMMAND"].contains("REDACTED"));
         // Existing env wins over runtime.
         let mut env2 = HashMap::new();
-        env2.insert("PAPERCLIP_AGENT_ID".to_string(), "local-override".to_string());
+        env2.insert(
+            "PAPERCLIP_AGENT_ID".to_string(),
+            "local-override".to_string(),
+        );
         let merged2 = build_invocation_env_for_logs(
             &env2,
             BuildInvocationEnvForLogsOptions {
@@ -2425,7 +2486,10 @@ mod tests {
         assert_eq!(resolve_host_for_url("::"), "localhost");
         assert_eq!(resolve_host_for_url(""), "localhost");
         assert_eq!(resolve_host_for_url("localhost"), "localhost");
-        assert_eq!(resolve_host_for_url("node-1.example.com"), "node-1.example.com");
+        assert_eq!(
+            resolve_host_for_url("node-1.example.com"),
+            "node-1.example.com"
+        );
         // IPv6 unbracketed → bracket.
         assert_eq!(resolve_host_for_url("::1"), "[::1]");
         assert_eq!(resolve_host_for_url("fe80::1"), "[fe80::1]");
@@ -2472,7 +2536,10 @@ mod tests {
             "PAPERCLIP_RUNTIME_API_URL".to_string(),
             "https://api.example.com".to_string(),
         );
-        runtime.insert("PAPERCLIP_API_URL".to_string(), "http://fallback".to_string());
+        runtime.insert(
+            "PAPERCLIP_API_URL".to_string(),
+            "http://fallback".to_string(),
+        );
         let vars = build_paperclip_env(BuildPaperclipEnvInput {
             agent_id: "a",
             company_id: "c",
@@ -2506,7 +2573,10 @@ mod tests {
         assert_eq!(env["PAPERCLIP_WORKSPACE_SOURCE"], "local");
         assert_eq!(env["PAPERCLIP_WORKSPACE_STRATEGY"], "fresh");
         assert_eq!(env["PAPERCLIP_WORKSPACE_ID"], "ws-1");
-        assert_eq!(env["PAPERCLIP_WORKSPACE_REPO_URL"], "git@github.com:foo/bar.git");
+        assert_eq!(
+            env["PAPERCLIP_WORKSPACE_REPO_URL"],
+            "git@github.com:foo/bar.git"
+        );
         assert_eq!(env["PAPERCLIP_WORKSPACE_REPO_REF"], "main");
         assert_eq!(env["PAPERCLIP_WORKSPACE_BRANCH"], "main");
         assert_eq!(env["PAPERCLIP_WORKSPACE_WORKTREE_PATH"], "/workspace/wt");
@@ -2546,18 +2616,19 @@ mod tests {
         hint.insert("projectId".to_string(), serde_json::json!("p-1"));
         let hints = vec![hint];
         let staged = HashMap::new();
-        let out = shape_paperclip_workspace_env_for_execution(
-            ShapePaperclipWorkspaceEnvInput {
-                workspace_cwd: Some("/workspace"),
-                workspace_workspace_worktree_path: Some("/workspace/wt"),
-                workspace_hints: Some(&hints),
-                execution_target_is_remote: false,
-                execution_cwd: None,
-                staged_project_dirs: Some(&staged),
-            },
-        );
+        let out = shape_paperclip_workspace_env_for_execution(ShapePaperclipWorkspaceEnvInput {
+            workspace_cwd: Some("/workspace"),
+            workspace_workspace_worktree_path: Some("/workspace/wt"),
+            workspace_hints: Some(&hints),
+            execution_target_is_remote: false,
+            execution_cwd: None,
+            staged_project_dirs: Some(&staged),
+        });
         assert_eq!(out.workspace_cwd.as_deref(), Some("/workspace"));
-        assert_eq!(out.workspace_worktree_path.as_deref(), Some("/workspace/wt"));
+        assert_eq!(
+            out.workspace_worktree_path.as_deref(),
+            Some("/workspace/wt")
+        );
         // Hint retains its cwd on local target.
         assert_eq!(
             out.workspace_hints[0].get("cwd"),
@@ -2573,16 +2644,14 @@ mod tests {
         let hints = vec![hint];
         let mut staged = HashMap::new();
         staged.insert("p-1".to_string(), "/sandbox/project-p-1".to_string());
-        let out = shape_paperclip_workspace_env_for_execution(
-            ShapePaperclipWorkspaceEnvInput {
-                workspace_cwd: Some("/workspace"),
-                workspace_workspace_worktree_path: None,
-                workspace_hints: Some(&hints),
-                execution_target_is_remote: true,
-                execution_cwd: Some("/workspace"),
-                staged_project_dirs: Some(&staged),
-            },
-        );
+        let out = shape_paperclip_workspace_env_for_execution(ShapePaperclipWorkspaceEnvInput {
+            workspace_cwd: Some("/workspace"),
+            workspace_workspace_worktree_path: None,
+            workspace_hints: Some(&hints),
+            execution_target_is_remote: true,
+            execution_cwd: Some("/workspace"),
+            staged_project_dirs: Some(&staged),
+        });
         // Hint cwd was repointed to the staged dir.
         assert_eq!(
             out.workspace_hints[0].get("cwd"),
@@ -2597,16 +2666,14 @@ mod tests {
         hint.insert("projectId".to_string(), serde_json::json!("p-missing"));
         let hints = vec![hint];
         let staged = HashMap::new();
-        let out = shape_paperclip_workspace_env_for_execution(
-            ShapePaperclipWorkspaceEnvInput {
-                workspace_cwd: Some("/workspace"),
-                workspace_workspace_worktree_path: None,
-                workspace_hints: Some(&hints),
-                execution_target_is_remote: true,
-                execution_cwd: Some("/workspace"),
-                staged_project_dirs: Some(&staged),
-            },
-        );
+        let out = shape_paperclip_workspace_env_for_execution(ShapePaperclipWorkspaceEnvInput {
+            workspace_cwd: Some("/workspace"),
+            workspace_workspace_worktree_path: None,
+            workspace_hints: Some(&hints),
+            execution_target_is_remote: true,
+            execution_cwd: Some("/workspace"),
+            staged_project_dirs: Some(&staged),
+        });
         // No staged dir for this hint's projectId → cwd dropped.
         assert!(out.workspace_hints[0].get("cwd").is_none());
     }
@@ -2639,10 +2706,7 @@ mod tests {
             "AGENT_WORKSPACE_CWD".to_string(),
             serde_json::json!("/local"),
         );
-        env.insert(
-            "OTHER_VAR".to_string(),
-            serde_json::json!("/local/other"),
-        );
+        env.insert("OTHER_VAR".to_string(), serde_json::json!("/local/other"));
         let out = rewrite_workspace_cwd_env_vars_for_execution(
             RewriteWorkspaceCwdEnvVarsForExecutionInput {
                 env: Some(&env),
@@ -2704,15 +2768,21 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("PATH".to_string(), "/usr/bin".to_string());
         env.insert("HOME".to_string(), "/home/agent".to_string());
-        env.insert("PAPERCLIP_AGENT_ID".to_string(), "should-be-stripped".to_string());
-        env.insert("PAPERCLIP_COMPANY_ID".to_string(), "should-be-stripped".to_string());
         env.insert(
-            "PAPERCLIP_RUNTIME_API_URL".to_string(),
-            "kept".to_string(),
+            "PAPERCLIP_AGENT_ID".to_string(),
+            "should-be-stripped".to_string(),
         );
+        env.insert(
+            "PAPERCLIP_COMPANY_ID".to_string(),
+            "should-be-stripped".to_string(),
+        );
+        env.insert("PAPERCLIP_RUNTIME_API_URL".to_string(), "kept".to_string());
         env.insert("PAPERCLIP_LISTEN_HOST".to_string(), "kept".to_string());
         env.insert("PAPERCLIP_LISTEN_PORT".to_string(), "kept".to_string());
-        env.insert("PAPERCLIPAI_CMD".to_string(), "should-be-stripped".to_string());
+        env.insert(
+            "PAPERCLIPAI_CMD".to_string(),
+            "should-be-stripped".to_string(),
+        );
         let out = sanitize_inherited_paperclip_env(&env);
         assert_eq!(out["PATH"], "/usr/bin");
         assert_eq!(out["HOME"], "/home/agent");
@@ -2779,16 +2849,28 @@ mod tests {
 
     #[test]
     fn is_maintainer_only_skill_target_detects_agents_skills_path() {
-        assert!(is_maintainer_only_skill_target("/home/agent/.agents/skills/foo"));
-        assert!(is_maintainer_only_skill_target("C:\\home\\.agents\\skills\\foo"));
-        assert!(!is_maintainer_only_skill_target("/home/agent/.paperclip/skills/foo"));
+        assert!(is_maintainer_only_skill_target(
+            "/home/agent/.agents/skills/foo"
+        ));
+        assert!(is_maintainer_only_skill_target(
+            "C:\\home\\.agents\\skills\\foo"
+        ));
+        assert!(!is_maintainer_only_skill_target(
+            "/home/agent/.paperclip/skills/foo"
+        ));
         assert!(!is_maintainer_only_skill_target("/tmp/random"));
     }
 
     #[test]
     fn skill_location_label_trims_and_returns_none() {
-        assert_eq!(skill_location_label(Some("/home/agent")), Some("/home/agent".to_string()));
-        assert_eq!(skill_location_label(Some("  /home  ")), Some("/home".to_string()));
+        assert_eq!(
+            skill_location_label(Some("/home/agent")),
+            Some("/home/agent".to_string())
+        );
+        assert_eq!(
+            skill_location_label(Some("  /home  ")),
+            Some("/home".to_string())
+        );
         assert_eq!(skill_location_label(Some("")), None);
         assert_eq!(skill_location_label(Some("   ")), None);
         assert_eq!(skill_location_label(None), None);
@@ -2877,7 +2959,10 @@ mod tests {
     #[test]
     fn expand_home_prefix_expands_tilde() {
         assert_eq!(expand_home_prefix("~", "/home/agent"), "/home/agent");
-        assert_eq!(expand_home_prefix("~/x/y", "/home/agent"), "/home/agent/x/y");
+        assert_eq!(
+            expand_home_prefix("~/x/y", "/home/agent"),
+            "/home/agent/x/y"
+        );
         assert_eq!(expand_home_prefix("/abs/path", "/home/agent"), "/abs/path");
         assert_eq!(expand_home_prefix("relative", "/home/agent"), "relative");
     }
@@ -2949,7 +3034,10 @@ mod tests {
             vec!["k1".to_string(), "k2".to_string(), "k3".to_string()]
         );
         assert_eq!(pref.desired_skill_entries.len(), 3);
-        assert_eq!(pref.desired_skill_entries[1].version_id.as_deref(), Some("v2"));
+        assert_eq!(
+            pref.desired_skill_entries[1].version_id.as_deref(),
+            Some("v2")
+        );
     }
 
     #[test]
@@ -3006,9 +3094,18 @@ mod tests {
     #[test]
     fn canonicalize_resolves_key_runtime_name_and_slug() {
         let avail = vec![
-            AvailableSkillRef { key: "owner/k1", runtime_name: Some("k1") },
-            AvailableSkillRef { key: "owner/k2", runtime_name: Some("k2") },
-            AvailableSkillRef { key: "owner/k3", runtime_name: Some("k3") },
+            AvailableSkillRef {
+                key: "owner/k1",
+                runtime_name: Some("k1"),
+            },
+            AvailableSkillRef {
+                key: "owner/k2",
+                runtime_name: Some("k2"),
+            },
+            AvailableSkillRef {
+                key: "owner/k3",
+                runtime_name: Some("k3"),
+            },
         ];
         assert_eq!(
             canonicalize_desired_paperclip_skill_reference("OWNER/K1", &avail),
@@ -3022,7 +3119,10 @@ mod tests {
             canonicalize_desired_paperclip_skill_reference("k3", &avail),
             "owner/k3"
         );
-        assert_eq!(canonicalize_desired_paperclip_skill_reference("", &avail), "");
+        assert_eq!(
+            canonicalize_desired_paperclip_skill_reference("", &avail),
+            ""
+        );
         assert_eq!(
             canonicalize_desired_paperclip_skill_reference("unknown", &avail),
             "unknown"
@@ -3032,7 +3132,10 @@ mod tests {
     #[test]
     fn resolve_paperclip_desired_skill_names_returns_empty_when_not_explicit() {
         let cfg = serde_json::json!({});
-        let avail = vec![AvailableSkillRef { key: "owner/k1", runtime_name: Some("k1") }];
+        let avail = vec![AvailableSkillRef {
+            key: "owner/k1",
+            runtime_name: Some("k1"),
+        }];
         assert!(resolve_paperclip_desired_skill_names(&cfg, &avail).is_empty());
     }
 
@@ -3044,13 +3147,23 @@ mod tests {
             }
         });
         let avail = vec![
-            AvailableSkillRef { key: "owner/k1", runtime_name: Some("k1") },
-            AvailableSkillRef { key: "owner/k2", runtime_name: Some("k2") },
+            AvailableSkillRef {
+                key: "owner/k1",
+                runtime_name: Some("k1"),
+            },
+            AvailableSkillRef {
+                key: "owner/k2",
+                runtime_name: Some("k2"),
+            },
         ];
         let names = resolve_paperclip_desired_skill_names(&cfg, &avail);
         assert_eq!(
             names,
-            vec!["owner/k1".to_string(), "owner/k2".to_string(), "unknown".to_string()]
+            vec![
+                "owner/k1".to_string(),
+                "owner/k2".to_string(),
+                "unknown".to_string()
+            ]
         );
     }
 
@@ -3192,7 +3305,10 @@ mod tests {
         assert_eq!(entries[1].key, "owner/k2");
         assert_eq!(entries[2].key, "owner/k5");
         assert_eq!(entries[2].version_id.as_deref(), Some("v5"));
-        assert_eq!(entries[2].source_status, Some(PaperclipSkillSourceStatus::Missing));
+        assert_eq!(
+            entries[2].source_status,
+            Some(PaperclipSkillSourceStatus::Missing)
+        );
         assert_eq!(entries[2].missing_detail.as_deref(), Some("k5 is missing"));
     }
 
