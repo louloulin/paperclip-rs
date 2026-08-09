@@ -24,12 +24,21 @@
 
 pub mod builder;
 pub mod http;
+pub mod mentions;
 pub mod policy;
 pub mod trust;
 pub mod types;
 
 pub use builder::build_context;
 pub use http::{company_resource, denial_to_string, enforce, enforce_issue, enforce_permission};
+pub use mentions::{
+    build_agent_mention_href, build_user_mention_href, extract_agent_mention_ids,
+    extract_pipeline_mention_ids, extract_routine_mention_ids, extract_skill_mention_ids,
+    extract_user_mention_ids, parse_agent_mention_href, parse_user_mention_href,
+    ParsedAgentMention, ParsedUserMention,
+    AGENT_MENTION_SCHEME, PIPELINE_MENTION_SCHEME, PROJECT_MENTION_SCHEME,
+    ROUTINE_MENTION_SCHEME, SKILL_MENTION_SCHEME, USER_MENTION_SCHEME,
+};
 pub use policy::{evaluate, principal_type_of, AuthzError, Context};
 pub use trust::{
     is_agent_within_boundary, is_issue_within_boundary, is_tool_class_within_boundary,

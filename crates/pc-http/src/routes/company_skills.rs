@@ -12,6 +12,11 @@ use serde_json::{json, Value};
 use tokio::fs;
 use uuid::Uuid;
 
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 use pc_realtime::LiveEvent;
 use pc_repos::change_consent_gate::{
@@ -1079,9 +1084,20 @@ struct PatchSkillBody {
 async fn patch_skill(
     State(state): State<AppState>,
     Path((company_id, skill_id)): Path<(Uuid, Uuid)>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     headers: HeaderMap,
     Json(body): Json<PatchSkillBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::SkillsCreate,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     super::change_consent::assert_agent_change_consented(
         &state,
         &headers,

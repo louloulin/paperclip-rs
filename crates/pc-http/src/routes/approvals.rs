@@ -304,8 +304,29 @@ async fn reject_approval(
 async fn resubmit_approval(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<ResubmitApprovalBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：resubmit 需要 UsersInvite 权限
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM approvals WHERE id = $1",
+    )
+    .bind(approval_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     // Set status back to 'pending' and update payload if provided
     ApprovalRepo::new(&state.db)
         .resubmit(approval_id, body.payload.as_ref(), body.note.as_deref())
@@ -399,6 +420,7 @@ struct AddApprovalCommentBody {
 async fn add_approval_comment(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<AddApprovalCommentBody>,
 ) -> ApiResult<impl IntoResponse> {
     if body.body.trim().is_empty() {
@@ -408,6 +430,12 @@ async fn add_approval_comment(
         .get_company_id(approval_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    // pc-authz：comment 需要公司成员资格（任何 active member 都能 comment）
+    if !actor.actor.has_company_access(company_id) {
+        return Err(ApiError::Forbidden(
+            "actor lacks access to this company".into(),
+        ));
+    }
     let id = ApprovalRepo::new(&state.db)
         .add_comment_raw(
             company_id,

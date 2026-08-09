@@ -21,6 +21,10 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
 
 use pc_realtime::LiveEvent;
 use pc_repos::goal::GoalRepo;
@@ -128,8 +132,20 @@ struct CompanyGoalCreateBody {
 async fn create_company_goal(
     State(s): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(b): Json<CompanyGoalCreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：创建 company goal 需要 UsersInvite 权限
+    if let Err(err) = enforce_permission(
+        &s.db,
+        &actor,
+        company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if b.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title required".into()));
     }
@@ -159,8 +175,29 @@ async fn create_company_goal(
 async fn update(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(b): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：先查 company_id
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM goals WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(s.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &s.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let r = GoalRepo::new(&s.db)
         .update(
             id,
@@ -176,7 +213,30 @@ async fn update(
         .publish(LiveEvent::new("goal.updated", "goal", r.id).with_company(r.company_id));
     Ok(Json(serde_json::to_value(r).unwrap_or_default()))
 }
-async fn remove(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
+async fn remove(
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
+) -> ApiResult<StatusCode> {
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM goals WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(s.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &s.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if GoalRepo::new(&s.db).delete_one(id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {

@@ -30,6 +30,11 @@ use pc_repos::folder::{
     CountsQuery, FolderKind, FolderPatch, FolderRepo, MoveFolderItem, MoveFolderItemKind, NewFolder,
 };
 
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -291,7 +296,19 @@ async fn move_folder(
 async fn delete_folder(
     State(state): State<AppState>,
     Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：删除 folder 需要 UsersInvite 权限
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let deleted = FolderRepo::new(&state.db)
         .delete(company_id, folder_id)
         .await

@@ -576,7 +576,23 @@ async fn rollback_config_revision(
 async fn pause_agent(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：先加载 agent 取 company_id
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(PauseAgentCommand {
@@ -595,7 +611,22 @@ async fn pause_agent(
 async fn resume_agent(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(ResumeAgentCommand(id))
@@ -672,8 +703,24 @@ struct UpdateAgentPermissionsBody {
 async fn update_agent_permissions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<UpdateAgentPermissionsBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：更新 agent 权限需要先加载目标 agent 取 company_id
+    let target_for_authz = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target_for_authz.company_id,
+        PermissionKey::UsersManagePermissions,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(UpdateAgentPermissionsCommand {

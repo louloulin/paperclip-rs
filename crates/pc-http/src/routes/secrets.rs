@@ -12,6 +12,11 @@ use serde_json::{json, Value};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
@@ -310,9 +315,21 @@ struct ProviderConfigBody {
 async fn create_provider_config(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     headers: axum::http::HeaderMap,
     Json(body): Json<ProviderConfigBody>,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：创建 secret provider config 需要 EnvironmentsManage 权限（Admin）
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     use crate::require_user_id;
     let provider = body
         .provider
@@ -360,7 +377,28 @@ async fn get_provider_config(
 async fn delete_provider_config(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：查 company_id
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM secret_provider_configs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("provider {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     SecretRepo::new(&state.db).delete_provider(id).await?;
     Ok((StatusCode::NO_CONTENT, Json(json!({ "deleted": true }))))
 }

@@ -15,6 +15,11 @@ use uuid::Uuid;
 use pc_realtime::LiveEvent;
 use pc_repos::project::ProjectRepo;
 
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -168,8 +173,19 @@ async fn list_company_projects(
 async fn create_company_project(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = ProjectRepo::new(&state.db)
         .create_simple(company_id, &body.name, body.description.as_deref())
         .await?;

@@ -1400,7 +1400,19 @@ async fn patch_member(
 async fn archive_member(
     State(state): State<AppState>,
     Path((company_id, member_id)): Path<(Uuid, Uuid)>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：归档成员需要 UsersManagePermissions 权限（Admin 角色）
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::UsersManagePermissions,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let ok = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
         .archive(company_id, member_id)
         .await
@@ -1424,8 +1436,20 @@ struct PatchMemberPermissionsBody {
 async fn patch_member_permissions(
     State(state): State<AppState>,
     Path((company_id, member_id)): Path<(Uuid, Uuid)>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<PatchMemberPermissionsBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：管理成员权限需要 UsersManagePermissions 权限
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::UsersManagePermissions,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     // 解析 archived→status 映射；company_memberships 没有 archived_at 列（Round 89 已修）。
     let archived_status = if body.archived.unwrap_or(false) {
         Some(pc_repos::company_member::MemberStatus::Archived)

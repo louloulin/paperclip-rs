@@ -1,4 +1,9 @@
 //! `/api/documents*` 路由：CRUD。
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 #[allow(unused_imports)]
 use axum::{
@@ -58,8 +63,20 @@ struct CreateBody {
 }
 async fn create(
     State(s): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(b): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    // pc-authz：创建 document 需要 UsersInvite 权限
+    if let Err(err) = enforce_permission(
+        &s.db,
+        &actor,
+        b.company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let r = DocumentRepo::new(&s.db)
         .create(b.company_id, b.title.as_deref(), &b.body)
         .await?;
@@ -81,8 +98,29 @@ struct UpdateBody {
 async fn update(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(b): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz：查 company_id
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM documents WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(s.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("document {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &s.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::UsersInvite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let r = DocumentRepo::new(&s.db)
         .update(id, b.title.as_deref(), b.body.as_deref())
         .await?

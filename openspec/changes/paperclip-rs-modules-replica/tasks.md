@@ -337,3 +337,42 @@
 - [x] `is_issue_within_boundary` / `is_agent_within_boundary` / `is_tool_class_within_boundary`
 - [x] 14 个单元测试
 - [x] evidence: `r547-pc-authz-trust-preset-resolver.md`
+
+## M49 — pc-authz 第二批路由接入
+
+- [x] `issues.rs` create + update（2 路由）
+- [x] `approvals.rs` create + resubmit + add_comment（3 路由）
+- [x] `goals.rs` create × 2 + update + remove（4 路由）
+- [x] `folders.rs` create + delete（2 路由）
+- [x] 累计 23 路由接入 pc-authz
+- [x] evidence: `r548-pc-authz-bulk-integration-rd2.md`
+
+## M50 — pc-authz 第三批路由接入
+
+- [x] `projects.rs` create + update + create_company_project（3 路由）
+- [x] `companies.rs` archive_member + patch_member_permissions（2 路由）
+- [x] 累计 28 路由接入 pc-authz
+- [x] evidence: `r549-pc-authz-bulk-integration-rd3.md`
+
+## M51 — pc-authz 第四批路由接入
+
+- [x] `documents.rs` create + update（2 路由）
+- [x] `secrets.rs` create_provider_config + delete_provider_config（2 路由）
+- [x] `company_skills.rs` create_skill_version + patch_skill（2 路由）
+- [x] 累计 34 路由接入 pc-authz
+- [x] evidence: `r550-pc-authz-bulk-integration-rd4.md`
+
+## M52 — pc-authz mention 解析器
+
+- [x] `mentions.rs` — 6 scheme + parse/build/extract
+- [x] `parse_agent_mention_href` / `parse_user_mention_href`
+- [x] `extract_agent_mention_ids` / `extract_user_mention_ids` / `extract_pipeline_mention_ids` / `extract_routine_mention_ids` / `extract_skill_mention_ids`
+- [x] 17 个单元测试（含 round-trip + 多行 + dedup）
+- [x] evidence: `r551-pc-authz-mentions-extractor.md`
+
+## M53 — pc-authz 第五批路由接入
+
+- [x] `cases.rs` create + update + create_company_case（3 路由）
+- [x] `agents.rs` update_permissions + pause + resume（3 路由）
+- [x] 累计 40 路由接入 pc-authz
+- [x] evidence: `r552-pc-authz-bulk-integration-rd5.md`

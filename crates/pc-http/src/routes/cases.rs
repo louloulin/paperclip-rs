@@ -21,6 +21,11 @@ use pc_repos::case::{
 };
 use pc_repos::document::DocumentRevisionRow;
 
+use axum::Extension as AxumExtension;
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
+use sqlx;
+
 use crate::{ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -194,8 +199,19 @@ struct CreateBody {
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        body.company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));
     }
@@ -232,8 +248,28 @@ struct UpdateBody {
 async fn update(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM cases WHERE id = $1",
+    )
+    .bind(case_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let preview_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        preview_company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = CaseRepo::new(&state.db)
         .update(
             case_id,
@@ -271,8 +307,19 @@ async fn list_company_cases(
 async fn create_company_case(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::PipelinesWrite,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));
     }
