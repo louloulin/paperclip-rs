@@ -195,11 +195,13 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/companies/:company_id/approvals",
-            get(list_company_approvals_route),
+            get(list_company_approvals_route)
+                .post(create_company_approval_route),
         )
         .route(
             "/api/companies/:company_id/decisions",
-            get(list_company_decisions_route),
+            get(list_company_decisions_route)
+                .post(create_company_decision_route),
         )
         // NOTE: `/api/companies/:company_id/goals` is registered by goals.rs (the
         // canonical goals router module). The duplicate registration here was removed
@@ -208,7 +210,8 @@ pub fn router() -> Router<AppState> {
         // remains as dead code (kept for reference).
         .route(
             "/api/companies/:company_id/pipelines",
-            get(list_company_pipelines_route),
+            get(list_company_pipelines_route)
+                .post(create_company_pipeline_route),
         )
         .route(
             "/api/companies/:company_id/case-events",
@@ -2380,6 +2383,155 @@ async fn ensure_company_exists(state: &AppState, company_id: Uuid) -> ApiResult<
     Ok(())
 }
 
+// =============================================================================
+// R513 — company-scoped POST handlers
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CreateCompanyApprovalBody {
+    approval_type: String,
+    #[serde(default)]
+    payload: Value,
+    #[serde(default)]
+    requested_by_user_id: Option<String>,
+    #[serde(default)]
+    requested_by_agent_id: Option<Uuid>,
+}
+
+/// `POST /api/companies/:company_id/approvals` — company-scoped approval
+/// creation. Mirrors Node `approvals.ts:124` (`POST /companies/:companyId/approvals`).
+async fn create_company_approval_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateCompanyApprovalBody>,
+) -> ApiResult<axum::response::Response> {
+    ensure_company_exists(&state, company_id).await?;
+    if body.approval_type.trim().is_empty() {
+        return Err(ApiError::BadRequest("approval_type must not be empty".into()));
+    }
+    let payload = if body.payload.is_null() {
+        Value::Object(Default::default())
+    } else {
+        body.payload
+    };
+    if body.requested_by_user_id.is_none() && body.requested_by_agent_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "approval must be requested by agent or user".into(),
+        ));
+    }
+    let parsed_type = pc_repos::approval::ApprovalType::parse(body.approval_type.trim())
+        .unwrap_or(pc_repos::approval::ApprovalType::Custom);
+    let new_approval = pc_repos::approval::NewApproval {
+        company_id,
+        approval_type: parsed_type,
+        requested_by_agent_id: body.requested_by_agent_id,
+        requested_by_user_id: body.requested_by_user_id.clone(),
+        payload,
+    };
+    let row = ApprovalRepo::new(&state.db).create(&new_approval).await?;
+    state
+        .realtime
+        .publish(LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id));
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(&row).unwrap_or(Value::Null))).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CreateCompanyDecisionBody {
+    title: String,
+    body: String,
+    #[serde(default)]
+    options: Option<Value>,
+    #[serde(default)]
+    inputs: Option<Value>,
+    #[serde(default)]
+    rule_key: Option<String>,
+}
+
+/// `POST /api/companies/:company_id/decisions` — company-scoped decision
+/// creation. Mirrors Node `decisions.ts:42`
+/// (`POST /companies/:companyId/decisions`).
+async fn create_company_decision_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateCompanyDecisionBody>,
+) -> ApiResult<axum::response::Response> {
+    ensure_company_exists(&state, company_id).await?;
+    if body.title.trim().is_empty() || body.body.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "title and body must not be empty".into(),
+        ));
+    }
+    let signing = &state.decision_signing;
+    let mut row = DecisionRepo::new(&state.db)
+        .create(company_id, &body.title, &body.body, signing)
+        .await?;
+    if let Some(opts) = body.options.as_ref() {
+        row.options = opts.clone();
+        sqlx::query("UPDATE decisions SET options=$1, updated_at=now() WHERE id=$2")
+            .bind(opts)
+            .bind(row.id)
+            .execute(state.db.pool())
+            .await?;
+    }
+    if let Some(inputs) = body.inputs.as_ref() {
+        sqlx::query("UPDATE decisions SET inputs=$1, updated_at=now() WHERE id=$2")
+            .bind(inputs)
+            .bind(row.id)
+            .execute(state.db.pool())
+            .await?;
+    }
+    if let Some(rule_key) = body.rule_key.as_ref() {
+        sqlx::query("UPDATE decisions SET rule_key=$1, updated_at=now() WHERE id=$2")
+            .bind(rule_key)
+            .bind(row.id)
+            .execute(state.db.pool())
+            .await?;
+    }
+    state
+        .realtime
+        .publish(LiveEvent::new("decision.created", "decision", row.id).with_company(company_id));
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(&row).unwrap_or(Value::Null))).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CreateCompanyPipelineBody {
+    key: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+/// `POST /api/companies/:company_id/pipelines` — company-scoped pipeline
+/// creation. Mirrors Node `pipelines.ts:891`
+/// (`POST /companies/:companyId/pipelines`).
+async fn create_company_pipeline_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Json(body): Json<CreateCompanyPipelineBody>,
+) -> ApiResult<axum::response::Response> {
+    ensure_company_exists(&state, company_id).await?;
+    if body.key.trim().is_empty() {
+        return Err(ApiError::BadRequest("key must not be empty".into()));
+    }
+    if body.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("name must not be empty".into()));
+    }
+    let row = PipelineRepo::new(&state.db)
+        .create(
+            company_id,
+            body.key.trim(),
+            body.name.trim(),
+            body.description.as_deref(),
+        )
+        .await?;
+    state
+        .realtime
+        .publish(LiveEvent::new("pipeline.created", "pipeline", row.id).with_company(company_id));
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(&row).unwrap_or(Value::Null))).into_response())
+}
 /// `GET /api/companies/stats` — board-only cross-company aggregated stats.
 ///
 /// Mirrors Node `/companies/stats`. Returns per-company stats for every

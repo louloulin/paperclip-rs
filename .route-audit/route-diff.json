@@ -1,12 +1,12 @@
 {
   "node_unique": 581,
-  "rust_unique": 870,
-  "common": 568,
-  "missing_in_rust": 13,
+  "rust_unique": 873,
+  "common": 571,
+  "missing_in_rust": 10,
   "extra_in_rust": 302,
-  "coverage_method_path": 97.76,
+  "coverage_method_path": 98.28,
   "missing_by_category": {
-    ":param": 9,
+    ":param": 6,
     "": 2,
     "restart": 1,
     "root": 1
@@ -43,18 +43,6 @@
     {
       "method": "POST",
       "path": "/api/companies/"
-    },
-    {
-      "method": "POST",
-      "path": "/api/companies/:param/approvals"
-    },
-    {
-      "method": "POST",
-      "path": "/api/companies/:param/decisions"
-    },
-    {
-      "method": "POST",
-      "path": "/api/companies/:param/pipelines"
     },
     {
       "method": "POST",
