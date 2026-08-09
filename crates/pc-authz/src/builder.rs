@@ -188,6 +188,27 @@ fn rank(r: CompanyRole) -> u8 {
     }
 }
 
+/// R555：从 DB 构造 Context，并从 issue body 提取 mention IDs。
+///
+/// 这是一个高阶 helper,把 [`build_context`] 与 [`Context::with_mentions_from_body`]
+/// 合并为一个调用。典型用法是 issue 路由(`POST /api/issues`、`POST /api/issues/:id/comments`),
+/// 在 evaluate 之前注入 issue body / comment body 中的 mention。
+///
+/// 行为：
+/// 1. 调用 `build_context` 加载 memberships + grants + role
+/// 2. 用 `with_mentions_from_body` 解析 body 中的 `agent://` / `user://` 提及
+/// 3. 返回带 mention 信息的 Context
+///
+/// **单次 DB 查询**:复用 `build_context` 的查询,无额外 round-trip。
+pub async fn build_context_with_issue_body(
+    db: &Db,
+    actor: &Actor,
+    issue_body: &str,
+) -> Context {
+    let ctx = build_context(db, actor).await;
+    ctx.with_mentions_from_body(issue_body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

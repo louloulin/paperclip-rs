@@ -29,8 +29,8 @@ pub mod policy;
 pub mod trust;
 pub mod types;
 
-pub use builder::build_context;
-pub use http::{company_resource, denial_to_string, enforce, enforce_issue, enforce_permission};
+pub use builder::{build_context, build_context_with_issue_body};
+pub use http::{company_resource, denial_to_string, enforce, enforce_environments_manage, enforce_issue, enforce_permission};
 pub use mentions::{
     build_agent_mention_href, build_user_mention_href, extract_agent_mention_ids,
     extract_pipeline_mention_ids, extract_routine_mention_ids, extract_skill_mention_ids,

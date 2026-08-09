@@ -6,12 +6,14 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, patch, post},
-    Json, Router,
+    Extension as AxumExtension, Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use pc_auth::AuthContext;
+use pc_authz::{enforce_environments_manage, enforce_permission, PermissionKey};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::environment::{EnvironmentRepo, EnvironmentRow};
@@ -121,8 +123,12 @@ fn default_driver() -> String {
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".into()));
     }
@@ -158,9 +164,13 @@ struct UpdateBody {
 
 async fn update(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = EnvironmentRepo::new(&state.db)
         .update(
             id,
@@ -176,7 +186,14 @@ async fn update(
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
-async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
+async fn remove(
+    State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let ok = EnvironmentRepo::new(&state.db).delete(id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
@@ -202,8 +219,19 @@ async fn list_company_environments(
 async fn create_company_environment(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let _ = company_id;
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".into()));
@@ -368,8 +396,12 @@ async fn get_custom_image_template_envid(
 
 async fn delete_custom_image_template(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let affected = EnvironmentRepo::new(&state.db)
         .delete_custom_image_template(id)
         .await?;
@@ -586,9 +618,13 @@ fn default_terminal_ttl() -> i64 {
 
 async fn create_custom_image_setup_session(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(environment_id): Path<Uuid>,
     Json(body): Json<CreateSetupSessionBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let env_repo = EnvironmentRepo::new(&state.db);
     let env = env_repo
         .get(environment_id)
@@ -629,8 +665,12 @@ async fn create_custom_image_setup_session(
 
 async fn cancel_custom_image_setup_session(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let env_repo = EnvironmentRepo::new(&state.db);
     let ok = env_repo
         .finish_custom_image_setup_session(id, "cancelled", Some("cancelled by user"))
@@ -651,9 +691,13 @@ async fn cancel_custom_image_setup_session(
 
 async fn finish_custom_image_setup_session(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(body): Json<FinishSetupSessionBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_environments_manage(&state.db, &actor).await {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let env_repo = EnvironmentRepo::new(&state.db);
     let ok = env_repo
         .finish_custom_image_setup_session(id, "finished", body.failure_reason.as_deref())

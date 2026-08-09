@@ -285,6 +285,30 @@ impl SuppressionInputs {
             db_worktree_override_armed: false,
         }
     }
+
+    /// R557：从 DB experimental flag 装载 `db_worktree_override_armed`。
+    ///
+    /// 与 Node `experimental.enableWorktreeRunExecution` 字段对齐:
+    /// 当 DB 行 `experimental.enable_worktree_run_execution = true` 时,
+    /// 即使 `in_worktree` 也不会被抑制。
+    ///
+    /// 这是默认 `from_env` 不读取的字段(env 没有该信号),
+    /// 调用方在加载 DB 后调用此方法覆盖。
+    pub fn with_db_override(mut self, armed: bool) -> Self {
+        self.db_worktree_override_armed = armed;
+        self
+    }
+
+    /// R557：从 `experimental_flags` 行(若存在)装载 DB override。
+    ///
+    /// 接受 `Option<bool>`:`None` 表示 DB 行不存在(保持当前值),
+    /// `Some(b)` 表示装载具体值。
+    pub fn with_db_override_opt(mut self, armed: Option<bool>) -> Self {
+        if let Some(b) = armed {
+            self.db_worktree_override_armed = b;
+        }
+        self
+    }
 }
 
 /// Suppression decision result.
@@ -672,5 +696,128 @@ mod tests {
     fn end_to_end_skip_when_recovering_stale_claim() {
         let action = decide_wake_action(Some(&existing("w-1", "completed", 5)), &incoming());
         assert!(action.is_create());
+    }
+
+    // ============== R557: with_db_override + cross-process idempotency ==============
+
+    #[test]
+    fn r557_with_db_override_lifts_worktree_suppression() {
+        let env = std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
+        let inputs = SuppressionInputs::from_env(&env).with_db_override(true);
+        let decision = resolve_suppression(&inputs);
+        assert!(!decision.suppressed);
+        assert_eq!(decision.reason, SuppressionReason::None);
+    }
+
+    #[test]
+    fn r557_with_db_override_disabled_keeps_worktree_suppression() {
+        let env = std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
+        let inputs = SuppressionInputs::from_env(&env).with_db_override(false);
+        let decision = resolve_suppression(&inputs);
+        assert!(decision.suppressed);
+        assert_eq!(decision.reason, SuppressionReason::WorktreeInstance);
+    }
+
+    #[test]
+    fn r557_db_override_opt_none_keeps_default_false() {
+        let env = std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
+        let inputs = SuppressionInputs::from_env(&env).with_db_override_opt(None);
+        // 默认 false,与原 from_env 行为一致
+        assert!(!inputs.db_worktree_override_armed);
+        assert!(resolve_suppression(&inputs).suppressed);
+    }
+
+    #[test]
+    fn r557_db_override_opt_some_applies_value() {
+        let env = std::collections::HashMap::new();
+        let inputs = SuppressionInputs::from_env(&env).with_db_override_opt(Some(true));
+        assert!(inputs.db_worktree_override_armed);
+    }
+
+    #[test]
+    fn r557_db_restore_in_progress_overrides_worktree_override() {
+        // 即使 DB override armed,database_restore_in_progress 仍然是最高优先级
+        let env = std::collections::HashMap::from([
+            ("PAPERCLIP_IN_WORKTREE".into(), "true".into()),
+            ("PAPERCLIP_DATABASE_RESTORE_IN_PROGRESS".into(), "true".into()),
+        ]);
+        let inputs = SuppressionInputs::from_env(&env).with_db_override(true);
+        let decision = resolve_suppression(&inputs);
+        assert!(decision.suppressed);
+        assert_eq!(decision.reason, SuppressionReason::DatabaseRestoreInProgress);
+    }
+
+    #[test]
+    fn r557_idempotency_key_issue_assignment_format() {
+        let k = build_issue_assignment_wake_key("co-1", "a-1", "iss-1");
+        assert_eq!(k, "issue_assignment_wake:co-1:a-1:iss-1");
+    }
+
+    #[test]
+    fn r557_idempotency_key_decision_continuation_format() {
+        let k = build_decision_continuation_wake_key("d-42");
+        assert_eq!(k, "decision_continuation:d-42");
+    }
+
+    #[test]
+    fn r557_cross_source_wake_comment_id_merge() {
+        // 模拟多源 comment 列表合并 (issue / decision / status card)
+        let a = json!({"wakeCommentIds": ["c-1", "c-2"]});
+        let b = json!({"wakeCommentIds": ["c-2", "c-3"]});
+        let c = json!({"commentId": "c-4"});
+        let merged = merge_wake_comment_ids([&a, &b, &c]);
+        // c-2 在两源中出现,只保留首次出现
+        assert_eq!(merged, vec!["c-1", "c-2", "c-3", "c-4"]);
+    }
+
+    #[test]
+    fn r557_dedup_with_payload_merge_end_to_end() {
+        // 真实场景: 同一 agent 短时间内被 wake 两次,带不同的 reason + 共享 issue
+        let first_existing = Some(WakeSnapshot {
+            id: "w-1".into(),
+            agent_id: "a-1".into(),
+            company_id: "co-1".into(),
+            status: "queued".into(),
+            coalesced_count: 0,
+            payload: Some(json!({
+                "wakeReason": "first call",
+                "issueId": "iss-1",
+                "wakeCommentIds": ["c-1"],
+            })),
+        });
+        let incoming = WakeInput {
+            agent_id: "a-1".into(),
+            company_id: "co-1".into(),
+            source: "issue_assignment".into(),
+            reason: Some("second call".into()),
+            payload: Some(json!({
+                "wakeReason": "second call",
+                "wakeCommentIds": ["c-2"],
+            })),
+            idempotency_key: Some(build_issue_assignment_wake_key("co-1", "a-1", "iss-1")),
+        };
+        // 1. Decision: 应当 Coalesce
+        let action = decide_wake_action(first_existing.as_ref(), &incoming);
+        let coalesce = match action {
+            WakeAction::Coalesce { into_id, increment } => (into_id, increment),
+            other => panic!("expected Coalesce, got {other:?}"),
+        };
+        assert_eq!(coalesce.0, "w-1");
+        assert_eq!(coalesce.1, 1);
+
+        // 2. Payload merge: 验证 wakeReason 被覆盖,wakeCommentIds 合并
+        let merged = merge_wake_payloads(
+            first_existing.unwrap().payload.as_ref(),
+            incoming.payload.as_ref(),
+        );
+        assert_eq!(merged["wakeReason"], "second call");
+        assert_eq!(merged["issueId"], "iss-1"); // 保留 first
+        let ids: Vec<&str> = merged["wakeCommentIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["c-1", "c-2"]);
     }
 }

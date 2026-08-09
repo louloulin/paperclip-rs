@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use pc_auth::{Actor, CompanyMembership};
 
+use crate::mentions::{extract_agent_mention_ids, extract_user_mention_ids};
 use crate::types::{
     Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource,
 };
@@ -124,6 +125,39 @@ impl Context {
 
     pub fn with_explicit_grant(mut self) -> Self {
         self.has_explicit_grant = true;
+        self
+    }
+
+    /// R555：从 markdown body 提取 mention IDs 并注入到 Context。
+    ///
+    /// 复刻 Node `extractAgentMentionIds` / `extractUserMentionIds` 的语义,
+    /// 自动从 issue body / comment body 中解析所有 `[label](agent://uuid)` /
+    /// `[label](user://id)` 提及,并填充 `issue_mentioned_agent_ids` /
+    /// `issue_mentioned_user_ids` 字段。
+    ///
+    /// 这两个字段在 [`evaluate`] 中被检查以决定 mention-based grant
+    /// (Reason::AllowIssueMentionGrant) 是否应用。
+    ///
+    /// # 用法
+    ///
+    /// ```ignore
+    /// let ctx = build_context(&db, &actor)
+    ///     .await
+    ///     .with_mentions_from_body(&issue.body);
+    /// let decision = evaluate(&actor, &ctx, &resource, action);
+    /// ```
+    pub fn with_mentions_from_body(mut self, body: &str) -> Self {
+        self.issue_mentioned_agent_ids = extract_agent_mention_ids(body);
+        self.issue_mentioned_user_ids = extract_user_mention_ids(body);
+        self
+    }
+
+    /// R555：从 markdown body 提取 mention IDs 并就地修改 `&mut Context`。
+    ///
+    /// 用于已经在异步上下文中持有 Context &mut 引用的场景(例如 builder)。
+    pub fn populate_mentions_from_body(&mut self, body: &str) -> &mut Self {
+        self.issue_mentioned_agent_ids = extract_agent_mention_ids(body);
+        self.issue_mentioned_user_ids = extract_user_mention_ids(body);
         self
     }
 
@@ -1047,5 +1081,62 @@ mod tests {
         );
         assert_eq!(principal_type_of(&Actor::System), None);
         assert_eq!(principal_type_of(&Actor::Anonymous), None);
+    }
+
+    // ============== R555: with_mentions_from_body ==============
+
+    #[test]
+    fn with_mentions_from_body_extracts_agent_and_user_ids() {
+        let agent_id = Uuid::new_v4();
+        let body = format!(
+            "Hello @admin please review [task](agent://{}?i=claude)",
+            agent_id
+        );
+        let ctx = Context::anonymous().with_mentions_from_body(&body);
+        assert_eq!(ctx.issue_mentioned_agent_ids, vec![agent_id]);
+    }
+
+    #[test]
+    fn with_mentions_from_body_dedupes_repeated_mentions() {
+        let agent_id = Uuid::new_v4();
+        let body = format!(
+            "[a](agent://{agent_id}) and [b](agent://{agent_id}) again"
+        );
+        let ctx = Context::anonymous().with_mentions_from_body(&body);
+        assert_eq!(ctx.issue_mentioned_agent_ids, vec![agent_id]);
+    }
+
+    #[test]
+    fn with_mentions_from_body_extracts_user_mentions() {
+        let body = "Hi [alice](user://alice) and [bob](user://bob)";
+        let ctx = Context::anonymous().with_mentions_from_body(body);
+        assert_eq!(
+            ctx.issue_mentioned_user_ids,
+            vec!["alice".to_string(), "bob".to_string()]
+        );
+    }
+
+    #[test]
+    fn with_mentions_from_body_empty_body_yields_empty() {
+        let ctx = Context::anonymous().with_mentions_from_body("");
+        assert!(ctx.issue_mentioned_agent_ids.is_empty());
+        assert!(ctx.issue_mentioned_user_ids.is_empty());
+    }
+
+    #[test]
+    fn with_mentions_from_body_ignores_non_mention_links() {
+        let body = "see [docs](https://example.com) and [rust](https://rust-lang.org)";
+        let ctx = Context::anonymous().with_mentions_from_body(body);
+        assert!(ctx.issue_mentioned_agent_ids.is_empty());
+        assert!(ctx.issue_mentioned_user_ids.is_empty());
+    }
+
+    #[test]
+    fn populate_mentions_from_body_mutates_in_place() {
+        let agent_id = Uuid::new_v4();
+        let body = format!("[x](agent://{agent_id})");
+        let mut ctx = Context::anonymous();
+        ctx.populate_mentions_from_body(&body);
+        assert_eq!(ctx.issue_mentioned_agent_ids, vec![agent_id]);
     }
 }

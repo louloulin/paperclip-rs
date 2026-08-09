@@ -361,8 +361,23 @@ struct RequestRevisionBody {
 async fn request_approval_revision(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<RequestRevisionBody>,
 ) -> ApiResult<Json<Value>> {
+    let company_id = ApprovalRepo::new(&state.db)
+        .get_company_id(approval_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::JoinsApprove,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let decided_by = body.decided_by.as_deref().unwrap_or("board");
     let row = ApprovalRepo::new(&state.db)
         .request_revision(approval_id, decided_by, body.decision_note.as_deref())

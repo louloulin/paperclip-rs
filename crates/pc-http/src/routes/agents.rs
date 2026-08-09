@@ -348,8 +348,19 @@ fn create_agent_input(company_id: Uuid, body: CreateBody) -> ApiResult<CreateAge
 async fn hire_agent(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::AgentsCreate,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let result = state
         .agents
         .ask(HireAgentCommand {
@@ -641,8 +652,23 @@ async fn resume_agent(
 
 async fn clear_agent_error(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(ClearAgentErrorCommand(id))
@@ -657,8 +683,23 @@ async fn clear_agent_error(
 
 async fn terminate_agent(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(TerminateAgentCommand(id))
@@ -673,8 +714,23 @@ async fn terminate_agent(
 
 async fn approve_agent(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(ApproveAgentCommand(id))
@@ -780,10 +836,25 @@ struct UpdateInstructionsPathBody {
 
 async fn update_instructions_path(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<UpdateInstructionsPathBody>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let agent = load_agent(&state, id).await?;
     super::change_consent::assert_agent_change_consented(
         &state,
@@ -843,10 +914,25 @@ async fn update_instructions_path(
 
 async fn update_instructions_bundle(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<UpdateInstructionsBundleBody>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let agent = load_agent(&state, id).await?;
     super::change_consent::assert_agent_change_consented(
         &state,
@@ -953,9 +1039,24 @@ async fn put_instructions_file(
 
 async fn delete_instructions_file(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<InstructionsFileQuery>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let agent = load_agent(&state, id).await?;
     let path = required_instruction_path(query.path)?;
     let result = state
@@ -1040,9 +1141,24 @@ struct ResetRuntimeSessionBody {
 
 async fn reset_runtime_session(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(body): Json<ResetRuntimeSessionBody>,
 ) -> ApiResult<Json<Value>> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(ResetRuntimeSessionCommand {
@@ -1090,9 +1206,24 @@ fn standard_key_scope() -> Value {
 
 async fn create_agent_key(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(body): Json<CreateAgentKeyBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let target = AgentRepo::new(&state.db)
+        .get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        target.company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = state
         .agents
         .ask(CreateAgentKeyCommand {

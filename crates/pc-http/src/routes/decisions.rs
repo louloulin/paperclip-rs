@@ -6,12 +6,14 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
+    Extension as AxumExtension, Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
 use pc_realtime::LiveEvent;
 use pc_repos::decision::{verify_decision_signature, DecisionRepo, SignedDecisionRow};
 use pc_repos::decision_bundle::{
@@ -73,8 +75,19 @@ struct CreateBody {
 
 async fn create(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        body.company_id,
+        PermissionKey::JoinsApprove,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.title.trim().is_empty() || body.body.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "title and body must not be empty".into(),
@@ -145,6 +158,7 @@ async fn load_verified_decision(
 
 async fn decide_decision(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(decision_id): Path<Uuid>,
     Json(body): Json<DecideDecisionBody>,
 ) -> ApiResult<Json<Value>> {
@@ -154,6 +168,16 @@ async fn decide_decision(
     let company_id = load_verified_decision(&state, decision_id)
         .await?
         .company_id;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::JoinsApprove,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     DecisionRepo::new(&state.db)
         .mark_decided(
             decision_id,
@@ -189,12 +213,23 @@ struct DismissDecisionBody {
 
 async fn dismiss_decision(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(decision_id): Path<Uuid>,
     Json(body): Json<DismissDecisionBody>,
 ) -> ApiResult<Json<Value>> {
     let company_id = load_verified_decision(&state, decision_id)
         .await?
         .company_id;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::JoinsApprove,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     DecisionRepo::new(&state.db)
         .mark_dismissed(
             decision_id,
@@ -217,6 +252,7 @@ async fn dismiss_decision(
 
 async fn cancel_decision(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(decision_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let repo = DecisionRepo::new(&state.db);
@@ -224,6 +260,16 @@ async fn cancel_decision(
         .get_company_id(decision_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::JoinsApprove,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     repo.mark_cancelled(decision_id).await?;
     state.realtime.publish(
         LiveEvent::new("decision.cancelled", "decision", decision_id).with_company(company_id),
@@ -276,9 +322,20 @@ struct CreateDecisionBundleBody {
 
 async fn create_decision_bundle(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateDecisionBundleBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::JoinsApprove,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = DecisionBundleRepo::new(&state.db)
         .create(
             company_id,

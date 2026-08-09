@@ -5,9 +5,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, patch, post},
-    Json, Router,
+    Extension as AxumExtension, Json, Router,
 };
 use chrono::{DateTime, Utc};
+use pc_auth::AuthContext;
+use pc_authz::{enforce_permission, PermissionKey};
 use pc_repos::budget::{
     BudgetRepo, IncidentRow, PolicyRow, ResolveIncidentInput, UpsertPolicyInput,
 };
@@ -130,9 +132,20 @@ fn limit(query: &CostQuery) -> ApiResult<i64> {
 
 async fn create_cost_event(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateCostEvent>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let result = CostRepo::new(&state.db)
         .create_event(company_id, &body)
         .await?;
@@ -392,9 +405,20 @@ struct BudgetBody {
 
 async fn update_company_budget(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<BudgetBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.budget_monthly_cents < 0 {
         return Err(ApiError::BadRequest(
             "budgetMonthlyCents must be non-negative".to_owned(),
@@ -412,6 +436,7 @@ async fn update_company_budget(
 
 async fn update_agent_budget(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(agent_id): Path<Uuid>,
     Json(body): Json<BudgetBody>,
 ) -> ApiResult<Json<Value>> {
@@ -424,6 +449,16 @@ async fn update_agent_budget(
         .set_budget(agent_id, body.budget_monthly_cents)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id_ret,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     Ok(Json(json!({
         "id": id,
         "companyId": company_id_ret,
@@ -490,9 +525,20 @@ async fn list_budget_policies(
 
 async fn upsert_budget_policy(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     Json(input): Json<UpsertPolicyInput>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if !CompanyRepo::new(&state.db).exists(company_id).await? {
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }
@@ -510,9 +556,20 @@ async fn upsert_budget_policy(
 
 async fn resolve_budget_incident(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path((company_id, incident_id)): Path<(Uuid, Uuid)>,
     Json(input): Json<ResolveIncidentInput>,
 ) -> ApiResult<Json<IncidentRow>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if !CompanyRepo::new(&state.db).exists(company_id).await? {
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }
@@ -540,9 +597,20 @@ struct FinanceEventBody {
 
 async fn create_finance_event(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<FinanceEventBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::AgentsConfigure,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if !CompanyRepo::new(&state.db).exists(company_id).await? {
         return Err(ApiError::NotFound(format!("company {company_id}")));
     }

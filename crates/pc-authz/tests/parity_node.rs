@@ -464,3 +464,20 @@ fn parity_grant_overrides_insufficient_role() {
     assert!(d.allowed);
     assert_eq!(d.reason, Reason::AllowExplicitGrant);
 }
+
+#[test]
+fn r555_mentions_helpers_in_public_api() {
+    // 烟雾测试：确认 mention 提取 + helper 公开 API 可达。
+    use pc_authz::{
+        build_context_with_issue_body, extract_agent_mention_ids, extract_user_mention_ids,
+    };
+    use uuid::Uuid;
+    let id = Uuid::new_v4();
+    let body = format!("Hi [claude](agent://{id}?i=claude) and [alice](user://alice)");
+    let agents = extract_agent_mention_ids(&body);
+    assert_eq!(agents, vec![id]);
+    let users = extract_user_mention_ids(&body);
+    assert_eq!(users, vec!["alice".to_string()]);
+    // 确认 high-level helper 也是可调用的(实际 DB 调用跳过,仅类型断言)
+    let _ = build_context_with_issue_body;
+}

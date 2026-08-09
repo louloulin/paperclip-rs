@@ -82,6 +82,57 @@ pub fn company_resource(company_id: Uuid) -> Resource {
     Resource::Company { company_id }
 }
 
+/// Instance-level environments:manage check.
+///
+/// 与 Node `paperclip/server/src/services/authorization.ts` 对齐:
+/// environments 是实例级资源,不绑定到具体 company。
+/// 一个用户只要满足以下任一条件就允许 `environments:manage`:
+///
+/// 1. `Actor::System`(内部 actor,短路允许)
+/// 2. `is_instance_admin == true`(pc-authz::policy::Context 上的标志)
+/// 3. 在任意 active company membership 中具有 Admin 角色
+///
+/// 单次 DB 查询:通过 `build_context` 获取 memberships + role +
+/// is_instance_admin 后,在内存中逐 membership 调用 `evaluate`。
+pub async fn enforce_environments_manage(
+    db: &Db,
+    actor: &AuthContext,
+) -> Result<(), AuthzError> {
+    let ctx = build_context(db, &actor.actor).await;
+    let action = Action::Permission(PermissionKey::EnvironmentsManage);
+
+    // 1. System / instance_admin / local_board 在 evaluate_user 阶段短路
+    //    不依赖 company_id;传 nil UUID 作为哨兵。
+    let probe = evaluate(
+        &actor.actor,
+        &ctx,
+        &Resource::Company { company_id: Uuid::nil() },
+        action,
+    );
+    if probe.allowed && probe.reason != crate::types::Reason::DenyCompanyBoundary {
+        return Ok(());
+    }
+
+    // 2. 在 active memberships 中查找 Admin 角色
+    for membership in &ctx.memberships {
+        if membership.status.as_deref() != Some("active") {
+            continue;
+        }
+        let resource = Resource::Company {
+            company_id: membership.company_id,
+        };
+        let decision = evaluate(&actor.actor, &ctx, &resource, action);
+        if decision.allowed {
+            return Ok(());
+        }
+    }
+
+    Err(AuthzError::Forbidden(
+        "environments:manage requires instance admin or Admin role in some active company"
+            .into(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +150,53 @@ mod tests {
             Resource::Company { company_id } => assert_eq!(company_id, c),
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn enforce_environments_manage_anonymous_denies() {
+        // 直接走 evaluate 路径验证短路,不需要 DB。
+        use crate::policy::Context;
+        use pc_auth::Actor;
+        let ctx = Context::anonymous();
+        let actor = Actor::Anonymous;
+        let resource = Resource::Company { company_id: Uuid::nil() };
+        let action = Action::Permission(PermissionKey::EnvironmentsManage);
+        let decision = evaluate(&actor, &ctx, &resource, action);
+        assert!(!decision.allowed);
+        assert_eq!(decision.reason, crate::types::Reason::DenyUnauthenticated);
+    }
+
+    #[test]
+    fn enforce_environments_manage_system_allows() {
+        use crate::policy::Context;
+        use pc_auth::Actor;
+        let ctx = Context::anonymous();
+        let actor = Actor::System;
+        let resource = Resource::Company { company_id: Uuid::nil() };
+        let action = Action::Permission(PermissionKey::EnvironmentsManage);
+        let decision = evaluate(&actor, &ctx, &resource, action);
+        assert!(decision.allowed);
+        assert_eq!(decision.reason, crate::types::Reason::AllowInstanceAdmin);
+    }
+
+    #[test]
+    fn enforce_environments_manage_instance_admin_user_allows() {
+        use crate::policy::Context;
+        use pc_auth::Actor;
+        let ctx = Context::for_user(vec![], vec![], None, true);
+        let actor = Actor::User {
+            id: "u1".into(),
+            name: None,
+            email: None,
+            is_instance_admin: true,
+            company_ids: vec![],
+            memberships: vec![],
+            run_id: None,
+        };
+        let resource = Resource::Company { company_id: Uuid::nil() };
+        let action = Action::Permission(PermissionKey::EnvironmentsManage);
+        let decision = evaluate(&actor, &ctx, &resource, action);
+        assert!(decision.allowed);
+        assert_eq!(decision.reason, crate::types::Reason::AllowInstanceAdmin);
     }
 }

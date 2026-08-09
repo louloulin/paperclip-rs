@@ -456,10 +456,21 @@ async fn list_user_defs(
 
 async fn create_user_def(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     headers: axum::http::HeaderMap,
     Json(body): Json<UserDefBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     use crate::require_user_id;
     let key = body
         .key
@@ -489,8 +500,19 @@ async fn create_user_def(
 
 async fn delete_user_def(
     State(state): State<AppState>,
-    Path((_company_id, def_id)): Path<(Uuid, Uuid)>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
+    Path((company_id, def_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     SecretRepo::new(&state.db)
         .archive_user_definition(def_id)
         .await?;
@@ -625,9 +647,30 @@ struct UpdateSecretBody {
 
 async fn update_secret(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(secret_id): Path<Uuid>,
     Json(body): Json<UpdateSecretBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz: 查 secret 的 company_id
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM company_secrets WHERE id = $1",
+    )
+    .bind(secret_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let secret_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("secret {secret_id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        secret_company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = SecretRepo::new(&state.db)
         .patch_company_secret(
             secret_id,
@@ -649,9 +692,30 @@ struct RotateSecretBody {
 
 async fn rotate_secret(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(secret_id): Path<Uuid>,
     Json(body): Json<RotateSecretBody>,
 ) -> ApiResult<Json<Value>> {
+    // pc-authz: 查 secret 的 company_id
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM company_secrets WHERE id = $1",
+    )
+    .bind(secret_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let secret_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("secret {secret_id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        secret_company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = SecretRepo::new(&state.db)
         .rotate_company_secret(
             secret_id,
@@ -736,6 +800,7 @@ struct PatchProviderConfigBody {
 
 async fn patch_provider_config(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(body): Json<PatchProviderConfigBody>,
 ) -> ApiResult<Json<Value>> {
@@ -745,6 +810,26 @@ async fn patch_provider_config(
         && body.default_for_kind.is_none()
     {
         return Err(ApiError::BadRequest("no fields to update".into()));
+    }
+    // pc-authz: 查 provider config 的 company_id
+    let preview: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT company_id FROM secret_provider_configs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let cfg_company_id = preview
+        .ok_or_else(|| ApiError::NotFound(format!("provider {id}")))?
+        .0;
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        cfg_company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
     }
     let row = SecretRepo::new(&state.db)
         .patch_provider_config(
@@ -789,9 +874,20 @@ struct CreateCompanySecretBody {
 
 async fn create_company_secret(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateCompanySecretBody>,
 ) -> ApiResult<impl IntoResponse> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     if body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name is required".into()));
     }
@@ -990,9 +1086,20 @@ struct PatchUserDefBody {
 
 async fn patch_user_def(
     State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
     Path((company_id, definition_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<PatchUserDefBody>,
 ) -> ApiResult<Json<Value>> {
+    if let Err(err) = enforce_permission(
+        &state.db,
+        &actor,
+        company_id,
+        PermissionKey::EnvironmentsManage,
+    )
+    .await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
     let row = SecretRepo::new(&state.db)
         .patch_user_definition(
             company_id,
