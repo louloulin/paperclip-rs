@@ -13,6 +13,73 @@ use crate::issue_terminal_effects::{
 };
 use crate::Db;
 
+// ---- R516: extract search response shapes ----
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ExtractIssueHitRow {
+    pub id: Uuid,
+    pub identifier: String,
+    pub title: String,
+    pub status: String,
+    pub assignee_agent_id: Option<Uuid>,
+    pub updated_at: pc_core::Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtractIssueFieldMatchRow {
+    pub field: String,
+    pub label: String,
+    pub excerpt: String,
+    pub excerpt_truncated: bool,
+    pub source_kind: String,
+    pub source_id: String,
+}
+
+fn make_excerpt(text: &str, contains: &str, kind: &str) -> Option<String> {
+    if contains.is_empty() { return None; }
+    let lower = text.to_lowercase();
+    let lower_contains = contains.to_lowercase();
+    let bytes = text.as_bytes();
+    let lc_bytes = lower.as_bytes();
+    let needle = lower_contains.as_bytes();
+    if kind == "url" {
+        let mut i = 0;
+        while i + needle.len() <= lc_bytes.len() {
+            if &lc_bytes[i..i + needle.len()] == needle {
+                let mut start = i;
+                while start > 0 && is_url_char(bytes[start - 1]) { start -= 1; }
+                let mut end = i + needle.len();
+                while end < bytes.len() && is_url_char(bytes[end]) { end += 1; }
+                let lo = start.saturating_sub(80);
+                let hi = (end + 80).min(text.len());
+                let mut snippet = text[lo..hi].to_string();
+                if lo > 0 { snippet = format!("…{snippet}", snippet = snippet); }
+                if hi < text.len() { snippet.push('…'); }
+                return Some(snippet);
+            }
+            i += 1;
+        }
+        None
+    } else {
+        match lower.find(&lower_contains) {
+            Some(idx) => {
+                let lo = idx.saturating_sub(80);
+                let hi = (idx + contains.len() + 80).min(text.len());
+                let mut snippet = text[lo..hi].to_string();
+                if lo > 0 { snippet = format!("…{snippet}", snippet = snippet); }
+                if hi < text.len() { snippet.push('…'); }
+                Some(snippet)
+            }
+            None => None,
+        }
+    }
+}
+
+fn is_url_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(b, b'.' | b'/' | b'-' | b'_' | b':' | b'%' | b'?' | b'#' | b'=' | b'&' | b'~' | b'+' | b'@' | b'!' | b',' | b';')
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct IssueTitleRow {
     pub id: Uuid,
@@ -708,6 +775,170 @@ impl<'a> IssueRepo<'a> {
         .bind(limit)
         .fetch_all(self.db.pool())
         .await
+    }
+
+    /// R516: company extract search hits (Node CompanySearchExtractResponse 兼容)。
+    pub async fn search_extract_issue_hits(
+        &self,
+        company_id: Uuid,
+        contains: &str,
+        scope: &str,
+        limit: i64,
+    ) -> sqlx::Result<Vec<ExtractIssueHitRow>> {
+        let limit = limit.clamp(1, 200);
+        let include_issues = scope == "all" || scope == "issues";
+        let include_comments = scope == "all" || scope == "comments";
+        let include_documents = scope == "all" || scope == "documents";
+        if !include_issues && !include_comments && !include_documents {
+            return Ok(Vec::new());
+        }
+        let like_pat = format!("%{contains}%");
+        let mut conds: Vec<String> = Vec::new();
+        if include_issues {
+            conds.push("(i.title ILIKE $2 OR i.description ILIKE $2)".into());
+        }
+        if include_comments {
+            conds.push(
+                "EXISTS (SELECT 1 FROM issue_comments c \
+                 WHERE c.issue_id = i.id AND c.company_id = $1 \
+                 AND c.deleted_at IS NULL AND c.body ILIKE $2)"
+                    .into(),
+            );
+        }
+        if include_documents {
+            conds.push(
+                "EXISTS (SELECT 1 FROM issue_documents idoc \
+                 JOIN documents d ON d.id = idoc.document_id \
+                 WHERE idoc.issue_id = i.id AND idoc.company_id = $1 \
+                 AND d.latest_body ILIKE $2)"
+                    .into(),
+            );
+        }
+        let sql = format!(
+            "SELECT DISTINCT i.id, i.identifier, i.title, i.status, i.assignee_agent_id, i.updated_at \
+             FROM issues i WHERE i.company_id = $1 AND ({}) \
+             ORDER BY i.updated_at DESC LIMIT $3",
+            conds.join(" OR "),
+        );
+        sqlx::query_as::<_, ExtractIssueHitRow>(&sql)
+            .bind(company_id)
+            .bind(&like_pat)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// R516: 列出 issue 的 title/description 匹配片段 + excerpt。
+    pub async fn list_issue_field_matches(
+        &self,
+        issue_id: Uuid,
+        contains: &str,
+        kind: &str,
+        matches_per_issue: i64,
+    ) -> sqlx::Result<Vec<ExtractIssueFieldMatchRow>> {
+        let m = matches_per_issue.clamp(1, 50);
+        let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT title, description FROM issues WHERE id = $1",
+        )
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        let Some((title, description)) = row else { return Ok(Vec::new()); };
+        let mut out = Vec::new();
+        for (field, label, text) in [
+            ("title", "title", title),
+            ("description", "description", description),
+        ] {
+            if let Some(t) = text {
+                if let Some(excerpt) = make_excerpt(&t, contains, kind) {
+                    out.push(ExtractIssueFieldMatchRow {
+                        field: field.to_string(),
+                        label: label.to_string(),
+                        excerpt,
+                        excerpt_truncated: false,
+                        source_kind: "issue".to_string(),
+                        source_id: issue_id.to_string(),
+                    });
+                    if out.len() as i64 >= m { return Ok(out); }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// R516: 列出 issue 的评论匹配片段。
+    pub async fn list_issue_comment_matches(
+        &self,
+        issue_id: Uuid,
+        contains: &str,
+        kind: &str,
+        matches_per_issue: i64,
+    ) -> sqlx::Result<Vec<ExtractIssueFieldMatchRow>> {
+        let m = matches_per_issue.clamp(1, 50);
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, body FROM issue_comments \
+             WHERE issue_id = $1 AND deleted_at IS NULL \
+             ORDER BY created_at DESC",
+        )
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut out = Vec::new();
+        for (cid, body) in rows {
+            if let Some(excerpt) = make_excerpt(&body, contains, kind) {
+                out.push(ExtractIssueFieldMatchRow {
+                    field: "comment".to_string(),
+                    label: "comment".to_string(),
+                    excerpt,
+                    excerpt_truncated: false,
+                    source_kind: "comment".to_string(),
+                    source_id: cid.to_string(),
+                });
+                if out.len() as i64 >= m { return Ok(out); }
+            }
+        }
+        Ok(out)
+    }
+
+    /// R516: 列出 issue 的文档匹配片段。
+    pub async fn list_issue_document_matches(
+        &self,
+        issue_id: Uuid,
+        contains: &str,
+        kind: &str,
+        matches_per_issue: i64,
+    ) -> sqlx::Result<Vec<ExtractIssueFieldMatchRow>> {
+        let m = matches_per_issue.clamp(1, 50);
+        let rows: Vec<(Uuid, Option<String>, String)> = sqlx::query_as(
+            "SELECT d.id, d.title, d.latest_body FROM documents d \
+             JOIN issue_documents idoc ON idoc.document_id = d.id \
+             WHERE idoc.issue_id = $1",
+        )
+        .bind(issue_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        let mut out = Vec::new();
+        for (did, title, body) in rows {
+            for (field, label, text) in [
+                ("document_title", "document title", title),
+                ("document_body", "document body", Some(body)),
+            ] {
+                if let Some(t) = text {
+                    if let Some(excerpt) = make_excerpt(&t, contains, kind) {
+                        out.push(ExtractIssueFieldMatchRow {
+                            field: field.to_string(),
+                            label: label.to_string(),
+                            excerpt,
+                            excerpt_truncated: false,
+                            source_kind: "document".to_string(),
+                            source_id: did.to_string(),
+                        });
+                        if out.len() as i64 >= m { return Ok(out); }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// 列出全部（跨公司）；按 status 过滤；limit 默认 200。

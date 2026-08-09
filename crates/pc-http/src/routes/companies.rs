@@ -1975,33 +1975,130 @@ async fn get_org_png(
     Ok(([("content-type", "image/png")], png))
 }
 
+/// R516: GET/POST /api/companies/:company_id/search/extract
+/// Node `CompanySearchExtractResponse` 兼容契约:
+/// - query params: contains (>=2), kind (literal|url), scope (all|issues|comments|documents),
+///   limit (1..200), offset, matchesPerIssue (1..50)
+/// - POST body 也支持 (历史遗留)
 async fn search_extract(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
     body: Option<Json<serde_json::Value>>,
 ) -> ApiResult<Json<Value>> {
-    // GET requests come with no body; default to empty query / default limit.
     let body = body.map(|Json(b)| b).unwrap_or(serde_json::json!({}));
-    let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let limit = body
-        .get("limit")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(20)
-        .clamp(1, 100);
-    let rows = pc_repos::issue::IssueRepo::new(&state.db)
-        .search_titles(company_id, query, limit)
-        .await?;
-    let hits: Vec<Value> = rows
-        .into_iter()
-        .map(|row| {
-            json!({
-                "id": row.id, "title": row.title, "status": row.status, "kind": "issue",
-            })
+    // 优先 query string, 然后 body。
+    let pick = |k: &str| -> Option<String> {
+        query.0.get(k).cloned().or_else(|| {
+            body.get(k).and_then(|v| v.as_str().map(String::from))
         })
-        .collect();
-    Ok(Json(
-        json!({"items": hits, "query": query, "companyId": company_id}),
-    ))
+    };
+    let contains = pick("contains")
+        .or_else(|| pick("query"))
+        .unwrap_or_default();
+    if contains.len() < 2 {
+        return Err(ApiError::BadRequest(
+            "contains must be at least 2 characters".into(),
+        ));
+    }
+    let kind = pick("kind").unwrap_or_else(|| "literal".to_string());
+    if kind != "literal" && kind != "url" {
+        return Err(ApiError::BadRequest("kind must be literal or url".into()));
+    }
+    let scope = pick("scope").unwrap_or_else(|| "all".to_string());
+    if !["all", "issues", "comments", "documents"].contains(&scope.as_str()) {
+        return Err(ApiError::BadRequest(
+            "scope must be all, issues, comments, or documents".into(),
+        ));
+    }
+    let limit = pick("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(100)
+        .clamp(1, 200);
+    let _offset = pick("offset").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    let matches_per_issue = pick("matchesPerIssue")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(10)
+        .clamp(1, 50);
+    let repo = pc_repos::issue::IssueRepo::new(&state.db);
+    let hits = repo
+        .search_extract_issue_hits(company_id, &contains, &scope, limit + 1)
+        .await?;
+    let has_more = hits.len() as i64 > limit;
+    let page: Vec<_> = hits.into_iter().take(limit as usize).collect();
+    let mut results: Vec<Value> = Vec::with_capacity(page.len());
+    let mut truncated = has_more;
+    for hit in page {
+        let mut matches: Vec<Value> = Vec::new();
+        if scope == "all" || scope == "issues" {
+            for m in repo
+                .list_issue_field_matches(hit.id, &contains, &kind, matches_per_issue)
+                .await?
+            {
+                matches.push(json!({
+                    "value": m.excerpt,
+                    "field": m.field,
+                    "label": m.label,
+                    "excerpt": m.excerpt,
+                    "excerptTruncated": m.excerpt_truncated,
+                    "source": {"type": "issue", "issueId": m.source_id},
+                }));
+            }
+        }
+        if scope == "all" || scope == "comments" {
+            for m in repo
+                .list_issue_comment_matches(hit.id, &contains, &kind, matches_per_issue)
+                .await?
+            {
+                matches.push(json!({
+                    "value": m.excerpt,
+                    "field": m.field,
+                    "label": m.label,
+                    "excerpt": m.excerpt,
+                    "excerptTruncated": m.excerpt_truncated,
+                    "source": {"type": "comment", "commentId": m.source_id},
+                }));
+            }
+        }
+        if scope == "all" || scope == "documents" {
+            for m in repo
+                .list_issue_document_matches(hit.id, &contains, &kind, matches_per_issue)
+                .await?
+            {
+                matches.push(json!({
+                    "value": m.excerpt,
+                    "field": m.field,
+                    "label": m.label,
+                    "excerpt": m.excerpt,
+                    "excerptTruncated": m.excerpt_truncated,
+                    "source": {"type": "document", "documentId": m.source_id},
+                }));
+            }
+        }
+        let matches_truncated = matches.len() as i64 >= matches_per_issue;
+        if matches_truncated { truncated = true; }
+        results.push(json!({
+            "issueId": hit.id,
+            "identifier": hit.identifier,
+            "title": hit.title,
+            "status": hit.status,
+            "assigneeAgentId": hit.assignee_agent_id,
+            "updatedAt": hit.updated_at,
+            "matches": matches,
+            "matchesTruncated": matches_truncated,
+        }));
+    }
+    Ok(Json(json!({
+        "contains": contains,
+        "kind": kind,
+        "scope": scope,
+        "limit": limit,
+        "offset": _offset,
+        "matchesPerIssue": matches_per_issue,
+        "results": results,
+        "hasMore": has_more,
+        "truncated": truncated,
+    })))
 }
 
 #[derive(Debug, Deserialize, Default)]
