@@ -11,6 +11,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
+use std::collections::BTreeMap;
+use pc_telemetry::global;
 
 use pc_realtime::LiveEvent;
 use pc_repos::routine::{
@@ -269,6 +271,10 @@ async fn create_routine(
     state
         .realtime
         .publish(LiveEvent::new("routine.created", "routine", row.id).with_company(row.company_id));
+    global::track("routine.created", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("routine_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(row).unwrap_or_default()),
@@ -409,6 +415,10 @@ async fn update(
     state
         .realtime
         .publish(LiveEvent::new("routine.updated", "routine", row.id).with_company(row.company_id));
+    global::track("routine.updated", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("routine_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -624,6 +634,10 @@ async fn run_routine(
         LiveEvent::new("routine.run.triggered", "routine_run", dispatched.run.id)
             .with_company(dispatched.run.company_id),
     );
+    global::track("routine.run.triggered", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(dispatched.run.company_id.to_string())),
+        ("run_id".into(), serde_json::json!(dispatched.run.id.to_string())),
+    ]));
     Ok((
         StatusCode::ACCEPTED,
         Json(serde_json::to_value(dispatched.run).unwrap_or_default()),

@@ -294,6 +294,10 @@ async fn create_agent(
             .with_company(row.company_id)
             .with_actor("system"),
     );
+    global::track("agent.created", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("name".into(), serde_json::json!(row.name.clone())),
+    ]));
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -2543,3 +2547,5 @@ mod heartbeat_route_tests {
         assert!(result.is_some());
     }
 }
+use pc_telemetry::global;
+use std::collections::BTreeMap;

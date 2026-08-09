@@ -11,6 +11,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
+use std::collections::BTreeMap;
+use pc_telemetry::global;
 
 use pc_realtime::LiveEvent;
 use pc_repos::approval::ApprovalRepo;
@@ -98,6 +100,11 @@ async fn create(
     state.realtime.publish(
         LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id),
     );
+    global::track("approval.created", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("approval_id".into(), serde_json::json!(row.id.to_string())),
+        ("approval_type".into(), serde_json::json!(row.approval_type)),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -205,6 +212,10 @@ async fn approve_approval(
     state.realtime.publish(
         LiveEvent::new("approval.approved", "approval", row.id).with_company(row.company_id),
     );
+    global::track("approval.approved", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("decision".into(), serde_json::json!("approved")),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -225,6 +236,10 @@ async fn reject_approval(
     state.realtime.publish(
         LiveEvent::new("approval.rejected", "approval", row.id).with_company(row.company_id),
     );
+    global::track("approval.rejected", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("approval_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -244,6 +259,9 @@ async fn resubmit_approval(
     state
         .realtime
         .publish(LiveEvent::new("approval.resubmitted", "approval", id).with_company(company_id));
+    global::track("approval.resubmitted", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(company_id.to_string())),
+    ]));
     Ok(Json(json!({
         "id": id,
         "companyId": company_id,
@@ -275,6 +293,10 @@ async fn request_approval_revision(
         LiveEvent::new("approval.revision_requested", "approval", row.id)
             .with_company(row.company_id),
     );
+    global::track("approval.revision_requested", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("approval_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -342,6 +364,11 @@ async fn add_approval_comment(
             .with_company(company_id)
             .with_data(json!({"approvalId": approval_id})),
     );
+    global::track("approval.comment_added", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(company_id.to_string())),
+        ("approval_id".into(), serde_json::json!(approval_id.to_string())),
+        ("comment_id".into(), serde_json::json!(id.to_string())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(json!({

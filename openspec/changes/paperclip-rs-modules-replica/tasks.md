@@ -249,3 +249,27 @@
 - [x] `Extension<Arc<ProductTelemetryClient>>` 演示路由 `track()`
 - [x] 真 HTTP collector 验证 envelope 与 dimensions
 - [x] evidence: `r536-server-extension-telemetry.md`
+- [x] evidence: `r536-server-extension-telemetry.md`
+
+## M37 — Global sink 与业务埋点
+
+- [x] `pc-telemetry::global` 模块提供 install/current/track
+- [x] `auth.signed_in` / `company.created` / `issue.created` 真实接入
+- [x] `pc-server` main 注册全局客户端
+- [x] evidence: `r537-global-sink-business-events.md`
+- [x] evidence: `r537-global-sink-business-events.md`
+
+## M38 — 业务埋点批量接入（5 域）
+
+- [x] agents / approvals / pipelines×2 / routines 真实 track()
+- [x] global::track 同步入队 + install_for_tests 支持多测试
+- [x] evidence: `r538-business-events-batch.md`
+
+## M39 — 剩余业务埋点补完（11 类事件）
+
+- [x] approvals × 5：`approval.created` / `approval.rejected` / `approval.resubmitted` / `approval.revision_requested` / `approval.comment_added`
+- [x] pipelines × 4：`pipeline.stage.created` / `pipeline.case.created` / `pipeline.case.claimed` / `pipeline.archived`
+- [x] routines × 2：`routine.created` / `routine.updated`
+- [x] 修复 `pipelines.rs` 中孤儿 `track()` 调用（编译失败）
+- [x] 修复 `routines.rs` / `approvals.rs` 中位于文件末尾的孤儿 `use` 导入
+- [x] evidence: `r539-business-events-completion.md`

@@ -696,6 +696,10 @@ async fn create(
             .with_company(row.company_id)
             .with_actor("system"),
     );
+    global::track("issue.created", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("title".into(), serde_json::json!(row.title.clone())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -7552,3 +7556,5 @@ mod round236_route_tests {
         );
     }
 }
+use pc_telemetry::global;
+use std::collections::BTreeMap;

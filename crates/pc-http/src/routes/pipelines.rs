@@ -11,6 +11,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
+use std::collections::BTreeMap;
+use pc_telemetry::global;
 
 use pc_realtime::LiveEvent;
 use pc_repos::case::CaseRepo;
@@ -168,6 +170,10 @@ async fn create(
     state.realtime.publish(
         LiveEvent::new("pipeline.created", "pipeline", row.id).with_company(row.company_id),
     );
+    global::track("pipeline.created", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("name".into(), serde_json::json!(row.name.clone())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -261,6 +267,10 @@ async fn create_stage(
     state.realtime.publish(
         LiveEvent::new("pipeline.stage.created", "pipeline_stage", row.id).with_company(id),
     );
+    global::track("pipeline.stage.created", BTreeMap::from([
+        ("pipeline_id".into(), serde_json::json!(id.to_string())),
+        ("name".into(), serde_json::json!(row.name.clone())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(row).unwrap_or_default()),
@@ -429,6 +439,10 @@ async fn create_case(
         LiveEvent::new("pipeline.case.created", "pipeline_case", row.id)
             .with_company(row.company_id),
     );
+    global::track("pipeline.case.created", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("case_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(row).unwrap_or_default()),
@@ -478,6 +492,10 @@ async fn transition_case(
         LiveEvent::new("pipeline.case.transitioned", "pipeline_case", row.id)
             .with_company(row.company_id),
     );
+    global::track("pipeline.case.transitioned", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("case_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -499,6 +517,10 @@ async fn claim_case_route(
         LiveEvent::new("pipeline.case.claimed", "pipeline_case", row.id)
             .with_company(row.company_id),
     );
+    global::track("pipeline.case.claimed", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("case_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -612,8 +634,12 @@ async fn archive_pipeline(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("pipeline {id}")))?;
     state.realtime.publish(
-        LiveEvent::new("pipeline.archived", "pipeline", row.id).with_company(row.company_id),
+    LiveEvent::new("pipeline.archived", "pipeline", row.id).with_company(row.company_id),
     );
+    global::track("pipeline.archived", BTreeMap::from([
+        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
+        ("pipeline_id".into(), serde_json::json!(row.id.to_string())),
+    ]));
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 

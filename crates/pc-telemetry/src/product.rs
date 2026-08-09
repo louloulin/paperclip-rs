@@ -146,7 +146,7 @@ pub struct ProductTelemetryClient {
     config: ProductTelemetryConfig,
     state: TelemetryState,
     version: String,
-    queue: Arc<Mutex<Vec<Event>>>,
+    pub(crate) queue: Arc<Mutex<Vec<Event>>>,
     http: reqwest::Client,
     pending: Arc<Mutex<RetryQueue<PendingBatch>>>,
     next_attempt: Arc<Mutex<HashMap<String, u32>>>,

@@ -103,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
             env!("CARGO_PKG_VERSION"),
         )?)
     };
+    pc_telemetry::global::install(std::sync::Arc::clone(&product_telemetry));
     let product_telemetry_periodic = std::sync::Arc::clone(&product_telemetry)
         .start_periodic_flush(std::time::Duration::from_secs(60));
     let product_telemetry_actor: RetryActorHandle = std::sync::Arc::clone(&product_telemetry)

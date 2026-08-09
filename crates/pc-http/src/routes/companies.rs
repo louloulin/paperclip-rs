@@ -275,6 +275,10 @@ async fn create(
             .with_company(row.id)
             .with_actor("system"),
     );
+    global::track("company.created", BTreeMap::from([
+        ("name".into(), serde_json::json!(row.name.clone())),
+        ("owner_id".into(), serde_json::json!(owner_id.clone())),
+    ]));
     Ok((
         StatusCode::CREATED,
         Json(json!({ "id": row.id, "name": row.name, "status": row.status })),
@@ -3739,3 +3743,5 @@ mod r511_activity_routes_tests {
         assert_eq!(pe.actor_type, Some(ActorType::System));
     }
 }
+use pc_telemetry::global;
+use std::collections::BTreeMap;
