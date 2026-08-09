@@ -11,6 +11,7 @@ pub mod access_log;
 pub mod auth;
 pub mod body_limit;
 pub mod cors;
+pub mod csrf;
 pub mod redaction;
 pub mod request_id;
 pub mod stack;
@@ -21,4 +22,8 @@ pub use body_limit::BodyLimitLayer;
 pub use cors::{CorsConfig, CorsLayer, DEFAULT_ALLOWED_ORIGINS};
 pub use redaction::{redact_json, redact_text, RedactionConfig};
 pub use request_id::{RequestId, RequestIdLayer, REQUEST_ID_HEADER};
+pub use csrf::{
+    csrf_decision, csrf_layer, csrf_set_cookie, generate_csrf_token, CsrfDenial,
+    CSRF_COOKIE_NAME, CSRF_HEADER_NAME, CSRF_TOKEN_BYTES,
+};
 pub use stack::{apply_default_middleware, default_redaction};

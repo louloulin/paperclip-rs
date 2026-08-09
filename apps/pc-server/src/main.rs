@@ -442,6 +442,12 @@ async fn main() -> anyhow::Result<()> {
             state.clone(),
             pc_http::middleware::auth::auth_layer,
         ))
+        // csrf_layer: 双提交 cookie CSRF 校验（POST/PUT/PATCH/DELETE 在已认证
+        // 场景下必须带匹配的 cookie + header；better-auth 行为等价）
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            pc_http::middleware::csrf::csrf_layer,
+        ))
         .with_state(state.clone());
     // Look for a UI dist bundle to serve alongside the API.
     let ui_dist_path: Option<std::path::PathBuf> = std::env::var("UI_DIR")

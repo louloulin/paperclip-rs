@@ -108,4 +108,5 @@ audit/.coverage-trend.json
 .codex-cache-*.png
 .codex-cache-*.jpg
 .codex-table-thumb.jpg
-target/
+target/.e2e-logs/
+tests/e2e/test-results/

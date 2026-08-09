@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { signUpAndAttachCsrf, withCsrf } from "./_csrf-helper";
 
 /**
  * M21 — companies 子路由 invite / join-request CRUD
@@ -9,9 +10,8 @@ import { test, expect } from "@playwright/test";
  *   DELETE /api/companies/:id/invites/:id   → revoke_invite
  *   GET    /api/companies/:id/join-requests → list_join_requests
  *
- * Note: handlers currently do NOT enforce `users:invite` permission (M22
- * follow-up). The endpoint still requires a valid company_id and the
- * underlying tables.
+ * Every state-changing call carries the `x-csrf-token` header sourced from
+ * the sign-up response body (paperclip-rs double-submit cookie CSRF).
  */
 
 const BASE = process.env.E2E_SERVER_URL ?? "http://localhost:53100";
@@ -19,26 +19,29 @@ const TS = Date.now();
 
 test.describe("M21 — company invite / join-request CRUD", () => {
   test("invite lifecycle: create → list → revoke", async ({ request }) => {
-    // 1. sign-up + create company
-    await request.post(`${BASE}/api/auth/sign-up/email`, {
-      data: {
-        email: `e2e-inv-${TS}@paperclip.test`,
-        password: "playwright-inv-pass-42",
-        name: `E2E Inv ${TS}`,
-      },
-    });
-    const companyRes = await request.post(`${BASE}/api/companies`, {
+    // 1. sign-up + create company (all with CSRF)
+    const ctx = await signUpAndAttachCsrf(
+      request,
+      BASE,
+      `e2e-inv-${TS}@paperclip.test`,
+      "playwright-inv-pass-42",
+      `E2E Inv ${TS}`,
+    );
+    const companyRes = await request.post(`${BASE}/api/companies`, withCsrf({
       data: { name: `Acme Inv ${TS}` },
-    });
+    }, ctx.csrfToken));
     expect([200, 201]).toContain(companyRes.status());
     const company = await companyRes.json();
     const companyId: string = company.id ?? company.companyId ?? company.company_id;
     expect(companyId).toBeTruthy();
 
     // 2. POST /api/companies/:id/invites
-    const create = await request.post(`${BASE}/api/companies/${companyId}/invites`, {
-      data: { inviteType: "member", role: "operator", expiresInDays: 30 },
-    });
+    const create = await request.post(
+      `${BASE}/api/companies/${companyId}/invites`,
+      withCsrf({
+        data: { inviteType: "member", role: "operator", expiresInDays: 30 },
+      }, ctx.csrfToken),
+    );
     expect(create.status()).toBe(200);
     const created = await create.json();
     expect(created.id).toBeTruthy();
@@ -58,6 +61,7 @@ test.describe("M21 — company invite / join-request CRUD", () => {
     // 4. DELETE /api/companies/:id/invites/:invite_id → 204
     const revoke = await request.delete(
       `${BASE}/api/companies/${companyId}/invites/${inviteId}`,
+      withCsrf({}, ctx.csrfToken),
     );
     expect(revoke.status()).toBe(204);
 
@@ -71,48 +75,56 @@ test.describe("M21 — company invite / join-request CRUD", () => {
   });
 
   test("create invite with invalid company id returns 404 or 500", async ({ request }) => {
+    const ctx = await signUpAndAttachCsrf(
+      request,
+      BASE,
+      `e2e-invbad-${TS}@paperclip.test`,
+      "playwright-invbad-pass-42",
+      `E2E InvBad ${TS}`,
+    );
     const fakeCompanyId = "00000000-0000-0000-0000-000000000000";
-    const res = await request.post(`${BASE}/api/companies/${fakeCompanyId}/invites`, {
-      data: { inviteType: "member", role: "viewer" },
-    });
-    // Handler currently doesn't enforce FK; may return 200 with broken state.
-    // We accept any response as long as it doesn't crash the server.
+    const res = await request.post(
+      `${BASE}/api/companies/${fakeCompanyId}/invites`,
+      withCsrf({
+        data: { inviteType: "member", role: "viewer" },
+      }, ctx.csrfToken),
+    );
     expect([200, 400, 404, 500]).toContain(res.status());
   });
 
   test("revoke unknown invite id returns 404", async ({ request }) => {
-    // Need a valid company to reach the handler; create one quickly.
-    await request.post(`${BASE}/api/auth/sign-up/email`, {
-      data: {
-        email: `e2e-rv-${TS}@paperclip.test`,
-        password: "playwright-rv-pass-42",
-        name: `E2E Rv ${TS}`,
-      },
-    });
-    const companyRes = await request.post(`${BASE}/api/companies`, {
+    const ctx = await signUpAndAttachCsrf(
+      request,
+      BASE,
+      `e2e-rv-${TS}@paperclip.test`,
+      "playwright-rv-pass-42",
+      `E2E Rv ${TS}`,
+    );
+    const companyRes = await request.post(`${BASE}/api/companies`, withCsrf({
       data: { name: `Acme Rv ${TS}` },
-    });
+    }, ctx.csrfToken));
     const company = await companyRes.json();
     const companyId: string = company.id ?? company.companyId ?? company.company_id;
 
     const fakeInviteId = "00000000-0000-0000-0000-000000000000";
     const revoke = await request.delete(
       `${BASE}/api/companies/${companyId}/invites/${fakeInviteId}`,
+      withCsrf({}, ctx.csrfToken),
     );
     expect(revoke.status()).toBe(404);
   });
 
   test("list join-requests returns array (empty for new company)", async ({ request }) => {
-    await request.post(`${BASE}/api/auth/sign-up/email`, {
-      data: {
-        email: `e2e-jr-${TS}@paperclip.test`,
-        password: "playwright-jr-pass-42",
-        name: `E2E JR ${TS}`,
-      },
-    });
-    const companyRes = await request.post(`${BASE}/api/companies`, {
+    const ctx = await signUpAndAttachCsrf(
+      request,
+      BASE,
+      `e2e-jr-${TS}@paperclip.test`,
+      "playwright-jr-pass-42",
+      `E2E JR ${TS}`,
+    );
+    const companyRes = await request.post(`${BASE}/api/companies`, withCsrf({
       data: { name: `Acme JR ${TS}` },
-    });
+    }, ctx.csrfToken));
     const company = await companyRes.json();
     const companyId: string = company.id ?? company.companyId ?? company.company_id;
 

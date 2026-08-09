@@ -444,6 +444,8 @@ struct AuthSuccessResponse {
     token: String,
     #[serde(rename = "expiresAt")]
     expires_at: chrono::DateTime<Utc>,
+    #[serde(rename = "csrfToken")]
+    csrf_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -512,6 +514,11 @@ async fn sign_in_email(
         pc_realtime::LiveEvent::new("auth.signed_in", "user", Uuid::nil()).with_actor(&user.id),
     );
     let cookie = session_cookie(&session_token, expires_at);
+    let csrf_token = crate::middleware::csrf::generate_csrf_token();
+    let csrf_cookie = crate::middleware::csrf::csrf_set_cookie(
+        &csrf_token,
+        (expires_at - Utc::now()).num_seconds().max(0),
+    );
     let resp = AuthSuccessResponse {
         success: true,
         user: SessionUserOut {
@@ -524,9 +531,14 @@ async fn sign_in_email(
         redirect: false,
         token: session_token.clone(),
         expires_at,
+        csrf_token: csrf_token.clone(),
     };
     let mut out_headers = HeaderMap::new();
     out_headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie"));
+    out_headers.append(
+        header::SET_COOKIE,
+        csrf_cookie.parse().expect("valid set-cookie"),
+    );
     Ok((StatusCode::OK, out_headers, Json(resp)))
 }
 
@@ -543,6 +555,8 @@ struct SignUpResponse {
     user: SessionUserOut,
     token: String,
     expires_at: chrono::DateTime<Utc>,
+    #[serde(rename = "csrfToken")]
+    csrf_token: String,
 }
 
 async fn sign_up_email(
@@ -592,6 +606,11 @@ async fn sign_up_email(
         pc_realtime::LiveEvent::new("auth.signed_up", "user", Uuid::nil()).with_actor(&user_id),
     );
     let cookie = session_cookie(&session_token, expires_at);
+    let csrf_token = crate::middleware::csrf::generate_csrf_token();
+    let csrf_cookie = crate::middleware::csrf::csrf_set_cookie(
+        &csrf_token,
+        (expires_at - Utc::now()).num_seconds().max(0),
+    );
     let resp = SignUpResponse {
         success: true,
         user: SessionUserOut {
@@ -603,9 +622,14 @@ async fn sign_up_email(
         },
         token: session_token.clone(),
         expires_at,
+        csrf_token: csrf_token.clone(),
     };
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie header"));
+    headers.append(
+        header::SET_COOKIE,
+        csrf_cookie.parse().expect("valid set-cookie header"),
+    );
     Ok((StatusCode::OK, headers, Json(resp)))
 }
 
@@ -620,6 +644,8 @@ struct RefreshResponse {
     success: bool,
     token: String,
     expires_at: chrono::DateTime<Utc>,
+    #[serde(rename = "csrfToken")]
+    csrf_token: String,
 }
 
 async fn refresh_session(
@@ -672,13 +698,23 @@ async fn refresh_session(
             .with_actor(&user_id),
     );
     let cookie = session_cookie(&new_token, expires_at);
+    let csrf_token = crate::middleware::csrf::generate_csrf_token();
+    let csrf_cookie = crate::middleware::csrf::csrf_set_cookie(
+        &csrf_token,
+        (expires_at - Utc::now()).num_seconds().max(0),
+    );
     let resp = RefreshResponse {
         success: true,
         token: new_token.clone(),
         expires_at,
+        csrf_token: csrf_token.clone(),
     };
     let mut out_headers = HeaderMap::new();
     out_headers.insert(header::SET_COOKIE, cookie.parse().expect("valid set-cookie"));
+    out_headers.append(
+        header::SET_COOKIE,
+        csrf_cookie.parse().expect("valid set-cookie"),
+    );
     Ok((StatusCode::OK, out_headers, Json(resp)))
 }
 

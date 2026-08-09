@@ -42,6 +42,7 @@ uuid = { workspace = true }
 bytes = "1"
 base64 = "0.22"
 sha2 = "0.10"
+hex = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
