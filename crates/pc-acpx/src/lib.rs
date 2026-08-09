@@ -37,6 +37,7 @@ pub mod error;
 pub mod error_classification;
 pub mod exclude_patterns;
 pub mod execution_target;
+pub mod execution_target_decision;
 pub mod execution_target_process;
 pub mod fs_ops;
 pub mod gemini_command_shell;

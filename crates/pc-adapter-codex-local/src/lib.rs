@@ -541,6 +541,36 @@ impl Adapter for CodexLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = string(&context.adapter_config, "command").unwrap_or("codex");
+        let configured_timeout_sec = context
+            .adapter_config
+            .get("timeoutSec")
+            .and_then(serde_json::Value::as_f64);
+        let configured_cwd = string(&context.adapter_config, "cwd");
+        let local_fallback_cwd = context
+            .cwd
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let agent_command_shell = string(&context.adapter_config, "agentCommand")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let execution_target_decision =
+            pc_acpx::execution_target::resolve_adapter_execution_target_decision(
+                &pc_acpx::execution_target::ResolveAdapterExecutionTargetDecisionInput {
+                    execution_target: context.execution_target.as_ref(),
+                    legacy_remote_execution: None,
+                    environment_id: None,
+                    lease_id: None,
+                    configured_cwd,
+                    local_fallback_cwd: &local_fallback_cwd,
+                    configured_timeout_sec,
+                    sandbox_runner_available: false,
+                    agent_command_shell: Some(&agent_command_shell),
+                },
+            );
+        let timeout_sec = (!execution_target_decision.timeout.is_disabled())
+            .then_some(execution_target_decision.timeout.timeout_sec);
         // 输出不活动监控：解析 adapterConfig.outputInactivityTimeoutMs（R433）。
         let monitor_resolution = crate::output_inactivity_monitor::resolve_codex_inactivity_timeout(
             context.adapter_config.get("outputInactivityTimeoutMs"),
@@ -559,11 +589,6 @@ impl Adapter for CodexLocalAdapter {
         // 启动真实 bridge（server/worker + SSH runner），并用真实 bridge
         // env 覆盖 4 键；sandbox target 无 provider runner，保持 env-only
         // 合并；本地原样返回。
-        let timeout_sec = context
-            .adapter_config
-            .get("timeoutSec")
-            .and_then(|v| v.as_f64())
-            .filter(|v| v.is_finite() && *v > 0.0);
         let execution_env = crate::codex_execution_env::build_codex_execution_env(
             &crate::codex_execution_env::CodexExecutionEnvInput {
                 run_id: &context.run_id.to_string(),
@@ -638,24 +663,7 @@ impl Adapter for CodexLocalAdapter {
         let mut started_process_session_bridge: Option<
             pc_acpx::process_session_bridge::ProcessSessionBridgeHandle,
         > = None;
-        let parsed_target = context
-            .execution_target
-            .as_ref()
-            .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
-        let agent_command_shell = string(&context.adapter_config, "agentCommand")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let use_remote_process_session = crate::codex_bridge_env::use_codex_remote_process_session(
-            parsed_target.as_ref(),
-            false,
-            !agent_command_shell.is_empty(),
-        );
-        if use_remote_process_session {
-            let session_cwd = pc_acpx::execution_target::adapter_execution_target_remote_cwd(
-                parsed_target.as_ref(),
-                "",
-            );
+        if execution_target_decision.uses_remote_process_session {
             let events_for_bridge_log = events.clone();
             match crate::codex_bridge_env::start_codex_process_session_bridge(
                 &context.run_id.to_string(),
@@ -663,7 +671,7 @@ impl Adapter for CodexLocalAdapter {
                 None,
                 "codex",
                 &agent_command_shell,
-                &session_cwd,
+                &execution_target_decision.execution_cwd,
                 &env,
                 timeout_sec,
                 None,
@@ -801,7 +809,8 @@ impl Adapter for CodexLocalAdapter {
         // workspace 字段从 adapter_config.workspaceContext 读取（若有）。
         result.session_params = build_resolved_session_params(
             result.session_id.as_deref(),
-            context.cwd.as_deref(),
+            (!execution_target_decision.execution_cwd.is_empty())
+                .then(|| std::path::Path::new(&execution_target_decision.execution_cwd)),
             &context.adapter_config,
             context.execution_target.as_ref(),
         );

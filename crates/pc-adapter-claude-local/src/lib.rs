@@ -428,16 +428,47 @@ impl ClaudeLocalAdapter {
         events: AdapterEventSink,
     ) -> Result<AdapterExecutionResult, AdapterError> {
         let command = default_command(&context.adapter_config);
+        let configured_timeout_sec = context
+            .adapter_config
+            .get("timeoutSec")
+            .and_then(Value::as_f64);
+        let configured_cwd = context
+            .adapter_config
+            .get("cwd")
+            .and_then(Value::as_str);
+        let local_fallback_cwd = context
+            .cwd
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let agent_command_shell = context
+            .adapter_config
+            .get("agentCommand")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let execution_target_decision =
+            pc_acpx::execution_target::resolve_adapter_execution_target_decision(
+                &pc_acpx::execution_target::ResolveAdapterExecutionTargetDecisionInput {
+                    execution_target: context.execution_target.as_ref(),
+                    legacy_remote_execution: None,
+                    environment_id: None,
+                    lease_id: None,
+                    configured_cwd,
+                    local_fallback_cwd: &local_fallback_cwd,
+                    configured_timeout_sec,
+                    sandbox_runner_available: false,
+                    agent_command_shell: Some(&agent_command_shell),
+                },
+            );
+        let timeout_sec = (!execution_target_decision.timeout.is_disabled())
+            .then_some(execution_target_decision.timeout.timeout_sec);
         // R490+R492：构建执行 env（对齐 Node claude execute.ts L679-692）。
         // 远程 + usesBridge 时合并 paperclip bridge env；R492 起 SSH 远程
         // target 启动真实 bridge（server/worker + SSH runner），并用真实
         // bridge env 覆盖 4 键；sandbox target 无 provider runner，保持
         // env-only 合并；本地原样返回。
-        let timeout_sec = context
-            .adapter_config
-            .get("timeoutSec")
-            .and_then(|v| v.as_f64())
-            .filter(|v| v.is_finite() && *v > 0.0);
         let execution_env = crate::claude_execution_env::build_claude_execution_env(
             &crate::claude_execution_env::ClaudeExecutionEnvInput {
                 run_id: &context.run_id.to_string(),
@@ -511,27 +542,7 @@ impl ClaudeLocalAdapter {
         let mut started_process_session_bridge: Option<
             pc_acpx::process_session_bridge::ProcessSessionBridgeHandle,
         > = None;
-        let parsed_target = context
-            .execution_target
-            .as_ref()
-            .and_then(pc_acpx::execution_target::parse_adapter_execution_target);
-        let agent_command_shell = context
-            .adapter_config
-            .get("agentCommand")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let use_remote_process_session = crate::claude_remote_workspace::use_claude_remote_process_session(
-            parsed_target.as_ref(),
-            false,
-            !agent_command_shell.is_empty(),
-        );
-        if use_remote_process_session {
-            let session_cwd = pc_acpx::execution_target::adapter_execution_target_remote_cwd(
-                parsed_target.as_ref(),
-                "",
-            );
+        if execution_target_decision.uses_remote_process_session {
             let events_for_bridge_log = events.clone();
             match crate::claude_remote_workspace::start_claude_process_session_bridge(
                 &context.run_id.to_string(),
@@ -539,7 +550,7 @@ impl ClaudeLocalAdapter {
                 None,
                 "claude",
                 &agent_command_shell,
-                &session_cwd,
+                &execution_target_decision.execution_cwd,
                 &env,
                 timeout_sec,
                 None,
@@ -594,26 +605,18 @@ impl ClaudeLocalAdapter {
         let prompt_bundle_key =
             compute_prompt_bundle_key(&context.prompt, &context.adapter_config);
         let mcp_server_identity = String::new();
-        let effective_execution_cwd = context
-            .cwd
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let effective_execution_cwd = execution_target_decision.execution_cwd.clone();
 
         // 从 context.execution_target 解析远程状态（对齐 Node execute.ts）：
         // - execution_target_is_remote：远程 target（SSH / Sandbox）为 true
         // - execution_target_session_identity：远程时才装配 identity
-        let parsed_target = context.execution_target.as_ref().and_then(|v| {
-            pc_acpx::execution_target::parse_adapter_execution_target(v)
-        });
-        let execution_target_is_remote =
-            pc_acpx::execution_target::adapter_execution_target_is_remote(parsed_target.as_ref());
+        let execution_target_is_remote = execution_target_decision.is_remote;
         let execution_target: Option<&Value> = context.execution_target.as_ref();
         let execution_target_session_identity_owned: Option<Value> = if execution_target_is_remote {
-            pc_acpx::execution_target::adapter_execution_target_session_identity(
-                parsed_target.as_ref(),
-            )
-            .and_then(|id| serde_json::to_value(id).ok())
+            execution_target_decision
+                .remote_execution_identity
+                .as_ref()
+                .and_then(|identity| serde_json::to_value(identity).ok())
         } else {
             None
         };

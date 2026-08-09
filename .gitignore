@@ -110,3 +110,4 @@ audit/.coverage-trend.json
 .codex-table-thumb.jpg
 target/.e2e-logs/
 tests/e2e/test-results/
+.e2e-logs/

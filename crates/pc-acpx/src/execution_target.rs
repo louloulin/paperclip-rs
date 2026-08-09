@@ -44,6 +44,11 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::execution_target_decision::{
+    AdapterExecutionTargetDecision, AdapterExecutionTargetKind, AdapterManagedRuntimeStrategy,
+    ResolveAdapterExecutionTargetDecisionInput, resolve_adapter_execution_target_decision,
+};
+
 
 // =============================================================================
 // Constants
@@ -889,12 +894,15 @@ pub fn adapter_execution_target_session_matches(
 pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<AdapterExecutionTarget> {
     let parsed = parse_object(value);
     let kind = read_string_meta(&parsed, "kind")?;
+    let workspace_realization = parsed
+        .get("workspaceRealization")
+        .and_then(|value| serde_json::from_value(value.clone()).ok());
     if kind == "local" {
         return Some(AdapterExecutionTarget::Local(AdapterLocalExecutionTarget {
             kind: "local".to_string(),
             environment_id: read_string_meta(&parsed, "environmentId"),
             lease_id: read_string_meta(&parsed, "leaseId"),
-            workspace_realization: None,
+            workspace_realization,
         }));
     }
     if kind != "remote" {
@@ -914,7 +922,7 @@ pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<Adapt
                     lease_id: read_string_meta(&parsed, "leaseId"),
                     remote_cwd: spec.remote_cwd.clone(),
                     spec,
-                    workspace_realization: None,
+                    workspace_realization,
                 },
             )))
         }
@@ -938,7 +946,7 @@ pub fn parse_adapter_execution_target(value: &serde_json::Value) -> Option<Adapt
                     remote_cwd,
                     timeout_ms,
                     stream_run_logs,
-                    workspace_realization: None,
+                    workspace_realization,
                 },
             )))
         }
