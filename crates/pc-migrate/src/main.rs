@@ -54,7 +54,11 @@ enum Command {
     /// 校验 schema:列出关键表是否存在。
     Verify {
         /// 期望存在的关键表名(逗号分隔)。
-        #[arg(long, value_delimiter = ',', default_value = "companies,agents,issues,projects,heartbeat_runs,plugin_jobs,tool_invocations,tool_connections")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            default_value = "companies,agents,issues,projects,heartbeat_runs,plugin_jobs,tool_invocations,tool_connections"
+        )]
         required_tables: Vec<String>,
     },
     /// 把当前 schema 标记为基线(仅插入历史记录,不跑迁移)。
@@ -99,7 +103,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Status => cmd_status(&db, cli.json).await,
         Command::Verify { required_tables } => cmd_verify(&db, &required_tables, cli.json).await,
         Command::Baseline { label } => cmd_baseline(&db, &label, cli.json).await,
-        Command::Seed { file } => { cmd_seed(&db, &file, cli.json).await?; Ok(()) }
+        Command::Seed { file } => {
+            cmd_seed(&db, &file, cli.json).await?;
+            Ok(())
+        }
         Command::Create { .. } => unreachable!("handled above"),
     }
 }

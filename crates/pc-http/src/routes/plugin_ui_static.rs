@@ -19,8 +19,7 @@ use axum::{
 };
 use pc_plugin_ui_static::{
     cache_control_for, compute_etag, is_loopback_host, mime_for_extension,
-    path_attempts_protocol_override, resolve_plugin_ui_dir, safe_resolve_within,
-    PluginUiError,
+    path_attempts_protocol_override, resolve_plugin_ui_dir, safe_resolve_within, PluginUiError,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -195,7 +194,10 @@ async fn handler(
         }
     };
     let metadata = std::fs::metadata(&resolved).ok();
-    let size = metadata.as_ref().map(|m| m.len()).unwrap_or(bytes.len() as u64);
+    let size = metadata
+        .as_ref()
+        .map(|m| m.len())
+        .unwrap_or(bytes.len() as u64);
     let mtime_ms = metadata
         .as_ref()
         .and_then(|m| m.modified().ok())
@@ -209,7 +211,10 @@ async fn handler(
         .unwrap_or("index.js");
     let cache_control = cache_control_for(filename);
 
-    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
         if if_none_match == etag {
             return StatusCode::NOT_MODIFIED.into_response();
         }
@@ -223,10 +228,12 @@ async fn handler(
 
     let mut resp = Response::new(Body::from(bytes));
     *resp.status_mut() = StatusCode::OK;
-    resp.headers_mut().insert(header::CONTENT_TYPE, mime.parse().unwrap());
+    resp.headers_mut()
+        .insert(header::CONTENT_TYPE, mime.parse().unwrap());
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, cache_control.parse().unwrap());
-    resp.headers_mut().insert(header::ETAG, etag.parse().unwrap());
+    resp.headers_mut()
+        .insert(header::ETAG, etag.parse().unwrap());
     // SSRF 防护占位: dev proxy path 在 production 环境跳过,这里保留 hook
     let _ = is_loopback_host; // 保留符号引用,防止 lint 报错
     resp

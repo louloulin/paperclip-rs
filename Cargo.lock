@@ -2601,6 +2601,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2609,6 +2610,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "base64",
  "chrono",
  "flate2",
@@ -2618,11 +2620,14 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

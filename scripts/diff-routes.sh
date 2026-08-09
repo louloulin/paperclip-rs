@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/diff-routes.sh — M21 路由字节级对齐度量
+# scripts/diff-routes.sh — M30 路由字节级对齐度量
 #
 # 对比 paperclip（Node，路径 ../paperclip）与 paperclip-rs（Rust）两边的
 # HTTP method+path 路由表，计算覆盖率与 top 缺口类别。
@@ -55,10 +55,34 @@ def extract_node(node_root):
             routes.append((verb, full_path, fname))
     return routes
 
+# Rust wildcard names: collapse `*file_path` / `*filePath` / `*x` → `*filePath`
+# (Node path-to-regexp v8 conventionally names wildcards `*filePath`).
+WILDCARD_NORMALIZE_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_]*")
+
+def normalise_path(p):
+    """Collapse `:foo` → `:param` + wildcard names → `*filePath`."""
+    p = re.sub(r':[A-Za-z_][A-Za-z0-9_]*', ':param', p)
+    p = WILDCARD_NORMALIZE_RE.sub('*filePath', p)
+    return p
+
+def strip_rust_comments(src):
+    """Strip // line comments so .route() chunks preceded by comments are still matched.
+
+    Block comments are NOT stripped here on purpose: axum wildcard path syntax
+    contains `*file_path`, which a naive `/*` detector would falsely treat as
+    a C-style block comment start.
+    """
+    return re.sub(r'//[^\n]*', '', src)
+
 def extract_rust(rust_root):
     """Walk Rust crates/pc-http/src/routes/*.rs and pull every verb chained
     onto a `.route("/path", ...)`. Captures `get/post/put/patch/delete`
     whether the verb is the first argument or chained via `.verb(...)`.
+
+    M30 hardening:
+    - strip line/block comments before scanning so leading-comment chunks
+      don't get skipped (companies.rs R516 search/extract had this bug).
+    - use greedy depth tracking so chained `.route(...).merge(...)` works.
     """
     routes = []
     routes_dir = os.path.join(rust_root, "crates/pc-http/src/routes")
@@ -69,19 +93,16 @@ def extract_rust(rust_root):
             continue
         fpath = os.path.join(routes_dir, fname)
         with open(fpath) as f:
-            src = f.read()
-        # Strip Rust string-literal escapes so our regex sees the literal text.
-        # We scan for `.route(` invocations and, for each one, harvest every
-        # verb keyword chained onto the matching path. The simple approach
-        # below works because `.route(p, X.Y...)` calls put the verb chain
-        # immediately after the comma, on the same logical block.
+            raw = f.read()
+        src = strip_rust_comments(raw)
         for chunk in re.split(r"\.route\(", src)[1:]:
-            pm = re.match(r"""\s*['"]([^'"]+)['"]""", chunk)
+            # Allow leading whitespace + comments before the string literal.
+            pm = re.search(r"""['"]([^'"]+)['"]""", chunk)
             if not pm:
                 continue
             path = pm.group(1)
             # Restrict the scan to the same `.route(...)` invocation: stop at
-            # the first top-level close paren. We track paren depth starting
+            # the first top-level close paren. Track paren depth starting
             # from 1 (we are inside the .route( call already).
             depth = 1
             tail_chars = []
@@ -101,12 +122,8 @@ def extract_rust(rust_root):
                 routes.append((v, path, fname))
     return routes
 
-def normalise_param(p):
-    """Collapse `:foo`, `:id`, etc. to `:param`."""
-    return re.sub(r':[A-Za-z_][A-Za-z0-9_]*', ':param', p)
-
 def norm_set(routes):
-    return {(verb, normalise_param(path)) for verb, path, _ in routes}
+    return {(verb, normalise_path(path)) for verb, path, _ in routes}
 
 def category(path):
     if not path.startswith("/"): return "misc"
@@ -145,7 +162,7 @@ with open(os.path.join(OUT_DIR, "route-diff.json"), "w") as f:
 
 # Markdown summary
 md = []
-md.append("# M21 — Node ↔ Rust 路由 method+path 重合率")
+md.append("# M30 — Node ↔ Rust 路由 method+path 重合率")
 md.append("")
 md.append(f"- Node unique routes: **{result['node_unique']}**")
 md.append(f"- Rust unique routes: **{result['rust_unique']}**")

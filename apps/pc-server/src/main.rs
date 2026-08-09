@@ -39,7 +39,9 @@ use pc_repos::agent::{
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::settings::SettingsRepo;
 
-use pc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
+use pc_telemetry::{
+    log_banner, ProductTelemetryClient, ProductTelemetryConfig, RetryActorHandle, StartupBanner, TelemetryOptions,
+};
 use tokio::signal;
 use tracing::info;
 
@@ -90,6 +92,21 @@ async fn main() -> anyhow::Result<()> {
         },
     };
     log_banner(&banner);
+
+    let product_telemetry = {
+        let state_dir = pc_config::PaperclipHomePaths::from_env()?
+            .instance_root()
+            .join("telemetry");
+        std::sync::Arc::new(ProductTelemetryClient::new(
+            ProductTelemetryConfig::from_env(),
+            &state_dir,
+            env!("CARGO_PKG_VERSION"),
+        )?)
+    };
+    let product_telemetry_periodic = std::sync::Arc::clone(&product_telemetry)
+        .start_periodic_flush(std::time::Duration::from_secs(60));
+    let product_telemetry_actor: RetryActorHandle = std::sync::Arc::clone(&product_telemetry)
+        .start_background_retry_actor();
 
     // 4. 连接数据库
     let db = Db::connect(
@@ -490,6 +507,12 @@ async fn main() -> anyhow::Result<()> {
         .context("axum serve")?;
 
     heartbeat_scheduler.abort();
+
+    product_telemetry_periodic.stop().await;
+    product_telemetry_actor.stop().await;
+    if let Err(error) = product_telemetry.final_flush().await {
+        tracing::warn!(error = %error, "final product telemetry flush failed");
+    }
 
     actors.shutdown().await.context("shutdown actors")?;
 

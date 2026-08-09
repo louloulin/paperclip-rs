@@ -146,7 +146,11 @@ pub fn resolve_plugin_ui_dir(
         package_root
     } else {
         let direct = local_plugin_dir.join(package_name);
-        if direct.exists() { direct } else { return None; }
+        if direct.exists() {
+            direct
+        } else {
+            return None;
+        }
     };
     let canonical_root = std::fs::canonicalize(&package_root).ok()?;
     let candidate = canonical_root.join(entrypoints_ui);
@@ -162,10 +166,7 @@ pub fn resolve_plugin_ui_dir(
 /// 1. 解码 percent-encoding(失败的 → InvalidPath)
 /// 2. 拒绝含 `://`、`//`、`\\` 的协议/绝对路径绕过
 /// 3. 用 `Path::join` 拼到 ui_dir,canonicalize,验证前缀
-pub fn safe_resolve_within(
-    ui_dir: &Path,
-    raw_file_path: &str,
-) -> Result<PathBuf, PluginUiError> {
+pub fn safe_resolve_within(ui_dir: &Path, raw_file_path: &str) -> Result<PathBuf, PluginUiError> {
     let decoded = percent_decode(raw_file_path)
         .ok_or_else(|| PluginUiError::InvalidPath(raw_file_path.to_string()))?;
     if decoded.contains("://") || decoded.starts_with("//") || decoded.starts_with("\\\\") {
@@ -180,7 +181,9 @@ pub fn safe_resolve_within(
         return Err(PluginUiError::PathTraversal(decoded));
     }
     if !canonical_target.is_file() {
-        return Err(PluginUiError::NotFound(canonical_target.to_string_lossy().into_owned()));
+        return Err(PluginUiError::NotFound(
+            canonical_target.to_string_lossy().into_owned(),
+        ));
     }
     Ok(canonical_target)
 }
@@ -217,7 +220,11 @@ pub fn is_http_url(url: &str) -> bool {
 /// 在 base URL 之上拼接 raw path,产出 target URL。  
 /// `base` 必须以 `/` 结尾,否则自动追加。
 pub fn build_dev_proxy_url(base: &str, raw_path: &str) -> Option<String> {
-    let normalized_base = if base.ends_with('/') { base.to_string() } else { format!("{base}/") };
+    let normalized_base = if base.ends_with('/') {
+        base.to_string()
+    } else {
+        format!("{base}/")
+    };
     // 直接字符串拼接:rust 没有内置 URL 构造,但 path 已经过 `safe_resolve_within` 校验
     Some(format!("{normalized_base}{raw_path}"))
 }
@@ -226,7 +233,9 @@ pub fn build_dev_proxy_url(base: &str, raw_path: &str) -> Option<String> {
 ///
 /// 在 Node 中通过 `new URL(rawPath, base)` 推断,如果 decoded path 含 `://`/`//`/`\\` 即视为逃逸。
 pub fn path_attempts_protocol_override(raw_file_path: &str) -> bool {
-    let Some(decoded) = percent_decode(raw_file_path) else { return true; };
+    let Some(decoded) = percent_decode(raw_file_path) else {
+        return true;
+    };
     decoded.contains("://") || decoded.starts_with("//") || decoded.starts_with("\\\\")
 }
 
@@ -236,7 +245,10 @@ mod tests {
 
     #[test]
     fn mime_known_extensions() {
-        assert_eq!(mime_for_extension("js"), "application/javascript; charset=utf-8");
+        assert_eq!(
+            mime_for_extension("js"),
+            "application/javascript; charset=utf-8"
+        );
         assert_eq!(mime_for_extension("CSS"), "text/css; charset=utf-8");
         assert_eq!(mime_for_extension("woff2"), "font/woff2");
     }
@@ -268,7 +280,10 @@ mod tests {
 
     #[test]
     fn cache_control_picks_immutable_for_hashed_files() {
-        assert_eq!(cache_control_for("index-abc12345.js"), CACHE_CONTROL_IMMUTABLE);
+        assert_eq!(
+            cache_control_for("index-abc12345.js"),
+            CACHE_CONTROL_IMMUTABLE
+        );
         assert_eq!(cache_control_for("index.js"), CACHE_CONTROL_REVALIDATE);
     }
 

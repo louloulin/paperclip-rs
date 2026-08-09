@@ -53,13 +53,18 @@ macro_rules! require_db {
 #[test]
 fn r527_create_writes_valid_skeleton_and_sanitizes_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let path = cmd_create("add user_prefs", &tmp.path().to_path_buf(), false)
-        .expect("create");
+    let path = cmd_create("add user_prefs", &tmp.path().to_path_buf(), false).expect("create");
     let body = std::fs::read_to_string(&path).expect("read");
     // 命名清洗:`add user_prefs` → `add_user_prefs`
     let fname = path.file_name().unwrap().to_string_lossy().to_string();
-    assert!(fname.ends_with("_add_user_prefs.sql"), "sanitized filename: {fname}");
-    assert!(body.contains("add_user_prefs"), "body should embed sanitized name");
+    assert!(
+        fname.ends_with("_add_user_prefs.sql"),
+        "sanitized filename: {fname}"
+    );
+    assert!(
+        body.contains("add_user_prefs"),
+        "body should embed sanitized name"
+    );
     assert!(body.contains("Write your forward SQL here"));
 }
 
@@ -83,7 +88,10 @@ fn r527_redact_url_strips_userinfo() {
         redact_url("postgres://u:p@host:5432/x"),
         "postgres://***@host:5432/x"
     );
-    assert_eq!(redact_url("postgres://localhost/x"), "postgres://localhost/x");
+    assert_eq!(
+        redact_url("postgres://localhost/x"),
+        "postgres://localhost/x"
+    );
 }
 
 #[test]
@@ -106,18 +114,31 @@ fn r527_resolve_url_priority_chain() {
     std::env::remove_var("DATABASE_URL");
     assert!(resolve_url(None).is_err());
     // restore
-    if let Some(v) = prev1 { std::env::set_var("PAPERCLIP_DATABASE_URL", v); }
-    if let Some(v) = prev2 { std::env::set_var("DATABASE_URL", v); }
+    if let Some(v) = prev1 {
+        std::env::set_var("PAPERCLIP_DATABASE_URL", v);
+    }
+    if let Some(v) = prev2 {
+        std::env::set_var("DATABASE_URL", v);
+    }
 }
 
 #[test]
 fn r527_default_required_tables_match_node_parity() {
     // Node verify 表集合在 server/src/http/server.ts 启动期 hard-code;
     // Rust 端在 DEFAULT_REQUIRED_TABLES 列出,确保 serverside 表单一致。
-    let s: Vec<String> = DEFAULT_REQUIRED_TABLES.iter().map(|s| s.to_string()).collect();
+    let s: Vec<String> = DEFAULT_REQUIRED_TABLES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     for t in &[
-        "companies", "agents", "issues", "projects",
-        "heartbeat_runs", "plugin_jobs", "tool_invocations", "tool_connections",
+        "companies",
+        "agents",
+        "issues",
+        "projects",
+        "heartbeat_runs",
+        "plugin_jobs",
+        "tool_invocations",
+        "tool_connections",
     ] {
         assert!(s.contains(&t.to_string()), "missing required table: {t}");
     }
@@ -147,7 +168,10 @@ async fn r527_status_dry_run_does_not_apply() {
     let before = pc_db::Migrator::status(&db).await.expect("status");
     cmd_up(&db, true, false).await.expect("dry-run up");
     let after = pc_db::Migrator::status(&db).await.expect("status");
-    assert_eq!(before.applied, after.applied, "dry-run must not change applied count");
+    assert_eq!(
+        before.applied, after.applied,
+        "dry-run must not change applied count"
+    );
 }
 
 #[tokio::test]
@@ -155,7 +179,10 @@ async fn r527_verify_succeeds_on_fresh_schema() {
     let db = require_db!();
     // 确保已 up
     cmd_up(&db, false, false).await.expect("up");
-    let req: Vec<String> = DEFAULT_REQUIRED_TABLES.iter().map(|s| s.to_string()).collect();
+    let req: Vec<String> = DEFAULT_REQUIRED_TABLES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let report = cmd_verify_report(&db, &req).await.expect("verify_report");
     assert!(
         report.missing.is_empty(),
@@ -182,7 +209,9 @@ async fn r527_verify_detects_missing_table() {
 async fn r527_baseline_inserts_history_row() {
     let db = require_db!();
     cmd_up(&db, false, false).await.expect("up");
-    cmd_baseline(&db, "r527-test", false).await.expect("baseline");
+    cmd_baseline(&db, "r527-test", false)
+        .await
+        .expect("baseline");
     // 验证行存在
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT hash FROM __drizzle_migrations WHERE hash LIKE 'baseline-r527-test-%' LIMIT 1",

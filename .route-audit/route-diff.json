@@ -1,26 +1,10 @@
 {
   "node_unique": 581,
-  "rust_unique": 880,
-  "common": 578,
-  "missing_in_rust": 3,
+  "rust_unique": 883,
+  "common": 581,
+  "missing_in_rust": 0,
   "extra_in_rust": 302,
-  "coverage_method_path": 99.48,
-  "missing_by_category": {
-    ":param": 2,
-    "restart": 1
-  },
-  "top_missing": [
-    {
-      "method": "GET",
-      "path": "/api/_plugins/:param/ui/*filePath"
-    },
-    {
-      "method": "GET",
-      "path": "/api/companies/:param/search/extract"
-    },
-    {
-      "method": "POST",
-      "path": "/dev-server/restart"
-    }
-  ]
+  "coverage_method_path": 100.0,
+  "missing_by_category": {},
+  "top_missing": []
 }

@@ -22,8 +22,8 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn r528_plugin_ui_static_serves_real_file_with_etag() {
-    use axum::Router;
     use axum::routing::get;
+    use axum::Router;
     use std::sync::Arc;
 
     // 真实文件 + ETag 头
@@ -99,8 +99,7 @@ fn r528_plugin_ui_static_safe_resolve_rejects_protocol_override() {
 #[test]
 fn r528_cases_links_alias_route_registered() {
     let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/routes/cases.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/cases.rs"),
     )
     .expect("read cases.rs");
     assert!(
@@ -114,8 +113,7 @@ fn r528_cases_links_alias_route_registered() {
 #[test]
 fn r528_companies_search_extract_route_registered() {
     let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/routes/companies.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/companies.rs"),
     )
     .expect("read companies.rs");
     assert!(
@@ -135,7 +133,10 @@ fn r528_dev_server_restart_writes_request_file() {
     let ok = write_restart_request(&request, Some(&env_file)).expect("write");
     assert!(ok);
     let expected = tmp.path().join("dev-server-restart-request.json");
-    assert!(expected.exists(), "restart-request.json must be written next to status.json");
+    assert!(
+        expected.exists(),
+        "restart-request.json must be written next to status.json"
+    );
     let body = std::fs::read_to_string(&expected).unwrap();
     assert!(body.contains("manual_restart_now"));
     assert!(body.contains(&request.requested_at));
@@ -177,7 +178,9 @@ fn r528_dev_server_status_round_trip() {
         "pendingMigrations": ["m1.sql"]
     });
     std::fs::write(&status_file, serde_json::to_string_pretty(&json).unwrap()).unwrap();
-    let status = read_persisted_status(Some(&env_file)).expect("read").expect("present");
+    let status = read_persisted_status(Some(&env_file))
+        .expect("read")
+        .expect("present");
     assert!(status.dirty);
     assert_eq!(status.changed_path_count, 2);
     assert_eq!(status.pending_migrations, vec!["m1.sql"]);
@@ -196,8 +199,7 @@ fn r528_dev_server_status_missing_returns_none() {
 #[test]
 fn r528_dev_server_restart_route_static_contract() {
     let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/routes/dev_server_restart.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/dev_server_restart.rs"),
     )
     .expect("read route file");
     assert!(

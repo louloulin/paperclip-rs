@@ -23,13 +23,22 @@ use pc_dev_server_status::{
 use serde_json::json;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/dev-server/restart", post(handler))
+    // 同时挂 root-level `/dev-server/restart` 与 `/api/dev-server/restart`:
+    // - Node `healthRoutes` 在 root(NO_REPLACE_PREFIX)直接挂 `/dev-server/restart`
+    // - paperclip-rs 顶层路由统一加 `/api` 前缀,所以两条都注册即可对齐 Node 路径且不破坏现有 e2e 调用方
+    Router::new()
+        .route("/api/dev-server/restart", post(handler))
+        .route("/dev-server/restart", post(handler))
 }
 
 fn env_status_file() -> Option<String> {
     let raw = std::env::var("PAPERCLIP_DEV_SERVER_STATUS_FILE").ok()?;
     let trimmed = raw.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn deployment_mode_authenticated() -> bool {

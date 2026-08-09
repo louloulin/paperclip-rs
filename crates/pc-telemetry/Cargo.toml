@@ -21,11 +21,14 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
 
 # feedback trace 上传客户端依赖（gzip+base64+json）
 flate2 = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+uuid = { workspace = true }
+sha2 = "0.10"
 
 # OTLP 依赖（feature-gated，避免对默认构建造成编译开销）
 opentelemetry = { version = "0.27", optional = true }
@@ -35,3 +38,6 @@ tracing-opentelemetry = { version = "0.28", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
+tempfile = "3"
+axum = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

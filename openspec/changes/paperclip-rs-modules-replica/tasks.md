@@ -208,3 +208,44 @@
 
 - [ ] `pc-heartbeat::recovery::stale_issue_lock_sweep` 与 Node `services/heartbeat.ts` 行为对齐
 - [ ] `round300` 4 个失败测试全过
+
+## M31 — 产品遥测客户端核心
+
+- [x] 持久 install state 与私有引用哈希
+- [x] 事件队列、Node 兼容 envelope 与稳定 batchId
+- [x] 真实 HTTP ingest + 失败批次回填测试
+- [ ] 业务埋点、退避重试、周期 flush 与 server shutdown 接线
+- [x] evidence: `r531-product-telemetry-client.md`
+
+## M32 — 产品遥测 fallback 与生命周期
+
+- [x] transient endpoint fallback 保持相同 batchId
+- [x] 周期 flush 可停止任务
+- [x] Node opt-out 环境变量契约
+- [x] pc-server graceful shutdown 最终 flush
+- [x] evidence: `r532-telemetry-lifecycle-fallback.md`
+
+## M33 — Telemetry Retry-After 与字节分批
+
+- [x] `429` / `Retry-After` 与 capped exponential backoff
+- [x] 重试保持完全相同 body 与 batchId
+- [x] `maxBodyBytes` 递归拆分及超大单事件丢弃
+- [ ] 异步有界 pending store、淘汰、timer cancel、jitter
+- [x] evidence: `r533-telemetry-retry-byte-caps.md`
+
+## M34 — 异步有界 pending retry
+
+- [x] 独立泛型 `RetryQueue` 状态机与 capped jitter backoff
+- [x] 产品客户端接入异步 retry actor/timer
+- [x] timer cancel、stop drain、pending payload attempt 元数据
+- [x] 真实多批次溢出与停止验证
+- [x] evidence: `r534-retry-queue-state.md`（M34-a）+ `r534-async-pending-retry.md`（M34-b）
+- [x] pc-server 启动 actor 并在 shutdown 时 final_flush
+- [x] evidence: `r535-telemetry-server-lifecycle.md`
+- [x] evidence: `r535-telemetry-server-lifecycle.md`
+
+## M36 — Extension 注入与端到端闭环
+
+- [x] `Extension<Arc<ProductTelemetryClient>>` 演示路由 `track()`
+- [x] 真 HTTP collector 验证 envelope 与 dimensions
+- [x] evidence: `r536-server-extension-telemetry.md`

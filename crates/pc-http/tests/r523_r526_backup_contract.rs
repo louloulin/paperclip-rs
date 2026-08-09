@@ -33,7 +33,11 @@ fn r523_parse_backup_stamp_recognized_names() {
         let ts = parsed.unwrap();
         // 时间戳应当是 UTC 当天 00:00:00（只取日期段）
         use chrono::Timelike;
-        assert_eq!(ts.hour(), 0, "R523: backup stamp must normalize to 00:00:00");
+        assert_eq!(
+            ts.hour(),
+            0,
+            "R523: backup stamp must normalize to 00:00:00"
+        );
         assert_eq!(ts.minute(), 0);
         assert_eq!(ts.second(), 0);
     }
@@ -44,8 +48,8 @@ fn r523_parse_backup_stamp_rejects_malformed() {
     let bad = [
         "manual-export.zip",
         "paperclip-bad-date.sql.gz",
-        "paperclip-20260315.sql.gz",     // 缺时间段
-        "paperclip-20260315-120000.gz",  // 缺 .sql
+        "paperclip-20260315.sql.gz",    // 缺时间段
+        "paperclip-20260315-120000.gz", // 缺 .sql
         "random-file.sql.gz",
     ];
     for n in bad {
@@ -62,7 +66,10 @@ fn r523_classify_separates_kept_from_pruned() {
         ("paperclip-1d.sql.gz".to_string(), now - Duration::days(1)),
         ("paperclip-7d.sql.gz".to_string(), now - Duration::days(7)),
         ("paperclip-10d.sql.gz".to_string(), now - Duration::days(10)),
-        ("paperclip-100d.sql.gz".to_string(), now - Duration::days(100)),
+        (
+            "paperclip-100d.sql.gz".to_string(),
+            now - Duration::days(100),
+        ),
     ];
     let result = classify(&files, now, &policy);
     assert!(!result.is_empty());
@@ -102,8 +109,16 @@ fn r523_prune_removes_old_keeps_recent() {
     let stats: RetentionStats = policy.prune(&dir, now).expect("prune");
     assert!(!old_path.exists(), "R523: old backup must be pruned");
     assert!(new_path.exists(), "R523: new backup must be kept");
-    assert!(stats.pruned >= 1, "R523: stats.pruned should be >= 1, got {}", stats.pruned);
-    assert!(stats.kept >= 1, "R523: stats.kept should be >= 1, got {}", stats.kept);
+    assert!(
+        stats.pruned >= 1,
+        "R523: stats.pruned should be >= 1, got {}",
+        stats.pruned
+    );
+    assert!(
+        stats.kept >= 1,
+        "R523: stats.kept should be >= 1, got {}",
+        stats.kept
+    );
 }
 
 #[test]
@@ -119,7 +134,10 @@ fn r523_prune_keeps_unrecognized_names_strict_mode() {
     filetime_touch(&manual, now - Duration::days(100));
 
     let stats = policy.prune(&dir, now).expect("prune");
-    assert!(manual.exists(), "R523: strict mode must keep unrecognized names");
+    assert!(
+        manual.exists(),
+        "R523: strict mode must keep unrecognized names"
+    );
     assert_eq!(stats.kept, 1);
     assert_eq!(stats.pruned, 0);
 }
@@ -151,7 +169,9 @@ fn r523_engine_list_sorts_descending_by_mtime() {
 fn r523_engine_list_handles_missing_dir() {
     let engine = pc_backup::engine::BackupEngine::new();
     let dir = std::env::temp_dir().join("pc-backup-missing-xyz-not-exist");
-    let list = engine.list(&dir).expect("list on missing dir should not error");
+    let list = engine
+        .list(&dir)
+        .expect("list on missing dir should not error");
     assert!(list.is_empty());
 }
 
@@ -179,7 +199,9 @@ fn r526_trigger_rejects_cloud_managed_instance() {
     );
     // 必须先于 require_user_id 短路（cloud_managed 不暴露任何 actor 信息）
     // 只在 `async fn trigger_backup` 函数体内定位,避免命中文件顶部的 use/fn 定义。
-    let trigger_idx = src.find("async fn trigger_backup").expect("trigger_backup def");
+    let trigger_idx = src
+        .find("async fn trigger_backup")
+        .expect("trigger_backup def");
     let body = &src[trigger_idx..];
     // 下一个 `async fn` 即下一个路由函数的开始 = trigger_backup 的函数体结束
     let body_end = body[1..]
@@ -187,8 +209,12 @@ fn r526_trigger_rejects_cloud_managed_instance() {
         .map(|i| i + 1)
         .unwrap_or(body.len());
     let body = &body[..body_end];
-    let cloud_idx = body.find("is_cloud_managed_instance()").expect("cloud call inside trigger_backup");
-    let require_idx = body.find("require_user_id").expect("require_user_id call inside trigger_backup");
+    let cloud_idx = body
+        .find("is_cloud_managed_instance()")
+        .expect("cloud call inside trigger_backup");
+    let require_idx = body
+        .find("require_user_id")
+        .expect("require_user_id call inside trigger_backup");
     assert!(
         cloud_idx < require_idx,
         "R526: cloud_managed check must run BEFORE require_user_id in trigger_backup"

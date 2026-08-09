@@ -76,7 +76,10 @@ pub fn resolve_status_paths(env_status_file: Option<&str>) -> Option<(PathBuf, P
         return None;
     }
     let status_path = PathBuf::from(status_path);
-    let parent = status_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let parent = status_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     let restart = parent.join("dev-server-restart-request.json");
     Some((status_path, restart))
 }
@@ -118,7 +121,10 @@ pub fn parse_persisted_value(value: serde_json::Value) -> PersistedDevServerStat
     };
     let changed_paths_sample = normalize_string_array(obj.get("changedPathsSample"));
     let pending_migrations = normalize_string_array(obj.get("pendingMigrations"));
-    let changed_path_count_raw = obj.get("changedPathCount").cloned().unwrap_or(serde_json::Value::Null);
+    let changed_path_count_raw = obj
+        .get("changedPathCount")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let changed_path_count = match changed_path_count_raw {
         serde_json::Value::Number(n) => n
             .as_f64()
@@ -158,7 +164,11 @@ fn normalize_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
 fn normalize_timestamp(value: Option<&serde_json::Value>) -> Option<String> {
     let s = value?.as_str()?;
     let trimmed = s.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// 写入 restart request JSON。返回 `Ok(false)` 表示路径未配置(模拟 Node 的 boolean 返回)。
@@ -241,8 +251,14 @@ mod tests {
 
     #[test]
     fn parse_persisted_value_handles_non_object() {
-        assert_eq!(parse_persisted_value(serde_json::json!(42)), PersistedDevServerStatus::default());
-        assert_eq!(parse_persisted_value(serde_json::json!(null)), PersistedDevServerStatus::default());
+        assert_eq!(
+            parse_persisted_value(serde_json::json!(42)),
+            PersistedDevServerStatus::default()
+        );
+        assert_eq!(
+            parse_persisted_value(serde_json::json!(null)),
+            PersistedDevServerStatus::default()
+        );
     }
 
     #[test]
@@ -275,13 +291,27 @@ mod tests {
 
     #[test]
     fn restart_required_logic() {
-        let s1 = PersistedDevServerStatus { dirty: false, changed_path_count: 0, pending_migrations: vec![], ..Default::default() };
+        let s1 = PersistedDevServerStatus {
+            dirty: false,
+            changed_path_count: 0,
+            pending_migrations: vec![],
+            ..Default::default()
+        };
         assert!(!restart_required(&s1));
-        let s2 = PersistedDevServerStatus { dirty: true, ..Default::default() };
+        let s2 = PersistedDevServerStatus {
+            dirty: true,
+            ..Default::default()
+        };
         assert!(restart_required(&s2));
-        let s3 = PersistedDevServerStatus { changed_path_count: 5, ..Default::default() };
+        let s3 = PersistedDevServerStatus {
+            changed_path_count: 5,
+            ..Default::default()
+        };
         assert!(restart_required(&s3));
-        let s4 = PersistedDevServerStatus { pending_migrations: vec!["m1".into()], ..Default::default() };
+        let s4 = PersistedDevServerStatus {
+            pending_migrations: vec!["m1".into()],
+            ..Default::default()
+        };
         assert!(restart_required(&s4));
     }
 }
