@@ -36,6 +36,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/cases/:case_id/events", get(list_case_events))
         .route("/api/cases/:case_id/issue-links", post(create_case_link))
+        // ── M28: Node-parity alias for POST /cases/:id/links ──
+        .route("/api/cases/:case_id/links", post(create_case_link))
         .route(
             "/api/cases/:case_id/documents",
             get(list_case_documents).put(upsert_case_document),
@@ -1770,28 +1772,38 @@ async fn open_conversation_route(
 }
 
 /// `GET /api/cases/:case_id/context-pack` — bundle of case context for AI.
-/// Mirrors Node `/cases/:caseId/context-pack`.  We synthesize the response
-/// from `cases` + `case_events` + `case_issue_links` + `issues`.
+///
+/// R522: 对齐 Node `GET /cases/:caseId/context-pack`（paperclip/server/src/routes/pipelines.ts）。
+/// Node 响应包含: `case { id, caseKey, title, version, untrustedContent { summary, fields } }`
+/// / `stage` / `allowedTransitions` / `linkedIssues` / `blockers` / `childOutcomes`
+/// / `outputSummaries` / `events`（`PIPELINE_CONTEXT_PACK_EVENT_LIMIT=20` 条，倒序后再 reverse）。
+///
+/// Rust 端约束（与 Node 不完全相同，可接受的差异）：
+/// - `caseKey` 我们用 `identifier`（paperclip-rs DB schema 字段名）
+/// - `version` 用 `case.version`（如有）— paperclip-rs 缺 version 列，用 `1` 占位
+/// - `stage` / `allowedTransitions` / `blockers` / `childOutcomes` 在当前 schema 不可得，返回 `null` / `[]`
+/// - `outputSummaries` 用 `repo.list_outputs` 计算（与 `/outputs` 端点同源）
+/// - `events` 严格限制为 `PIPELINE_CONTEXT_PACK_EVENT_LIMIT`（R522 修复 50→20 bug）
 async fn get_case_context_pack(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    use pc_repos::case::PIPELINE_CONTEXT_PACK_EVENT_LIMIT;
     let repo = CaseRepo::new(&state.db);
     let case = repo
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let events = repo
+    let events_desc = repo
         .list_context_events(case.company_id, case_id)
         .await
         .unwrap_or_default();
-    let linked_issues = repo
-        .list_context_issues(case.company_id, case_id)
-        .await
-        .unwrap_or_default();
-    let children_count = repo.count_children(case.company_id, case_id).await?;
-    let event_items: Vec<Value> = events
+    // Node: order=desc 然后 reverse → 最终为正序（最旧在前，最新在后）
+    // Rust SQL 已经 DESC，所以 reverse 一次即对齐 Node
+    let event_items: Vec<Value> = events_desc
         .into_iter()
+        .rev()
+        .take(PIPELINE_CONTEXT_PACK_EVENT_LIMIT as usize)
         .map(|e| {
             json!({
                 "kind": e.kind,
@@ -1804,6 +1816,10 @@ async fn get_case_context_pack(
             })
         })
         .collect();
+    let linked_issues = repo
+        .list_context_issues(case.company_id, case_id)
+        .await
+        .unwrap_or_default();
     let issue_items: Vec<Value> = linked_issues
         .into_iter()
         .map(|i| {
@@ -1814,19 +1830,47 @@ async fn get_case_context_pack(
             })
         })
         .collect();
+    let outputs = repo
+        .list_outputs(case.company_id, case_id)
+        .await
+        .unwrap_or_default();
+    let output_summaries: Vec<Value> = outputs
+        .iter()
+        .map(|o| {
+            json!({
+                "id": o.id,
+                "title": o.title,
+                "status": o.status,
+                "linkRole": o.link_role,
+                "completedAt": o.completed_at,
+            })
+        })
+        .collect();
+    let child_count = repo.count_children(case.company_id, case_id).await?;
+    let child_outcomes: Vec<Value> = Vec::new(); // schema 无 child outcomes 表，返回空
+
     Ok(Json(json!({
         "case": {
             "id": case.id,
+            "caseKey": case.identifier,           // Node: caseKey
+            "title": case.title,
+            "version": 1,                          // paperclip-rs schema 无 version 列，占位
+            "untrustedContent": {
+                "summary": case.summary,
+                "fields": case.fields,
+            },
             "caseNumber": case.case_number,
             "identifier": case.identifier,
-            "title": case.title,
-            "summary": case.summary,
             "status": case.status,
             "caseType": case.case_type,
-            "fields": case.fields,
         },
+        "stage": Value::Null,                      // schema 无 stage 列
+        "allowedTransitions": Vec::<Value>::new(),// schema 无 allowedTransitions 表
         "linkedIssues": issue_items,
-        "childCount": children_count,
+        "blockers": Vec::<Value>::new(),           // schema 无 blockers 表
+        "childOutcomes": child_outcomes,
+        "childCount": child_count,                // 保留向后兼容字段
+        "outputSummaries": output_summaries,
         "events": event_items,
         "recentEventCount": event_items.len(),
     })))

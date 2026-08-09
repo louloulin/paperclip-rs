@@ -20,6 +20,7 @@ pub mod company_skills;
 pub mod costs;
 pub mod dashboard;
 pub mod decision_training;
+pub mod dev_server_restart;
 pub mod decisions;
 pub mod documents;
 pub mod environment_selection;
@@ -77,6 +78,7 @@ pub mod extensions;
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(health::router())
+        .merge(dev_server_restart::router())
         .merge(companies::router())
         .merge(agents::router())
         .merge(issues::router())

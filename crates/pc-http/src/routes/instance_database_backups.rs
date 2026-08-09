@@ -2,6 +2,21 @@
 //!
 //! 通过 `pc_backup::BackupManager` 统一调度，与原
 //! `paperclip/server/src/services/backup.ts` 等价。
+//!
+//! R526: 镜像 Node `isCloudManagedInstance()` — 在 cloud-managed 实例上
+//! 禁用手动触发（避免把平台管理的备份目录暴露给任何 actor，包括 owner-admin）。
+//! 检测口径：env `PAPERCLIP_DEPLOYMENT_MODE=cloud_managed` 或同义键。
+//! 默认 self-hosted（行为不变）。
+
+fn is_cloud_managed_instance() -> bool {
+    let deployment = std::env::var("PAPERCLIP_DEPLOYMENT_MODE")
+        .ok()
+        .or_else(|| std::env::var("PAPERCLIP_CLOUD_MANAGED").ok());
+    matches!(
+        deployment.as_deref(),
+        Some("cloud_managed") | Some("cloud-managed") | Some("true")
+    )
+}
 
 use axum::{
     extract::{Path, State},
@@ -51,6 +66,13 @@ async fn trigger_backup(
     headers: axum::http::HeaderMap,
     body: Option<Json<TriggerBody>>,
 ) -> ApiResult<impl IntoResponse> {
+    // R526: cloud-managed 实例上禁用手动触发
+    // （镜像 Node `forbidden("Database backups are platform-managed on cloud-managed instances", {code: "database_backups_platform_managed"})`）
+    if is_cloud_managed_instance() {
+        return Err(ApiError::BadRequest(
+            "Database backups are platform-managed on cloud-managed instances".into(),
+        ));
+    }
     require_user_id(&state, &headers).await?;
     let url = db_url_from_env()?;
     let label = body.and_then(|Json(b)| b.label);

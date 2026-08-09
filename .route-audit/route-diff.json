@@ -1,12 +1,12 @@
 {
   "node_unique": 581,
-  "rust_unique": 879,
-  "common": 577,
-  "missing_in_rust": 4,
+  "rust_unique": 880,
+  "common": 578,
+  "missing_in_rust": 3,
   "extra_in_rust": 302,
-  "coverage_method_path": 99.31,
+  "coverage_method_path": 99.48,
   "missing_by_category": {
-    ":param": 3,
+    ":param": 2,
     "restart": 1
   },
   "top_missing": [
@@ -17,10 +17,6 @@
     {
       "method": "GET",
       "path": "/api/companies/:param/search/extract"
-    },
-    {
-      "method": "POST",
-      "path": "/api/cases/:param/links"
     },
     {
       "method": "POST",

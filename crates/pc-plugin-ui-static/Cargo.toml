@@ -1,0 +1,19 @@
+[package]
+name = "pc-plugin-ui-static"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip plugin UI bundle 静态文件服务 + dev proxy SSRF 防护（与 Node plugin-ui-static.ts 1:1 对齐）"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

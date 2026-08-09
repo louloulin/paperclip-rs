@@ -27,6 +27,9 @@ pc-plugin-host = { path = "../pc-plugin-host" }
 pc-plugin-protocol = { path = "../pc-plugin-protocol" }
 pc-workflow = { path = "../pc-workflow" }
 pc-storage = { path = "../pc-storage" }
+pc-dev-server-status = { path = "../pc-dev-server-status" }
+pc-plugin-ui-static = { path = "../pc-plugin-ui-static" }
+dirs = "5"
 pc-activity = { path = "../pc-activity" }
 pc-feature-flags = { path = "../pc-feature-flags" }
 axum = { workspace = true }
@@ -62,3 +65,6 @@ dirs = "5"
 # Live-events resume test deps
 tokio-tungstenite = { version = "0.24", features = ["connect"] }
 rand = "0.8"
+
+[target.'cfg(unix)'.dev-dependencies]
+filetime = "0.2"

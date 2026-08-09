@@ -2279,6 +2279,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-dev-server-status"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "pc-errors"
 version = "0.1.0"
 dependencies = [
@@ -2332,6 +2343,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dirs 5.0.1",
+ "filetime",
  "flate2",
  "futures-util",
  "hex",
@@ -2344,11 +2356,13 @@ dependencies = [
  "pc-backup",
  "pc-core",
  "pc-db",
+ "pc-dev-server-status",
  "pc-errors",
  "pc-feature-flags",
  "pc-heartbeat",
  "pc-plugin-host",
  "pc-plugin-protocol",
+ "pc-plugin-ui-static",
  "pc-realtime",
  "pc-repos",
  "pc-secrets",
@@ -2380,6 +2394,7 @@ dependencies = [
  "pc-db",
  "serde_json",
  "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2435,6 +2450,18 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "pc-plugin-ui-static"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

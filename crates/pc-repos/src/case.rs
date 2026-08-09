@@ -273,7 +273,13 @@ pub struct NewBreakdownChild {
     pub fields: Option<serde_json::Value>,
 }
 
-/// Round 120: case context_pack 事件投影（最近 50 条 case_events）。
+/// R522: 对齐 Node `PIPELINE_CONTEXT_PACK_EVENT_LIMIT = 20`（paperclip/server/src/services/pipelines.ts）。
+///
+/// 该常量决定 `context_pack` 端点返回的最大事件数：超过则按 `created_at DESC` 截断。
+/// 与 `listCaseEventsPage` 同样的边界，保证 Node ↔ Rust 客户端可互换。
+pub const PIPELINE_CONTEXT_PACK_EVENT_LIMIT: i64 = 20;
+
+/// Round 120: case context_pack 事件投影（最近 20 条 case_events，R522 修正上限）。
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaseContextEventRow {
@@ -2193,10 +2199,11 @@ impl<'a> CaseRepo<'a> {
         sqlx::query_as::<_, CaseContextEventRow>(
             "SELECT kind, actor_type, actor_user_id, actor_agent_id, run_id, payload, created_at \
              FROM case_events WHERE company_id=$1 AND case_id=$2 \
-             ORDER BY created_at DESC LIMIT 50",
+             ORDER BY created_at DESC LIMIT $3",
         )
         .bind(company_id)
         .bind(case_id)
+        .bind(PIPELINE_CONTEXT_PACK_EVENT_LIMIT)
         .fetch_all(self.db.pool())
         .await
     }

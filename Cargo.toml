@@ -35,6 +35,8 @@ members = [
     "apps/pc-server",
     "apps/pc-cli",
     "crates/pc-storage",
+    "crates/pc-dev-server-status",
+    "crates/pc-plugin-ui-static",
     "crates/pc-workflow",
     "crates/pc-activity",
     "crates/pc-openapi",

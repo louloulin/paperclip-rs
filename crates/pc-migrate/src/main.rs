@@ -1,25 +1,15 @@
-//! `paperclip-migrate` — Paperclip 数据库迁移独立工具。
+//! `paperclip-migrate` —— Paperclip 数据库迁移独立 CLI。
 //!
-//! 与 `pc-server` 内置迁移等价，但作为独立二进制可：
-//! - 在 CI / 部署脚本中独立调用
-//! - 启动时检查迁移状态而不启动 HTTP 服务
-//! - 在多副本部署中只让一个 pod 跑迁移（leader-election 由调用方处理）
-//!
-//! 子命令：
-//! - `up`         应用所有 pending 迁移
-//! - `status`     列出 available / applied / pending
-//! - `verify`     比对 schema 与目标 manifest（轻量校验：表数量 + 关键表存在）
-//! - `baseline`   把当前 schema 标记为基线（不执行任何迁移；用于从外部初始化 DB）
+//! 业务逻辑全部在 `pc_migrate::` lib 中;本文件只负责 clap 解析 + 入口路由。
 
-use std::time::Instant;
-
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use pc_db::{Db, Migrator};
-use serde_json::json;
 use std::path::PathBuf;
-use tracing::info;
-use tracing_subscriber::EnvFilter;
+
+use clap::{Parser, Subcommand};
+use pc_db::Db;
+use pc_migrate::{
+    cmd_baseline, cmd_create, cmd_down, cmd_seed, cmd_status, cmd_up, cmd_verify, init_tracing,
+    resolve_url,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -37,7 +27,7 @@ struct Cli {
     #[arg(long, default_value_t = 4, global = true)]
     max_connections: u32,
 
-    /// 输出 JSON 格式（用于 CI / 自动化）。
+    /// 输出 JSON 格式(用于 CI / 自动化)。
     #[arg(long, global = true)]
     json: bool,
 
@@ -49,64 +39,59 @@ struct Cli {
 enum Command {
     /// 应用所有 pending 迁移。
     Up {
-        /// 仅打印计划，不真正执行。
+        /// 仅打印计划,不真正执行。
         #[arg(long)]
         dry_run: bool,
     },
-    /// 回滚最近一次迁移（需对应 down.sql）。
+    /// 回滚最近一次迁移(需对应 down.sql)。
     Down {
-        /// 回滚步数（默认 1）。
+        /// 回滚步数(默认 1)。
         #[arg(long, default_value_t = 1)]
         steps: u32,
     },
     /// 显示迁移状态。
     Status,
-    /// 校验 schema：列出关键表是否存在。
+    /// 校验 schema:列出关键表是否存在。
     Verify {
-        /// 期望存在的关键表名（逗号分隔）。默认与原 server 一致。
-        #[arg(
-            long,
-            value_delimiter = ',',
-            default_value = "companies,agents,issues,projects,heartbeat_runs,plugin_jobs,tool_invocations,tool_connections"
-        )]
+        /// 期望存在的关键表名(逗号分隔)。
+        #[arg(long, value_delimiter = ',', default_value = "companies,agents,issues,projects,heartbeat_runs,plugin_jobs,tool_invocations,tool_connections")]
         required_tables: Vec<String>,
     },
-    /// 把当前 schema 标记为基线（仅插入历史记录，不跑迁移）。
+    /// 把当前 schema 标记为基线(仅插入历史记录,不跑迁移)。
     Baseline {
-        /// 基线标签名（写入 __drizzle_migrations 表）
+        /// 基线标签名(写入 __drizzle_migrations 表)。
         #[arg(long, default_value = "external_baseline")]
         label: String,
     },
-    /// 创建新迁移文件骨架（命名: YYYYMMDDHHMMSS_<name>.sql）。
+    /// 创建新迁移文件骨架(命名: YYYYMMDDHHMMSS_<name>.sql)。
     Create {
-        /// 迁移名（snake_case）。
+        /// 迁移名(snake_case)。
         name: String,
-        /// 输出目录（默认 ./migrations）。
+        /// 输出目录(默认 ./migrations)。
         #[arg(long, default_value = "./migrations")]
         dir: PathBuf,
     },
-    /// 跑 seed SQL（若存在 ./migrations/seed.sql）。
+    /// 跑 seed SQL(若存在 ./migrations/seed.sql)。
     Seed {
-        /// seed 文件路径（默认 ./migrations/seed.sql）。
+        /// seed 文件路径(默认 ./migrations/seed.sql)。
         #[arg(long, default_value = "./migrations/seed.sql")]
         file: PathBuf,
     },
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let cli = Cli::parse();
     // `create` doesn't need a DB connection.
     if let Command::Create { name, dir } = &cli.command {
-        return cmd_create(name, dir, cli.json);
+        cmd_create(name, dir, cli.json)?;
+        return Ok(());
     }
 
-    let url = resolve_url(&cli)?;
-    let db = Db::connect(&url, cli.max_connections, 1)
-        .await
-        .with_context(|| format!("connect {}", redact_url(&url)))?;
+    let url = resolve_url(cli.database_url.as_deref())?;
+    let db = Db::connect(&url, cli.max_connections, 1).await?;
 
     match cli.command {
         Command::Up { dry_run } => cmd_up(&db, dry_run, cli.json).await,
@@ -114,309 +99,7 @@ async fn main() -> Result<()> {
         Command::Status => cmd_status(&db, cli.json).await,
         Command::Verify { required_tables } => cmd_verify(&db, &required_tables, cli.json).await,
         Command::Baseline { label } => cmd_baseline(&db, &label, cli.json).await,
-        Command::Seed { file } => cmd_seed(&db, &file, cli.json).await,
+        Command::Seed { file } => { cmd_seed(&db, &file, cli.json).await?; Ok(()) }
         Command::Create { .. } => unreachable!("handled above"),
-    }
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .try_init();
-}
-
-fn resolve_url(cli: &Cli) -> Result<String> {
-    if let Some(url) = &cli.database_url {
-        if !url.is_empty() {
-            return Ok(url.clone());
-        }
-    }
-    if let Ok(url) = std::env::var("PAPERCLIP_DATABASE_URL") {
-        if !url.is_empty() {
-            return Ok(url);
-        }
-    }
-    if let Ok(url) = std::env::var("DATABASE_URL") {
-        if !url.is_empty() {
-            return Ok(url);
-        }
-    }
-    anyhow::bail!(
-        "database url not set: pass --database-url or PAPERCLIP_DATABASE_URL/DATABASE_URL"
-    );
-}
-
-fn redact_url(url: &str) -> String {
-    if let Some((scheme, rest)) = url.split_once("://") {
-        if let Some((_userinfo, host)) = rest.split_once('@') {
-            return format!("{scheme}://***@{host}");
-        }
-    }
-    url.to_string()
-}
-
-async fn cmd_up(db: &Db, dry_run: bool, json: bool) -> Result<()> {
-    let start = Instant::now();
-    let status_before = Migrator::status(db).await?;
-    if dry_run {
-        if json {
-            println!(
-                "{}",
-                json!({
-                    "dryRun": true,
-                    "available": status_before.available,
-                    "appliedBefore": status_before.applied,
-                    "pending": status_before.pending,
-                    "durationMs": start.elapsed().as_millis() as i64,
-                })
-            );
-        } else {
-            println!(
-                "[dry-run] pending migrations: {} (total available {})",
-                status_before.pending.len(),
-                status_before.available
-            );
-            for name in &status_before.pending {
-                println!("  - {name}");
-            }
-        }
-        return Ok(());
-    }
-    Migrator::run(db).await.context("apply migrations")?;
-    let status_after = Migrator::status(db).await?;
-    if json {
-        println!(
-            "{}",
-            json!({
-                "applied": status_after.applied - status_before.applied,
-                "available": status_after.available,
-                "appliedTotal": status_after.applied,
-                "pending": status_after.pending,
-                "durationMs": start.elapsed().as_millis() as i64,
-            })
-        );
-    } else {
-        info!(
-            applied = status_after.applied - status_before.applied,
-            available = status_after.available,
-            pending = status_after.pending.len(),
-            durationMs = start.elapsed().as_millis() as i64,
-            "migrations up"
-        );
-        println!(
-            "applied {} migration(s); {} pending ({} total available) in {:?}",
-            status_after.applied - status_before.applied,
-            status_after.pending.len(),
-            status_after.available,
-            start.elapsed()
-        );
-    }
-    Ok(())
-}
-
-async fn cmd_status(db: &Db, json: bool) -> Result<()> {
-    let status = Migrator::status(db).await?;
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "available": status.available,
-                "applied": status.applied,
-                "pending": status.pending,
-            }))?
-        );
-    } else {
-        println!("available: {}", status.available);
-        println!("applied:   {}", status.applied);
-        println!("pending:   {}", status.pending.len());
-        for name in &status.pending {
-            println!("  - {name}");
-        }
-    }
-    Ok(())
-}
-
-async fn cmd_verify(db: &Db, required: &[String], json: bool) -> Result<()> {
-    let pool = db.pool();
-    let mut present = Vec::<String>::new();
-    let mut missing = Vec::<String>::new();
-    for table in required {
-        let row: Option<(i32,)> = sqlx::query_as(
-            "SELECT COUNT(*)::int FROM information_schema.tables \
-             WHERE table_schema = 'public' AND table_name = $1",
-        )
-        .bind(table)
-        .fetch_optional(pool)
-        .await
-        .with_context(|| format!("query information_schema for {table}"))?;
-        match row {
-            Some((0,)) => missing.push(table.clone()),
-            _ => present.push(table.clone()),
-        }
-    }
-    let total: (i32,) = sqlx::query_as(
-        "SELECT COUNT(*)::int FROM information_schema.tables WHERE table_schema = 'public'",
-    )
-    .fetch_one(pool)
-    .await
-    .context("count public tables")?;
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "publicTables": total.0,
-                "present": present,
-                "missing": missing,
-                "ok": missing.is_empty(),
-            }))?
-        );
-    } else {
-        println!("public tables: {}", total.0);
-        println!("present: {} table(s)", present.len());
-        for t in &present {
-            println!("  ✓ {t}");
-        }
-        if !missing.is_empty() {
-            println!("missing: {} table(s)", missing.len());
-            for t in &missing {
-                println!("  ✗ {t}");
-            }
-        }
-    }
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "schema verification failed: {} required table(s) missing",
-            missing.len()
-        );
-    }
-    Ok(())
-}
-
-async fn cmd_baseline(db: &Db, label: &str, json: bool) -> Result<()> {
-    // 仅插入历史记录；不执行 SQL。
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS __drizzle_migrations (\
-         id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT NOT NULL)",
-    )
-    .execute(db.pool())
-    .await
-    .ok();
-    let hash = format!("baseline-{label}-{}", chrono::Utc::now().timestamp_millis());
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    sqlx::query("INSERT INTO __drizzle_migrations (hash, created_at) VALUES ($1, $2)")
-        .bind(&hash)
-        .bind(now_ms)
-        .execute(db.pool())
-        .await
-        .context("insert baseline row")?;
-    if json {
-        println!("{}", json!({ "label": label, "hash": hash, "at": now_ms }));
-    } else {
-        info!(label, hash, "baseline recorded");
-        println!("baseline recorded: {label} (hash={hash})");
-    }
-    Ok(())
-}
-
-async fn cmd_down(db: &Db, steps: u32, json: bool) -> Result<()> {
-    let status = Migrator::status(db).await?;
-    // Migrator doesn't expose the applied migration *names* ordered by recency;
-    // we approximate "would revert last N" by slicing the most-recently-applied
-    // slice. Without down.sql files in the manifest this is a no-op.
-    let _ = steps;
-    let _ = status.applied;
-    if json {
-        println!(
-            "{}",
-            json!({
-                "applied_count": status.applied,
-                "note": "down.sql files not present in this build; no schema change applied"
-            })
-        );
-    } else {
-        println!(
-            "{} migration(s) applied; no down.sql files present in this build, schema unchanged",
-            status.applied
-        );
-    }
-    Ok(())
-}
-
-fn cmd_create(name: &str, dir: &PathBuf, json: bool) -> Result<()> {
-    let safe = sanitize_name(name);
-    if safe.is_empty() {
-        anyhow::bail!("invalid migration name: {name}");
-    }
-    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
-    std::fs::create_dir_all(dir).with_context(|| format!("mkdir {}", dir.display()))?;
-    let path = dir.join(format!("{stamp}_{safe}.sql"));
-    let template = format!(
-        "-- Migration {safe}\n-- Created by paperclip-migrate create\n\n-- Write your forward SQL here.\n",
-    );
-    std::fs::write(&path, template).with_context(|| format!("write {}", path.display()))?;
-    if json {
-        println!("{}", json!({ "path": path.display().to_string() }));
-    } else {
-        println!("created migration skeleton: {}", path.display());
-    }
-    Ok(())
-}
-
-fn sanitize_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-async fn cmd_seed(db: &Db, file: &PathBuf, json: bool) -> Result<()> {
-    if !file.exists() {
-        if json {
-            println!(
-                "{}",
-                json!({ "applied": false, "reason": "seed file not found", "path": file.display().to_string() })
-            );
-        } else {
-            println!("seed file not found: {}", file.display());
-        }
-        return Ok(());
-    }
-    let sql = std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
-    sqlx::raw_sql(&sql)
-        .execute(db.pool())
-        .await
-        .with_context(|| format!("execute {}", file.display()))?;
-    if json {
-        println!(
-            "{}",
-            json!({ "applied": true, "path": file.display().to_string(), "bytes": sql.len() })
-        );
-    } else {
-        println!("seed applied: {} ({} bytes)", file.display(), sql.len());
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn redact_url_keeps_scheme_and_host() {
-        let r = redact_url("postgres://user:pwd@host:5432/db");
-        assert_eq!(r, "postgres://***@host:5432/db");
-    }
-
-    #[test]
-    fn redact_url_no_userinfo_passthrough() {
-        let r = redact_url("postgres://localhost/db");
-        assert_eq!(r, "postgres://localhost/db");
     }
 }
