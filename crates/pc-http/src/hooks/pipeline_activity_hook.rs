@@ -755,4 +755,438 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
 
         Ok(())
     }
+
+    // -------- R603 v6.1: case issue link 子资源 lifecycle --------
+
+    async fn on_case_issue_linked(
+        &self,
+        link: &pc_repos::pipeline::PipelineCaseIssueLinkRow,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let link_id = link.id;
+        let case_id = link.case_id;
+        let company_id = link.company_id;
+        let issue_id = link.issue_id;
+        let role = link.role.clone();
+
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineCaseIssueLinked,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "pipeline_case_issue_link",
+            link_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "link_id": link_id.to_string(),
+            "case_id": case_id.to_string(),
+            "company_id": company_id.to_string(),
+            "issue_id": issue_id.to_string(),
+            "role": role,
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(link_id = %link_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("pipeline.case.issue_linked", "pipeline_case_issue_link", link_id)
+                .with_company(company_id)
+                .with_actor("system"),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(link_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+
+    async fn on_case_issue_unlinked(
+        &self,
+        link_id: Uuid,
+        case_id: Uuid,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let company_id: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT company_id FROM pipeline_cases WHERE id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(self.state.db.pool())
+        .await
+        .ok()
+        .flatten();
+        let company_id = match company_id {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineCaseIssueUnlinked,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "pipeline_case_issue_link",
+            link_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "link_id": link_id.to_string(),
+            "case_id": case_id.to_string(),
+            "company_id": company_id.to_string(),
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(link_id = %link_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("pipeline.case.issue_unlinked", "pipeline_case_issue_link", link_id)
+                .with_company(company_id)
+                .with_actor("system"),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(link_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+    // -------- R603 v6.5: documents 子资源 lifecycle --------
+
+    async fn on_pipeline_document_upserted(
+        &self,
+        pipeline_id: Uuid,
+        company_id: Uuid,
+        key: String,
+        content: serde_json::Value,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineDocumentUpserted,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "pipeline_document",
+            pipeline_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "pipeline_id": pipeline_id.to_string(),
+            "company_id": company_id.to_string(),
+            "key": key,
+            "content": content,
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(pipeline_id = %pipeline_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("pipeline.document_upserted", "pipeline", pipeline_id)
+                .with_company(company_id)
+                .with_actor("system")
+                .with_data(serde_json::json!({"key": key})),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(pipeline_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+
+    async fn on_pipeline_document_revision_restored(
+        &self,
+        pipeline_id: Uuid,
+        company_id: Uuid,
+        key: String,
+        revision_id: Uuid,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineDocumentRevisionRestored,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "pipeline_document",
+            pipeline_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "pipeline_id": pipeline_id.to_string(),
+            "company_id": company_id.to_string(),
+            "key": key,
+            "revision_id": revision_id.to_string(),
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(pipeline_id = %pipeline_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new(
+                "pipeline.document_revision_restored",
+                "pipeline",
+                pipeline_id,
+            )
+            .with_company(company_id)
+            .with_actor("system")
+            .with_data(serde_json::json!({"key": key})),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(pipeline_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+
+    // -------- R603 v6.6: bulk review + automation retry --------
+
+    async fn on_cases_bulk_reviewed(
+        &self,
+        company_id: Uuid,
+        succeeded: i64,
+        failed: i64,
+        total: i64,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineCasesBulkReviewed,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "company",
+            company_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "company_id": company_id.to_string(),
+            "succeeded": succeeded,
+            "failed": failed,
+            "total": total,
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(company_id = %company_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("pipeline.cases.bulk_reviewed", "company", company_id)
+                .with_company(company_id)
+                .with_actor("system")
+                .with_data(serde_json::json!({
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "total": total,
+                })),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(company_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+
+    async fn on_case_automation_retry_requested(
+        &self,
+        case_id: Uuid,
+        company_id: Uuid,
+        from_version: i32,
+        to_version: i32,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineCaseAutomationRetryRequested,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "case",
+            case_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "case_id": case_id.to_string(),
+            "company_id": company_id.to_string(),
+            "from_version": from_version,
+            "to_version": to_version,
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(case_id = %case_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("case.automation.retry_requested", "case", case_id)
+                .with_company(company_id)
+                .with_actor("system")
+                .with_data(serde_json::json!({
+                    "case_id": case_id.to_string(),
+                    "from_version": from_version,
+                    "to_version": to_version,
+                })),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(case_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+
+    async fn on_case_automation_specific_retry_requested(
+        &self,
+        case_id: Uuid,
+        company_id: Uuid,
+        automation_id: Uuid,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineCaseAutomationSpecificRetryRequested,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "case",
+            case_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "case_id": case_id.to_string(),
+            "company_id": company_id.to_string(),
+            "automation_id": automation_id.to_string(),
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(case_id = %case_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("case.automation.specific_retry", "case", case_id)
+                .with_company(company_id)
+                .with_actor("system")
+                .with_data(serde_json::json!({
+                    "case_id": case_id.to_string(),
+                    "automation_id": automation_id.to_string(),
+                })),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(case_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
+
+    async fn on_case_automation_current_stage_rerun_requested(
+        &self,
+        case_id: Uuid,
+        company_id: Uuid,
+        stage_id: Uuid,
+        version: i32,
+    ) -> pc_pipelines::PipelineServiceResult<()> {
+        let activity_event = ActivityEvent::new(
+            ActivityKind::PipelineCaseAutomationCurrentStageRerunRequested,
+            ActivityActor::System {
+                component: "pipeline_service".into(),
+            },
+            "case",
+            case_id,
+        )
+        .with_company(company_id)
+        .with_payload(serde_json::json!({
+            "case_id": case_id.to_string(),
+            "company_id": company_id.to_string(),
+            "stage_id": stage_id.to_string(),
+            "version": version,
+        }));
+
+        if let Err(e) = self.state.activity.emit(activity_event.clone()).await {
+            tracing::warn!(case_id = %case_id, error = %e, "activity emit failed");
+        }
+
+        self.state.realtime.publish(
+            LiveEvent::new("case.automation.current_stage_rerun", "case", case_id)
+                .with_company(company_id)
+                .with_actor("system")
+                .with_data(serde_json::json!({
+                    "case_id": case_id.to_string(),
+                    "stage_id": stage_id.to_string(),
+                    "version": version,
+                })),
+        );
+
+        let plugin_event = PluginEvent {
+            event_id: activity_event.id.0.to_string(),
+            event_type: activity_event.kind.as_str().to_string(),
+            occurred_at: activity_event.occurred_at,
+            actor_id: None,
+            actor_type: Some(ActorType::System),
+            entity_id: Some(case_id.to_string()),
+            entity_type: Some(activity_event.subject_kind.clone()),
+            company_id: company_id.to_string(),
+            payload: activity_event.payload.clone(),
+        };
+        let _ = self.state.plugin_event_bus.emit(plugin_event).await;
+
+        Ok(())
+    }
 }

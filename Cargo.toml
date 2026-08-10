@@ -51,6 +51,9 @@ members = [
     "crates/pc-portability",
     "crates/pc-issues",
     "crates/pc-pipelines",
+    "crates/pc-routines",
+    "crates/pc-folders",
+    "crates/pc-goals",
 ]
 
 [workspace.package]

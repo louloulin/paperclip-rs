@@ -30,9 +30,10 @@ pub use permissions::{
     default_permissions_for_role, normalize_agent_permissions, AgentPermissions,
 };
 pub use service::{
-    AgentApiKey, AgentConfigRevision, AgentHire, AgentHook, AgentKeyCreated, AgentLifecycleEvent,
-    AgentPatch, AgentPermissionUpdate, AgentRuntimeState, AgentService, CreateAgent, CreateAgentKey,
-    NoopAgentHook, PauseReason, RecordingAgentHook, ResetRuntimeSession, ResetRuntimeState,
+    is_uuid_like, normalize_agent_url_key, AgentApiKey, AgentConfigRevision, AgentHire, AgentHook,
+    AgentKeyCreated, AgentLifecycleEvent, AgentPatch, AgentPermissionUpdate, AgentRuntimeState,
+    AgentService, ChainOfCommandNode, CreateAgent, CreateAgentKey, NoopAgentHook, OrgChartNode,
+    PauseReason, RecordingAgentHook, ResetRuntimeSession, ResetRuntimeState, ResolveByRefResult,
     RevisionContext,
 };
 pub use snapshot::{

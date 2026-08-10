@@ -13,6 +13,7 @@ use pc_repos::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// R594: agent 生命周期事件。
@@ -39,6 +40,15 @@ pub trait AgentHook: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
+
+    /// R604: 组织架构图已计算完成（含 agent 数）。
+    async fn on_org_chart_computed(
+        &self,
+        _company_id: Uuid,
+        _count: i64,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// R594: Noop hook — 默认不触发任何副作用。
@@ -50,6 +60,8 @@ impl AgentHook for NoopAgentHook {}
 #[derive(Default)]
 pub struct RecordingAgentHook {
     pub events: std::sync::Mutex<Vec<AgentLifecycleEvent>>,
+    /// R604: 记录组织架构图计算事件 — (company_id, count)
+    pub org_chart_computed: std::sync::Mutex<Vec<(Uuid, i64)>>,
 }
 
 #[async_trait]
@@ -59,6 +71,18 @@ impl AgentHook for RecordingAgentHook {
         event: AgentLifecycleEvent,
     ) -> Result<()> {
         self.events.lock().expect("lock").push(event);
+        Ok(())
+    }
+
+    async fn on_org_chart_computed(
+        &self,
+        company_id: Uuid,
+        count: i64,
+    ) -> Result<()> {
+        self.org_chart_computed
+            .lock()
+            .expect("lock")
+            .push((company_id, count));
         Ok(())
     }
 }
@@ -347,6 +371,52 @@ impl From<AgentConfigRevisionRow> for AgentConfigRevision {
             created_at: row.created_at,
         }
     }
+}
+
+// ============================================================
+// R604: 组织架构图节点（递归 reports_to 关系）
+// ============================================================
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgChartNode {
+    pub id: Uuid,
+    pub name: String,
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reports_to: Option<Uuid>,
+    /// 子节点（递归）。无下属时为空数组。
+    #[serde(default)]
+    pub reports: Vec<OrgChartNode>,
+}
+
+// ============================================================
+// R604: 命令链节点（id/name/role/title）
+// ============================================================
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainOfCommandNode {
+    pub id: Uuid,
+    pub name: String,
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+// ============================================================
+// R604: resolveByReference 解析结果
+// ============================================================
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ResolveByRefResult {
+    /// 唯一匹配到一个 agent
+    Found { agent: AgentRow },
+    /// 没找到
+    NotFound,
+    /// urlKey 匹配到多个 agent（ambiguous）
+    Ambiguous { candidates: Vec<AgentRow> },
 }
 
 #[derive(Clone)]
@@ -908,6 +978,158 @@ impl AgentService {
         self.update(id, AgentPatch::from_snapshot(snapshot), context)
             .await
     }
+
+    // ============================================================
+    // R604: orgForCompany — 列出公司下非 terminated 的 agent，
+    //       递归构建 reports_to 树（如果 manager 不在公司内则视为 root）
+    // ============================================================
+    pub async fn org_for_company(&self, company_id: Uuid) -> Result<Vec<OrgChartNode>> {
+        let repo = AgentRepo::new(&self.db);
+        let rows = repo.list_by_company(company_id).await.map_err(map_sql_error)?;
+        let company_id_set: HashSet<Uuid> = rows.iter().map(|r| r.id).collect();
+        let active: Vec<AgentRow> = rows
+            .into_iter()
+            .filter(|r| r.status != "terminated")
+            .collect();
+        // 按 manager 分组。如果 reportsTo 指向公司外的 agent，则视为 root
+        let mut by_manager: HashMap<Option<Uuid>, Vec<AgentRow>> = HashMap::new();
+        for row in &active {
+            let key = match row.reports_to {
+                Some(mgr) if company_id_set.contains(&mgr) => Some(mgr),
+                _ => None,
+            };
+            by_manager.entry(key).or_default().push(row.clone());
+        }
+        // 按 name 排序（与 Node listCompanyAgentRows 行为一致）
+        for v in by_manager.values_mut() {
+            v.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        // 递归构建
+        fn build(
+            manager_id: Option<Uuid>,
+            by_manager: &HashMap<Option<Uuid>, Vec<AgentRow>>,
+        ) -> Vec<OrgChartNode> {
+            let members = match by_manager.get(&manager_id) {
+                Some(m) => m,
+                None => return Vec::new(),
+            };
+            members
+                .iter()
+                .map(|row| OrgChartNode {
+                    id: row.id,
+                    name: row.name.clone(),
+                    role: row.role.clone(),
+                    title: row.title.clone(),
+                    status: row.status.clone(),
+                    reports_to: row.reports_to,
+                    reports: build(Some(row.id), by_manager),
+                })
+                .collect()
+        }
+        let tree = build(None, &by_manager);
+        let count = active.len() as i64;
+        self.dispatch_org_chart_computed(company_id, count).await?;
+        Ok(tree)
+    }
+
+    /// R604: 触发 org chart computed 事件给所有 hook。
+    async fn dispatch_org_chart_computed(
+        &self,
+        company_id: Uuid,
+        count: i64,
+    ) -> Result<()> {
+        for hook in &self.hooks {
+            if let Err(e) = hook.on_org_chart_computed(company_id, count).await {
+                tracing::warn!(
+                    company_id = %company_id,
+                    error = %e,
+                    "agent org chart hook failed"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    // ============================================================
+    // R604: getChainOfCommand — 从 agent 向上追溯 reports_to 链
+    //       限制 50 跳 + visited 集合防环（与 Node 行为一致）
+    // ============================================================
+    pub async fn get_chain_of_command(&self, agent_id: Uuid) -> Result<Vec<ChainOfCommandNode>> {
+        let repo = AgentRepo::new(&self.db);
+        let Some(start) = repo.get(agent_id).await.map_err(map_sql_error)? else {
+            return Ok(Vec::new());
+        };
+        let mut visited: HashSet<Uuid> = HashSet::new();
+        visited.insert(start.id);
+        let mut chain: Vec<ChainOfCommandNode> = Vec::new();
+        let mut current_id = start.reports_to;
+        while let Some(mgr_id) = current_id {
+            if visited.contains(&mgr_id) || chain.len() >= 50 {
+                break;
+            }
+            visited.insert(mgr_id);
+            let Some(mgr) = repo.get(mgr_id).await.map_err(map_sql_error)? else {
+                break;
+            };
+            chain.push(ChainOfCommandNode {
+                id: mgr.id,
+                name: mgr.name.clone(),
+                role: mgr.role.clone(),
+                title: mgr.title.clone(),
+            });
+            current_id = mgr.reports_to;
+        }
+        Ok(chain)
+    }
+
+    // ============================================================
+    // R604: resolveByReference — 按 urlKey / id 解析 agent
+    //       1) trim 后如果匹配 UUID 格式 → 按 id 查（必须属于指定 company）
+    //       2) 否则按 urlKey（normalizeAgentUrlKey）查同公司非 terminated agent
+    //       3) 0 匹配 → NotFound；1 匹配 → Found；>1 匹配 → Ambiguous
+    // ============================================================
+    pub async fn resolve_by_reference(
+        &self,
+        company_id: Uuid,
+        reference: &str,
+    ) -> Result<ResolveByRefResult> {
+        let raw = reference.trim();
+        if raw.is_empty() {
+            return Ok(ResolveByRefResult::NotFound);
+        }
+        let repo = AgentRepo::new(&self.db);
+        if is_uuid_like(raw) {
+            if let Ok(parsed) = Uuid::parse_str(raw) {
+                if let Some(agent) = repo.get(parsed).await.map_err(map_sql_error)? {
+                    if agent.company_id == company_id {
+                        return Ok(ResolveByRefResult::Found { agent });
+                    }
+                }
+            }
+            return Ok(ResolveByRefResult::NotFound);
+        }
+        let Some(target_key) = normalize_agent_url_key(raw) else {
+            return Ok(ResolveByRefResult::NotFound);
+        };
+        let rows = repo
+            .list_by_company(company_id)
+            .await
+            .map_err(map_sql_error)?;
+        let candidates: Vec<AgentRow> = rows
+            .into_iter()
+            .filter(|row| {
+                row.status != "terminated"
+                    && normalize_agent_url_key(&row.name).as_deref() == Some(target_key.as_str())
+            })
+            .collect();
+        match candidates.len() {
+            0 => Ok(ResolveByRefResult::NotFound),
+            1 => Ok(ResolveByRefResult::Found {
+                agent: candidates.into_iter().next().expect("single"),
+            }),
+            _ => Ok(ResolveByRefResult::Ambiguous { candidates }),
+        }
+    }
 }
 
 fn runtime_state(
@@ -951,6 +1173,38 @@ fn config_record(snapshot: AgentConfigSnapshot) -> AgentConfigRecord {
         budget_monthly_cents: snapshot.budget_monthly_cents,
         metadata: snapshot.metadata,
     }
+}
+
+/// R604: 把字符串规范化为 agent urlKey（仅含 a-z0-9 + `-`，首尾 `-` 去除）。
+pub fn normalize_agent_url_key(value: &str) -> Option<String> {
+    let trimmed = value.trim().to_lowercase();
+    let mut out = String::with_capacity(trimmed.len());
+    let mut prev_dash = true; // 抑制开头连续 `-`
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed_out = out.trim_matches('-').to_string();
+    if trimmed_out.is_empty() {
+        None
+    } else {
+        Some(trimmed_out)
+    }
+}
+
+/// R604: 简化的 UUID 形状判定（trim 后正则匹配）。
+pub fn is_uuid_like(value: &str) -> bool {
+    // trim + lowercase + 长度检查
+    let v = value.trim();
+    if v.len() != 36 {
+        return false;
+    }
+    Uuid::parse_str(v).is_ok()
 }
 
 fn map_sql_error(error: sqlx::Error) -> Error {

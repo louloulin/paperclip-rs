@@ -1,4 +1,4 @@
-//! R603 v3: PipelineActivityHook 端到端 contract 测试（pipeline + stage + transition）。
+//! R603 v4: PipelineActivityHook 端到端 contract 测试（pipeline + stage + transition + case）。
 
 use std::sync::Arc;
 
@@ -12,8 +12,10 @@ use pc_http::{
     AppState,
 };
 use pc_pipelines::{
-    CreatePipelineInput, CreateStageMinimalInput, CreateTransitionInput, PipelineHook,
-    PipelineService, StageKind, UpdatePipelinePatch, UpdateStagePatch,
+    CaseActorKind, CaseEventKind, CreateCaseEventInput, CreateCaseMinimalInput, CreatePipelineInput,
+    CreateStageMinimalInput, CreateTransitionInput, LinkCaseIssueInput, PipelineHook,
+    PipelineService, StageKind, TransitionCaseInput, UpdateCaseStageInput, UpdatePipelinePatch,
+    UpdateStagePatch, UpsertPipelineDocumentInput, BulkReviewItem,
 };
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
@@ -103,6 +105,23 @@ async fn insert_company(pool: &PgPool) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
+    // cases → transitions → stages → pipelines
+    let _ = sqlx::query(
+        "DELETE FROM pipeline_case_issue_links WHERE company_id = $1",
+    )
+    .bind(company_id)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM pipeline_cases WHERE company_id = $1",
+    )
+    .bind(company_id)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query("DELETE FROM pipeline_documents WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query(
         "DELETE FROM pipeline_transitions WHERE pipeline_id IN          (SELECT id FROM pipelines WHERE company_id = $1)",
     )
@@ -692,6 +711,750 @@ async fn r603v3_no_transition_activity_without_hook() {
         transition_events.is_empty(),
         "no transition activity without hook, got {snapshot:?}"
     );
+
+    cleanup(&pool, company_id).await;
+}
+
+// ===========================================================================
+// R603 v4: case 子资源 contract 测试
+// ===========================================================================
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v4_create_case_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v4-create-case".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+
+    let baseline_count = in_mem.snapshot().len();
+    let _ = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c".into(),
+                title: "Case".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline_count);
+    let has_created = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseCreated));
+    assert!(has_created, "expected PipelineCaseCreated activity, got {snapshot:?}");
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v4_update_case_stage_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v4-update-case".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let s2 = insert_stage(&pool, pipe.id, "s2", "S2", "review", 1).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c".into(),
+                title: "Case".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let baseline_count = in_mem.snapshot().len();
+    let _ = svc
+        .update_case_stage(
+            company_id,
+            case.id,
+            &UpdateCaseStageInput {
+                from_stage_id: s1,
+                to_stage_id: s2,
+            },
+        )
+        .await
+        .expect("update");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline_count);
+    let has_transition = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseStageTransitioned));
+    assert!(
+        has_transition,
+        "expected PipelineCaseStageTransitioned activity, got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v4_delete_case_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v4-delete-case".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c".into(),
+                title: "Case".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let baseline_count = in_mem.snapshot().len();
+    let deleted = svc.delete_case(company_id, case.id).await.expect("delete");
+    assert!(deleted);
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline_count);
+    let has_removed = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseRemoved));
+    assert!(has_removed, "expected PipelineCaseRemoved activity, got {snapshot:?}");
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v4_case_event_recorded_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v4-case-event".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c".into(),
+                title: "Case".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let baseline_count = in_mem.snapshot().len();
+    let _ = svc
+        .create_case_event(
+            company_id,
+            case.id,
+            &CreateCaseEventInput {
+                kind: CaseEventKind::Transitioned,
+                actor: CaseActorKind::System,
+                actor_user_id: None,
+                actor_agent_id: None,
+                run_id: None,
+                from_stage_id: Some(s1),
+                to_stage_id: None,
+                payload: serde_json::json!({"reason": "manual"}),
+            },
+        )
+        .await
+        .expect("event");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline_count);
+    let has_event = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseEventRecorded));
+    assert!(
+        has_event,
+        "expected PipelineCaseEventRecorded activity, got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+
+// ============================================================================
+// R603 v6.1: case issue link hook contract
+// ============================================================================
+
+async fn insert_issue(pool: &PgPool, company_id: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at)          VALUES ($1, $2, $3, 'open', 'normal', now(), now())",
+    )
+    .bind(id)
+    .bind(company_id)
+    .bind(format!("Issue-{id}"))
+    .execute(pool)
+    .await
+    .expect("insert issue");
+    id
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_1_link_case_issue_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v6-1-link".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c".into(),
+                title: "Case".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+    let issue_id = insert_issue(&pool, company_id).await;
+
+    let baseline_count = in_mem.snapshot().len();
+    let _ = svc
+        .link_case_issue(
+            company_id,
+            case.id,
+            &LinkCaseIssueInput {
+                issue_id,
+                role: "work".into(),
+            },
+        )
+        .await
+        .expect("link");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline_count);
+    let has_linked = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseIssueLinked));
+    assert!(
+        has_linked,
+        "expected PipelineCaseIssueLinked activity, got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_1_unlink_case_issue_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v6-1-unlink".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c".into(),
+                title: "Case".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+    let issue_id = insert_issue(&pool, company_id).await;
+
+    let link = svc
+        .link_case_issue(
+            company_id,
+            case.id,
+            &LinkCaseIssueInput {
+                issue_id,
+                role: "work".into(),
+            },
+        )
+        .await
+        .expect("link");
+
+    let baseline_count = in_mem.snapshot().len();
+    let ok = svc
+        .unlink_case_issue(company_id, case.id, link.id)
+        .await
+        .expect("unlink");
+    assert!(ok);
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline_count);
+    let has_unlinked = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseIssueUnlinked));
+    assert!(
+        has_unlinked,
+        "expected PipelineCaseIssueUnlinked activity, got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_2_transition_case_emits_activity_and_event_recorded() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = PipelineActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn PipelineHook> = Arc::new(hook);
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe_input = CreatePipelineInput {
+        key: "r603v6-2-trans".into(),
+        name: "Pipeline".into(),
+        description: None,
+    };
+    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let s2 = insert_stage(&pool, pipe.id, "s2", "S2", "review", 1).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "c-t".into(),
+                title: "Transition".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let baseline = in_mem.snapshot().len();
+    let _ = svc
+        .transition_case(
+            company_id,
+            case.id,
+            &TransitionCaseInput {
+                from_stage_id: s1,
+                to_stage_id: s2,
+                actor_user_id: Some("u-actor".into()),
+                actor_type: "user".into(),
+            },
+        )
+        .await
+        .expect("transition");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline);
+    let has_transitioned = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseStageTransitioned));
+    let has_event = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseEventRecorded));
+    assert!(
+        has_transitioned,
+        "expected PipelineCaseStageTransitioned, got {snapshot:?}"
+    );
+    assert!(
+        has_event,
+        "expected PipelineCaseEventRecorded (transitioned event), got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+
+// ===========================================================================
+// R603 v6.5: documents 子资源 lifecycle
+// ===========================================================================
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_5_put_pipeline_document_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook: Arc<dyn PipelineHook> = Arc::new(PipelineActivityHook::new(state_arc.clone()));
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe = svc
+        .create(
+            company_id,
+            &CreatePipelineInput {
+                key: "v65-doc-h".into(),
+                name: "Doc Hook".into(),
+                description: None,
+            },
+        )
+        .await
+        .expect("create pipe");
+
+    let baseline = in_mem.snapshot().len();
+    svc.put_pipeline_document(
+        company_id,
+        pipe.id,
+        &UpsertPipelineDocumentInput {
+            key: "spec".into(),
+            content: serde_json::json!({"v": 1}),
+        },
+    )
+    .await
+    .expect("put");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline);
+    let has_upserted = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineDocumentUpserted));
+    assert!(
+        has_upserted,
+        "expected PipelineDocumentUpserted, got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_5_restore_pipeline_document_revision_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook: Arc<dyn PipelineHook> = Arc::new(PipelineActivityHook::new(state_arc.clone()));
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe = svc
+        .create(
+            company_id,
+            &CreatePipelineInput {
+                key: "v65-rest-h".into(),
+                name: "Rest Hook".into(),
+                description: None,
+            },
+        )
+        .await
+        .expect("create pipe");
+
+    svc.put_pipeline_document(
+        company_id,
+        pipe.id,
+        &UpsertPipelineDocumentInput {
+            key: "spec".into(),
+            content: serde_json::json!({"v": 1}),
+        },
+    )
+    .await
+    .expect("put");
+
+    let baseline = in_mem.snapshot().len();
+    let rev_id = Uuid::new_v4();
+    svc.restore_pipeline_document_revision(company_id, pipe.id, "spec", rev_id)
+        .await
+        .expect("restore");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline);
+    let has_restored = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineDocumentRevisionRestored));
+    assert!(
+        has_restored,
+        "expected PipelineDocumentRevisionRestored, got {snapshot:?}"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+
+// ===========================================================================
+// R603 v6.6: bulk review + automation retry hook
+// ===========================================================================
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_6_bulk_review_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook: Arc<dyn PipelineHook> = Arc::new(PipelineActivityHook::new(state_arc.clone()));
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe = svc
+        .create(
+            company_id,
+            &CreatePipelineInput {
+                key: "v66-bulk-h".into(),
+                name: "Bulk Hook".into(),
+                description: None,
+            },
+        )
+        .await
+        .expect("create pipe");
+
+    // Insert a case directly
+    let case_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO cases (id, company_id, case_number, identifier, case_type, title, status, fields, created_at, updated_at)          VALUES ($1, $2, 1, $3, $4, $5, $6, \'{}\'::jsonb, now(), now())",
+    )
+    .bind(case_id)
+    .bind(company_id)
+    .bind(format!("BHOOK-{case_id}"))
+    .bind("general")
+    .bind("Hook Case")
+    .bind("in_review")
+    .execute(&pool)
+    .await
+    .expect("insert case");
+
+    let _ = pipe;
+
+    let baseline = in_mem.snapshot().len();
+    let items = vec![BulkReviewItem {
+        case_id,
+        decision: "approved".into(),
+        note: None,
+        expected_version: None,
+    }];
+    svc.bulk_review_cases(company_id, &items).await.expect("bulk");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline);
+    let has_bulk = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCasesBulkReviewed));
+    assert!(has_bulk, "expected PipelineCasesBulkReviewed, got {snapshot:?}");
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_6_automation_specific_retry_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook: Arc<dyn PipelineHook> = Arc::new(PipelineActivityHook::new(state_arc.clone()));
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe = svc
+        .create(
+            company_id,
+            &CreatePipelineInput {
+                key: "v66-sr-h".into(),
+                name: "SR Hook".into(),
+                description: None,
+            },
+        )
+        .await
+        .expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "sr-h".into(),
+                title: "SR".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let baseline = in_mem.snapshot().len();
+    let auto_id = Uuid::new_v4();
+    svc.request_case_automation_specific_retry(case.id, auto_id)
+        .await
+        .expect("sr");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline);
+    let has_sr = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseAutomationSpecificRetryRequested));
+    assert!(has_sr, "expected PipelineCaseAutomationSpecificRetryRequested, got {snapshot:?}");
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r603v6_6_automation_current_stage_rerun_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook: Arc<dyn PipelineHook> = Arc::new(PipelineActivityHook::new(state_arc.clone()));
+    let svc = PipelineService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let pipe = svc
+        .create(
+            company_id,
+            &CreatePipelineInput {
+                key: "v66-rr-h".into(),
+                name: "RR Hook".into(),
+                description: None,
+            },
+        )
+        .await
+        .expect("create pipe");
+    let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
+    let case = svc
+        .create_case(
+            company_id,
+            pipe.id,
+            &CreateCaseMinimalInput {
+                case_key: "rr-h".into(),
+                title: "RR".into(),
+                stage_id: s1,
+                summary: None,
+                fields: serde_json::json!({}),
+                parent_case_id: None,
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                origin_run_id: None,
+            },
+        )
+        .await
+        .expect("create case");
+
+    let baseline = in_mem.snapshot().len();
+    svc.request_case_automation_current_stage_rerun(case.id)
+        .await
+        .expect("rerun");
+
+    let snapshot = in_mem.snapshot();
+    assert!(snapshot.len() > baseline);
+    let has_rr = snapshot
+        .iter()
+        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseAutomationCurrentStageRerunRequested));
+    assert!(has_rr, "expected PipelineCaseAutomationCurrentStageRerunRequested, got {snapshot:?}");
 
     cleanup(&pool, company_id).await;
 }

@@ -30,7 +30,7 @@ mod hierarchy;
 mod movement;
 mod personal;
 pub mod slug;
-mod view;
+pub mod view;
 
 #[cfg(test)]
 mod tests;

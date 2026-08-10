@@ -2395,6 +2395,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-folders"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-goals"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-heartbeat"
 version = "0.1.0"
 dependencies = [
@@ -2645,6 +2681,24 @@ dependencies = [
  "sha2",
  "sqlx",
  "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-routines"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

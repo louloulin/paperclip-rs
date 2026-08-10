@@ -551,6 +551,59 @@ impl<'a> PipelineRepo<'a> {
         .await
     }
 
+    /// 事务化转移 case stage + 同步写入 transitioned 事件。
+    ///
+    /// 步骤：
+    /// 1. `UPDATE pipeline_cases` 乐观锁（`stage_id = from_stage_id`）
+    /// 2. `INSERT INTO pipeline_case_events` (`type='transitioned'`)
+    ///
+    /// 返回值：`(updated_case, event)`；若乐观锁失败则返回 `Ok(None)`。
+    /// R603 v6.2: 对齐 Node `paperclip/server/src/services/pipelines.ts::transitionCase`
+    /// 的事务语义。
+    pub async fn transition_case_atomic(
+        &self,
+        company_id: Uuid,
+        case_id: Uuid,
+        from_stage_id: Uuid,
+        to_stage_id: Uuid,
+        actor_type: &str,
+        actor_user_id: Option<&str>,
+    ) -> sqlx::Result<Option<(PipelineCaseRow, PipelineCaseEventRow)>> {
+        let mut tx = self.db.pool().begin().await?;
+
+        let updated_opt: Option<PipelineCaseRow> = sqlx::query_as::<_, PipelineCaseRow>(
+            "UPDATE pipeline_cases SET                 stage_id = $2, version = version + 1,                 terminal_kind = CASE WHEN (SELECT kind FROM pipeline_stages WHERE id = $2) IN ('done', 'cancelled')                                     THEN (SELECT kind FROM pipeline_stages WHERE id = $2) ELSE terminal_kind END,                 terminal_at = CASE WHEN (SELECT kind FROM pipeline_stages WHERE id = $2) IN ('done', 'cancelled')                                    THEN now() ELSE terminal_at END,                 updated_at = now()              WHERE id = $1 AND stage_id = $3              RETURNING id, company_id, pipeline_id, stage_id, case_key, title, summary, fields,                     workspace_ref, parent_case_id, version, pending_suggestion,                     lease_owner_type, lease_agent_id, lease_user_id, lease_token, lease_expires_at,                     terminal_kind, terminal_at, child_count, terminal_child_count,                     created_by_user_id, created_by_agent_id, origin_run_id,                     created_at, updated_at",
+        )
+        .bind(case_id)
+        .bind(to_stage_id)
+        .bind(from_stage_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let updated = match updated_opt {
+            Some(u) => u,
+            None => {
+                tx.rollback().await.ok();
+                return Ok(None);
+            }
+        };
+
+        let event: PipelineCaseEventRow = sqlx::query_as::<_, PipelineCaseEventRow>(
+            "INSERT INTO pipeline_case_events                 (company_id, case_id, type, from_stage_id, to_stage_id, payload,                  actor_type, actor_agent_id, actor_user_id, run_id)              VALUES ($1,$2,'transitioned',$3,$4,'{}'::jsonb,$5,NULL,$6,NULL)              RETURNING id, company_id, case_id, type, actor_type, actor_user_id, actor_agent_id,                     run_id, from_stage_id, to_stage_id, payload, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(case_id)
+        .bind(from_stage_id)
+        .bind(to_stage_id)
+        .bind(actor_type)
+        .bind(actor_user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(Some((updated, event)))
+    }
+
     // =========================================================================
     // Pipeline case issue links
     // =========================================================================
@@ -708,8 +761,12 @@ impl<'a> PipelineRepo<'a> {
         Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
-    /// Round 110: 写一个 pipeline_documents (key upsert)，不存在时插入。
-    /// 真实 schema 缺 content 列，所以这只是为了更新 updated_at + 满足 FK。
+    /// R603 v6.5: 写一个 pipeline_documents (key upsert)，不存在时插入。
+    ///
+    /// - 已存在：UPDATE `updated_at`。
+    /// - 不存在：先在 `documents` 表创建一行（满足 `document_id` FK），
+    ///   再 INSERT `pipeline_documents`，二者在事务中原子完成。
+    /// 真实 schema 缺 content 列；这只是为了更新 `updated_at` + 满足 FK。
     pub async fn touch_pipeline_document(
         &self,
         pipeline_id: Uuid,
@@ -726,16 +783,17 @@ impl<'a> PipelineRepo<'a> {
         if n > 0 {
             return Ok(true);
         }
-        // 不存在：用 pipelines.company_id 反查 INSERT
-        let inserted = sqlx::query(
-            "INSERT INTO pipeline_documents (id, company_id, pipeline_id, document_id, key)              SELECT gen_random_uuid(), company_id, $1, gen_random_uuid(), $2 FROM pipelines WHERE id=$1",
+        // 不存在：事务内用 CTE 先 INSERT documents 再 INSERT pipeline_documents。
+        let mut tx = self.db.pool().begin().await?;
+        let inserted: Option<(Uuid,)> = sqlx::query_as(
+            "WITH new_doc AS (\n  INSERT INTO documents (company_id, latest_body)\n  SELECT p.company_id, '' FROM pipelines p WHERE p.id = $1\n  RETURNING id\n)\nINSERT INTO pipeline_documents (id, company_id, pipeline_id, document_id, key)\nSELECT gen_random_uuid(), p.company_id, p.id, new_doc.id, $2\nFROM pipelines p, new_doc\nWHERE p.id = $1\nRETURNING id",
         )
         .bind(pipeline_id)
         .bind(key)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
-        Ok(inserted > 0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(inserted.is_some())
     }
 
     /// Round 110: pipeline 反查 company_id（generate_cases_batch 用）。
