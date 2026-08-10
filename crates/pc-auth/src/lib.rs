@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod auth_service;
 pub mod email_sender;
 pub mod email_verification;
 pub mod error;
@@ -29,9 +30,15 @@ pub use error::{classify as classify_auth_error, classify_str as classify_auth_s
 pub use oauth_state::{
     code_challenge_s256, new_oauth_state, verify_oauth_state, OAuthStateOutcome, OAuthStateRecord,
 };
+pub use auth_service::{
+    validate_sign_in_input, validate_sign_up_input, AuthService, AuthServiceConfig,
+    AuthServiceError, InMemorySessionStore, InMemoryUserStore, InMemoryVerificationStore,
+    NormalizedSignUpInput, SessionRecord, SessionStore, SignInInput, SignInResult, SignUpInput,
+    SignUpResult, UserRecord, UserStore, VerificationStore,
+};
 pub use session_refresh::{
     check_session, new_session_record, rotate_session, should_rotate, touch_session,
-    SessionCheckOutcome, SessionPolicy, SessionRecord,
+    SessionCheckOutcome, SessionPolicy, SessionRecord as SessionRefreshRecord,
 };
 
 #[derive(Debug, Error)]

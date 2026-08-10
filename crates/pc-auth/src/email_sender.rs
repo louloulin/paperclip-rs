@@ -78,7 +78,7 @@ impl EmailAddress {
     #[must_use]
     pub fn render(&self) -> String {
         match &self.name {
-            Some(n) => format!(""{}" <{}>", n, self.address),
+            Some(n) => format!("\"{}\" <{}>", n, self.address),
             None => self.address.clone(),
         }
     }
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn r568_email_address_with_name() {
         let a = EmailAddress::with_name("a@b.co", "Alice").unwrap();
-        assert_eq!(a.render(), ""Alice" <a@b.co>");
+        assert_eq!(a.render(), "\"Alice\" <a@b.co>");
         assert!(EmailAddress::with_name("a@b.co", "").is_err());
     }
 
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn r568_email_address_parse_rfc5322_style() {
-        let a = EmailAddress::parse(""Alice" <a@b.co>").unwrap();
+        let a = EmailAddress::parse("\"Alice\" <a@b.co>").unwrap();
         assert_eq!(a.address, "a@b.co");
         assert_eq!(a.name.as_deref(), Some("Alice"));
         let a = EmailAddress::parse("a@b.co").unwrap();

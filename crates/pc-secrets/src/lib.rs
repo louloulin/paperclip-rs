@@ -18,6 +18,7 @@ pub mod provider;
 pub mod registry;
 pub mod retry;
 pub mod rotation;
+pub mod service;
 pub mod types;
 pub mod vault;
 
@@ -29,6 +30,7 @@ pub use rotation::{
     evaluate_rotation, RotationEvaluation, RotationEvaluationInput, RotationPolicyConfig,
     RotationReason,
 };
+pub use service::{cache_key, SecretService, SecretServiceError, SecretServiceResult};
 pub use decision_signing::{
     ensure_decision_signing_secret, resolve_decision_signing_secret, sign_decision_spec,
     sign_decision_spec_with_secret, verify_decision_spec, verify_decision_spec_with_secret,

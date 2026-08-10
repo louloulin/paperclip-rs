@@ -25,3 +25,5 @@ base64 = "0.22"
 thiserror = { workspace = true }
 argon2 = "0.5"
 rand = "0.8"
+async-trait = { workspace = true }
+tokio = { workspace = true }
