@@ -1,0 +1,27 @@
+[package]
+name = "pc-issue-execution-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Issue execution policy state-machine service — wraps pc-core pure logic with DB integration and hooks"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+pc-decision-bundle = { path = "../pc-decision-bundle" }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

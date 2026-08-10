@@ -1,0 +1,16 @@
+[package]
+name = "pc-tool-profile-binding-precedence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tool profile binding scope precedence — 1:1 with paperclip server tool-profile-binding-precedence.ts"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]

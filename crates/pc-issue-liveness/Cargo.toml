@@ -1,0 +1,25 @@
+[package]
+name = "pc-issue-liveness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Issue graph liveness classification (replica of Node services/recovery/issue-graph-liveness.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+pc-decision-bundle = { path = "../pc-decision-bundle" }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

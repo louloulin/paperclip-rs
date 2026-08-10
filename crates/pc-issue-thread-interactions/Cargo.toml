@@ -1,0 +1,27 @@
+[package]
+name = "pc-issue-thread-interactions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Issue thread interactions service — business layer for ask_user_questions, request_confirmation, request_checkbox_confirmation, request_item_verdicts, suggest_tasks"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+pc-decision-bundle = { path = "../pc-decision-bundle" }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

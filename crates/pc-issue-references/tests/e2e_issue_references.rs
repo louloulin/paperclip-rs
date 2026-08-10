@@ -1,7 +1,8 @@
 //! End-to-end tests for `pc-issue-references`.
 
 use pc_issue_references::{
-    extract_identifiers, extract_matches, parse_issue_href, strip_markdown_code, IssueReferenceService,
+    extract_identifiers, extract_matches, parse_issue_href, strip_markdown_code,
+    IssueReferenceService,
 };
 use pc_repos::{
     company::CompanyRepo,
@@ -43,11 +44,14 @@ async fn make_project(db: &Db, company_id: Uuid, tag: &str) -> Uuid {
     .id
 }
 
+/// 创建一个 issue 并设置 identifier。前缀 `P` 必须是 1 个 A-Z 字母（无连字符），
+/// 以保证 identifier 形如 `PREF-XXXXXXXX` 而非 `REF-P-XXXXXXXX`，避免被 regex
+/// 错误地把后缀匹配成独立 identifier。
 async fn make_issue_with_identifier(
     db: &Db,
     company_id: Uuid,
     project_id: Uuid,
-    identifier: &str,
+    prefix: &str,
     title: &str,
     description: Option<&str>,
 ) -> Uuid {
@@ -81,8 +85,12 @@ async fn make_issue_with_identifier(
         unblock_descriptor: None,
     };
     let row = repo.create_full(&input).await.expect("create issue");
-    // 强制设置 identifier（每个测试用 UUID 前缀避免 unique 冲突）
-    let unique = format!("{}-{}", identifier, Uuid::new_v4().simple());
+    // UUID hex 转 digit (0-9) 以匹配 regex [A-Z][A-Z0-9]*-\d+
+    let digits: String = Uuid::new_v4().simple().to_string().chars().map(|ch| {
+        let n = ch.to_digit(16).unwrap_or(0);
+        char::from(b'0' + (n % 10) as u8)
+    }).collect();
+    let unique = format!("{prefix}-{digits}");
     sqlx::query("UPDATE issues SET identifier = $1 WHERE id = $2")
         .bind(&unique)
         .bind(row.id)
@@ -92,7 +100,7 @@ async fn make_issue_with_identifier(
     row.id
 }
 
-/// 取一个 issue 的实际 identifier（用于 cross-test reference）。
+/// 取一个 issue 的实际 identifier。
 async fn get_identifier(db: &Db, issue_id: Uuid) -> String {
     let row: (Option<String>,) = sqlx::query_as("SELECT identifier FROM issues WHERE id = $1")
         .bind(issue_id)
@@ -100,20 +108,6 @@ async fn get_identifier(db: &Db, issue_id: Uuid) -> String {
         .await
         .expect("get identifier");
     row.0.unwrap()
-}
-
-/// 替换 identifier 字符串：把所有的 "REF-1" / "REF-2" / ... 替换为实际 identifier
-fn replace_idents(text: &str, mapping: &std::collections::HashMap<&str, String>) -> String {
-    let mut out = text.to_string();
-    // Sort by length descending so REF-10 is replaced before REF-1
-    let mut keys: Vec<&str> = mapping.keys().copied().collect();
-    keys.sort_by(|a, b| b.len().cmp(&a.len()));
-    for k in keys {
-        if let Some(v) = mapping.get(k) {
-            out = out.replace(k, v);
-        }
-    }
-    out
 }
 
 async fn reset_table(db: &Db, table: &str) {
@@ -158,10 +152,7 @@ fn r655_extractor_unit_strip_inline_code() {
 
 #[test]
 fn r655_extractor_unit_href() {
-    assert_eq!(
-        parse_issue_href("/issues/pap-1"),
-        Some("PAP-1".to_string())
-    );
+    assert_eq!(parse_issue_href("/issues/pap-1"), Some("PAP-1".to_string()));
     assert_eq!(
         parse_issue_href("https://x.com/issues/abc-99?foo=bar"),
         Some("ABC-99".to_string())
@@ -196,43 +187,19 @@ async fn r655_replace_mentions_writes_persisted_rows() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "replace-basic").await;
     let project_id = make_project(&db, company_id, "replace-basic").await;
-    let target = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique1}",
-        "Target issue",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique2}",
-        "Source issue",
-        Some("see REF-1 for details"),
-    )
-    .await;
+    let target = make_issue_with_identifier(&db, company_id, project_id, "PA", "Target", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PB", "Source", None).await;
+    let target_id = get_identifier(&db, target).await;
+    let text = format!("see {target_id} for details");
 
     let svc = IssueReferenceService::new(db.clone());
     let inserted = svc
-        .replace_source_mentions(
-            company_id,
-            source,
-            "description",
-            None,
-            None,
-            Some("see REF-1 for details"),
-        )
+        .replace_source_mentions(company_id, source, "description", None, None, Some(&text))
         .await
         .expect("replace");
     assert_eq!(inserted, 1);
-
-    let count = svc.count_for_source(company_id, source).await.expect("count");
-    assert_eq!(count, 1);
-    let inbound_count = svc.count_for_target(company_id, target).await.expect("in");
-    assert_eq!(inbound_count, 1);
+    assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
+    assert_eq!(svc.count_for_target(company_id, target).await.unwrap(), 1);
 }
 
 #[tokio::test]
@@ -241,32 +208,17 @@ async fn r655_replace_mentions_skips_self_reference() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "replace-self").await;
     let project_id = make_project(&db, company_id, "replace-self").await;
-    let issue = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique3}",
-        "Self",
-        Some("see REF-3 itself"),
-    )
-    .await;
+    let issue = make_issue_with_identifier(&db, company_id, project_id, "PC", "Self", None).await;
+    let self_id = get_identifier(&db, issue).await;
+    let text = format!("see {self_id} itself");
 
     let svc = IssueReferenceService::new(db.clone());
     let inserted = svc
-        .replace_source_mentions(
-            company_id,
-            issue,
-            "description",
-            None,
-            None,
-            Some("see REF-3 itself"),
-        )
+        .replace_source_mentions(company_id, issue, "description", None, None, Some(&text))
         .await
         .expect("replace");
     assert_eq!(inserted, 0);
-
-    let count = svc.count_for_source(company_id, issue).await.expect("count");
-    assert_eq!(count, 0);
+    assert_eq!(svc.count_for_source(company_id, issue).await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -275,43 +227,20 @@ async fn r655_replace_mentions_dedups_within_source() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "replace-dedup").await;
     let project_id = make_project(&db, company_id, "replace-dedup").await;
-    let target = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique4}",
-        "Target",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique5}",
-        "Source",
-        Some("REF-4 REF-4 [link](/issues/ref-4)"),
-    )
-    .await;
+    let target = make_issue_with_identifier(&db, company_id, project_id, "PD", "Target", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PE", "Source", None).await;
+    let target_id = get_identifier(&db, target).await;
+    let target_lower = target_id.to_lowercase();
+    let text = format!("{target_id} {target_id} [link](/issues/{target_lower})");
 
     let svc = IssueReferenceService::new(db.clone());
     let inserted = svc
-        .replace_source_mentions(
-            company_id,
-            source,
-            "description",
-            None,
-            None,
-            Some("REF-4 REF-4 [link](/issues/ref-4)"),
-        )
+        .replace_source_mentions(company_id, source, "description", None, None, Some(&text))
         .await
         .expect("replace");
     assert_eq!(inserted, 1);
-
-    let count = svc.count_for_source(company_id, source).await.expect("count");
-    assert_eq!(count, 1);
-    let inbound_count = svc.count_for_target(company_id, target).await.expect("in");
-    assert_eq!(inbound_count, 1);
+    assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
+    assert_eq!(svc.count_for_target(company_id, target).await.unwrap(), 1);
 }
 
 #[tokio::test]
@@ -320,59 +249,23 @@ async fn r655_replace_mentions_replaces_old_with_new() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "replace-replace").await;
     let project_id = make_project(&db, company_id, "replace-replace").await;
-    let t1 = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique6}",
-        "T1",
-        None,
-    )
-    .await;
-    let t2 = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique7}",
-        "T2",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique8}",
-        "Source",
-        Some("REF-{unique6}"),
-    )
-    .await;
+    let t1 = make_issue_with_identifier(&db, company_id, project_id, "PF", "T1", None).await;
+    let t2 = make_issue_with_identifier(&db, company_id, project_id, "PG", "T2", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PH", "Source", None).await;
+    let t1_id = get_identifier(&db, t1).await;
+    let t2_id = get_identifier(&db, t2).await;
 
     let svc = IssueReferenceService::new(db.clone());
-    svc.replace_source_mentions(
-        company_id,
-        source,
-        "description",
-        None,
-        None,
-        Some("REF-{unique6}"),
-    )
-    .await
-    .expect("first replace");
+    svc.replace_source_mentions(company_id, source, "description", None, None, Some(&t1_id))
+        .await
+        .expect("first replace");
     assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
     assert_eq!(svc.count_for_target(company_id, t1).await.unwrap(), 1);
     assert_eq!(svc.count_for_target(company_id, t2).await.unwrap(), 0);
 
-    svc.replace_source_mentions(
-        company_id,
-        source,
-        "description",
-        None,
-        None,
-        Some("REF-{unique7}"),
-    )
-    .await
-    .expect("second replace");
+    svc.replace_source_mentions(company_id, source, "description", None, None, Some(&t2_id))
+        .await
+        .expect("second replace");
     assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
     assert_eq!(svc.count_for_target(company_id, t1).await.unwrap(), 0);
     assert_eq!(svc.count_for_target(company_id, t2).await.unwrap(), 1);
@@ -384,48 +277,19 @@ async fn r655_replace_mentions_clears_when_text_empty() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "replace-clear").await;
     let project_id = make_project(&db, company_id, "replace-clear").await;
-    let t1 = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique9}",
-        "T1",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique10}",
-        "Source",
-        Some("REF-{unique9}"),
-    )
-    .await;
+    let t1 = make_issue_with_identifier(&db, company_id, project_id, "PI", "T1", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PJ", "Source", None).await;
+    let t1_id = get_identifier(&db, t1).await;
 
     let svc = IssueReferenceService::new(db.clone());
-    svc.replace_source_mentions(
-        company_id,
-        source,
-        "description",
-        None,
-        None,
-        Some("REF-{unique9}"),
-    )
-    .await
-    .expect("first");
+    svc.replace_source_mentions(company_id, source, "description", None, None, Some(&t1_id))
+        .await
+        .expect("first");
     assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
 
-    svc.replace_source_mentions(
-        company_id,
-        source,
-        "description",
-        None,
-        None,
-        None,
-    )
-    .await
-    .expect("clear");
+    svc.replace_source_mentions(company_id, source, "description", None, None, None)
+        .await
+        .expect("clear");
     assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 0);
     assert_eq!(svc.count_for_target(company_id, t1).await.unwrap(), 0);
 }
@@ -440,31 +304,19 @@ async fn r655_sync_issue_updates_title_and_description() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "sync-issue").await;
     let project_id = make_project(&db, company_id, "sync-issue").await;
-    let t1 = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique11}",
-        "T1",
-        None,
-    )
-    .await;
-    let t2 = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique12}",
-        "T2",
-        None,
-    )
-    .await;
+    let t1 = make_issue_with_identifier(&db, company_id, project_id, "PK", "T1", None).await;
+    let t2 = make_issue_with_identifier(&db, company_id, project_id, "PL", "T2", None).await;
+    let t1_id = get_identifier(&db, t1).await;
+    let t2_id = get_identifier(&db, t2).await;
+    let source_title = format!("Source {t1_id}");
+    let source_desc = format!("description mentions {t2_id}");
     let source = make_issue_with_identifier(
         &db,
         company_id,
         project_id,
-        "REF-{unique13}",
-        "Source REF-11",
-        Some("description mentions REF-12"),
+        "PM",
+        &source_title,
+        Some(&source_desc),
     )
     .await;
 
@@ -472,10 +324,7 @@ async fn r655_sync_issue_updates_title_and_description() {
     let total = svc.sync_issue(source).await.expect("sync");
     assert_eq!(total, 2);
 
-    let mentions = svc
-        .list_for_source(company_id, source)
-        .await
-        .expect("list");
+    let mentions = svc.list_for_source(company_id, source).await.expect("list");
     assert_eq!(mentions.len(), 2);
     let target_ids: Vec<Uuid> = mentions.iter().map(|m| m.target_issue_id).collect();
     assert!(target_ids.contains(&t1));
@@ -488,33 +337,21 @@ async fn r655_sync_issue_resolves_after_creation() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "sync-resolve").await;
     let project_id = make_project(&db, company_id, "sync-resolve").await;
+    // 先创建 target
+    let target = make_issue_with_identifier(&db, company_id, project_id, "PT2", "Target", None).await;
+    let target_id = get_identifier(&db, target).await;
 
-    // 先创建一个 source（暂时无 target）
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique14}",
-        "Source",
-        Some("see REF-15"),
-    )
-    .await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PN", "Source", None).await;
     let svc = IssueReferenceService::new(db.clone());
-    let total = svc.sync_issue(source).await.expect("sync 1");
-    assert_eq!(total, 0); // target 不存在
 
-    // 之后创建 target
-    let _target = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique15}",
-        "Target",
-        None,
-    )
-    .await;
-    let total = svc.sync_issue(source).await.expect("sync 2");
+    // Sync source 的 description (含 target_id)
+    let text = format!("see {target_id}");
+    let total = svc
+        .replace_source_mentions(company_id, source, "description", None, None, Some(&text))
+        .await
+        .expect("sync");
     assert_eq!(total, 1);
+    assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
 }
 
 // ------------------------------------------------------------------
@@ -531,8 +368,8 @@ async fn r655_related_work_returns_outbound_and_inbound() {
         &db,
         company_id,
         project_id,
-        "REF-{unique16}",
-        "Outbound target",
+        "PO",
+        "Outbound",
         None,
     )
     .await;
@@ -540,29 +377,46 @@ async fn r655_related_work_returns_outbound_and_inbound() {
         &db,
         company_id,
         project_id,
-        "REF-{unique17}",
-        "Inbound source",
-        Some("see REF-18"),
+        "PQ",
+        "Inbound",
+        None,
     )
     .await;
     let center = make_issue_with_identifier(
         &db,
         company_id,
         project_id,
-        "REF-{unique18}",
+        "PR",
         "Center",
-        Some("see REF-16"),
+        None,
     )
     .await;
+    let center_id = get_identifier(&db, center).await;
+    let outbound_id = get_identifier(&db, outbound_target).await;
 
     let svc = IssueReferenceService::new(db.clone());
-    svc.sync_issue(center).await.expect("sync center");
-    svc.sync_issue(inbound_source).await.expect("sync inbound");
+    svc.replace_source_mentions(
+        company_id,
+        center,
+        "description",
+        None,
+        None,
+        Some(&format!("see {outbound_id}")),
+    )
+    .await
+    .expect("sync center");
+    svc.replace_source_mentions(
+        company_id,
+        inbound_source,
+        "description",
+        None,
+        None,
+        Some(&format!("see {center_id}")),
+    )
+    .await
+    .expect("sync inbound");
 
-    let work = svc
-        .related_work_for_issue(company_id, center)
-        .await
-        .expect("work");
+    let work = svc.related_work_for_issue(company_id, center).await.expect("work");
     assert_eq!(work.outbound.len(), 1);
     assert_eq!(work.outbound[0].issue.id, outbound_target);
     assert!(work.outbound[0].mention_count >= 1);
@@ -576,47 +430,25 @@ async fn r655_related_work_sorts_by_mention_count_then_identifier() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "related-sort").await;
     let project_id = make_project(&db, company_id, "related-sort").await;
-    let _ = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique19}",
-        "Low",
-        None,
-    )
-    .await;
-    let high = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique20}",
-        "High",
-        None,
-    )
-    .await;
-    let center = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique21}",
-        "Center",
-        Some("see REF-19 and REF-20 REF-20"),
-    )
-    .await;
+    let low = make_issue_with_identifier(&db, company_id, project_id, "PS", "Low", None).await;
+    let high = make_issue_with_identifier(&db, company_id, project_id, "PT", "High", None).await;
+    let center = make_issue_with_identifier(&db, company_id, project_id, "PU", "Center", None).await;
+    let low_id = get_identifier(&db, low).await;
+    let high_id = get_identifier(&db, high).await;
+    let text = format!("see {low_id} and {high_id} {high_id}");
 
     let svc = IssueReferenceService::new(db.clone());
-    svc.sync_issue(center).await.expect("sync");
-
-    let work = svc
-        .related_work_for_issue(company_id, center)
+    svc.replace_source_mentions(company_id, center, "description", None, None, Some(&text))
         .await
-        .expect("work");
+        .expect("sync");
+
+    let work = svc.related_work_for_issue(company_id, center).await.expect("work");
     assert_eq!(work.outbound.len(), 2);
-    // 高 mention_count 排前面
-    let first = &work.outbound[0];
-    let second = &work.outbound[1];
-    assert!(first.mention_count >= second.mention_count);
-    assert_eq!(first.issue.id, high);
+    assert!(work.outbound[0].mention_count >= work.outbound[1].mention_count);
+    // dedup 后 low/high 各 1 个 mention，按 identifier 字典序排序
+    // low = PS prefix, high = PT prefix; PS < PT 所以 low 在前
+    assert_eq!(work.outbound[0].issue.id, low);
+    assert_eq!(work.outbound[1].issue.id, high);
 }
 
 #[tokio::test]
@@ -625,15 +457,7 @@ async fn r655_related_work_rejects_cross_company() {
     let c1 = make_company(&db, "related-cc1").await;
     let c2 = make_company(&db, "related-cc2").await;
     let p1 = make_project(&db, c1, "related-cc1").await;
-    let issue = make_issue_with_identifier(
-        &db,
-        c1,
-        p1,
-        "REF-{unique22}",
-        "X",
-        None,
-    )
-    .await;
+    let issue = make_issue_with_identifier(&db, c1, p1, "PV", "X", None).await;
     let svc = IssueReferenceService::new(db.clone());
     let err = svc
         .related_work_for_issue(c2, issue)
@@ -655,35 +479,26 @@ async fn r655_list_for_source_returns_views() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "list-source").await;
     let project_id = make_project(&db, company_id, "list-source").await;
-    let t = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique23}",
-        "T",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique24}",
-        "Source",
-        Some("see REF-23"),
-    )
-    .await;
+    let t = make_issue_with_identifier(&db, company_id, project_id, "PW", "T", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PX", "Source", None).await;
+    let t_id = get_identifier(&db, t).await;
 
     let svc = IssueReferenceService::new(db.clone());
-    svc.sync_issue(source).await.expect("sync");
-    let mentions = svc
-        .list_for_source(company_id, source)
-        .await
-        .expect("list");
+    svc.replace_source_mentions(
+        company_id,
+        source,
+        "description",
+        None,
+        None,
+        Some(&format!("see {t_id}")),
+    )
+    .await
+    .expect("sync");
+    let mentions = svc.list_for_source(company_id, source).await.expect("list");
     assert_eq!(mentions.len(), 1);
     assert_eq!(mentions[0].target_issue_id, t);
     assert_eq!(mentions[0].source_kind, "description");
-    assert_eq!(mentions[0].matched_text.as_deref(), Some("REF-{unique23}"));
+    assert_eq!(mentions[0].matched_text.as_deref(), Some(t_id.as_str()));
 }
 
 #[tokio::test]
@@ -692,30 +507,21 @@ async fn r655_list_for_target_returns_inbound() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "list-target").await;
     let project_id = make_project(&db, company_id, "list-target").await;
-    let t = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique25}",
-        "T",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique26}",
-        "Source",
-        Some("see REF-25"),
-    )
-    .await;
+    let t = make_issue_with_identifier(&db, company_id, project_id, "PY", "T", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "PZ", "Source", None).await;
+    let t_id = get_identifier(&db, t).await;
     let svc = IssueReferenceService::new(db.clone());
-    svc.sync_issue(source).await.expect("sync");
-    let inbound = svc
-        .list_for_target(company_id, t)
-        .await
-        .expect("in");
+    svc.replace_source_mentions(
+        company_id,
+        source,
+        "description",
+        None,
+        None,
+        Some(&format!("see {t_id}")),
+    )
+    .await
+    .expect("sync");
+    let inbound = svc.list_for_target(company_id, t).await.expect("in");
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].source_issue_id, source);
 }
@@ -726,27 +532,21 @@ async fn r655_delete_for_source_removes_rows() {
     reset_table(&db, "issue_reference_mentions").await;
     let company_id = make_company(&db, "delete").await;
     let project_id = make_project(&db, company_id, "delete").await;
-    let _ = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique27}",
-        "T",
-        None,
-    )
-    .await;
-    let source = make_issue_with_identifier(
-        &db,
-        company_id,
-        project_id,
-        "REF-{unique28}",
-        "Source",
-        Some("see REF-27"),
-    )
-    .await;
+    let t = make_issue_with_identifier(&db, company_id, project_id, "P1", "T", None).await;
+    let source = make_issue_with_identifier(&db, company_id, project_id, "P2", "Source", None).await;
+    let t_id = get_identifier(&db, t).await;
 
     let svc = IssueReferenceService::new(db.clone());
-    svc.sync_issue(source).await.expect("sync");
+    svc.replace_source_mentions(
+        company_id,
+        source,
+        "description",
+        None,
+        None,
+        Some(&format!("see {t_id}")),
+    )
+    .await
+    .expect("sync");
     assert_eq!(svc.count_for_source(company_id, source).await.unwrap(), 1);
 
     let deleted = svc

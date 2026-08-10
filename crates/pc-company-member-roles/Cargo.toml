@@ -1,0 +1,15 @@
+[package]
+name = "pc-company-member-roles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Human company membership roles + permissions — 1:1 with paperclip server company-member-roles.ts"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]

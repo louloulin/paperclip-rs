@@ -41,7 +41,7 @@ pub async fn list_user_ids_with_any_role(db: &Db, user_ids: &[String]) -> RepoRe
 pub async fn promote(db: &Db, user_id: &str) -> RepoResult<Uuid> {
     let row: (Uuid,) = sqlx::query_as(
         "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin') \
-         ON CONFLICT (user_id) DO UPDATE SET updated_at = now() \
+         ON CONFLICT (user_id, role) DO UPDATE SET updated_at = now() \
          RETURNING id",
     )
     .bind(user_id)

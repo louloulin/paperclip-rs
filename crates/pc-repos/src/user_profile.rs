@@ -6,7 +6,15 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use crate::Db;
+use crate::{Db, RepoResult};
+
+/// Round 687: board-auth 用的 user 简要信息。
+#[derive(Debug, Clone)]
+pub struct BoardUserSummaryRow {
+    pub id: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
 
 #[derive(Debug, Clone, FromRow)]
 pub struct CompanyUserRow {
@@ -425,6 +433,21 @@ impl<'a> UserProfileRepo<'a> {
 
     /// Round 151: 最近活跃用户列表（admin 用户管理路径）。
     /// 返回 (id, name, email, image, updated_at)。
+
+    /// Round 687: 按 id 查 user 简要信息（id, name, email）。
+    /// `auth_users.id` 是 text，不是 uuid，所以不能用 Uuid 类型。
+    pub async fn find_summary_by_id(
+        &self,
+        user_id: &str,
+    ) -> RepoResult<Option<BoardUserSummaryRow>> {
+        let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            r#"SELECT id, name, email FROM "user" WHERE id = $1"#
+        )
+        .bind(user_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(|(id, name, email)| BoardUserSummaryRow { id, name, email }))
+    }
     pub async fn list_recent(
         &self,
         limit: i64,

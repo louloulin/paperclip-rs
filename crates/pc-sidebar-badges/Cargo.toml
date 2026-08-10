@@ -1,0 +1,13 @@
+[package]
+name = "pc-sidebar-badges"
+version = "0.1.0"
+edition = "2021"
+description = "Sidebar badge helpers (normalize timestamp, isDismissed)"
+license = "Apache-2.0"
+
+[dependencies]
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[lib]
+path = "src/lib.rs"

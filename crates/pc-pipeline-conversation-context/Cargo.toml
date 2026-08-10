@@ -1,0 +1,27 @@
+[package]
+name = "pc-pipeline-conversation-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pipeline conversation body document context: load + redacted markdown rendering"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+pc-source-trust = { path = "../pc-source-trust" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }

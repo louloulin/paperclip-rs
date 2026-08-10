@@ -99,6 +99,92 @@ impl<'a> BoardKeyRepo<'a> {
     pub async fn revoke(&self, key_id: Uuid, user_id: &str) -> RepoResult<u64> {
         revoke(self.db, key_id, user_id).await
     }
+
+    pub async fn list_by_user(
+        &self,
+        user_id: &str,
+        include_inactive: bool,
+    ) -> RepoResult<Vec<BoardKeyRow>> {
+        list_by_user(self.db, user_id, include_inactive).await
+    }
+
+    pub async fn find_by_token_hash(&self, key_hash: &str) -> RepoResult<Option<BoardKeyRow>> {
+        find_by_token_hash(self.db, key_hash).await
+    }
+
+    pub async fn find_by_id_and_user(
+        &self,
+        key_id: Uuid,
+        user_id: &str,
+    ) -> RepoResult<Option<BoardKeyRow>> {
+        find_by_id_and_user(self.db, key_id, user_id).await
+    }
+
+    pub async fn touch(&self, key_id: Uuid) -> RepoResult<()> {
+        touch(self.db, key_id).await
+    }
+}
+
+/// Round 687: 按 user_id 列出所有 key（含 revoked/expired），按 created_at DESC 排序。
+pub async fn list_by_user(
+    db: &Db,
+    user_id: &str,
+    include_inactive: bool,
+) -> RepoResult<Vec<BoardKeyRow>> {
+    if include_inactive {
+        let rows: Vec<BoardKeyRow> = sqlx::query_as(
+            "SELECT id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at              FROM board_api_keys WHERE user_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(db.pool())
+        .await?;
+        Ok(rows)
+    } else {
+        let rows: Vec<BoardKeyRow> = sqlx::query_as(
+            "SELECT id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at              FROM board_api_keys              WHERE user_id = $1 AND revoked_at IS NULL                AND (expires_at IS NULL OR expires_at > now())              ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(db.pool())
+        .await?;
+        Ok(rows)
+    }
+}
+
+/// Round 687: 按 key_hash 查找尚未撤销的 key（用于 token 解析）。
+/// 调用方在外部过滤 expires_at < now。
+pub async fn find_by_token_hash(db: &Db, key_hash: &str) -> RepoResult<Option<BoardKeyRow>> {
+    let row: Option<BoardKeyRow> = sqlx::query_as(
+        "SELECT id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at          FROM board_api_keys WHERE key_hash = $1 AND revoked_at IS NULL",
+    )
+    .bind(key_hash)
+    .fetch_optional(db.pool())
+    .await?;
+    Ok(row)
+}
+
+/// Round 687: 按 id + user_id 查找 key（assertCurrentBoardKey 路径）。
+pub async fn find_by_id_and_user(
+    db: &Db,
+    key_id: Uuid,
+    user_id: &str,
+) -> RepoResult<Option<BoardKeyRow>> {
+    let row: Option<BoardKeyRow> = sqlx::query_as(
+        "SELECT id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at          FROM board_api_keys WHERE id = $1 AND user_id = $2",
+    )
+    .bind(key_id)
+    .bind(user_id)
+    .fetch_optional(db.pool())
+    .await?;
+    Ok(row)
+}
+
+/// Round 687: 标记 key 已被使用（last_used_at = now()）。
+pub async fn touch(db: &Db, key_id: Uuid) -> RepoResult<()> {
+    sqlx::query("UPDATE board_api_keys SET last_used_at = now() WHERE id = $1")
+        .bind(key_id)
+        .execute(db.pool())
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]

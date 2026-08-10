@@ -1,0 +1,18 @@
+[package]
+name = "pc-recovery-observability"
+version = "0.1.0"
+edition = "2021"
+description = "Recovery observability report (weekly rate + cause + handoff classification)"
+license = "Apache-2.0"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[lib]
+path = "src/lib.rs"

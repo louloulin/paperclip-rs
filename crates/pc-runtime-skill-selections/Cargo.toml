@@ -1,0 +1,14 @@
+[package]
+name = "pc-runtime-skill-selections"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Skill version selection map — 1:1 with paperclip server runtime-skill-selections.ts"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]

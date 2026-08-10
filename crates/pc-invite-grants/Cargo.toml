@@ -1,0 +1,14 @@
+[package]
+name = "pc-invite-grants"
+version = "0.1.0"
+edition = "2021"
+description = "Invite defaults payload -> permission grants extractor"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pc-company-member-roles = { path = "../pc-company-member-roles" }
+
+[lib]
+path = "src/lib.rs"

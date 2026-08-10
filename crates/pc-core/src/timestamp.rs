@@ -17,6 +17,16 @@ impl Timestamp {
     pub fn as_datetime(&self) -> DateTime<Utc> {
         self.0
     }
+
+    /// 转为毫秒时间戳。
+    pub fn timestamp_millis(&self) -> i64 {
+        self.0.timestamp_millis()
+    }
+
+    /// 从毫秒时间戳构造（i64）。
+    pub fn from_timestamp_millis(ms: i64) -> Self {
+        Self(DateTime::<Utc>::from_timestamp_millis(ms).unwrap_or_else(Utc::now))
+    }
 }
 
 impl Default for Timestamp {

@@ -1,0 +1,26 @@
+[package]
+name = "pc-run-liveness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Run liveness classification service — classify run outcomes for heartbeat / recovery decisions"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+pc-decision-bundle = { path = "../pc-decision-bundle" }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

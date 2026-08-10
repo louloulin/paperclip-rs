@@ -1,0 +1,11 @@
+[package]
+name = "pc-issue-dependency-wakeups"
+version = "0.1.0"
+edition = "2021"
+description = "Issue dependency wakeup idempotency key + status set"
+license = "Apache-2.0"
+
+[dependencies]
+
+[lib]
+path = "src/lib.rs"

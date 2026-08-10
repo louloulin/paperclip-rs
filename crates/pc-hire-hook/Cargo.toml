@@ -1,0 +1,26 @@
+[package]
+name = "pc-hire-hook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hire-approved adapter hook — invokes adapter.onHireApproved and logs activity"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-adapter-api = { path = "../pc-adapter-api" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tracing = "0.1"
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+futures = { workspace = true }
+pc-db = { path = "../pc-db" }

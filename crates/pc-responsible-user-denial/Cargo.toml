@@ -1,0 +1,12 @@
+[package]
+name = "pc-responsible-user-denial"
+version = "0.1.0"
+edition = "2021"
+description = "Responsible-user denial code normalization"
+license = "Apache-2.0"
+
+[dependencies]
+serde_json = "1"
+
+[lib]
+path = "src/lib.rs"

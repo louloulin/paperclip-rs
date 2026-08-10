@@ -1,0 +1,28 @@
+[package]
+name = "pc-board-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Board auth service — board API keys + CLI auth challenges"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+rand = "0.8"
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tracing = "0.1"
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+pc-db = { path = "../pc-db" }

@@ -1,0 +1,27 @@
+[package]
+name = "pc-low-trust-runtime-containment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Low-trust runtime containment: workspace isolation, runtime service gate, ancestor checks"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+pc-trust-preset-resolver = { path = "../pc-trust-preset-resolver" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }

@@ -1,0 +1,22 @@
+[package]
+name = "pc-live-events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Live-events in-process pub/sub — broadcast LiveEvent to company-scoped or global subscribers"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = ["serde", "clock"] }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time", "test-util"] }

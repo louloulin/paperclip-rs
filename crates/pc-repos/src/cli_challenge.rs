@@ -32,6 +32,9 @@ pub struct ChallengeRow {
     pub cancelled_at: Option<Timestamp>,
     pub expires_at: Timestamp,
     pub created_at: Timestamp,
+    /// Round 687: challenge 关联的 board api key id（approve 时回填）。
+    #[serde(default)]
+    pub board_api_key_id: Option<Uuid>,
 }
 
 /// Round 149: 创建 challenge（一次性写入并返回行）。
@@ -49,7 +52,7 @@ pub async fn create(
     expires_at: Timestamp,
 ) -> RepoResult<ChallengeRow> {
     let row: ChallengeRow = sqlx::query_as(
-        "INSERT INTO cli_auth_challenges             (secret_hash, command, client_name, requested_access, requested_company_id,              pending_key_hash, pending_key_name, expires_at)          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at",
+        "INSERT INTO cli_auth_challenges             (secret_hash, command, client_name, requested_access, requested_company_id,              pending_key_hash, pending_key_name, expires_at)          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at, board_api_key_id",
     )
     .bind(secret_hash)
     .bind(command)
@@ -67,7 +70,7 @@ pub async fn create(
 /// Round 149: 按 id 查找 challenge（CLI 轮询路径）。
 pub async fn find_by_id(db: &Db, id: Uuid) -> RepoResult<Option<ChallengeRow>> {
     let row: Option<ChallengeRow> = sqlx::query_as(
-        "SELECT id, secret_hash, command, client_name, requested_access, requested_company_id,                 pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                 cancelled_at, expires_at, created_at          FROM cli_auth_challenges WHERE id = $1",
+        "SELECT id, secret_hash, command, client_name, requested_access, requested_company_id,                 pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                 cancelled_at, expires_at, created_at, board_api_key_id          FROM cli_auth_challenges WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(db.pool())
@@ -78,7 +81,7 @@ pub async fn find_by_id(db: &Db, id: Uuid) -> RepoResult<Option<ChallengeRow>> {
 /// Round 149: 标记 challenge 为 approved（设置 approved_by_user_id + approved_at）。
 pub async fn approve(db: &Db, id: Uuid, user_id: &str) -> RepoResult<ChallengeRow> {
     let row: ChallengeRow = sqlx::query_as(
-        "UPDATE cli_auth_challenges SET             approved_by_user_id = $2, approved_at = now(), updated_at = now()          WHERE id = $1          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at",
+        "UPDATE cli_auth_challenges SET             approved_by_user_id = $2, approved_at = now(), updated_at = now()          WHERE id = $1          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at, board_api_key_id",
     )
     .bind(id)
     .bind(user_id)
@@ -90,7 +93,7 @@ pub async fn approve(db: &Db, id: Uuid, user_id: &str) -> RepoResult<ChallengeRo
 /// Round 149: 标记 challenge 为 cancelled（写 cancelled_at，不动 approved_* 字段）。
 pub async fn cancel(db: &Db, id: Uuid) -> RepoResult<ChallengeRow> {
     let row: ChallengeRow = sqlx::query_as(
-        "UPDATE cli_auth_challenges SET cancelled_at = now(), updated_at = now()          WHERE id = $1          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at",
+        "UPDATE cli_auth_challenges SET cancelled_at = now(), updated_at = now()          WHERE id = $1          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at, board_api_key_id",
     )
     .bind(id)
     .fetch_one(db.pool())
@@ -145,6 +148,55 @@ impl<'a> ChallengeRepo<'a> {
     pub async fn cancel(&self, id: Uuid) -> RepoResult<ChallengeRow> {
         cancel(self.db, id).await
     }
+
+    pub async fn list_requested_company_ids_by_board_key(
+        &self,
+        board_api_key_id: Uuid,
+    ) -> RepoResult<Vec<Uuid>> {
+        list_requested_company_ids_by_board_key(self.db, board_api_key_id).await
+    }
+
+    pub async fn approve_with_board_key(
+        &self,
+        id: Uuid,
+        user_id: &str,
+        board_api_key_id: Uuid,
+    ) -> RepoResult<ChallengeRow> {
+        approve_with_board_key(self.db, id, user_id, board_api_key_id).await
+    }
+}
+
+/// Round 687: 列出挂载在某个 board_api_key_id 上的 challenge 的 requested_company_id。
+pub async fn list_requested_company_ids_by_board_key(
+    db: &Db,
+    board_api_key_id: Uuid,
+) -> RepoResult<Vec<Uuid>> {
+    let rows: Vec<(Option<Uuid>,)> = sqlx::query_as(
+        "SELECT requested_company_id FROM cli_auth_challenges WHERE board_api_key_id = $1",
+    )
+    .bind(board_api_key_id)
+    .fetch_all(db.pool())
+    .await?;
+    Ok(rows.into_iter().filter_map(|(id,)| id).collect())
+}
+
+/// Round 687: 原子 approve —— 同时写入 approved_* + board_api_key_id，
+/// 并保留已存在的 approved_at（如有）。返回最新 challenge 行。
+pub async fn approve_with_board_key(
+    db: &Db,
+    id: Uuid,
+    user_id: &str,
+    board_api_key_id: Uuid,
+) -> RepoResult<ChallengeRow> {
+    let row: ChallengeRow = sqlx::query_as(
+        "UPDATE cli_auth_challenges SET             approved_by_user_id = $2,             board_api_key_id = $3,             approved_at = COALESCE(approved_at, now()),             updated_at = now()          WHERE id = $1          RETURNING id, secret_hash, command, client_name, requested_access, requested_company_id,                    pending_key_hash, pending_key_name, approved_by_user_id, approved_at,                    cancelled_at, expires_at, created_at",
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(board_api_key_id)
+    .fetch_one(db.pool())
+    .await?;
+    Ok(row)
 }
 
 #[cfg(test)]

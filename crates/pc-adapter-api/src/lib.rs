@@ -206,6 +206,73 @@ pub trait Adapter: Send + Sync + 'static {
     ) -> Result<AdapterExecutionResult, AdapterError>;
 }
 
+// ============================================================================
+// HireApprovedHook — adapter-side hook for "agent hire approved" notifications.
+// ============================================================================
+
+/// hire 通知的 source 字段（与 Node 字面量 1:1）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HireApprovedSource {
+    JoinRequest,
+    Approval,
+}
+
+impl HireApprovedSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::JoinRequest => "join_request",
+            Self::Approval => "approval",
+        }
+    }
+}
+
+/// 与 Node `HireApprovedPayload` 1:1 对齐的 payload DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HireApprovedPayload {
+    pub company_id: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub adapter_type: String,
+    pub source: HireApprovedSource,
+    pub source_id: String,
+    /// RFC3339 timestamp string。
+    pub approved_at: String,
+    pub message: String,
+}
+
+/// adapter `onHireApproved` 调用结果 —— 与 Node `{ ok, error?, detail? }` 1:1。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HireApprovedResult {
+    pub ok: bool,
+    pub error: Option<String>,
+    pub detail: Option<String>,
+}
+
+impl HireApprovedResult {
+    pub fn ok() -> Self {
+        Self { ok: true, error: None, detail: None }
+    }
+
+    pub fn failure(error: impl Into<String>, detail: Option<String>) -> Self {
+        Self { ok: false, error: Some(error.into()), detail }
+    }
+}
+
+/// Adapter 实现的 hire-approved 回调 trait。
+///
+/// Node 端 `adapter.onHireApproved(payload, adapterConfig)` 在 Rust 中被拆为
+/// 独立 trait；adapter 自己选择是否实现。
+#[async_trait]
+pub trait HireApprovedHook: Send + Sync + 'static {
+    async fn on_hire_approved(
+        &self,
+        payload: HireApprovedPayload,
+        adapter_config: serde_json::Value,
+    ) -> HireApprovedResult;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AdapterRegistryError {
     #[error("adapter already registered: {0}")]

@@ -1,0 +1,29 @@
+[package]
+name = "pc-work-products"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Issue work product service: list/create/update/remove/import for issueWorkProducts"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+pc-import-write-types = { path = "../pc-import-write-types" }
+pc-batch-insert = { path = "../pc-batch-insert" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
