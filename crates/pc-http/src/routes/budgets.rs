@@ -283,11 +283,11 @@ async fn observed_for_agent(
     policy: &pc_repos::budget::PolicyRow,
     now: chrono::DateTime<chrono::Utc>,
 ) -> ApiResult<i64> {
-    // 简化实现：从 cost_events 聚合 metric 对应字段（amount_cents）。
+    // 简化实现：从 cost_events 聚合 metric 对应字段（cost_cents）。
     // 真实生产应该按 policy.metric（billed_cents 等）取对应字段，
-    // 这里统一用 amount_cents 占位以满足 evaluate_full 签名。
+    // 这里统一用 cost_cents 占位以满足 evaluate_full 签名。
     let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT COALESCE(SUM(amount_cents), 0)::bigint FROM cost_events          WHERE agent_id = $1 AND occurred_at >= $2",
+        "SELECT COALESCE(SUM(cost_cents), 0)::bigint FROM cost_events          WHERE agent_id = $1 AND occurred_at >= $2",
     )
     .bind(agent_id)
     .bind(policy_window_start(policy, now))

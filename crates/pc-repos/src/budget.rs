@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PolicyRow {
     pub id: Uuid,
     pub company_id: Uuid,
@@ -33,6 +34,7 @@ pub struct PolicyRow {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IncidentRow {
     pub id: Uuid,
     pub company_id: Uuid,

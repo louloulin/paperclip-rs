@@ -273,14 +273,14 @@ async fn r582_e2e_evaluate_full_idempotent_incident_creation() {
         .evaluate_full(&policy, 900, chrono::Utc::now())
         .await
         .expect("evaluate 1");
-    assert!(matches!(eval1.incident.unwrap(), IncidentOutcome::Created(_)));
+    assert!(matches!(eval1.incident.unwrap(), IncidentOutcome::Created { .. }));
 
     // 第二次 — 应返回 AlreadyExists，不重复创建
     let eval2 = svc
         .evaluate_full(&policy, 950, chrono::Utc::now())
         .await
         .expect("evaluate 2");
-    assert!(matches!(eval2.incident.unwrap(), IncidentOutcome::AlreadyExists(_)));
+    assert!(matches!(eval2.incident.unwrap(), IncidentOutcome::AlreadyExists { .. }));
 
     assert_eq!(count_incidents(&db, policy_id).await, 1, "should still have 1 incident");
 }
@@ -384,8 +384,8 @@ async fn r582_e2e_get_incident_returns_stored_row() {
         .await
         .expect("evaluate");
     let created_id = match eval.incident.unwrap() {
-        IncidentOutcome::Created(row) => row.id,
-        IncidentOutcome::AlreadyExists(row) => row.id,
+        IncidentOutcome::Created { incident: row } => row.id,
+        IncidentOutcome::AlreadyExists { incident: row } => row.id,
     };
 
     let got = svc
