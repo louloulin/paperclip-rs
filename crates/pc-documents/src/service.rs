@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use pc_errors::{forbidden, internal, unprocessable, validation, Error, Result};
 use pc_repos::document::{
     AnnotationCommentRow, AnnotationThreadRow, DocumentRepo, DocumentRevisionRow, DocumentRow,
-    IssueDocumentLinkRow,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -173,10 +172,11 @@ struct NormalizedCreate {
 }
 
 /// Partial update for a document. Empty `body` is treated as "no change" so
-/// callers can update `title` without rewriting the body.
+/// callers can update `title` without rewriting the body. To clear the
+/// title, the caller must pass `Some(String::new())` explicitly.
 #[derive(Debug, Clone, Default)]
 pub struct DocumentPatch {
-    pub title: Option<Option<String>>,
+    pub title: Option<String>,
     pub format: Option<String>,
     pub body: Option<String>,
     pub updated_by_agent_id: Option<Uuid>,
@@ -439,10 +439,7 @@ impl DocumentService {
 
         let new_body = patch.body.clone().unwrap_or_else(|| existing.latest_body.clone());
         let new_format = patch.format.clone().unwrap_or_else(|| existing.format.clone());
-        let new_title = match patch.title.clone() {
-            Some(t) => Some(t),
-            None => existing.title.clone(),
-        };
+        let new_title = patch.title.clone().or_else(|| existing.title.clone());
 
         let updated = sqlx::query_as::<_, DocumentRow>(
             "UPDATE documents SET title = $2, format = $3, latest_body = $4,                 latest_revision_number = latest_revision_number + 1,                 updated_by_agent_id = $5, updated_by_user_id = $6, updated_at = now()              WHERE company_id = $1 AND id = $7              RETURNING id, company_id, title, format, latest_body, latest_revision_id,                 latest_revision_number, created_by_agent_id, created_by_user_id,                 updated_by_agent_id, updated_by_user_id, locked_at, locked_by_agent_id,                 locked_by_user_id, source_trust, created_at, updated_at",
@@ -623,10 +620,11 @@ impl DocumentService {
 
     pub async fn list_annotation_threads(
         &self,
-        issue_id: Uuid,
+        document_id: Uuid,
+        document_key: &str,
     ) -> Result<Vec<AnnotationThreadRow>> {
         DocumentRepo::new(&self.db)
-            .list_annotation_threads(issue_id)
+            .list_annotation_threads(document_id, document_key)
             .await
             .map_err(map_sql_error)
     }
@@ -782,7 +780,7 @@ impl DocumentService {
     pub async fn upsert_issue_document(
         &self,
         input: UpsertIssueDocument,
-    ) -> Result<IssueDocumentLinkRow> {
+    ) -> Result<DocumentRow> {
         if input.key.trim().is_empty() {
             return Err(validation("issue document key must not be empty"));
         }
@@ -798,7 +796,6 @@ impl DocumentService {
                 input.title.as_deref(),
                 &input.body,
                 &format,
-                input.created_by_agent_id,
                 input.created_by_user_id.as_deref(),
             )
             .await
