@@ -1,26 +1,18 @@
 [package]
-name = "pc-portability"
+name = "pc-default-agent-instructions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Company portability service: preview/export/import (R593)"
-
+description = "Default agent instructions bundle service"
 [lints]
 workspace = true
-
 [dependencies]
 async-trait = { workspace = true }
-chrono = { workspace = true }
-pc-core = { path = "../pc-core" }
-pc-pipelines = { path = "../pc-pipelines" }
+pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1"
-uuid = { workspace = true }
-sqlx = { workspace = true }
-
 [dev-dependencies]
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

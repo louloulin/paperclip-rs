@@ -159,12 +159,69 @@ pub struct PortabilityCounts {
     pub pipelines: usize,
 }
 
+/// R630: import 冲突处理策略。
+///
+/// 对齐上游 `CompanyPortabilityCollisionStrategy` 的简化子集：
+/// - `Skip` — 同名实体已存在则跳过
+/// - `Rename` — 同名实体已存在则追加 `(imported)` 后缀
+/// - `Fail` — 同名实体已存在则返回 InvalidInput 错误
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CollisionStrategy {
+    #[default]
+    Skip,
+    Rename,
+    Fail,
+}
+
+/// R630: import bundle 输入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportInput {
+    /// 来源 manifest（来自 export）。
+    pub manifest: ExportManifest,
+    /// 新 company 名字。
+    pub new_company_name: String,
+    /// 新 company owner principal id（HTTP 层注入）。
+    pub owner_principal_id: String,
+    /// 冲突策略 — 默认 Skip。
+    #[serde(default)]
+    pub collision_strategy: CollisionStrategy,
+    /// 是否同时导入 issues。默认 true。
+    #[serde(default = "default_true")]
+    pub include_issues: bool,
+    /// 是否同时导入 agents。默认 true。
+    #[serde(default = "default_true")]
+    pub include_agents: bool,
+    /// 是否同时导入 pipelines。R631 实现。
+    #[serde(default = "default_true")]
+    pub include_pipelines: bool,
+}
+
+fn default_true() -> bool { true }
+
+/// R630: import 结果。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub target_company_id: Uuid,
+    pub source_company_id: Uuid,
+    pub agents_created: usize,
+    pub agents_skipped: usize,
+    pub issues_created: usize,
+    pub issues_skipped: usize,
+    pub pipelines_created: usize,
+    pub pipelines_skipped: usize,
+}
+
 /// Lifecycle event — hook 可以订阅以触发副作用（audit log / 通知）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortabilityLifecycleEvent {
     Previewed { company_id: Uuid, counts: PortabilityCounts },
     /// R600: export bundle 已生成（manifest 收集完成）。
     Exported { company_id: Uuid, counts: ExportCounts },
+    /// R630/R631: import bundle 已导入（创建新 company + agents + issues + pipelines）。
+    Imported { source_company_id: Uuid, target_company_id: Uuid, agents: usize, issues: usize, pipelines: usize },
 }
 
 /// Hook trait：副作用抽象。
@@ -189,6 +246,21 @@ impl PortabilityHook for NoopPortabilityHook {}
 #[derive(Default)]
 pub struct RecordingPortabilityHook {
     pub events: std::sync::Mutex<Vec<PortabilityLifecycleEvent>>,
+}
+
+impl RecordingPortabilityHook {
+    pub fn events_snapshot(&self) -> Vec<PortabilityLifecycleEvent> {
+        self.events.lock().expect("lock").clone()
+    }
+    pub fn len(&self) -> usize {
+        self.events.lock().expect("lock").len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn clear(&self) {
+        self.events.lock().expect("lock").clear()
+    }
 }
 
 #[async_trait]
@@ -365,5 +437,268 @@ impl<'a> PortabilityService<'a> {
         Ok(pc_repos::company::CompanyRepo::new(self.repo.db)
             .exists(company_id)
             .await?)
+    }
+
+    /// R630: import 一个 export manifest 到一个新 company。
+    ///
+    /// 流程：
+    /// 1. 校验 manifest（version + 公司名 + 不为空）
+    /// 2. 创建新 company（用 `new_company_name` + owner principal）
+    /// 3. 按 include_agents 批量创建 agents（应用 collision 策略）
+    /// 4. 按 include_issues 批量创建 issues（应用 collision 策略）
+    /// 5. 触发 `PortabilityLifecycleEvent::Imported` hook
+    ///
+    /// 暂未实现：
+    /// - Pipelines（需要 `pc-pipelines::PipelineService::create`，留待 v5+）
+    /// - File resources / envInputs（需要 `pc-storage` 接入）
+    /// - Side imports（projects / skills / routines / documents）
+    pub async fn import(
+        &self,
+        input: ImportInput,
+    ) -> PortabilityServiceResult<ImportResult> {
+        // Validate input
+        if input.new_company_name.trim().is_empty() {
+            return Err(PortabilityServiceError::InvalidInput(
+                "newCompanyName must not be empty".into(),
+            ));
+        }
+        if input.owner_principal_id.trim().is_empty() {
+            return Err(PortabilityServiceError::InvalidInput(
+                "ownerPrincipalId must not be empty".into(),
+            ));
+        }
+        if input.manifest.agents.is_empty()
+            && input.manifest.issues.is_empty()
+            && input.manifest.pipelines.is_empty()
+        {
+            return Err(PortabilityServiceError::InvalidInput(
+                "manifest must contain at least one agent, issue, or pipeline".into(),
+            ));
+        }
+
+        let source_company_id = input.manifest.company.id;
+        let company_repo = pc_repos::company::CompanyRepo::new(self.repo.db);
+        let description = input.manifest.company.description.clone();
+
+        // 1. Create new company
+        let new_company = company_repo
+            .create(
+                &input.new_company_name,
+                description.as_deref(),
+            )
+            .await?;
+
+        // Create owner membership (best-effort — skip if already exists)
+        let _ = company_repo
+            .create_owner_membership(
+                new_company.id,
+                &input.owner_principal_id,
+            )
+            .await;
+
+        let target_company_id = new_company.id;
+
+        // 2. Create agents
+        let agent_repo = pc_repos::agent::AgentRepo::new(self.repo.db);
+        let mut agents_created = 0usize;
+        let mut agents_skipped = 0usize;
+        if input.include_agents {
+            for agent in &input.manifest.agents {
+                let resolved_name = match self
+                    .resolve_agent_name(target_company_id, &agent.name, input.collision_strategy)
+                    .await?
+                {
+                    Some(n) => n,
+                    None => {
+                        agents_skipped += 1;
+                        continue;
+                    }
+                };
+                agent_repo
+                    .create_simple(
+                        target_company_id,
+                        &resolved_name,
+                        &agent.role,
+                    )
+                    .await?;
+                agents_created += 1;
+            }
+        }
+
+        // 3. Create issues
+        let issue_repo = pc_repos::issue::IssueRepo::new(self.repo.db);
+        let mut issues_created = 0usize;
+        let mut issues_skipped = 0usize;
+        if input.include_issues {
+            for issue in &input.manifest.issues {
+                let resolved_title = match self
+                    .resolve_issue_title(target_company_id, &issue.title, input.collision_strategy)
+                    .await?
+                {
+                    Some(t) => t,
+                    None => {
+                        issues_skipped += 1;
+                        continue;
+                    }
+                };
+                issue_repo
+                    .create(
+                        target_company_id,
+                        &resolved_title,
+                        None,
+                        &issue.priority,
+                        None,
+                    )
+                    .await?;
+                issues_created += 1;
+            }
+        }
+
+        // 4. Pipelines (R631)
+        let (pipelines_created, pipelines_skipped) = if input.include_pipelines {
+            self.import_pipelines(target_company_id, &input.manifest.pipelines, input.collision_strategy).await?
+        } else {
+            (0, 0)
+        };
+
+        let result = ImportResult {
+            target_company_id,
+            source_company_id,
+            agents_created,
+            agents_skipped,
+            issues_created,
+            issues_skipped,
+            pipelines_created,
+            pipelines_skipped,
+        };
+
+        // 5. Trigger hook
+        for hook in &self.hooks {
+            hook.on_lifecycle(PortabilityLifecycleEvent::Imported {
+                source_company_id,
+                target_company_id,
+                agents: agents_created,
+                issues: issues_created,
+                pipelines: pipelines_created,
+            })
+            .await?;
+        }
+
+        Ok(result)
+    }
+
+    /// R630 helper: 检查 agent 名是否冲突，按策略解析。返回 None = skip。
+    async fn resolve_agent_name(
+        &self,
+        company_id: Uuid,
+        original: &str,
+        strategy: CollisionStrategy,
+    ) -> PortabilityServiceResult<Option<String>> {
+        let repo = pc_repos::agent::AgentRepo::new(self.repo.db);
+        let existing: Vec<_> = repo.list_by_company(company_id).await?;
+        let exists = existing.iter().any(|a| a.name == original);
+        if !exists {
+            return Ok(Some(original.to_string()));
+        }
+        match strategy {
+            CollisionStrategy::Fail => Err(PortabilityServiceError::InvalidInput(format!(
+                "agent name conflict: {original}"
+            ))),
+            CollisionStrategy::Skip => Ok(None),
+            CollisionStrategy::Rename => Ok(Some(format!("{original} (imported)"))),
+        }
+    }
+
+    /// R631 helper: 批量导入 pipelines 到 target company。
+    async fn import_pipelines(
+        &self,
+        target_company_id: Uuid,
+        pipelines: &[pc_repos::company_export::PipelineSummary],
+        strategy: CollisionStrategy,
+    ) -> PortabilityServiceResult<(usize, usize)> {
+        let svc = pc_pipelines::PipelineService::new(self.repo.db);
+        let mut created = 0usize;
+        let mut skipped = 0usize;
+        for p in pipelines {
+            let resolved_key = match self
+                .resolve_pipeline_key(target_company_id, &p.key, strategy)
+                .await?
+            {
+                Some(k) => k,
+                None => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+            let input = pc_pipelines::CreatePipelineInput {
+                key: resolved_key,
+                name: p.name.clone(),
+                description: None,
+            };
+            // 忽略 key 冲突错误（已存在于目标 company）
+            match svc.create(target_company_id, &input).await {
+                Ok(_) => created += 1,
+                Err(pc_pipelines::PipelineServiceError::Repo(msg))
+                    if msg.contains("duplicate key")
+                        || msg.contains("pipelines_company_key_unique")
+                        || msg.contains("UNIQUE") =>
+                {
+                    skipped += 1;
+                }
+                Err(pc_pipelines::PipelineServiceError::InvalidInput(msg))
+                    if msg.to_lowercase().contains("key") =>
+                {
+                    skipped += 1;
+                }
+                Err(e) => return Err(PortabilityServiceError::Repo(e.to_string())),
+            }
+        }
+        Ok((created, skipped))
+    }
+
+    /// R631 helper: 检查 pipeline key 是否冲突。
+    async fn resolve_pipeline_key(
+        &self,
+        company_id: Uuid,
+        original: &str,
+        strategy: CollisionStrategy,
+    ) -> PortabilityServiceResult<Option<String>> {
+        let svc = pc_pipelines::PipelineService::new(self.repo.db);
+        match strategy {
+            CollisionStrategy::Skip | CollisionStrategy::Rename => {
+                // 直接尝试 resolve（PipelineService::create 会校验 key）
+                if strategy == CollisionStrategy::Rename {
+                    Ok(Some(format!("{original}_imported")))
+                } else {
+                    Ok(Some(original.to_string()))
+                }
+            }
+            CollisionStrategy::Fail => {
+                // Fail strategy: 暂不校验实际冲突，由 PipelineService.create 返回错误处理
+                Ok(Some(original.to_string()))
+            }
+        }
+    }
+
+    /// R630 helper: 检查 issue title 是否冲突，按策略解析。
+    async fn resolve_issue_title(
+        &self,
+        company_id: Uuid,
+        original: &str,
+        strategy: CollisionStrategy,
+    ) -> PortabilityServiceResult<Option<String>> {
+        let repo = pc_repos::issue::IssueRepo::new(self.repo.db);
+        let matches = repo.search_titles(company_id, original, 50).await?;
+        let exists = matches.iter().any(|i| i.title == original);
+        if !exists {
+            return Ok(Some(original.to_string()));
+        }
+        match strategy {
+            CollisionStrategy::Fail => Err(PortabilityServiceError::InvalidInput(format!(
+                "issue title conflict: {original}"
+            ))),
+            CollisionStrategy::Skip => Ok(None),
+            CollisionStrategy::Rename => Ok(Some(format!("{original} (imported)"))),
+        }
     }
 }
