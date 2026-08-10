@@ -12,5 +12,6 @@
 mod service;
 
 pub use service::{
-    AttentionCounts, AttentionItem, AttentionItemKind, AttentionService, AttentionSeverity,
+    AttentionCounts, AttentionError, AttentionItem, AttentionItemKind, AttentionResult,
+    AttentionService, AttentionSeverity,
 };

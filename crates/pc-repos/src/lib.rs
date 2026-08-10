@@ -60,6 +60,7 @@ pub mod issue_continuation_summary;
 pub mod issue_diagnostics;
 pub mod issue_goal_fallback;
 pub mod issue_terminal_effects;
+pub mod issue_reference_mentions;
 pub mod issue_tree_hold;
 pub mod issue_visibility;
 pub mod join_request;

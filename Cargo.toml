@@ -66,6 +66,8 @@ members = [
     "crates/pc-board-chat",
     "crates/pc-issues",
     "crates/pc-issue-approvals",
+    "crates/pc-issue-tree-control",
+    "crates/pc-issue-references",
     "crates/pc-invite",
     "crates/pc-pipelines",
     "crates/pc-project",

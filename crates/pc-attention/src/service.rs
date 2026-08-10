@@ -6,7 +6,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// R632: Attention item severity 等级。
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum AttentionSeverity {
     Critical,
@@ -155,7 +155,7 @@ impl AttentionService {
                 severity: AttentionSeverity::High,
                 title: format!("Agent error: {}", row.name),
                 description: row.error_reason,
-                created_at: row.updated_at,
+                created_at: row.updated_at.as_datetime(),
             });
         }
 
@@ -167,9 +167,9 @@ impl AttentionService {
                 subject_id: row.id,
                 company_id,
                 severity: AttentionSeverity::Medium,
-                title: format!("Approval pending: {}", row.title),
-                description: None,
-                created_at: row.created_at,
+                title: format!("Approval pending: {}", row.approval_type),
+                description: row.decision_note,
+                created_at: row.created_at.as_datetime(),
             });
         }
 
@@ -181,15 +181,15 @@ impl AttentionService {
                 subject_id: row.id,
                 company_id,
                 severity: AttentionSeverity::High,
-                title: format!("Budget incident: {}", row.title),
+                title: format!("Budget incident: {} / {}", row.metric, row.threshold_type),
                 description: None,
-                created_at: row.created_at,
+                created_at: row.created_at.as_datetime(),
             });
         }
 
         // 4. DecisionOpen
         let decision_repo = pc_repos::decision::DecisionRepo::new(&self.db);
-        if let Ok(rows) = decision_repo.list_open_attention(company_id).await {
+        if let Ok(rows) = decision_repo.list_open_attention(company_id, 100).await {
             for row in rows {
                 all.push(AttentionItem {
                     kind: AttentionItemKind::DecisionOpen,
@@ -198,7 +198,7 @@ impl AttentionService {
                     severity: AttentionSeverity::Medium,
                     title: format!("Decision open: {}", row.title),
                     description: None,
-                    created_at: row.created_at,
+                    created_at: row.created_at.as_datetime(),
                 });
             }
         }
@@ -212,14 +212,14 @@ impl AttentionService {
                     subject_id: row.id,
                     company_id,
                     severity: AttentionSeverity::High,
-                    title: format!("Heartbeat run failed: {}", row.id),
-                    description: None,
-                    created_at: row.created_at,
+                    title: format!("Heartbeat run failed: {} ({})", row.id, row.agent_name),
+                    description: row.error,
+                    created_at: row.updated_at.as_datetime(),
                 });
             }
         }
 
-        // 6-8. Issue attentions
+        // 6-9. Issue attentions
         let issue_repo = pc_repos::issue::IssueRepo::new(&self.db);
         if let Ok(rows) = issue_repo.list_blocked_attention(company_id).await {
             for row in rows {
@@ -229,8 +229,8 @@ impl AttentionService {
                     company_id,
                     severity: AttentionSeverity::High,
                     title: format!("Issue blocked: {}", row.title),
-                    description: None,
-                    created_at: row.created_at,
+                    description: row.sample_blocker_identifier,
+                    created_at: row.updated_at.as_datetime(),
                 });
             }
         }
@@ -243,7 +243,7 @@ impl AttentionService {
                     severity: AttentionSeverity::Low,
                     title: format!("Productivity review: {}", row.title),
                     description: None,
-                    created_at: row.created_at,
+                    created_at: row.updated_at.as_datetime(),
                 });
             }
         }
@@ -256,68 +256,70 @@ impl AttentionService {
                     severity: AttentionSeverity::Medium,
                     title: format!("Issue in review: {}", row.title),
                     description: None,
-                    created_at: row.created_at,
+                    created_at: row.updated_at.as_datetime(),
                 });
             }
         }
         if let Ok(rows) = issue_repo.list_pending_interactions_attention(company_id).await {
             for row in rows {
+                let title = row.title.clone().unwrap_or_else(|| format!("Interaction {}", row.id));
                 all.push(AttentionItem {
                     kind: AttentionItemKind::IssuePendingInteraction,
                     subject_id: row.id,
                     company_id,
                     severity: AttentionSeverity::Medium,
-                    title: format!("Issue pending interaction: {}", row.title),
-                    description: None,
-                    created_at: row.created_at,
+                    title: format!("Issue pending interaction: {}", title),
+                    description: row.summary,
+                    created_at: row.updated_at.as_datetime(),
                 });
             }
         }
 
-        // 9. JoinRequestPending
+        // 10. JoinRequestPending
         let jr_repo = pc_repos::join_request::JoinRequestRepo::new(&self.db);
         if let Ok(rows) = jr_repo.list_pending_attention(company_id).await {
             for row in rows {
+                let email = row.request_email_snapshot.unwrap_or_else(|| row.request_ip);
                 all.push(AttentionItem {
                     kind: AttentionItemKind::JoinRequestPending,
                     subject_id: row.id,
                     company_id,
                     severity: AttentionSeverity::Low,
-                    title: format!("Join request pending: {}", row.email),
+                    title: format!("Join request pending: {} ({})", email, row.request_type),
                     description: None,
-                    created_at: row.created_at,
+                    created_at: row.created_at.as_datetime(),
                 });
             }
         }
 
-        // 10. PipelineAttention
+        // 11. PipelineAttention
         let pipeline_repo = pc_repos::pipeline::PipelineRepo::new(&self.db);
-        if let Ok(rows) = pipeline_repo.list_attention_pipelines(company_id).await {
-            for row in rows {
+        if let Ok(rows) = pipeline_repo.list_attention_pipelines(company_id, 100).await {
+            for (id, name, _desc, review_count, total_count, updated_at) in rows {
                 all.push(AttentionItem {
                     kind: AttentionItemKind::PipelineAttention,
-                    subject_id: row.id,
+                    subject_id: id,
                     company_id,
                     severity: AttentionSeverity::Medium,
-                    title: format!("Pipeline attention: {}", row.name),
+                    title: format!("Pipeline {} ({} reviews / {} total)", name, review_count, total_count),
                     description: None,
-                    created_at: row.created_at,
+                    created_at: updated_at,
                 });
             }
         }
 
-        // 11. ToolError
+        // 12. ToolError
         let tool_repo = pc_repos::tool::ToolRepo::new(&self.db);
         if let Ok(rows) = tool_repo.list_apps_attention(company_id).await {
-            for row in rows {
+            for (id, kind, _provider_url, _enabled, _status, _description) in rows {
                 all.push(AttentionItem {
                     kind: AttentionItemKind::ToolError,
-                    subject_id: row.id,
+                    subject_id: id,
                     company_id,
                     severity: AttentionSeverity::Medium,
-                    title: format!("Tool error: {}", row.name),
+                    title: format!("Tool attention: {}", kind),
                     description: None,
-                    created_at: row.created_at,
+                    created_at: chrono::Utc::now(),
                 });
             }
         }
