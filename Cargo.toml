@@ -50,6 +50,7 @@ members = [
     "crates/pc-companies",
     "crates/pc-portability",
     "crates/pc-issues",
+    "crates/pc-pipelines",
 ]
 
 [workspace.package]

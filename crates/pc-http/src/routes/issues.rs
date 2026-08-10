@@ -27,6 +27,37 @@ use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor, IssueUpdateReceipt};
+use pc_issues::{IssueService, IssueServiceError};
+
+// =============================================================================
+// R602 v6: IssueService 路由层集成
+// =============================================================================
+
+/// 构造一个自动触发 IssueActivityHook 的 IssueService。
+///
+/// 所有 hooks 模块里注册的 IssueActivityHook 都会随之触发：
+/// IssueCreated / IssueUpdated / IssueAssigned / IssueCommented 等
+/// 通过同一个 hook fanout 到 ActivityLog + Realtime + PluginEventBus。
+fn issue_service_with_activity(state: &AppState) -> IssueService<'static> {
+    let state_arc = std::sync::Arc::new(state.clone());
+    let hook: std::sync::Arc<dyn pc_issues::IssueHook> =
+        std::sync::Arc::new(crate::hooks::IssueActivityHook::new(state_arc));
+    let db_static: &'static pc_repos::Db = Box::leak(Box::new(state.db.clone()));
+    IssueService::with_hooks(db_static, vec![hook])
+}
+
+/// IssueService 错误 → ApiError 映射。
+fn map_issue_service_error(e: IssueServiceError) -> ApiError {
+    use IssueServiceError::*;
+    match e {
+        NotFound(_) => ApiError::NotFound("issue".into()),
+        InvalidInput(m) => ApiError::BadRequest(m),
+        Forbidden(m) => ApiError::Forbidden(m),
+        Repo(m) => ApiError::Internal(format!("repo: {m}")),
+    }
+}
+
+
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
@@ -3475,9 +3506,12 @@ async fn count_company_issues(
     Path(company_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<CountQuery>,
 ) -> ApiResult<Json<Value>> {
-    let count = IssueRepo::new(&state.db)
-        .count_company_issues(company_id, q.status.as_deref())
-        .await?;
+    // R602 v6: 迁移到 IssueService — 包含 hook fanout（count 路径不写 hook 但服务化后保留扩展点）
+    let svc = issue_service_with_activity(&state);
+    let count = svc
+        .count_with_status(company_id, q.status.as_deref())
+        .await
+        .map_err(map_issue_service_error)?;
     Ok(Json(
         json!({ "company_id": company_id, "count": count, "status": q.status }),
     ))
@@ -3491,9 +3525,12 @@ async fn issues_by_status(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows: Vec<(String, i64)> = IssueRepo::new(&state.db)
-        .count_visible_by_status(company_id)
-        .await?;
+    // R602 v6: 迁移到 IssueService
+    let svc = issue_service_with_activity(&state);
+    let rows = svc
+        .count_by_status(company_id)
+        .await
+        .map_err(map_issue_service_error)?;
     let mut total = 0i64;
     let groups: Vec<Value> = rows
         .iter()
@@ -3651,24 +3688,36 @@ async fn create_company_issue(
     Path(company_id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
+    // R602 v6: 迁移到 IssueService.create
     let title = body
         .get("title")
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::BadRequest("title is required".into()))?;
-    let description = body.get("description").and_then(Value::as_str);
+        .ok_or_else(|| ApiError::BadRequest("title is required".into()))?
+        .to_owned();
+    let description = body
+        .get("description")
+        .and_then(Value::as_str)
+        .map(|s| s.to_owned());
     let priority = body
         .get("priority")
         .and_then(Value::as_str)
-        .unwrap_or("normal");
-    let row = IssueRepo::new(&state.db)
-        .create(company_id, title, description, priority, None)
-        .await?;
+        .map(|s| s.to_owned());
+    let input = pc_issues::CreateIssueMinimalInput {
+        title,
+        description,
+        status: None,
+        priority,
+        created_by_user_id: None,
+    };
+    let svc = issue_service_with_activity(&state);
+    let row = svc
+        .create(company_id, &input)
+        .await
+        .map_err(map_issue_service_error)?;
     let id = row.id;
-    state
-        .realtime
-        .publish(LiveEvent::new("issue.created", "issue", id).with_company(company_id));
+    // IssueActivityHook.on_created 已发布 "issue.created" realtime 事件，此处无需重复 publish
     Ok(Json(
-        json!({ "id": id, "companyId": company_id, "title": title }),
+        json!({ "id": id, "companyId": company_id, "title": row.title }),
     ))
 }
 

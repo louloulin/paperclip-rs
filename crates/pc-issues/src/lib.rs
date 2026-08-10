@@ -12,21 +12,22 @@
 //! - 低耦合：通过 service 抽象，调用方（HTTP / CLI）无需直接操作 repo
 //! - 可测：service 单元测试不依赖 HTTP 层
 //!
-//! **R602 范围（v1）**
+//! **R602 范围（v4 累计）**
 //! - 4 个 read 方法（直通 repo，带公司作用域校验）
-//! - 1 个 create 入口（聚焦"最小可工作子集"）
-//! - `IssueHook::on_created` 副作用抽象
+//! - `create` + 业务校验
+//! - `update_status` 带状态机 + 时间戳副作用 + `IssueHook::on_status_changed`
+//! - `assign` + `IssueHook::on_assigned`
+//! - `list_comments` + `create_comment` + `IssueHook::on_commented` (v4)
 //! - Activity hook 端由 `pc-http/src/hooks/issue_activity_hook.rs` 实现
 //!
 //! 后续轮次扩展：
-//! - `update_status(issue_id, new_status)` + `IssueHook::on_status_changed`
-//! - `assign(issue_id, agent_id)` + `IssueHook::on_assigned`
-//! - `comment_create` / `comment_list`
 //! - children（sub-issue）服务
 //! - 路由层从 `IssueRepo::new(&state.db)` 迁移到 `IssueService`
 
 use async_trait::async_trait;
-use pc_repos::issue::{CreateIssueInput, IssueRepo, IssueRow};
+use pc_repos::issue::{
+    CreateIssueInput, IssueCommentRow, IssueRepo, IssueRow,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -90,6 +91,43 @@ pub enum IssueLifecycleEvent {
     },
 }
 
+/// Issue 指派语义描述。
+///
+/// `Agent(uuid)`：指派给具体 agent（assignee_agent_id 写入，assignee_user_id 清空）。
+/// `User(name)`：指派给具体用户（assignee_user_id 写入，assignee_agent_id 清空）。
+/// `Unassign`：显式清除所有 assignee 字段。
+///
+/// `Clone + PartialEq + Eq` 派生便于 hook 单元测试做相等断言。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssignKind {
+    Agent(Uuid),
+    User(String),
+    Unassign,
+}
+
+/// AssignTarget — 业务层输入：Agent / User / Unassign。
+///
+/// 与 AssignKind 区别：AssignTarget 是 service.assign 入参（owned String）；
+/// AssignKind 是 hook payload（Clone + Eq 派生）。
+#[derive(Debug, Clone)]
+pub enum AssignTarget {
+    Agent(Uuid),
+    User(String),
+    Unassign,
+}
+
+impl From<&AssignKind> for AssignTarget {
+    /// 转换 hook payload → service 输入（仅用于 replay 场景）。
+    fn from(kind: &AssignKind) -> Self {
+        match kind {
+            AssignKind::Agent(id) => AssignTarget::Agent(*id),
+            AssignKind::User(name) => AssignTarget::User(name.clone()),
+            AssignKind::Unassign => AssignTarget::Unassign,
+        }
+    }
+}
+
+
 /// Hook trait：副作用抽象。
 ///
 /// 默认全部 noop，调用方可选择性实现。
@@ -100,6 +138,56 @@ pub trait IssueHook: Send + Sync {
     /// 失败语义：单个 hook 失败不会回滚 issue 创建，
     /// 返回 `Err` 时 service 会将错误冒泡给调用方。
     async fn on_created(&self, _row: &IssueRow) -> IssueServiceResult<()> {
+        Ok(())
+    }
+    /// Issue 状态变更后调用（service.update_status）。
+
+    ///
+
+    /// `old_status` 是变更前的状态；`new_status` 是新状态。
+
+    /// 如果 new_status 是终态（done/cancelled）触发的 side-effect
+
+    /// （completed_at / cancelled_at 时间戳）已由 service 层写入，
+
+    /// hook 拿到的 row 已是最新版本。
+
+    async fn on_status_changed(
+        &self,
+        _row: &IssueRow,
+        _old_status: &str,
+        _new_status: &str,
+    ) -> IssueServiceResult<()> {
+        Ok(())
+    }
+    /// Issue 指派 / 重新指派 / 取消指派 后调用（service.assign）。
+
+    ///
+
+    /// `kind` 描述具体指派语义：Agent(uuid) / User(display name) / Unassign。
+
+    /// hook 拿到的 row 已是最新版本（含新的 assignee_* 字段）。
+
+    async fn on_assigned(
+        &self,
+        _row: &IssueRow,
+        _kind: AssignKind,
+    ) -> IssueServiceResult<()> {
+        Ok(())
+    }
+    /// Issue 新增评论后调用（service.create_comment）。
+
+    ///
+
+    /// `parent_issue` 是评论所属 issue 的最新 row（用于 hook 推断 company_id 等上下文）。
+
+    /// `comment` 是新创建的评论。
+
+    async fn on_commented(
+        &self,
+        _parent_issue: &IssueRow,
+        _comment: &IssueCommentRow,
+    ) -> IssueServiceResult<()> {
         Ok(())
     }
 }
@@ -113,12 +201,46 @@ impl IssueHook for NoopIssueHook {}
 #[derive(Default)]
 pub struct RecordingIssueHook {
     pub created: std::sync::Mutex<Vec<Uuid>>,
+    pub status_changed: std::sync::Mutex<Vec<(Uuid, String, String)>>,
+    pub assigned: std::sync::Mutex<Vec<(Uuid, AssignKind)>>,
+    pub commented: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (issue_id, comment_id)
 }
 
 #[async_trait]
 impl IssueHook for RecordingIssueHook {
     async fn on_created(&self, row: &IssueRow) -> IssueServiceResult<()> {
         self.created.lock().expect("lock").push(row.id);
+        Ok(())
+    }
+    async fn on_status_changed(
+        &self,
+        row: &IssueRow,
+        old_status: &str,
+        new_status: &str,
+    ) -> IssueServiceResult<()> {
+        self.status_changed
+            .lock()
+            .expect("lock")
+            .push((row.id, old_status.to_string(), new_status.to_string()));
+        Ok(())
+    }
+    async fn on_assigned(
+        &self,
+        row: &IssueRow,
+        kind: AssignKind,
+    ) -> IssueServiceResult<()> {
+        self.assigned.lock().expect("lock").push((row.id, kind));
+        Ok(())
+    }
+    async fn on_commented(
+        &self,
+        parent_issue: &IssueRow,
+        comment: &IssueCommentRow,
+    ) -> IssueServiceResult<()> {
+        self.commented
+            .lock()
+            .expect("lock")
+            .push((parent_issue.id, comment.id));
         Ok(())
     }
 }
@@ -192,6 +314,18 @@ impl<'a> IssueService<'a> {
     /// 统计某公司 issue 总数。
     pub async fn count_for_company(&self, company_id: Uuid) -> IssueServiceResult<i64> {
         Ok(self.repo.count_for_company(company_id).await?)
+    }
+
+    /// 统计某公司 issue 总数（按 status 可选过滤）。
+    ///
+    /// 对齐 `IssueRepo::count_company_issues(company_id, status)`。
+    /// `status=None` 等价于 `count_for_company`。
+    pub async fn count_with_status(
+        &self,
+        company_id: Uuid,
+        status: Option<&str>,
+    ) -> IssueServiceResult<i64> {
+        Ok(self.repo.count_company_issues(company_id, status).await?)
     }
 
     /// 按状态统计某公司 issue 数（仅未隐藏）。
@@ -277,13 +411,287 @@ impl<'a> IssueService<'a> {
         }
         Ok(row)
     }
+
+    // ---------- 状态变更 ----------
+
+    /// 更新 issue 状态（带状态机校验 + 时间戳副作用）。
+    ///
+    /// 对齐上游 paperclip `applyStatusSideEffects`：
+    /// - in_progress → 写 `started_at`（如果未设置）
+    /// - done → 写 `completed_at`
+    /// - cancelled → 写 `cancelled_at`
+    /// - 从 done/cancelled 离开 → 清空 `completed_at` / `cancelled_at`
+    ///
+    /// 校验：
+    /// - new_status ∈ `ALL_ISSUE_STATUSES`
+    /// - old == new → 返回 existing（no-op，不触发 hook — 对齐上游 assertTransition）
+    /// - issue 不存在或跨公司 → NotFound
+    ///
+    /// 副作用：依次调用 hook 的 `on_status_changed(updated_row, old, new)`。
+    pub async fn update_status(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        new_status: &str,
+    ) -> IssueServiceResult<IssueRow> {
+        if !is_valid_status(new_status) {
+            return Err(IssueServiceError::InvalidInput(format!(
+                "invalid status: {new_status}"
+            )));
+        }
+        let existing = self
+            .repo
+            .get(issue_id)
+            .await?
+            .ok_or_else(|| IssueServiceError::NotFound(format!("issue {issue_id}")))?;
+        if existing.company_id != company_id {
+            return Err(IssueServiceError::NotFound(format!("issue {issue_id}")));
+        }
+        let old_status = existing.status.clone();
+        if old_status == new_status {
+            return Ok(existing);
+        }
+
+        let started_at_set = new_status == "in_progress" && existing.started_at.is_none();
+        let completed_at_set = new_status == "done";
+        let cancelled_at_set = new_status == "cancelled";
+        let clear_terminal_timestamps = matches!(old_status.as_str(), "done" | "cancelled")
+            && !matches!(new_status, "done" | "cancelled");
+
+        let updated = self
+            .write_status_with_side_effects(
+                issue_id,
+                new_status,
+                started_at_set,
+                completed_at_set,
+                cancelled_at_set,
+                clear_terminal_timestamps,
+            )
+            .await?
+            .ok_or_else(|| IssueServiceError::NotFound(format!("issue {issue_id}")))?;
+
+        for hook in &self.hooks {
+            hook.on_status_changed(&updated, &old_status, new_status).await?;
+        }
+        Ok(updated)
+    }
+
+    /// 单 issue 状态写库 — status + 可选 3 个时间戳。
+    ///
+    /// 直接走 SQL 而非 `update_full`，避免填充 24 字段 UpdateIssuePatch 的样板代码。
+    /// 返回的最新 row 会作为 hook payload 一并传递给 `on_status_changed`。
+    async fn write_status_with_side_effects(
+        &self,
+        issue_id: Uuid,
+        new_status: &str,
+        started_at_set: bool,
+        completed_at_set: bool,
+        cancelled_at_set: bool,
+        clear_terminal_timestamps: bool,
+    ) -> IssueServiceResult<Option<IssueRow>> {
+        let sql = format!(
+            "UPDATE issues SET              status = $1,              started_at = CASE WHEN $2::boolean THEN now() ELSE started_at END,              completed_at = CASE                              WHEN $3::boolean THEN now()                              WHEN $5::boolean THEN NULL                              ELSE completed_at                            END,              cancelled_at = CASE                              WHEN $4::boolean THEN now()                              WHEN $5::boolean THEN NULL                              ELSE cancelled_at                            END,              updated_at = now()              WHERE id = $6              RETURNING *",
+        );
+        let row: Option<IssueRow> = sqlx::query_as::<_, IssueRow>(&sql)
+            .bind(new_status)
+            .bind(started_at_set)
+            .bind(completed_at_set)
+            .bind(cancelled_at_set)
+            .bind(clear_terminal_timestamps)
+            .bind(issue_id)
+            .fetch_optional(self.repo.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+
+    /// 指派 / 重新指派 / 取消指派 issue。
+    ///
+    /// 语义对齐上游 `issueService.assign` / `unassign`：
+    /// - `Agent(uuid)` → assignee_agent_id = $uuid, assignee_user_id = NULL
+    /// - `User(name)` → assignee_user_id = $name, assignee_agent_id = NULL
+    /// - `Unassign`  → 两个 assignee 字段都清空
+    ///
+    /// No-op 语义（同 update_status）：
+    /// - 当前 assignee 与新 target 字段完全一致 → 返回 existing，不写库、不触发 hook
+    ///
+    /// 校验：
+    /// - issue 不存在或跨公司 → NotFound
+    ///
+    /// 副作用：依次调用每个 hook 的 `on_assigned(updated_row, kind)`。
+    pub async fn assign(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        target: AssignTarget,
+    ) -> IssueServiceResult<IssueRow> {
+        let existing = self
+            .repo
+            .get(issue_id)
+            .await?
+            .ok_or_else(|| IssueServiceError::NotFound(format!("issue {issue_id}")))?;
+        if existing.company_id != company_id {
+            return Err(IssueServiceError::NotFound(format!("issue {issue_id}")));
+        }
+
+        // 计算要写入的 assignee_* 字段 + kind
+        let (new_agent_id, new_user_id, kind) = match &target {
+            AssignTarget::Agent(id) => (Some(*id), None, AssignKind::Agent(*id)),
+            AssignTarget::User(name) => (None, Some(name.clone()), AssignKind::User(name.clone())),
+            AssignTarget::Unassign => (None, None, AssignKind::Unassign),
+        };
+
+        // No-op 检测：assignee 字段完全一致
+        let already_matches = existing.assignee_agent_id == new_agent_id
+            && existing.assignee_user_id == new_user_id;
+        if already_matches {
+            return Ok(existing);
+        }
+
+        let updated = self
+            .write_assignees(issue_id, new_agent_id, new_user_id.as_deref())
+            .await?
+            .ok_or_else(|| IssueServiceError::NotFound(format!("issue {issue_id}")))?;
+
+        for hook in &self.hooks {
+            hook.on_assigned(&updated, kind.clone()).await?;
+        }
+        Ok(updated)
+    }
+
+    /// 单 issue assignee 字段写库。
+    async fn write_assignees(
+        &self,
+        issue_id: Uuid,
+        assignee_agent_id: Option<Uuid>,
+        assignee_user_id: Option<&str>,
+    ) -> IssueServiceResult<Option<IssueRow>> {
+        let sql = "UPDATE issues SET                    assignee_agent_id = $1,                    assignee_user_id = $2,                    updated_at = now()                    WHERE id = $3                    RETURNING *";
+        let row: Option<IssueRow> = sqlx::query_as::<_, IssueRow>(sql)
+            .bind(assignee_agent_id)
+            .bind(assignee_user_id)
+            .bind(issue_id)
+            .fetch_optional(self.repo.db.pool())
+            .await?;
+        Ok(row)
+    }
+
+    // ---------- 评论 ----------
+
+    /// 列出 issue 的所有评论（按 created_at ASC）。
+
+    ///
+
+    /// 校验：issue 不存在或跨公司 → NotFound。
+
+    pub async fn list_comments(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> IssueServiceResult<Vec<IssueCommentRow>> {
+        self.ensure_issue_in_company(company_id, issue_id).await?;
+        Ok(self.repo.list_comments(issue_id).await?)
+    }
+
+    /// 创建 issue 评论。
+
+    ///
+
+    /// 业务校验：
+    /// - body 非空（trim）
+    /// - `author` 必须正好是 agent 或 user 之一（不能同时为两者或两者皆空 — 对齐上游 assertIssueCommentAuthorTypeAllowed）
+
+    ///
+
+    /// 副作用：依次调用每个 hook 的 `on_commented(parent_issue, comment)`。
+
+    pub async fn create_comment(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        author: CommentAuthor<'_>,
+        body: &str,
+    ) -> IssueServiceResult<IssueCommentRow> {
+        if body.trim().is_empty() {
+            return Err(IssueServiceError::InvalidInput(
+                "comment body must not be empty".into(),
+            ));
+        }
+        let (agent_id, user_id) = match &author {
+            CommentAuthor::Agent(id) => (Some(*id), None),
+            CommentAuthor::User(name) => (None, Some(*name)),
+            CommentAuthor::Anonymous => (None, None),
+        };
+        // 上游：agent 与 user 必须二选一；都填 / 都不填都被拒。
+        let both_set = agent_id.is_some() && user_id.is_some();
+        let both_empty = agent_id.is_none() && user_id.is_none();
+        if both_set || both_empty {
+            return Err(IssueServiceError::InvalidInput(
+                "comment author must be either agent or user (not both, not neither)".into(),
+            ));
+        }
+
+        let parent_issue = self.ensure_issue_in_company(company_id, issue_id).await?;
+        let author_agent_id = agent_id;
+        let author_user_id = user_id;
+        let row = self
+            .repo
+            .create_comment(
+                company_id,
+                issue_id,
+                author_agent_id,
+                author_user_id,
+                body,
+            )
+            .await?;
+
+        for hook in &self.hooks {
+            hook.on_commented(&parent_issue, &row).await?;
+        }
+        Ok(row)
+    }
+
+    /// 内部：校验 issue 存在 + 同公司；返回最新 row。
+
+    async fn ensure_issue_in_company(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> IssueServiceResult<IssueRow> {
+        let row = self
+            .repo
+            .get(issue_id)
+            .await?
+            .ok_or_else(|| IssueServiceError::NotFound(format!("issue {issue_id}")))?;
+        if row.company_id != company_id {
+            return Err(IssueServiceError::NotFound(format!("issue {issue_id}")));
+        }
+        Ok(row)
+    }
 }
 
+/// 评论作者类型（service.create_comment 入参）。
+
+///
+
+/// 设计：`Agent` 携带 uuid、`User` 携带字符串 id、`Anonymous` 标识无作者 —
+
+/// service 层会强制三选一校验，禁止 Agent+User 同时存在。
+
+#[derive(Debug, Clone)]
+pub enum CommentAuthor<'a> {
+    Agent(Uuid),
+    User(&'a str),
+    Anonymous,
+}
+
+/// 所有合法的 issue status — 对齐上游 paperclip `ALL_ISSUE_STATUSES`。
+pub const ALL_ISSUE_STATUSES: &[&str] = &[
+    "backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled",
+];
+
 fn is_valid_status(s: &str) -> bool {
-    matches!(
-        s,
-        "todo" | "in_progress" | "in_review" | "done" | "cancelled" | "backlog"
-    )
+    ALL_ISSUE_STATUSES.contains(&s)
 }
 
 fn is_valid_priority(s: &str) -> bool {
@@ -312,7 +720,15 @@ mod unit_tests {
     fn r602_valid_status_set() {
         assert!(is_valid_status("todo"));
         assert!(is_valid_status("in_progress"));
+        assert!(is_valid_status("blocked"));
         assert!(!is_valid_status("bogus"));
+    }
+
+    #[test]
+    fn r602_all_statuses_constant_complete() {
+        assert!(ALL_ISSUE_STATUSES.contains(&"backlog"));
+        assert!(ALL_ISSUE_STATUSES.contains(&"done"));
+        assert_eq!(ALL_ISSUE_STATUSES.len(), 7);
     }
 
     #[test]
@@ -326,5 +742,6 @@ mod unit_tests {
     fn r602_recording_hook_starts_empty() {
         let hook = RecordingIssueHook::default();
         assert_eq!(hook.created.lock().unwrap().len(), 0);
+        assert_eq!(hook.status_changed.lock().unwrap().len(), 0);
     }
 }

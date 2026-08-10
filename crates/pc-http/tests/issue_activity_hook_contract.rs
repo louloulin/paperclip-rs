@@ -225,3 +225,433 @@ async fn r602_hook_count_propagation() {
     );
     assert_eq!(svc.hook_count(), 2);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v2_update_status_emits_activity_and_live_event() {
+    use pc_issues::ALL_ISSUE_STATUSES;
+
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let realtime = state.realtime.clone();
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+
+    // 先创建一个 issue（这一步会触发 on_created activity，记录 1 条）
+    let input = CreateIssueMinimalInput {
+        title: "status change test".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    let mut rx = realtime.subscribe();
+
+    // 用合法 status 切换：todo → in_progress
+    let target = ALL_ISSUE_STATUSES
+        .iter()
+        .find(|s| **s == "in_progress")
+        .copied()
+        .unwrap();
+    let updated = svc
+        .update_status(company_id, row.id, target)
+        .await
+        .expect("status");
+    assert_eq!(updated.status, "in_progress");
+
+    // 验证 activity log 出现至少一条 IssueUpdated（status_changed 路径）
+    let snapshot = in_mem.snapshot();
+    let updated_events: Vec<_> = snapshot
+        .iter()
+        .filter(|e| matches!(e.kind, ActivityKind::IssueUpdated))
+        .collect();
+    assert!(
+        !updated_events.is_empty(),
+        "expected at least one IssueUpdated activity after status change, got {snapshot:?}"
+    );
+
+    // 验证 realtime 收到 issue.status_changed
+    let mut got_status_changed = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            Ok(Ok(ev)) => {
+                if ev.event == "issue.status_changed" {
+                    got_status_changed = true;
+                    break;
+                }
+            }
+            _ => continue,
+        }
+    }
+    assert!(
+        got_status_changed,
+        "expected to receive at least one issue.status_changed live event"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v2_same_status_noop_does_not_trigger_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let input = CreateIssueMinimalInput {
+        title: "noop".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    // 记录"调用 update_status 之前"的 activity 数；同状态 no-op 不应新增任何 activity
+    let baseline_count = in_mem.snapshot().len();
+
+    // 同状态更新 → no-op → 不触发 hook → 不增加 activity
+    let _ = svc
+        .update_status(company_id, row.id, "todo")
+        .await
+        .expect("noop");
+
+    let after_count = in_mem.snapshot().len();
+    assert_eq!(
+        after_count, baseline_count,
+        "same-status no-op should not emit any activity (was {baseline_count}, now {after_count})"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v3_assign_emits_activity_and_live_event() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let realtime = state.realtime.clone();
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let agent_id = Uuid::new_v4();
+    // 插入 agent 满足 FK 校验
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, status,          adapter_config, permissions, created_at, updated_at)          VALUES ($1, $2, $3, 'general', 'process', 'idle', '{}'::jsonb, '{}'::jsonb,          now(), now())",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind(format!("Agent-{agent_id}"))
+    .execute(&pool)
+    .await
+    .expect("insert agent");
+
+    let input = CreateIssueMinimalInput {
+        title: "assign activity test".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    let mut rx = realtime.subscribe();
+
+    let updated = svc
+        .assign(company_id, row.id, pc_issues::AssignTarget::Agent(agent_id))
+        .await
+        .expect("assign");
+    assert_eq!(updated.assignee_agent_id, Some(agent_id));
+
+    // 验证 activity log 出现至少一条 IssueAssigned
+    let snapshot = in_mem.snapshot();
+    let assigned_events: Vec<_> = snapshot
+        .iter()
+        .filter(|e| matches!(e.kind, ActivityKind::IssueAssigned))
+        .collect();
+    assert!(
+        !assigned_events.is_empty(),
+        "expected IssueAssigned activity event, got {snapshot:?}"
+    );
+
+    // 验证 realtime 收到 issue.assigned
+    let mut got_assigned = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            Ok(Ok(ev)) => {
+                if ev.event == "issue.assigned" {
+                    got_assigned = true;
+                    break;
+                }
+            }
+            _ => continue,
+        }
+    }
+    assert!(
+        got_assigned,
+        "expected to receive at least one issue.assigned live event"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v3_unassign_emits_activity() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let agent_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, status,          adapter_config, permissions, created_at, updated_at)          VALUES ($1, $2, $3, 'general', 'process', 'idle', '{}'::jsonb, '{}'::jsonb,          now(), now())",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind(format!("Agent-{agent_id}"))
+    .execute(&pool)
+    .await
+    .expect("insert agent");
+
+    let input = CreateIssueMinimalInput {
+        title: "unassign test".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    // 先指派 + 记录 baseline
+    let _ = svc
+        .assign(company_id, row.id, pc_issues::AssignTarget::Agent(agent_id))
+        .await
+        .expect("assign");
+
+    let baseline = in_mem.snapshot().len();
+
+    // unassign
+    let updated = svc
+        .assign(company_id, row.id, pc_issues::AssignTarget::Unassign)
+        .await
+        .expect("unassign");
+    assert_eq!(updated.assignee_agent_id, None);
+    assert_eq!(updated.assignee_user_id, None);
+
+    // 应出现至少多一条 IssueAssigned 事件（unassign 也是 assign 语义）
+    let after = in_mem.snapshot().len();
+    assert!(
+        after > baseline,
+        "unassign should produce an additional activity event (baseline={baseline}, after={after})"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v3_same_assignment_noop_does_not_emit() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let agent_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, status,          adapter_config, permissions, created_at, updated_at)          VALUES ($1, $2, $3, 'general', 'process', 'idle', '{}'::jsonb, '{}'::jsonb,          now(), now())",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind(format!("Agent-{agent_id}"))
+    .execute(&pool)
+    .await
+    .expect("insert agent");
+
+    let input = CreateIssueMinimalInput {
+        title: "noop assign".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    let _ = svc
+        .assign(company_id, row.id, pc_issues::AssignTarget::Agent(agent_id))
+        .await
+        .expect("assign");
+
+    // 记录 baseline（assign 已发出 1 条 activity）
+    let baseline = in_mem
+        .snapshot()
+        .iter()
+        .filter(|e| matches!(e.kind, ActivityKind::IssueAssigned))
+        .count();
+
+    // 同样 assign → no-op → 不发新 activity
+    let _ = svc
+        .assign(company_id, row.id, pc_issues::AssignTarget::Agent(agent_id))
+        .await
+        .expect("noop");
+
+    let after = in_mem
+        .snapshot()
+        .iter()
+        .filter(|e| matches!(e.kind, ActivityKind::IssueAssigned))
+        .count();
+    assert_eq!(
+        after, baseline,
+        "no-op assign should not emit additional IssueAssigned events (baseline={baseline}, after={after})"
+    );
+
+    cleanup(&pool, company_id).await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v4_create_comment_emits_activity_and_live_event() {
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let realtime = state.realtime.clone();
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+    let agent_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, status,          adapter_config, permissions, created_at, updated_at)          VALUES ($1, $2, $3, 'general', 'process', 'idle', '{}'::jsonb, '{}'::jsonb,          now(), now())",
+    )
+    .bind(agent_id)
+    .bind(company_id)
+    .bind(format!("Agent-{agent_id}"))
+    .execute(&pool)
+    .await
+    .expect("insert agent");
+
+    let input = CreateIssueMinimalInput {
+        title: "comment contract test".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    let mut rx = realtime.subscribe();
+
+    let comment = svc
+        .create_comment(
+            company_id,
+            row.id,
+            pc_issues::CommentAuthor::Agent(agent_id),
+            "looks good",
+        )
+        .await
+        .expect("comment");
+
+    // 验证 activity log
+    let snapshot = in_mem.snapshot();
+    let commented_events: Vec<_> = snapshot
+        .iter()
+        .filter(|e| matches!(e.kind, ActivityKind::IssueCommented))
+        .collect();
+    assert!(
+        !commented_events.is_empty(),
+        "expected IssueCommented activity event, got {snapshot:?}"
+    );
+
+    // 验证 realtime 收到 issue.commented
+    let mut got_commented = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            Ok(Ok(ev)) => {
+                if ev.event == "issue.commented" {
+                    got_commented = true;
+                    break;
+                }
+            }
+            _ => continue,
+        }
+    }
+    assert!(
+        got_commented,
+        "expected to receive at least one issue.commented live event"
+    );
+
+    // 验证 comment id 落进 payload
+    let ev_payload = serde_json::to_value(&commented_events[0].payload).unwrap_or(serde_json::json!({}));
+    assert_eq!(
+        ev_payload["comment_id"].as_str(),
+        Some(comment.id.to_string().as_str())
+    );
+    assert_eq!(ev_payload["author_kind"].as_str(), Some("agent"));
+
+    cleanup(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r602_v4_user_author_comment_routes_correctly() {
+    // 反向验证：User author 在 hook payload 里走 "user" 分支
+    let _guard = TEST_LOCK.lock().await;
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let state_arc = Arc::new(state);
+    let hook = IssueActivityHook::new(state_arc.clone());
+    let hook: Arc<dyn IssueHook> = Arc::new(hook);
+    let svc = IssueService::with_hooks(&db, vec![hook]);
+
+    let company_id = insert_company(&pool).await;
+
+    let input = CreateIssueMinimalInput {
+        title: "user-comment test".into(),
+        description: None,
+        status: Some("todo".into()),
+        priority: None,
+        created_by_user_id: None,
+    };
+    let row = svc.create(company_id, &input).await.expect("create");
+
+    let _ = svc
+        .create_comment(
+            company_id,
+            row.id,
+            pc_issues::CommentAuthor::User("alice"),
+            "human says hi",
+        )
+        .await
+        .expect("comment");
+
+    let snapshot = in_mem.snapshot();
+    let ev = snapshot
+        .iter()
+        .find(|e| matches!(e.kind, ActivityKind::IssueCommented))
+        .expect("commented event");
+    let payload_json = serde_json::to_value(&ev.payload).unwrap_or(serde_json::json!({}));
+    assert_eq!(payload_json["author_kind"].as_str(), Some("user"));
+    assert_eq!(payload_json["author_id"].as_str(), Some("alice"));
+
+    cleanup(&pool, company_id).await;
+}
