@@ -27,7 +27,7 @@ use pc_companies::{
 };
 use crate::hooks::CompanyActivityHook;
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
-use pc_portability::{PortabilityPreviewInput, PortabilityService, PortabilityServiceError};
+use pc_portability::{ExportInput, PortabilityPreviewInput, PortabilityService, PortabilityServiceError};
 use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
 use pc_repos::decision::DecisionRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
@@ -657,34 +657,36 @@ struct CompanyExportBody {
 async fn start_company_export(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
-    Json(body): Json<CompanyExportBody>,
+    Json(_body): Json<CompanyExportBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    // Round 224 真实实现：验证 company 存在 → 发布 realtime 事件 → 202 Accepted
-    //
-    // 原 Round 98 stub 引用不存在的表 `company_export_jobs`。
-    // Node 端 export 是同步返回 bundle（不是 job 队列）。
-    // paperclip-rs 把 export 委托给 Node 端 background worker：
-    // 1. 校验 company 存在 → 404
-    // 2. 序列化 export 选项作为 event payload
-    // 3. 通过 realtime 通知 Node `companyPortability.export.requested`
-    // 4. Node 后台 worker 调 `portability.exportBundle` 并把结果写回 object storage
-    let _ = body; // 当前仅转发整体 payload；具体选项由 Node 端处理
-    let _ = CompanyRepo::new(&state.db)
-        .get(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
+    // R600: 通过 PortabilityService.export 收集 manifest
+    let manifest = PortabilityService::new(&state.db)
+        .export(id, ExportInput::default())
+        .await
+        .map_err(|e| map_portability_service_error(e, id))?;
+    // 发布 realtime 事件给 UI / Node background worker
     state.realtime.publish(
         LiveEvent::new("company.export.requested", "company", id)
             .with_company(id)
             .with_data(serde_json::json!({
                 "companyId": id,
-                "options": serde_json::to_value(&body).unwrap_or(serde_json::json!({})),
+                "counts": {
+                    "agents": manifest.counts.agents,
+                    "issues": manifest.counts.issues,
+                    "pipelines": manifest.counts.pipelines,
+                },
             })),
     );
     Ok(Json(serde_json::json!({
         "companyId": id,
-        "status": "accepted",
-        "note": "export request delegated to Node background worker via realtime event",
+        "version": manifest.version,
+        "status": "exported",
+        "counts": {
+            "agents": manifest.counts.agents,
+            "issues": manifest.counts.issues,
+            "pipelines": manifest.counts.pipelines,
+        },
+        "generatedAt": manifest.generated_at,
     })))
 }
 

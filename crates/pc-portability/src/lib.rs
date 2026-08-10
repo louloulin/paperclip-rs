@@ -72,6 +72,69 @@ pub struct PortabilityPreviewInput {
     pub include: PortabilityInclude,
 }
 
+/// R600: export bundle 输入。
+///
+/// 对齐上游 `CompanyPortabilityExport`：`include` 控制哪些类别被收集，
+/// `file_paths` 限制文件路径白名单（暂未实现完整文件序列化）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportInput {
+    #[serde(default)]
+    pub include: PortabilityInclude,
+    /// 输出格式 — 当前固定 "1.0"。
+    #[serde(default = "default_version")]
+    pub version: String,
+}
+
+impl Default for ExportInput {
+    fn default() -> Self {
+        Self {
+            include: PortabilityInclude::default(),
+            version: default_version(),
+        }
+    }
+}
+
+fn default_version() -> String {
+    "1.0".into()
+}
+
+/// R600: export counts — manifest 各类别实体计数。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportCounts {
+    pub agents: usize,
+    pub issues: usize,
+    pub pipelines: usize,
+}
+
+/// R600: company summary — 嵌入 manifest 的公司基础信息。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanySummary {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub issue_prefix: String,
+}
+
+/// R600: export manifest — 对齐上游 `CompanyPortabilityManifest`。
+///
+/// 完整 manifest 还包含 projects / skills / routines / envInputs 等，
+/// 留待后续轮次扩展。当前子集：company / agents / issues / pipelines。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportManifest {
+    pub version: String,
+    pub company: CompanySummary,
+    pub agents: Vec<AgentSummary>,
+    pub issues: Vec<IssueSummary>,
+    pub pipelines: Vec<PipelineSummary>,
+    pub counts: ExportCounts,
+    pub generated_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Portability preview 增强结果。
 ///
 /// 与 `CompanyExportPreview` 区别：增加 version + counts 聚合 + 时间戳。
@@ -100,6 +163,8 @@ pub struct PortabilityCounts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortabilityLifecycleEvent {
     Previewed { company_id: Uuid, counts: PortabilityCounts },
+    /// R600: export bundle 已生成（manifest 收集完成）。
+    Exported { company_id: Uuid, counts: ExportCounts },
 }
 
 /// Hook trait：副作用抽象。
@@ -225,5 +290,80 @@ impl<'a> PortabilityService<'a> {
         company_id: Uuid,
     ) -> PortabilityServiceResult<Vec<PipelineSummary>> {
         Ok(self.repo.list_pipeline_summaries(company_id).await?)
+    }
+
+    /// R600: 生成 company export manifest。
+    ///
+    /// 对齐上游 `companyPortabilityService.exportBundle` 的核心子集：
+    /// - 验证 company 存在（None → NotFound）
+    /// - 收集 issues / agents / pipelines 摘要（按 `include` 配置）
+    /// - 组装 `ExportManifest` + counts + generated_at
+    /// - 触发 `PortabilityLifecycleEvent::Exported` hook
+    ///
+    /// 暂未实现：
+    /// - 完整 file resources 序列化（`CompanyPortabilityFileEntry` 写入）
+    /// - envInputs 收集
+    /// - sidebarOrder 排序
+    /// - collisionStrategy 处理
+    /// 这些留待后续轮次扩展。
+    pub async fn export(
+        &self,
+        company_id: Uuid,
+        input: ExportInput,
+    ) -> PortabilityServiceResult<ExportManifest> {
+        // R600: 用 CompanyRepo 验证 company 存在并拿基本信息
+        let company_row = pc_repos::company::CompanyRepo::new(self.repo.db)
+            .get(company_id)
+            .await?
+            .ok_or_else(|| PortabilityServiceError::NotFound(format!("company {company_id}")))?;
+
+        // R600: 调用 repo 拿三类摘要
+        let issue_summaries = self.repo.list_issue_summaries(company_id).await?;
+        let agent_summaries = self.repo.list_agent_summaries(company_id).await?;
+        let pipeline_summaries = self.repo.list_pipeline_summaries(company_id).await?;
+
+        let counts = ExportCounts {
+            agents: agent_summaries.len(),
+            issues: issue_summaries.len(),
+            pipelines: pipeline_summaries.len(),
+        };
+        let counts_for_hook = counts.clone();
+
+        let company = CompanySummary {
+            id: company_row.id,
+            name: company_row.name.clone(),
+            description: company_row.description.clone(),
+            status: company_row.status.clone(),
+            issue_prefix: company_row.issue_prefix.clone(),
+        };
+
+        let manifest = ExportManifest {
+            version: input.version,
+            company,
+            agents: agent_summaries,
+            issues: issue_summaries,
+            pipelines: pipeline_summaries,
+            counts: counts.clone(),
+            generated_at: chrono::Utc::now(),
+        };
+
+        for hook in &self.hooks {
+            hook.on_lifecycle(PortabilityLifecycleEvent::Exported {
+                company_id,
+                counts: counts_for_hook.clone(),
+            })
+            .await?;
+        }
+        Ok(manifest)
+    }
+
+    /// R600: 直通 CompanyRepo::get — 验证 company 存在
+    pub async fn company_exists(
+        &self,
+        company_id: Uuid,
+    ) -> PortabilityServiceResult<bool> {
+        Ok(pc_repos::company::CompanyRepo::new(self.repo.db)
+            .exists(company_id)
+            .await?)
     }
 }

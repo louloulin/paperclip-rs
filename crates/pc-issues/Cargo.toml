@@ -1,0 +1,25 @@
+[package]
+name = "pc-issues"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Issue business layer: list/get/create/update/status + lifecycle hooks"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+sqlx = { workspace = true }
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

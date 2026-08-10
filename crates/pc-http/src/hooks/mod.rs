@@ -6,9 +6,17 @@
 //! AppState。
 
 pub mod agent_activity_hook;
+pub mod agent_termination_approval_hook;
+pub mod approval_decision_link_hook;
 pub mod company_activity_hook;
 pub mod company_budget_hook;
+pub mod decision_activity_hook;
+pub mod issue_activity_hook;
 
 pub use agent_activity_hook::AgentActivityHook;
+pub use agent_termination_approval_hook::AgentTerminationApprovalHook;
+pub use approval_decision_link_hook::ApprovalDecisionLinkHook;
 pub use company_activity_hook::CompanyActivityHook;
 pub use company_budget_hook::CompanyBudgetHook;
+pub use decision_activity_hook::DecisionActivityHook;
+pub use issue_activity_hook::IssueActivityHook;

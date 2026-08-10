@@ -49,6 +49,7 @@ members = [
     "crates/pc-budgets",
     "crates/pc-companies",
     "crates/pc-portability",
+    "crates/pc-issues",
 ]
 
 [workspace.package]

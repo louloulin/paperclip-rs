@@ -94,6 +94,9 @@ async fn r593_portability_preview_emits_lifecycle_event() {
             assert_eq!(*cid, company_id);
             assert_eq!(counts.issues, 0);
         }
+        PortabilityLifecycleEvent::Exported { .. } => {
+            panic!("expected Previewed event, got Exported");
+        }
     }
 
     cleanup(&pool, company_id).await;
@@ -163,4 +166,195 @@ async fn r593_portability_repo_error_propagates() {
         .expect("preview");
     assert_eq!(preview.company_id, bogus_id);
     assert_eq!(preview.counts.issues, 0);
+}
+
+// =================== R600: export() e2e ===================
+
+async fn insert_agent_with_role(pool: &PgPool, company_id: Uuid, role: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, status, adapter_config, \
+         permissions, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, 'process', 'idle', '{}'::jsonb, '{}'::jsonb, now(), now())",
+    )
+    .bind(id)
+    .bind(company_id)
+    .bind(format!("Agent-{id}"))
+    .bind(role)
+    .execute(pool)
+    .await
+    .expect("insert agent");
+    id
+}
+
+async fn insert_issue_with_status(pool: &PgPool, company_id: Uuid, status: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, 'medium', now(), now())",
+    )
+    .bind(id)
+    .bind(company_id)
+    .bind(format!("Issue-{id}"))
+    .bind(status)
+    .execute(pool)
+    .await
+    .expect("insert issue");
+    id
+}
+
+async fn insert_pipeline(pool: &PgPool, company_id: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pipelines (id, company_id, key, name, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, now(), now())",
+    )
+    .bind(id)
+    .bind(company_id)
+    .bind(format!("pipe_{id}"))
+    .bind(format!("Pipeline {id}"))
+    .execute(pool)
+    .await
+    .expect("insert pipeline");
+    id
+}
+
+async fn cleanup_with_agents(pool: &PgPool, company_id: Uuid) {
+    let _ = sqlx::query("DELETE FROM pipelines WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM issues WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM agents WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r600_export_empty_company_returns_zero_counts() {
+    let (db, pool) = setup_db().await;
+    let company_id = insert_company(&pool).await;
+    let svc = PortabilityService::new(&db);
+
+    let manifest = svc
+        .export(company_id, pc_portability::ExportInput::default())
+        .await
+        .expect("export");
+
+    assert_eq!(manifest.version, "1.0");
+    assert_eq!(manifest.company.id, company_id);
+    assert_eq!(manifest.counts.agents, 0);
+    assert_eq!(manifest.counts.issues, 0);
+    assert_eq!(manifest.counts.pipelines, 0);
+
+    cleanup_with_agents(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r600_export_collects_manifest() {
+    let (db, pool) = setup_db().await;
+    let company_id = insert_company(&pool).await;
+    let _agent_id = insert_agent_with_role(&pool, company_id, "ceo").await;
+    let _issue_id = insert_issue_with_status(&pool, company_id, "todo").await;
+    let _pipeline_id = insert_pipeline(&pool, company_id).await;
+
+    let svc = PortabilityService::new(&db);
+    let manifest = svc
+        .export(company_id, pc_portability::ExportInput::default())
+        .await
+        .expect("export");
+
+    assert_eq!(manifest.counts.agents, 1);
+    assert_eq!(manifest.counts.issues, 1);
+    assert_eq!(manifest.counts.pipelines, 1);
+    assert_eq!(manifest.agents.len(), 1);
+    assert_eq!(manifest.agents[0].role, "ceo");
+    assert_eq!(manifest.issues.len(), 1);
+    assert_eq!(manifest.issues[0].status, "todo");
+
+    cleanup_with_agents(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r600_export_missing_company_returns_not_found() {
+    let (db, _pool) = setup_db().await;
+    let svc = PortabilityService::new(&db);
+    let bogus = Uuid::new_v4();
+
+    let res = svc
+        .export(bogus, pc_portability::ExportInput::default())
+        .await;
+    assert!(matches!(
+        res.unwrap_err(),
+        pc_portability::PortabilityServiceError::NotFound(_)
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r600_export_emits_lifecycle_event() {
+    let (db, pool) = setup_db().await;
+    let company_id = insert_company(&pool).await;
+    let hook = Arc::new(RecordingPortabilityHook::default());
+    let svc = PortabilityService::with_hooks(&db, vec![hook.clone()]);
+
+    let _ = svc
+        .export(company_id, pc_portability::ExportInput::default())
+        .await
+        .expect("export");
+
+    let events = hook.events.lock().expect("lock");
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        PortabilityLifecycleEvent::Exported { company_id: cid, counts } => {
+            assert_eq!(*cid, company_id);
+            assert_eq!(counts.agents, 0);
+        }
+        other => panic!("expected Exported, got {other:?}"),
+    }
+
+    cleanup_with_agents(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r600_export_version_default() {
+    let (db, pool) = setup_db().await;
+    let company_id = insert_company(&pool).await;
+    let svc = PortabilityService::new(&db);
+
+    let manifest = svc
+        .export(company_id, pc_portability::ExportInput::default())
+        .await
+        .expect("export");
+    assert_eq!(manifest.version, "1.0");
+
+    cleanup_with_agents(&pool, company_id).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r600_export_company_summary_carries_metadata() {
+    let (db, pool) = setup_db().await;
+    let company_id = insert_company(&pool).await;
+    let svc = PortabilityService::new(&db);
+
+    let manifest = svc
+        .export(company_id, pc_portability::ExportInput::default())
+        .await
+        .expect("export");
+    assert_eq!(manifest.company.id, company_id);
+    assert_eq!(manifest.company.status, "active");
+    assert!(manifest.company.issue_prefix.starts_with("P5"));
+
+    cleanup_with_agents(&pool, company_id).await;
 }
