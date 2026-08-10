@@ -54,6 +54,7 @@ members = [
     "crates/pc-routines",
     "crates/pc-folders",
     "crates/pc-goals",
+    "crates/pc-documents",
 ]
 
 [workspace.package]
