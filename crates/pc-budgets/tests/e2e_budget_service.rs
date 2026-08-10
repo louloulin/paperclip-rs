@@ -300,7 +300,7 @@ async fn r582_e2e_resolve_incident_triggers_resolve_hook() {
         .await
         .expect("evaluate");
     let incident_id = match eval.incident.unwrap() {
-        IncidentOutcome::Created(row) | IncidentOutcome::AlreadyExists(row) => row.id,
+        IncidentOutcome::Created { incident: row } | IncidentOutcome::AlreadyExists { incident: row } => row.id,
     };
 
     // 解决 incident
@@ -353,8 +353,8 @@ async fn r582_e2e_threshold_type_mapping_in_evaluate_full() {
         .await
         .expect("evaluate");
     let incident = match eval.incident.unwrap() {
-        IncidentOutcome::Created(row) => row,
-        IncidentOutcome::AlreadyExists(row) => row,
+        IncidentOutcome::Created { incident: row } => row,
+        IncidentOutcome::AlreadyExists { incident: row } => row,
     };
     assert_eq!(incident.threshold_type, "soft");
 
@@ -364,8 +364,8 @@ async fn r582_e2e_threshold_type_mapping_in_evaluate_full() {
         .await
         .expect("evaluate 2");
     let incident2 = match eval2.incident.unwrap() {
-        IncidentOutcome::Created(row) => row,
-        IncidentOutcome::AlreadyExists(row) => row,
+        IncidentOutcome::Created { incident: row } => row,
+        IncidentOutcome::AlreadyExists { incident: row } => row,
     };
     assert_eq!(incident2.threshold_type, "hard");
 }

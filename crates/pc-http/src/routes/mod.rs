@@ -11,6 +11,7 @@ pub mod auth;
 pub mod authz;
 pub mod board_chat;
 pub mod built_in_agents;
+pub mod budgets;
 pub mod cases;
 pub(crate) mod change_consent;
 pub mod companies;
@@ -80,6 +81,7 @@ pub fn router() -> Router<AppState> {
         .merge(health::router())
         .merge(dev_server_restart::router())
         .merge(companies::router())
+        .merge(budgets::router())
         .merge(agents::router())
         .merge(issues::router())
         .merge(projects::router())

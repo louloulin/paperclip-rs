@@ -184,30 +184,20 @@ impl<'a> ApprovalService<'a> {
         decided_by_user_id: &str,
         note: Option<&str>,
     ) -> ApprovalServiceResult<ApprovalRow> {
-        let existing = self
-            .repo
-            .get(company_id, id)
-            .await?
-            .ok_or_else(|| ApprovalServiceError::NotFound(format!("approval {id}")))?;
-        let prev = ApprovalStatus::parse(&existing.status)
-            .ok_or_else(|| ApprovalServiceError::InvalidTransition(existing.status.clone()))?;
-        if prev != ApprovalStatus::Pending {
-            return Err(ApprovalServiceError::InvalidTransition(format!(
-                "only pending can request revision (was {prev:?})"
-            )));
-        }
+        let _ = company_id;
         let row = self
             .repo
-            .decide(
-                company_id,
-                id,
-                ApprovalStatus::Pending, // 复用 decide 但保留 pending（由调用方负责）
-                decided_by_user_id,
-                note,
-            )
+            .request_revision(id, decided_by_user_id, note)
             .await?
-            .ok_or_else(|| ApprovalServiceError::NotFound(format!("approval {id}")))?;
-        // request_revision 通过自定义 SQL 在 repo 中实现；这里退化为 note-only
+            .ok_or_else(|| {
+                ApprovalServiceError::InvalidTransition(
+                    "only pending approvals can request revision".into(),
+                )
+            })?;
+        // 注：当前 hook 设计只有 Approved / Rejected / Cancelled 三阶段。
+        // request_revision 是状态机中的 revision_requested，但语义上不是终态取消，
+        // 因此不触发任何 hook。如果未来需要"revision 通知"语义，可新增
+        // HookPhase::RevisionRequested + 扩展 ApprovalHook trait。
         Ok(row)
     }
 

@@ -273,3 +273,161 @@ async fn r584_http_approve_create_new_agent_with_budget_creates_policy() {
     .expect("count policies");
     assert_eq!(policy_count, 1, "expected budget policy");
 }
+
+
+// =============================================================================
+// R585: 其他 service 化端点 e2e
+// =============================================================================
+
+#[tokio::test(flavor = "current_thread")]
+async fn r585_http_decide_endpoint_routes_through_service_approve() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    insert_user_membership(&db, company_id).await;
+    let agent_id = insert_agent_in_status(&db, company_id, "pending_approval").await;
+    let approval_id = insert_hire_approval(
+        &db,
+        company_id,
+        json!({ "agentId": agent_id.to_string() }),
+    )
+    .await;
+    let app = routes::approvals::router().with_state(test_state(db.clone()));
+
+    // /decide 是通用端点，应等价于 /approve
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/approvals/{approval_id}/decide"),
+        Some(json!({
+            "status": "approved",
+            "decided_by": "user-1",
+            "note": "via decide endpoint"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "decide: {body}");
+    assert_eq!(body["status"], "approved");
+    // 副作用：agent 已激活
+    assert_eq!(fetch_agent_status(&db, agent_id).await, "idle");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r585_http_decide_endpoint_routes_through_service_reject() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    insert_user_membership(&db, company_id).await;
+    let agent_id = insert_agent_in_status(&db, company_id, "pending_approval").await;
+    let approval_id = insert_hire_approval(
+        &db,
+        company_id,
+        json!({ "agentId": agent_id.to_string() }),
+    )
+    .await;
+    let app = routes::approvals::router().with_state(test_state(db.clone()));
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/approvals/{approval_id}/decide"),
+        Some(json!({
+            "status": "rejected",
+            "decided_by": "user-1",
+            "note": "nope"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "decide: {body}");
+    assert_eq!(body["status"], "rejected");
+    assert_eq!(fetch_agent_status(&db, agent_id).await, "terminated");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r585_http_request_revision_endpoint_routes_through_service() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    insert_user_membership(&db, company_id).await;
+    let approval_id = insert_hire_approval(
+        &db,
+        company_id,
+        json!({ "name": "Test Bot" }),
+    )
+    .await;
+    let app = routes::approvals::router().with_state(test_state(db.clone()));
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/approvals/{approval_id}/request-revision"),
+        Some(json!({ "decisionNote": "please adjust budget" })),
+    )
+    .await;
+    assert_eq!(status, 200, "request-revision: {body}");
+    // service 端实现是"更新 note + 仍为 pending"，验证 row 字段存在
+    let body_id = body["id"].as_str().unwrap_or_default();
+    assert_eq!(body_id, approval_id.to_string());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r585_http_comments_endpoints_route_through_service() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    insert_user_membership(&db, company_id).await;
+    let approval_id = insert_hire_approval(
+        &db,
+        company_id,
+        json!({ "name": "Comment Bot" }),
+    )
+    .await;
+    let app = routes::approvals::router().with_state(test_state(db.clone()));
+
+    // 先 add 一条
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/approvals/{approval_id}/comments"),
+        Some(json!({
+            "body": "first review comment",
+            "authorUserId": "user-1"
+        })),
+    )
+    .await;
+    assert_eq!(status, 201, "add comment: {body}");
+    assert!(!body["id"].as_str().unwrap_or_default().is_empty());
+
+    // 再 list
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/approvals/{approval_id}/comments"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "list comments: {body}");
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["body"], "first review comment");
+    assert_eq!(items[0]["authorUserId"], "user-1");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn r585_http_add_comment_rejects_empty_body() {
+    let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
+    let company_id = insert_company(&db).await;
+    insert_user_membership(&db, company_id).await;
+    let approval_id = insert_hire_approval(
+        &db,
+        company_id,
+        json!({ "name": "Bot" }),
+    )
+    .await;
+    let app = routes::approvals::router().with_state(test_state(db.clone()));
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/approvals/{approval_id}/comments"),
+        Some(json!({ "body": "", "authorUserId": "user-1" })),
+    )
+    .await;
+    assert_eq!(status, 400, "empty body should be 400");
+}

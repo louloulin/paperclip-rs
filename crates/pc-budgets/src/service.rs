@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use uuid::Uuid;
 
+use serde::{Deserialize, Serialize};
 use pc_core::Timestamp;
 use pc_repos::budget::{
     BudgetRepo, IncidentRow, NewIncidentInput, PolicyRow, ResolveIncidentInput, UpsertPolicyInput,
@@ -103,7 +104,8 @@ impl From<sqlx::Error> for BudgetError {
 pub type BudgetResult<T> = Result<T, BudgetError>;
 
 /// Policy 用量状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum BudgetPolicyStatus {
     /// 用量未达 warn 阈值。
     Ok,
@@ -165,7 +167,8 @@ impl BudgetThresholdType {
 }
 
 /// 综合评估结果。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FullEvaluation {
     /// 推导的 status。
     pub status: BudgetPolicyStatus,
@@ -176,12 +179,13 @@ pub struct FullEvaluation {
 }
 
 /// incident 创建结果。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
 pub enum IncidentOutcome {
     /// 新建成功（之前不存在）。
-    Created(IncidentRow),
+    Created { incident: IncidentRow },
     /// 已存在（同 policy/window/threshold），未重复创建。
-    AlreadyExists(IncidentRow),
+    AlreadyExists { incident: IncidentRow },
 }
 
 /// 计算时间窗口（纯函数）。
@@ -390,7 +394,7 @@ impl<'a> BudgetService<'a> {
             amount_observed: observed as i32,
         };
         match self.repo.create_incident(&input).await? {
-            Some(row) => Ok(IncidentOutcome::Created(row)),
+            Some(row) => Ok(IncidentOutcome::Created { incident: row }),
             None => {
                 // ON CONFLICT DO NOTHING — 查找现有
                 let existing = self
@@ -401,7 +405,7 @@ impl<'a> BudgetService<'a> {
                         threshold,
                     )
                     .await?;
-                Ok(IncidentOutcome::AlreadyExists(existing))
+                Ok(IncidentOutcome::AlreadyExists { incident: existing })
             }
         }
     }

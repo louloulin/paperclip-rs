@@ -154,10 +154,25 @@ async fn decide(
             "status must be approved|rejected|cancelled".into(),
         ));
     }
-    let row = ApprovalRepo::new(&state.db)
-        .decide_four_args(id, &body.status, body.note.as_deref(), &body.decided_by)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {id}")))?;
+    // 先查 company_id（service 需要）
+    let company_id = load_approval_company(&state.db, id).await?;
+    let svc = build_hire_approval_service(&state.db);
+    let row = match body.status.as_str() {
+        "approved" => svc
+            .approve(company_id, id, &body.decided_by, body.note.as_deref())
+            .await
+            .map_err(|e| map_approval_service_error(e, id))?,
+        "rejected" => svc
+            .reject(company_id, id, &body.decided_by, body.note.as_deref())
+            .await
+            .map_err(|e| map_approval_service_error(e, id))?,
+        "cancelled" => svc
+            .cancel(company_id, id, &body.decided_by, body.note.as_deref())
+            .await
+            .map_err(|e| map_approval_service_error(e, id))?
+            .ok_or_else(|| ApiError::NotFound(format!("approval {id}")))?,
+        _ => unreachable!(),
+    };
     state.realtime.publish(
         LiveEvent::new(format!("approval.{}", body.status), "approval", row.id)
             .with_company(row.company_id),
@@ -347,10 +362,7 @@ async fn request_approval_revision(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<RequestRevisionBody>,
 ) -> ApiResult<Json<Value>> {
-    let company_id = ApprovalRepo::new(&state.db)
-        .get_company_id(approval_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let company_id = load_approval_company(&state.db, approval_id).await?;
     if let Err(err) = enforce_permission(
         &state.db,
         &actor,
@@ -362,10 +374,12 @@ async fn request_approval_revision(
         return Err(ApiError::Forbidden(err.to_string()));
     }
     let decided_by = body.decided_by.as_deref().unwrap_or("board");
-    let row = ApprovalRepo::new(&state.db)
-        .request_revision(approval_id, decided_by, body.decision_note.as_deref())
-        .await?
-        .ok_or_else(|| ApiError::Conflict("Only pending approvals can request revision".into()))?;
+    // request_revision 内部走 service：检查状态机 + 触发 hooks（无 hire_agent hook 影响 revision_requested）
+    let svc = build_hire_approval_service(&state.db);
+    let row = svc
+        .request_revision(company_id, approval_id, decided_by, body.decision_note.as_deref())
+        .await
+        .map_err(|e| map_approval_service_error(e, approval_id))?;
     state.realtime.publish(
         LiveEvent::new("approval.revision_requested", "approval", row.id)
             .with_company(row.company_id),
@@ -381,24 +395,23 @@ async fn list_approval_comments(
     State(state): State<AppState>,
     Path(approval_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = ApprovalRepo::new(&state.db)
-        .list_comments_raw(approval_id)
+    let svc = build_hire_approval_service(&state.db);
+    let rows = svc
+        .list_comments(approval_id)
         .await
-        .unwrap_or_default();
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows
         .into_iter()
-        .map(
-            |(id, company_id, author_agent_id, author_user_id, body, created_at)| {
-                json!({
-                    "id": id,
-                    "companyId": company_id,
-                    "authorAgentId": author_agent_id,
-                    "authorUserId": author_user_id,
-                    "body": body,
-                    "createdAt": created_at,
-                })
-            },
-        )
+        .map(|c| {
+            json!({
+                "id": c.id,
+                "companyId": c.company_id,
+                "authorAgentId": c.author_agent_id,
+                "authorUserId": c.author_user_id,
+                "body": c.body,
+                "createdAt": c.created_at,
+            })
+        })
         .collect();
     Ok(Json(json!({
         "approvalId": approval_id,
@@ -424,25 +437,27 @@ async fn add_approval_comment(
     if body.body.trim().is_empty() {
         return Err(ApiError::BadRequest("body is required".into()));
     }
-    let company_id = ApprovalRepo::new(&state.db)
-        .get_company_id(approval_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let company_id = load_approval_company(&state.db, approval_id).await?;
     // pc-authz：comment 需要公司成员资格（任何 active member 都能 comment）
     if !actor.actor.has_company_access(company_id) {
         return Err(ApiError::Forbidden(
             "actor lacks access to this company".into(),
         ));
     }
-    let id = ApprovalRepo::new(&state.db)
-        .add_comment_raw(
-            company_id,
-            approval_id,
-            body.author_agent_id,
-            body.author_user_id.as_deref(),
-            &body.body,
-        )
-        .await?;
+    // 通过 service 走 add_comment：自动隔离业务逻辑
+    let svc = build_hire_approval_service(&state.db);
+    let c = pc_repos::approval::NewApprovalComment {
+        approval_id,
+        company_id,
+        author_user_id: body.author_user_id.clone(),
+        author_agent_id: body.author_agent_id,
+        body: body.body.clone(),
+    };
+    let comment = svc
+        .add_comment(&c)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let id = comment.id;
     state.realtime.publish(
         LiveEvent::new("approval.comment_added", "approval_comment", id)
             .with_company(company_id)
@@ -462,7 +477,7 @@ async fn add_approval_comment(
             "body": body.body,
             "authorUserId": body.author_user_id,
             "authorAgentId": body.author_agent_id,
-            "createdAt": chrono::Utc::now(),
+            "createdAt": comment.created_at,
         })),
     ))
 }
