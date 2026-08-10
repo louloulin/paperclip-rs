@@ -17,6 +17,6 @@ pub mod service;
 
 pub use service::{
     compute_window, infer_status, normalize_scope_name, BudgetEnforcementHook, BudgetEnforcementScope,
-    BudgetError, BudgetPolicyStatus, BudgetService, BudgetWindow, BudgetWindowKind,
-    NoopEnforcementHook,
+    BudgetError, BudgetPolicyStatus, BudgetService, BudgetThresholdType, BudgetWindow, BudgetWindowKind,
+    BudgetResult, FullEvaluation, IncidentOutcome, NoopEnforcementHook,
 };

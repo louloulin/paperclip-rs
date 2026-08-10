@@ -22,3 +22,4 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 futures-executor = "0.3"
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

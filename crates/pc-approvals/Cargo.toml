@@ -21,3 +21,5 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 futures-executor = "0.3"
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

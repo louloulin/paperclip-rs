@@ -92,6 +92,24 @@ pub struct ResolveIncidentInput {
     pub decision_note: Option<String>,
 }
 
+/// Round 578: 创建 budget incident 的输入。
+///
+/// 由 `BudgetService::record_incident_if_needed` 构造。
+#[derive(Debug, Clone)]
+pub struct NewIncidentInput {
+    pub company_id: Uuid,
+    pub policy_id: Uuid,
+    pub scope_type: String,
+    pub scope_id: Uuid,
+    pub metric: String,
+    pub window_kind: String,
+    pub window_start: pc_core::Timestamp,
+    pub window_end: pc_core::Timestamp,
+    pub threshold_type: String,
+    pub amount_limit: i32,
+    pub amount_observed: i32,
+}
+
 pub struct BudgetRepo<'a> {
     pub db: &'a Db,
 }
@@ -222,6 +240,34 @@ impl<'a> BudgetRepo<'a> {
         )
         .bind(company_id)
         .bind(incident_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// Round 578: 创建一个 budget incident。
+    ///
+    /// 使用 `(policy_id, window_start, threshold_type)` 唯一索引：
+    /// 如果已存在同 (policy, window, threshold) 的 incident，则返回已有的，不重复创建。
+    ///
+    /// 返回 `None` 表示数据库错误（不在 unique 冲突下的"已存在"，因为我们用 ON CONFLICT DO NOTHING）。
+    pub async fn create_incident(
+        &self,
+        input: &NewIncidentInput,
+    ) -> sqlx::Result<Option<IncidentRow>> {
+        sqlx::query_as::<_, IncidentRow>(
+            "INSERT INTO budget_incidents                 (company_id, policy_id, scope_type, scope_id, metric, window_kind,                  window_start, window_end, threshold_type, amount_limit, amount_observed)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)              ON CONFLICT (policy_id, window_start, threshold_type) WHERE budget_incidents.status <> 'dismissed' DO NOTHING              RETURNING id, company_id, policy_id, scope_type, scope_id, metric, window_kind,                        window_start, window_end, threshold_type, amount_limit, amount_observed,                        status, approval_id, resolved_at, created_at, updated_at",
+        )
+        .bind(input.company_id)
+        .bind(input.policy_id)
+        .bind(&input.scope_type)
+        .bind(input.scope_id)
+        .bind(&input.metric)
+        .bind(&input.window_kind)
+        .bind(input.window_start)
+        .bind(input.window_end)
+        .bind(&input.threshold_type)
+        .bind(input.amount_limit)
+        .bind(input.amount_observed)
         .fetch_optional(self.db.pool())
         .await
     }

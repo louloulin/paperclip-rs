@@ -16,11 +16,17 @@ use std::collections::BTreeMap;
 use pc_telemetry::global;
 use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
-use pc_authz::{enforce_permission, Action, PermissionKey, Resource};
+use pc_authz::{enforce_permission, PermissionKey};
 
 use pc_realtime::LiveEvent;
 use pc_repos::approval::ApprovalRepo;
 use pc_repos::issue_approvals::IssueApprovalRepo;
+
+use pc_approvals::{
+    ApprovalService, DbHireAgentOps, HireAgentApprovalHook, HireMode, NoopApprovalHook,
+};
+
+use std::sync::Arc;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -217,36 +223,24 @@ async fn approve_approval(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
-    // 先查 row 以取 company_id
-    let preview_company: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM approvals WHERE id = $1",
-    )
-    .bind(approval_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let preview_company_id = preview_company
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?
-        .0;
+    let company_id = load_approval_company(&state.db, approval_id).await?;
     // pc-authz：批准 approval 需要 UsersInvite 权限（Operator 角色及以上）。
     if let Err(err) = enforce_permission(
         &state.db,
         &actor,
-        preview_company_id,
+        company_id,
         PermissionKey::UsersInvite,
     )
     .await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    let row = ApprovalRepo::new(&state.db)
-        .decide_four_args(
-            approval_id,
-            "approved",
-            body.note.as_deref(),
-            body.decided_by.as_deref().unwrap_or("user"),
-        )
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let svc = build_hire_approval_service(&state.db);
+    let decided_by = body.decided_by.as_deref().unwrap_or("user");
+    let row = svc
+        .approve(company_id, approval_id, decided_by, body.note.as_deref())
+        .await
+        .map_err(|e| map_approval_service_error(e, approval_id))?;
     state.realtime.publish(
         LiveEvent::new("approval.approved", "approval", row.id).with_company(row.company_id),
     );
@@ -263,34 +257,23 @@ async fn reject_approval(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
-    let preview_company: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM approvals WHERE id = $1",
-    )
-    .bind(approval_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let preview_company_id = preview_company
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?
-        .0;
+    let company_id = load_approval_company(&state.db, approval_id).await?;
     if let Err(err) = enforce_permission(
         &state.db,
         &actor,
-        preview_company_id,
+        company_id,
         PermissionKey::UsersInvite,
     )
     .await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    let row = ApprovalRepo::new(&state.db)
-        .decide_four_args(
-            approval_id,
-            "rejected",
-            body.note.as_deref(),
-            body.decided_by.as_deref().unwrap_or("user"),
-        )
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?;
+    let svc = build_hire_approval_service(&state.db);
+    let decided_by = body.decided_by.as_deref().unwrap_or("user");
+    let row = svc
+        .reject(company_id, approval_id, decided_by, body.note.as_deref())
+        .await
+        .map_err(|e| map_approval_service_error(e, approval_id))?;
     state.realtime.publish(
         LiveEvent::new("approval.rejected", "approval", row.id).with_company(row.company_id),
     );
@@ -482,4 +465,45 @@ async fn add_approval_comment(
             "createdAt": chrono::Utc::now(),
         })),
     ))
+}
+// ============== R584: ApprovalService + HireAgentApprovalHook 辅助函数 ==============
+
+/// 从 DB 查 approval 的 company_id（用于 authz 检查）。
+async fn load_approval_company(db: &pc_db::Db, approval_id: Uuid) -> Result<Uuid, ApiError> {
+    let preview_company: Option<(Uuid,)> =
+        sqlx::query_as("SELECT company_id FROM approvals WHERE id = $1")
+            .bind(approval_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    preview_company
+        .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))
+        .map(|(c,)| c)
+}
+
+/// 构造"hire agent 决策走真实 DB"路径的 `ApprovalService`：
+/// - 注册 `HireAgentApprovalHook<DbHireAgentOps>`：approve → 激活/创建 agent + budget policy；reject → terminate
+/// - 注册 `NoopApprovalHook` 占位（未来可加通知、audit log 等副作用）
+fn build_hire_approval_service(db: &pc_db::Db) -> ApprovalService<'_> {
+    let ops = Arc::new(DbHireAgentOps::new(db.clone()));
+    let hire_hook: Arc<dyn pc_approvals::ApprovalHook> =
+        Arc::new(HireAgentApprovalHook::new(ops));
+    let noop: Arc<dyn pc_approvals::ApprovalHook> = Arc::new(NoopApprovalHook);
+    ApprovalService::with_hooks(db, vec![hire_hook, noop])
+}
+
+/// `ApprovalServiceError` → HTTP `ApiError` 映射。
+fn map_approval_service_error(
+    e: pc_approvals::ApprovalServiceError,
+    approval_id: Uuid,
+) -> ApiError {
+    use pc_approvals::ApprovalServiceError;
+    match e {
+        ApprovalServiceError::NotFound(_) => ApiError::NotFound(format!("approval {approval_id}")),
+        ApprovalServiceError::InvalidTransition(s) => {
+            ApiError::BadRequest(format!("invalid transition: {s}"))
+        }
+        ApprovalServiceError::Repo(e) => ApiError::Internal(e.to_string()),
+        ApprovalServiceError::Hook(s) => ApiError::Internal(format!("hook error: {s}")),
+    }
 }

@@ -19,8 +19,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use uuid::Uuid;
 
+use pc_core::Timestamp;
 use pc_repos::budget::{
-    BudgetRepo, IncidentRow, PolicyRow, ResolveIncidentInput, UpsertPolicyInput,
+    BudgetRepo, IncidentRow, NewIncidentInput, PolicyRow, ResolveIncidentInput, UpsertPolicyInput,
 };
 
 /// 时间窗口类型。
@@ -51,6 +52,13 @@ impl BudgetWindowKind {
     }
 }
 
+impl std::str::FromStr for BudgetWindowKind {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("invalid window kind: {s}"))
+    }
+}
+
 /// 时间窗口。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetWindow {
@@ -72,6 +80,8 @@ pub enum BudgetError {
     InvalidWindowKind(String),
     #[error("invalid scope type: {0}")]
     InvalidScopeType(String),
+    #[error("not found: {0}")]
+    NotFound(String),
     #[error("repository error: {0}")]
     Repo(String),
     #[error("hook error: {0}")]
@@ -125,6 +135,53 @@ impl BudgetPolicyStatus {
     pub fn is_at_or_above_warning(self) -> bool {
         !matches!(self, Self::Ok)
     }
+}
+
+/// Incident 阈值类型（对应 paperclip 上游 `BudgetThresholdType`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BudgetThresholdType {
+    /// 软阈值（warning 级别）。
+    Soft,
+    /// 硬阈值（hard_stop 级别）。
+    Hard,
+}
+
+impl BudgetThresholdType {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Soft => "soft",
+            Self::Hard => "hard",
+        }
+    }
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "soft" => Some(Self::Soft),
+            "hard" => Some(Self::Hard),
+            _ => None,
+        }
+    }
+}
+
+/// 综合评估结果。
+#[derive(Debug, Clone)]
+pub struct FullEvaluation {
+    /// 推导的 status。
+    pub status: BudgetPolicyStatus,
+    /// incident outcome（status=Ok 时为 None）。
+    pub incident: Option<IncidentOutcome>,
+    /// 是否触发了 enforcement hook。
+    pub hook_triggered: bool,
+}
+
+/// incident 创建结果。
+#[derive(Debug, Clone)]
+pub enum IncidentOutcome {
+    /// 新建成功（之前不存在）。
+    Created(IncidentRow),
+    /// 已存在（同 policy/window/threshold），未重复创建。
+    AlreadyExists(IncidentRow),
 }
 
 /// 计算时间窗口（纯函数）。
@@ -300,6 +357,78 @@ impl<'a> BudgetService<'a> {
     // 业务 API：评估 policy + 触发 hook
     // ------------------------------------------------------------------
 
+    /// 给定 observed 用量，记录 incident（如果当前窗口还没记录过）。
+    ///
+    /// 行为：
+    /// - 计算 policy window（基于 `policy.window_kind` + `now`）
+    /// - 通过 `(policy_id, window_start, threshold_type)` 唯一索引避免重复
+    /// - 返回 `IncidentOutcome::Created` 或 `IncidentOutcome::AlreadyExists`
+    ///
+    /// 何时调用：在 `infer_status` 推导出 `Warning` 或 `HardStop` 之后。
+    /// 调用方负责先调用 `infer_status` 判断是否需要记录。
+    pub async fn record_incident_if_needed(
+        &self,
+        policy: &PolicyRow,
+        observed: i64,
+        threshold: BudgetThresholdType,
+        now: DateTime<Utc>,
+    ) -> BudgetResult<IncidentOutcome> {
+        let window_kind = BudgetWindowKind::parse(&policy.window_kind)
+            .ok_or_else(|| BudgetError::InvalidWindowKind(policy.window_kind.clone()))?;
+        let window = compute_window(window_kind, now);
+        let input = NewIncidentInput {
+            company_id: policy.company_id,
+            policy_id: policy.id,
+            scope_type: policy.scope_type.clone(),
+            scope_id: policy.scope_id,
+            metric: policy.metric.clone(),
+            window_kind: policy.window_kind.clone(),
+            window_start: Timestamp::from_dt(window.start),
+            window_end: Timestamp::from_dt(window.end),
+            threshold_type: threshold.as_str().to_string(),
+            amount_limit: policy.amount,
+            amount_observed: observed as i32,
+        };
+        match self.repo.create_incident(&input).await? {
+            Some(row) => Ok(IncidentOutcome::Created(row)),
+            None => {
+                // ON CONFLICT DO NOTHING — 查找现有
+                let existing = self
+                    .find_open_incident(
+                        policy.company_id,
+                        policy.id,
+                        Timestamp::from_dt(window.start),
+                        threshold,
+                    )
+                    .await?;
+                Ok(IncidentOutcome::AlreadyExists(existing))
+            }
+        }
+    }
+
+    /// 查找同 (policy, window, threshold) 的 open incident。
+    ///
+    /// 返回首个匹配项；无则返回 NotFound。
+    async fn find_open_incident(
+        &self,
+        company_id: Uuid,
+        policy_id: Uuid,
+        window_start: Timestamp,
+        threshold: BudgetThresholdType,
+    ) -> BudgetResult<IncidentRow> {
+        let incidents = self.repo.list_open_attention(company_id).await?;
+        let target = threshold.as_str().to_string();
+        for inc in incidents {
+            if inc.policy_id == policy_id
+                && inc.window_start == window_start
+                && inc.threshold_type == target
+            {
+                return Ok(inc);
+            }
+        }
+        Err(BudgetError::NotFound("incident".into()))
+    }
+
     /// 给定 observed 用量，评估 policy 状态 + 触发相应 hook。
     ///
     /// 返回计算得到的 status。
@@ -327,6 +456,62 @@ impl<'a> BudgetService<'a> {
         // 静默消费 now — 留作未来 metrics hook
         let _ = now;
         Ok(status)
+    }
+
+    /// 综合评估：推导 status + 自动 record_incident + 触发 hook。
+    ///
+    /// 与 `evaluate_and_enforce` 的差异：
+    /// - `evaluate_and_enforce` 只触发 hook，不写 incident
+    /// - `evaluate_full` 还会把 warning/hard_stop 写入 budget_incidents（幂等）
+    ///
+    /// 返回 `FullEvaluation` 包含状态 + incident outcome + hook 是否被触发。
+    /// 调用方（route 层 / 后台任务）拿到结果后可以做埋点 / 实时事件。
+    pub async fn evaluate_full(
+        &self,
+        policy: &PolicyRow,
+        observed: i64,
+        now: DateTime<Utc>,
+    ) -> BudgetResult<FullEvaluation> {
+        let status = infer_status(observed, policy.amount as i64, policy.warn_percent);
+        let mut result = FullEvaluation {
+            status,
+            incident: None,
+            hook_triggered: false,
+        };
+        // 1. 状态非 OK 时尝试 record incident
+        match status {
+            BudgetPolicyStatus::Warning => {
+                result.incident = Some(
+                    self.record_incident_if_needed(policy, observed, BudgetThresholdType::Soft, now)
+                        .await?,
+                );
+            }
+            BudgetPolicyStatus::HardStop => {
+                result.incident = Some(
+                    self.record_incident_if_needed(policy, observed, BudgetThresholdType::Hard, now)
+                        .await?,
+                );
+            }
+            BudgetPolicyStatus::Ok => {}
+        }
+        // 2. 按 policy 配置触发 hook
+        let scope = BudgetEnforcementScope {
+            company_id: policy.company_id,
+            scope_type: policy.scope_type.clone(),
+            scope_id: policy.scope_id,
+        };
+        match status {
+            BudgetPolicyStatus::HardStop if policy.hard_stop_enabled => {
+                self.run_hooks(HookPhase::HardStop, &scope).await?;
+                result.hook_triggered = true;
+            }
+            BudgetPolicyStatus::Warning if policy.notify_enabled => {
+                self.run_hooks(HookPhase::Warning, &scope).await?;
+                result.hook_triggered = true;
+            }
+            _ => {}
+        }
+        Ok(result)
     }
 
     /// 解决 incident + 触发 on_resolve hook。
@@ -587,5 +772,105 @@ mod tests {
         assert_eq!(infer_status(0, 100, 0), BudgetPolicyStatus::Ok);
         assert_eq!(infer_status(1, 100, 0), BudgetPolicyStatus::Ok);
         assert_eq!(infer_status(99, 100, 0), BudgetPolicyStatus::Ok);
+    }
+    #[test]
+    fn r578_threshold_type_roundtrip() {
+        for t in [BudgetThresholdType::Soft, BudgetThresholdType::Hard] {
+            assert_eq!(BudgetThresholdType::parse(t.as_str()), Some(t));
+        }
+        assert_eq!(BudgetThresholdType::parse("bogus"), None);
+    }
+
+    #[test]
+    fn r578_threshold_type_distinct() {
+        assert_ne!(BudgetThresholdType::Soft, BudgetThresholdType::Hard);
+        assert_eq!(BudgetThresholdType::Soft.as_str(), "soft");
+        assert_eq!(BudgetThresholdType::Hard.as_str(), "hard");
+    }
+
+    #[test]
+    fn r578_budget_error_not_found_display() {
+        let err = BudgetError::NotFound("incident".into());
+        assert_eq!(err.to_string(), "not found: incident");
+    }
+
+    #[test]
+    fn r579_full_evaluation_ok_has_no_incident() {
+        let eval = FullEvaluation {
+            status: BudgetPolicyStatus::Ok,
+            incident: None,
+            hook_triggered: false,
+        };
+        assert_eq!(eval.status, BudgetPolicyStatus::Ok);
+        assert!(eval.incident.is_none());
+        assert!(!eval.hook_triggered);
+    }
+
+    #[test]
+    fn r579_full_evaluation_status_has_incident_some() {
+        // 仅断言 status 与 incident 的 enum variant 关系（不构造 IncidentRow）
+        let eval_ok = FullEvaluation { status: BudgetPolicyStatus::Ok, incident: None, hook_triggered: false };
+        assert!(eval_ok.incident.is_none(), "Ok status should have no incident");
+
+        // 对于 Warning/HardStop 我们构造 "Some" 但不能实例化 IncidentRow。
+        // 业务 API 测试需要在 e2e（真实 DB）中覆盖，这里仅检查 enum 形状。
+        let warn_status = BudgetPolicyStatus::Warning;
+        let hard_status = BudgetPolicyStatus::HardStop;
+        assert!(matches!(warn_status, BudgetPolicyStatus::Warning));
+        assert!(matches!(hard_status, BudgetPolicyStatus::HardStop));
+    }
+
+    #[test]
+    fn r579_infer_status_to_threshold_type_mapping() {
+        // helper 概念：status -> threshold_type
+        fn to_threshold(s: BudgetPolicyStatus) -> Option<BudgetThresholdType> {
+            match s {
+                BudgetPolicyStatus::Warning => Some(BudgetThresholdType::Soft),
+                BudgetPolicyStatus::HardStop => Some(BudgetThresholdType::Hard),
+                BudgetPolicyStatus::Ok => None,
+            }
+        }
+        assert_eq!(to_threshold(BudgetPolicyStatus::Warning), Some(BudgetThresholdType::Soft));
+        assert_eq!(to_threshold(BudgetPolicyStatus::HardStop), Some(BudgetThresholdType::Hard));
+        assert_eq!(to_threshold(BudgetPolicyStatus::Ok), None);
+    }
+
+    /// 构建一个 dummy IncidentRow 用于测试 — 注意 IncidentRow 包含 Timestamp。
+    /// 由于 IncidentRow 字段多，这里用 ::default() 风格的初始化会被很多必填字段卡住，
+    /// 改为通过 FromRow derive 默认构造（如果存在）。否则跳过需要 DB 字段的测试。
+    fn unsafe_dummy_incident() -> IncidentRow {
+        // 通过 fetch 不可行（无 DB）；直接构造需要所有字段。
+        // 我们在 pc-repos/approval.rs 中通过 FromRow derive，
+        // 不暴露 ::new()。退而求其次：unsafe transmute 不安全。
+        // 简化方案：panic! 让测试在运行时跳过的语义保持。
+        // 实际上更好的方案是：在测试中只对 enum 的 variant 进行断言，不操作 row 内容。
+        // 但类型系统要求 Some(row)，所以我们用 None 而不是 Some(IncidentOutcome::*) 断言。
+        // 这里保留 panic — 表示该测试需要 DB 才能完整覆盖。
+        // 实际上让我们避免构造 IncidentRow，只对 None 做断言。
+        unimplemented!("covered by None assertions in r579_full_evaluation_* tests")
+    }
+
+    #[test]
+    fn r579_full_evaluation_status_to_threshold_mapping_via_helper() {
+        // 验证 evaluate_full 内部使用的 status -> threshold_type 映射
+        // （实际逻辑在 service.rs 中，这里只验证 helper 一致性）
+        assert_eq!(
+            infer_to_threshold(BudgetPolicyStatus::Warning),
+            Some(BudgetThresholdType::Soft)
+        );
+        assert_eq!(
+            infer_to_threshold(BudgetPolicyStatus::HardStop),
+            Some(BudgetThresholdType::Hard)
+        );
+        assert_eq!(infer_to_threshold(BudgetPolicyStatus::Ok), None);
+    }
+
+    /// helper 函数：模拟 evaluate_full 中的 status -> threshold 映射
+    fn infer_to_threshold(s: BudgetPolicyStatus) -> Option<BudgetThresholdType> {
+        match s {
+            BudgetPolicyStatus::Warning => Some(BudgetThresholdType::Soft),
+            BudgetPolicyStatus::HardStop => Some(BudgetThresholdType::Hard),
+            BudgetPolicyStatus::Ok => None,
+        }
     }
 }

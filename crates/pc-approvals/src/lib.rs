@@ -12,12 +12,20 @@
 //! - 低耦合：通过 trait 抽象副作用，调用方按需注入
 //! - 可测：trait-based hook 便于测试时替换
 
+pub mod db_ops;
+pub mod hire_hook;
 pub mod service;
 pub mod state_machine;
 
+pub use db_ops::DbHireAgentOps;
+pub use hire_hook::{
+    HireAgentApprovalHook, HireAgentApprovalPayload, HireAgentOperations, HireMode,
+};
+pub use pc_repos::approval::{ApprovalStatus, ApprovalType};
+
 pub use service::{
-    ApprovalHook, ApprovalHookOutcome, ApprovalService, ApprovalServiceError, ApprovalServiceResult,
-    NoopApprovalHook,
+    ApprovalHook, ApprovalHookOutcome, ApprovalService, ApprovalServiceError,
+    ApprovalServiceResult, FailingHook, NoopApprovalHook, RecordingHook,
 };
 pub use state_machine::{
     can_cancel, can_decide, can_request_revision, can_resubmit, validate_transition,
