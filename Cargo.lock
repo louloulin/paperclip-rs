@@ -2263,6 +2263,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-companies"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-config"
 version = "0.1.0"
 dependencies = [
@@ -2320,6 +2337,24 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "pc-decisions"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-repos",
+ "pc-secrets",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2401,8 +2436,10 @@ dependencies = [
  "pc-authz",
  "pc-backup",
  "pc-budgets",
+ "pc-companies",
  "pc-core",
  "pc-db",
+ "pc-decisions",
  "pc-dev-server-status",
  "pc-errors",
  "pc-feature-flags",

@@ -1,0 +1,26 @@
+[package]
+name = "pc-decisions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Decision business layer: list/create/decide/dismiss/cancel + signing verification"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+pc-secrets = { path = "../pc-secrets" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+sqlx = { workspace = true }
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

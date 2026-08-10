@@ -318,6 +318,31 @@ impl AgentService {
             .map_err(map_sql_error)
     }
 
+    /// R588: 列出公司下的 agent（route service 化）
+    pub async fn list_by_company(&self, company_id: Uuid) -> Result<Vec<AgentRow>> {
+        AgentRepo::new(&self.db)
+            .list_by_company(company_id)
+            .await
+            .map_err(map_sql_error)
+    }
+
+    /// R588: 列出所有 agent（route service 化）
+    pub async fn list_all(&self) -> Result<Vec<AgentRow>> {
+        AgentRepo::new(&self.db)
+            .list_all()
+            .await
+            .map_err(map_sql_error)
+    }
+
+    /// R588: 删除 agent（route service 化）。
+    /// 返回 true 表示实际删除了一行，false 表示 agent 不存在。
+    pub async fn delete(&self, id: Uuid) -> Result<bool> {
+        AgentRepo::new(&self.db)
+            .delete(id)
+            .await
+            .map_err(map_sql_error)
+    }
+
     pub async fn create(&self, input: CreateAgent) -> Result<AgentRow> {
         if input.company_id.is_nil() {
             return Err(validation("companyId is required"));

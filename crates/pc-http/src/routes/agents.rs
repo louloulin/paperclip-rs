@@ -193,7 +193,8 @@ async fn list_company_agents(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Vec<AgentRow>>> {
-    let rows = AgentRepo::new(&state.db)
+    // R588: 通过 AgentService 取列表（service 抽象层）
+    let rows = AgentService::new(state.db.clone())
         .list_by_company(company_id)
         .await?;
     Ok(Json(rows))
@@ -209,15 +210,18 @@ async fn list(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    // R588: 通过 AgentService 取列表
+    let svc = AgentService::new(state.db.clone());
     let rows = match q.company_id {
-        Some(cid) => AgentRepo::new(&state.db).list_by_company(cid).await?,
-        None => AgentRepo::new(&state.db).list_all().await?,
+        Some(cid) => svc.list_by_company(cid).await?,
+        None => svc.list_all().await?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = AgentRepo::new(&state.db)
+    // R588: 通过 AgentService 取单个
+    let row = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -540,7 +544,7 @@ async fn list_config_revisions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    if AgentRepo::new(&state.db).get(id).await?.is_none() {
+    if AgentService::new(state.db.clone()).get(id).await?.is_none() {
         return Err(ApiError::NotFound(format!("agent {id}")));
     }
     let rows = AgentService::new(state.db.clone())
@@ -589,8 +593,8 @@ async fn pause_agent(
     Path(id): Path<Uuid>,
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
-    // pc-authz：先加载 agent 取 company_id
-    let target = AgentRepo::new(&state.db)
+    // R589: pc-authz 先加载 agent 取 company_id（走 AgentService）
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -624,7 +628,7 @@ async fn resume_agent(
     Path(id): Path<Uuid>,
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -655,7 +659,7 @@ async fn clear_agent_error(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -686,7 +690,7 @@ async fn terminate_agent(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -717,7 +721,7 @@ async fn approve_agent(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -762,8 +766,8 @@ async fn update_agent_permissions(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<UpdateAgentPermissionsBody>,
 ) -> ApiResult<Json<Value>> {
-    // pc-authz：更新 agent 权限需要先加载目标 agent 取 company_id
-    let target_for_authz = AgentRepo::new(&state.db)
+    // R589: pc-authz 先加载 agent 取 company_id（走 AgentService）
+    let target_for_authz = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -841,7 +845,7 @@ async fn update_instructions_path(
     headers: HeaderMap,
     Json(body): Json<UpdateInstructionsPathBody>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -919,7 +923,7 @@ async fn update_instructions_bundle(
     headers: HeaderMap,
     Json(body): Json<UpdateInstructionsBundleBody>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -1043,7 +1047,7 @@ async fn delete_instructions_file(
     Path(id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<InstructionsFileQuery>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -1080,7 +1084,8 @@ async fn delete_instructions_file(
 }
 
 async fn load_agent(state: &AppState, id: Uuid) -> ApiResult<AgentRow> {
-    AgentRepo::new(&state.db)
+    // R589: 通过 AgentService 加载
+    AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))
@@ -1145,7 +1150,7 @@ async fn reset_runtime_session(
     Path(id): Path<Uuid>,
     Json(body): Json<ResetRuntimeSessionBody>,
 ) -> ApiResult<Json<Value>> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -1180,7 +1185,7 @@ async fn list_agent_keys(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    if AgentRepo::new(&state.db).get(id).await?.is_none() {
+    if AgentService::new(state.db.clone()).get(id).await?.is_none() {
         return Err(ApiError::NotFound(format!("agent {id}")));
     }
     let rows = AgentService::new(state.db.clone())
@@ -1210,7 +1215,7 @@ async fn create_agent_key(
     Path(id): Path<Uuid>,
     Json(body): Json<CreateAgentKeyBody>,
 ) -> ApiResult<impl IntoResponse> {
-    let target = AgentRepo::new(&state.db)
+    let target = AgentService::new(state.db.clone())
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -1260,8 +1265,9 @@ async fn remove(
     Path(id): Path<Uuid>,
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<StatusCode> {
-    // pc-authz：删除 agent 需要先加载目标 agent 取 company_id
-    let target_for_authz = AgentRepo::new(&state.db)
+    // R588: 通过 AgentService 删除（service 抽象层）
+    let svc = AgentService::new(state.db.clone());
+    let target_for_authz = svc
         .get(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {id}")))?;
@@ -1275,7 +1281,7 @@ async fn remove(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    let ok = AgentRepo::new(&state.db).delete(id).await?;
+    let ok = svc.delete(id).await?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -1332,7 +1338,7 @@ async fn create_heartbeat_run(
     body: WakeBody,
     legacy: bool,
 ) -> ApiResult<impl IntoResponse> {
-    let agent = AgentRepo::new(&state.db)
+    let agent = AgentService::new(state.db.clone())
         .get(agent_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
@@ -1455,7 +1461,7 @@ pub async fn dispatch_queued_heartbeat(
     if queued.status != "queued" {
         return Ok(None);
     }
-    let agent = AgentRepo::new(&state.db)
+    let agent = AgentService::new(state.db.clone())
         .get(queued.agent_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {}", queued.agent_id)))?;
@@ -1614,7 +1620,7 @@ pub async fn dispatch_due_issue_monitors(state: &AppState, limit: i64) -> ApiRes
 }
 
 pub async fn dispatch_due_timer_heartbeats(state: &AppState, limit: usize) -> ApiResult<usize> {
-    let agents = AgentRepo::new(&state.db).list_all().await?;
+    let agents = AgentService::new(state.db.clone()).list_all().await?;
     let mut dispatched = 0usize;
     for agent in agents.into_iter().take(limit) {
         if agent.status == "paused" || agent.status == "terminated" {
@@ -2242,7 +2248,8 @@ async fn list_agent_configurations(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = AgentRepo::new(&state.db)
+    // R589: 通过 AgentService 取列表
+    let rows = AgentService::new(state.db.clone())
         .list_by_company(company_id)
         .await?;
     let items: Vec<Value> = rows
@@ -2379,7 +2386,7 @@ async fn get_self_agent(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let agent_id = extract_self_agent_id(&headers)?;
-    let agent = AgentRepo::new(&state.db)
+    let agent = AgentService::new(state.db.clone())
         .get(agent_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
@@ -2391,7 +2398,7 @@ async fn get_self_inbox_lite(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Vec<Value>>> {
     let agent_id = extract_self_agent_id(&headers)?;
-    let agent = AgentRepo::new(&state.db)
+    let agent = AgentService::new(state.db.clone())
         .get(agent_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;
@@ -2433,7 +2440,7 @@ async fn get_self_inbox_mine(
     axum::extract::Query(q): axum::extract::Query<SelfInboxMineQuery>,
 ) -> ApiResult<Json<Vec<Value>>> {
     let agent_id = extract_self_agent_id(&headers)?;
-    let agent = AgentRepo::new(&state.db)
+    let agent = AgentService::new(state.db.clone())
         .get(agent_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?;

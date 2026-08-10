@@ -22,6 +22,9 @@ use pc_repos::agent_action_audit::{
 use pc_repos::approval::ApprovalRepo;
 use pc_repos::asset::AssetRepo;
 use pc_repos::case::CaseRepo;
+use pc_companies::{
+    CompanyActor, CompanyService, CreateCompanyInput, UpdateCompanyPatch,
+};
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
 use pc_repos::company_export::CompanyExportRepo;
 use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
@@ -45,6 +48,16 @@ use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, Action, PermissionKey, Resource};
 use axum::Extension as AxumExtension;
 
+
+fn map_company_service_error(e: pc_companies::CompanyServiceError, id: Uuid) -> ApiError {
+    use pc_companies::CompanyServiceError::*;
+    match e {
+        NotFound(_) => ApiError::NotFound(format!("company {id}")),
+        InvalidInput(m) => ApiError::BadRequest(m),
+        Forbidden(m) => ApiError::Forbidden(m),
+        Repo(m) => ApiError::Internal(format!("repo: {m}")),
+    }
+}
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/companies", get(list).post(create))
@@ -234,14 +247,16 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
-    let rows = CompanyRepo::new(&state.db).list().await?;
+    // R590: 业务下沉到 CompanyService
+    let rows = CompanyService::new(&state.db).list().await
+        .map_err(|e| map_company_service_error(e, Uuid::nil()))?;
     Ok(Json(rows))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = CompanyRepo::new(&state.db)
-        .get(id)
-        .await?
+    // R590: 业务下沉到 CompanyService
+    let row = CompanyService::new(&state.db).get_by_id(id).await
+        .map_err(|e| map_company_service_error(e, id))?
         .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
@@ -259,20 +274,20 @@ async fn create(
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if body.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("name must not be empty".into()));
-    }
-    let row = CompanyRepo::new(&state.db)
-        .create(&body.name, body.description.as_deref())
-        .await?;
+    // R590: 业务下沉到 CompanyService
     let owner_id = match require_user_id(&state, &headers).await {
         Ok(user_id) => user_id,
         Err(ApiError::Unauthorized(_)) => "local-board".to_owned(),
         Err(error) => return Err(error),
     };
-    CompanyRepo::new(&state.db)
-        .create_owner_membership(row.id, &owner_id)
-        .await?;
+    let row = CompanyService::new(&state.db)
+        .create(CreateCompanyInput {
+            name: body.name,
+            description: body.description,
+            owner_principal_id: owner_id.clone(),
+        })
+        .await
+        .map_err(|e| map_company_service_error(e, Uuid::nil()))?;
     state.realtime.publish(
         LiveEvent::new("company.created", "company", row.id)
             .with_company(row.id)
@@ -304,14 +319,17 @@ async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
-    let row = CompanyRepo::new(&state.db)
-        .update(
-            id,
-            body.name.as_deref(),
-            body.description.as_deref(),
-            body.status.as_deref(),
-        )
-        .await?
+    // R590: 业务下沉到 CompanyService
+    let patch = UpdateCompanyPatch {
+        name: body.name,
+        description: body.description,
+        status: body.status,
+        ..Default::default()
+    };
+    let row = CompanyService::new(&state.db)
+        .update(id, patch, &CompanyActor::system())
+        .await
+        .map_err(|e| map_company_service_error(e, id))?
         .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     state
         .realtime
@@ -320,9 +338,11 @@ async fn update(
 }
 
 async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = CompanyRepo::new(&state.db)
-        .archive(id)
-        .await?
+    // R590: 业务下沉到 CompanyService
+    let row = CompanyService::new(&state.db)
+        .archive(id, &CompanyActor::system())
+        .await
+        .map_err(|e| map_company_service_error(e, id))?
         .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     Ok(Json(
         json!({ "id": row.id, "status": row.status, "archived_at": row.updated_at }),
@@ -330,7 +350,9 @@ async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    let ok = CompanyRepo::new(&state.db).delete(id).await?;
+    // R590: 业务下沉到 CompanyService
+    let ok = CompanyService::new(&state.db).remove(id).await
+        .map_err(|e| map_company_service_error(e, id))?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
     } else {

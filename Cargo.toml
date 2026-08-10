@@ -32,6 +32,7 @@ members = [
     "crates/pc-plugin-protocol",
     "crates/pc-plugin-host",
     "crates/pc-secrets",
+    "crates/pc-decisions",
     "apps/pc-server",
     "apps/pc-cli",
     "crates/pc-storage",
@@ -46,6 +47,7 @@ members = [
     "crates/pc-cron",
     "crates/pc-approvals",
     "crates/pc-budgets",
+    "crates/pc-companies",
 ]
 
 [workspace.package]

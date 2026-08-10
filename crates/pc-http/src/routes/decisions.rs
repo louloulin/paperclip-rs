@@ -15,6 +15,7 @@ use uuid::Uuid;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
 use pc_realtime::LiveEvent;
+use pc_decisions::{DecisionService, NoopDecisionHook};
 use pc_repos::decision::{verify_decision_signature, DecisionRepo, SignedDecisionRow};
 use pc_repos::decision_bundle::{
     DecisionBundleFilter, DecisionBundleRepo, DecisionBundleRow, NewDecisionBundle,
@@ -51,9 +52,11 @@ async fn list(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    // R587: 通过 DecisionService 取列表
+    let svc = DecisionService::new(&state.db, &state.decision_signing);
     let rows = match q.company_id {
-        Some(cid) => DecisionRepo::new(&state.db).list_by_company(cid).await?,
-        None => DecisionRepo::new(&state.db).list_all(200).await?,
+        Some(cid) => svc.list_by_company(cid).await.map_err(map_decision_service_error)?,
+        None => svc.list_all(200).await.map_err(map_decision_service_error)?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
@@ -88,19 +91,16 @@ async fn create(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    if body.title.trim().is_empty() || body.body.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "title and body must not be empty".into(),
-        ));
-    }
-    let row = DecisionRepo::new(&state.db)
-        .create(
-            body.company_id,
-            &body.title,
-            &body.body,
-            &state.decision_signing,
-        )
-        .await?;
+    // R587: 通过 DecisionService 创建（自动验空 + 触发 on_created hook）
+    let svc = DecisionService::with_hooks(
+        &state.db,
+        &state.decision_signing,
+        vec![std::sync::Arc::new(NoopDecisionHook)],
+    );
+    let row = svc
+        .create(body.company_id, &body.title, &body.body)
+        .await
+        .map_err(map_decision_service_error)?;
     state.realtime.publish(
         LiveEvent::new("decision.created", "decision", row.id).with_company(row.company_id),
     );
@@ -178,30 +178,31 @@ async fn decide_decision(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    DecisionRepo::new(&state.db)
-        .mark_decided(
+    // R587: 通过 DecisionService.decide 走签名验签 + on_decided hook
+    let svc = DecisionService::with_hooks(
+        &state.db,
+        &state.decision_signing,
+        vec![std::sync::Arc::new(NoopDecisionHook)],
+    );
+    let row = svc
+        .decide(
             decision_id,
             &body.chosen_option_id,
             body.decided_by_user_id.as_deref(),
+            body.note.as_deref(),
             body.input_values.as_ref(),
         )
-        .await?;
+        .await
+        .map_err(map_decision_service_error)?;
     state.realtime.publish(
         LiveEvent::new("decision.decided", "decision", decision_id)
-            .with_company(company_id)
+            .with_company(row.company_id)
             .with_data(json!({
-                "chosenOptionId": body.chosen_option_id,
-                "decidedByUserId": body.decided_by_user_id,
-                "note": body.note,
+                "chosenOptionId": row.chosen_option_id,
+                "decidedByUserId": row.decided_by_user_id,
             })),
     );
-    Ok(Json(json!({
-        "id": decision_id,
-        "companyId": company_id,
-        "status": "decided",
-        "chosenOptionId": body.chosen_option_id,
-        "decidedAt": chrono::Utc::now(),
-    })))
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -230,24 +231,26 @@ async fn dismiss_decision(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    DecisionRepo::new(&state.db)
-        .mark_dismissed(
+    // R587: 通过 DecisionService.dismiss 走 on_dismissed hook
+    let svc = DecisionService::with_hooks(
+        &state.db,
+        &state.decision_signing,
+        vec![std::sync::Arc::new(NoopDecisionHook)],
+    );
+    let row = svc
+        .dismiss(
             decision_id,
             &body.reason.clone().unwrap_or_default(),
             &body.decided_by_user_id.clone().unwrap_or_default(),
         )
-        .await?;
+        .await
+        .map_err(map_decision_service_error)?;
     state.realtime.publish(
         LiveEvent::new("decision.dismissed", "decision", decision_id)
-            .with_company(company_id)
+            .with_company(row.company_id)
             .with_data(json!({"reason": body.reason, "decidedByUserId": body.decided_by_user_id})),
     );
-    Ok(Json(json!({
-        "id": decision_id,
-        "companyId": company_id,
-        "status": "dismissed",
-        "reason": body.reason,
-    })))
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
 async fn cancel_decision(
@@ -255,8 +258,14 @@ async fn cancel_decision(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Path(decision_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let repo = DecisionRepo::new(&state.db);
-    let company_id = repo
+    // R587: 通过 DecisionService.cancel 走 on_cancelled hook
+    let svc = DecisionService::with_hooks(
+        &state.db,
+        &state.decision_signing,
+        vec![std::sync::Arc::new(NoopDecisionHook)],
+    );
+    // 拿 company_id 用于 authz 与 realtime（不破坏既有行为）
+    let company_id = DecisionRepo::new(&state.db)
         .get_company_id(decision_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
@@ -270,15 +279,14 @@ async fn cancel_decision(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    repo.mark_cancelled(decision_id).await?;
+    let row = svc
+        .cancel(decision_id)
+        .await
+        .map_err(map_decision_service_error)?;
     state.realtime.publish(
-        LiveEvent::new("decision.cancelled", "decision", decision_id).with_company(company_id),
+        LiveEvent::new("decision.cancelled", "decision", decision_id).with_company(row.company_id),
     );
-    Ok(Json(json!({
-        "id": decision_id,
-        "companyId": company_id,
-        "status": "cancelled",
-    })))
+    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
 async fn decision_stats_route(
@@ -449,5 +457,22 @@ fn map_decision_bundle_error(error: pc_repos::decision_bundle::DecisionBundleErr
     match error {
         E::EmptyTitle => ApiError::BadRequest("title required".into()),
         other => ApiError::Internal(format!("decision bundle repo error: {other}")),
+    }
+}
+
+
+// =============================================================================
+// R587: DecisionService error mapping
+// =============================================================================
+
+fn map_decision_service_error(e: pc_decisions::DecisionServiceError) -> ApiError {
+    use pc_decisions::DecisionServiceError;
+    match e {
+        DecisionServiceError::NotFound(m) => ApiError::NotFound(m),
+        DecisionServiceError::InvalidInput(m) => ApiError::BadRequest(m),
+        DecisionServiceError::SignatureInvalid(m) => ApiError::Forbidden(m),
+        DecisionServiceError::Forbidden(m) => ApiError::Forbidden(m),
+        DecisionServiceError::Repo(m) => ApiError::Internal(format!("decision repo: {m}")),
+        DecisionServiceError::Signing(m) => ApiError::Internal(format!("decision signing: {m}")),
     }
 }

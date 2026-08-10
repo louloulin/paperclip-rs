@@ -182,7 +182,7 @@ async fn r586_http_upsert_policy_rejects_invalid_window_kind() {
     )
     .await;
     assert_eq!(status, 400, "invalid window kind: {body}");
-    assert!(body["message"].as_str().unwrap_or("").contains("invalid window kind"));
+    assert!(body["error"]["message"].as_str().unwrap_or("").contains("invalid window kind"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -239,7 +239,7 @@ async fn r586_http_resolve_incident_endpoint_handles_missing() {
     )
     .await;
     assert_eq!(status, 404, "missing incident: {body}");
-    assert!(body["message"].as_str().unwrap_or("").contains(&missing_id.to_string()));
+    assert!(body["error"]["message"].as_str().unwrap_or("").contains(&missing_id.to_string()));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -13,6 +13,8 @@ pc-core = { path = "../pc-core", features = ["sqlx"] }
 pc-agent = { path = "../pc-agent" }
 pc-approvals = { path = "../pc-approvals" }
 pc-budgets = { path = "../pc-budgets" }
+pc-companies = { path = "../pc-companies" }
+pc-decisions = { path = "../pc-decisions" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-telemetry = { path = "../pc-telemetry" }
