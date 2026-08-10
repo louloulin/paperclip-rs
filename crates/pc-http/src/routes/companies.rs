@@ -25,8 +25,9 @@ use pc_repos::case::CaseRepo;
 use pc_companies::{
     CompanyActor, CompanyService, CreateCompanyInput, UpdateCompanyPatch,
 };
+use crate::hooks::CompanyActivityHook;
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
-use pc_repos::company_export::CompanyExportRepo;
+use pc_portability::{PortabilityPreviewInput, PortabilityService, PortabilityServiceError};
 use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
 use pc_repos::decision::DecisionRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
@@ -48,6 +49,23 @@ use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, Action, PermissionKey, Resource};
 use axum::Extension as AxumExtension;
 
+
+/// R591: 构造一个自动触发 activity / realtime / plugin event 的 CompanyService。
+fn company_service_with_activity(state: &AppState) -> CompanyService<'_> {
+    let state_arc = std::sync::Arc::new(state.clone());
+    let hook: std::sync::Arc<dyn pc_companies::CompanyHook> =
+        std::sync::Arc::new(CompanyActivityHook::new(state_arc));
+    CompanyService::with_hooks(&state.db, vec![hook])
+}
+
+fn map_portability_service_error(e: PortabilityServiceError, id: Uuid) -> ApiError {
+    use PortabilityServiceError::*;
+    match e {
+        NotFound(_) => ApiError::NotFound(format!("company {id}")),
+        InvalidInput(m) => ApiError::BadRequest(m),
+        Repo(m) => ApiError::Internal(format!("repo: {m}")),
+    }
+}
 
 fn map_company_service_error(e: pc_companies::CompanyServiceError, id: Uuid) -> ApiError {
     use pc_companies::CompanyServiceError::*;
@@ -248,14 +266,14 @@ pub fn router() -> Router<AppState> {
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
     // R590: 业务下沉到 CompanyService
-    let rows = CompanyService::new(&state.db).list().await
+    let rows = company_service_with_activity(&state).list().await
         .map_err(|e| map_company_service_error(e, Uuid::nil()))?;
     Ok(Json(rows))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
     // R590: 业务下沉到 CompanyService
-    let row = CompanyService::new(&state.db).get_by_id(id).await
+    let row = company_service_with_activity(&state).get_by_id(id).await
         .map_err(|e| map_company_service_error(e, id))?
         .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -280,11 +298,12 @@ async fn create(
         Err(ApiError::Unauthorized(_)) => "local-board".to_owned(),
         Err(error) => return Err(error),
     };
-    let row = CompanyService::new(&state.db)
+    let row = company_service_with_activity(&state)
         .create(CreateCompanyInput {
             name: body.name,
             description: body.description,
             owner_principal_id: owner_id.clone(),
+            budget_monthly_cents: None,
         })
         .await
         .map_err(|e| map_company_service_error(e, Uuid::nil()))?;
@@ -326,7 +345,7 @@ async fn update(
         status: body.status,
         ..Default::default()
     };
-    let row = CompanyService::new(&state.db)
+    let row = company_service_with_activity(&state)
         .update(id, patch, &CompanyActor::system())
         .await
         .map_err(|e| map_company_service_error(e, id))?
@@ -339,7 +358,7 @@ async fn update(
 
 async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
     // R590: 业务下沉到 CompanyService
-    let row = CompanyService::new(&state.db)
+    let row = company_service_with_activity(&state)
         .archive(id, &CompanyActor::system())
         .await
         .map_err(|e| map_company_service_error(e, id))?
@@ -351,7 +370,7 @@ async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
     // R590: 业务下沉到 CompanyService
-    let ok = CompanyService::new(&state.db).remove(id).await
+    let ok = company_service_with_activity(&state).remove(id).await
         .map_err(|e| map_company_service_error(e, id))?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
@@ -494,12 +513,15 @@ async fn export_preview(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    // R593: 通过 PortabilityService::preview 服务化
     let company: Option<CompanyRow> = CompanyRepo::new(&state.db).get(id).await?;
     let company = company.ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
-    // 收集关键实体作为可移植快照
-    let preview = CompanyExportRepo::new(&state.db).preview(id).await?;
+    let preview = PortabilityService::new(&state.db)
+        .preview(id, PortabilityPreviewInput::default())
+        .await
+        .map_err(|e| map_portability_service_error(e, id))?;
     Ok(Json(json!({
-        "version": "1.0",
+        "version": preview.version,
         "company": {
             "id": company.id,
             "name": company.name,
@@ -507,9 +529,9 @@ async fn export_preview(
             "status": company.status,
         },
         "counts": {
-            "issues": preview.issues.len(),
-            "agents": preview.agents.len(),
-            "pipelines": preview.pipelines.len(),
+            "issues": preview.counts.issues,
+            "agents": preview.counts.agents,
+            "pipelines": preview.counts.pipelines,
         },
         "issues": preview.issues.into_iter().map(|i| json!({"id":i.id,"title":i.title,"status":i.status,"priority":i.priority})).collect::<Vec<_>>(),
         "agents": preview.agents.into_iter().map(|a| json!({"id":a.id,"name":a.name,"role":a.role})).collect::<Vec<_>>(),

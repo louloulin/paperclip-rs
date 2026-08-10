@@ -28,6 +28,11 @@ pub enum ActivityKind {
     DocumentAnnotated,
     RoutineRan,
     PipelineRan,
+    /// R591: company 生命周期事件
+    CompanyCreated,
+    CompanyUpdated,
+    CompanyArchived,
+    CompanyRemoved,
     Other,
 }
 
@@ -58,6 +63,10 @@ impl ActivityKind {
             Self::DocumentAnnotated => "document.annotated",
             Self::RoutineRan => "routine.ran",
             Self::PipelineRan => "pipeline.ran",
+            Self::CompanyCreated => "company.created",
+            Self::CompanyUpdated => "company.updated",
+            Self::CompanyArchived => "company.archived",
+            Self::CompanyRemoved => "company.removed",
             Self::Other => "other",
         }
     }

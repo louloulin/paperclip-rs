@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use pc_errors::{conflict, internal, unprocessable, validation, Error, Result};
 use pc_repos::{
     agent::{
@@ -13,6 +14,54 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+/// R594: agent 生命周期事件。
+///
+/// hook 可以订阅以触发副作用（暂停相关 workflow / audit log / 创建 approval）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentLifecycleEvent {
+    /// Agent 被终止。
+    Terminated { id: Uuid, company_id: Uuid, role: String },
+    /// Agent 被暂停（含原因）。
+    Paused { id: Uuid, company_id: Uuid, reason: String },
+    /// Agent 被恢复。
+    Resumed { id: Uuid, company_id: Uuid },
+}
+
+/// R594: agent lifecycle hook trait。
+///
+/// 默认全部 noop — 调用方可选择性实现。
+#[async_trait]
+pub trait AgentHook: Send + Sync {
+    async fn on_lifecycle(
+        &self,
+        _event: AgentLifecycleEvent,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// R594: Noop hook — 默认不触发任何副作用。
+pub struct NoopAgentHook;
+#[async_trait]
+impl AgentHook for NoopAgentHook {}
+
+/// R594: 记录 hook 调用 — 测试用。
+#[derive(Default)]
+pub struct RecordingAgentHook {
+    pub events: std::sync::Mutex<Vec<AgentLifecycleEvent>>,
+}
+
+#[async_trait]
+impl AgentHook for RecordingAgentHook {
+    async fn on_lifecycle(
+        &self,
+        event: AgentLifecycleEvent,
+    ) -> Result<()> {
+        self.events.lock().expect("lock").push(event);
+        Ok(())
+    }
+}
 
 use crate::{contains_redacted_marker, AgentConfigSnapshot};
 
@@ -303,12 +352,47 @@ impl From<AgentConfigRevisionRow> for AgentConfigRevision {
 #[derive(Clone)]
 pub struct AgentService {
     db: Db,
+    hooks: Vec<std::sync::Arc<dyn AgentHook>>,
 }
 
 impl AgentService {
     #[must_use]
     pub fn new(db: Db) -> Self {
-        Self { db }
+        Self { db, hooks: Vec::new() }
+    }
+
+    /// R594: 构造带 hook 的 service。
+    #[must_use]
+    pub fn with_hooks(db: Db, hooks: Vec<std::sync::Arc<dyn AgentHook>>) -> Self {
+        Self { db, hooks }
+    }
+
+    /// R594: 链式添加 hook。
+    #[must_use]
+    pub fn add_hook(mut self, hook: std::sync::Arc<dyn AgentHook>) -> Self {
+        self.hooks.push(hook);
+        self
+    }
+
+    /// R594: 触发 lifecycle event 给所有 hook。
+    async fn dispatch_lifecycle(
+        &self,
+        event: AgentLifecycleEvent,
+    ) -> Result<()> {
+        for hook in &self.hooks {
+            if let Err(e) = hook.on_lifecycle(event.clone()).await {
+                tracing::warn!(
+                    agent_id = ?match &event {
+                        AgentLifecycleEvent::Terminated { id, .. }
+                        | AgentLifecycleEvent::Paused { id, .. }
+                        | AgentLifecycleEvent::Resumed { id, .. } => id,
+                    },
+                    error = %e,
+                    "agent lifecycle hook failed"
+                );
+            }
+        }
+        Ok(())
     }
 
     pub async fn get(&self, id: Uuid) -> Result<Option<AgentRow>> {
@@ -517,7 +601,15 @@ impl AgentService {
         if existing.status == "terminated" {
             return Err(conflict("Cannot pause terminated agent"));
         }
-        repo.pause(id, reason.as_str()).await.map_err(map_sql_error)
+        let updated = repo.pause(id, reason.as_str()).await.map_err(map_sql_error)?;
+        // R594: 触发 lifecycle hook
+        self.dispatch_lifecycle(AgentLifecycleEvent::Paused {
+            id,
+            company_id: existing.company_id,
+            reason: reason.as_str().to_owned(),
+        })
+        .await?;
+        Ok(updated)
     }
 
     pub async fn resume(&self, id: Uuid) -> Result<Option<AgentRow>> {
@@ -532,7 +624,14 @@ impl AgentService {
             }
             _ => {}
         }
-        repo.resume(id).await.map_err(map_sql_error)
+        let updated = repo.resume(id).await.map_err(map_sql_error)?;
+        // R594: 触发 lifecycle hook
+        self.dispatch_lifecycle(AgentLifecycleEvent::Resumed {
+            id,
+            company_id: existing.company_id,
+        })
+        .await?;
+        Ok(updated)
     }
 
     pub async fn clear_error(&self, id: Uuid) -> Result<Option<AgentRow>> {
@@ -562,10 +661,20 @@ impl AgentService {
     }
 
     pub async fn terminate(&self, id: Uuid) -> Result<Option<AgentRow>> {
-        AgentRepo::new(&self.db)
-            .terminate(id)
-            .await
-            .map_err(map_sql_error)
+        let repo = AgentRepo::new(&self.db);
+        // R594: 先取 agent 信息（用于 hook payload），如果不存在则 short-circuit
+        let Some(existing) = repo.get(id).await.map_err(map_sql_error)? else {
+            return Ok(None);
+        };
+        let updated = repo.terminate(id).await.map_err(map_sql_error)?;
+        // R594: 触发 lifecycle hook
+        self.dispatch_lifecycle(AgentLifecycleEvent::Terminated {
+            id,
+            company_id: existing.company_id,
+            role: existing.role.clone(),
+        })
+        .await?;
+        Ok(updated)
     }
 
     pub async fn create_api_key(&self, id: Uuid, input: CreateAgentKey) -> Result<AgentKeyCreated> {

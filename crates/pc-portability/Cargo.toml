@@ -1,9 +1,9 @@
 [package]
-name = "pc-agent"
+name = "pc-portability"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Agent domain service and kameo actor runtime"
+description = "Company portability service: preview/export/import (R593)"
 
 [lints]
 workspace = true
@@ -11,18 +11,15 @@ workspace = true
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
-dirs = { workspace = true }
-kameo = { workspace = true }
 pc-core = { path = "../pc-core" }
-pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10"
-sqlx = { workspace = true }
-tokio = { workspace = true }
+thiserror = { workspace = true }
 tracing = "0.1"
 uuid = { workspace = true }
+sqlx = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

@@ -151,6 +151,13 @@ impl AppState {
         self.decision_signing = service;
         self
     }
+
+    /// R591: inject a custom ActivityLog (used by tests to capture events).
+    #[must_use]
+    pub fn with_activity(mut self, activity: ActivityLog) -> Self {
+        self.activity = activity;
+        self
+    }
 }
 
 impl FromRef<AppState> for Arc<WsState> {

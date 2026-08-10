@@ -47,6 +47,7 @@ async fn r590_company_service_create_emits_lifecycle_event() {
         name: format!("R590-Create-{}", Uuid::new_v4()),
         description: Some("test".into()),
         owner_principal_id: "user-test-1".into(),
+        budget_monthly_cents: None,
     };
     let row = svc.create(input.clone()).await.expect("create");
 
@@ -57,7 +58,7 @@ async fn r590_company_service_create_emits_lifecycle_event() {
     let events = hook.events.lock().expect("lock");
     assert_eq!(events.len(), 1);
     match &events[0] {
-        CompanyLifecycleEvent::Created { id, owner_principal_id } => {
+        CompanyLifecycleEvent::Created { id, owner_principal_id, .. } => {
             assert_eq!(*id, row.id);
             assert_eq!(owner_principal_id, "user-test-1");
         }
@@ -77,6 +78,7 @@ async fn r590_company_service_create_validates_name() {
             name: "   ".into(),
             description: None,
             owner_principal_id: "u".into(),
+            budget_monthly_cents: None,
         })
         .await;
     assert!(res.is_err(), "empty name must reject");
@@ -106,6 +108,7 @@ async fn r590_company_service_update_partial_returns_row() {
             name: format!("R590-Update-{}", Uuid::new_v4()),
             description: Some("before".into()),
             owner_principal_id: "user-test-2".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");
@@ -144,6 +147,7 @@ async fn r590_company_service_update_rejects_invalid_status() {
             name: format!("R590-Status-{}", Uuid::new_v4()),
             description: None,
             owner_principal_id: "user-test-3".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");
@@ -196,6 +200,7 @@ async fn r590_company_service_archive_emits_event() {
             name: format!("R590-Archive-{}", Uuid::new_v4()),
             description: None,
             owner_principal_id: "user-test-4".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");
@@ -210,7 +215,7 @@ async fn r590_company_service_archive_emits_event() {
     let events = hook.events.lock().expect("lock");
     assert!(events
         .iter()
-        .any(|e| matches!(e, CompanyLifecycleEvent::Archived { id } if *id == created.id)));
+        .any(|e| matches!(e, CompanyLifecycleEvent::Archived { id, .. } if *id == created.id)));
 
     cleanup_company(&pool, created.id).await;
 }
@@ -226,6 +231,7 @@ async fn r590_company_service_remove_emits_event() {
             name: format!("R590-Remove-{}", Uuid::new_v4()),
             description: None,
             owner_principal_id: "user-test-5".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");
@@ -243,7 +249,7 @@ async fn r590_company_service_remove_emits_event() {
     let events = hook.events.lock().expect("lock");
     assert!(events
         .iter()
-        .any(|e| matches!(e, CompanyLifecycleEvent::Removed { id } if *id == created.id)));
+        .any(|e| matches!(e, CompanyLifecycleEvent::Removed { id, .. } if *id == created.id)));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -256,6 +262,7 @@ async fn r590_company_service_list_includes_created() {
             name: format!("R590-List-{}", Uuid::new_v4()),
             description: None,
             owner_principal_id: "user-test-6".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");
@@ -279,6 +286,7 @@ async fn r590_company_service_with_noop_hook_does_not_panic() {
             name: format!("R590-Noop-{}", Uuid::new_v4()),
             description: None,
             owner_principal_id: "user-test-7".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");
@@ -296,6 +304,7 @@ async fn r590_company_service_stats_returns_row() {
             name: format!("R590-Stats-{}", Uuid::new_v4()),
             description: None,
             owner_principal_id: "user-test-8".into(),
+            budget_monthly_cents: None,
         })
         .await
         .expect("create");

@@ -59,6 +59,8 @@ pub struct CreateCompanyInput {
     pub name: String,
     pub description: Option<String>,
     pub owner_principal_id: String,
+    /// R592: 月度预算（cents）。当 > 0 时 hook 可触发 BudgetService.upsert_policy。
+    pub budget_monthly_cents: Option<i32>,
 }
 
 /// 更新 company 时的可选字段集合。
@@ -99,7 +101,7 @@ pub struct BrandingPatch {
 }
 
 /// 调用方 actor 信息 — service 用它来打 activity log / consent by。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompanyActor {
     pub actor_type: String,
     pub actor_id: String,
@@ -123,7 +125,7 @@ impl CompanyActor {
 /// 每个事件携带触发它的 actor 信息，让 hook 能写 audit log / 通知。
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompanyLifecycleEvent {
-    Created { id: Uuid, owner_principal_id: String, actor: CompanyActor },
+    Created { id: Uuid, owner_principal_id: String, budget_monthly_cents: Option<i32>, actor: CompanyActor },
     Updated { id: Uuid, patch: UpdateCompanyPatch, actor: CompanyActor },
     Archived { id: Uuid, actor: CompanyActor },
     Removed { id: Uuid, actor: CompanyActor },
@@ -258,6 +260,7 @@ impl<'a> CompanyService<'a> {
             hook.on_lifecycle(CompanyLifecycleEvent::Created {
                 id: row.id,
                 owner_principal_id: input.owner_principal_id.clone(),
+                budget_monthly_cents: input.budget_monthly_cents,
                 actor: CompanyActor::system(),
             })
             .await?;
@@ -339,7 +342,7 @@ impl<'a> CompanyService<'a> {
     pub async fn archive(
         &self,
         id: Uuid,
-        _actor: &CompanyActor,
+        actor: &CompanyActor,
     ) -> CompanyServiceResult<Option<CompanyRow>> {
         let row = self.repo.archive(id).await?;
         if let Some(ref row) = row {
@@ -380,6 +383,7 @@ impl<'a> CompanyService<'a> {
                         name: patch.name.clone(),
                         ..Default::default()
                     },
+                    actor: CompanyActor::system(),
                 })
                 .await?;
             }

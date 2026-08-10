@@ -48,6 +48,7 @@ members = [
     "crates/pc-approvals",
     "crates/pc-budgets",
     "crates/pc-companies",
+    "crates/pc-portability",
 ]
 
 [workspace.package]

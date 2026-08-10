@@ -30,9 +30,10 @@ pub use permissions::{
     default_permissions_for_role, normalize_agent_permissions, AgentPermissions,
 };
 pub use service::{
-    AgentApiKey, AgentConfigRevision, AgentHire, AgentKeyCreated, AgentPatch,
-    AgentPermissionUpdate, AgentRuntimeState, AgentService, CreateAgent, CreateAgentKey,
-    PauseReason, ResetRuntimeSession, ResetRuntimeState, RevisionContext,
+    AgentApiKey, AgentConfigRevision, AgentHire, AgentHook, AgentKeyCreated, AgentLifecycleEvent,
+    AgentPatch, AgentPermissionUpdate, AgentRuntimeState, AgentService, CreateAgent, CreateAgentKey,
+    NoopAgentHook, PauseReason, RecordingAgentHook, ResetRuntimeSession, ResetRuntimeState,
+    RevisionContext,
 };
 pub use snapshot::{
     contains_redacted_marker, sanitize_snapshot_value, AgentConfigSnapshot, REDACTED_VALUE,
