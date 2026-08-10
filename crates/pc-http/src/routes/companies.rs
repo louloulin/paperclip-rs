@@ -12,8 +12,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::hooks::CompanyActivityHook;
 use pc_activity::{ActivityActor, ActivityEvent, ActivityFilter, ActivityKind};
+use pc_companies::{CompanyActor, CompanyService, CreateCompanyInput, UpdateCompanyPatch};
 use pc_plugin_host::plugin_event_bus::{ActorType, PluginEvent};
+use pc_portability::{
+    ExportInput, PortabilityPreviewInput, PortabilityService, PortabilityServiceError,
+};
 use pc_realtime::LiveEvent;
 use pc_repos::agent::AgentRepo;
 use pc_repos::agent_action_audit::{
@@ -22,12 +27,7 @@ use pc_repos::agent_action_audit::{
 use pc_repos::approval::ApprovalRepo;
 use pc_repos::asset::AssetRepo;
 use pc_repos::case::CaseRepo;
-use pc_companies::{
-    CompanyActor, CompanyService, CreateCompanyInput, UpdateCompanyPatch,
-};
-use crate::hooks::CompanyActivityHook;
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};
-use pc_portability::{ExportInput, PortabilityPreviewInput, PortabilityService, PortabilityServiceError};
 use pc_repos::cost::{CostRepo, FinanceEventRow, NewFinanceEvent};
 use pc_repos::decision::DecisionRepo;
 use pc_repos::feedback_trace::FeedbackTraceRepo;
@@ -44,11 +44,10 @@ use pc_repos::work_timeline::{
 };
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
-use pc_core::Timestamp;
+use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, Action, PermissionKey, Resource};
-use axum::Extension as AxumExtension;
-
+use pc_core::Timestamp;
 
 /// R591: 构造一个自动触发 activity / realtime / plugin event 的 CompanyService。
 fn company_service_with_activity(state: &AppState) -> CompanyService<'_> {
@@ -266,14 +265,18 @@ pub fn router() -> Router<AppState> {
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CompanyListRow>>> {
     // R590: 业务下沉到 CompanyService
-    let rows = company_service_with_activity(&state).list().await
+    let rows = company_service_with_activity(&state)
+        .list()
+        .await
         .map_err(|e| map_company_service_error(e, Uuid::nil()))?;
     Ok(Json(rows))
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
     // R590: 业务下沉到 CompanyService
-    let row = company_service_with_activity(&state).get_by_id(id).await
+    let row = company_service_with_activity(&state)
+        .get_by_id(id)
+        .await
         .map_err(|e| map_company_service_error(e, id))?
         .ok_or_else(|| ApiError::NotFound(format!("company {id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
@@ -312,10 +315,13 @@ async fn create(
             .with_company(row.id)
             .with_actor("system"),
     );
-    global::track("company.created", BTreeMap::from([
-        ("name".into(), serde_json::json!(row.name.clone())),
-        ("owner_id".into(), serde_json::json!(owner_id.clone())),
-    ]));
+    global::track(
+        "company.created",
+        BTreeMap::from([
+            ("name".into(), serde_json::json!(row.name.clone())),
+            ("owner_id".into(), serde_json::json!(owner_id.clone())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({ "id": row.id, "name": row.name, "status": row.status })),
@@ -370,7 +376,9 @@ async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
     // R590: 业务下沉到 CompanyService
-    let ok = company_service_with_activity(&state).remove(id).await
+    let ok = company_service_with_activity(&state)
+        .remove(id)
+        .await
         .map_err(|e| map_company_service_error(e, id))?;
     if ok {
         Ok(StatusCode::NO_CONTENT)
@@ -830,13 +838,8 @@ async fn create_label(
     Json(body): Json<LabelBody>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz: 写入公司资源需要 UsersInvite 权限（Operator 角色及以上）。
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::UsersInvite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::UsersInvite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }

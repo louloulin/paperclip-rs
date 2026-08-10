@@ -2,6 +2,7 @@
 //!
 //! 覆盖：CRUD / children / comments / labels / read state / inbox archive。
 
+use axum::Extension as AxumExtension;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -9,16 +10,16 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use uuid::Uuid;
-use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sqlx;
+use uuid::Uuid;
 
 use pc_activity::kinds::ActivityKind;
 use pc_activity::types::{ActivityActor, ActivityEvent};
+use pc_issues::{IssueService, IssueServiceError};
 use pc_realtime::LiveEvent;
 use pc_repos::activity::ActivityRepo;
 use pc_repos::agent::AgentRepo;
@@ -27,7 +28,6 @@ use pc_repos::feedback_trace::FeedbackTraceRepo;
 use pc_repos::feedback_vote::FeedbackVoteRepo;
 use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::issue::{IssueRelationUpdate, IssueRepo, IssueUpdateActor, IssueUpdateReceipt};
-use pc_issues::{IssueService, IssueServiceError};
 
 // =============================================================================
 // R602 v6: IssueService 路由层集成
@@ -56,7 +56,6 @@ fn map_issue_service_error(e: IssueServiceError) -> ApiError {
         Repo(m) => ApiError::Internal(format!("repo: {m}")),
     }
 }
-
 
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
@@ -731,10 +730,16 @@ async fn create(
             .with_company(row.company_id)
             .with_actor("system"),
     );
-    global::track("issue.created", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("title".into(), serde_json::json!(row.title.clone())),
-    ]));
+    global::track(
+        "issue.created",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("title".into(), serde_json::json!(row.title.clone())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({

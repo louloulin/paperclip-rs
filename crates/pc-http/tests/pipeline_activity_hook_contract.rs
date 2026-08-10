@@ -12,10 +12,10 @@ use pc_http::{
     AppState,
 };
 use pc_pipelines::{
-    CaseActorKind, CaseEventKind, CreateCaseEventInput, CreateCaseMinimalInput, CreatePipelineInput,
-    CreateStageMinimalInput, CreateTransitionInput, LinkCaseIssueInput, PipelineHook,
-    PipelineService, StageKind, TransitionCaseInput, UpdateCaseStageInput, UpdatePipelinePatch,
-    UpdateStagePatch, UpsertPipelineDocumentInput, BulkReviewItem,
+    BulkReviewItem, CaseActorKind, CaseEventKind, CreateCaseEventInput, CreateCaseMinimalInput,
+    CreatePipelineInput, CreateStageMinimalInput, CreateTransitionInput, LinkCaseIssueInput,
+    PipelineHook, PipelineService, StageKind, TransitionCaseInput, UpdateCaseStageInput,
+    UpdatePipelinePatch, UpdateStagePatch, UpsertPipelineDocumentInput,
 };
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
@@ -106,18 +106,14 @@ async fn insert_company(pool: &PgPool) -> Uuid {
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
     // cases → transitions → stages → pipelines
-    let _ = sqlx::query(
-        "DELETE FROM pipeline_case_issue_links WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .execute(pool)
-    .await;
-    let _ = sqlx::query(
-        "DELETE FROM pipeline_cases WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .execute(pool)
-    .await;
+    let _ = sqlx::query("DELETE FROM pipeline_case_issue_links WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM pipeline_cases WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM pipeline_documents WHERE company_id = $1")
         .bind(company_id)
         .execute(pool)
@@ -362,7 +358,10 @@ async fn r603v2_create_stage_emits_activity_and_live_event() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
 
     let baseline_count = in_mem.snapshot().len();
 
@@ -432,7 +431,10 @@ async fn r603v2_update_stage_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let stage_id = insert_stage(&pool, pipe.id, "tmp", "Tmp", "working", 0).await;
 
     let baseline_count = in_mem.snapshot().len();
@@ -477,7 +479,10 @@ async fn r603v2_delete_stage_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let stage_id = insert_stage(&pool, pipe.id, "tmp", "Tmp", "working", 0).await;
 
     let baseline_count = in_mem.snapshot().len();
@@ -515,7 +520,10 @@ async fn r603v2_no_stage_activity_without_hook() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let stage_id = insert_stage(&pool, pipe.id, "tmp", "Tmp", "working", 0).await;
     let _ = svc
         .delete_stage(company_id, stage_id)
@@ -563,7 +571,10 @@ async fn r603v3_create_transition_emits_activity_and_live_event() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let a = insert_stage(&pool, pipe.id, "a", "A", "working", 0).await;
     let b = insert_stage(&pool, pipe.id, "b", "B", "review", 1).await;
 
@@ -588,7 +599,10 @@ async fn r603v3_create_transition_emits_activity_and_live_event() {
     let has_created = snapshot
         .iter()
         .any(|e| matches!(e.kind, ActivityKind::PipelineTransitionCreated));
-    assert!(has_created, "expected PipelineTransitionCreated activity, got {snapshot:?}");
+    assert!(
+        has_created,
+        "expected PipelineTransitionCreated activity, got {snapshot:?}"
+    );
     assert!(snapshot.len() > baseline_count);
 
     // realtime: pipeline.transition.created
@@ -605,7 +619,10 @@ async fn r603v3_create_transition_emits_activity_and_live_event() {
             _ => continue,
         }
     }
-    assert!(got_created, "expected pipeline.transition.created live event");
+    assert!(
+        got_created,
+        "expected pipeline.transition.created live event"
+    );
 
     cleanup(&pool, company_id).await;
     let _ = t;
@@ -627,7 +644,10 @@ async fn r603v3_delete_transition_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let a = insert_stage(&pool, pipe.id, "a", "A", "working", 0).await;
     let b = insert_stage(&pool, pipe.id, "b", "B", "review", 1).await;
     let t = svc
@@ -677,7 +697,10 @@ async fn r603v3_no_transition_activity_without_hook() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let a = insert_stage(&pool, pipe.id, "a", "A", "working", 0).await;
     let b = insert_stage(&pool, pipe.id, "b", "B", "review", 1).await;
     let t = svc
@@ -735,7 +758,10 @@ async fn r603v4_create_case_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
 
     let baseline_count = in_mem.snapshot().len();
@@ -763,7 +789,10 @@ async fn r603v4_create_case_emits_activity() {
     let has_created = snapshot
         .iter()
         .any(|e| matches!(e.kind, ActivityKind::PipelineCaseCreated));
-    assert!(has_created, "expected PipelineCaseCreated activity, got {snapshot:?}");
+    assert!(
+        has_created,
+        "expected PipelineCaseCreated activity, got {snapshot:?}"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -784,7 +813,10 @@ async fn r603v4_update_case_stage_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
     let s2 = insert_stage(&pool, pipe.id, "s2", "S2", "review", 1).await;
     let case = svc
@@ -848,7 +880,10 @@ async fn r603v4_delete_case_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
     let case = svc
         .create_case(
@@ -878,7 +913,10 @@ async fn r603v4_delete_case_emits_activity() {
     let has_removed = snapshot
         .iter()
         .any(|e| matches!(e.kind, ActivityKind::PipelineCaseRemoved));
-    assert!(has_removed, "expected PipelineCaseRemoved activity, got {snapshot:?}");
+    assert!(
+        has_removed,
+        "expected PipelineCaseRemoved activity, got {snapshot:?}"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -899,7 +937,10 @@ async fn r603v4_case_event_recorded_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
     let case = svc
         .create_case(
@@ -952,7 +993,6 @@ async fn r603v4_case_event_recorded_emits_activity() {
     cleanup(&pool, company_id).await;
 }
 
-
 // ============================================================================
 // R603 v6.1: case issue link hook contract
 // ============================================================================
@@ -987,7 +1027,10 @@ async fn r603v6_1_link_case_issue_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
     let case = svc
         .create_case(
@@ -1051,7 +1094,10 @@ async fn r603v6_1_unlink_case_issue_emits_activity() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
     let case = svc
         .create_case(
@@ -1105,7 +1151,6 @@ async fn r603v6_1_unlink_case_issue_emits_activity() {
     cleanup(&pool, company_id).await;
 }
 
-
 #[tokio::test(flavor = "current_thread")]
 async fn r603v6_2_transition_case_emits_activity_and_event_recorded() {
     let _guard = TEST_LOCK.lock().await;
@@ -1122,7 +1167,10 @@ async fn r603v6_2_transition_case_emits_activity_and_event_recorded() {
         name: "Pipeline".into(),
         description: None,
     };
-    let pipe = svc.create(company_id, &pipe_input).await.expect("create pipe");
+    let pipe = svc
+        .create(company_id, &pipe_input)
+        .await
+        .expect("create pipe");
     let s1 = insert_stage(&pool, pipe.id, "s1", "S1", "working", 0).await;
     let s2 = insert_stage(&pool, pipe.id, "s2", "S2", "review", 1).await;
     let case = svc
@@ -1178,7 +1226,6 @@ async fn r603v6_2_transition_case_emits_activity_and_event_recorded() {
 
     cleanup(&pool, company_id).await;
 }
-
 
 // ===========================================================================
 // R603 v6.5: documents 子资源 lifecycle
@@ -1283,7 +1330,6 @@ async fn r603v6_5_restore_pipeline_document_revision_emits_activity() {
     cleanup(&pool, company_id).await;
 }
 
-
 // ===========================================================================
 // R603 v6.6: bulk review + automation retry hook
 // ===========================================================================
@@ -1334,14 +1380,19 @@ async fn r603v6_6_bulk_review_emits_activity() {
         note: None,
         expected_version: None,
     }];
-    svc.bulk_review_cases(company_id, &items).await.expect("bulk");
+    svc.bulk_review_cases(company_id, &items)
+        .await
+        .expect("bulk");
 
     let snapshot = in_mem.snapshot();
     assert!(snapshot.len() > baseline);
     let has_bulk = snapshot
         .iter()
         .any(|e| matches!(e.kind, ActivityKind::PipelineCasesBulkReviewed));
-    assert!(has_bulk, "expected PipelineCasesBulkReviewed, got {snapshot:?}");
+    assert!(
+        has_bulk,
+        "expected PipelineCasesBulkReviewed, got {snapshot:?}"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -1395,10 +1446,16 @@ async fn r603v6_6_automation_specific_retry_emits_activity() {
 
     let snapshot = in_mem.snapshot();
     assert!(snapshot.len() > baseline);
-    let has_sr = snapshot
-        .iter()
-        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseAutomationSpecificRetryRequested));
-    assert!(has_sr, "expected PipelineCaseAutomationSpecificRetryRequested, got {snapshot:?}");
+    let has_sr = snapshot.iter().any(|e| {
+        matches!(
+            e.kind,
+            ActivityKind::PipelineCaseAutomationSpecificRetryRequested
+        )
+    });
+    assert!(
+        has_sr,
+        "expected PipelineCaseAutomationSpecificRetryRequested, got {snapshot:?}"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -1451,10 +1508,16 @@ async fn r603v6_6_automation_current_stage_rerun_emits_activity() {
 
     let snapshot = in_mem.snapshot();
     assert!(snapshot.len() > baseline);
-    let has_rr = snapshot
-        .iter()
-        .any(|e| matches!(e.kind, ActivityKind::PipelineCaseAutomationCurrentStageRerunRequested));
-    assert!(has_rr, "expected PipelineCaseAutomationCurrentStageRerunRequested, got {snapshot:?}");
+    let has_rr = snapshot.iter().any(|e| {
+        matches!(
+            e.kind,
+            ActivityKind::PipelineCaseAutomationCurrentStageRerunRequested
+        )
+    });
+    assert!(
+        has_rr,
+        "expected PipelineCaseAutomationCurrentStageRerunRequested, got {snapshot:?}"
+    );
 
     cleanup(&pool, company_id).await;
 }

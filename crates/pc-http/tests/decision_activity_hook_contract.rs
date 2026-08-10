@@ -155,20 +155,21 @@ async fn r599_create_emits_decision_proposed() {
     let signing = test_signing();
     let hook: Arc<dyn pc_decisions::DecisionHook> =
         Arc::new(DecisionActivityHook::new(Arc::new(state.clone())));
-    let svc = DecisionService::with_hooks(
-        &db,
-        &signing,
-        vec![hook],
-    );
+    let svc = DecisionService::with_hooks(&db, &signing, vec![hook]);
 
-    let row = svc.create(company_id, "R599 proposal", "Test body").await.expect("create");
+    let row = svc
+        .create(company_id, "R599 proposal", "Test body")
+        .await
+        .expect("create");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::DecisionProposed)
-            && e.subject_kind == "decision"
-            && e.subject_id == row.id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::DecisionProposed)
+                && e.subject_kind == "decision"
+                && e.subject_id == row.id),
         "expected DecisionProposed activity, got: {events:?}"
     );
 
@@ -187,16 +188,23 @@ async fn r599_decide_emits_decision_approved() {
         Arc::new(DecisionActivityHook::new(Arc::new(state.clone())));
     let svc = DecisionService::with_hooks(&db, &signing, vec![hook]);
 
-    let row = svc.create(company_id, "R599 decide", "Decide body").await.expect("create");
+    let row = svc
+        .create(company_id, "R599 decide", "Decide body")
+        .await
+        .expect("create");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let _ = svc.decide(row.id, "x", Some("test-user"), None, None).await.expect("decide");
+    let _ = svc
+        .decide(row.id, "x", Some("test-user"), None, None)
+        .await
+        .expect("decide");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::DecisionApproved)
-            && e.subject_id == row.id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::DecisionApproved) && e.subject_id == row.id),
         "expected DecisionApproved activity, got: {events:?}"
     );
 
@@ -215,15 +223,22 @@ async fn r599_dismiss_emits_decision_dismissed() {
         Arc::new(DecisionActivityHook::new(Arc::new(state.clone())));
     let svc = DecisionService::with_hooks(&db, &signing, vec![hook]);
 
-    let row = svc.create(company_id, "R599 dismiss", "Dismiss body").await.expect("create");
+    let row = svc
+        .create(company_id, "R599 dismiss", "Dismiss body")
+        .await
+        .expect("create");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let _ = svc.dismiss(row.id, "test reason", "test-user").await.expect("dismiss");
+    let _ = svc
+        .dismiss(row.id, "test reason", "test-user")
+        .await
+        .expect("dismiss");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::DecisionDismissed)
-            && e.subject_id == row.id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::DecisionDismissed) && e.subject_id == row.id),
         "expected DecisionDismissed activity, got: {events:?}"
     );
 
@@ -242,15 +257,19 @@ async fn r599_cancel_emits_decision_cancelled() {
         Arc::new(DecisionActivityHook::new(Arc::new(state.clone())));
     let svc = DecisionService::with_hooks(&db, &signing, vec![hook]);
 
-    let row = svc.create(company_id, "R599 cancel", "Cancel body").await.expect("create");
+    let row = svc
+        .create(company_id, "R599 cancel", "Cancel body")
+        .await
+        .expect("create");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let _ = svc.cancel(row.id).await.expect("cancel");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::DecisionCancelled)
-            && e.subject_id == row.id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::DecisionCancelled) && e.subject_id == row.id),
         "expected DecisionCancelled activity, got: {events:?}"
     );
 
@@ -278,7 +297,10 @@ async fn r599_activity_event_payload_carries_metadata() {
         Arc::new(DecisionActivityHook::new(Arc::new(state.clone())));
     let svc = DecisionService::with_hooks(&db, &signing, vec![hook]);
 
-    let row = svc.create(company_id, "R599 metadata", "Metadata body").await.expect("create");
+    let row = svc
+        .create(company_id, "R599 metadata", "Metadata body")
+        .await
+        .expect("create");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let events = in_mem.snapshot();

@@ -95,12 +95,10 @@ async fn insert_agent(pool: &PgPool, company_id: Uuid, role: &str) -> Uuid {
 
 async fn cleanup(pool: &PgPool, company_id: Uuid, agent_id: Uuid) {
     // 先清理 approvals 引用此 agent
-    let _ = sqlx::query(
-        "DELETE FROM approvals WHERE payload->>'agent_id' = $1",
-    )
-    .bind(agent_id.to_string())
-    .execute(pool)
-    .await;
+    let _ = sqlx::query("DELETE FROM approvals WHERE payload->>'agent_id' = $1")
+        .bind(agent_id.to_string())
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM agents WHERE id = $1")
         .bind(agent_id)
         .execute(pool)
@@ -263,10 +261,7 @@ async fn r595_custom_high_risk_roles_respected() {
     let approval_svc = Arc::new(ApprovalService::new(db_static));
     // 自定义高风险 role 为 "researcher"
     let hook: Arc<dyn pc_agent::AgentHook> = Arc::new(
-        AgentTerminationApprovalHook::with_high_risk_roles(
-            approval_svc,
-            vec!["researcher".into()],
-        ),
+        AgentTerminationApprovalHook::with_high_risk_roles(approval_svc, vec!["researcher".into()]),
     );
     let svc = pc_agent::AgentService::with_hooks(db.clone(), vec![hook]);
 
@@ -280,7 +275,10 @@ async fn r595_custom_high_risk_roles_respected() {
     .fetch_one(db.pool())
     .await
     .expect("count");
-    assert_eq!(count.0, 1, "researcher should be high-risk with custom config");
+    assert_eq!(
+        count.0, 1,
+        "researcher should be high-risk with custom config"
+    );
 
     cleanup(&pool, company_id, agent_id).await;
 }
@@ -299,12 +297,11 @@ async fn r595_terminate_nonexistent_no_approval() {
     let result = svc.terminate(Uuid::new_v4()).await.expect("terminate");
     assert!(result.is_none());
 
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM approvals WHERE company_id = $1")
-            .bind(bogus_company)
-            .fetch_one(&pool)
-            .await
-            .expect("count");
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM approvals WHERE company_id = $1")
+        .bind(bogus_company)
+        .fetch_one(&pool)
+        .await
+        .expect("count");
     assert_eq!(count.0, 0, "no approval for missing agent");
 }
 

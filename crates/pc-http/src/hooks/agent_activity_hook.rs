@@ -55,9 +55,9 @@ fn subject_id(event: &pc_agent::AgentLifecycleEvent) -> Uuid {
 fn company_id(event: &pc_agent::AgentLifecycleEvent) -> Option<Uuid> {
     use pc_agent::AgentLifecycleEvent::*;
     match *event {
-        Terminated { company_id, .. }
-        | Paused { company_id, .. }
-        | Resumed { company_id, .. } => Some(company_id),
+        Terminated { company_id, .. } | Paused { company_id, .. } | Resumed { company_id, .. } => {
+            Some(company_id)
+        }
     }
 }
 
@@ -72,10 +72,7 @@ fn live_event_for(event: &pc_agent::AgentLifecycleEvent) -> Option<(&'static str
 
 #[async_trait]
 impl AgentHook for AgentActivityHook {
-    async fn on_lifecycle(
-        &self,
-        event: pc_agent::AgentLifecycleEvent,
-    ) -> pc_errors::Result<()> {
+    async fn on_lifecycle(&self, event: pc_agent::AgentLifecycleEvent) -> pc_errors::Result<()> {
         let id = subject_id(&event);
         let mut activity_event = ActivityEvent::new(
             kind_for(&event),
@@ -94,8 +91,7 @@ impl AgentHook for AgentActivityHook {
         }
 
         if let Some((event_name, resource_id)) = live_event_for(&event) {
-            let mut live = LiveEvent::new(event_name, "agent", resource_id)
-                .with_actor("system");
+            let mut live = LiveEvent::new(event_name, "agent", resource_id).with_actor("system");
             if let Some(cid) = company_id(&event) {
                 live = live.with_company(cid);
             }

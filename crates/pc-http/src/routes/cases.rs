@@ -251,12 +251,10 @@ async fn update(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM cases WHERE id = $1")
+        .bind(case_id)
+        .fetch_optional(state.db.pool())
+        .await?;
     let preview_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?
         .0;
@@ -310,13 +308,8 @@ async fn create_company_case(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<Json<Value>> {
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }

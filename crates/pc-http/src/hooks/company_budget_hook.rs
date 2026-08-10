@@ -38,10 +38,7 @@ impl CompanyBudgetHook {
 
 #[async_trait]
 impl CompanyHook for CompanyBudgetHook {
-    async fn on_lifecycle(
-        &self,
-        event: CompanyLifecycleEvent,
-    ) -> CompanyServiceResult<()> {
+    async fn on_lifecycle(&self, event: CompanyLifecycleEvent) -> CompanyServiceResult<()> {
         if let CompanyLifecycleEvent::Created {
             id,
             budget_monthly_cents: Some(amount),
@@ -64,11 +61,7 @@ impl CompanyHook for CompanyBudgetHook {
                 is_active: true,
                 updated_by_user_id: Some("system".into()),
             };
-            if let Err(e) = self
-                .budget_service
-                .upsert_policy(id, input)
-                .await
-            {
+            if let Err(e) = self.budget_service.upsert_policy(id, input).await {
                 tracing::warn!(
                     company_id = %id,
                     error = %e,

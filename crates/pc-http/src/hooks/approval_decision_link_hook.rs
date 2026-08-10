@@ -70,10 +70,7 @@ impl ApprovalDecisionLinkHook {
 
 #[async_trait]
 impl ApprovalHook for ApprovalDecisionLinkHook {
-    async fn on_approved(
-        &self,
-        approval: &ApprovalRow,
-    ) -> pc_approvals::ApprovalHookOutcome {
+    async fn on_approved(&self, approval: &ApprovalRow) -> pc_approvals::ApprovalHookOutcome {
         let Some(decision_id) = self.parse_decision_id(approval) else {
             return pc_approvals::ApprovalHookOutcome::Skipped;
         };
@@ -112,10 +109,7 @@ impl ApprovalHook for ApprovalDecisionLinkHook {
         }
     }
 
-    async fn on_rejected(
-        &self,
-        approval: &ApprovalRow,
-    ) -> pc_approvals::ApprovalHookOutcome {
+    async fn on_rejected(&self, approval: &ApprovalRow) -> pc_approvals::ApprovalHookOutcome {
         let Some(decision_id) = self.parse_decision_id(approval) else {
             return pc_approvals::ApprovalHookOutcome::Skipped;
         };
@@ -140,10 +134,7 @@ impl ApprovalHook for ApprovalDecisionLinkHook {
         }
     }
 
-    async fn on_cancelled(
-        &self,
-        approval: &ApprovalRow,
-    ) -> pc_approvals::ApprovalHookOutcome {
+    async fn on_cancelled(&self, approval: &ApprovalRow) -> pc_approvals::ApprovalHookOutcome {
         let Some(decision_id) = self.parse_decision_id(approval) else {
             return pc_approvals::ApprovalHookOutcome::Skipped;
         };

@@ -239,7 +239,11 @@ async fn r603v5_post_pipeline_creates_and_get_returns() {
     )
     .await;
     assert_eq!(s, 200, "GET list: {b}");
-    assert!(b.as_array().unwrap().iter().any(|p| p["key"] == "v5-create"));
+    assert!(b
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["key"] == "v5-create"));
 
     cleanup(&pool, company_id).await;
 }
@@ -669,7 +673,6 @@ async fn r603v5_create_case_rejects_empty_fields() {
     cleanup(&pool, company_id).await;
 }
 
-
 // ---------------------------------------------------------------------------
 // R603 v6.2: case stage transition route
 // ---------------------------------------------------------------------------
@@ -802,7 +805,6 @@ async fn r603v6_2_transition_with_stale_from_returns_409() {
     cleanup(&pool, company_id).await;
 }
 
-
 // ---------------------------------------------------------------------------
 // R603 v6.3: case claim / release / events routes
 // ---------------------------------------------------------------------------
@@ -875,7 +877,6 @@ async fn r603v6_3_claim_release_round_trip() {
 
     cleanup(&pool, company_id).await;
 }
-
 
 // ---------------------------------------------------------------------------
 // R603 v6.4: 子资源 route（cases batch / health / automation env / replace transitions）
@@ -1016,7 +1017,6 @@ async fn r603v6_4_patch_stage_automation_env_via_service() {
 
     cleanup(&pool, company_id).await;
 }
-
 
 // ===========================================================================
 // R603 v6.5: documents 子资源 route migration
@@ -1177,9 +1177,7 @@ async fn r603v6_5_restore_pipeline_document_revision_via_service_returns_restore
     let (s, b) = call(
         &app,
         "POST",
-        &format!(
-            "/api/pipelines/{pipe_id}/documents/spec/revisions/{rev_id}/restore"
-        ),
+        &format!("/api/pipelines/{pipe_id}/documents/spec/revisions/{rev_id}/restore"),
         serde_json::json!({}),
     )
     .await;
@@ -1189,7 +1187,6 @@ async fn r603v6_5_restore_pipeline_document_revision_via_service_returns_restore
 
     cleanup(&pool, company_id).await;
 }
-
 
 // ===========================================================================
 // R603 v6.6: pipelines-attention + bulk review + automation retry

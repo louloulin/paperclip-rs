@@ -1088,13 +1088,8 @@ async fn patch_skill(
     headers: HeaderMap,
     Json(body): Json<PatchSkillBody>,
 ) -> ApiResult<Json<Value>> {
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::SkillsCreate,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::SkillsCreate).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }

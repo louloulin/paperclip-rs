@@ -296,13 +296,8 @@ async fn create_agent(
     body: CreateBody,
 ) -> ApiResult<impl IntoResponse> {
     // pc-authz：创建 agent 需要 AgentsCreate 权限（Operator 角色及以上）
-    if let Err(err) = enforce_permission(
-        &state.db,
-        actor,
-        company_id,
-        PermissionKey::AgentsCreate,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, actor, company_id, PermissionKey::AgentsCreate).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -317,10 +312,16 @@ async fn create_agent(
             .with_company(row.company_id)
             .with_actor("system"),
     );
-    global::track("agent.created", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("name".into(), serde_json::json!(row.name.clone())),
-    ]));
+    global::track(
+        "agent.created",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("name".into(), serde_json::json!(row.name.clone())),
+        ]),
+    );
     Ok((StatusCode::CREATED, Json(row)))
 }
 
@@ -355,13 +356,8 @@ async fn hire_agent(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::AgentsCreate,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::AgentsCreate).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }

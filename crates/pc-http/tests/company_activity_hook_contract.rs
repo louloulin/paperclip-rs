@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use axum::{body::Body, http::Request};
-use pc_adapter_api::AdapterRegistry;
 use pc_activity::{ActivityKind, ActivityLog, InMemoryActivityLog, SharedActivitySink};
-use pc_companies::{CompanyActor, CompanyService, CompanyHook, CompanyLifecycleEvent};
+use pc_adapter_api::AdapterRegistry;
+use pc_companies::{CompanyActor, CompanyHook, CompanyLifecycleEvent, CompanyService};
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_http::{
@@ -56,12 +56,7 @@ fn test_state_with_recording(db: Db) -> (AppState, Arc<InMemoryActivityLog>) {
     (state, in_mem)
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Value,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let response = app
         .clone()
@@ -115,9 +110,11 @@ async fn r591_create_emits_activity_event() {
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::CompanyCreated)
-            && e.subject_kind == "company"
-            && e.subject_id == id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::CompanyCreated)
+                && e.subject_kind == "company"
+                && e.subject_id == id),
         "expected CompanyCreated activity event, got: {events:?}"
     );
 
@@ -163,8 +160,7 @@ async fn r591_update_emits_activity_event() {
     );
     assert!(events
         .iter()
-        .any(|e| matches!(e.kind, ActivityKind::CompanyUpdated)
-            && e.subject_id == created.id));
+        .any(|e| matches!(e.kind, ActivityKind::CompanyUpdated) && e.subject_id == created.id));
 
     cleanup(&db, created.id).await;
 }
@@ -200,9 +196,12 @@ async fn r591_archive_emits_activity_event() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let events = in_mem.snapshot();
-    assert!(events.iter().any(|e| matches!(e.kind, ActivityKind::CompanyArchived)
-        && e.subject_id == created.id),
-        "expected CompanyArchived event");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::CompanyArchived) && e.subject_id == created.id),
+        "expected CompanyArchived event"
+    );
 
     cleanup(&db, created.id).await;
 }

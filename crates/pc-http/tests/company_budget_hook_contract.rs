@@ -52,12 +52,7 @@ fn test_state(db: Db) -> AppState {
     )
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Value,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let response = app
         .clone()
@@ -115,21 +110,21 @@ async fn r592_create_with_budget_creates_policy() {
         .expect("create");
 
     // 验证 budget policy 已经在 DB 中
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1 AND scope_type = 'company'")
-            .bind(created.id)
-            .fetch_one(db.pool())
-            .await
-            .expect("count");
-    assert_eq!(count.0, 1, "expected 1 budget policy");
-
-    let row: (i32, String) = sqlx::query_as(
-        "SELECT amount, window_kind FROM budget_policies WHERE scope_id = $1",
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1 AND scope_type = 'company'",
     )
     .bind(created.id)
     .fetch_one(db.pool())
     .await
-    .expect("fetch policy");
+    .expect("count");
+    assert_eq!(count.0, 1, "expected 1 budget policy");
+
+    let row: (i32, String) =
+        sqlx::query_as("SELECT amount, window_kind FROM budget_policies WHERE scope_id = $1")
+            .bind(created.id)
+            .fetch_one(db.pool())
+            .await
+            .expect("fetch policy");
     assert_eq!(row.0, 50_000);
     assert_eq!(row.1, "calendar_month_utc");
 
@@ -156,13 +151,15 @@ async fn r592_create_without_budget_does_not_create_policy() {
         .await
         .expect("create");
 
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1")
-            .bind(created.id)
-            .fetch_one(db.pool())
-            .await
-            .expect("count");
-    assert_eq!(count.0, 0, "no policy expected when budget_monthly_cents is None");
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1")
+        .bind(created.id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count");
+    assert_eq!(
+        count.0, 0,
+        "no policy expected when budget_monthly_cents is None"
+    );
 
     cleanup(&db, created.id).await;
 }
@@ -187,12 +184,11 @@ async fn r592_create_with_zero_budget_does_not_create_policy() {
         .await
         .expect("create");
 
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1")
-            .bind(created.id)
-            .fetch_one(db.pool())
-            .await
-            .expect("count");
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1")
+        .bind(created.id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count");
     assert_eq!(count.0, 0, "no policy expected when budget = 0");
 
     cleanup(&db, created.id).await;
@@ -249,12 +245,11 @@ async fn r592_hook_skips_other_events() {
         .expect("archive");
 
     // 验证 policy 没被错误创建（archive 不应创建 policy）
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1")
-            .bind(created.id)
-            .fetch_one(db.pool())
-            .await
-            .expect("count");
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM budget_policies WHERE scope_id = $1")
+        .bind(created.id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count");
     assert_eq!(count.0, 0, "archive should not create policy");
 
     cleanup(&db, created.id).await;

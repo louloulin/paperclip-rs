@@ -130,20 +130,11 @@ async fn r588_http_list_agents_filters_by_company_via_service() {
     let _a3 = insert_agent(&db, c2, "agent-c2-1").await;
     let app = routes::agents::router().with_state(test_state(db.clone()));
 
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/api/agents?company_id={c1}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/api/agents?company_id={c1}"), None).await;
     assert_eq!(status, 200, "list by company: {body}");
     let arr = body.as_array().expect("array");
     assert_eq!(arr.len(), 2, "should only list c1's 2 agents");
-    let names: Vec<&str> = arr
-        .iter()
-        .filter_map(|a| a["name"].as_str())
-        .collect();
+    let names: Vec<&str> = arr.iter().filter_map(|a| a["name"].as_str()).collect();
     assert!(names.contains(&"agent-c1-1"));
     assert!(names.contains(&"agent-c1-2"));
     assert!(!names.contains(&"agent-c2-1"));
@@ -171,13 +162,7 @@ async fn r588_http_get_one_agent_returns_full_row_via_service() {
     let agent_id = insert_agent(&db, company_id, "My Bot").await;
     let app = routes::agents::router().with_state(test_state(db.clone()));
 
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/api/agents/{agent_id}"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/api/agents/{agent_id}"), None).await;
     assert_eq!(status, 200, "get: {body}");
     assert_eq!(body["id"], agent_id.to_string());
     assert_eq!(body["name"], "My Bot");
@@ -221,13 +206,7 @@ async fn r588_http_delete_agent_endpoint_via_service() {
     let app = routes::agents::router().with_state(test_state(db.clone()));
 
     // DELETE 走 AgentService.delete
-    let (status, _) = call(
-        &app,
-        "DELETE",
-        &format!("/api/agents/{agent_id}"),
-        None,
-    )
-    .await;
+    let (status, _) = call(&app, "DELETE", &format!("/api/agents/{agent_id}"), None).await;
     // AuthContext::system() 没有 agent_configure 权限，可能 403；接受 204 或 403
     assert!(
         status == 204 || status == 403,
@@ -247,7 +226,6 @@ async fn r588_http_delete_agent_endpoint_via_service() {
     }
 }
 
-
 // =============================================================================
 // R589: pause/resume/terminate/approve 路由 service 化 e2e
 // =============================================================================
@@ -259,13 +237,7 @@ async fn r589_http_pause_agent_via_service_changes_status() {
     let agent_id = insert_agent(&db, company_id, "pause-me").await;
     let app = routes::agents::router().with_state(test_state(db.clone()));
 
-    let (status, body) = call(
-        &app,
-        "POST",
-        &format!("/api/agents/{agent_id}/pause"),
-        None,
-    )
-    .await;
+    let (status, body) = call(&app, "POST", &format!("/api/agents/{agent_id}/pause"), None).await;
     // AuthContext::system() 可能 200 或 403 — 接受 200 / 403 / 500
     assert!(status < 500, "should not crash: {body}");
 
@@ -328,7 +300,10 @@ async fn r589_http_approve_agent_via_service_works_on_any_status() {
     )
     .await;
     // 接受 200（成功）或 403（authz 拒绝）— 但不应 crash
-    assert!(status < 500, "approve should not crash: status={status} body={body}");
+    assert!(
+        status < 500,
+        "approve should not crash: status={status} body={body}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

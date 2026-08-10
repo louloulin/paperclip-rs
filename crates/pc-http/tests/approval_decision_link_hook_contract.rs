@@ -12,9 +12,7 @@
 use std::sync::Arc;
 
 use pc_adapter_api::AdapterRegistry;
-use pc_approvals::{
-    ApprovalHook, ApprovalHookOutcome, ApprovalService,
-};
+use pc_approvals::{ApprovalHook, ApprovalHookOutcome, ApprovalService};
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_http::{
@@ -176,13 +174,12 @@ async fn cleanup(pool: &PgPool, company_id: Uuid, agent_id: Uuid, decision_id: U
 }
 
 async fn fetch_decision_status(pool: &PgPool, decision_id: Uuid) -> (String, Option<String>) {
-    let row: (String, Option<String>) = sqlx::query_as(
-        "SELECT status, chosen_option_id FROM decisions WHERE id = $1",
-    )
-    .bind(decision_id)
-    .fetch_one(pool)
-    .await
-    .expect("fetch decision");
+    let row: (String, Option<String>) =
+        sqlx::query_as("SELECT status, chosen_option_id FROM decisions WHERE id = $1")
+            .bind(decision_id)
+            .fetch_one(pool)
+            .await
+            .expect("fetch decision");
     row
 }
 
@@ -221,7 +218,10 @@ async fn r601_approve_marks_linked_decision_decided() {
     assert_eq!(approved.status, "approved");
 
     let (status, chosen) = fetch_decision_status(&pool, decision_id).await;
-    assert_eq!(status, "decided", "decision should be decided after approval");
+    assert_eq!(
+        status, "decided",
+        "decision should be decided after approval"
+    );
     assert_eq!(chosen.as_deref(), Some("approved"));
 
     cleanup(&pool, company_id, agent_id, decision_id).await;
@@ -375,7 +375,10 @@ async fn r601_unknown_decision_id_returns_skipped() {
 
     let outcome = hook.on_approved(&approval_row).await;
     assert!(
-        matches!(outcome, ApprovalHookOutcome::Skipped | ApprovalHookOutcome::Ok),
+        matches!(
+            outcome,
+            ApprovalHookOutcome::Skipped | ApprovalHookOutcome::Ok
+        ),
         "unknown decision_id should skip, got {outcome:?}"
     );
 

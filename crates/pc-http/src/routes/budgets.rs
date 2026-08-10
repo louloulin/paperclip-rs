@@ -197,10 +197,7 @@ async fn budgets_overview(
         .list_incidents(company_id)
         .await
         .map_err(map_budget_error)?;
-    let open = incidents
-        .iter()
-        .filter(|i| i.status != "dismissed")
-        .count();
+    let open = incidents.iter().filter(|i| i.status != "dismissed").count();
     let warning_count = incidents
         .iter()
         .filter(|i| i.threshold_type == "warning")
@@ -235,12 +232,11 @@ async fn agent_budgets(
     Path(agent_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     // 查 agent → company
-    let agent: Option<(Uuid,)> =
-        sqlx::query_as("SELECT company_id FROM agents WHERE id = $1")
-            .bind(agent_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let agent: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM agents WHERE id = $1")
+        .bind(agent_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let company_id = agent
         .ok_or_else(|| ApiError::NotFound(format!("agent {agent_id}")))?
         .0;
@@ -316,8 +312,12 @@ fn map_budget_error(e: pc_budgets::BudgetError) -> ApiError {
     use pc_budgets::BudgetError;
     match e {
         BudgetError::NotFound(m) => ApiError::NotFound(m),
-        BudgetError::InvalidWindowKind(m) => ApiError::BadRequest(format!("invalid window kind: {m}")),
-        BudgetError::InvalidScopeType(m) => ApiError::BadRequest(format!("invalid scope type: {m}")),
+        BudgetError::InvalidWindowKind(m) => {
+            ApiError::BadRequest(format!("invalid window kind: {m}"))
+        }
+        BudgetError::InvalidScopeType(m) => {
+            ApiError::BadRequest(format!("invalid scope type: {m}"))
+        }
         BudgetError::Repo(m) => ApiError::Internal(format!("budget repo error: {m}")),
         BudgetError::Hook(m) => ApiError::Internal(format!("budget hook error: {m}")),
     }
@@ -325,4 +325,12 @@ fn map_budget_error(e: pc_budgets::BudgetError) -> ApiError {
 
 // 类型位置引用，避免 dead_code 误报（rustc 看见 pub use 也会触发）
 #[allow(dead_code)]
-fn _ensure_imports_used(_w: BudgetWindowKind, _s: BudgetPolicyStatus, _t: BudgetThresholdType, _o: IncidentOutcome, _e: FullEvaluation, _a: Arc<()>) {}
+fn _ensure_imports_used(
+    _w: BudgetWindowKind,
+    _s: BudgetPolicyStatus,
+    _t: BudgetThresholdType,
+    _o: IncidentOutcome,
+    _e: FullEvaluation,
+    _a: Arc<()>,
+) {
+}

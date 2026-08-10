@@ -121,9 +121,11 @@ async fn r594_terminate_through_service_emits_activity_event() {
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::AgentStopped)
-            && e.subject_kind == "agent"
-            && e.subject_id == agent_id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::AgentStopped)
+                && e.subject_kind == "agent"
+                && e.subject_id == agent_id),
         "expected AgentStopped activity event for agent {agent_id}, got: {events:?}"
     );
 
@@ -180,8 +182,9 @@ async fn r594_pause_then_resume_emits_correct_kinds() {
 
     let events = in_mem.snapshot();
     assert!(
-        events.iter().any(|e| matches!(e.kind, ActivityKind::AgentStarted)
-            && e.subject_id == agent_id),
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::AgentStarted) && e.subject_id == agent_id),
         "expected AgentStarted activity event for agent {agent_id}, got: {events:?}"
     );
 

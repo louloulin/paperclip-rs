@@ -299,13 +299,8 @@ async fn delete_folder(
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz：删除 folder 需要 UsersInvite 权限
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::UsersInvite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::UsersInvite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }

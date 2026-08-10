@@ -176,13 +176,8 @@ async fn create_company_project(
     AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<Json<Value>> {
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }

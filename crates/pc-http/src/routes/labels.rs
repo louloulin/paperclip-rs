@@ -18,7 +18,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use pc_repos::label::{LabelPatch, LabelRepo, NewLabel};
+use pc_label::{LabelError, LabelService};
+use pc_repos::label::{LabelPatch, NewLabel};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -54,10 +55,10 @@ pub async fn list_labels(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let rows = LabelRepo::new(&state.db)
+    let rows = LabelService::new(state.db.clone())
         .list_by_company(company_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(label_api_error)?;
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
@@ -71,8 +72,8 @@ pub async fn create_label(
         name: body.name,
         color: body.color,
     };
-    let row = LabelRepo::new(&state.db)
-        .create(&input)
+    let row = LabelService::new(state.db.clone())
+        .create(input)
         .await
         .map_err(|e| match e.to_string().as_str() {
             s if s.contains("unique") || s.contains("23505") => {
@@ -95,10 +96,10 @@ pub async fn patch_label(
         name: body.name,
         color: body.color,
     };
-    let row = LabelRepo::new(&state.db)
-        .patch(label_id, &patch)
+    let row = LabelService::new(state.db.clone())
+        .patch(label_id, patch)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(label_api_error)?;
     match row {
         Some(r) => Ok(Json(serde_json::to_value(r).unwrap_or_default())),
         None => Err(ApiError::NotFound(format!("label {label_id}"))),
@@ -109,12 +110,20 @@ pub async fn delete_label(
     State(state): State<AppState>,
     Path(label_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let deleted = LabelRepo::new(&state.db)
+    let deleted = LabelService::new(state.db.clone())
         .delete(label_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(label_api_error)?;
     if !deleted {
         return Err(ApiError::NotFound(format!("label {label_id}")));
     }
     Ok(Json(json!({ "deleted": true, "labelId": label_id })))
+}
+
+fn label_api_error(error: LabelError) -> ApiError {
+    match error {
+        LabelError::Validation(message) => ApiError::BadRequest(message),
+        LabelError::Conflict => ApiError::Conflict("label name already exists in company".into()),
+        other => ApiError::Internal(other.to_string()),
+    }
 }

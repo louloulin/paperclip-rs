@@ -2173,6 +2173,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-assets"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-auth"
 version = "0.1.0"
 dependencies = [
@@ -2282,6 +2300,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-company-member"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-company-skill"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-config"
 version = "0.1.0"
 dependencies = [
@@ -2310,6 +2361,25 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "pc-costs"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-budgets",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2389,6 +2459,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-environment"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-errors"
 version = "0.1.0"
 dependencies = [
@@ -2406,6 +2494,54 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-feedback-redaction"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "pc-feedback-trace"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-feedback-vote"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2501,6 +2637,7 @@ dependencies = [
  "pc-feature-flags",
  "pc-heartbeat",
  "pc-issues",
+ "pc-label",
  "pc-pipelines",
  "pc-plugin-host",
  "pc-plugin-protocol",
@@ -2528,12 +2665,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-inbox"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-invite"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-issues"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-label"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-errors",
  "pc-repos",
  "serde",
  "serde_json",
@@ -2659,6 +2848,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-project"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-realtime"
 version = "0.1.0"
 dependencies = [
@@ -2699,6 +2906,22 @@ dependencies = [
  "sha2",
  "sqlx",
  "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-routine"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2839,6 +3062,56 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "pc-tool"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-core",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-tool-connection"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-tool-runtime-metrics"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-errors",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

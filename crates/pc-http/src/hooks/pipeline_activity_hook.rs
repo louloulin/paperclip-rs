@@ -237,12 +237,11 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         // 通过 stage_id 找 company_id（stage row 不存 company_id）。
         // 这里依赖 hook 与 service 在同一进程内 — service.create_stage 已经校验过 company。
         // 直接走 db 查 pipeline.company_id 以避免让 service 传冗余字段。
-        let company_id_res: Result<uuid::Uuid, sqlx::Error> = sqlx::query_scalar(
-            "SELECT company_id FROM pipelines WHERE id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_one(self.state.db.pool())
-        .await;
+        let company_id_res: Result<uuid::Uuid, sqlx::Error> =
+            sqlx::query_scalar("SELECT company_id FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_one(self.state.db.pool())
+                .await;
         let company_id = match company_id_res {
             Ok(c) => c,
             Err(e) => {
@@ -304,12 +303,11 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         let stage_id = stage.id;
         let pipeline_id = stage.pipeline_id;
 
-        let company_id_res: Result<uuid::Uuid, sqlx::Error> = sqlx::query_scalar(
-            "SELECT company_id FROM pipelines WHERE id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_one(self.state.db.pool())
-        .await;
+        let company_id_res: Result<uuid::Uuid, sqlx::Error> =
+            sqlx::query_scalar("SELECT company_id FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_one(self.state.db.pool())
+                .await;
         let company_id = match company_id_res {
             Ok(c) => c,
             Err(e) => {
@@ -367,12 +365,11 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         stage_id: Uuid,
         pipeline_id: Uuid,
     ) -> pc_pipelines::PipelineServiceResult<()> {
-        let company_id_res: Result<uuid::Uuid, sqlx::Error> = sqlx::query_scalar(
-            "SELECT company_id FROM pipelines WHERE id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_one(self.state.db.pool())
-        .await;
+        let company_id_res: Result<uuid::Uuid, sqlx::Error> =
+            sqlx::query_scalar("SELECT company_id FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_one(self.state.db.pool())
+                .await;
         let company_id = match company_id_res {
             Ok(c) => c,
             Err(e) => {
@@ -431,12 +428,11 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         let transition_id = transition.id;
         let pipeline_id = transition.pipeline_id;
 
-        let company_id_res: Result<uuid::Uuid, sqlx::Error> = sqlx::query_scalar(
-            "SELECT company_id FROM pipelines WHERE id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_one(self.state.db.pool())
-        .await;
+        let company_id_res: Result<uuid::Uuid, sqlx::Error> =
+            sqlx::query_scalar("SELECT company_id FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_one(self.state.db.pool())
+                .await;
         let company_id = match company_id_res {
             Ok(c) => c,
             Err(e) => {
@@ -468,9 +464,13 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         }
 
         self.state.realtime.publish(
-            LiveEvent::new("pipeline.transition.created", "pipeline_transition", transition_id)
-                .with_company(company_id)
-                .with_actor("system"),
+            LiveEvent::new(
+                "pipeline.transition.created",
+                "pipeline_transition",
+                transition_id,
+            )
+            .with_company(company_id)
+            .with_actor("system"),
         );
 
         let plugin_event = PluginEvent {
@@ -494,12 +494,11 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         transition_id: Uuid,
         pipeline_id: Uuid,
     ) -> pc_pipelines::PipelineServiceResult<()> {
-        let company_id_res: Result<uuid::Uuid, sqlx::Error> = sqlx::query_scalar(
-            "SELECT company_id FROM pipelines WHERE id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_one(self.state.db.pool())
-        .await;
+        let company_id_res: Result<uuid::Uuid, sqlx::Error> =
+            sqlx::query_scalar("SELECT company_id FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_one(self.state.db.pool())
+                .await;
         let company_id = match company_id_res {
             Ok(c) => c,
             Err(e) => {
@@ -528,9 +527,13 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         }
 
         self.state.realtime.publish(
-            LiveEvent::new("pipeline.transition.deleted", "pipeline_transition", transition_id)
-                .with_company(company_id)
-                .with_actor("system"),
+            LiveEvent::new(
+                "pipeline.transition.deleted",
+                "pipeline_transition",
+                transition_id,
+            )
+            .with_company(company_id)
+            .with_actor("system"),
         );
 
         let plugin_event = PluginEvent {
@@ -735,9 +738,13 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         }
 
         self.state.realtime.publish(
-            LiveEvent::new("pipeline.case.event_recorded", "pipeline_case_event", event_id)
-                .with_company(company_id)
-                .with_actor("system"),
+            LiveEvent::new(
+                "pipeline.case.event_recorded",
+                "pipeline_case_event",
+                event_id,
+            )
+            .with_company(company_id)
+            .with_actor("system"),
         );
 
         let plugin_event = PluginEvent {
@@ -790,9 +797,13 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         }
 
         self.state.realtime.publish(
-            LiveEvent::new("pipeline.case.issue_linked", "pipeline_case_issue_link", link_id)
-                .with_company(company_id)
-                .with_actor("system"),
+            LiveEvent::new(
+                "pipeline.case.issue_linked",
+                "pipeline_case_issue_link",
+                link_id,
+            )
+            .with_company(company_id)
+            .with_actor("system"),
         );
 
         let plugin_event = PluginEvent {
@@ -816,14 +827,13 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         link_id: Uuid,
         case_id: Uuid,
     ) -> pc_pipelines::PipelineServiceResult<()> {
-        let company_id: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT company_id FROM pipeline_cases WHERE id = $1",
-        )
-        .bind(case_id)
-        .fetch_optional(self.state.db.pool())
-        .await
-        .ok()
-        .flatten();
+        let company_id: Option<uuid::Uuid> =
+            sqlx::query_scalar("SELECT company_id FROM pipeline_cases WHERE id = $1")
+                .bind(case_id)
+                .fetch_optional(self.state.db.pool())
+                .await
+                .ok()
+                .flatten();
         let company_id = match company_id {
             Some(c) => c,
             None => return Ok(()),
@@ -849,9 +859,13 @@ impl pc_pipelines::PipelineHook for PipelineActivityHook {
         }
 
         self.state.realtime.publish(
-            LiveEvent::new("pipeline.case.issue_unlinked", "pipeline_case_issue_link", link_id)
-                .with_company(company_id)
-                .with_actor("system"),
+            LiveEvent::new(
+                "pipeline.case.issue_unlinked",
+                "pipeline_case_issue_link",
+                link_id,
+            )
+            .with_company(company_id)
+            .with_actor("system"),
         );
 
         let plugin_event = PluginEvent {

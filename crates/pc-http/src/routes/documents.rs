@@ -67,13 +67,8 @@ async fn create(
     Json(b): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     // pc-authz：创建 document 需要 UsersInvite 权限
-    if let Err(err) = enforce_permission(
-        &s.db,
-        &actor,
-        b.company_id,
-        PermissionKey::UsersInvite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&s.db, &actor, b.company_id, PermissionKey::UsersInvite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -102,12 +97,10 @@ async fn update(
     Json(b): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz：查 company_id
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM documents WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(s.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM documents WHERE id = $1")
+        .bind(id)
+        .fetch_optional(s.db.pool())
+        .await?;
     let preview_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("document {id}")))?
         .0;

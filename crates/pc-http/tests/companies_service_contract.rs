@@ -48,12 +48,7 @@ fn test_state(db: Db) -> AppState {
     )
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Value,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let response = app
         .clone()
@@ -110,7 +105,8 @@ async fn r590_companies_list_via_service() {
     assert_eq!(status, 200);
     let arr = body.as_array().expect("array");
     assert!(
-        arr.iter().any(|c| c["id"].as_str() == Some(id.to_string().as_str())),
+        arr.iter()
+            .any(|c| c["id"].as_str() == Some(id.to_string().as_str())),
         "created company should appear in list"
     );
 
@@ -123,13 +119,7 @@ async fn r590_companies_get_one_via_service() {
     let id = insert_company(&db, "get").await;
 
     let app = routes::companies::router().with_state(test_state(db.clone()));
-    let (status, body) = call(
-        &app,
-        "GET",
-        &format!("/api/companies/{id}"),
-        json!({}),
-    )
-    .await;
+    let (status, body) = call(&app, "GET", &format!("/api/companies/{id}"), json!({})).await;
     assert_eq!(status, 200);
     assert_eq!(body["id"].as_str(), Some(id.to_string().as_str()));
 
@@ -267,12 +257,11 @@ async fn r590_companies_archive_via_service() {
     assert_eq!(body["status"].as_str(), Some("archived"));
 
     // Verify in DB
-    let row: (String,) =
-        sqlx::query_as("SELECT status FROM companies WHERE id = $1")
-            .bind(id)
-            .fetch_one(db.pool())
-            .await
-            .expect("fetch");
+    let row: (String,) = sqlx::query_as("SELECT status FROM companies WHERE id = $1")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .expect("fetch");
     assert_eq!(row.0, "archived");
 
     cleanup(&db, id).await;
@@ -284,22 +273,15 @@ async fn r590_companies_remove_via_service_returns_204() {
     let id = insert_company(&db, "remove").await;
 
     let app = routes::companies::router().with_state(test_state(db.clone()));
-    let (status, _body) = call(
-        &app,
-        "DELETE",
-        &format!("/api/companies/{id}"),
-        json!({}),
-    )
-    .await;
+    let (status, _body) = call(&app, "DELETE", &format!("/api/companies/{id}"), json!({})).await;
     assert_eq!(status, 204);
 
     // Verify gone
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM companies WHERE id = $1")
-            .bind(id)
-            .fetch_one(db.pool())
-            .await
-            .expect("count");
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM companies WHERE id = $1")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count");
     assert_eq!(count.0, 0);
 }
 

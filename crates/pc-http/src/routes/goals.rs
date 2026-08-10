@@ -10,6 +10,7 @@
 //! | PATCH  | `/api/goals/:id` | ✅ | update |
 //! | DELETE | `/api/goals/:id` | ✅ | delete |
 
+use axum::Extension as AxumExtension;
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
@@ -18,13 +19,12 @@ use axum::{
     routing::{delete, get, patch, post},
     Json, Router,
 };
-use serde::Deserialize;
-use serde_json::{json, Value};
-use uuid::Uuid;
-use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
+use serde::Deserialize;
+use serde_json::{json, Value};
 use sqlx;
+use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::goal::GoalRepo;
@@ -136,13 +136,8 @@ async fn create_company_goal(
     Json(b): Json<CompanyGoalCreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     // pc-authz：创建 company goal 需要 UsersInvite 权限
-    if let Err(err) = enforce_permission(
-        &s.db,
-        &actor,
-        company_id,
-        PermissionKey::UsersInvite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&s.db, &actor, company_id, PermissionKey::UsersInvite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -179,12 +174,10 @@ async fn update(
     Json(b): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz：先查 company_id
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM goals WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(s.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM goals WHERE id = $1")
+        .bind(id)
+        .fetch_optional(s.db.pool())
+        .await?;
     let preview_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?
         .0;
@@ -218,12 +211,10 @@ async fn remove(
     Path(id): Path<Uuid>,
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<StatusCode> {
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM goals WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(s.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM goals WHERE id = $1")
+        .bind(id)
+        .fetch_optional(s.db.pool())
+        .await?;
     let preview_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("goal {id}")))?
         .0;

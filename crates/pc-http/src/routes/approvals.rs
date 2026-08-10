@@ -1,5 +1,6 @@
 //! `/api/approvals*` 路由：CRUD + 决策。
 
+use axum::Extension as AxumExtension;
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
@@ -8,15 +9,14 @@ use axum::{
     routing::{delete, get, patch, post},
     Json, Router,
 };
-use serde::Deserialize;
-use serde_json::{json, Value};
-use uuid::Uuid;
-use sqlx;
-use std::collections::BTreeMap;
-use pc_telemetry::global;
-use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
+use pc_telemetry::global;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sqlx;
+use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::approval::ApprovalRepo;
@@ -122,11 +122,17 @@ async fn create(
     state.realtime.publish(
         LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id),
     );
-    global::track("approval.created", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("approval_id".into(), serde_json::json!(row.id.to_string())),
-        ("approval_type".into(), serde_json::json!(row.approval_type)),
-    ]));
+    global::track(
+        "approval.created",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("approval_id".into(), serde_json::json!(row.id.to_string())),
+            ("approval_type".into(), serde_json::json!(row.approval_type)),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -240,13 +246,8 @@ async fn approve_approval(
 ) -> ApiResult<Json<Value>> {
     let company_id = load_approval_company(&state.db, approval_id).await?;
     // pc-authz：批准 approval 需要 UsersInvite 权限（Operator 角色及以上）。
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::UsersInvite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::UsersInvite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -259,10 +260,16 @@ async fn approve_approval(
     state.realtime.publish(
         LiveEvent::new("approval.approved", "approval", row.id).with_company(row.company_id),
     );
-    global::track("approval.approved", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("decision".into(), serde_json::json!("approved")),
-    ]));
+    global::track(
+        "approval.approved",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("decision".into(), serde_json::json!("approved")),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -273,13 +280,8 @@ async fn reject_approval(
     Json(body): Json<ApproveRejectBody>,
 ) -> ApiResult<Json<Value>> {
     let company_id = load_approval_company(&state.db, approval_id).await?;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::UsersInvite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::UsersInvite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -292,10 +294,16 @@ async fn reject_approval(
     state.realtime.publish(
         LiveEvent::new("approval.rejected", "approval", row.id).with_company(row.company_id),
     );
-    global::track("approval.rejected", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("approval_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "approval.rejected",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("approval_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -306,12 +314,10 @@ async fn resubmit_approval(
     Json(body): Json<ResubmitApprovalBody>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz：resubmit 需要 UsersInvite 权限
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM approvals WHERE id = $1",
-    )
-    .bind(approval_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM approvals WHERE id = $1")
+        .bind(approval_id)
+        .fetch_optional(state.db.pool())
+        .await?;
     let preview_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("approval {approval_id}")))?
         .0;
@@ -336,9 +342,13 @@ async fn resubmit_approval(
     state
         .realtime
         .publish(LiveEvent::new("approval.resubmitted", "approval", id).with_company(company_id));
-    global::track("approval.resubmitted", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(company_id.to_string())),
-    ]));
+    global::track(
+        "approval.resubmitted",
+        BTreeMap::from([(
+            "company_id".into(),
+            serde_json::json!(company_id.to_string()),
+        )]),
+    );
     Ok(Json(json!({
         "id": id,
         "companyId": company_id,
@@ -363,13 +373,8 @@ async fn request_approval_revision(
     Json(body): Json<RequestRevisionBody>,
 ) -> ApiResult<Json<Value>> {
     let company_id = load_approval_company(&state.db, approval_id).await?;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::JoinsApprove,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::JoinsApprove).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -377,17 +382,28 @@ async fn request_approval_revision(
     // request_revision 内部走 service：检查状态机 + 触发 hooks（无 hire_agent hook 影响 revision_requested）
     let svc = build_hire_approval_service(&state.db);
     let row = svc
-        .request_revision(company_id, approval_id, decided_by, body.decision_note.as_deref())
+        .request_revision(
+            company_id,
+            approval_id,
+            decided_by,
+            body.decision_note.as_deref(),
+        )
         .await
         .map_err(|e| map_approval_service_error(e, approval_id))?;
     state.realtime.publish(
         LiveEvent::new("approval.revision_requested", "approval", row.id)
             .with_company(row.company_id),
     );
-    global::track("approval.revision_requested", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("approval_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "approval.revision_requested",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("approval_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -463,11 +479,20 @@ async fn add_approval_comment(
             .with_company(company_id)
             .with_data(json!({"approvalId": approval_id})),
     );
-    global::track("approval.comment_added", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(company_id.to_string())),
-        ("approval_id".into(), serde_json::json!(approval_id.to_string())),
-        ("comment_id".into(), serde_json::json!(id.to_string())),
-    ]));
+    global::track(
+        "approval.comment_added",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(company_id.to_string()),
+            ),
+            (
+                "approval_id".into(),
+                serde_json::json!(approval_id.to_string()),
+            ),
+            ("comment_id".into(), serde_json::json!(id.to_string())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -501,8 +526,7 @@ async fn load_approval_company(db: &pc_db::Db, approval_id: Uuid) -> Result<Uuid
 /// - 注册 `NoopApprovalHook` 占位（未来可加通知、audit log 等副作用）
 fn build_hire_approval_service(db: &pc_db::Db) -> ApprovalService<'_> {
     let ops = Arc::new(DbHireAgentOps::new(db.clone()));
-    let hire_hook: Arc<dyn pc_approvals::ApprovalHook> =
-        Arc::new(HireAgentApprovalHook::new(ops));
+    let hire_hook: Arc<dyn pc_approvals::ApprovalHook> = Arc::new(HireAgentApprovalHook::new(ops));
     let noop: Arc<dyn pc_approvals::ApprovalHook> = Arc::new(NoopApprovalHook);
     ApprovalService::with_hooks(db, vec![hire_hook, noop])
 }

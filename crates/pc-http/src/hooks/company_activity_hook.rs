@@ -83,10 +83,7 @@ fn live_event_for(event: &CompanyLifecycleEvent) -> Option<(&'static str, uuid::
 
 #[async_trait]
 impl CompanyHook for CompanyActivityHook {
-    async fn on_lifecycle(
-        &self,
-        event: CompanyLifecycleEvent,
-    ) -> CompanyServiceResult<()> {
+    async fn on_lifecycle(&self, event: CompanyLifecycleEvent) -> CompanyServiceResult<()> {
         let id = match event {
             CompanyLifecycleEvent::Created { id, .. }
             | CompanyLifecycleEvent::Updated { id, .. }
@@ -150,10 +147,12 @@ fn event_actor(event: &CompanyLifecycleEvent) -> &CompanyActor {
 
 fn payload_for(event: &CompanyLifecycleEvent) -> Option<serde_json::Value> {
     match event {
-        CompanyLifecycleEvent::Created { owner_principal_id, .. } => {
-            Some(serde_json::json!({ "owner_principal_id": owner_principal_id }))
+        CompanyLifecycleEvent::Created {
+            owner_principal_id, ..
+        } => Some(serde_json::json!({ "owner_principal_id": owner_principal_id })),
+        CompanyLifecycleEvent::Updated { patch, .. } => {
+            Some(serde_json::to_value(patch).unwrap_or_default())
         }
-        CompanyLifecycleEvent::Updated { patch, .. } => Some(serde_json::to_value(patch).unwrap_or_default()),
         CompanyLifecycleEvent::Archived { .. } | CompanyLifecycleEvent::Removed { .. } => None,
     }
 }

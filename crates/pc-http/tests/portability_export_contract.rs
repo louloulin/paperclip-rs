@@ -46,12 +46,7 @@ fn test_state(db: Db) -> AppState {
     )
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Value,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let response = app
         .clone()

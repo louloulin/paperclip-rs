@@ -380,12 +380,11 @@ async fn delete_provider_config(
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<impl IntoResponse> {
     // pc-authz：查 company_id
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM secret_provider_configs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> =
+        sqlx::query_as("SELECT company_id FROM secret_provider_configs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(state.db.pool())
+            .await?;
     let preview_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("provider {id}")))?
         .0;
@@ -652,12 +651,11 @@ async fn update_secret(
     Json(body): Json<UpdateSecretBody>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz: 查 secret 的 company_id
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM company_secrets WHERE id = $1",
-    )
-    .bind(secret_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> =
+        sqlx::query_as("SELECT company_id FROM company_secrets WHERE id = $1")
+            .bind(secret_id)
+            .fetch_optional(state.db.pool())
+            .await?;
     let secret_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("secret {secret_id}")))?
         .0;
@@ -697,12 +695,11 @@ async fn rotate_secret(
     Json(body): Json<RotateSecretBody>,
 ) -> ApiResult<Json<Value>> {
     // pc-authz: 查 secret 的 company_id
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM company_secrets WHERE id = $1",
-    )
-    .bind(secret_id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> =
+        sqlx::query_as("SELECT company_id FROM company_secrets WHERE id = $1")
+            .bind(secret_id)
+            .fetch_optional(state.db.pool())
+            .await?;
     let secret_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("secret {secret_id}")))?
         .0;
@@ -812,12 +809,11 @@ async fn patch_provider_config(
         return Err(ApiError::BadRequest("no fields to update".into()));
     }
     // pc-authz: 查 provider config 的 company_id
-    let preview: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT company_id FROM secret_provider_configs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(state.db.pool())
-    .await?;
+    let preview: Option<(Uuid,)> =
+        sqlx::query_as("SELECT company_id FROM secret_provider_configs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(state.db.pool())
+            .await?;
     let cfg_company_id = preview
         .ok_or_else(|| ApiError::NotFound(format!("provider {id}")))?
         .0;

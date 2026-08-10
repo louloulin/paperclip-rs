@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
-use pc_realtime::LiveEvent;
 use pc_decisions::{DecisionService, NoopDecisionHook};
+use pc_realtime::LiveEvent;
 use pc_repos::decision::{verify_decision_signature, DecisionRepo, SignedDecisionRow};
 use pc_repos::decision_bundle::{
     DecisionBundleFilter, DecisionBundleRepo, DecisionBundleRow, NewDecisionBundle,
@@ -55,8 +55,14 @@ async fn list(
     // R587: 通过 DecisionService 取列表
     let svc = DecisionService::new(&state.db, &state.decision_signing);
     let rows = match q.company_id {
-        Some(cid) => svc.list_by_company(cid).await.map_err(map_decision_service_error)?,
-        None => svc.list_all(200).await.map_err(map_decision_service_error)?,
+        Some(cid) => svc
+            .list_by_company(cid)
+            .await
+            .map_err(map_decision_service_error)?,
+        None => svc
+            .list_all(200)
+            .await
+            .map_err(map_decision_service_error)?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
@@ -168,13 +174,8 @@ async fn decide_decision(
     let company_id = load_verified_decision(&state, decision_id)
         .await?
         .company_id;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::JoinsApprove,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::JoinsApprove).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -221,13 +222,8 @@ async fn dismiss_decision(
     let company_id = load_verified_decision(&state, decision_id)
         .await?
         .company_id;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::JoinsApprove,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::JoinsApprove).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -269,13 +265,8 @@ async fn cancel_decision(
         .get_company_id(decision_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::JoinsApprove,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::JoinsApprove).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -334,13 +325,8 @@ async fn create_decision_bundle(
     Path(company_id): Path<Uuid>,
     Json(body): Json<CreateDecisionBundleBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::JoinsApprove,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::JoinsApprove).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -459,7 +445,6 @@ fn map_decision_bundle_error(error: pc_repos::decision_bundle::DecisionBundleErr
         other => ApiError::Internal(format!("decision bundle repo error: {other}")),
     }
 }
-
 
 // =============================================================================
 // R587: DecisionService error mapping

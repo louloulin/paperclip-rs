@@ -1,5 +1,6 @@
 //! `/api/routines*` 路由：CRUD + trigger。
 
+use axum::Extension as AxumExtension;
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
@@ -8,14 +9,13 @@ use axum::{
     routing::{delete, get, patch, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use uuid::Uuid;
-use std::collections::BTreeMap;
-use pc_telemetry::global;
-use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
+use pc_telemetry::global;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
 use pc_repos::routine::{
@@ -243,13 +243,8 @@ async fn create_routine(
         .company_id
         .ok_or_else(|| ApiError::BadRequest("companyId is required".into()))?;
     // pc-authz：创建 routine 需要 PipelinesWrite 权限（pipeline 跟 routine 是同一组管理）
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -288,10 +283,16 @@ async fn create_routine(
     state
         .realtime
         .publish(LiveEvent::new("routine.created", "routine", row.id).with_company(row.company_id));
-    global::track("routine.created", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("routine_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "routine.created",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("routine_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(row).unwrap_or_default()),
@@ -432,10 +433,16 @@ async fn update(
     state
         .realtime
         .publish(LiveEvent::new("routine.updated", "routine", row.id).with_company(row.company_id));
-    global::track("routine.updated", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("routine_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "routine.updated",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("routine_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -651,10 +658,19 @@ async fn run_routine(
         LiveEvent::new("routine.run.triggered", "routine_run", dispatched.run.id)
             .with_company(dispatched.run.company_id),
     );
-    global::track("routine.run.triggered", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(dispatched.run.company_id.to_string())),
-        ("run_id".into(), serde_json::json!(dispatched.run.id.to_string())),
-    ]));
+    global::track(
+        "routine.run.triggered",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(dispatched.run.company_id.to_string()),
+            ),
+            (
+                "run_id".into(),
+                serde_json::json!(dispatched.run.id.to_string()),
+            ),
+        ]),
+    );
     Ok((
         StatusCode::ACCEPTED,
         Json(serde_json::to_value(dispatched.run).unwrap_or_default()),

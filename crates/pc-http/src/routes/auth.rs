@@ -513,10 +513,13 @@ async fn sign_in_email(
     state.realtime.publish(
         pc_realtime::LiveEvent::new("auth.signed_in", "user", Uuid::nil()).with_actor(&user.id),
     );
-    global::track("auth.signed_in", BTreeMap::from([
-        ("method".into(), serde_json::json!("email")),
-        ("user_id".into(), serde_json::json!(user.id.clone())),
-    ]));
+    global::track(
+        "auth.signed_in",
+        BTreeMap::from([
+            ("method".into(), serde_json::json!("email")),
+            ("user_id".into(), serde_json::json!(user.id.clone())),
+        ]),
+    );
     let cookie = session_cookie(&session_token, expires_at);
     let csrf_token = crate::middleware::csrf::generate_csrf_token();
     let csrf_cookie = crate::middleware::csrf::csrf_set_cookie(

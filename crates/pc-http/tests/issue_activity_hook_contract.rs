@@ -117,7 +117,9 @@ async fn r602_create_emits_activity_log_event() {
 
     let snapshot = in_mem.snapshot();
     assert!(
-        snapshot.iter().any(|e| matches!(e.kind, ActivityKind::IssueCreated)),
+        snapshot
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::IssueCreated)),
         "expected at least one IssueCreated activity event, got {snapshot:?}"
     );
     // payload 应该含 issue_id / title / status / priority
@@ -126,7 +128,10 @@ async fn r602_create_emits_activity_log_event() {
         .find(|e| matches!(e.kind, ActivityKind::IssueCreated))
         .expect("at least one");
     let payload_json = serde_json::to_value(&created_ev.payload).unwrap_or(serde_json::json!({}));
-    assert_eq!(payload_json["issue_id"].as_str(), Some(row.id.to_string().as_str()));
+    assert_eq!(
+        payload_json["issue_id"].as_str(),
+        Some(row.id.to_string().as_str())
+    );
     assert_eq!(payload_json["title"].as_str(), Some("Activity test"));
     assert_eq!(payload_json["status"].as_str(), Some("todo"));
 
@@ -602,7 +607,8 @@ async fn r602_v4_create_comment_emits_activity_and_live_event() {
     );
 
     // 验证 comment id 落进 payload
-    let ev_payload = serde_json::to_value(&commented_events[0].payload).unwrap_or(serde_json::json!({}));
+    let ev_payload =
+        serde_json::to_value(&commented_events[0].payload).unwrap_or(serde_json::json!({}));
     assert_eq!(
         ev_payload["comment_id"].as_str(),
         Some(comment.id.to_string().as_str())

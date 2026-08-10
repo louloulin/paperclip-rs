@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use pc_adapter_api::AdapterRegistry;
 use pc_activity::{ActivityKind, ActivityLog, InMemoryActivityLog, SharedActivitySink};
+use pc_adapter_api::AdapterRegistry;
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_http::{
@@ -169,7 +169,10 @@ async fn r602_v6_create_endpoint_uses_issue_service_and_emits_activity() {
         })),
     )
     .await;
-    assert!((200..300).contains(&status), "create should be 2xx, got {status}: {body}");
+    assert!(
+        (200..300).contains(&status),
+        "create should be 2xx, got {status}: {body}"
+    );
     assert_eq!(body["title"], "migrate-test");
 
     // 验证 IssueActivityHook.on_created 触发了

@@ -17,6 +17,7 @@ pc-companies = { path = "../pc-companies" }
 pc-portability = { path = "../pc-portability" }
 pc-pipelines = { path = "../pc-pipelines" }
 pc-issues = { path = "../pc-issues" }
+pc-label = { path = "../pc-label" }
 pc-decisions = { path = "../pc-decisions" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }

@@ -101,11 +101,7 @@ async fn insert_agent_in_status(db: &Db, company_id: Uuid, status: &str) -> Uuid
     id
 }
 
-async fn insert_hire_approval(
-    db: &Db,
-    company_id: Uuid,
-    payload: Value,
-) -> Uuid {
+async fn insert_hire_approval(db: &Db, company_id: Uuid, payload: Value) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO approvals (id, company_id, type, status, payload, requested_by_user_id, \
@@ -129,12 +125,7 @@ async fn fetch_agent_status(db: &Db, id: Uuid) -> String {
         .expect("fetch status")
 }
 
-async fn call(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
@@ -174,12 +165,8 @@ async fn r584_http_approve_activate_pending_agent_to_idle() {
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
     let agent_id = insert_agent_in_status(&db, company_id, "pending_approval").await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "agentId": agent_id.to_string() }),
-    )
-    .await;
+    let approval_id =
+        insert_hire_approval(&db, company_id, json!({ "agentId": agent_id.to_string() })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     // approve via HTTP
@@ -203,12 +190,8 @@ async fn r584_http_reject_pending_agent_terminates_it() {
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
     let agent_id = insert_agent_in_status(&db, company_id, "pending_approval").await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "agentId": agent_id.to_string() }),
-    )
-    .await;
+    let approval_id =
+        insert_hire_approval(&db, company_id, json!({ "agentId": agent_id.to_string() })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -264,16 +247,14 @@ async fn r584_http_approve_create_new_agent_with_budget_creates_policy() {
     assert_eq!(new_agent_count, 1, "expected exactly one new agent");
 
     // budget policy 应被创建
-    let policy_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM budget_policies WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("count policies");
+    let policy_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM budget_policies WHERE company_id = $1")
+            .bind(company_id)
+            .fetch_one(db.pool())
+            .await
+            .expect("count policies");
     assert_eq!(policy_count, 1, "expected budget policy");
 }
-
 
 // =============================================================================
 // R585: 其他 service 化端点 e2e
@@ -285,12 +266,8 @@ async fn r585_http_decide_endpoint_routes_through_service_approve() {
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
     let agent_id = insert_agent_in_status(&db, company_id, "pending_approval").await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "agentId": agent_id.to_string() }),
-    )
-    .await;
+    let approval_id =
+        insert_hire_approval(&db, company_id, json!({ "agentId": agent_id.to_string() })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     // /decide 是通用端点，应等价于 /approve
@@ -317,12 +294,8 @@ async fn r585_http_decide_endpoint_routes_through_service_reject() {
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
     let agent_id = insert_agent_in_status(&db, company_id, "pending_approval").await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "agentId": agent_id.to_string() }),
-    )
-    .await;
+    let approval_id =
+        insert_hire_approval(&db, company_id, json!({ "agentId": agent_id.to_string() })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -346,12 +319,7 @@ async fn r585_http_request_revision_endpoint_routes_through_service() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "name": "Test Bot" }),
-    )
-    .await;
+    let approval_id = insert_hire_approval(&db, company_id, json!({ "name": "Test Bot" })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -372,12 +340,7 @@ async fn r585_http_comments_endpoints_route_through_service() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "name": "Comment Bot" }),
-    )
-    .await;
+    let approval_id = insert_hire_approval(&db, company_id, json!({ "name": "Comment Bot" })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     // 先 add 一条
@@ -414,12 +377,7 @@ async fn r585_http_add_comment_rejects_empty_body() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     insert_user_membership(&db, company_id).await;
-    let approval_id = insert_hire_approval(
-        &db,
-        company_id,
-        json!({ "name": "Bot" }),
-    )
-    .await;
+    let approval_id = insert_hire_approval(&db, company_id, json!({ "name": "Bot" })).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     let (status, _) = call(

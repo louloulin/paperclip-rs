@@ -67,10 +67,7 @@ impl AgentTerminationApprovalHook {
 
 #[async_trait]
 impl pc_agent::AgentHook for AgentTerminationApprovalHook {
-    async fn on_lifecycle(
-        &self,
-        event: AgentLifecycleEvent,
-    ) -> pc_errors::Result<()> {
+    async fn on_lifecycle(&self, event: AgentLifecycleEvent) -> pc_errors::Result<()> {
         let AgentLifecycleEvent::Terminated {
             id: agent_id,
             company_id,

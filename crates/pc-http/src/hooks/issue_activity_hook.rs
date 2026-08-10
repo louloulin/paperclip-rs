@@ -159,19 +159,18 @@ impl IssueHook for IssueActivityHook {
                 "agent",
                 serde_json::json!({ "assignee_agent_id": id.to_string() }),
             ),
-            pc_issues::AssignKind::User(name) => (
-                "user",
-                serde_json::json!({ "assignee_user_id": name }),
-            ),
-            pc_issues::AssignKind::Unassign => (
-                "unassign",
-                serde_json::json!({}),
-            ),
+            pc_issues::AssignKind::User(name) => {
+                ("user", serde_json::json!({ "assignee_user_id": name }))
+            }
+            pc_issues::AssignKind::Unassign => ("unassign", serde_json::json!({})),
         };
 
         let mut payload_map = serde_json::Map::new();
         payload_map.insert("issue_id".into(), serde_json::json!(issue_id.to_string()));
-        payload_map.insert("company_id".into(), serde_json::json!(company_id.to_string()));
+        payload_map.insert(
+            "company_id".into(),
+            serde_json::json!(company_id.to_string()),
+        );
         payload_map.insert("title".into(), serde_json::json!(row.title));
         payload_map.insert("kind".into(), serde_json::json!(kind_str));
         if let Some(obj) = payload_extra.as_object() {

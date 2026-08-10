@@ -1,5 +1,6 @@
 //! `/api/pipelines*` 路由：CRUD。
 
+use axum::Extension as AxumExtension;
 #[allow(unused_imports)]
 use axum::{
     extract::{Path, State},
@@ -8,18 +9,17 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use serde::Deserialize;
-use serde_json::{json, Value};
-use uuid::Uuid;
-use std::collections::BTreeMap;
-use sqlx;
-use pc_telemetry::global;
-use axum::Extension as AxumExtension;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
+use pc_telemetry::global;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sqlx;
+use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use pc_pipelines::{
-    CreatePipelineInput, CreateStageMinimalInput, CreateTransitionInput, CreateCaseMinimalInput,
+    CreateCaseMinimalInput, CreatePipelineInput, CreateStageMinimalInput, CreateTransitionInput,
     PipelineHook, PipelineService, StageKind, UpdatePipelinePatch, UpdateStagePatch,
 };
 use pc_realtime::LiveEvent;
@@ -163,8 +163,14 @@ async fn list(
     // R603 v5: 业务下沉到 PipelineService
     let svc = pipeline_service_with_activity(&state);
     let rows = match q.company_id {
-        Some(cid) => svc.list_by_company(cid).await.map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?,
-        None => svc.list_all(200).await.map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?,
+        Some(cid) => svc
+            .list_by_company(cid)
+            .await
+            .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?,
+        None => svc
+            .list_all(200)
+            .await
+            .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?,
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
@@ -192,13 +198,11 @@ async fn id_company_id(state: &AppState, id: Uuid) -> ApiResult<Uuid> {
 
 /// 内部辅助：通过 pipeline_case row 反查 company_id（service 子资源需要 company_id）。
 async fn case_company_id(state: &AppState, case_id: Uuid) -> ApiResult<Uuid> {
-    sqlx::query_scalar::<_, Uuid>(
-        "SELECT company_id FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await?
-    .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))
+    sqlx::query_scalar::<_, Uuid>("SELECT company_id FROM pipeline_cases WHERE id = $1")
+        .bind(case_id)
+        .fetch_optional(state.db.pool())
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,10 +246,16 @@ async fn create(
         .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?;
     // 注意：service 已通过 PipelineActivityHook 自动 publish 了 realtime（"pipeline.created"）。
     // 这里保留 telemetry track。
-    global::track("pipeline.created", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("name".into(), serde_json::json!(row.name.clone())),
-    ]));
+    global::track(
+        "pipeline.created",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("name".into(), serde_json::json!(row.name.clone())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -271,13 +281,8 @@ async fn update(
 ) -> ApiResult<Json<Value>> {
     // pc-authz：查公司以做权限检查
     let company_id = id_company_id(&state, id).await?;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -304,13 +309,8 @@ async fn remove(
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<StatusCode> {
     let company_id = id_company_id(&state, id).await?;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -351,14 +351,13 @@ async fn get_stage(
 ) -> ApiResult<Json<Value>> {
     // R603 v5: 业务下沉到 PipelineService
     // service.get_stage 需要 company_id；通过 stage 反查 pipeline_id → company_id。
-    let pipeline_id_opt: Option<Uuid> = sqlx::query_scalar(
-        "SELECT pipeline_id FROM pipeline_stages WHERE id = $1",
-    )
-    .bind(stage_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let pipeline_id = pipeline_id_opt
-        .ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
+    let pipeline_id_opt: Option<Uuid> =
+        sqlx::query_scalar("SELECT pipeline_id FROM pipeline_stages WHERE id = $1")
+            .bind(stage_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let pipeline_id =
+        pipeline_id_opt.ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
     let company_id = id_company_id(&state, pipeline_id).await?;
     let svc = pipeline_service_with_activity(&state);
     let row = svc
@@ -411,10 +410,13 @@ async fn create_stage(
         .await
         .map_err(|e| map_pipeline_service_error(e, id))?;
     // service 已通过 PipelineActivityHook 自动 publish realtime。
-    global::track("pipeline.stage.created", BTreeMap::from([
-        ("pipeline_id".into(), serde_json::json!(id.to_string())),
-        ("name".into(), serde_json::json!(row.name.clone())),
-    ]));
+    global::track(
+        "pipeline.stage.created",
+        BTreeMap::from([
+            ("pipeline_id".into(), serde_json::json!(id.to_string())),
+            ("name".into(), serde_json::json!(row.name.clone())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(row).unwrap_or_default()),
@@ -440,20 +442,20 @@ async fn update_stage(
 ) -> ApiResult<Json<Value>> {
     // R603 v5: 业务下沉到 PipelineService
     // service.update_stage 需要 company_id；通过 stage 反查 pipeline_id → company_id。
-    let pipeline_id_opt: Option<Uuid> = sqlx::query_scalar(
-        "SELECT pipeline_id FROM pipeline_stages WHERE id = $1",
-    )
-    .bind(stage_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let pipeline_id = pipeline_id_opt
-        .ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
+    let pipeline_id_opt: Option<Uuid> =
+        sqlx::query_scalar("SELECT pipeline_id FROM pipeline_stages WHERE id = $1")
+            .bind(stage_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let pipeline_id =
+        pipeline_id_opt.ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
     let company_id = id_company_id(&state, pipeline_id).await?;
     let kind = match body.kind.as_deref() {
         None => None,
-        Some(s) => Some(StageKind::from_db_str(s).ok_or_else(|| {
-            ApiError::BadRequest(format!("invalid stage kind: {s}"))
-        })?),
+        Some(s) => Some(
+            StageKind::from_db_str(s)
+                .ok_or_else(|| ApiError::BadRequest(format!("invalid stage kind: {s}")))?,
+        ),
     };
     let svc = pipeline_service_with_activity(&state);
     let row = svc
@@ -477,14 +479,13 @@ async fn remove_stage(
     Path((_id, stage_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
     // R603 v5: 业务下沉到 PipelineService
-    let pipeline_id_opt: Option<Uuid> = sqlx::query_scalar(
-        "SELECT pipeline_id FROM pipeline_stages WHERE id = $1",
-    )
-    .bind(stage_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let pipeline_id = pipeline_id_opt
-        .ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
+    let pipeline_id_opt: Option<Uuid> =
+        sqlx::query_scalar("SELECT pipeline_id FROM pipeline_stages WHERE id = $1")
+            .bind(stage_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let pipeline_id =
+        pipeline_id_opt.ok_or_else(|| ApiError::NotFound(format!("stage {stage_id}")))?;
     let company_id = id_company_id(&state, pipeline_id).await?;
     let svc = pipeline_service_with_activity(&state);
     let ok = svc
@@ -581,14 +582,12 @@ async fn get_case(
 ) -> ApiResult<Json<Value>> {
     // R603 v5: 业务下沉到 PipelineService
     // service.get_case 需要 company_id；通过 case 反查。
-    let company_id_opt: Option<Uuid> = sqlx::query_scalar(
-        "SELECT company_id FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let company_id = company_id_opt
-        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let company_id_opt: Option<Uuid> =
+        sqlx::query_scalar("SELECT company_id FROM pipeline_cases WHERE id = $1")
+            .bind(case_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let company_id = company_id_opt.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let svc = pipeline_service_with_activity(&state);
     let row = svc
         .get_case(company_id, case_id)
@@ -641,10 +640,16 @@ async fn create_case(
         .await
         .map_err(|e| map_pipeline_service_error(e, id))?;
     // service 已通过 PipelineActivityHook 自动 publish realtime。
-    global::track("pipeline.case.created", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("case_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "pipeline.case.created",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("case_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(row).unwrap_or_default()),
@@ -671,25 +676,23 @@ async fn transition_case(
     Json(body): Json<TransitionCaseBody>,
 ) -> ApiResult<Json<Value>> {
     // service.transition_case 需要 from_stage_id + company_id。
-    let pipeline_id_opt: Option<Uuid> = sqlx::query_scalar(
-        "SELECT pipeline_id FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let pipeline_id = pipeline_id_opt
-        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let pipeline_id_opt: Option<Uuid> =
+        sqlx::query_scalar("SELECT pipeline_id FROM pipeline_cases WHERE id = $1")
+            .bind(case_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let pipeline_id =
+        pipeline_id_opt.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     let company_id = id_company_id(&state, pipeline_id).await?;
 
     // 读取当前 case 的 stage_id 作为 from_stage_id（避免客户端传错）
-    let from_stage_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT stage_id FROM pipeline_cases WHERE id = $1",
-    )
-    .bind(case_id)
-    .fetch_optional(state.db.pool())
-    .await?;
-    let from_stage_id = from_stage_id
-        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    let from_stage_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT stage_id FROM pipeline_cases WHERE id = $1")
+            .bind(case_id)
+            .fetch_optional(state.db.pool())
+            .await?;
+    let from_stage_id =
+        from_stage_id.ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
 
     let svc = pipeline_service_with_activity(&state);
     let row = svc
@@ -714,10 +717,16 @@ async fn transition_case(
             other => map_pipeline_service_error(other, pipeline_id),
         })?;
     // service 已通过 PipelineActivityHook 自动 publish realtime / activity。
-    global::track("pipeline.case.transitioned", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("case_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "pipeline.case.transitioned",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("case_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -754,10 +763,16 @@ async fn claim_case_route(
         LiveEvent::new("pipeline.case.claimed", "pipeline_case", row.id)
             .with_company(row.company_id),
     );
-    global::track("pipeline.case.claimed", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("case_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "pipeline.case.claimed",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("case_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -877,13 +892,8 @@ async fn archive_pipeline(
     AxumExtension(actor): AxumExtension<AuthContext>,
 ) -> ApiResult<Json<Value>> {
     let company_id = id_company_id(&state, id).await?;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
@@ -894,10 +904,16 @@ async fn archive_pipeline(
         .await
         .map_err(|e| map_pipeline_service_error(e, id))?;
     // service 已通过 PipelineActivityHook 自动 publish realtime（"pipeline.archived"）。
-    global::track("pipeline.archived", BTreeMap::from([
-        ("company_id".into(), serde_json::json!(row.company_id.to_string())),
-        ("pipeline_id".into(), serde_json::json!(row.id.to_string())),
-    ]));
+    global::track(
+        "pipeline.archived",
+        BTreeMap::from([
+            (
+                "company_id".into(),
+                serde_json::json!(row.company_id.to_string()),
+            ),
+            ("pipeline_id".into(), serde_json::json!(row.id.to_string())),
+        ]),
+    );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
@@ -1026,7 +1042,10 @@ async fn put_pipeline_document(
     Json(body): Json<PutPipelineDocumentBody>,
 ) -> ApiResult<Json<Value>> {
     let company_id = id_company_id(&state, pipeline_id).await?;
-    let content = body.content.clone().unwrap_or_else(|| serde_json::json!({}));
+    let content = body
+        .content
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
     let svc = pipeline_service_with_activity(&state);
     let ok = svc
         .put_pipeline_document(
