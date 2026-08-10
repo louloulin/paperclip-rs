@@ -11,11 +11,16 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod email_sender;
 pub mod email_verification;
 pub mod error;
 pub mod oauth_state;
 pub mod session_refresh;
 
+pub use email_sender::{
+    build_email_sender, render_template, EmailAddress, EmailMessage, EmailSender, EmailSenderError,
+    LogEmailSender, NoopEmailSender,
+};
 pub use email_verification::{
     consume_email_verification, issue_email_verification, verify_email_token, EmailVerificationOutcome,
     EmailVerificationRecord,

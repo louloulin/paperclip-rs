@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 pub mod aws;
+pub mod cache;
+pub mod decision;
 pub mod decision_signing;
 pub mod error;
 pub mod gcp;
@@ -15,11 +17,18 @@ pub mod local_encrypted;
 pub mod provider;
 pub mod registry;
 pub mod retry;
+pub mod rotation;
 pub mod types;
 pub mod vault;
 
 pub use aws::AwsSecretsManagerProvider;
+pub use cache::{CacheEntry, CacheStats, SecretCache};
+pub use decision::{decide_provider, SecretDecision, SecretDecisionContext};
 pub use error::{SecretErrorCategory, SecretProviderError};
+pub use rotation::{
+    evaluate_rotation, RotationEvaluation, RotationEvaluationInput, RotationPolicyConfig,
+    RotationReason,
+};
 pub use decision_signing::{
     ensure_decision_signing_secret, resolve_decision_signing_secret, sign_decision_spec,
     sign_decision_spec_with_secret, verify_decision_spec, verify_decision_spec_with_secret,
