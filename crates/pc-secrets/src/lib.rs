@@ -2,6 +2,7 @@
 
 pub mod aws;
 pub mod decision_signing;
+pub mod error;
 pub mod gcp;
 /// 秘密提供方抽象与本地 AES-256-GCM 加密实现。
 ///
@@ -13,10 +14,12 @@ pub mod gcp;
 pub mod local_encrypted;
 pub mod provider;
 pub mod registry;
+pub mod retry;
 pub mod types;
 pub mod vault;
 
 pub use aws::AwsSecretsManagerProvider;
+pub use error::{SecretErrorCategory, SecretProviderError};
 pub use decision_signing::{
     ensure_decision_signing_secret, resolve_decision_signing_secret, sign_decision_spec,
     sign_decision_spec_with_secret, verify_decision_spec, verify_decision_spec_with_secret,
@@ -27,11 +30,12 @@ pub use gcp::GcpSecretManagerProvider;
 pub use local_encrypted::LocalEncryptedProvider;
 pub use provider::SecretProvider;
 pub use registry::SecretProviderRegistry;
+pub use retry::{retry_string, retry_transient, RetryPolicy};
 pub use types::{
     LocalEncryptedMaterial, PreparedSecretVersion, ProviderHealthCheck, ProviderHealthStatus,
     SecretProviderValidationResult, StoredSecretVersionMaterial,
 };
-pub use vault::VaultProvider;
+pub use vault::{VaultAuth, VaultProvider};
 
 pub fn hmac_sha256(key: &[u8], payload: &[u8]) -> String {
     use hmac::{Hmac, Mac};
@@ -50,7 +54,7 @@ pub fn hmac_sha256(key: &[u8], payload: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{SecretProviderRuntimeContext, SecretProviderWriteContext};
+    use crate::provider::SecretProviderWriteContext;
     use serde_json::json;
     use uuid::Uuid;
 

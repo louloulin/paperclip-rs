@@ -14,6 +14,7 @@ pub mod error_codes;
 pub mod manifest;
 pub mod methods;
 pub mod types;
+pub mod worker_to_host;
 
 pub use config_validator::{
     validate_instance_config, ConfigValidationError, ConfigValidationResult,
@@ -27,6 +28,13 @@ pub use manifest::{
 };
 pub use methods::{
     HostToWorkerMethodName, WorkerToHostMethodName, HOST_TO_WORKER_METHODS, WORKER_TO_HOST_METHODS,
+};
+pub use worker_to_host::{
+    dispatch_worker_to_host_request, parse_params, params_or_empty_object, ActivityLogParams, ActivityLogResult,
+    DataMutateParams, DataMutateResult, DataQueryParams, DataQueryResult, EmitEventParams,
+    EmitEventResult, GetStateParams, GetStateResult, LogParams, LogResult, NotifyParams,
+    NotifyResult, ProgressParams, ProgressResult, SetStateParams, SetStateResult, ToolInvokeParams,
+    ToolInvokeResult, WorkerToHostDispatcher, WorkerToHostHandler,
 };
 pub use types::{
     ConfigChangedParams, ExecuteToolParams, GetDataParams, HandleApiRequestParams,

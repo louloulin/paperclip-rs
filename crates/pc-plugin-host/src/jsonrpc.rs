@@ -16,13 +16,28 @@ use pc_plugin_protocol::{
     JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse, WORKER_TO_HOST_METHODS,
 };
 
-/// Async trait for handling worker → host JSON-RPC requests. The host
-/// invokes this callback when a worker calls one of the registered
-/// `WORKER_TO_HOST_METHODS` methods.
+/// Async wrapper around the typed
+/// `pc_plugin_protocol::WorkerToHostDispatcher`. Plugins that already
+/// implement the typed dispatcher (the recommended path) get a blanket
+/// `WorkerToHostHandler` impl for free; legacy async implementations can
+/// keep their custom `handle` directly on this trait.
 #[async_trait::async_trait]
 pub trait WorkerToHostHandler: Send + Sync {
     /// Handle the worker request and return a JSON value (or error).
     async fn handle(&self, method: &str, params: Option<Value>) -> Result<Value, JsonRpcError>;
+}
+
+// 任何实现了 `pc_plugin_protocol::WorkerToHostDispatcher` 的对象都自动
+// 满足 `pc_plugin_host::WorkerToHostHandler`：dispatcher trait 提供了同步
+// typed `handle`，host trait 只是把 `async fn` 包了一层。
+#[async_trait::async_trait]
+impl<T> WorkerToHostHandler for T
+where
+    T: pc_plugin_protocol::WorkerToHostDispatcher,
+{
+    async fn handle(&self, method: &str, params: Option<Value>) -> Result<Value, JsonRpcError> {
+        pc_plugin_protocol::dispatch_worker_to_host_request(method, params, self)
+    }
 }
 
 /// 待处理 RPC 调用的 `HashMap` 别名。

@@ -33,6 +33,40 @@ pub enum WorkerState {
     Crashed,
 }
 
+impl WorkerState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Ready => "ready",
+            Self::Busy => "busy",
+            Self::Running => "running",
+            Self::Stopping => "stopping",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+            Self::Error => "error",
+            Self::Crashed => "crashed",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Stopped | Self::Failed | Self::Crashed)
+    }
+
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            Self::Starting => matches!(next, Self::Ready | Self::Failed | Self::Error),
+            Self::Ready => matches!(next, Self::Busy | Self::Running | Self::Stopping | Self::Error | Self::Crashed),
+            Self::Busy | Self::Running => matches!(next, Self::Ready | Self::Stopping | Self::Error | Self::Crashed),
+            Self::Error => matches!(next, Self::Starting | Self::Stopping | Self::Failed | Self::Crashed),
+            Self::Stopping => matches!(next, Self::Stopped | Self::Failed),
+            Self::Stopped | Self::Failed | Self::Crashed => matches!(next, Self::Starting),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerOptions {
     pub plugin_id: Uuid,
@@ -256,7 +290,11 @@ impl WorkerHandle {
 
     async fn set_state(&self, new_state: WorkerState) {
         let mut state = self.state.lock().await;
-        *state = new_state;
+        if state.can_transition_to(new_state) {
+            *state = new_state;
+        } else {
+            warn!(plugin_id = %self.plugin_id, from = state.as_str(), to = new_state.as_str(), "ignored invalid worker state transition");
+        }
     }
 
     // ---- supervisor hooks ----
@@ -319,6 +357,31 @@ mod tests {
             instance_id: Uuid::new_v4(),
             init_timeout: Duration::from_secs(5),
         }
+    }
+
+    #[test]
+    fn r562_worker_state_names_and_terminal_states() {
+        assert_eq!(WorkerState::Starting.as_str(), "starting");
+        assert!(!WorkerState::Ready.is_terminal());
+        assert!(WorkerState::Stopped.is_terminal());
+        assert!(WorkerState::Failed.is_terminal());
+        assert!(WorkerState::Crashed.is_terminal());
+    }
+
+    #[test]
+    fn r562_worker_state_valid_transitions() {
+        assert!(WorkerState::Starting.can_transition_to(WorkerState::Ready));
+        assert!(WorkerState::Ready.can_transition_to(WorkerState::Busy));
+        assert!(WorkerState::Busy.can_transition_to(WorkerState::Ready));
+        assert!(WorkerState::Stopping.can_transition_to(WorkerState::Stopped));
+        assert!(WorkerState::Crashed.can_transition_to(WorkerState::Starting));
+    }
+
+    #[test]
+    fn r562_worker_state_invalid_transitions() {
+        assert!(!WorkerState::Starting.can_transition_to(WorkerState::Busy));
+        assert!(!WorkerState::Ready.can_transition_to(WorkerState::Stopped));
+        assert!(!WorkerState::Stopped.can_transition_to(WorkerState::Ready));
     }
 
     #[tokio::test]

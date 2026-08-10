@@ -92,6 +92,46 @@ impl SkillTestRunStatus {
             Self::Superseded => "superseded",
         }
     }
+
+    /// R560：是否为终态（不可再推进）。
+    ///
+    /// Passed / Failed / Cancelled / Superseded 都是终态。
+    /// Queued / Running 是中间态，可以继续推进。
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Passed | Self::Failed | Self::Cancelled | Self::Superseded
+        )
+    }
+
+    /// R560：状态机转换守卫。
+    ///
+    /// 合法的转换:
+    /// - Queued   → Running | Cancelled | Superseded
+    /// - Running  → Passed | Failed | Cancelled | Superseded
+    /// - 终态  → 不可再转换（除非是 Superseded 的旧 run 被新的 Queued 替换;
+    ///                那个路径用 `supersede_prior_runs` 而不是 `update_test_run_status`）
+    ///
+    /// 镜像 Node `canTransitionSkillTestRun` 在
+    /// `services/company-skills.ts` 中的语义。
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return false;
+        }
+        if self.is_terminal() {
+            return false;
+        }
+        match (self, next) {
+            (Self::Queued, Self::Running) => true,
+            (Self::Queued, Self::Cancelled) => true,
+            (Self::Queued, Self::Superseded) => true,
+            (Self::Running, Self::Passed) => true,
+            (Self::Running, Self::Failed) => true,
+            (Self::Running, Self::Cancelled) => true,
+            (Self::Running, Self::Superseded) => true,
+            _ => false,
+        }
+    }
 }
 
 // ---------- 1) company_skills ----------
@@ -2118,6 +2158,89 @@ mod tests {
     fn test_run_status_strings() {
         assert_eq!(SkillTestRunStatus::Queued.as_str(), "queued");
         assert_eq!(SkillTestRunStatus::Passed.as_str(), "passed");
+    }
+
+    // ============== R560: state machine ==============
+
+    #[test]
+    fn r560_terminal_states() {
+        assert!(!SkillTestRunStatus::Queued.is_terminal());
+        assert!(!SkillTestRunStatus::Running.is_terminal());
+        assert!(SkillTestRunStatus::Passed.is_terminal());
+        assert!(SkillTestRunStatus::Failed.is_terminal());
+        assert!(SkillTestRunStatus::Cancelled.is_terminal());
+        assert!(SkillTestRunStatus::Superseded.is_terminal());
+    }
+
+    #[test]
+    fn r560_valid_queued_transitions() {
+        let from = SkillTestRunStatus::Queued;
+        assert!(from.can_transition_to(SkillTestRunStatus::Running));
+        assert!(from.can_transition_to(SkillTestRunStatus::Cancelled));
+        assert!(from.can_transition_to(SkillTestRunStatus::Superseded));
+        // 跳到 Passed/Failed 不合法(必须先 Running)
+        assert!(!from.can_transition_to(SkillTestRunStatus::Passed));
+        assert!(!from.can_transition_to(SkillTestRunStatus::Failed));
+    }
+
+    #[test]
+    fn r560_valid_running_transitions() {
+        let from = SkillTestRunStatus::Running;
+        assert!(from.can_transition_to(SkillTestRunStatus::Passed));
+        assert!(from.can_transition_to(SkillTestRunStatus::Failed));
+        assert!(from.can_transition_to(SkillTestRunStatus::Cancelled));
+        assert!(from.can_transition_to(SkillTestRunStatus::Superseded));
+        // 跳回 Queued 不合法
+        assert!(!from.can_transition_to(SkillTestRunStatus::Queued));
+    }
+
+    #[test]
+    fn r560_terminal_states_cannot_transition() {
+        for terminal in [
+            SkillTestRunStatus::Passed,
+            SkillTestRunStatus::Failed,
+            SkillTestRunStatus::Cancelled,
+            SkillTestRunStatus::Superseded,
+        ] {
+            for next in [
+                SkillTestRunStatus::Queued,
+                SkillTestRunStatus::Running,
+                SkillTestRunStatus::Passed,
+                SkillTestRunStatus::Failed,
+                SkillTestRunStatus::Cancelled,
+                SkillTestRunStatus::Superseded,
+            ] {
+                assert!(
+                    !terminal.can_transition_to(next),
+                    "{:?} should not transition to {:?}",
+                    terminal,
+                    next
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r560_self_transition_rejected() {
+        for s in [
+            SkillTestRunStatus::Queued,
+            SkillTestRunStatus::Running,
+            SkillTestRunStatus::Passed,
+            SkillTestRunStatus::Failed,
+            SkillTestRunStatus::Cancelled,
+            SkillTestRunStatus::Superseded,
+        ] {
+            assert!(!s.can_transition_to(s), "self-transition should be rejected for {s:?}");
+        }
+    }
+
+    #[test]
+    fn r560_invalid_skips_rejected() {
+        // 跳级转换（如 Queued→Failed）应被拒绝
+        assert!(!SkillTestRunStatus::Queued.can_transition_to(SkillTestRunStatus::Failed));
+        assert!(!SkillTestRunStatus::Queued.can_transition_to(SkillTestRunStatus::Passed));
+        // 已 Cancelled 的 run 不能突然 Passed
+        assert!(!SkillTestRunStatus::Cancelled.can_transition_to(SkillTestRunStatus::Passed));
     }
     #[test]
     fn new_skill_input_basic_validation() {

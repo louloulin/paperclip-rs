@@ -11,6 +11,24 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod email_verification;
+pub mod error;
+pub mod oauth_state;
+pub mod session_refresh;
+
+pub use email_verification::{
+    consume_email_verification, issue_email_verification, verify_email_token, EmailVerificationOutcome,
+    EmailVerificationRecord,
+};
+pub use error::{classify as classify_auth_error, classify_str as classify_auth_str, AuthErrorCategory};
+pub use oauth_state::{
+    code_challenge_s256, new_oauth_state, verify_oauth_state, OAuthStateOutcome, OAuthStateRecord,
+};
+pub use session_refresh::{
+    check_session, new_session_record, rotate_session, should_rotate, touch_session,
+    SessionCheckOutcome, SessionPolicy, SessionRecord,
+};
+
 #[derive(Debug, Error)]
 pub enum AuthError {
     #[error("missing credentials")]

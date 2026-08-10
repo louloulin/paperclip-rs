@@ -18,6 +18,8 @@ pub mod plugin_stream_bus;
 pub mod pool;
 pub mod registry;
 pub mod supervisor;
+#[cfg(test)]
+mod host_dispatcher_e2e;
 
 pub use bundled_plugins::{
     ensure_bundled_plugins, resolve_bundled_catalog_root, resolve_bundled_plugin_installs,

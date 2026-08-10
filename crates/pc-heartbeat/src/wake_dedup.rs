@@ -389,8 +389,31 @@ pub fn build_decision_continuation_wake_key(decision_id: &str) -> String {
 }
 
 // ============================================================================
-// Tests
+// DB + env integration (R558)
 // ============================================================================
+
+/// R558：从 DB + env 构造最终的 `SuppressionInputs`。
+///
+/// 调用顺序:
+/// 1. `from_env` 读取 env vars
+/// 2. 用 `is_experimental_enabled("enableWorktreeRunExecution")` 读取 DB flag
+/// 3. 用 `with_db_override_opt` 注入(只覆盖,保留 env 中的其他字段)
+///
+/// 这样:
+/// - env vars 提供低延迟信号(boot-time override)
+/// - DB 提供持久多租户 override(multi-tenant 行级 override)
+/// - `database_restore_in_progress` 优先级最高,DB override 无法 lift
+pub async fn build_suppression_inputs(
+    db: &pc_repos::Db,
+    env: &std::collections::HashMap<String, String>,
+) -> SuppressionInputs {
+    let base = SuppressionInputs::from_env(env);
+    let db_armed = pc_repos::settings::SettingsRepo::new(db)
+        .is_experimental_enabled("enableWorktreeRunExecution")
+        .await
+        .unwrap_or(false);
+    base.with_db_override(db_armed)
+}
 
 #[cfg(test)]
 mod tests {

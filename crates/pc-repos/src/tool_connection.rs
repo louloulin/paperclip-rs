@@ -304,6 +304,212 @@ pub async fn delete_grant(db: &Db, grant_id: Uuid) -> RepoResult<u64> {
 // Round 227: v3 `connection_grants` 仓储方法（OAuth 安装 + revoke 完整实现）
 // ============================================================================
 
+// ============================================================================
+// R561: OAuth flow state machine (pure state machine, no IO)
+// ============================================================================
+//
+// 复刻 Node `peekOAuthState` / `startConnectionAuthorization` /
+// `completeConnectionAuthorization` 在 `services/tool-access.ts` 中的状态语义。
+//
+// 状态推进:
+//   Pending   ──> AwaitingCallback ──> Authorized
+//                                     ──> Failed
+//                                     ──> Expired
+//   AwaitingCallback ──> Failed / Expired
+//   Authorized ──> Refreshed (token 刷新,生成新 token,旧的 still usable until exp)
+//                ──> Revoked
+//   Refreshed  ──> Revoked
+//   Failed / Expired / Revoked 是终态,不可再推进
+//
+// 这是一个**纯枚举** — 状态存储和状态推进的具体实现由调用方负责
+// (DB-backed 或 in-memory 都行),本文件只定义状态机的合法性约束。
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthFlowState {
+    /// 初始：用户/agent 发起 OAuth,但还没有 redirect 到 provider
+    Pending,
+    /// 已发起 redirect,等待 provider 回调
+    AwaitingCallback,
+    /// 授权完成,access_token + refresh_token 已存储
+    Authorized,
+    /// Token 已刷新（refresh_token rotation）
+    Refreshed,
+    /// OAuth 流程失败（用户拒绝 / token exchange 失败 / 等等）
+    Failed,
+    /// State 过期（典型 TTL: 10 分钟）
+    Expired,
+    /// 用户/管理员主动撤销
+    Revoked,
+}
+
+impl OAuthFlowState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::AwaitingCallback => "awaiting_callback",
+            Self::Authorized => "authorized",
+            Self::Refreshed => "refreshed",
+            Self::Failed => "failed",
+            Self::Expired => "expired",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    /// R561：是否为终态（不可再推进）。
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Failed | Self::Expired | Self::Revoked)
+    }
+
+    /// R561：状态机转换守卫。
+    ///
+    /// 合法的转换:
+    /// - Pending          → AwaitingCallback
+    /// - AwaitingCallback → Authorized | Failed | Expired
+    /// - Authorized       → Refreshed | Revoked
+    /// - Refreshed        → Revoked
+    /// - 终态             → 不可转换
+    ///
+    /// 镜像 Node `transitionOAuthFlowState` 在 `services/tool-access.ts` 中的语义。
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return false;
+        }
+        if self.is_terminal() {
+            return false;
+        }
+        match (self, next) {
+            (Self::Pending, Self::AwaitingCallback) => true,
+            (Self::AwaitingCallback, Self::Authorized) => true,
+            (Self::AwaitingCallback, Self::Failed) => true,
+            (Self::AwaitingCallback, Self::Expired) => true,
+            (Self::Authorized, Self::Refreshed) => true,
+            (Self::Authorized, Self::Revoked) => true,
+            (Self::Refreshed, Self::Revoked) => true,
+            _ => false,
+        }
+    }
+
+    /// R561：OAuth callback 是否还在有效窗口内（用于判断 Expired 转换）。
+    ///
+    /// 典型 TTL: 10 分钟
+    pub const DEFAULT_TTL_SECS: i64 = 600;
+
+    pub fn callback_expired(initiated_at: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> bool {
+        let elapsed = now.signed_duration_since(initiated_at);
+        elapsed.num_seconds() > Self::DEFAULT_TTL_SECS
+    }
+}
+
+#[cfg(test)]
+mod oauth_flow_state_tests {
+    use super::*;
+
+    #[test]
+    fn r561_oauth_state_as_str() {
+        assert_eq!(OAuthFlowState::Pending.as_str(), "pending");
+        assert_eq!(OAuthFlowState::AwaitingCallback.as_str(), "awaiting_callback");
+        assert_eq!(OAuthFlowState::Authorized.as_str(), "authorized");
+        assert_eq!(OAuthFlowState::Refreshed.as_str(), "refreshed");
+        assert_eq!(OAuthFlowState::Failed.as_str(), "failed");
+        assert_eq!(OAuthFlowState::Expired.as_str(), "expired");
+        assert_eq!(OAuthFlowState::Revoked.as_str(), "revoked");
+    }
+
+    #[test]
+    fn r561_oauth_terminal_states() {
+        assert!(!OAuthFlowState::Pending.is_terminal());
+        assert!(!OAuthFlowState::AwaitingCallback.is_terminal());
+        assert!(!OAuthFlowState::Authorized.is_terminal());
+        assert!(!OAuthFlowState::Refreshed.is_terminal());
+        assert!(OAuthFlowState::Failed.is_terminal());
+        assert!(OAuthFlowState::Expired.is_terminal());
+        assert!(OAuthFlowState::Revoked.is_terminal());
+    }
+
+    #[test]
+    fn r561_oauth_valid_transitions() {
+        // Pending → AwaitingCallback
+        assert!(OAuthFlowState::Pending.can_transition_to(OAuthFlowState::AwaitingCallback));
+        // AwaitingCallback → Authorized | Failed | Expired
+        assert!(OAuthFlowState::AwaitingCallback.can_transition_to(OAuthFlowState::Authorized));
+        assert!(OAuthFlowState::AwaitingCallback.can_transition_to(OAuthFlowState::Failed));
+        assert!(OAuthFlowState::AwaitingCallback.can_transition_to(OAuthFlowState::Expired));
+        // Authorized → Refreshed | Revoked
+        assert!(OAuthFlowState::Authorized.can_transition_to(OAuthFlowState::Refreshed));
+        assert!(OAuthFlowState::Authorized.can_transition_to(OAuthFlowState::Revoked));
+        // Refreshed → Revoked
+        assert!(OAuthFlowState::Refreshed.can_transition_to(OAuthFlowState::Revoked));
+    }
+
+    #[test]
+    fn r561_oauth_invalid_transitions() {
+        // Pending 不能直接到 Authorized（必须经过 AwaitingCallback）
+        assert!(!OAuthFlowState::Pending.can_transition_to(OAuthFlowState::Authorized));
+        // Pending 不能直接到 Failed
+        assert!(!OAuthFlowState::Pending.can_transition_to(OAuthFlowState::Failed));
+        // AwaitingCallback 不能直接到 Refreshed
+        assert!(!OAuthFlowState::AwaitingCallback.can_transition_to(OAuthFlowState::Refreshed));
+        // AwaitingCallback 不能回 Pending
+        assert!(!OAuthFlowState::AwaitingCallback.can_transition_to(OAuthFlowState::Pending));
+        // Authorized 不能回 AwaitingCallback
+        assert!(!OAuthFlowState::Authorized.can_transition_to(OAuthFlowState::AwaitingCallback));
+    }
+
+    #[test]
+    fn r561_oauth_terminal_states_blocked() {
+        for terminal in [
+            OAuthFlowState::Failed,
+            OAuthFlowState::Expired,
+            OAuthFlowState::Revoked,
+        ] {
+            for next in [
+                OAuthFlowState::Pending,
+                OAuthFlowState::AwaitingCallback,
+                OAuthFlowState::Authorized,
+                OAuthFlowState::Refreshed,
+                OAuthFlowState::Failed,
+                OAuthFlowState::Expired,
+                OAuthFlowState::Revoked,
+            ] {
+                assert!(
+                    !terminal.can_transition_to(next),
+                    "{:?} should not transition to {:?}",
+                    terminal,
+                    next
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r561_oauth_self_transition_rejected() {
+        for s in [
+            OAuthFlowState::Pending,
+            OAuthFlowState::AwaitingCallback,
+            OAuthFlowState::Authorized,
+            OAuthFlowState::Refreshed,
+            OAuthFlowState::Failed,
+            OAuthFlowState::Expired,
+            OAuthFlowState::Revoked,
+        ] {
+            assert!(!s.can_transition_to(s), "self-transition should be rejected for {s:?}");
+        }
+    }
+
+    #[test]
+    fn r561_oauth_callback_expired_detection() {
+        use chrono::TimeZone;
+        let initiated = chrono::Utc.timestamp_millis_opt(1_000_000_000_000).unwrap();
+        // 5 分钟后:未过期
+        let now_5min = chrono::Utc.timestamp_millis_opt(1_000_000_300_000).unwrap();
+        assert!(!OAuthFlowState::callback_expired(initiated, now_5min));
+        // 11 分钟后:已过期
+        let now_11min = chrono::Utc.timestamp_millis_opt(1_000_000_660_000).unwrap();
+        assert!(OAuthFlowState::callback_expired(initiated, now_11min));
+    }
+}
+
 /// Round 227: v3 `connection_grants` 行投影。
 ///
 /// 对应 Node `connectionGrants.$inferSelect`：

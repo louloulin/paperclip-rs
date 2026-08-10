@@ -19,18 +19,77 @@ use crate::types::{
 
 use super::provider::{SecretProvider, SecretProviderRuntimeContext, SecretProviderWriteContext};
 
+/// Vault 鉴权方式。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VaultAuth {
+    /// 直接使用静态 token。
+    Token(String),
+    /// AppRole: `POST /v1/auth/approle/login`。
+    /// 响应里 `auth.client_token` 即 Vault token。
+    AppRole {
+        role_id: String,
+        secret_id: String,
+    },
+    /// Kubernetes auth: `POST /v1/auth/kubernetes/login`.
+    Kubernetes { role: String, jwt: String },
+}
+
 #[derive(Debug, Clone)]
 pub struct VaultProvider {
     addr: String,
-    token: String,
+    auth: VaultAuth,
+    /// Vault enterprise namespace；空字符串等价于 root。
+    namespace: String,
 }
 
 impl VaultProvider {
     pub fn new(addr: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             addr: addr.into(),
-            token: token.into(),
+            auth: VaultAuth::Token(token.into()),
+            namespace: String::new(),
         }
+    }
+
+    /// 切换为 AppRole 鉴权。
+    #[must_use]
+    pub fn with_approle(
+        addr: impl Into<String>,
+        role_id: impl Into<String>,
+        secret_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            addr: addr.into(),
+            auth: VaultAuth::AppRole {
+                role_id: role_id.into(),
+                secret_id: secret_id.into(),
+            },
+            namespace: String::new(),
+        }
+    }
+
+    /// 切换为 Kubernetes auth 鉴权。
+    #[must_use]
+    pub fn with_kubernetes_auth(
+        addr: impl Into<String>,
+        role: impl Into<String>,
+        jwt: impl Into<String>,
+    ) -> Self {
+        Self {
+            addr: addr.into(),
+            auth: VaultAuth::Kubernetes {
+                role: role.into(),
+                jwt: jwt.into(),
+            },
+            namespace: String::new(),
+        }
+    }
+
+    /// 设置 Vault enterprise namespace（X-Vault-Namespace header）。
+    #[must_use]
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = namespace.into();
+        self
     }
 
     pub fn from_config(provider_config: Option<Value>) -> Result<Self, String> {
@@ -41,12 +100,42 @@ impl VaultProvider {
             .or_else(|| cfg.get("addr").and_then(|v| v.as_str()))
             .ok_or_else(|| "missing address in vault provider_config".to_string())?
             .to_string();
+        let namespace = cfg
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        // 优先 AppRole，其次 Kubernetes，最后静态 token。
+        if let (Some(role_id), Some(secret_id)) = (
+            cfg.get("roleId").and_then(|v| v.as_str()),
+            cfg.get("secretId").and_then(|v| v.as_str()),
+        ) {
+            let mut p = Self::with_approle(addr, role_id, secret_id);
+            if !namespace.is_empty() {
+                p = p.with_namespace(namespace);
+            }
+            return Ok(p);
+        }
+        if let (Some(role), Some(jwt)) = (
+            cfg.get("kubernetesRole").and_then(|v| v.as_str()),
+            cfg.get("kubernetesJwt").and_then(|v| v.as_str()),
+        ) {
+            let mut p = Self::with_kubernetes_auth(addr, role, jwt);
+            if !namespace.is_empty() {
+                p = p.with_namespace(namespace);
+            }
+            return Ok(p);
+        }
         let token = cfg
             .get("token")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing token in vault provider_config".to_string())?
             .to_string();
-        Ok(Self::new(addr, token))
+        let mut p = Self::new(addr, token);
+        if !namespace.is_empty() {
+            p = p.with_namespace(namespace);
+        }
+        Ok(p)
     }
 
     pub(crate) fn addr(&self) -> &str {
@@ -54,7 +143,70 @@ impl VaultProvider {
     }
 
     pub(crate) fn token(&self) -> &str {
-        &self.token
+        match &self.auth {
+            VaultAuth::Token(t) => t,
+            // 对 AppRole / Kubernetes 而言，初始 token 为空串；调用方需先 login。
+            _ => "",
+        }
+    }
+
+    pub(crate) fn auth_kind(&self) -> &'static str {
+        match self.auth {
+            VaultAuth::Token(_) => "token",
+            VaultAuth::AppRole { .. } => "approle",
+            VaultAuth::Kubernetes { .. } => "kubernetes",
+        }
+    }
+
+    pub(crate) fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// 把构造时填入的 `AppRole` / `Kubernetes` 凭证兑换成真实 token。
+    /// 成功后 `self.auth` 变为 `Token(...)`，后续请求直接走静态 token 路径。
+    pub async fn exchange_token(&mut self) -> Result<(), String> {
+        let (path, payload) = match &self.auth {
+            VaultAuth::AppRole { role_id, secret_id } => (
+                "/v1/auth/approle/login".to_string(),
+                json!({ "role_id": role_id, "secret_id": secret_id }),
+            ),
+            VaultAuth::Kubernetes { role, jwt } => (
+                "/v1/auth/kubernetes/login".to_string(),
+                json!({ "role": role, "jwt": jwt }),
+            ),
+            VaultAuth::Token(_) => return Ok(()),
+        };
+        let url = format!("{}{}", self.addr.trim_end_matches('/'), path);
+        let mut req = client()
+            .post(&url)
+            .json(&payload);
+        if !self.namespace.is_empty() {
+            req = req.header("X-Vault-Namespace", &self.namespace);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("vault {} login request error: {e}", self.auth_kind()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "vault {} login returned {status}: {body}",
+                self.auth_kind()
+            ));
+        }
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("vault login json error: {e}"))?;
+        let token = v
+            .get("auth")
+            .and_then(|a| a.get("client_token"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| "vault login response missing auth.client_token".to_string())?
+            .to_string();
+        self.auth = VaultAuth::Token(token);
+        Ok(())
     }
 }
 
@@ -66,6 +218,20 @@ fn client() -> &'static Client {
             .build()
             .expect("reqwest client")
     })
+}
+
+/// 给 request builder 加上 X-Vault-Token 和（可选）X-Vault-Namespace。
+fn apply_auth_headers(
+    builder: reqwest::RequestBuilder,
+    token: &str,
+    namespace: &str,
+) -> reqwest::RequestBuilder {
+    let builder = builder.header("X-Vault-Token", token);
+    if !namespace.is_empty() {
+        builder.header("X-Vault-Namespace", namespace)
+    } else {
+        builder
+    }
 }
 
 /// path 限制：只允许 ASCII 字母数字 + `_` + `-` + `.` + `/`，长度 ≤ 1024。
@@ -98,8 +264,23 @@ impl SecretProvider for VaultProvider {
         if self.addr().is_empty() {
             return SecretProviderValidationResult::invalid("address is empty");
         }
-        if self.token().is_empty() {
-            return SecretProviderValidationResult::invalid("token is empty");
+        match &self.auth {
+            VaultAuth::Token(t) if t.is_empty() => {
+                return SecretProviderValidationResult::invalid("token is empty");
+            }
+            VaultAuth::AppRole { role_id, secret_id }
+                if role_id.is_empty() || secret_id.is_empty() =>
+            {
+                return SecretProviderValidationResult::invalid(
+                    "approle role_id/secret_id must be non-empty",
+                );
+            }
+            VaultAuth::Kubernetes { role, jwt } if role.is_empty() || jwt.is_empty() => {
+                return SecretProviderValidationResult::invalid(
+                    "kubernetes role/jwt must be non-empty",
+                );
+            }
+            _ => {}
         }
         SecretProviderValidationResult::valid()
     }
@@ -123,10 +304,8 @@ impl SecretProvider for VaultProvider {
                 "cas": 0,
             },
         });
-        let resp = client()
-            .post(&url)
-            .header("X-Vault-Token", self.token())
-            .json(&payload)
+        let req = client().post(&url).json(&payload);
+        let resp = apply_auth_headers(req, self.token(), self.namespace())
             .send()
             .await
             .map_err(|e| format!("vault write request error: {e}"))?;
@@ -183,9 +362,8 @@ impl SecretProvider for VaultProvider {
             self.addr().trim_end_matches('/'),
             path
         );
-        let resp = client()
-            .get(&url)
-            .header("X-Vault-Token", self.token())
+        let req = client().get(&url);
+        let resp = apply_auth_headers(req, self.token(), self.namespace())
             .send()
             .await
             .map_err(|e| format!("vault read request error: {e}"))?;
@@ -214,11 +392,8 @@ impl SecretProvider for VaultProvider {
     ) -> ProviderHealthCheck {
         // Vault health endpoint: GET /v1/sys/health
         let url = format!("{}/v1/sys/health", self.addr().trim_end_matches('/'));
-        match client()
-            .get(&url)
-            .header("X-Vault-Token", self.token())
-            .send()
-            .await
+        let req = client().get(&url);
+        match apply_auth_headers(req, self.token(), self.namespace()).send().await
         {
             Ok(r) => {
                 let s = r.status();
@@ -279,4 +454,113 @@ impl SecretProvider for VaultProvider {
 #[cfg(test)]
 pub(crate) fn sanitize_path_for_test(path: &str) -> Result<String, String> {
     sanitize_path(path)
+}
+
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn r564_vault_with_approle_starts_with_approle_auth() {
+        let p = VaultProvider::with_approle("https://vault.example.com", "role-1", "secret-1");
+        assert_eq!(p.auth_kind(), "approle");
+        assert_eq!(p.token(), "", "approle must not expose secret_id as token");
+        assert_eq!(p.namespace(), "");
+    }
+
+    #[test]
+    fn r564_vault_with_kubernetes_starts_with_kubernetes_auth() {
+        let p = VaultProvider::with_kubernetes_auth(
+            "https://vault.example.com",
+            "my-role",
+            "eyJhbGciOiJSUzI1NiJ9.payload",
+        );
+        assert_eq!(p.auth_kind(), "kubernetes");
+        assert_eq!(p.token(), "");
+    }
+
+    #[test]
+    fn r564_vault_with_namespace_passes_through() {
+        let p = VaultProvider::new("https://vault.example.com", "tok").with_namespace("team-a");
+        assert_eq!(p.namespace(), "team-a");
+    }
+
+    #[test]
+    fn r564_vault_from_config_picks_approle() {
+        let cfg = json!({
+            "address": "https://vault.example.com",
+            "roleId": "r",
+            "secretId": "s",
+            "namespace": "ns1",
+        });
+        let p = VaultProvider::from_config(Some(cfg)).unwrap();
+        assert_eq!(p.auth_kind(), "approle");
+        assert_eq!(p.namespace(), "ns1");
+    }
+
+    #[test]
+    fn r564_vault_from_config_picks_kubernetes() {
+        let cfg = json!({
+            "address": "https://vault.example.com",
+            "kubernetesRole": "my-role",
+            "kubernetesJwt": "jwt-token",
+        });
+        let p = VaultProvider::from_config(Some(cfg)).unwrap();
+        assert_eq!(p.auth_kind(), "kubernetes");
+    }
+
+    #[test]
+    fn r564_vault_from_config_falls_back_to_token() {
+        let cfg = json!({
+            "address": "https://vault.example.com",
+            "token": "static-tok",
+        });
+        let p = VaultProvider::from_config(Some(cfg)).unwrap();
+        assert_eq!(p.auth_kind(), "token");
+        assert_eq!(p.token(), "static-tok");
+    }
+
+    #[test]
+    fn r564_vault_from_config_rejects_missing_credentials() {
+        let cfg = json!({ "address": "https://vault.example.com" });
+        assert!(VaultProvider::from_config(Some(cfg)).is_err());
+    }
+
+    #[tokio::test]
+    async fn r564_vault_validate_config_rejects_empty_approle() {
+        let p = VaultProvider::with_approle("https://vault.example.com", "", "secret");
+        let r = p.validate_config(None).await;
+        assert!(!r.ok);
+        assert!(r.warnings[0].contains("approle"));
+    }
+
+    #[tokio::test]
+    async fn r564_vault_validate_config_accepts_full_approle() {
+        let p = VaultProvider::with_approle("https://vault.example.com", "role", "secret");
+        let r = p.validate_config(None).await;
+        assert!(r.ok);
+    }
+
+    #[tokio::test]
+    async fn r564_vault_token_provider_exchange_is_noop() {
+        // 静态 token 路径的 exchange_token 应当是 no-op。
+        let mut p = VaultProvider::new("https://vault.example.com", "t");
+        p.exchange_token().await.unwrap();
+        assert_eq!(p.auth_kind(), "token");
+        assert_eq!(p.token(), "t");
+    }
+
+    #[test]
+    fn r564_vault_approle_auth_constructs_request_shape() {
+        // 验证 login URL 与 payload 与 Vault 协议一致。
+        let p = VaultProvider::with_approle("https://vault.example.com/", "r", "s");
+        match p.auth {
+            VaultAuth::AppRole { role_id, secret_id } => {
+                assert_eq!(role_id, "r");
+                assert_eq!(secret_id, "s");
+            }
+            _ => panic!("expected AppRole"),
+        }
+    }
 }
