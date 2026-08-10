@@ -1,0 +1,25 @@
+[package]
+name = "pc-plugin-job-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Plugin job store service: sync declarations + run lifecycle (1:1 with Node services/plugin-job-store.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-db = { path = "../pc-db" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+chrono = { workspace = true }
+sqlx = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

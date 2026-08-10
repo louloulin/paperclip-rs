@@ -481,6 +481,258 @@ impl<'a> PluginRepo<'a> {
         .await
     }
 
+    // ---- Round R740: pc-plugin-job-store service 仓储扩展 ----
+
+    /// R740: list jobs by plugin_id + 可选 status filter（Node `listJobs`）。
+    pub async fn list_jobs_filtered(
+        &self,
+        plugin_id: Uuid,
+        status: Option<&str>,
+    ) -> sqlx::Result<Vec<PluginJobRow>> {
+        match status {
+            Some(s) => sqlx::query_as::<_, PluginJobRow>(
+                "SELECT id, plugin_id, job_key, schedule, status, last_run_at, next_run_at, created_at, updated_at \
+                 FROM plugin_jobs WHERE plugin_id = $1 AND status = $2 ORDER BY job_key ASC",
+            )
+            .bind(plugin_id)
+            .bind(s)
+            .fetch_all(self.db.pool())
+            .await,
+            None => sqlx::query_as::<_, PluginJobRow>(
+                "SELECT id, plugin_id, job_key, schedule, status, last_run_at, next_run_at, created_at, updated_at \
+                 FROM plugin_jobs WHERE plugin_id = $1 ORDER BY job_key ASC",
+            )
+            .bind(plugin_id)
+            .fetch_all(self.db.pool())
+            .await,
+        }
+    }
+
+    /// R740: get job by composite key (plugin_id, job_key)（Node `getJobByKey`）。
+    pub async fn get_job_by_key(
+        &self,
+        plugin_id: Uuid,
+        job_key: &str,
+    ) -> sqlx::Result<Option<PluginJobRow>> {
+        sqlx::query_as::<_, PluginJobRow>(
+            "SELECT id, plugin_id, job_key, schedule, status, last_run_at, next_run_at, created_at, updated_at \
+             FROM plugin_jobs WHERE plugin_id = $1 AND job_key = $2",
+        )
+        .bind(plugin_id)
+        .bind(job_key)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// R740: get job by primary key (UUID)（Node `getJobById`）。
+    pub async fn get_job_by_id(
+        &self,
+        job_id: Uuid,
+    ) -> sqlx::Result<Option<PluginJobRow>> {
+        sqlx::query_as::<_, PluginJobRow>(
+            "SELECT id, plugin_id, job_key, schedule, status, last_run_at, next_run_at, created_at, updated_at \
+             FROM plugin_jobs WHERE id = $1",
+        )
+        .bind(job_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// R740: get job scoped to plugin（Node `getJobByIdForPlugin`）。
+    pub async fn get_job_by_id_for_plugin(
+        &self,
+        plugin_id: Uuid,
+        job_id: Uuid,
+    ) -> sqlx::Result<Option<PluginJobRow>> {
+        sqlx::query_as::<_, PluginJobRow>(
+            "SELECT id, plugin_id, job_key, schedule, status, last_run_at, next_run_at, created_at, updated_at \
+             FROM plugin_jobs WHERE id = $1 AND plugin_id = $2",
+        )
+        .bind(job_id)
+        .bind(plugin_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// R740: update job status（Node `updateJobStatus`）。
+    pub async fn update_job_status(
+        &self,
+        job_id: Uuid,
+        status: &str,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE plugin_jobs SET status = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(job_id)
+        .bind(status)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// R740: 推进 lastRunAt / nextRunAt 时间戳（Node `updateRunTimestamps`）。
+    pub async fn update_run_timestamps(
+        &self,
+        job_id: Uuid,
+        last_run_at: Timestamp,
+        next_run_at: Option<Timestamp>,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE plugin_jobs SET last_run_at = $2, next_run_at = $3, updated_at = now() WHERE id = $1",
+        )
+        .bind(job_id)
+        .bind(last_run_at)
+        .bind(next_run_at)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// R740: delete all jobs for a plugin（Node `deleteAllJobs`）。
+    pub async fn delete_all_jobs(
+        &self,
+        plugin_id: Uuid,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query("DELETE FROM plugin_jobs WHERE plugin_id = $1")
+            .bind(plugin_id)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
+        Ok(n)
+    }
+
+    /// R740: 检查 plugin 是否存在（Node `assertPluginExists`）。
+    pub async fn assert_plugin_exists(&self, plugin_id: Uuid) -> RepoResult<bool> {
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM plugins WHERE id = $1")
+            .bind(plugin_id)
+            .fetch_optional(self.db.pool())
+            .await?;
+        Ok(row.is_some())
+    }
+
+    /// R740: create a run with status='queued' + null started_at（Node `createRun`）。
+    pub async fn create_queued_run(
+        &self,
+        plugin_id: Uuid,
+        job_id: Uuid,
+        trigger: &str,
+        company_id: Option<Uuid>,
+    ) -> sqlx::Result<PluginJobRunRow> {
+        sqlx::query_as::<_, PluginJobRunRow>(
+            "INSERT INTO plugin_job_runs (plugin_id, job_id, company_id, trigger, status) \
+             VALUES ($1, $2, $3, $4, 'queued') \
+             RETURNING id, job_id, plugin_id, company_id, trigger, status, duration_ms, error, logs, \
+                       started_at, finished_at, created_at",
+        )
+        .bind(plugin_id)
+        .bind(job_id)
+        .bind(company_id)
+        .bind(trigger)
+        .fetch_one(self.db.pool())
+        .await
+    }
+
+    /// R740: mark run as running + startedAt = now()（Node `markRunning`）。
+    pub async fn mark_run_running(&self, run_id: Uuid) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE plugin_job_runs SET status = 'running', started_at = now() WHERE id = $1",
+        )
+        .bind(run_id)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// R740: complete a run with final status + error + duration + finishedAt（Node `completeRun`）。
+    pub async fn complete_run(
+        &self,
+        run_id: Uuid,
+        status: &str,
+        error: Option<&str>,
+        duration_ms: Option<i32>,
+    ) -> RepoResult<u64> {
+        let n = sqlx::query(
+            "UPDATE plugin_job_runs SET status = $2, error = $3, duration_ms = $4, finished_at = now() \
+             WHERE id = $1",
+        )
+        .bind(run_id)
+        .bind(status)
+        .bind(error)
+        .bind(duration_ms)
+        .execute(self.db.pool())
+        .await?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// R740: get run by primary key（Node `getRunById`）。
+    pub async fn get_run_by_id(
+        &self,
+        run_id: Uuid,
+    ) -> sqlx::Result<Option<PluginJobRunRow>> {
+        sqlx::query_as::<_, PluginJobRunRow>(
+            "SELECT id, job_id, plugin_id, company_id, trigger, status, duration_ms, error, logs, \
+                    started_at, finished_at, created_at \
+             FROM plugin_job_runs WHERE id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// R740: list runs by job_id（Node `listRunsByJob`）。
+    pub async fn list_runs_by_job(
+        &self,
+        job_id: Uuid,
+        limit: i64,
+    ) -> sqlx::Result<Vec<PluginJobRunRow>> {
+        sqlx::query_as::<_, PluginJobRunRow>(
+            "SELECT id, job_id, plugin_id, company_id, trigger, status, duration_ms, error, logs, \
+                    started_at, finished_at, created_at \
+             FROM plugin_job_runs WHERE job_id = $1 \
+             ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(job_id)
+        .bind(limit.clamp(1, 500))
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    /// R740: list runs by plugin_id + 可选 status filter（Node `listRunsByPlugin`）。
+    pub async fn list_runs_by_plugin(
+        &self,
+        plugin_id: Uuid,
+        status: Option<&str>,
+        limit: i64,
+    ) -> sqlx::Result<Vec<PluginJobRunRow>> {
+        match status {
+            Some(s) => sqlx::query_as::<_, PluginJobRunRow>(
+                "SELECT id, job_id, plugin_id, company_id, trigger, status, duration_ms, error, logs, \
+                        started_at, finished_at, created_at \
+                 FROM plugin_job_runs WHERE plugin_id = $1 AND status = $2 \
+                 ORDER BY created_at DESC LIMIT $3",
+            )
+            .bind(plugin_id)
+            .bind(s)
+            .bind(limit.clamp(1, 500))
+            .fetch_all(self.db.pool())
+            .await,
+            None => sqlx::query_as::<_, PluginJobRunRow>(
+                "SELECT id, job_id, plugin_id, company_id, trigger, status, duration_ms, error, logs, \
+                        started_at, finished_at, created_at \
+                 FROM plugin_job_runs WHERE plugin_id = $1 \
+                 ORDER BY created_at DESC LIMIT $2",
+            )
+            .bind(plugin_id)
+            .bind(limit.clamp(1, 500))
+            .fetch_all(self.db.pool())
+            .await,
+        }
+    }
+
     pub async fn list_webhook_deliveries(
         &self,
         plugin_id: Uuid,

@@ -2141,6 +2141,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-adapter-plugin-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pc-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pc-adapter-process"
 version = "0.1.0"
 dependencies = [
@@ -2164,16 +2178,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "pc-adapter-registry-bootstrap"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]
@@ -2532,6 +2536,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-company-export-readme"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pc-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pc-company-member"
 version = "0.1.0"
 dependencies = [
@@ -2838,74 +2852,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-feedback-redaction"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pc-feedback-share"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-errors",
- "pc-repos",
- "pc-telemetry",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pc-feedback-share-client"
+name = "pc-feedback"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
  "chrono",
  "flate2",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
-]
-
-[[package]]
-name = "pc-feedback-trace"
-version = "0.1.0"
-dependencies = [
- "async-trait",
  "pc-core",
  "pc-errors",
  "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-feedback-vote"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-core",
- "pc-errors",
- "pc-repos",
+ "pc-telemetry",
  "serde",
  "serde_json",
  "sqlx",
@@ -3566,6 +3523,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-plugin-capability-validator"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "pc-plugin-config-validator"
 version = "0.1.0"
 dependencies = [
@@ -3598,6 +3565,23 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pc-plugin-job-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pc-core",
+ "pc-db",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4190,6 +4174,25 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "pc-work-products"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pc-batch-insert",
+ "pc-core",
+ "pc-import-write-types",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
