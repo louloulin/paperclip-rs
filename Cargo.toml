@@ -44,6 +44,8 @@ members = [
     "crates/pc-backup",
     "crates/pc-migrate",
     "crates/pc-cron",
+    "crates/pc-approvals",
+    "crates/pc-budgets",
 ]
 
 [workspace.package]

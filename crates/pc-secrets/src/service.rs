@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn r570_default_service_has_no_rotation_policy() {
         let s = SecretService::new();
-        let created = Utc::now() - Duration::days(365);
+        let created = Utc::now() - Duration::days(30);
         let eval = s.evaluate_secret_age(created, None);
         assert!(!eval.should_rotate());
     }

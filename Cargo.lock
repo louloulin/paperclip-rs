@@ -2153,6 +2153,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-approvals"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures-executor",
+ "pc-core",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-auth"
 version = "0.1.0"
 dependencies = [
@@ -2206,6 +2222,23 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pc-budgets"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures-executor",
+ "pc-core",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
  "tracing",
  "uuid",
 ]

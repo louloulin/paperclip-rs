@@ -1,0 +1,24 @@
+[package]
+name = "pc-budgets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Budget business layer: window calc, status inference, incident resolution"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+futures-executor = "0.3"

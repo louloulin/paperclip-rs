@@ -1,0 +1,23 @@
+[package]
+name = "pc-approvals"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Approval business layer: state machine + hooks for hire/budget side effects"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+uuid = { workspace = true }
+
+[dev-dependencies]
+futures-executor = "0.3"
