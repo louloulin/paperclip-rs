@@ -6,7 +6,6 @@ use pc_telemetry::feedback_share::{
     FeedbackTraceShareClient, FeedbackTraceShareError, UploadTraceBundleResponse,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

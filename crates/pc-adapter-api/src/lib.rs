@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod models_env;
+pub mod plugin_store;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;

@@ -21,3 +21,6 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+axum = { workspace = true }
+tokio-tungstenite = "0.24"
+anyhow = { workspace = true }

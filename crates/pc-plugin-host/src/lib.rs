@@ -8,12 +8,16 @@
 //! - 维护 `{plugin_id -> WorkerHandle}` 映射
 //! - 支持 graceful shutdown、health check、job dispatch
 
+pub mod capability_validator;
 pub mod bundled_plugins;
 pub mod handle;
 pub mod jsonrpc;
 pub mod notifications;
 pub mod plugin_event_bus;
 pub mod plugin_install_guard;
+pub mod config_validator;
+pub mod job_store;
+pub mod manifest_validator;
 pub mod plugin_stream_bus;
 pub mod pool;
 pub mod registry;

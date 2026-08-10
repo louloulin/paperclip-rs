@@ -258,6 +258,9 @@ pub use rate_limit::{
     DEFAULT_BUCKET_REFILL_PER_SECOND, DEFAULT_MAX_CONNECTIONS_PER_COMPANY,
 };
 
+/// R743: WebSocket 桥接层（原 `pc-ws` crate 已下沉）。
+pub mod ws_bridge;
+
 /// WebSocket state（server 名 + realtime handle）。
 #[derive(Clone)]
 pub struct WsState {

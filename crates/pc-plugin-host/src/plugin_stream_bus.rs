@@ -199,6 +199,18 @@ impl PluginStreamBus for InMemoryPluginStreamBus {
 // Tests
 // ============================================================================
 
+
+// ============================================================================
+// Factory
+// ============================================================================
+
+/// 构造默认 `InMemoryPluginStreamBus` 的工厂函数。
+///
+/// 旧 `pc-plugin-stream-bus` crate 的 `create_plugin_stream_bus()` API 等价物。
+pub fn create_plugin_stream_bus() -> InMemoryPluginStreamBus {
+    InMemoryPluginStreamBus::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

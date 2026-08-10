@@ -18,6 +18,11 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+pc-repos = { path = "../pc-repos" }
+pc-core = { path = "../pc-core" }
+pc-db = { path = "../pc-db" }
+sqlx = { workspace = true }
+jsonschema = { version = "0.29", default-features = false }
 tracing = "0.1"
 futures = { workspace = true }
 

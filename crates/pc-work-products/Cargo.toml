@@ -11,7 +11,6 @@ workspace = true
 [dependencies]
 pc-core = { path = "../pc-core" }
 pc-repos = { path = "../pc-repos" }
-pc-import-write-types = { path = "../pc-import-write-types" }
 pc-batch-insert = { path = "../pc-batch-insert" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

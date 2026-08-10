@@ -8,8 +8,10 @@
 //! - `createManyForImport`: 把每个 (issue, type) group 中"最后一个 isPrimary"作为
 //!   primary，其余设为 false；在事务内 chunked INSERT
 
+pub mod import_write_types;
+
 use chrono::{DateTime, Utc};
-use pc_import_write_types::ImportIssueWorkProductRow;
+use crate::import_write_types::ImportIssueWorkProductRow;
 use pc_repos::Db;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

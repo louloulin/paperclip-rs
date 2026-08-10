@@ -4,7 +4,9 @@
 
 mod actor;
 mod built_in_agent_metadata;
+mod default_agent_instructions;
 mod instructions;
+mod skill_selection;
 mod permissions;
 mod service;
 mod snapshot;
@@ -19,6 +21,15 @@ pub use actor::{
 pub use built_in_agent_metadata::{
     built_in_agent_markers_equal, read_built_in_agent_marker, with_built_in_agent_marker,
     BuiltInAgentMarker, BUILT_IN_AGENT_METADATA_KEY,
+};
+pub use default_agent_instructions::{
+    load_default_agent_instructions_bundle, resolve_default_agent_instructions_bundle_role,
+    AgentInstructionsRole as DefaultAgentInstructionsRole, DefaultAgentInstructionsError,
+    DefaultAgentInstructionsHook, DefaultAgentInstructionsHookEvent, DefaultAgentInstructionsService,
+    DefaultAgentInstructionsResult, NoopDefaultHook, RecordingDefaultHook,
+};
+pub use skill_selection::{
+    skill_version_selection_map, SkillSelectionEntry, SkillVersionSelectionOptions,
 };
 pub use instructions::{
     AgentInstructionsBundle, AgentInstructionsFileDetail, AgentInstructionsFileSummary,

@@ -15,6 +15,9 @@
 //! Round R593：起步 — 实现 `preview`（对应上游 `previewExport` / `getExportPreview`）。
 //! 完整 export/import 留待后续轮次。
 
+pub mod portable_path;
+pub use portable_path::*;
+
 use async_trait::async_trait;
 use pc_repos::company_export::{
     AgentSummary, CompanyExportPreview, CompanyExportRepo, IssueSummary, PipelineSummary,

@@ -1956,9 +1956,11 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -2141,20 +2143,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-adapter-plugin-store"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "pc-core",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "pc-adapter-process"
 version = "0.1.0"
 dependencies = [
@@ -2196,6 +2184,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "uuid",
@@ -2729,20 +2718,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-default-agent-instructions"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "pc-dev-server-status"
 version = "0.1.0"
 dependencies = [
@@ -3074,17 +3049,6 @@ dependencies = [
  "tower 0.5.3",
  "tower-http",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-import-write-types"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "pc-core",
- "serde",
- "serde_json",
  "uuid",
 ]
 
@@ -3523,35 +3487,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-plugin-capability-validator"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
-name = "pc-plugin-config-validator"
-version = "0.1.0"
-dependencies = [
- "jsonschema 0.29.1",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "pc-plugin-host"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "jsonschema 0.29.1",
+ "pc-core",
+ "pc-db",
  "pc-plugin-protocol",
+ "pc-repos",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
@@ -3568,23 +3517,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-plugin-job-store"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "pc-core",
- "pc-db",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-plugin-log-retention"
 version = "0.1.0"
 dependencies = [
@@ -3598,14 +3530,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-plugin-manifest-validator"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3639,13 +3563,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-plugin-stream-bus"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "pc-plugin-ui-static"
 version = "0.1.0"
 dependencies = [
@@ -3675,10 +3592,6 @@ dependencies = [
  "tracing",
  "uuid",
 ]
-
-[[package]]
-name = "pc-portable-path"
-version = "0.1.0"
 
 [[package]]
 name = "pc-principal-access-compatibility"
@@ -3737,6 +3650,8 @@ dependencies = [
 name = "pc-realtime"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "axum",
  "chrono",
  "dashmap",
  "futures",
@@ -3747,6 +3662,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "uuid",
 ]
@@ -3807,19 +3723,11 @@ dependencies = [
 name = "pc-responsible-user-denial"
 version = "0.1.0"
 dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "pc-responsible-user-denial-run-outcomes"
-version = "0.1.0"
-dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
  "pc-live-events",
  "pc-repos",
- "pc-responsible-user-denial",
  "serde",
  "serde_json",
  "sqlx",
@@ -3876,10 +3784,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-run-continuations"
-version = "0.1.0"
-
-[[package]]
 name = "pc-run-liveness"
 version = "0.1.0"
 dependencies = [
@@ -3895,13 +3799,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-runtime-skill-selections"
-version = "0.1.0"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -3978,15 +3875,7 @@ name = "pc-session-workspace-cwd"
 version = "0.1.0"
 
 [[package]]
-name = "pc-sidebar-badges"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde_json",
-]
-
-[[package]]
-name = "pc-sidebar-preferences"
+name = "pc-sidebar"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -4062,13 +3951,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-systemd-notify"
-version = "0.1.0"
-dependencies = [
- "tokio",
 ]
 
 [[package]]
@@ -4185,7 +4067,6 @@ dependencies = [
  "chrono",
  "pc-batch-insert",
  "pc-core",
- "pc-import-write-types",
  "pc-repos",
  "serde",
  "serde_json",
