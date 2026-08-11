@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::rules::RolloutRule;
+use super::rules::RolloutRule;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FeatureKey(&'static str);

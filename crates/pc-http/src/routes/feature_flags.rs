@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use pc_feature_flags::{FeatureKey, RolloutStrategy};
+use pc_core::feature_flags::{FeatureKey, RolloutStrategy};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -68,7 +68,7 @@ async fn register_flag(
     let enabled = body.enabled;
     let rule_strategy = body.into_rollout();
     let key = FeatureKey::new(Box::leak(key_str.clone().into_boxed_str()));
-    let rule = rule_strategy.map(|s| pc_feature_flags::rules::RolloutRule { strategy: s });
+    let rule = rule_strategy.map(|s| pc_core::feature_flags::rules::RolloutRule { strategy: s });
     state.feature_flags.catalog().register(key, enabled, rule);
     Ok(Json(json!({ "key": key_str, "registered": true })))
 }

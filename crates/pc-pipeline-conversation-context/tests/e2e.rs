@@ -6,7 +6,7 @@ use pc_pipeline_conversation_context::{
     MAX_CONTEXT_BODY_CHARS,
 };
 use pc_repos::Db;
-use pc_source_trust::{
+use pc_core::source_trust_resolver::{
     build_low_trust_source_trust, LowTrustSourceTrustInput, SourceTrustMetadata,
     LOW_TRUST_QUARANTINED_BODY,
 };

@@ -30,7 +30,7 @@ pc-heartbeat = { path = "../../crates/pc-heartbeat" }
 pc-repos = { path = "../../crates/pc-repos" }
 pc-storage = { path = "../../crates/pc-storage" }
 pc-secrets = { path = "../../crates/pc-secrets" }
-pc-feature-flags = { path = "../../crates/pc-feature-flags" }
+
 pc-plugin-host = { path = "../../crates/pc-plugin-host" }
 pc-plugin-protocol = { path = "../../crates/pc-plugin-protocol" }
 uuid = { workspace = true }

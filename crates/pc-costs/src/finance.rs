@@ -1,16 +1,8 @@
-#![forbid(unsafe_code)]
-//! `pc-finance` —— finance service 高级 facade。
+//! Finance service 高级 facade。
 //!
-//! 对应 Node `server/src/services/finance.ts`（134 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - [`FinanceSummary`] / [`FinanceByBiller`] / [`FinanceByKind`] / [`FinanceEventRow`]：re-export
-//! - [`finance_service`] factory —— typed handle，提供 summary / byBiller / byKind / list / createEvent
-//! - 重新导出 pc-repos 的 `CostRange` / `NewFinanceEvent` / `FinanceCreateError`
-//!
-//! 与 pc-repos 的区别：
-//! - pc-repos 提供 SQL 实现（`CostRepo::finance_summary` 等）
-//! - 本 crate 提供 typed factory facade，对外暴露 Node 端 `financeService(db)` 风格 API
+//! 对应 Node `server/src/services/finance.ts`（134 行）1:1 复刻。
+//! （原 `pc-finance` crate 已下沉到 `pc-costs::finance`）。
+
 
 use std::sync::Arc;
 

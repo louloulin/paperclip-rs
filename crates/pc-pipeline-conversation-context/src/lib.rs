@@ -7,7 +7,7 @@
 //! conversation issue, and renders a redacted markdown summary safe to
 //! embed into higher-trust agent contexts.
 //!
-//! Redaction is delegated to `pc-source-trust` (low-trust quarantine
+//! Redaction is delegated to `pc_core::source_trust_resolver` (low-trust quarantine
 //! markers, comment sanitisation) so the quarantine policy stays in
 //! one place.
 
@@ -16,7 +16,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use pc_repos::Db;
-use pc_source_trust::{
+use pc_core::source_trust_resolver::{
     build_low_trust_source_trust, is_low_trust_quarantined,
     redact_quarantined_body_for_higher_trust, sanitize_quarantined_comment_for_higher_trust,
     SourceTrustMetadata, LOW_TRUST_QUARANTINED_BODY,
@@ -480,7 +480,7 @@ pub struct RedactBodyInput {
     pub source_trust: Option<SourceTrustMetadata>,
 }
 
-impl pc_source_trust::RedactableBody for RedactBodyInput {
+impl pc_core::source_trust_resolver::RedactableBody for RedactBodyInput {
     fn body(&self) -> Option<&str> {
         if self.body.is_empty() { None } else { Some(&self.body) }
     }
@@ -501,7 +501,7 @@ pub struct RedactCommentInput {
     pub source_trust: Option<SourceTrustMetadata>,
 }
 
-impl pc_source_trust::SanitizableComment for RedactCommentInput {
+impl pc_core::source_trust_resolver::SanitizableComment for RedactCommentInput {
     fn source_trust(&self) -> Option<&SourceTrustMetadata> {
         self.source_trust.as_ref()
     }
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn low_trust_body_gets_quarantined() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_source_trust::LowTrustSourceTrustInput {
+        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
             issue_id: "i-1".to_string(),
             run_id: None,
             agent_id: None,
@@ -690,7 +690,7 @@ mod tests {
     #[test]
     fn is_low_trust_quarantined_matches_low_trust_preset() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_source_trust::LowTrustSourceTrustInput {
+        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
             issue_id: "i-1".to_string(),
             run_id: None,
             agent_id: None,
@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn low_trust_comment_gets_sanitized() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_source_trust::LowTrustSourceTrustInput {
+        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
             issue_id: "i-1".to_string(),
             run_id: None,
             agent_id: None,
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn format_with_body_document_includes_fence() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_source_trust::LowTrustSourceTrustInput {
+        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
             issue_id: "i-1".to_string(),
             run_id: None,
             agent_id: None,
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn format_low_trust_redacts_anchor_text_but_keeps_comment_metadata() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_source_trust::LowTrustSourceTrustInput {
+        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
             issue_id: "i-1".to_string(),
             run_id: None,
             agent_id: None,

@@ -1348,6 +1348,7 @@ pub fn evaluate_daily_cap(
 }
 pub mod systemd_notify;
 pub mod readiness;
+pub mod effective_run_config_fingerprints;
 pub mod recovery;
 pub mod retry_policy;
 pub mod run_scratch;

@@ -1,25 +1,17 @@
-#![forbid(unsafe_code)]
-//! `pc-source-trust` —— source trust metadata 分类与编辑。
+//! Source trust metadata 分类与编辑（含 resolver trait）。
 //!
-//! 对应 Node `server/src/services/source-trust.ts`（173 行）。
+//! 对应 Node `server/src/services/source-trust.ts`（173 行）1:1 复刻。
+//! （原 `pc-source-trust` crate 已下沉到 `pc-core::source_trust_resolver`）。
 //!
-//! 设计目标：1:1 复刻
-//! - [`SourceTrustMetadata`] —— 完整 DTO（preset / disposition / source / promotedFrom / promotedBy）
-//! - [`is_low_trust_quarantined`] / [`redact_quarantined_body_for_higher_trust`] /
-//!   [`sanitize_quarantined_comment_for_higher_trust`] —— pure helper
-//! - [`build_low_trust_source_trust`] / [`build_promoted_source_trust`] —— 构造 helper
-//! - [`resolve_actor_source_trust_for_issue`] —— async；通过 [`SourceTrustResolver`] 注入
-//!
-//! 与 Node 的差异：
-//! - DB 通过 [`SourceTrustResolver`] trait 注入（测试用 fake）
-//! - `forbidden` 错误用 [`SourceTrustError`] 表示
+//! 提供 [`SourceTrustResolver`] trait 抽象 IO；纯规则部分见 [`crate::source_trust`]。
+
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use pc_trust_preset_resolver::{
+pub use crate::trust_preset_resolver::{
     resolve_core_trust_preset, PolicySource, ResolveCoreTrustPresetInput, TrustPresetDenyReason,
     TrustPresetResolution, DEFAULT_TRUST_PRESET, LOW_TRUST_REVIEW_PRESET,
 };

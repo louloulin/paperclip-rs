@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::catalog::{FeatureCatalog, FeatureKey};
+use super::catalog::{FeatureCatalog, FeatureKey};
 
 #[derive(Clone)]
 pub struct FeatureEvaluator {
@@ -61,12 +61,12 @@ impl SharedFeatureEvaluator {
     }
 
     #[must_use]
-    pub fn catalog(&self) -> &crate::catalog::FeatureCatalog {
+    pub fn catalog(&self) -> &super::catalog::FeatureCatalog {
         self.0.catalog()
     }
 
     #[must_use]
-    pub fn is_enabled(&self, key: &crate::catalog::FeatureKey, actor_id: uuid::Uuid) -> bool {
+    pub fn is_enabled(&self, key: &super::catalog::FeatureKey, actor_id: uuid::Uuid) -> bool {
         self.0.is_enabled(key, actor_id)
     }
 }
@@ -74,7 +74,7 @@ impl SharedFeatureEvaluator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::RolloutRule;
+    use crate::feature_flags::{RolloutRule, RolloutStrategy};
     use uuid::Uuid;
 
     #[test]
@@ -120,7 +120,7 @@ mod tests {
             FeatureKey::new("x"),
             true,
             Some(RolloutRule {
-                strategy: crate::rules::RolloutStrategy::AllowList { ids: vec![allow] },
+                strategy: RolloutStrategy::AllowList { ids: vec![allow] },
             }),
         );
         let ev = FeatureEvaluator::new(cat);

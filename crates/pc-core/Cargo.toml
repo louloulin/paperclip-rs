@@ -29,3 +29,7 @@ kameo = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true, optional = true }
 url = "2"
+
+[dev-dependencies]
+pc-repos = { path = "../pc-repos" }
+sqlx = { workspace = true }

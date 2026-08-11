@@ -372,15 +372,15 @@ async fn main() -> anyhow::Result<()> {
 
         // Register a default feature flag so /api/feature-flags has non-empty data on startup.
         state.feature_flags.catalog().register(
-            pc_feature_flags::FeatureKey::new("pc.ui.dense-mode"),
+            pc_core::feature_flags::FeatureKey::new("pc.ui.dense-mode"),
             true,
             None,
         );
         state.feature_flags.catalog().register(
-            pc_feature_flags::FeatureKey::new("pc.workflows.auto-archive"),
+            pc_core::feature_flags::FeatureKey::new("pc.workflows.auto-archive"),
             true,
-            Some(pc_feature_flags::rules::RolloutRule {
-                strategy: pc_feature_flags::rules::RolloutStrategy::Percentage { pct: 25 },
+            Some(pc_core::feature_flags::rules::RolloutRule {
+                strategy: pc_core::feature_flags::rules::RolloutStrategy::Percentage { pct: 25 },
             }),
         );
         tracing::info!("feature flags: registered 2 default flags");

@@ -1,20 +1,11 @@
-//! Low-trust runtime containment（原 `pc-low-trust-runtime-containment` 已下沉）。
-//! low-trust review preset 启用时的工作区隔离、
-//! runtime service 许可、ancestor 链深度校验。
+//! Trust preset resolver 业务服务。
 //!
-//! 对齐 Node `services/low-trust-runtime-containment.ts`：
-//! - `LOW_TRUST_RUNTIME_MANAGEMENT_TOOL_CLASS = "runtime.manage"`
-//! - `isLowTrustRuntimeManagementAllowed`: 仅当 resolution.kind == low_trust_review
-//!   且 boundary.allowed_tool_classes 包含 runtime.manage 时返回 true
-//! - `assertLowTrustWorkspaceIsolation`: 校验 isolated workspaces 已启用 +
-//!   execution workspace mode = isolated_workspace + sandbox driver +
-//!   issue 在 boundary 内（直接或祖先链内）
-//! - `assertLowTrustRuntimeServicesAllowed`: resolution 是 denied 时抛错；
-//!   low_trust_review + 0 service 跳过；runtime.manage 不在 boundary 中则拒绝
-//! - `issueIdIsDescendantOf`: 沿 parent_id 链向上至多 12 层
+//! 对应 Node `server/src/services/trust-preset-resolver.ts` 1:1 复刻。
+//! （原 `pc-trust-preset-resolver` crate 已下沉到 `pc-core::trust_preset_resolver`）。
+
 
 use pc_repos::Db;
-use crate::{
+use super::{
     is_issue_within_low_trust_boundary, BoundaryIssue, LowTrustBoundaryWithCompany,
     TrustPresetResolution, LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH,
 };

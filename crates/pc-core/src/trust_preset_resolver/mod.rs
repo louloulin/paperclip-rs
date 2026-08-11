@@ -1,17 +1,8 @@
-#![forbid(unsafe_code)]
-//! `pc-trust-preset-resolver` —— trust preset 解析与 boundary 合并。
+//! Trust preset resolver 业务服务。
 //!
-//! 对应 Node `server/src/services/trust-preset-resolver.ts`（349 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - [`resolve_core_trust_preset`] —— 合并 agent/project/issue/run 四层 policy
-//! - [`is_issue_within_low_trust_boundary`] —— 检查 issue 是否在 boundary 内
-//! - [`parse_authorization_policy`] / [`parse_preset`] / [`parse_boundary`] —— schema 校验
-//! - [`merge_boundary`] —— boundary 交集合并
-//!
-//! 与 Node 的差异：
-//! - 用 `serde_json::Value` 替代 zod，手写 validation
-//! - Trust preset ID 用 enum（保持字符串值兼容）
+//! 对应 Node `server/src/services/trust-preset-resolver.ts` 1:1 复刻。
+//! （原 `pc-trust-preset-resolver` crate 已下沉到 `pc-core::trust_preset_resolver`）。
+
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -863,6 +854,7 @@ pub struct BoundaryIssue {
     pub project_id: Option<String>,
 }
 
+#[cfg(test)]
 #[cfg(test)]
 pub mod runtime_containment;
 

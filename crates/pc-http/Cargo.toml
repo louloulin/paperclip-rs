@@ -15,6 +15,7 @@ pc-approvals = { path = "../pc-approvals" }
 pc-budgets = { path = "../pc-budgets" }
 pc-companies = { path = "../pc-companies" }
 pc-portability = { path = "../pc-portability" }
+pc-routines = { path = "../pc-routines" }
 pc-pipelines = { path = "../pc-pipelines" }
 pc-issues = { path = "../pc-issues" }
 pc-decisions = { path = "../pc-decisions" }
@@ -39,7 +40,7 @@ pc-dev-server-status = { path = "../pc-dev-server-status" }
 pc-plugin-ui-static = { path = "../pc-plugin-ui-static" }
 dirs = "5"
 pc-activity = { path = "../pc-activity" }
-pc-feature-flags = { path = "../pc-feature-flags" }
+
 axum = { workspace = true }
 sqlx = { workspace = true }
 tower = { workspace = true }

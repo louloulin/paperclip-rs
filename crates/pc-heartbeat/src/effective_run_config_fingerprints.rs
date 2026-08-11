@@ -1,22 +1,11 @@
-//! Effective run config fingerprints (session / workspace / lease).
+//! Effective run config fingerprints（session / workspace / lease）。
 //!
-//! 1:1 port of Node `paperclip/server/src/services/effective-run-config-fingerprints.ts`.
+//! 1:1 复刻 Node `paperclip/server/src/services/effective-run-config-fingerprints.ts`。
+//! （原 `pc-effective-run-config-fingerprints` crate 已下沉到 `pc-heartbeat::effective_run_config_fingerprints`）。
 //!
-//! Given three potentially-mutating run configuration snapshots
-//! (session / workspace / lease) and an optional secret manifest, this
-//! crate computes a stable canonical JSON representation and a SHA-256
-//! fingerprint for each category. The fingerprint can be used to detect
-//! "did anything that materially affects the run change between two
-//! states?" — sensitive values (secrets, tokens, passwords, …) are
-//! redacted, volatile identifiers (runId, traceId, …) and host paths
-//! (cwd, homeDir, …) are dropped before hashing, and PAPERCLIP_*
-//! generated env vars are excluded from env canonicalization.
-//!
-//! Pure logic — no DB, no I/O. The crate exposes the canonical value
-//! type as `serde_json::Value` so callers can serialise it back to JSON
-//! without a custom intermediate type.
+//! Pure logic — no DB, no I/O。
 
-#![forbid(unsafe_code)]
+
 
 use std::collections::{BTreeMap, BTreeSet};
 

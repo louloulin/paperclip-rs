@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 pc-core = { path = "../pc-core" }
 pc-repos = { path = "../pc-repos" }
-pc-source-trust = { path = "../pc-source-trust" }
+
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

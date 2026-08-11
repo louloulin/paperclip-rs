@@ -10,7 +10,7 @@ use pc_backup::BackupManager;
 use pc_core::actor_runtime::kameo_api::ActorRef;
 use pc_core::ActorRegistry;
 use pc_db::Db;
-use pc_feature_flags::{FeatureEvaluator, SharedFeatureEvaluator};
+use pc_core::feature_flags::{FeatureEvaluator, SharedFeatureEvaluator};
 use pc_heartbeat::HeartbeatSupervisor;
 use pc_plugin_host::{NotificationBus, PluginEventBus, PluginRegistry, WorkerPool};
 use pc_realtime::RealtimeHandle;
@@ -119,7 +119,7 @@ impl AppState {
                 pc_activity::InMemoryActivityLog::new(),
             ))),
             feature_flags: SharedFeatureEvaluator::new(std::sync::Arc::new(FeatureEvaluator::new(
-                pc_feature_flags::FeatureCatalog::new(),
+                pc_core::feature_flags::FeatureCatalog::new(),
             ))),
             backup: Arc::new(BackupManager::with_defaults()),
             decision_signing: Arc::new(DecisionSigningService::from_environment()),

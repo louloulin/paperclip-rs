@@ -1,30 +1,8 @@
-#![forbid(unsafe_code)]
-//! `pc-environment-execution-target` —— 把 `environment + lease + adapter` 三元组
-//! 解析为 `AdapterExecutionTarget`（kind: local | remote）。
+//! Environment execution target 决策层。
 //!
-//! 对应 Node `server/src/services/environment-execution-target.ts`（259 行）。
-//!
-//! 设计目标：1:1 复刻决策层（driver 分发、能力闸门、remoteCwd 解析、
-//! shellCommand 校验、timeoutMs 提取）。执行相关部分（sandbox runner、ssh spec
-//! 构造、tracer span emission）通过 trait 抽象，便于未来接入具体的
-//! `EnvironmentRuntimeService` / `StartupTracer` / `AdapterRegistry`。
-//!
-//! 关键设计：
-//!
-//! - **Driver 分发**：`local` / `sandbox` / `ssh` 三种 driver，对应三种
-//!   `AdapterExecutionTarget` 形态。
-//! - **能力闸门**：sandbox / ssh 都要求 adapter 支持 remote managed
-//!   environments（`adapterSupportsRemoteManagedEnvironments(adapterType)`），
-//!   否则返回 `None`。
-//! - **remoteCwd 解析**：leaseMetadata.remoteCwd 非空字符串时取 trim 后的值，
-//!   否则 fallback 到 driver-specific 默认（sandbox → `/tmp`，ssh →
-//!   config.remoteWorkspacePath）。
-//! - **shellCommand 校验**：只接受 `"bash"` 或 `"sh"` 字面量，其它值（甚至非法
-//!   类型）一律为 `null`。
-//! - **Provider family 归一化**：仅返回闭集内的低基数字符串（避免 plugin key
-//!   污染 span）。
-//! - **trace 属性写入**：只在值是 finite number 时写入；`NaN` / `Infinity` / 缺
-//!   失一律跳过。
+//! 对应 Node `server/src/services/environment-execution-target.ts`（259 行）1:1 复刻。
+//! （原 `pc-environment-execution-target` crate 已下沉到 `pc-environment::execution_target`）。
+
 
 use std::collections::HashMap;
 
