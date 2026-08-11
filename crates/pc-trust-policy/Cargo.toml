@@ -1,0 +1,16 @@
+[package]
+name = "pc-trust-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Trust / low-trust-review policy types and constants (port of paperclip packages/shared/src/trust-policy.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "r551_trust_policy"
+path = "tests/r551_trust_policy.rs"

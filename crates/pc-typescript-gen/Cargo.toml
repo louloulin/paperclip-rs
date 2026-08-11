@@ -1,0 +1,18 @@
+[package]
+name = "pc-typescript-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Generate TypeScript types + Zod schemas from JSON Schema / OpenAPI 3.1 (used to align ui/ client with backend contracts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+pc-openapi = { path = "../pc-openapi" }
+
+[[example]]
+name = "gen_types"

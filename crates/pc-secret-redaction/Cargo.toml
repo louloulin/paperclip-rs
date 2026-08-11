@@ -1,0 +1,15 @@
+[package]
+name = "pc-secret-redaction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Secret field name detection + JWT-shape detection + recursive JSON redaction (port of paperclip server/src/redaction.ts — pure parts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+once_cell = "1"
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "unicode-script"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

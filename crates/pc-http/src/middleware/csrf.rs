@@ -399,6 +399,73 @@ mod tests {
         assert_allowed("POST", "/api/companies", &headers);
     }
 
+    // -------- r515: integration coverage for mixed-auth + parser stability --------
+
+    #[test]
+    fn r515_session_cookie_with_api_key_still_requires_csrf() {
+        // Even if API key is present, session cookie presence triggers CSRF check
+        // (defense-in-depth: an attacker who steals a session cookie should not
+        // bypass CSRF by also presenting an api key).
+        let headers = h(&[
+            ("cookie", "paperclip_session=xyz"),
+            ("x-paperclip-api-key", "pk_abc"),
+        ]);
+        assert_denied(
+            "POST",
+            "/api/companies",
+            &headers,
+            CsrfDenial::MissingCookie,
+        );
+    }
+
+    #[test]
+    fn r515_session_cookie_with_bearer_still_requires_csrf() {
+        // Same as above for Bearer token: any session cookie = CSRF required.
+        let headers = h(&[
+            ("cookie", "paperclip_session=xyz"),
+            ("authorization", "Bearer some-jwt"),
+        ]);
+        assert_denied(
+            "POST",
+            "/api/companies",
+            &headers,
+            CsrfDenial::MissingCookie,
+        );
+    }
+
+    #[test]
+    fn r515_multiple_cookies_parses_csrf_correctly() {
+        // Multiple unrelated cookies + csrf cookie at the end — parser must find it.
+        let headers = h(&[
+            ("cookie", "foo=bar; baz=qux; paperclip_session=xyz; paperclip_csrf=token42"),
+            ("x-csrf-token", "token42"),
+        ]);
+        assert_allowed("POST", "/api/companies", &headers);
+    }
+
+    #[test]
+    fn r515_csrf_denial_reason_strings_are_stable() {
+        // Locked-down strings used in 403 error response body — do not change.
+        assert_eq!(CsrfDenial::MissingCookie.reason(), "missing csrf cookie");
+        assert_eq!(CsrfDenial::MissingHeader.reason(), "missing csrf header");
+        assert_eq!(CsrfDenial::Mismatch.reason(), "csrf token mismatch");
+    }
+
+    #[test]
+    fn r515_full_token_round_trip_through_decision() {
+        // End-to-end: generate a real token, attach as cookie + header, decision = Ok.
+        let token = generate_csrf_token();
+        let cookie = format!("paperclip_session=xyz; paperclip_csrf={token}");
+        let headers = h_runtime(&[("cookie", cookie.clone()), ("x-csrf-token", token.clone())]);
+        assert_allowed("POST", "/api/companies", &headers);
+        // Mismatched token should still fail.
+        let bad_headers = h_runtime(&[
+            ("cookie", cookie),
+            ("x-csrf-token", "not-the-same-token".to_string()),
+        ]);
+        assert_denied("POST", "/api/companies", &bad_headers, CsrfDenial::Mismatch);
+    }
+
     #[test]
     fn csrf_decision_is_case_insensitive_for_method() {
         // POST without auth headers → allowed (no protected state).

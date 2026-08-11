@@ -1,0 +1,18 @@
+[package]
+name = "pc-routine-variables"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Routine template variable extraction, validation, and interpolation (port of paperclip packages/shared/src/routine-variables.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "r543_routine_variables"
+path = "tests/r543_routine_variables.rs"

@@ -1,0 +1,13 @@
+[package]
+name = "pc-log-redaction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Username / home-directory redaction for log lines + JSON values (port of paperclip server/src/log-redaction.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+thiserror = { workspace = true }

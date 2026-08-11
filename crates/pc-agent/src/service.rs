@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use pc_errors::{conflict, internal, unprocessable, validation, Error, Result};
+pub use pc_url_keys::{is_uuid_like, normalize_agent_url_key};
 use pc_repos::{
     agent::{
         AgentConfigRecord, AgentConfigRevisionRow, AgentRepo, AgentRow, AgentRuntimeStateRow,
@@ -1175,38 +1176,11 @@ fn config_record(snapshot: AgentConfigSnapshot) -> AgentConfigRecord {
     }
 }
 
-/// R604: 把字符串规范化为 agent urlKey（仅含 a-z0-9 + `-`，首尾 `-` 去除）。
-pub fn normalize_agent_url_key(value: &str) -> Option<String> {
-    let trimmed = value.trim().to_lowercase();
-    let mut out = String::with_capacity(trimmed.len());
-    let mut prev_dash = true; // 抑制开头连续 `-`
-    for ch in trimmed.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            prev_dash = false;
-        } else if !prev_dash {
-            out.push('-');
-            prev_dash = true;
-        }
-    }
-    let trimmed_out = out.trim_matches('-').to_string();
-    if trimmed_out.is_empty() {
-        None
-    } else {
-        Some(trimmed_out)
-    }
-}
+// `normalize_agent_url_key`, `is_uuid_like`, `derive_agent_url_key` are
+// re-exported from `pc-url-keys` (R530 extraction). They were previously
+// implemented inline here as part of R604.
 
-/// R604: 简化的 UUID 形状判定（trim 后正则匹配）。
-pub fn is_uuid_like(value: &str) -> bool {
-    // trim + lowercase + 长度检查
-    let v = value.trim();
-    if v.len() != 36 {
-        return false;
-    }
-    Uuid::parse_str(v).is_ok()
-}
-
+pub 
 fn map_sql_error(error: sqlx::Error) -> Error {
     internal(format!("agent database operation failed: {error}"))
 }

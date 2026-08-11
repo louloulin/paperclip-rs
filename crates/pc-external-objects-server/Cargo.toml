@@ -1,0 +1,18 @@
+[package]
+name = "pc-external-objects-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "External object URL canonicalization, identity hashing, and mention source key derivation (port of paperclip packages/shared/src/external-objects-server.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+once_cell = "1"
+pc-issue-references = { path = "../pc-issue-references" }
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "unicode-script"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+url = "2"

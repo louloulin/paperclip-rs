@@ -42,6 +42,7 @@ impl SessionPolicy {
             expires_at: now + self.idle_window,
             last_used_at: now,
             last_rotated_at: now,
+            revoked_at: None,
         }
     }
 }
@@ -59,6 +60,10 @@ pub struct SessionRecord {
     pub expires_at: DateTime<Utc>,
     pub last_used_at: DateTime<Utc>,
     pub last_rotated_at: DateTime<Utc>,
+    /// R512: 该 token 是否已被作废（轮换或显式登出）。`Some(ts)` 表示作废时间。
+    /// 持久化层可序列化为 `null`（未作废）以兼容旧记录。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +74,8 @@ pub enum SessionCheckOutcome {
     ExpiredAbsolute,
     /// 已超过 idle 窗口 —— token 过期。
     ExpiredIdle,
+    /// R512: token 已被作废（轮换 / 显式登出）—— 应视为攻击信号。
+    Revoked,
 }
 
 impl SessionCheckOutcome {
@@ -86,6 +93,10 @@ pub fn check_session(
     record: &SessionRecord,
     now: DateTime<Utc>,
 ) -> SessionCheckOutcome {
+    // R512: 已作废的 token 一律视为不可用（在 idle/absolute 之前检查）。
+    if record.revoked_at.is_some() {
+        return SessionCheckOutcome::Revoked;
+    }
     // 绝对生命周期优先
     if now - record.issued_at >= policy.absolute_lifetime {
         return SessionCheckOutcome::ExpiredAbsolute;
@@ -115,6 +126,7 @@ pub fn touch_session(
         expires_at: now + policy.idle_window,
         last_used_at: now,
         last_rotated_at: record.last_rotated_at,
+        revoked_at: record.revoked_at,
     }
 }
 
@@ -130,7 +142,73 @@ pub fn rotate_session(
         expires_at: record.expires_at,
         last_used_at: record.last_used_at,
         last_rotated_at: now,
+        revoked_at: record.revoked_at,
     }
+}
+
+/// R512: 标记一个 session 已被作废。`now` 作为作废时间戳。
+#[must_use]
+pub fn mark_revoked(record: &SessionRecord, now: DateTime<Utc>) -> SessionRecord {
+    SessionRecord {
+        issued_at: record.issued_at,
+        expires_at: record.expires_at,
+        last_used_at: record.last_used_at,
+        last_rotated_at: record.last_rotated_at,
+        revoked_at: Some(now),
+    }
+}
+
+/// R512: 该 session 是否已作废。
+#[must_use]
+pub fn is_revoked(record: &SessionRecord) -> bool {
+    record.revoked_at.is_some()
+}
+
+/// R512: 重用检测的判定结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReuseOutcome {
+    /// 没有检测到重用 —— 当前 token 在 family 中是最新且未被作废。
+    Ok,
+    /// 检测到重用 —— 攻击信号：调用方应作废整个 family。
+    ReuseDetected,
+}
+
+impl ReuseOutcome {
+    #[must_use]
+    pub fn is_reuse(&self) -> bool {
+        matches!(self, Self::ReuseDetected)
+    }
+}
+
+/// R512: 检测 token 是否被重用。
+///
+/// 重用判定规则（任一满足即视为重用）：
+/// 1. **presented 本身已作废**：表示旧 token 又被拿来用。
+/// 2. **family 中存在更新的活跃 token**：表示 token 已被轮换，旧 token 仍在被使用。
+///
+/// `presented` 是当前被提交的 session；`family` 是 family 内所有 session 的快照
+/// （调用方负责提供；本函数不读取存储）。
+#[must_use]
+pub fn detect_reuse(presented: &SessionRecord, family: &[SessionRecord]) -> ReuseOutcome {
+    // Rule 1: presented 自身已作废 → 重用。
+    if presented.revoked_at.is_some() {
+        return ReuseOutcome::ReuseDetected;
+    }
+    // Rule 2: family 中有比 presented 更新（last_rotated_at 更晚）且未作废的 token。
+    for sibling in family {
+        // 跳过自己
+        if sibling.issued_at == presented.issued_at
+            && sibling.last_rotated_at == presented.last_rotated_at
+        {
+            continue;
+        }
+        if sibling.revoked_at.is_none()
+            && sibling.last_rotated_at > presented.last_rotated_at
+        {
+            return ReuseOutcome::ReuseDetected;
+        }
+    }
+    ReuseOutcome::Ok
 }
 
 #[cfg(test)]
@@ -235,5 +313,139 @@ mod tests {
         let s2 = rotate_session(&p, &s, after);
         assert_eq!(s2.last_rotated_at, after);
         assert_eq!(s2.last_used_at, s.last_used_at, "rotate must not change last_used");
+    }
+
+    // -------- r512: family tracking + reuse detection --------
+
+    #[test]
+    fn r512_new_session_has_revoked_at_none() {
+        let p = SessionPolicy::default();
+        let now = Utc::now();
+        let s = p.new_session(now);
+        assert!(s.revoked_at.is_none());
+        assert!(!is_revoked(&s));
+    }
+
+    #[test]
+    fn r512_mark_revoked_sets_timestamp_and_preserves_other_fields() {
+        let p = SessionPolicy::default();
+        let now = Utc::now();
+        let s = p.new_session(now);
+        let later = now + Duration::minutes(7);
+        let r = mark_revoked(&s, later);
+        assert_eq!(r.revoked_at, Some(later));
+        assert_eq!(r.issued_at, s.issued_at);
+        assert_eq!(r.last_used_at, s.last_used_at);
+        assert!(is_revoked(&r));
+    }
+
+    #[test]
+    fn r512_check_session_returns_revoked_when_revoked_at_set() {
+        let p = SessionPolicy::default();
+        let now = Utc::now();
+        let s = p.new_session(now);
+        let r = mark_revoked(&s, now + Duration::minutes(1));
+        let outcome = check_session(&p, &r, now + Duration::minutes(2));
+        assert_eq!(outcome, SessionCheckOutcome::Revoked);
+        assert!(!outcome.is_ok());
+    }
+
+    #[test]
+    fn r512_revoked_takes_priority_over_idle_and_absolute() {
+        // 即使 idle/absolute 都未过期，revoked 也要先命中。
+        let mut p = SessionPolicy::default();
+        p.idle_window = Duration::hours(1);
+        p.absolute_lifetime = Duration::days(7);
+        let now = Utc::now();
+        let s = p.new_session(now);
+        let r = mark_revoked(&s, now + Duration::minutes(1));
+        let outcome = check_session(&p, &r, now + Duration::minutes(5));
+        assert_eq!(outcome, SessionCheckOutcome::Revoked);
+    }
+
+    #[test]
+    fn r512_detect_reuse_ok_for_fresh_presented_alone() {
+        let now = Utc::now();
+        let s = SessionRecord {
+            issued_at: now,
+            expires_at: now + Duration::minutes(30),
+            last_used_at: now,
+            last_rotated_at: now,
+            revoked_at: None,
+        };
+        assert_eq!(detect_reuse(&s, &[s.clone()]), ReuseOutcome::Ok);
+    }
+
+    #[test]
+    fn r512_detect_reuse_fires_when_presented_is_revoked() {
+        let now = Utc::now();
+        let s = SessionRecord {
+            issued_at: now,
+            expires_at: now + Duration::minutes(30),
+            last_used_at: now,
+            last_rotated_at: now,
+            revoked_at: Some(now + Duration::minutes(1)),
+        };
+        assert_eq!(detect_reuse(&s, &[s.clone()]), ReuseOutcome::ReuseDetected);
+    }
+
+    #[test]
+    fn r512_detect_reuse_fires_when_sibling_is_newer_and_active() {
+        // presented 是旧 token；family 中存在一个更新的 active token → 重用。
+        let now = Utc::now();
+        let presented = SessionRecord {
+            issued_at: now,
+            expires_at: now + Duration::minutes(30),
+            last_used_at: now,
+            last_rotated_at: now,
+            revoked_at: None,
+        };
+        let later = now + Duration::hours(1);
+        let newer = SessionRecord {
+            issued_at: now,
+            expires_at: later + Duration::minutes(30),
+            last_used_at: later,
+            last_rotated_at: later,
+            revoked_at: None,
+        };
+        let family = vec![presented.clone(), newer];
+        assert_eq!(detect_reuse(&presented, &family), ReuseOutcome::ReuseDetected);
+    }
+
+    #[test]
+    fn r512_detect_reuse_ok_when_newer_sibling_is_also_revoked() {
+        // 较新的兄弟 token 已作废（被强制登出）→ 不会再被利用，不算 reuse。
+        let now = Utc::now();
+        let presented = SessionRecord {
+            issued_at: now,
+            expires_at: now + Duration::minutes(30),
+            last_used_at: now,
+            last_rotated_at: now,
+            revoked_at: None,
+        };
+        let later = now + Duration::hours(1);
+        let newer_revoked = SessionRecord {
+            issued_at: now,
+            expires_at: later + Duration::minutes(30),
+            last_used_at: later,
+            last_rotated_at: later,
+            revoked_at: Some(later),
+        };
+        let family = vec![presented.clone(), newer_revoked];
+        assert_eq!(detect_reuse(&presented, &family), ReuseOutcome::Ok);
+    }
+
+    #[test]
+    fn r512_detect_reuse_skips_self_when_comparing_siblings() {
+        // 边界情况：family 中只有 presented 自己，不应被自己的 last_rotated_at 误判。
+        let now = Utc::now();
+        let s = SessionRecord {
+            issued_at: now,
+            expires_at: now + Duration::minutes(30),
+            last_used_at: now,
+            last_rotated_at: now,
+            revoked_at: None,
+        };
+        assert_eq!(detect_reuse(&s, std::slice::from_ref(&s)), ReuseOutcome::Ok);
     }
 }

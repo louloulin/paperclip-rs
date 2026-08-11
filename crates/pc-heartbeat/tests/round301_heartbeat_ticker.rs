@@ -10,6 +10,19 @@ use uuid::Uuid;
 
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
+// Tests in this file share one PostgreSQL instance. The stale-lock sweep is a
+// global operation (no per-company filter), so round300 fixtures (cleaned up
+// at the end of each test) and our own fixtures interact through the global
+// `cleared` counter. We serialize tests inside this binary with a process-wide
+// mutex so each test gets a deterministic view of its own company's state,
+// and we additionally assert against *our* issue ids (scoped) rather than
+// relying on absolute totals.
+static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+    TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 async fn connect() -> Db {
     Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
@@ -130,6 +143,7 @@ fn wake_template(company_id: Uuid, agent_id: Uuid) -> NewAgentWakeupRequest {
 
 #[tokio::test(flavor = "current_thread")]
 async fn tick_runs_both_sweeps_on_empty_company() {
+    let _guard = lock_tests();
     let db = connect().await;
     let (company_id, agent_id) = fixture_with_company(&db).await;
     let config = HeartbeatTickerConfig::default();
@@ -145,7 +159,22 @@ async fn tick_runs_both_sweeps_on_empty_company() {
     let stranded = result.stranded.expect("stranded outcome present");
     assert_eq!(stranded.dispatched, 0);
     assert_eq!(stranded.skipped, 0);
-    assert_eq!(result.stale_lock_cleared, 0);
+    // Scoped assertion: empty company has no issues, so no lock columns should
+    // exist for it regardless of how many stale locks the global sweep cleared
+    // elsewhere (round300 fixtures, etc.). We do NOT assert
+    // `stale_lock_cleared == 0` because that counter is global and shared
+    // with round300 tests.
+    let row: (Option<Uuid>, Option<Uuid>) = sqlx::query_as(
+        "SELECT checkout_run_id, execution_run_id FROM issues WHERE company_id = $1",
+    )
+    .bind(company_id)
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+    .into_iter()
+    .next()
+    .unwrap_or((None, None));
+    assert_eq!(row, (None, None), "empty company must have no issues");
     cleanup(&db, company_id).await;
 }
 
@@ -181,6 +210,7 @@ async fn tick_dispatches_stranded_and_returns_outcome() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn tick_clears_stale_locks_when_enabled() {
+    let _guard = lock_tests();
     let db = connect().await;
     let (company_id, agent_id) = fixture_with_company(&db).await;
     // Insert terminal run + issue with checkout_run_id pointing at it
@@ -208,7 +238,7 @@ async fn tick_clears_stale_locks_when_enabled() {
     .unwrap();
 
     let config = HeartbeatTickerConfig::default();
-    let result = run_heartbeat_tick(
+    let _result = run_heartbeat_tick(
         &db,
         &config,
         &wake_template(company_id, agent_id),
@@ -216,17 +246,19 @@ async fn tick_clears_stale_locks_when_enabled() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        result.stale_lock_cleared, 1,
-        "stale lock sweep must clean terminal run reference"
-    );
 
+    // Scoped assertion: our specific issue's checkout_run_id must be NULL
+    // after the sweep. We do NOT assert `stale_lock_cleared == 1` because
+    // that counter is global and shared with round300 fixtures.
     let row: (Option<Uuid>,) = sqlx::query_as("SELECT checkout_run_id FROM issues WHERE id=$1")
         .bind(issue)
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(row.0, None);
+    assert_eq!(
+        row.0, None,
+        "stale lock sweep must clear terminal run reference for our issue"
+    );
 
     cleanup(&db, company_id).await;
 }

@@ -1,0 +1,16 @@
+[package]
+name = "pc-frontmatter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Markdown frontmatter block splitting, parsing, serialization, and round-trip analysis (port of paperclip packages/shared/src/frontmatter.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex-lite = "0.1"
+once_cell = "1"
+thiserror = "1"

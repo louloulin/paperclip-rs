@@ -30,6 +30,9 @@ pub fn register_core_dtos(reg: &mut OpenApiRegistry) {
     // `#[serde(flatten)]` which silently drops `type: "object"` and
     // `required` from the wire format.
     reg.register_schema_value("Decision", decision_schema());
+    // R518: companion schemas referenced by Decision.options / DecisionOption.effects.
+    reg.register_schema_value("DecisionOption", decision_option_schema());
+    reg.register_schema_value("DecisionEffect", decision_effect_schema());
     reg.register_schema_value("Company", company_schema());
     reg.register_schema_value("Issue", issue_schema());
     reg.register_schema_value("Agent", agent_schema());
@@ -62,6 +65,20 @@ pub fn register_core_dtos(reg: &mut OpenApiRegistry) {
     reg.register_schema_value("GoalList", goal_list_schema());
     reg.register_schema_value("InboxList", inbox_list_schema());
     reg.register_schema_value("FolderList", folder_list_schema());
+    // R513: admin + companies sub-resources.
+    reg.register_schema_value("CompanyMember", company_member_schema());
+    reg.register_schema_value("Invite", invite_schema());
+    reg.register_schema_value("AdminUser", admin_user_schema());
+    reg.register_schema_value("CompanyMemberList", company_member_list_schema());
+    reg.register_schema_value("InviteList", invite_list_schema());
+    reg.register_schema_value("AdminUserList", admin_user_list_schema());
+    // R522: Companies aggregation endpoints.
+    reg.register_schema_value("CompanyStats", company_stats_schema());
+    reg.register_schema_value("CompanyStatsList", company_stats_list_schema());
+    reg.register_schema_value("CompanyTimelineResult", company_timeline_result_schema());
+    reg.register_schema_value("CompanyArtifact", company_artifact_schema());
+    reg.register_schema_value("CompanyArtifactList", company_artifact_list_schema());
+    reg.register_schema_value("CompanyOrgChart", company_org_chart_schema());
 }
 
 /// OpenAPI schema for the upstream `Decision` shape (mirrors
@@ -509,6 +526,180 @@ pub fn list_response_envelope_schema(item_schema_ref: &str) -> Value {
     })
 }
 
+/// R522: Per-company stats returned by GET /api/companies/:company_id/stats.
+pub fn company_stats_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Per-company aggregate statistics.",
+        "properties": {
+            "companyId": { "type": "string" },
+            "agentCount": { "type": "integer", "format": "int64" },
+            "activeAgentCount": { "type": "integer", "format": "int64" },
+            "issueCount": { "type": "integer", "format": "int64" },
+            "openIssueCount": { "type": "integer", "format": "int64" },
+            "decisionsPending": { "type": "integer", "format": "int64" },
+            "monthlySpendCents": { "type": "integer", "format": "int64" },
+            "monthlyBudgetCents": { "type": ["integer", "null"], "format": "int64" },
+            "lastActivityAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "required": ["companyId", "agentCount", "issueCount", "monthlySpendCents"]
+    })
+}
+
+/// R522: Global stats list returned by GET /api/companies/stats.
+pub fn company_stats_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Per-company stats for every company the caller can see.",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/CompanyStats" }
+            }
+        },
+        "required": ["items"]
+    })
+}
+
+/// R522: Work-timeline result returned by GET /api/companies/:company_id/timeline.
+pub fn company_timeline_result_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Work timeline spanning actors / spans / events / edges.",
+        "properties": {
+            "actors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "kind": { "type": "string", "enum": ["user", "agent"] },
+                        "displayName": { "type": "string" }
+                    },
+                    "required": ["id", "kind", "displayName"]
+                }
+            },
+            "spans": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "kind": { "type": "string" },
+                        "startedAt": { "type": "string", "format": "date-time" },
+                        "endedAt": { "type": ["string", "null"], "format": "date-time" },
+                        "actorId": { "type": ["string", "null"] },
+                        "issueId": { "type": ["string", "null"] },
+                        "metadata": { "type": ["object", "null"] }
+                    },
+                    "required": ["id", "kind", "startedAt"]
+                }
+            },
+            "events": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "kind": { "type": "string" },
+                        "occurredAt": { "type": "string", "format": "date-time" },
+                        "actorId": { "type": ["string", "null"] },
+                        "targetId": { "type": ["string", "null"] },
+                        "payload": { "type": ["object", "null"] }
+                    },
+                    "required": ["id", "kind", "occurredAt"]
+                }
+            },
+            "edges": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "fromId": { "type": "string" },
+                        "toId": { "type": "string" },
+                        "kind": { "type": "string", "enum": ["blocks", "relates", "parent_of", "assigned_to"] }
+                    },
+                    "required": ["fromId", "toId", "kind"]
+                }
+            }
+        },
+        "required": ["actors", "spans", "events", "edges"]
+    })
+}
+
+/// R522: A single company artifact (returned by GET /api/companies/:company_id/artifacts).
+pub fn company_artifact_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "A build artifact or work product attached to a company.",
+        "properties": {
+            "id": { "type": "string" },
+            "kind": { "type": "string", "enum": ["build", "report", "export", "log", "other"] },
+            "name": { "type": "string" },
+            "sizeBytes": { "type": ["integer", "null"], "format": "int64" },
+            "contentType": { "type": ["string", "null"] },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "createdByUserId": { "type": ["string", "null"] },
+            "downloadUrl": { "type": ["string", "null"] },
+            "metadata": { "type": ["object", "null"] }
+        },
+        "required": ["id", "kind", "name", "createdAt"]
+    })
+}
+
+/// R522: List of company artifacts returned by GET /api/companies/:company_id/artifacts.
+pub fn company_artifact_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Paginated list of company artifacts.",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/CompanyArtifact" }
+            },
+            "pagination": { "$ref": "#/components/schemas/PaginationCursor" }
+        },
+        "required": ["items", "pagination"]
+    })
+}
+
+/// R522: Org-chart structure returned by GET /api/companies/:company_id/org.
+pub fn company_org_chart_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Hierarchical org chart for a company's agents.",
+        "properties": {
+            "nodes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "agentId": { "type": ["string", "null"] },
+                        "userId": { "type": ["string", "null"] },
+                        "name": { "type": "string" },
+                        "title": { "type": ["string", "null"] },
+                        "reportsTo": { "type": ["string", "null"] }
+                    },
+                    "required": ["id", "name"]
+                }
+            },
+            "edges": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "fromId": { "type": "string" },
+                        "toId": { "type": "string" }
+                    },
+                    "required": ["fromId", "toId"]
+                }
+            }
+        },
+        "required": ["nodes", "edges"]
+    })
+}
+
 /// R509: ErrorResponse — generic 4xx/5xx error body for non-422 responses.
 pub fn error_response_schema() -> Value {
     json!({
@@ -692,6 +883,101 @@ pub fn folder_list_schema() -> Value {
         "items": { "$ref": "#/components/schemas/Folder" }
     })
 }
+/// R513: CompanyMember schema (mirrors `pc_repos::company_member::CompanyMemberRow`).
+pub fn company_member_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "A user's membership in a company, with optional user fields denormalised from a LEFT JOIN.",
+        "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "companyId": { "type": "string", "format": "uuid" },
+            "principalId": { "type": "string", "description": "Opaque principal identity (user_id or agent_id)." },
+            "membershipRole": { "type": "string", "description": "Role key within the company (e.g. owner, admin, member)." },
+            "status": {
+                "type": "string",
+                "enum": ["active", "archived"],
+                "description": "Whether the membership is active or archived."
+            },
+            "name": { "type": ["string", "null"] },
+            "email": { "type": ["string", "null"] },
+            "image": { "type": ["string", "null"] },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": [
+            "id", "companyId", "principalId", "membershipRole", "status",
+            "createdAt", "updatedAt"
+        ]
+    })
+}
+
+/// R513: Invite schema (mirrors `pc_repos::invite::InviteRow`).
+pub fn invite_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "An invite token that grants access to a company when accepted.",
+        "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "companyId": { "type": "string", "format": "uuid" },
+            "inviteType": { "type": "string", "description": "open (anyone with link) or restricted (named recipients)." },
+            "allowedJoinTypes": { "type": "string" },
+            "defaultsPayload": { "type": ["object", "null"] },
+            "tokenHash": { "type": "string" },
+            "expiresAt": { "type": "string", "format": "date-time" },
+            "invitedByUserId": { "type": ["string", "null"] },
+            "revokedAt": { "type": ["string", "null"], "format": "date-time" },
+            "acceptedAt": { "type": ["string", "null"], "format": "date-time" },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": [
+            "id", "companyId", "inviteType", "allowedJoinTypes", "tokenHash",
+            "expiresAt", "createdAt", "updatedAt"
+        ]
+    })
+}
+
+/// R513: AdminUser schema - instance-level admin directory entry.
+pub fn admin_user_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "A user as seen by the instance admin directory (isInstanceAdmin flag included).",
+        "properties": {
+            "id": { "type": "string" },
+            "email": { "type": ["string", "null"] },
+            "name": { "type": ["string", "null"] },
+            "image": { "type": ["string", "null"] },
+            "emailVerifiedAt": { "type": ["string", "null"], "format": "date-time" },
+            "isInstanceAdmin": { "type": "boolean", "description": "Whether the user holds the instance_admin role." },
+            "createdAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "required": ["id", "isInstanceAdmin"]
+    })
+}
+
+/// R513: CompanyMember list response shape (array of CompanyMember).
+pub fn company_member_list_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/CompanyMember" }
+    })
+}
+
+/// R513: Invite list response shape (array of Invite).
+pub fn invite_list_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/Invite" }
+    })
+}
+
+/// R513: AdminUser list response shape (array of AdminUser).
+pub fn admin_user_list_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/AdminUser" }
+    })
+}
 
 /// Wrap a JSON schema definition as a [`SchemaRef`] ready for registration.
 #[must_use]
@@ -702,6 +988,8 @@ pub fn into_schema_ref(schema: &Value) -> SchemaRef {
 /// All DTO schema names registered by [`register_core_dtos`].
 pub const CORE_DTO_NAMES: &[&str] = &[
     "Decision",
+    "DecisionOption",
+    "DecisionEffect",
     "Company",
     "Issue",
     "Agent",
@@ -734,6 +1022,20 @@ pub const CORE_DTO_NAMES: &[&str] = &[
     "GoalList",
     "InboxList",
     "FolderList",
+    // R513: admin + companies sub-resources.
+    "CompanyMember",
+    "Invite",
+    "AdminUser",
+    "CompanyMemberList",
+    "InviteList",
+    "AdminUserList",
+    // R522: Companies aggregation endpoints.
+    "CompanyStats",
+    "CompanyStatsList",
+    "CompanyTimelineResult",
+    "CompanyArtifact",
+    "CompanyArtifactList",
+    "CompanyOrgChart",
 ];
 
 #[cfg(test)]
@@ -1078,7 +1380,8 @@ mod tests {
         register_core_dtos(&mut reg);
         let spec = reg.build();
         // R511: 8 new schemas added (Case/Goal/Inbox/Folder + 4 List arrays).
-        assert_eq!(spec.schema_count(), 27);
+        // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
+        assert_eq!(spec.schema_count(), 41);
     }
 
     #[test]
@@ -1086,7 +1389,8 @@ mod tests {
         let mut reg = OpenApiRegistry::builder();
         register_core_dtos(&mut reg);
         let spec = reg.build();
-        assert_eq!(spec.schema_count(), 27);
+        // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
+        assert_eq!(spec.schema_count(), 41);
     }
 
     #[test]
@@ -1094,7 +1398,8 @@ mod tests {
         let mut reg = OpenApiRegistry::builder();
         register_core_dtos(&mut reg);
         let spec = reg.build();
-        assert_eq!(spec.schema_count(), 27);
+        // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
+        assert_eq!(spec.schema_count(), 41);
     }
 
     #[test]
@@ -1119,12 +1424,13 @@ mod tests {
         let mut reg = OpenApiRegistry::builder();
         register_core_dtos(&mut reg);
         let spec = reg.build();
-        assert_eq!(spec.schema_count(), 27);
+        // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
+        assert_eq!(spec.schema_count(), 41);
     }
 
     #[test]
     fn r507_core_dto_names_constant_has_nine_entries() {
-        assert_eq!(CORE_DTO_NAMES.len(), 27);
+        assert_eq!(CORE_DTO_NAMES.len(), 41);
         for name in ["CompanyList", "AgentList", "IssueList", "DecisionList"] {
             assert!(CORE_DTO_NAMES.contains(&name), "missing `{name}`");
         }
@@ -1272,12 +1578,13 @@ mod tests {
         let mut reg = OpenApiRegistry::builder();
         register_core_dtos(&mut reg);
         let spec = reg.build();
-        assert_eq!(spec.schema_count(), 27);
+        // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
+        assert_eq!(spec.schema_count(), 41);
     }
 
     #[test]
     fn r511_core_dto_names_constant_has_twenty_seven_entries() {
-        assert_eq!(CORE_DTO_NAMES.len(), 27);
+        assert_eq!(CORE_DTO_NAMES.len(), 41);
         for name in [
             "Case",
             "Goal",
@@ -1295,13 +1602,123 @@ mod tests {
         }
     }
 
+
+    // -------- r513: admin + companies sub-resources --------
+
     #[test]
-    fn r511_new_schemas_round_trip_through_yaml() {
+    fn r513_company_member_schema_required_core_fields() {
+        let v = company_member_schema();
+        let required = v["required"].as_array().expect("required");
+        let names: Vec<&str> = required.iter().filter_map(|r| r.as_str()).collect();
+        for field in ["id", "companyId", "principalId", "membershipRole", "status"] {
+            assert!(
+                names.contains(&field),
+                "CompanyMember.required must include `{field}`, got {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn r513_company_member_schema_status_enum_is_active_or_archived() {
+        let v = company_member_schema();
+        let en = v["properties"]["status"]["enum"].as_array().expect("enum");
+        let values: Vec<&str> = en.iter().filter_map(|e| e.as_str()).collect();
+        assert_eq!(
+            values,
+            vec!["active", "archived"],
+            "CompanyMember.status enum must be exactly [active, archived]"
+        );
+    }
+
+    #[test]
+    fn r513_invite_schema_required_core_fields() {
+        let v = invite_schema();
+        let required = v["required"].as_array().expect("required");
+        let names: Vec<&str> = required.iter().filter_map(|r| r.as_str()).collect();
+        for field in ["id", "companyId", "inviteType", "allowedJoinTypes", "tokenHash", "expiresAt"] {
+            assert!(
+                names.contains(&field),
+                "Invite.required must include `{field}`, got {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn r513_invite_schema_nullable_fields_use_string_or_null() {
+        let v = invite_schema();
+        for field in ["invitedByUserId", "revokedAt", "acceptedAt"] {
+            assert_eq!(
+                v["properties"][field]["type"],
+                serde_json::json!(["string", "null"]),
+                "Invite.{field} must be nullable"
+            );
+        }
+    }
+
+    #[test]
+    fn r513_admin_user_schema_required_minimum() {
+        let v = admin_user_schema();
+        let required = v["required"].as_array().expect("required");
+        let names: Vec<&str> = required.iter().filter_map(|r| r.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["id", "isInstanceAdmin"],
+            "AdminUser.required must be exactly [id, isInstanceAdmin]"
+        );
+    }
+
+    #[test]
+    fn r513_list_schemas_reference_correct_single_schemas() {
+        for (list_name, list_value, expected_ref) in [
+            ("CompanyMemberList", company_member_list_schema(), "CompanyMember"),
+            ("InviteList", invite_list_schema(), "Invite"),
+            ("AdminUserList", admin_user_list_schema(), "AdminUser"),
+        ] {
+            assert_eq!(
+                list_value["type"], "array",
+                "{list_name} must have type=array"
+            );
+            assert_eq!(
+                list_value["items"]["$ref"],
+                format!("#/components/schemas/{expected_ref}"),
+                "{list_name}.items.$ref must point to {expected_ref}"
+            );
+        }
+    }
+
+    #[test]
+    fn r513_register_core_dtos_registers_thirty_three() {
+        let mut reg = OpenApiRegistry::builder();
+        register_core_dtos(&mut reg);
+        let spec = reg.build();
+        assert_eq!(spec.schema_count(), 41);
+    }
+
+    #[test]
+    fn r513_core_dto_names_constant_has_thirty_three_entries() {
+        assert_eq!(CORE_DTO_NAMES.len(), 41);
+        for name in [
+            "CompanyMember",
+            "Invite",
+            "AdminUser",
+            "CompanyMemberList",
+            "InviteList",
+            "AdminUserList",
+        ] {
+            assert!(
+                CORE_DTO_NAMES.contains(&name),
+                "missing `{name}` in CORE_DTO_NAMES"
+            );
+        }
+    }
+
+    #[test]
+    fn r513_new_schemas_round_trip_through_yaml() {
         let mut reg = OpenApiRegistry::builder();
         register_core_dtos(&mut reg);
         let spec = reg.build();
         let y = spec.to_yaml_string().expect("yaml");
-        for name in ["Case:", "Goal:", "Inbox:", "Folder:"] {
+        for name in ["CompanyMember:", "Invite:", "AdminUser:"] {
             assert!(y.contains(name), "YAML missing top-level {name} key");
         }
     }

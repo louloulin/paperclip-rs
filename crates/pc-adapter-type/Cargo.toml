@@ -1,0 +1,13 @@
+[package]
+name = "pc-adapter-type"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent adapter type validation (port of paperclip packages/shared/src/adapter-type.ts)"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "r555_adapter_type"
+path = "tests/r555_adapter_type.rs"

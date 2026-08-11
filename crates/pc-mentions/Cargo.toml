@@ -1,0 +1,16 @@
+[package]
+name = "pc-mentions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Markdown mention href parse/build/extract for 6 schemes (project/agent/user/skill/routine/pipeline) (port of paperclip packages/shared/src/project-mentions.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+percent-encoding = "2"
+
+[[test]]
+name = "r546_mentions"
+path = "tests/r546_mentions.rs"

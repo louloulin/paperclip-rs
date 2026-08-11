@@ -1,0 +1,16 @@
+[package]
+name = "pc-feature-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Feature catalog for cloud-managed instance experimental flags (port of paperclip packages/shared/src/feature-catalog.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "r556_feature_catalog"
+path = "tests/r556_feature_catalog.rs"

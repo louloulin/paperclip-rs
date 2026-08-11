@@ -1,0 +1,17 @@
+[package]
+name = "pc-home-paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip home directory + instance path resolution (port of paperclip packages/shared/src/home-paths.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+dirs = "5"
+thiserror = { workspace = true }
+
+[[test]]
+name = "r545_home_paths"
+path = "tests/r545_home_paths.rs"

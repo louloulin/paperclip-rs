@@ -1,0 +1,16 @@
+[package]
+name = "pc-app-definitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "App definition catalog helpers (port of paperclip packages/shared/src/app-definitions.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "r550_app_definitions"
+path = "tests/r550_app_definitions.rs"

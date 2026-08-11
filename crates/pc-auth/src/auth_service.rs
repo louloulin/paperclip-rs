@@ -23,7 +23,10 @@ use crate::email_verification::{
     consume_email_verification, issue_email_verification, verify_email_token, EmailVerificationOutcome,
     EmailVerificationRecord,
 };
-use crate::session_refresh::{check_session, new_session_record, rotate_session, SessionCheckOutcome, SessionPolicy};
+use crate::session_refresh::{
+    check_session, new_session_record, rotate_session, SessionCheckOutcome, SessionPolicy,
+    detect_reuse, is_revoked, mark_revoked, ReuseOutcome,
+};
 
 // ============================================================================
 // 输入 / 输出
@@ -82,6 +85,13 @@ pub struct SessionRecord {
     pub expires_at: DateTime<Utc>,
     pub last_used_at: DateTime<Utc>,
     pub last_rotated_at: DateTime<Utc>,
+    /// R512: family 链标识；同一 sign-in 产生的所有轮换 token 共享一个 family。
+    /// 若 family 内检测到 token 重用，整个 family 全部作废。
+    #[serde(default = "Uuid::new_v4")]
+    pub family_id: Uuid,
+    /// R512: 作废时间；`Some` 表示该 token 已被轮换 / 显式登出 / 重用作废。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 // ============================================================================
@@ -104,6 +114,8 @@ pub enum AuthServiceError {
     EmailNotVerified,
     /// session 不存在 / 已过期。
     SessionNotFound,
+    /// R512: 检测到 token 重用 —— 攻击信号，整个 family 已作废。
+    SessionReuseDetected,
     /// 内部存储错误。
     Storage(String),
     /// 邮件发送失败。
@@ -122,6 +134,7 @@ impl std::fmt::Display for AuthServiceError {
             Self::InvalidCredentials => write!(f, "invalid credentials"),
             Self::EmailNotVerified => write!(f, "email not verified"),
             Self::SessionNotFound => write!(f, "session not found"),
+            Self::SessionReuseDetected => write!(f, "session reuse detected"),
             Self::Storage(s) => write!(f, "storage: {s}"),
             Self::EmailSend(e) => write!(f, "email send: {e}"),
             Self::Other(s) => write!(f, "other: {s}"),
@@ -174,6 +187,20 @@ pub trait SessionStore: Send + Sync {
         old_token_hash: &str,
         new_session: &SessionRecord,
     ) -> Result<(), AuthServiceError>;
+    /// R512: 列出 family 内所有 session（按 token_hash 索引扫描）。
+    async fn find_family(&self, family_id: Uuid) -> Result<Vec<SessionRecord>, AuthServiceError>;
+    /// R512: 标记某个 token 已作废（设置 `revoked_at`）。不动其他字段。
+    async fn mark_revoked(
+        &self,
+        token_hash: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), AuthServiceError>;
+    /// R512: 作废整个 family（重用检测触发）。返回受影响 session 数。
+    async fn invalidate_family(
+        &self,
+        family_id: Uuid,
+        at: DateTime<Utc>,
+    ) -> Result<usize, AuthServiceError>;
 }
 
 /// email 验证 token 存储抽象。
@@ -245,6 +272,25 @@ impl InMemorySessionStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// 测试用：通过 token 找到对应 session 的 family_id，再查该 family 全部成员。
+    /// 返回 `None` 表示 token 不在 store 中。
+    pub async fn find_family_for_token(&self, token: &str) -> Option<Vec<SessionRecord>> {
+        let hash = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(token.as_bytes());
+            format!("{:x}", h.finalize())
+        };
+        let g = self.inner.lock().expect("session store mutex");
+        let family_id = g.get(&hash).map(|r| r.family_id)?;
+        let v: Vec<SessionRecord> = g
+            .values()
+            .filter(|r| r.family_id == family_id)
+            .cloned()
+            .collect();
+        Some(v)
+    }
 }
 
 #[async_trait]
@@ -269,9 +315,49 @@ impl SessionStore for InMemorySessionStore {
         new_session: &SessionRecord,
     ) -> Result<(), AuthServiceError> {
         let mut g = self.inner.lock().expect("session store mutex");
-        g.remove(old_token_hash);
+        // R512: 保留旧 token 记录（标记 revoked），用于 reuse detection。
+        // 这里不再 delete；reuse detection 在 refresh_session 入口处先做。
         g.insert(new_session.token_hash.clone(), new_session.clone());
+        if let Some(r) = g.get_mut(old_token_hash) {
+            r.revoked_at.get_or_insert_with(Utc::now);
+        }
         Ok(())
+    }
+
+    async fn find_family(&self, family_id: Uuid) -> Result<Vec<SessionRecord>, AuthServiceError> {
+        let g = self.inner.lock().expect("session store mutex");
+        Ok(g.values()
+            .filter(|r| r.family_id == family_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn mark_revoked(
+        &self,
+        token_hash: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), AuthServiceError> {
+        let mut g = self.inner.lock().expect("session store mutex");
+        if let Some(r) = g.get_mut(token_hash) {
+            r.revoked_at = Some(at);
+        }
+        Ok(())
+    }
+
+    async fn invalidate_family(
+        &self,
+        family_id: Uuid,
+        at: DateTime<Utc>,
+    ) -> Result<usize, AuthServiceError> {
+        let mut g = self.inner.lock().expect("session store mutex");
+        let mut count = 0usize;
+        for r in g.values_mut() {
+            if r.family_id == family_id && r.revoked_at.is_none() {
+                r.revoked_at = Some(at);
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 }
 
@@ -559,13 +645,36 @@ impl AuthService {
             expires_at: old.expires_at,
             last_used_at: old.last_used_at,
             last_rotated_at: old.last_rotated_at,
+            revoked_at: old.revoked_at,
         };
         match check_session(&self.config.session_policy, &record, Utc::now()) {
+            SessionCheckOutcome::Revoked => {
+                // 旧 token 已作废 —— 当作重用信号，作废整个 family。
+                self.sessions.invalidate_family(old.family_id, Utc::now()).await?;
+                return Err(AuthServiceError::SessionReuseDetected);
+            }
             SessionCheckOutcome::ExpiredAbsolute | SessionCheckOutcome::ExpiredIdle => {
                 self.sessions.delete_by_token_hash(&old_hash).await?;
                 return Err(AuthServiceError::SessionNotFound);
             }
             SessionCheckOutcome::Ok { .. } => {}
+        }
+        // R512: 重用检测 —— 拉取 family 内所有 session，扫描是否被轮换后又被使用。
+        let family = self.sessions.find_family(old.family_id).await?;
+        // 把 storage SessionRecord 投影到纯 session_refresh::SessionRecord 再判断。
+        let pure_family: Vec<crate::session_refresh::SessionRecord> = family
+            .iter()
+            .map(|s| crate::session_refresh::SessionRecord {
+                issued_at: s.issued_at,
+                expires_at: s.expires_at,
+                last_used_at: s.last_used_at,
+                last_rotated_at: s.last_rotated_at,
+                revoked_at: s.revoked_at,
+            })
+            .collect();
+        if detect_reuse(&record, &pure_family).is_reuse() {
+            self.sessions.invalidate_family(old.family_id, Utc::now()).await?;
+            return Err(AuthServiceError::SessionReuseDetected);
         }
         let now = Utc::now();
         let new_record = rotate_session(&self.config.session_policy, &record, now);
@@ -578,7 +687,10 @@ impl AuthService {
             expires_at: new_record.expires_at,
             last_used_at: new_record.last_used_at,
             last_rotated_at: new_record.last_rotated_at,
+            family_id: old.family_id,
+            revoked_at: None,
         };
+        // R512: 轮换时旧 token 自动作废（由 \ 内部设置 revoked_at）。
         self.sessions.rotate(&old_hash, &new_session).await?;
         Ok(SignInResult {
             user_id: old.user_id,
@@ -598,6 +710,8 @@ impl AuthService {
             expires_at: r.expires_at,
             last_used_at: r.last_used_at,
             last_rotated_at: r.last_rotated_at,
+            family_id: Uuid::new_v4(),
+            revoked_at: None,
         }
     }
 
@@ -650,6 +764,24 @@ mod tests {
         let mut config = AuthServiceConfig::default();
         config.require_email_verification = require_email_verification;
         (AuthService::in_memory(config, email), log_email)
+    }
+
+    /// 测试辅助：同时返回 InMemorySessionStore 引用，供 family/revoke 检查。
+    fn test_service_with_session_store(
+        require_email_verification: bool,
+    ) -> (AuthService, Arc<InMemorySessionStore>, Arc<LogEmailSender>) {
+        let email = Arc::new(LogEmailSender::new(
+            EmailAddress::new("noreply@paperclip.local").unwrap(),
+        ));
+        let log_email = email.clone();
+        let mut config = AuthServiceConfig::default();
+        config.require_email_verification = require_email_verification;
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let users: Arc<dyn UserStore> = Arc::new(InMemoryUserStore::new());
+        let verifications: Arc<dyn VerificationStore> =
+            Arc::new(InMemoryVerificationStore::new());
+        let svc = AuthService::new(config, users, sessions.clone(), verifications, email);
+        (svc, sessions, log_email)
     }
 
     #[test]
@@ -858,8 +990,63 @@ mod tests {
         let refreshed = svc.refresh_session(&r.session_token).await.unwrap();
         assert_ne!(refreshed.session_token, r.session_token, "should rotate");
         assert_eq!(refreshed.user_id, r.user_id);
-        // 旧 token 已失效
+        // R512: 旧 token 已作废 —— 第二次使用触发 reuse detection。
         let err = svc.refresh_session(&r.session_token).await.unwrap_err();
-        assert_eq!(err, AuthServiceError::SessionNotFound);
+        assert_eq!(err, AuthServiceError::SessionReuseDetected);
+    }
+
+    #[tokio::test]
+    async fn r512_refresh_session_keeps_family_id_stable_across_rotations() {
+        // 连续 N 次轮换后，family_id 不变（同一 sign-in 产生）。
+        let (svc, store, _) = test_service_with_session_store(false);
+        let input = SignUpInput {
+            email: "fam@example.com".into(),
+            password: "hunter2pw".into(),
+            name: None,
+        };
+        let r1 = svc.sign_up_email(&input).await.unwrap();
+        let family1 = store.find_family_for_token(&r1.session_token).await.unwrap();
+        let family_id_1 = family1.first().map(|r| r.family_id);
+        let r2 = svc.refresh_session(&r1.session_token).await.unwrap();
+        let family2 = store.find_family_for_token(&r2.session_token).await.unwrap();
+        let family_id_2 = family2.first().map(|r| r.family_id);
+        let r3 = svc.refresh_session(&r2.session_token).await.unwrap();
+        let family3 = store.find_family_for_token(&r3.session_token).await.unwrap();
+        let family_id_3 = family3.first().map(|r| r.family_id);
+        // family_id 保持稳定；成员数随轮换递增。
+        assert_eq!(family_id_1, family_id_2);
+        assert_eq!(family_id_2, family_id_3);
+        // 每次轮换 family 都增长一条 (旧 token 被 revoked, 新 token 入 family)。
+        assert_eq!(family1.len(), 1);
+        assert_eq!(family2.len(), 2);
+        assert_eq!(family3.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn r512_refresh_session_reuse_triggers_family_invalidation() {
+        // 攻击者拿到旧 token 来 refresh：触发 reuse detection，整个 family 作废。
+        let (svc, store, _) = test_service_with_session_store(false);
+        let input = SignUpInput {
+            email: "victim@example.com".into(),
+            password: "hunter2pw".into(),
+            name: None,
+        };
+        let legit = svc.sign_up_email(&input).await.unwrap();
+        // 合法轮换
+        let rotated = svc.refresh_session(&legit.session_token).await.unwrap();
+        assert_ne!(rotated.session_token, legit.session_token);
+        // 攻击者尝试用旧 token 再次 refresh
+        let err = svc.refresh_session(&legit.session_token).await.unwrap_err();
+        assert_eq!(err, AuthServiceError::SessionReuseDetected);
+        // 此时整个 family 已被作废 —— 即便合法的新 token 也无法再 refresh。
+        let err2 = svc.refresh_session(&rotated.session_token).await.unwrap_err();
+        assert_eq!(err2, AuthServiceError::SessionReuseDetected);
+        // 验证 store 中 family 全部 revoked
+        let family = store.find_family_for_token(&rotated.session_token).await.unwrap();
+        for r in &family {
+            assert!(r.revoked_at.is_some(), "all family members must be revoked");
+        }
+        // 至少包含旧 + 新 两条记录
+        assert!(family.len() >= 2);
     }
 }

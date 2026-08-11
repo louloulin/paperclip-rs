@@ -1,0 +1,13 @@
+[package]
+name = "pc-execution-workspace-guards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Closed isolated execution workspace guards (port of paperclip packages/shared/src/execution-workspace-guards.ts)"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "r552_execution_workspace_guards"
+path = "tests/r552_execution_workspace_guards.rs"

@@ -335,6 +335,92 @@ pub fn generate_session_token() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
+/// R514: API key token prefix kinds.
+///
+/// | Prefix | Purpose | Wire format |
+/// |---|---|---|
+/// | `pk_`  | machine-to-machine API key (Board user) | `pk_<32 url-safe chars>` |
+/// | `sess_` | reserved for future session tokens (currently unused) | `sess_<...>` |
+///
+/// The prefix is part of the token itself, so even if the hash leaks, the
+/// prefix reveals the token kind and lets middleware short-circuit
+/// (e.g. a session token can't accidentally be accepted as an API key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyPrefix {
+    /// `pk_` — Board user API key, machine-to-machine.
+    Pk,
+    /// `sess_` — reserved (placeholder for future per-session tokens).
+    Sess,
+}
+
+impl KeyPrefix {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pk => "pk_",
+            Self::Sess => "sess_",
+        }
+    }
+
+    /// Parse a token's prefix; returns `None` for unknown / missing prefixes.
+    ///
+    /// Recognized prefixes for [`Self::Pk`] (board API key):
+    /// - `pk_` (R514 current convention)
+    /// - `pcak_` (legacy ApiKeyIssuer)
+    /// - `pcp_board_` (legacy access.rs bootstrap)
+    ///
+    /// Legacy aliases keep existing hashed rows resolvable while new keys are
+    /// minted with `pk_` going forward.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        if let Some(rest) = token.strip_prefix("pk_") {
+            if !rest.is_empty() {
+                return Some(Self::Pk);
+            }
+        }
+        if let Some(rest) = token.strip_prefix("pcak_") {
+            if !rest.is_empty() {
+                return Some(Self::Pk);
+            }
+        }
+        if let Some(rest) = token.strip_prefix("pcp_board_") {
+            if !rest.is_empty() {
+                return Some(Self::Pk);
+            }
+        }
+        if let Some(rest) = token.strip_prefix("sess_") {
+            if !rest.is_empty() {
+                return Some(Self::Sess);
+            }
+        }
+        None
+    }
+}
+
+/// R514: Generate a new API key token with the given prefix.
+/// Returns `{prefix}{32 url-safe chars}` — total length 35 (3 prefix + 32 body).
+#[must_use]
+pub fn generate_api_key(prefix: KeyPrefix) -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 24]; // 24 bytes -> 32 url-safe base64 chars (no padding)
+    rand::thread_rng().fill_bytes(&mut bytes);
+    use base64::Engine;
+    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    format!("{}{}", prefix.as_str(), body)
+}
+
+/// R514: Validate that `token` has the expected prefix.
+///
+/// Returns `true` iff `KeyPrefix::parse(token) == Some(expected)`.
+///
+/// Used by [`resolve_api_key`] as an early reject: a session token (`sess_`)
+/// must never be accepted as an API key, and vice-versa, even if both
+/// happen to hash to the same value (collision).
+#[must_use]
+pub fn has_key_prefix(token: &str, expected: KeyPrefix) -> bool {
+    KeyPrefix::parse(token) == Some(expected)
+}
+
 /// Hash a session token for storage. Mirrors the existing `hash_token`.
 pub fn hash_token(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
@@ -342,6 +428,10 @@ pub fn hash_token(token: &str) -> String {
 }
 
 pub async fn resolve_api_key(db: &Db, token: &str) -> Result<Option<(Uuid, String)>, AuthError> {
+    // R514: 防御性 prefix 校验 —— 即使 hash 巧合碰撞，错误前缀也不会被当成 API key。
+    if !has_key_prefix(token, KeyPrefix::Pk) {
+        return Ok(None);
+    }
     let h = hash_token(token);
     let row: Option<(Uuid, String)> = sqlx::query_as(
         "SELECT id, user_id FROM board_api_keys \
@@ -596,6 +686,99 @@ mod tests {
         assert!(!a.contains('+'));
         assert!(!a.contains('/'));
         assert!(!a.contains('='));
+    }
+
+
+    // -------- r514: pk_ prefix convention --------
+
+    #[test]
+    fn r514_key_prefix_pk_is_pk() {
+        assert_eq!(KeyPrefix::Pk.as_str(), "pk_");
+    }
+
+    #[test]
+    fn r514_key_prefix_sess_is_sess() {
+        assert_eq!(KeyPrefix::Sess.as_str(), "sess_");
+    }
+
+    #[test]
+    fn r514_key_prefix_parse_recognizes_pk() {
+        assert_eq!(KeyPrefix::parse("pk_abc123"), Some(KeyPrefix::Pk));
+    }
+
+    #[test]
+    fn r514_key_prefix_parse_recognizes_legacy_pcak() {
+        // R514 legacy alias: pcak_ tokens minted by ApiKeyIssuer.
+        assert_eq!(KeyPrefix::parse("pcak_abc123"), Some(KeyPrefix::Pk));
+    }
+
+    #[test]
+    fn r514_key_prefix_parse_recognizes_legacy_pcp_board() {
+        // R514 legacy alias: pcp_board_ tokens minted by access.rs.
+        assert_eq!(KeyPrefix::parse("pcp_board_abc123"), Some(KeyPrefix::Pk));
+    }
+
+    #[test]
+    fn r514_key_prefix_parse_recognizes_sess() {
+        assert_eq!(KeyPrefix::parse("sess_xyz"), Some(KeyPrefix::Sess));
+    }
+
+    #[test]
+    fn r514_key_prefix_parse_rejects_empty_body() {
+        assert_eq!(KeyPrefix::parse("pk_"), None);
+        assert_eq!(KeyPrefix::parse("pcak_"), None);
+        assert_eq!(KeyPrefix::parse("pcp_board_"), None);
+        assert_eq!(KeyPrefix::parse("sess_"), None);
+    }
+
+    #[test]
+    fn r514_key_prefix_parse_rejects_unknown_prefix() {
+        assert_eq!(KeyPrefix::parse("totally_random_token"), None);
+        assert_eq!(KeyPrefix::parse("sk_abc"), None); // sk_ is reserved for future
+        assert_eq!(KeyPrefix::parse(""), None);
+    }
+
+    #[test]
+    fn r514_generate_api_key_has_pk_prefix() {
+        let token = generate_api_key(KeyPrefix::Pk);
+        assert!(token.starts_with("pk_"));
+        assert_eq!(token.len(), 3 + 32, "3 prefix + 32 url-safe chars");
+        assert_eq!(KeyPrefix::parse(&token), Some(KeyPrefix::Pk));
+    }
+
+    #[test]
+    fn r514_generate_api_key_unique_across_calls() {
+        let a = generate_api_key(KeyPrefix::Pk);
+        let b = generate_api_key(KeyPrefix::Pk);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn r514_has_key_prefix_accepts_matching() {
+        assert!(has_key_prefix("pk_abc", KeyPrefix::Pk));
+        assert!(has_key_prefix("pcak_abc", KeyPrefix::Pk));
+        assert!(has_key_prefix("sess_xyz", KeyPrefix::Sess));
+    }
+
+    #[test]
+    fn r514_has_key_prefix_rejects_mismatch() {
+        // session token can't be accepted as API key
+        assert!(!has_key_prefix("sess_abc", KeyPrefix::Pk));
+        // API key can't be accepted as session
+        assert!(!has_key_prefix("pk_abc", KeyPrefix::Sess));
+        // unknown prefix
+        assert!(!has_key_prefix("totally_random", KeyPrefix::Pk));
+        assert!(!has_key_prefix("", KeyPrefix::Pk));
+    }
+
+    #[test]
+    fn r514_pk_token_url_safe() {
+        // body part (after pk_) should be URL-safe base64 (no + / =)
+        let token = generate_api_key(KeyPrefix::Pk);
+        let body = token.strip_prefix("pk_").expect("has pk_ prefix");
+        assert!(!body.contains('+'));
+        assert!(!body.contains('/'));
+        assert!(!body.contains('='));
     }
 
     #[test]

@@ -1,0 +1,13 @@
+[package]
+name = "pc-issue-attribution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Issue attribution derivation (responsible user + originating actor) (port of paperclip packages/shared/src/issue-attribution.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

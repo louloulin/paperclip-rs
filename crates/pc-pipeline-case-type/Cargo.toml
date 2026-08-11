@@ -1,0 +1,13 @@
+[package]
+name = "pc-pipeline-case-type"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Derived case type from pipeline (port of paperclip packages/shared/src/pipeline-case-type.ts)"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "r554_pipeline_case_type"
+path = "tests/r554_pipeline_case_type.rs"

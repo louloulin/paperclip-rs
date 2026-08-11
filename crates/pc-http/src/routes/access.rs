@@ -335,7 +335,8 @@ async fn board_keys_create(
 ) -> ApiResult<impl IntoResponse> {
     let user_id = require_user_id(&state, &headers).await?;
     let name = body.name.clone().unwrap_or_else(|| "new-key".to_owned());
-    let token = random_cli_token("pcp_board_");
+    // R514: 切换到 pk_ 前缀（machine-to-machine 语义）；旧 pcp_board_ 仍可被 resolve_api_key 兼容验证（hash 不变）。
+    let token = pc_auth::generate_api_key(pc_auth::KeyPrefix::Pk);
     let key_hash = sha2_sha256(&token);
     let row = pc_repos::board_key::BoardKeyRepo::new(&state.db)
         .create(&user_id, &name, &key_hash, body.expires_at)

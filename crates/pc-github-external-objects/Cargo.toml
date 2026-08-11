@@ -1,0 +1,16 @@
+[package]
+name = "pc-github-external-objects"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure parsers + identity types for GitHub / GitHub Enterprise external objects (port of paperclip server/src/services/github-external-object-provider.ts — pure parts only)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+pc-github-fetch = { path = "../pc-github-fetch" }
+url = "2"

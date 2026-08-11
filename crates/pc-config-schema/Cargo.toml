@@ -1,0 +1,19 @@
+[package]
+name = "pc-config-schema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paperclip on-disk config.json schema (port of paperclip packages/shared/src/config-schema.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+pc-network-bind = { path = "../pc-network-bind" }
+
+[[test]]
+name = "r557_config_schema"
+path = "tests/r557_config_schema.rs"

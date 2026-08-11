@@ -1,0 +1,13 @@
+[package]
+name = "pc-portability-hash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canonical JSON + SHA-256 content hashing for portability (port of paperclip packages/shared/src/portability-hash.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = "1"
+sha2 = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "pc-environment-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Environment driver/sandbox-provider support resolution per adapter (port of paperclip packages/shared/src/environment-support.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -5,6 +5,19 @@ use pc_repos::Db;
 use serde_json::json;
 use uuid::Uuid;
 
+// Tests in this file share one PostgreSQL instance. The sweep is a global
+// operation (no company filter) and uses a WHERE-guard against concurrent
+// UPDATEs, so two tests creating identical-shaped fixtures in parallel can
+// race: each sees the other's fixture, the first sweep clears both, and the
+// second sweep's WHERE-guard blocks re-clearing. We serialize execution with a
+// process-wide mutex so each test gets a deterministic, isolated view of the
+// database state.
+static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+    TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn connect() -> Db {
@@ -98,13 +111,25 @@ async fn cleanup(db: &Db, company_id: Uuid) {
 #[tokio::test(flavor = "current_thread")]
 async fn clears_locks_when_checkout_run_is_terminal() {
     let db = connect().await;
+    let _guard = lock_tests();
     let (company_id, agent_id) = fixture_with_company(&db).await;
     let failed_run = insert_run_with_status(&db, company_id, agent_id, "failed").await;
     let issue_id = insert_issue_with_locks(&db, company_id, agent_id, Some(failed_run), None).await;
 
     let result = sweep_stale_issue_locks(&db).await.unwrap();
-    assert_eq!(result.cleared, 1, "terminal checkout run must be cleaned");
-    assert_eq!(result.issue_ids, vec![issue_id]);
+    // The sweep runs across the whole shared test database, so other tests'
+    // leftover stale-lock rows may also be cleaned. We assert that OUR issue
+    // is among the cleared set and that its lock columns are NULL, rather
+    // than asserting exact totals that are sensitive to global DB state.
+    assert!(
+        result.cleared >= 1,
+        "sweep must clear at least the test's own stale issue"
+    );
+    assert!(
+        result.issue_ids.contains(&issue_id),
+        "test issue {issue_id} must be in the cleared set: {:?}",
+        result.issue_ids
+    );
     assert!(result.candidates_considered >= 1);
 
     // Verify lock columns cleared
@@ -147,6 +172,7 @@ async fn clears_locks_when_checkout_run_is_terminal() {
 #[tokio::test(flavor = "current_thread")]
 async fn preserves_locks_when_run_still_running() {
     let db = connect().await;
+    let _guard = lock_tests();
     let (company_id, agent_id) = fixture_with_company(&db).await;
     let running_run = insert_run_with_status(&db, company_id, agent_id, "running").await;
     let issue_id = insert_issue_with_locks(
@@ -159,7 +185,13 @@ async fn preserves_locks_when_run_still_running() {
     .await;
 
     let result = sweep_stale_issue_locks(&db).await.unwrap();
-    assert_eq!(result.cleared, 0, "running run must be preserved");
+    // The test's own issue points at a running run, so it must NOT be cleared
+    // even when other tests' leftover stale-lock rows are processed.
+    assert!(
+        !result.issue_ids.contains(&issue_id),
+        "running-run issue {issue_id} must not be in the cleared set: {:?}",
+        result.issue_ids
+    );
 
     let row: (Option<Uuid>, Option<Uuid>) =
         sqlx::query_as("SELECT checkout_run_id, execution_run_id FROM issues WHERE id=$1")
@@ -176,6 +208,7 @@ async fn preserves_locks_when_run_still_running() {
 #[tokio::test(flavor = "current_thread")]
 async fn preserves_locks_when_one_lock_terminal_other_running() {
     let db = connect().await;
+    let _guard = lock_tests();
     let (company_id, agent_id) = fixture_with_company(&db).await;
     let failed_run = insert_run_with_status(&db, company_id, agent_id, "failed").await;
     let running_run = insert_run_with_status(&db, company_id, agent_id, "running").await;
@@ -189,9 +222,12 @@ async fn preserves_locks_when_one_lock_terminal_other_running() {
     .await;
 
     let result = sweep_stale_issue_locks(&db).await.unwrap();
-    assert_eq!(
-        result.cleared, 0,
-        "mixed lock: only both-cleanable should clear"
+    // Mixed lock (failed + running): only both-cleanable issues are cleared,
+    // so the test's own issue must NOT be in the cleared set.
+    assert!(
+        !result.issue_ids.contains(&issue_id),
+        "mixed-lock issue {issue_id} must not be cleared while one run is running: {:?}",
+        result.issue_ids
     );
 
     let row: (Option<Uuid>, Option<Uuid>) =
@@ -209,17 +245,26 @@ async fn preserves_locks_when_one_lock_terminal_other_running() {
 #[tokio::test(flavor = "current_thread")]
 async fn idempotent_second_pass_finds_nothing() {
     let db = connect().await;
+    let _guard = lock_tests();
     let (company_id, agent_id) = fixture_with_company(&db).await;
     let failed_run = insert_run_with_status(&db, company_id, agent_id, "failed").await;
     let issue_id = insert_issue_with_locks(&db, company_id, agent_id, Some(failed_run), None).await;
 
     let first = sweep_stale_issue_locks(&db).await.unwrap();
-    assert_eq!(first.cleared, 1);
-    assert_eq!(first.issue_ids, vec![issue_id]);
+    // First pass must clear the test's issue (it points at a failed run).
+    assert!(
+        first.issue_ids.contains(&issue_id),
+        "first pass must clear the test's own issue {issue_id}: {:?}",
+        first.issue_ids
+    );
 
     let second = sweep_stale_issue_locks(&db).await.unwrap();
-    assert_eq!(second.cleared, 0, "second pass must be idempotent");
-    assert!(second.issue_ids.is_empty());
+    // Second pass must not re-clear the test's issue (idempotent).
+    assert!(
+        !second.issue_ids.contains(&issue_id),
+        "second pass must not re-clear the test's issue {issue_id}: {:?}",
+        second.issue_ids
+    );
 
     cleanup(&db, company_id).await;
 }
@@ -227,13 +272,19 @@ async fn idempotent_second_pass_finds_nothing() {
 #[tokio::test(flavor = "current_thread")]
 async fn cleans_locks_when_checkout_terminal_and_execution_null() {
     let db = connect().await;
+    let _guard = lock_tests();
     let (company_id, agent_id) = fixture_with_company(&db).await;
     let failed_run = insert_run_with_status(&db, company_id, agent_id, "failed").await;
     // execution_run_id is NULL (the WHERE-clause already required either to be non-null)
     let issue_id = insert_issue_with_locks(&db, company_id, agent_id, Some(failed_run), None).await;
 
     let result = sweep_stale_issue_locks(&db).await.unwrap();
-    assert_eq!(result.cleared, 1);
+    // The test's own issue (checkout=failed, execution=null) must be cleared.
+    assert!(
+        result.issue_ids.contains(&issue_id),
+        "test issue {issue_id} must be in the cleared set: {:?}",
+        result.issue_ids
+    );
 
     // Both lock columns should now be NULL
     let row: (Option<Uuid>, Option<Uuid>) =

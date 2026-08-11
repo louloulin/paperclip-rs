@@ -17,7 +17,24 @@ use std::collections::BTreeMap;
 
 use pc_openapi::{register_core_dtos, OpenApiRegistry};
 
+use crate::middleware::csrf::csrf_path_allowed;
 use crate::AppState;
+
+/// R515: True if the path+method combination requires CSRF protection
+/// (and therefore should declare `security: [{csrfToken: []}]` in OpenAPI).
+///
+/// Mirrors `csrf_path_allowed` (whitelist) + the state-changing method set.
+/// Pure function so unit tests can cover all branches without an [`AppState`].
+pub fn csrf_protected_in_openapi(path: &str, method: &str) -> bool {
+    let method_upper = method.to_uppercase();
+    if !matches!(
+        method_upper.as_str(),
+        "POST" | "PUT" | "PATCH" | "DELETE"
+    ) {
+        return false;
+    }
+    !csrf_path_allowed(path)
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -147,7 +164,8 @@ fn build_openapi_body(state: &AppState) -> serde_json::Value {
         "components": {
             "securitySchemes": {
                 "session": { "type": "apiKey", "in": "cookie", "name": "paperclip_session" },
-                "apiKey": { "type": "apiKey", "in": "header", "name": "X-Paperclip-Api-Key" }
+                "apiKey": { "type": "apiKey", "in": "header", "name": "X-Paperclip-Api-Key" },
+                "csrfToken": { "type": "apiKey", "in": "header", "name": "X-CSRF-Token" }
             }
         },
         "x-paperclip": { "adapters": adapters }
@@ -674,6 +692,119 @@ pub fn path_schema_hint(path: &str, method: &str) -> Option<PathSchemaHint> {
             response: None,
         }),
 
+
+        // R513: admin user directory + company-access management.
+        ("/api/admin/users", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("AdminUserList"),
+        }),
+        ("/api/admin/users/{user_id}/company-access", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/admin/users/{user_id}/company-access", "PUT") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/admin/users/{user_id}/promote-instance-admin", "POST") => Some(PathSchemaHint {
+            request: None,
+            response: Some("AdminUser"),
+        }),
+        ("/api/admin/users/{user_id}/demote-instance-admin", "POST") => Some(PathSchemaHint {
+            request: None,
+            response: Some("AdminUser"),
+        }),
+
+        // R513: companies sub-resources.
+        ("/api/companies/{company_id}/members", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CompanyMemberList"),
+        }),
+        ("/api/companies/{company_id}/stats", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CompanyStats"),
+        }),
+        ("/api/companies/{company_id}/timeline", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CompanyTimelineResult"),
+        }),
+        ("/api/companies/{company_id}/artifacts", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CompanyArtifactList"),
+        }),
+        ("/api/companies/{company_id}/org", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CompanyOrgChart"),
+        }),
+        ("/api/companies/{company_id}/org.svg", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/companies/{company_id}/org.png", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/companies/{company_id}/agents", "POST") => Some(PathSchemaHint {
+            request: Some("Agent"),
+            response: Some("Agent"),
+        }),
+        ("/api/companies/{company_id}/archive", "POST") => Some(PathSchemaHint {
+            request: None,
+            response: Some("Company"),
+        }),
+        ("/api/companies/stats", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CompanyStatsList"),
+        }),
+        ("/api/companies/issues", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/companies/import/preview", "POST") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/companies/import/jobs/{job_id}", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+
+        // R513: invite routes.
+        ("/api/invites/{invite_id}", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("Invite"),
+        }),
+        ("/api/invites/{invite_id}/accept", "POST") => Some(PathSchemaHint {
+            request: None,
+            response: Some("Invite"),
+        }),
+        ("/api/invites/{invite_id}/onboarding", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/invites/{invite_id}/logo", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+
+        // R513: skills catalog.
+        ("/api/skills/available", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/skills/catalog", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/skills/index", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+        ("/api/skills/{skill_name}", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: None,
+        }),
+
         _ => None,
     }
 }
@@ -829,10 +960,20 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
                 tail.push(ch);
             }
             // Find chained methods in the tail.
+            //
+            // R522 fix: also split on `.` so chained methods like
+            // `.get(h).post(h)` are picked up. Tokens like `.post` get
+            // their leading `.` stripped before matching.
+            //
+            // Pre-R522 only the *leading* verb was detected for chained
+            // calls (e.g. `get(list).post(create)` only registered as
+            // GET). This left OpenAPI consumers blind to half the API
+            // surface.
             let mut verbs = std::collections::BTreeSet::new();
-            // Also include the leading verb (after the comma).
-            for token in tail.split(|c: char| c == '(' || c == ')' || c == ',' || c.is_whitespace())
-            {
+            for raw_token in tail.split(|c: char| {
+                c == '(' || c == ')' || c == ',' || c == '.' || c.is_whitespace()
+            }) {
+                let token = raw_token.trim_start_matches('.');
                 if matches!(token, "get" | "post" | "put" | "patch" | "delete") {
                     verbs.insert(token.to_string());
                 }
@@ -864,6 +1005,17 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
                     if let Some(body) = request_body {
                         if let Some(op_obj) = op.as_object_mut() {
                             op_obj.insert("requestBody".to_string(), body);
+                        }
+                    }
+                    // R515: annotate state-changing operations on session-auth
+                    // paths with `security: [{csrfToken: []}]` so API consumers
+                    // know they must send the X-CSRF-Token header.
+                    if csrf_protected_in_openapi(&normalized_path, verb) {
+                        if let Some(op_obj) = op.as_object_mut() {
+                            op_obj.insert(
+                                "security".to_string(),
+                                json!([{"csrfToken": []}]),
+                            );
                         }
                     }
                     obj.insert(method.clone(), op);
@@ -1093,7 +1245,7 @@ mod tests {
     }
 
     #[test]
-    fn r506_path_schema_hint_coverage_includes_all_sixty_nine() {
+    fn r506_path_schema_hint_coverage_includes_all_ninety_four() {
         // (path, method, expected_response, expected_request) — response is
         // `Option<&str>` to cover DELETE routes which return no body.
         let cases: &[(&str, &str, Option<&str>, Option<&str>)] = &[
@@ -1307,6 +1459,34 @@ mod tests {
             ("/api/folders", "GET", Some("FolderList"), None),
             ("/api/folders", "POST", Some("Folder"), Some("Folder")),
             ("/api/folders/{id}", "DELETE", None, None),
+            // R513: 25 additional hints — admin + companies sub-resources + invites + skills.
+            ("/api/admin/users", "GET", Some("AdminUserList"), None),
+            ("/api/admin/users/{user_id}/company-access", "GET", None, None),
+            ("/api/admin/users/{user_id}/company-access", "PUT", None, None),
+            ("/api/admin/users/{user_id}/promote-instance-admin", "POST", Some("AdminUser"), None),
+            ("/api/admin/users/{user_id}/demote-instance-admin", "POST", Some("AdminUser"), None),
+            ("/api/companies/{company_id}/members", "GET", Some("CompanyMemberList"), None),
+            // R522: companies aggregation endpoints now have real schemas.
+            ("/api/companies/{company_id}/stats", "GET", Some("CompanyStats"), None),
+            ("/api/companies/{company_id}/timeline", "GET", Some("CompanyTimelineResult"), None),
+            ("/api/companies/{company_id}/artifacts", "GET", Some("CompanyArtifactList"), None),
+            ("/api/companies/{company_id}/org", "GET", Some("CompanyOrgChart"), None),
+            ("/api/companies/{company_id}/org.svg", "GET", None, None),
+            ("/api/companies/{company_id}/org.png", "GET", None, None),
+            ("/api/companies/{company_id}/agents", "POST", Some("Agent"), Some("Agent")),
+            ("/api/companies/{company_id}/archive", "POST", Some("Company"), None),
+            ("/api/companies/stats", "GET", Some("CompanyStatsList"), None),
+            ("/api/companies/issues", "GET", None, None),
+            ("/api/companies/import/preview", "POST", None, None),
+            ("/api/companies/import/jobs/{job_id}", "GET", None, None),
+            ("/api/invites/{invite_id}", "GET", Some("Invite"), None),
+            ("/api/invites/{invite_id}/accept", "POST", Some("Invite"), None),
+            ("/api/invites/{invite_id}/onboarding", "GET", None, None),
+            ("/api/invites/{invite_id}/logo", "GET", None, None),
+            ("/api/skills/available", "GET", None, None),
+            ("/api/skills/catalog", "GET", None, None),
+            ("/api/skills/index", "GET", None, None),
+            ("/api/skills/{skill_name}", "GET", None, None),
         ];
         for (path, method, expected_resp, expected_req) in cases {
             let h = path_schema_hint(path, method)
@@ -1626,7 +1806,64 @@ mod tests {
     }
 
     #[test]
+    fn r513_admin_users_routes_round_trip() {
+        let h = path_schema_hint("/api/admin/users", "GET").expect("hint");
+        assert_eq!(h.response, Some("AdminUserList"));
+        let h = path_schema_hint("/api/admin/users/{user_id}/promote-instance-admin", "POST").expect("hint");
+        assert_eq!(h.response, Some("AdminUser"));
+        let h = path_schema_hint("/api/admin/users/{user_id}/demote-instance-admin", "POST").expect("hint");
+        assert_eq!(h.response, Some("AdminUser"));
+        let h = path_schema_hint("/api/admin/users/{user_id}/company-access", "GET").expect("hint");
+        assert!(h.request.is_none());
+        let h = path_schema_hint("/api/admin/users/{user_id}/company-access", "PUT").expect("hint");
+        assert!(h.response.is_none());
+    }
+
+    #[test]
+    fn r513_companies_sub_resources_round_trip() {
+        let h = path_schema_hint("/api/companies/{company_id}/members", "GET").expect("hint");
+        assert_eq!(h.response, Some("CompanyMemberList"));
+        // R522: stats/timeline/artifacts/org now have real schemas.
+        let h = path_schema_hint("/api/companies/{company_id}/stats", "GET").expect("hint");
+        assert_eq!(h.response, Some("CompanyStats"));
+        let h = path_schema_hint("/api/companies/{company_id}/timeline", "GET").expect("hint");
+        assert_eq!(h.response, Some("CompanyTimelineResult"));
+        let h = path_schema_hint("/api/companies/{company_id}/artifacts", "GET").expect("hint");
+        assert_eq!(h.response, Some("CompanyArtifactList"));
+        let h = path_schema_hint("/api/companies/{company_id}/org", "GET").expect("hint");
+        assert_eq!(h.response, Some("CompanyOrgChart"));
+        let h = path_schema_hint("/api/companies/{company_id}/archive", "POST").expect("hint");
+        assert_eq!(h.response, Some("Company"));
+        let h = path_schema_hint("/api/companies/{company_id}/agents", "POST").expect("hint");
+        assert_eq!(h.request, Some("Agent"));
+        assert_eq!(h.response, Some("Agent"));
+        let h = path_schema_hint("/api/companies/import/preview", "POST").expect("hint");
+        assert!(h.response.is_none());
+        let h = path_schema_hint("/api/companies/import/jobs/{job_id}", "GET").expect("hint");
+        assert!(h.response.is_none());
+    }
+
+    #[test]
+    fn r513_invites_and_skills_routes_round_trip() {
+        let h = path_schema_hint("/api/invites/{invite_id}", "GET").expect("hint");
+        assert_eq!(h.response, Some("Invite"));
+        let h = path_schema_hint("/api/invites/{invite_id}/accept", "POST").expect("hint");
+        assert_eq!(h.response, Some("Invite"));
+        let h = path_schema_hint("/api/invites/{invite_id}/onboarding", "GET").expect("hint");
+        assert!(h.response.is_none());
+        let h = path_schema_hint("/api/invites/{invite_id}/logo", "GET").expect("hint");
+        assert!(h.response.is_none());
+        for path in ["/api/skills/available", "/api/skills/catalog", "/api/skills/index"] {
+            let h = path_schema_hint(path, "GET").expect("hint");
+            assert!(h.response.is_none(), "skills endpoint {path} should have minimal response");
+        }
+        let h = path_schema_hint("/api/skills/{skill_name}", "GET").expect("hint");
+        assert!(h.response.is_none());
+    }
+
+    #[test]
     fn r511_folders_crud_and_legacy() {
+
         let h = path_schema_hint("/api/companies/{company_id}/folders", "GET").expect("hint");
         assert_eq!(h.response, Some("FolderList"));
         let h = path_schema_hint("/api/companies/{company_id}/folders", "POST").expect("hint");
@@ -1835,5 +2072,295 @@ mod tests {
         assert!(y.contains("Agent:"));
         assert!(y.contains("HeartbeatRun:"));
         assert!(y.contains("securitySchemes:"));
+    }
+
+    // -------- r515: CSRF in OpenAPI securitySchemes + path-level security --------
+
+    #[test]
+    fn r515_csrf_protected_in_openapi_safe_methods_return_false() {
+        // GET / HEAD / OPTIONS never require CSRF.
+        for method in ["GET", "HEAD", "OPTIONS", "get", "head"] {
+            assert!(
+                !csrf_protected_in_openapi("/api/companies", method),
+                "{method} should not require CSRF"
+            );
+        }
+    }
+
+    #[test]
+    fn r515_csrf_protected_in_openapi_state_changing_on_protected_path() {
+        assert!(csrf_protected_in_openapi("/api/companies", "POST"));
+        assert!(csrf_protected_in_openapi("/api/companies/{id}", "PATCH"));
+        assert!(csrf_protected_in_openapi("/api/issues", "PUT"));
+        assert!(csrf_protected_in_openapi("/api/decisions/{id}", "DELETE"));
+    }
+
+    #[test]
+    fn r515_csrf_protected_in_openapi_whitelist_returns_false() {
+        // Whitelist paths from middleware::csrf::csrf_path_allowed.
+        for (path, method) in [
+            ("/api/auth/sign-in/email", "POST"),
+            ("/api/auth/sign-up/email", "POST"),
+            ("/api/auth/refresh", "POST"),
+            ("/live-events", "GET"),  // already filtered by method
+            ("/openapi.json", "POST"),  // whitelisted even for POST
+            ("/api/openapi.json", "POST"),
+            ("/health", "DELETE"),
+            ("/_plugins/foo/ui/index.html", "POST"),
+            ("/api/dev-server/restart", "POST"),
+        ] {
+            assert!(
+                !csrf_protected_in_openapi(path, method),
+                "whitelisted {method} {path} should not require CSRF"
+            );
+        }
+    }
+
+    #[test]
+    fn r515_security_scheme_csrf_token_present_in_injected_body() {
+        // Simulate build_openapi_body: hand-build securitySchemes + inject DTOs.
+        let mut body = json!({
+            "components": {
+                "securitySchemes": {
+                    "session": { "type": "apiKey", "in": "cookie", "name": "paperclip_session" },
+                    "apiKey": { "type": "apiKey", "in": "header", "name": "X-Paperclip-Api-Key" },
+                    "csrfToken": { "type": "apiKey", "in": "header", "name": "X-CSRF-Token" }
+                }
+            }
+        });
+        inject_dto_schemas(&mut body);
+        let sec = &body["components"]["securitySchemes"];
+        assert!(sec["csrfToken"].is_object());
+        assert_eq!(sec["csrfToken"]["type"], "apiKey");
+        assert_eq!(sec["csrfToken"]["in"], "header");
+        assert_eq!(sec["csrfToken"]["name"], "X-CSRF-Token");
+        // Existing schemes still present (no regression).
+        assert!(sec["session"].is_object());
+        assert!(sec["apiKey"].is_object());
+    }
+
+    #[test]
+    fn r515_yaml_body_includes_csrf_token_security_scheme() {
+        let body = json!({
+            "components": {
+                "securitySchemes": {
+                    "csrfToken": { "type": "apiKey", "in": "header", "name": "X-CSRF-Token" }
+                }
+            }
+        });
+        let y = json_value_to_yaml(&body, 0);
+        assert!(y.contains("csrfToken:"));
+        assert!(y.contains("X-CSRF-Token"));
+    }
+
+    #[test]
+    fn r515_path_level_security_attached_to_post_companies() {
+        // Build an op for POST /api/companies and verify security is attached.
+        let path = "/api/companies";
+        let method = "POST";
+        let mut op = json!({
+            "operationId": "post_api_companies",
+            "summary": "POST /api/companies",
+            "tags": ["companies"],
+            "responses": {}
+        });
+        if csrf_protected_in_openapi(path, method) {
+            op.as_object_mut()
+                .unwrap()
+                .insert("security".to_string(), json!([{"csrfToken": []}]));
+        }
+        let sec = op["security"].as_array().expect("security array");
+        assert_eq!(sec.len(), 1);
+        assert_eq!(sec[0]["csrfToken"], json!([]));
+    }
+
+    #[test]
+    fn r515_path_level_security_absent_on_get_companies() {
+        let path = "/api/companies";
+        let method = "GET";
+        let mut op = json!({
+            "operationId": "get_api_companies",
+            "summary": "GET /api/companies",
+            "tags": ["companies"],
+            "responses": {}
+        });
+        if csrf_protected_in_openapi(path, method) {
+            op.as_object_mut()
+                .unwrap()
+                .insert("security".to_string(), json!([{"csrfToken": []}]));
+        }
+        assert!(op.get("security").is_none(), "GET should not have security");
+    }
+
+    #[test]
+    fn r515_path_level_security_absent_on_auth_signin() {
+        // /api/auth/* is whitelisted → no csrfToken requirement.
+        let path = "/api/auth/sign-in/email";
+        let method = "POST";
+        let mut op = json!({
+            "operationId": "post_api_auth_sign_in_email",
+            "summary": "POST /api/auth/sign-in/email",
+            "tags": ["auth"],
+            "responses": {}
+        });
+        if csrf_protected_in_openapi(path, method) {
+            op.as_object_mut()
+                .unwrap()
+                .insert("security".to_string(), json!([{"csrfToken": []}]));
+        }
+        assert!(op.get("security").is_none(), "auth signin should not have csrf security");
+    }
+
+    #[test]
+    fn r522_scan_routes_picks_up_chained_methods() {
+        // R522: After the scanner fix, `.route("/api/companies", get(list).post(create))`
+        // should register BOTH GET and POST. Previously only the leading verb
+        // (get) was detected, leaving the OpenAPI doc blind to POST.
+        let paths = scan_routes_for_openapi();
+        let companies = paths
+            .get("/api/companies")
+            .expect("/api/companies should be scanned");
+        let methods: Vec<&str> = companies
+            .as_object()
+            .map(|o| o.keys().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+        assert!(
+            methods.contains(&"get"),
+            "/api/companies missing GET, got {:?}",
+            methods
+        );
+        assert!(
+            methods.contains(&"post"),
+            "/api/companies missing POST (chained method), got {:?}",
+            methods
+        );
+    }
+
+    #[test]
+    fn r522_chained_patch_and_delete_registered() {
+        // R508 example: `.route("/api/companies/:company_id", get(get_one).patch(update).delete(remove))`
+        let paths = scan_routes_for_openapi();
+        let route = paths
+            .get("/api/companies/{company_id}")
+            .expect("/api/companies/{company_id} should be scanned");
+        let methods: std::collections::BTreeSet<&str> = route
+            .as_object()
+            .map(|o| o.keys().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+        assert!(methods.contains("get"));
+        assert!(methods.contains("patch"));
+        assert!(methods.contains("delete"));
+    }
+
+    #[test]
+    fn r522_scan_routes_attaches_security_to_post_companies() {
+        // R515 + R522: /api/companies now exposes POST via chained methods.
+        // Verify path-level security is attached.
+        let paths = scan_routes_for_openapi();
+        let post_companies = paths
+            .get("/api/companies")
+            .and_then(|p| p.get("post"))
+            .expect("POST /api/companies should be scanned");
+        let sec = post_companies["security"]
+            .as_array()
+            .expect("security array required");
+        assert_eq!(sec.len(), 1);
+        assert_eq!(sec[0]["csrfToken"], json!([]));
+    }
+
+    #[test]
+    fn r515_scan_routes_skips_security_on_get_companies_stats() {
+        // GET /api/companies/:company_id/stats must NOT have security (safe method).
+        let paths = scan_routes_for_openapi();
+        let get_stats = paths
+            .get("/api/companies/{company_id}/stats")
+            .and_then(|p| p.get("get"))
+            .expect("GET /api/companies/{company_id}/stats should be scanned");
+        assert!(get_stats.get("security").is_none());
+    }
+
+    #[test]
+    fn r522_chained_methods_not_breaking_single_method_routes() {
+        // Regression guard: routes that use single-method syntax (most of the
+        // codebase) must still be detected.
+        let paths = scan_routes_for_openapi();
+        // /api/companies/import/preview uses `.route("/...", post(handler))`
+        let import_preview = paths
+            .get("/api/companies/import/preview")
+            .and_then(|p| p.get("post"))
+            .expect("POST /api/companies/import/preview should be scanned");
+        assert!(import_preview.is_object());
+    }
+
+    #[test]
+    fn r522_company_aggregation_schemas_wired_in_openapi_body() {
+        // R522: companies aggregation endpoints now reference real schemas
+        // (CompanyStats, CompanyTimelineResult, CompanyArtifactList, CompanyOrgChart,
+        // CompanyStatsList). The OpenAPI body should contain all of them as
+        // entries in `components.schemas`.
+        use pc_openapi::{register_core_dtos, OpenApiRegistry};
+
+        let mut reg = OpenApiRegistry::builder();
+        register_core_dtos(&mut reg);
+        let spec = reg.build();
+        let schemas = &spec.to_json_value()["components"]["schemas"];
+
+        for name in ["CompanyStats", "CompanyStatsList", "CompanyTimelineResult",
+                     "CompanyArtifact", "CompanyArtifactList", "CompanyOrgChart"] {
+            assert!(
+                schemas.as_object().map(|o| o.contains_key(name)).unwrap_or(false),
+                "missing schema {name} in components.schemas"
+            );
+        }
+    }
+
+    #[test]
+    fn r522_path_schema_hint_includes_all_six_new_aggregations() {
+        // R522: every companies aggregation path should now resolve to a
+        // non-None response schema (except org.svg/org.png which return binary).
+        for (path, expected_resp) in [
+            ("/api/companies/{company_id}/stats", Some("CompanyStats")),
+            ("/api/companies/{company_id}/timeline", Some("CompanyTimelineResult")),
+            ("/api/companies/{company_id}/artifacts", Some("CompanyArtifactList")),
+            ("/api/companies/{company_id}/org", Some("CompanyOrgChart")),
+            ("/api/companies/stats", Some("CompanyStatsList")),
+            // org.svg / org.png still None (binary image response).
+            ("/api/companies/{company_id}/org.svg", None),
+            ("/api/companies/{company_id}/org.png", None),
+        ] {
+            let h = path_schema_hint(path, "GET")
+                .unwrap_or_else(|| panic!("no hint for {path}"));
+            assert_eq!(
+                h.response, expected_resp,
+                "response mismatch for {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn r522_core_dto_names_includes_company_aggregation_schemas() {
+        // R522: 6 new schemas registered; CORE_DTO_NAMES length 35 → 41.
+        use pc_openapi::CORE_DTO_NAMES;
+        assert_eq!(CORE_DTO_NAMES.len(), 41);
+        for name in ["CompanyStats", "CompanyStatsList", "CompanyTimelineResult",
+                     "CompanyArtifact", "CompanyArtifactList", "CompanyOrgChart"] {
+            assert!(
+                CORE_DTO_NAMES.contains(&name),
+                "CORE_DTO_NAMES missing {name}"
+            );
+        }
+    }
+
+        #[test]
+    fn r522_get_companies_now_has_security_path_level_via_post() {
+        // R515 + R522 combined: with POST now registered on /api/companies,
+        // the path-level security is present. The GET method on the same
+        // path must NOT have security (safe method).
+        let paths = scan_routes_for_openapi();
+        let entry = paths.get("/api/companies").expect("/api/companies scanned");
+        let post = entry.get("post").expect("POST present");
+        let get = entry.get("get").expect("GET present");
+        assert!(post.get("security").is_some(), "POST needs CSRF security");
+        assert!(get.get("security").is_none(), "GET should not have security");
     }
 }

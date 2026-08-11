@@ -1,0 +1,16 @@
+[package]
+name = "pc-workspace-commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Workspace runtime command definitions and service matching (port of paperclip packages/shared/src/workspace-commands.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "r548_workspace_commands"
+path = "tests/r548_workspace_commands.rs"

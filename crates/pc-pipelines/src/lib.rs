@@ -33,6 +33,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+
+
+pub mod case_type;
+
 /// Pipeline 业务错误。
 #[derive(Debug, Error)]
 pub enum PipelineServiceError {

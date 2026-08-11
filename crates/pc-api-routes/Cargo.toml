@@ -1,0 +1,13 @@
+[package]
+name = "pc-api-routes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "API endpoint constants (port of paperclip packages/shared/src/api.ts)"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "r549_api_routes"
+path = "tests/r549_api_routes.rs"

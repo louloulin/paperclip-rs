@@ -1,0 +1,17 @@
+[package]
+name = "pc-agent-eligibility"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent work eligibility + org-chain health (port of paperclip packages/shared/src/agent-eligibility.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "r544_agent_eligibility"
+path = "tests/r544_agent_eligibility.rs"

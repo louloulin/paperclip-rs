@@ -1,0 +1,17 @@
+[package]
+name = "pc-github-fetch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GitHub / GitHub Enterprise fetch wrapper + URL builders (port of paperclip server/src/services/github-fetch.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+thiserror = { workspace = true }
+url = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

@@ -1,0 +1,13 @@
+[package]
+name = "pc-external-objects"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "External object mention source label formatting (port of paperclip packages/shared/src/external-objects.ts)"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "r553_external_objects"
+path = "tests/r553_external_objects.rs"

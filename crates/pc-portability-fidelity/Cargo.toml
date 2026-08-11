@@ -1,0 +1,16 @@
+[package]
+name = "pc-portability-fidelity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Portability export fidelity reporting (port of paperclip packages/shared/src/portability-fidelity.ts)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "r547_fidelity"
+path = "tests/r547_fidelity.rs"
