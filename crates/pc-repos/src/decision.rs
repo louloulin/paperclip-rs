@@ -105,11 +105,37 @@ impl<'a> DecisionRepo<'a> {
             .await
     }
 
+    /// Insert a decision with default `options = []` and `expires_at = now + 7 days`.
+    /// Thin wrapper around [`Self::create_with_options`] that preserves the
+    /// legacy 4-arg signature.
     pub async fn create(
         &self,
         company_id: Uuid,
         title: &str,
         body: &str,
+        decision_signing: &DecisionSigningService,
+    ) -> sqlx::Result<DecisionRow> {
+        self.create_with_options(
+            company_id,
+            title,
+            body,
+            serde_json::json!([]),
+            None,
+            decision_signing,
+        )
+        .await
+    }
+
+    /// Insert a decision with caller-supplied `options` and optional `expires_at`.
+    /// When `expires_at` is `None`, the default of `now + 7 days` is used
+    /// (same as the legacy `create`).
+    pub async fn create_with_options(
+        &self,
+        company_id: Uuid,
+        title: &str,
+        body: &str,
+        options: serde_json::Value,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
         decision_signing: &DecisionSigningService,
     ) -> sqlx::Result<DecisionRow> {
         // decisions 表要求 origin_agent_id/issue_id/run_id NOT NULL
@@ -138,15 +164,18 @@ impl<'a> DecisionRepo<'a> {
         .ok_or(sqlx::Error::RowNotFound)?;
 
         let id = Uuid::new_v4();
-        let options = serde_json::json!([]);
         let target_snapshots = serde_json::json!({});
         let signed_spec = decision_signing
             .sign(&decision_signature_spec(id, &options, &target_snapshots))
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        let expires_clause = match expires_at {
+            Some(ts) => format!("'{}'::timestamptz", ts.to_rfc3339()),
+            None => "now() + interval '7 days'".to_string(),
+        };
         let sql = format!(
             "INSERT INTO decisions (id, company_id, origin_agent_id, origin_issue_id, origin_run_id, \
              title, body, options, signed_spec, target_snapshots, expires_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now() + interval '7 days') RETURNING {COLS}"
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, {expires_clause}) RETURNING {COLS}"
         );
         sqlx::query_as::<_, DecisionRow>(&sql)
             .bind(id)

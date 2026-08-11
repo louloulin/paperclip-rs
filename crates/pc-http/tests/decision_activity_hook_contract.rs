@@ -313,3 +313,116 @@ async fn r599_activity_event_payload_carries_metadata() {
 
     cleanup(&pool, company_id).await;
 }
+
+// =====================================================================
+// R502 — `DecisionService::create_with_spec` end-to-end contract
+// =====================================================================
+
+/// Verify that `create_with_spec` (the R502 entry point that wires R492 pure
+/// helpers into the create path) emits the same activity hook as `create`,
+/// persists the caller-supplied options, and honours an explicit `expires_at`.
+#[tokio::test(flavor = "current_thread")]
+async fn r502_create_with_spec_emits_activity_with_custom_options() {
+    let (db, pool) = setup_db().await;
+    let (state, in_mem) = test_state_with_recording(db.clone());
+    let (company_id, _agent_id, _issue_id, _run_id) =
+        insert_company_agent_issue_run(&db, &pool).await;
+
+    let signing = test_signing();
+    let hook: Arc<dyn pc_decisions::DecisionHook> =
+        Arc::new(DecisionActivityHook::new(Arc::new(state.clone())));
+    let svc = DecisionService::with_hooks(&db, &signing, vec![hook]);
+
+    // Build a CreateDecisionSpec with realistic options + 30-day expiry.
+    let mut spec = pc_decisions::CreateDecisionSpec::new();
+    spec.options = serde_json::json!([
+        {
+            "id": "approve",
+            "label": "Approve and continue",
+            "effects": [{
+                "type": "comment_on_issue",
+                "targetIssueId": "i-stub",
+                "body": "approved"
+            }]
+        },
+        {
+            "id": "reject",
+            "label": "Reject",
+            "effects": [{
+                "type": "update_issue_status",
+                "targetIssueId": "i-stub",
+                "status": "closed"
+            }]
+        }
+    ]);
+    let explicit_expiry = chrono::Utc::now() + chrono::Duration::days(30);
+    spec.expires_at = Some(explicit_expiry);
+    spec.continuation_policy = "wake_origin_agent".to_string();
+    spec.rule_key = Some("test.rule.r502".to_string());
+    spec.metadata = serde_json::json!({"origin": "r502-contract-test"});
+
+    let row = svc
+        .create_with_spec(company_id, "R502 with spec", "spec body", &spec)
+        .await
+        .expect("create_with_spec");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Hook fired.
+    let events = in_mem.snapshot();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, ActivityKind::DecisionProposed) && e.subject_id == row.id),
+        "expected DecisionProposed activity, got: {events:?}"
+    );
+
+    // Caller-supplied options persisted.
+    let opts = row.options.as_array().expect("options is array");
+    assert_eq!(opts.len(), 2);
+    assert_eq!(opts[0]["id"], "approve");
+    assert_eq!(opts[1]["id"], "reject");
+
+    // Continuation policy was honoured.
+    assert_eq!(row.continuation_policy, "wake_origin_agent");
+    assert_eq!(row.rule_key.as_deref(), Some("test.rule.r502"));
+
+    // expiry was honoured (within 2 seconds of expected).
+    let delta = (row.expires_at.as_datetime() - explicit_expiry)
+        .num_seconds()
+        .abs();
+    assert!(delta <= 2, "expected ~30d expiry, got delta={delta}s");
+
+    cleanup(&pool, company_id).await;
+}
+
+/// Verify that the legacy `create` (no spec) still works after the R502
+/// signature extension — backward compatibility sanity.
+#[tokio::test(flavor = "current_thread")]
+async fn r502_legacy_create_still_works_after_refactor() {
+    let (db, pool) = setup_db().await;
+    let (_state, _in_mem) = test_state_with_recording(db.clone());
+    let (company_id, _agent_id, _issue_id, _run_id) =
+        insert_company_agent_issue_run(&db, &pool).await;
+
+    let signing = test_signing();
+    let svc = DecisionService::new(&db, &signing);
+
+    let row = svc
+        .create(company_id, "R502 legacy", "legacy body")
+        .await
+        .expect("legacy create");
+    // Default options: empty array.
+    assert!(row.options.is_array());
+    assert!(row.options.as_array().unwrap().is_empty());
+    // Default continuation_policy: "none".
+    assert_eq!(row.continuation_policy, "none");
+    // Default expiry: ~7 days from now (within 2 seconds).
+    let now = chrono::Utc::now();
+    let delta_days = (row.expires_at.as_datetime() - now).num_days();
+    assert!(
+        delta_days >= 6 && delta_days <= 7,
+        "expected ~7d default expiry, got {delta_days}d"
+    );
+
+    cleanup(&pool, company_id).await;
+}

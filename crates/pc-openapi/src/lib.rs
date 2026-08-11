@@ -13,9 +13,11 @@ pub mod builder;
 pub mod path;
 pub mod schema;
 pub mod serializers;
+pub mod dto_schemas;
 pub mod spec;
 
 pub use builder::OpenApiRegistry;
 pub use path::{HttpMethod, OpenApiPath};
 pub use schema::SchemaRef;
+pub use dto_schemas::{register_core_dtos, CORE_DTO_NAMES};
 pub use spec::{Contact, ExternalDocs, Info, License, OpenApiSpec, Server};

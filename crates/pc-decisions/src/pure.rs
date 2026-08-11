@@ -278,6 +278,84 @@ pub fn json_copy<T: serde::Serialize + serde::de::DeserializeOwned>(value: &T) -
         .expect("deserialize after copy")
 }
 
+/// Optional structured spec for [`crate::DecisionService::create`].
+///
+/// Mirrors the upstream `CreateInput` shape (sans auth / actor — those are
+/// handled at the route layer). Every field except `options` has a safe
+/// default so simple callers can build a [`CreateDecisionSpec::default()`]
+/// and patch in only the fields they need.
+///
+/// **Defaults**:
+/// - `options`: empty array (a decision with no options is invalid upstream
+///   but the service layer accepts it; the signing layer will still produce
+///   a stable envelope).
+/// - `inputs`: `None` (no human input prompts required).
+/// - `expires_at`: `None` — service resolves to "now + 7 days".
+/// - `continuation_policy`: `"none"` (do not wake the origin agent).
+/// - `metadata`: empty object.
+/// - `idempotency_key`: `None`.
+/// - `rule_key`: `None`.
+#[derive(Debug, Clone, Default)]
+pub struct CreateDecisionSpec {
+    pub options: serde_json::Value,
+    pub inputs: Option<serde_json::Value>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub continuation_policy: String,
+    pub metadata: serde_json::Value,
+    pub idempotency_key: Option<String>,
+    pub rule_key: Option<String>,
+}
+
+impl CreateDecisionSpec {
+    /// Build a spec with default `continuation_policy` set to `"none"`.
+    /// Equivalent to upstream's `CreateInput.continuationPolicy` default.
+    pub fn new() -> Self {
+        Self {
+            options: serde_json::json!([]),
+            continuation_policy: "none".to_string(),
+            metadata: serde_json::json!({}),
+            ..Self::default()
+        }
+    }
+
+    /// Build the canonical signed-envelope payload using [`build_spec_envelope`].
+    /// Returns the canonicalised JSON string ready for signing.
+    pub fn spec_envelope(&self, decision_id: &str, target_snapshots: &Value) -> String {
+        build_spec_envelope(decision_id, &self.options, target_snapshots)
+    }
+
+    /// Validate that `options` is well-formed for the decision domain.
+    /// Currently: options must be a JSON array (possibly empty). Returns the
+    /// number of options.
+    pub fn validate_options(&self) -> Result<usize, &'static str> {
+        match &self.options {
+            Value::Array(items) => Ok(items.len()),
+            _ => Err("options must be a JSON array"),
+        }
+    }
+
+    /// Compute every unique target id referenced in any option.
+    /// Convenience wrapper around [`target_ids`].
+    pub fn all_target_ids(&self) -> Vec<String> {
+        target_ids(&self.options)
+    }
+
+    /// Compute the action map (target_id → set of `EffectAction`).
+    /// Convenience wrapper around [`target_actions`].
+    pub fn all_target_actions(&self) -> BTreeMap<String, BTreeSet<EffectAction>> {
+        target_actions(&self.options)
+    }
+
+    /// Resolve `expires_at` to a concrete timestamp. When `None`, falls back
+    /// to `now + 7 days` matching the repository's existing default.
+    pub fn effective_expires_at(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> chrono::DateTime<chrono::Utc> {
+        self.expires_at.unwrap_or_else(|| now + chrono::Duration::days(7))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,5 +693,125 @@ mod tests {
         let value = json!({ "nested": { "list": [1, 2, 3] } });
         let copy = json_copy(&value);
         assert_eq!(copy, value);
+    }
+
+    // -------- r502: CreateDecisionSpec --------
+
+    #[test]
+    fn r502_spec_new_sets_sane_defaults() {
+        let spec = CreateDecisionSpec::new();
+        assert_eq!(spec.continuation_policy, "none");
+        assert_eq!(spec.metadata, json!({}));
+        assert!(spec.options.is_array());
+        assert!(spec.options.as_array().unwrap().is_empty());
+        assert!(spec.inputs.is_none());
+        assert!(spec.expires_at.is_none());
+        assert!(spec.idempotency_key.is_none());
+        assert!(spec.rule_key.is_none());
+    }
+
+    #[test]
+    fn r502_spec_default_differs_from_new_only_in_business_defaults() {
+        // Default::default() uses Rust defaults (empty string / Null).
+        // new() overrides the fields that have a non-empty business default
+        // (continuation_policy = "none", options = [], metadata = {}).
+        // Verify the divergence is intentional and only affects those fields.
+        let a = CreateDecisionSpec::default();
+        let b = CreateDecisionSpec::new();
+        // Same fields NOT overridden by new()
+        assert_eq!(a.inputs, b.inputs);
+        assert_eq!(a.expires_at, b.expires_at);
+        assert_eq!(a.idempotency_key, b.idempotency_key);
+        assert_eq!(a.rule_key, b.rule_key);
+        // Fields overridden by new() (business defaults)
+        assert_ne!(a.options, b.options);
+        assert_ne!(a.continuation_policy, b.continuation_policy);
+        assert_ne!(a.metadata, b.metadata);
+    }
+
+    #[test]
+    fn r502_validate_options_accepts_empty_array() {
+        let spec = CreateDecisionSpec::new();
+        assert_eq!(spec.validate_options().unwrap(), 0);
+    }
+
+    #[test]
+    fn r502_validate_options_accepts_two_items() {
+        let mut spec = CreateDecisionSpec::new();
+        spec.options = json!([
+            {"id": "a", "label": "Approve", "targetIds": ["i-1"]},
+            {"id": "b", "label": "Reject",  "targetIds": ["i-1", "i-2"]},
+        ]);
+        assert_eq!(spec.validate_options().unwrap(), 2);
+    }
+
+    #[test]
+    fn r502_validate_options_rejects_non_array() {
+        let mut spec = CreateDecisionSpec::new();
+        spec.options = json!({"id": "a"});
+        assert!(spec.validate_options().is_err());
+        spec.options = json!("a string");
+        assert!(spec.validate_options().is_err());
+        spec.options = json!(42);
+        assert!(spec.validate_options().is_err());
+    }
+
+    #[test]
+    fn r502_all_target_ids_aggregates_across_options() {
+        let mut spec = CreateDecisionSpec::new();
+        spec.options = json!([
+            {"id": "a", "effects": [{"type": "comment_on_issue", "targetIssueId": "i-1"}]},
+            {"id": "b", "effects": [{"type": "update_issue_status", "targetIssueId": "i-2"},
+                                     {"type": "comment_on_issue", "targetIssueId": "i-1"}]},
+        ]);
+        let ids = spec.all_target_ids();
+        assert_eq!(ids, vec!["i-1".to_string(), "i-2".to_string()]);
+    }
+
+    #[test]
+    fn r502_all_target_actions_collapses_per_target() {
+        let mut spec = CreateDecisionSpec::new();
+        spec.options = json!([
+            {"id": "a", "effects": [{"type": "comment_on_issue", "targetIssueId": "i-1"}]},
+            {"id": "b", "effects": [{"type": "update_issue_status", "targetIssueId": "i-1"}]},
+        ]);
+        let actions = spec.all_target_actions();
+        let s = actions.get("i-1").unwrap();
+        assert!(s.contains(&EffectAction::Comment));
+        assert!(s.contains(&EffectAction::Mutate));
+    }
+
+    #[test]
+    fn r502_spec_envelope_matches_build_spec_envelope() {
+        // spec_envelope() is a thin wrapper, but verifying the wire-up
+        // catches accidental drift between the two helpers.
+        let mut spec = CreateDecisionSpec::new();
+        spec.options = json!([{"id": "a"}]);
+        let ts = json!({"i-1": {"status": "open"}});
+        let from_spec = spec.spec_envelope("d-1", &ts);
+        let from_helper = build_spec_envelope("d-1", &spec.options, &ts);
+        assert_eq!(from_spec, from_helper);
+        // envelope is canonicalised (deterministic key ordering)
+        assert!(from_spec.contains("\"decisionId\":\"d-1\""));
+    }
+
+    #[test]
+    fn r502_effective_expires_at_falls_back_to_seven_days() {
+        let spec = CreateDecisionSpec::new();
+        let now = chrono::Utc::now();
+        let eff = spec.effective_expires_at(now);
+        let delta = eff - now;
+        // Chrono Duration::days(7) returns a Duration; we just check the
+        // delta is in the right ball-park (7 days - 1s slack).
+        assert!(delta >= chrono::Duration::days(7) - chrono::Duration::seconds(1));
+        assert!(delta <= chrono::Duration::days(7) + chrono::Duration::seconds(1));
+    }
+
+    #[test]
+    fn r502_effective_expires_at_preserves_explicit_value() {
+        let explicit = chrono::Utc::now() + chrono::Duration::days(30);
+        let mut spec = CreateDecisionSpec::new();
+        spec.expires_at = Some(explicit);
+        assert_eq!(spec.effective_expires_at(chrono::Utc::now()), explicit);
     }
 }

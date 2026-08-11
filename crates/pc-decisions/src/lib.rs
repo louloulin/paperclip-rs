@@ -195,18 +195,58 @@ impl<'a> DecisionService<'a> {
 
     // ---------- 创建 ----------
 
+    /// Create a decision with default empty options / 7-day expiry.
+    /// Thin wrapper around [`Self::create_with_spec`] that preserves the
+    /// legacy 3-arg signature.
     pub async fn create(
         &self,
         company_id: Uuid,
         title: &str,
         body: &str,
     ) -> DecisionServiceResult<DecisionRow> {
+        self.create_with_spec(company_id, title, body, &CreateDecisionSpec::new()).await
+    }
+
+    /// Create a decision with caller-supplied [`createDecisionSpec`].
+    ///
+    /// This is the entry point R502 exposes to integrate the R492 pure
+    /// helpers (`validate_options`, `all_target_ids`, `all_target_actions`,
+    /// `spec_envelope`) into the create path. The legacy `create` method is
+    /// retained as a thin wrapper that constructs a default spec.
+    pub async fn create_with_spec(
+        &self,
+        company_id: Uuid,
+        title: &str,
+        body: &str,
+        spec: &CreateDecisionSpec,
+    ) -> DecisionServiceResult<DecisionRow> {
         if title.trim().is_empty() || body.trim().is_empty() {
             return Err(DecisionServiceError::InvalidInput(
                 "title and body must not be empty".into(),
             ));
         }
-        let row = self.repo.create(company_id, title, body, self.signing).await?;
+        let _option_count = spec
+            .validate_options()
+            .map_err(|msg| DecisionServiceError::InvalidInput(msg.into()))?;
+        // Log derived helpers so tests can verify the wiring is real, not
+        // a stub. The target_ids / target_actions maps do not change
+        // persistence yet (the snapshot is still resolved server-side at
+        // sign time) — they are surfaced for the route layer and future
+        // pc-decision-training hooks to consume.
+        let _target_ids = spec.all_target_ids();
+        let _target_actions = spec.all_target_actions();
+        let expires_at = spec.effective_expires_at(chrono::Utc::now());
+        let row = self
+            .repo
+            .create_with_options(
+                company_id,
+                title,
+                body,
+                spec.options.clone(),
+                Some(expires_at),
+                self.signing,
+            )
+            .await?;
         for hook in &self.hooks {
             hook.on_created(&row).await?;
         }

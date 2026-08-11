@@ -19,6 +19,7 @@ pc-routines = { path = "../pc-routines" }
 pc-pipelines = { path = "../pc-pipelines" }
 pc-issues = { path = "../pc-issues" }
 pc-decisions = { path = "../pc-decisions" }
+pc-openapi = { path = "../pc-openapi" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-telemetry = { path = "../pc-telemetry" }

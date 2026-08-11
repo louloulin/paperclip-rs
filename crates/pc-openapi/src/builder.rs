@@ -49,10 +49,29 @@ impl OpenApiRegistry {
                     .schemas
                     .insert(n, SchemaRef::Named { reference });
             }
-            SchemaRef::Inline { schema: _ } => {
+            SchemaRef::Inline { schema: _ } | SchemaRef::Raw(_) => {
                 self.components.schemas.insert(n, schema);
             }
         }
+        self
+    }
+
+    /// Register a schema from a raw `serde_json::Value`. Bypasses
+    /// [`SchemaRef`]’s flatten serialization (which loses keys like
+    /// `type` and `required` that share names with serde internals).
+    ///
+    /// Prefer this when you have a pre-built JSON schema object (e.g. from
+    /// hand-written DTO definitions in `pc_openapi::dto_schemas`).
+    pub fn register_schema_value(
+        &mut self,
+        name: impl Into<String>,
+        schema: serde_json::Value,
+    ) -> &mut Self {
+        // Wrap the raw value so we reuse the existing IndexMap<String, Value>
+        // storage but the stored `SchemaRef::Raw` emits the value verbatim.
+        self.components
+            .schemas
+            .insert(name.into(), SchemaRef::Raw(schema));
         self
     }
 
@@ -175,7 +194,7 @@ mod tests {
             SchemaRef::Named { reference } => {
                 assert_eq!(reference, "#/components/schemas/Agent");
             }
-            SchemaRef::Inline { .. } => panic!("expected Named"),
+            SchemaRef::Inline { .. } | SchemaRef::Raw(_) => panic!("expected Named"),
         }
     }
 
