@@ -25,10 +25,7 @@ pub enum IssueThreadInteractionHookEvent {
         idempotency_key: Option<String>,
     },
     /// Create 之后调用。
-    AfterCreate {
-        interaction_id: Uuid,
-        kind: String,
-    },
+    AfterCreate { interaction_id: Uuid, kind: String },
     /// Resolve 之前调用。
     BeforeResolve {
         interaction_id: Uuid,
@@ -90,50 +87,55 @@ impl RecordingIssueThreadInteractionHook {
 
 impl IssueThreadInteractionHook for RecordingIssueThreadInteractionHook {
     fn before_create(&self, input: &CreateIssueThreadInteractionInput) {
-        self.events.lock().unwrap().push(
-            IssueThreadInteractionHookEvent::BeforeCreate {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueThreadInteractionHookEvent::BeforeCreate {
                 issue_id: input.issue_id,
                 kind: input.kind.clone(),
                 idempotency_key: input.idempotency_key.clone(),
-            },
-        );
+            });
     }
 
     fn after_create(&self, interaction_id: Uuid, kind: &str) {
-        self.events.lock().unwrap().push(
-            IssueThreadInteractionHookEvent::AfterCreate {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueThreadInteractionHookEvent::AfterCreate {
                 interaction_id,
                 kind: kind.to_string(),
-            },
-        );
+            });
     }
 
     fn before_resolve(&self, input: &ResolveInteractionInput) {
-        self.events.lock().unwrap().push(
-            IssueThreadInteractionHookEvent::BeforeResolve {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueThreadInteractionHookEvent::BeforeResolve {
                 interaction_id: input.interaction_id,
                 new_status: input.new_status.as_str().to_string(),
                 actor: input.resolved_by_actor.clone(),
-            },
-        );
+            });
     }
 
     fn after_resolve(&self, resolution: &InteractionResolution) {
-        self.events.lock().unwrap().push(
-            IssueThreadInteractionHookEvent::AfterResolve {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueThreadInteractionHookEvent::AfterResolve {
                 resolution: resolution.clone(),
-            },
-        );
+            });
     }
 
     fn on_conflict(&self, issue_id: Uuid, kind: &str, idempotency_key: &str) {
-        self.events.lock().unwrap().push(
-            IssueThreadInteractionHookEvent::OnConflict {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueThreadInteractionHookEvent::OnConflict {
                 issue_id,
                 kind: kind.to_string(),
                 idempotency_key: idempotency_key.to_string(),
-            },
-        );
+            });
     }
 }
 

@@ -101,7 +101,10 @@ fn parse_adapter_env_extracts_env_subobject() {
     })
     .to_string();
     let env = parse_adapter_env(&txt).expect("env");
-    assert_eq!(env.get("CODEX_HOME").unwrap().as_str(), Some("/tmp/codex-home"));
+    assert_eq!(
+        env.get("CODEX_HOME").unwrap().as_str(),
+        Some("/tmp/codex-home")
+    );
 }
 
 #[test]

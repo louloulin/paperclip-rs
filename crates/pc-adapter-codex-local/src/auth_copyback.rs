@@ -73,6 +73,31 @@ impl CopyBackCodexAuthDecider for DefaultDecider {
     }
 }
 
+/// 生产决策器：复用 Codex 入站 auth merge 的同一份纯谓词。
+pub struct CodexAuthMergeDecider;
+
+impl CopyBackCodexAuthDecider for CodexAuthMergeDecider {
+    fn decide<'a>(
+        &'a self,
+        source_path: &'a Path,
+        destination_path: &'a Path,
+    ) -> BoxFuture<'a, std::io::Result<i32>> {
+        Box::pin(async move {
+            let (decision, _, _) = crate::codex_auth_merge::decide_codex_auth_merge_from_paths(
+                source_path,
+                destination_path,
+            )
+            .await;
+            Ok(match decision {
+                crate::codex_auth_merge::CodexAuthMergeDecision::UseSource => USE_SOURCE_EXIT,
+                crate::codex_auth_merge::CodexAuthMergeDecision::KeepDestination => {
+                    KEEP_DESTINATION_EXIT
+                }
+            })
+        })
+    }
+}
+
 /// 简化版 merge lock 占位：单进程内串行（生产环境由更上层提供真正的锁）。
 pub async fn with_directory_merge_lock<F, T>(dir: &Path, body: F) -> std::io::Result<T>
 where

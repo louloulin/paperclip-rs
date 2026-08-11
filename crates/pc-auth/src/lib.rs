@@ -18,23 +18,25 @@ pub mod error;
 pub mod oauth_state;
 pub mod session_refresh;
 
-pub use email_sender::{
-    build_email_sender, render_template, EmailAddress, EmailMessage, EmailSender, EmailSenderError,
-    LogEmailSender, NoopEmailSender,
-};
-pub use email_verification::{
-    consume_email_verification, issue_email_verification, verify_email_token, EmailVerificationOutcome,
-    EmailVerificationRecord,
-};
-pub use error::{classify as classify_auth_error, classify_str as classify_auth_str, AuthErrorCategory};
-pub use oauth_state::{
-    code_challenge_s256, new_oauth_state, verify_oauth_state, OAuthStateOutcome, OAuthStateRecord,
-};
 pub use auth_service::{
     validate_sign_in_input, validate_sign_up_input, AuthService, AuthServiceConfig,
     AuthServiceError, InMemorySessionStore, InMemoryUserStore, InMemoryVerificationStore,
     NormalizedSignUpInput, SessionRecord, SessionStore, SignInInput, SignInResult, SignUpInput,
     SignUpResult, UserRecord, UserStore, VerificationStore,
+};
+pub use email_sender::{
+    build_email_sender, render_template, EmailAddress, EmailMessage, EmailSender, EmailSenderError,
+    LogEmailSender, NoopEmailSender,
+};
+pub use email_verification::{
+    consume_email_verification, issue_email_verification, verify_email_token,
+    EmailVerificationOutcome, EmailVerificationRecord,
+};
+pub use error::{
+    classify as classify_auth_error, classify_str as classify_auth_str, AuthErrorCategory,
+};
+pub use oauth_state::{
+    code_challenge_s256, new_oauth_state, verify_oauth_state, OAuthStateOutcome, OAuthStateRecord,
 };
 pub use session_refresh::{
     check_session, new_session_record, rotate_session, should_rotate, touch_session,
@@ -687,7 +689,6 @@ mod tests {
         assert!(!a.contains('/'));
         assert!(!a.contains('='));
     }
-
 
     // -------- r514: pk_ prefix convention --------
 

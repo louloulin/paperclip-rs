@@ -12,6 +12,7 @@ workspace = true
 pc-core = { path = "../pc-core" }
 pc-repos = { path = "../pc-repos" }
 pc-realtime = { path = "../pc-realtime" }
+pc-responsible-user-denial-copy = { path = "../pc-responsible-user-denial-copy" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }

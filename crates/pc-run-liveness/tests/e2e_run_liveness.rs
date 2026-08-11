@@ -559,7 +559,10 @@ fn r667_state_as_str() {
 #[test]
 fn r667_actionability_as_str() {
     assert_eq!(RunLivenessActionability::Runnable.as_str(), "runnable");
-    assert_eq!(RunLivenessActionability::ManagerReview.as_str(), "manager_review");
+    assert_eq!(
+        RunLivenessActionability::ManagerReview.as_str(),
+        "manager_review"
+    );
     assert_eq!(
         RunLivenessActionability::BlockedExternal.as_str(),
         "blocked_external"
@@ -596,7 +599,6 @@ fn r667_classify_strips_noisy_transcript() {
         RunLivenessState::PlanOnly | RunLivenessState::NeedsFollowup | RunLivenessState::Advanced
     ));
 }
-
 
 #[test]
 fn r667_classify_unmanaged_via_unmanaged_background_task_obj() {

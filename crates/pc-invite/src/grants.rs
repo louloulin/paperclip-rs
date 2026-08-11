@@ -104,13 +104,10 @@ pub fn grants_from_defaults(
             _ => continue, // 已经过滤过，这里是 unreachable
         };
 
-        let scope = item_obj.get("scope").and_then(|v| {
-            if v.is_object() {
-                Some(v.clone())
-            } else {
-                None
-            }
-        });
+        let scope =
+            item_obj
+                .get("scope")
+                .and_then(|v| if v.is_object() { Some(v.clone()) } else { None });
 
         result.push(Grant {
             permission_key: static_pk,
@@ -125,9 +122,7 @@ pub fn grants_from_defaults(
 /// 与 Node `agentJoinGrantsFromDefaults` 1:1 对齐：
 /// - 若已有 `tasks:assign`，返回原 grants
 /// - 否则在末尾追加 `{ permissionKey: "tasks:assign", scope: null }`
-pub fn agent_join_grants_from_defaults(
-    defaults_payload: Option<&serde_json::Value>,
-) -> Vec<Grant> {
+pub fn agent_join_grants_from_defaults(defaults_payload: Option<&serde_json::Value>) -> Vec<Grant> {
     let grants = grants_from_defaults(defaults_payload, DefaultsKey::Agent);
     if grants
         .iter()
@@ -204,10 +199,7 @@ mod tests {
 
     #[test]
     fn r700_grants_from_defaults_scoped_not_object() {
-        let r = grants_from_defaults(
-            Some(&json!({"human": "not-object"})),
-            DefaultsKey::Human,
-        );
+        let r = grants_from_defaults(Some(&json!({"human": "not-object"})), DefaultsKey::Human);
         assert!(r.is_empty());
         let r = grants_from_defaults(Some(&json!({"human": 42})), DefaultsKey::Human);
         assert!(r.is_empty());
@@ -215,10 +207,7 @@ mod tests {
 
     #[test]
     fn r700_grants_from_defaults_no_grants_key() {
-        let r = grants_from_defaults(
-            Some(&json!({"human": {}})),
-            DefaultsKey::Human,
-        );
+        let r = grants_from_defaults(Some(&json!({"human": {}})), DefaultsKey::Human);
         assert!(r.is_empty());
     }
 
@@ -353,10 +342,7 @@ mod tests {
                 ]
             }
         });
-        let r = human_join_grants_from_defaults(
-            Some(&payload),
-            HumanCompanyMembershipRole::Viewer,
-        );
+        let r = human_join_grants_from_defaults(Some(&payload), HumanCompanyMembershipRole::Viewer);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].permission_key, "tasks:assign");
         assert!(r[0].scope.is_some());
@@ -370,19 +356,14 @@ mod tests {
 
         // payload.human.grants 是空数组
         let payload = json!({"human": {"grants": []}});
-        let r = human_join_grants_from_defaults(
-            Some(&payload),
-            HumanCompanyMembershipRole::Operator,
-        );
+        let r =
+            human_join_grants_from_defaults(Some(&payload), HumanCompanyMembershipRole::Operator);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].permission_key, "tasks:assign");
 
         // payload.human.grants 中所有项都被过滤掉（非法 key）
         let payload = json!({"human": {"grants": [{"permissionKey": "unknown"}]}});
-        let r = human_join_grants_from_defaults(
-            Some(&payload),
-            HumanCompanyMembershipRole::Viewer,
-        );
+        let r = human_join_grants_from_defaults(Some(&payload), HumanCompanyMembershipRole::Viewer);
         assert!(r.is_empty());
     }
 
@@ -391,7 +372,9 @@ mod tests {
         // 没有 payload 时，admin role 应该返回 7 个 grants (无 users:manage_permissions)
         let r = human_join_grants_from_defaults(None, HumanCompanyMembershipRole::Admin);
         assert_eq!(r.len(), 7);
-        assert!(!r.iter().any(|g| g.permission_key == "users:manage_permissions"));
+        assert!(!r
+            .iter()
+            .any(|g| g.permission_key == "users:manage_permissions"));
         assert!(r.iter().any(|g| g.permission_key == "agents:create"));
     }
 }

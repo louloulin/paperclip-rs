@@ -35,7 +35,10 @@ pub use urls::{git_hub_api_base, is_git_hub_dot_com, resolve_raw_git_hub_url};
 #[derive(Debug, Error)]
 pub enum GitHubFetchError {
     #[error("could not connect to {host} — ensure the URL points to a GitHub or GitHub Enterprise instance")]
-    Connection { host: String, source: reqwest::Error },
+    Connection {
+        host: String,
+        source: reqwest::Error,
+    },
     #[error("HTTP {status} from GitHub: {body}")]
     Http { status: u16, body: String },
     #[error("invalid URL: {0}")]

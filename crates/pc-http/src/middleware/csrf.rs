@@ -437,7 +437,10 @@ mod tests {
     fn r515_multiple_cookies_parses_csrf_correctly() {
         // Multiple unrelated cookies + csrf cookie at the end — parser must find it.
         let headers = h(&[
-            ("cookie", "foo=bar; baz=qux; paperclip_session=xyz; paperclip_csrf=token42"),
+            (
+                "cookie",
+                "foo=bar; baz=qux; paperclip_session=xyz; paperclip_csrf=token42",
+            ),
             ("x-csrf-token", "token42"),
         ]);
         assert_allowed("POST", "/api/companies", &headers);

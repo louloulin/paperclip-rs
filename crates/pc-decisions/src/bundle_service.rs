@@ -153,7 +153,10 @@ impl DecisionBundleService {
                 "title must not be empty".into(),
             ));
         }
-        let row = self.repo().create(company_id, input).await
+        let row = self
+            .repo()
+            .create(company_id, input)
+            .await
             .map_err(|e| DecisionBundleError::Pc(internal(e.to_string())))?;
         self.dispatch(DecisionBundleHookEvent::Created {
             company_id,

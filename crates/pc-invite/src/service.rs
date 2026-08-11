@@ -10,11 +10,11 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use pc_repos::invite::InviteRepo;
 pub use pc_repos::invite::{
     generate_url_safe_token, hash_token_hex, CreatedInvite, InviteRow, InviteStatus,
     InviteWithStatus, NewInvite,
 };
-use pc_repos::invite::InviteRepo;
 use pc_repos::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
@@ -144,7 +144,10 @@ pub struct InviteService {
 
 impl InviteService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn InviteHook>>) -> Self {
@@ -176,10 +179,7 @@ impl InviteService {
     // Read paths
     // -------------------------------------------------------------------------
 
-    pub async fn list_by_company(
-        &self,
-        company_id: Uuid,
-    ) -> InviteResult<Vec<InviteWithStatus>> {
+    pub async fn list_by_company(&self, company_id: Uuid) -> InviteResult<Vec<InviteWithStatus>> {
         if company_id.is_nil() {
             return Err(InviteError::Validation("companyId is required".into()));
         }
@@ -191,25 +191,21 @@ impl InviteService {
         token_hash: &str,
     ) -> InviteResult<Option<InviteRow>> {
         if token_hash.trim().is_empty() {
-            return Err(InviteError::Validation("tokenHash must not be empty".into()));
+            return Err(InviteError::Validation(
+                "tokenHash must not be empty".into(),
+            ));
         }
         Ok(self.repo().find_active_by_token_hash(token_hash).await?)
     }
 
-    pub async fn find_active_by_token(
-        &self,
-        raw_token: &str,
-    ) -> InviteResult<Option<InviteRow>> {
+    pub async fn find_active_by_token(&self, raw_token: &str) -> InviteResult<Option<InviteRow>> {
         if raw_token.trim().is_empty() {
             return Err(InviteError::Validation("token must not be empty".into()));
         }
         Ok(self.repo().find_active_by_token(raw_token).await?)
     }
 
-    pub async fn find_by_token_hash(
-        &self,
-        token_hash: &str,
-    ) -> InviteResult<Option<InviteRow>> {
+    pub async fn find_by_token_hash(&self, token_hash: &str) -> InviteResult<Option<InviteRow>> {
         Ok(self.repo().find_by_token_hash(token_hash).await?)
     }
 
@@ -236,7 +232,10 @@ impl InviteService {
         &self,
         token_hash: &str,
     ) -> InviteResult<Option<(Uuid, Uuid, Option<String>)>> {
-        Ok(self.repo().lookup_revoke_info_by_token_hash(token_hash).await?)
+        Ok(self
+            .repo()
+            .lookup_revoke_info_by_token_hash(token_hash)
+            .await?)
     }
 
     // -------------------------------------------------------------------------
@@ -258,11 +257,7 @@ impl InviteService {
     }
 
     /// Revoke a pending invite (mark `revoked_at`). Idempotent.
-    pub async fn revoke(
-        &self,
-        company_id: Uuid,
-        invite_id: Uuid,
-    ) -> InviteResult<bool> {
+    pub async fn revoke(&self, company_id: Uuid, invite_id: Uuid) -> InviteResult<bool> {
         if company_id.is_nil() {
             return Err(InviteError::Validation("companyId is required".into()));
         }
@@ -282,12 +277,7 @@ impl InviteService {
         // The repo returns (); success means the row was updated. We do not
         // know the company_id here, so emit the hook only when we can confirm.
         // Read first to get company_id.
-        let row = self
-            .repo()
-            .lookup_by_token_hash("")
-            .await
-            .ok()
-            .flatten();
+        let row = self.repo().lookup_by_token_hash("").await.ok().flatten();
         let _ = row; // unused; we still call mark_accepted below
         self.repo().mark_accepted(invite_id).await?;
         // Try to load the company_id via find_by_token_hash (via a token_hash
@@ -319,10 +309,9 @@ impl InviteService {
 
     /// Accept a raw token: look up by hash, validate, mark accepted.
     pub async fn accept_with_token(&self, raw_token: &str) -> InviteResult<InviteRow> {
-        let row = self
-            .find_active_by_token(raw_token)
-            .await?
-            .ok_or_else(|| InviteError::Validation("invite not found or no longer active".into()))?;
+        let row = self.find_active_by_token(raw_token).await?.ok_or_else(|| {
+            InviteError::Validation("invite not found or no longer active".into())
+        })?;
         self.accept(&row).await?;
         Ok(row)
     }

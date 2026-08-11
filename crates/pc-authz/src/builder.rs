@@ -200,11 +200,7 @@ fn rank(r: CompanyRole) -> u8 {
 /// 3. 返回带 mention 信息的 Context
 ///
 /// **单次 DB 查询**:复用 `build_context` 的查询,无额外 round-trip。
-pub async fn build_context_with_issue_body(
-    db: &Db,
-    actor: &Actor,
-    issue_body: &str,
-) -> Context {
+pub async fn build_context_with_issue_body(db: &Db, actor: &Actor, issue_body: &str) -> Context {
     let ctx = build_context(db, actor).await;
     ctx.with_mentions_from_body(issue_body)
 }

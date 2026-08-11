@@ -56,7 +56,12 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix: String = Uuid::new_v4().simple().to_string().chars().take(6).collect();
+    let prefix: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
@@ -145,10 +150,7 @@ async fn r604_multiple_hooks_all_receive_event() {
         counter: AtomicUsize::new(0),
         last: std::sync::Mutex::new(None),
     });
-    let svc = AgentService::with_hooks(
-        db,
-        vec![counter.clone(), counter2.clone()],
-    );
+    let svc = AgentService::with_hooks(db, vec![counter.clone(), counter2.clone()]);
     let _ = svc.org_for_company(company_id).await.expect("org");
 
     assert_eq!(counter.counter.load(Ordering::SeqCst), 1);
@@ -167,14 +169,15 @@ async fn r604_failing_hook_does_not_block_subsequent_hooks() {
         counter: AtomicUsize::new(0),
         last: std::sync::Mutex::new(None),
     });
-    let svc = AgentService::with_hooks(
-        db,
-        vec![Arc::new(FailingHook), counter.clone()],
-    );
+    let svc = AgentService::with_hooks(db, vec![Arc::new(FailingHook), counter.clone()]);
     // 必须不抛错（Failing hook 仅 log warn）
     let tree = svc.org_for_company(company_id).await.expect("org");
     assert_eq!(tree.len(), 1);
-    assert_eq!(counter.counter.load(Ordering::SeqCst), 1, "后置 hook 必须仍触发");
+    assert_eq!(
+        counter.counter.load(Ordering::SeqCst),
+        1,
+        "后置 hook 必须仍触发"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -195,7 +198,10 @@ async fn r604_chain_of_command_does_not_trigger_org_chart_hook() {
     let hook = Arc::new(RecordingAgentHook::default());
     let svc = AgentService::with_hooks(db, vec![hook.clone()]);
     let _ = svc.get_chain_of_command(b).await.expect("chain");
-    let _ = svc.resolve_by_reference(company_id, "ChainA").await.expect("resolve");
+    let _ = svc
+        .resolve_by_reference(company_id, "ChainA")
+        .await
+        .expect("resolve");
 
     assert!(hook.org_chart_computed.lock().expect("lock").is_empty());
 

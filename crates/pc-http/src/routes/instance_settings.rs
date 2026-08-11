@@ -32,7 +32,9 @@ pub fn router() -> Router<AppState> {
         )
         // ---- Round 41: instance-level admin endpoints ----
         .route("/api/stats", get(get_instance_stats))
-        .route("/api/dev-server/restart", post(restart_dev_server))
+        // `/api/dev-server/restart` canonical registration lives in
+        // routes::dev_server_restart (Round 282 removal — 重复注册会触发
+        // axum 0.7 的 "Overlapping method route" panic)
         // ── Round 205: issue-graph-liveness auto-recovery (experimental) ──
         .route(
             "/api/instance/settings/experimental/issue-graph-liveness-auto-recovery/preview",

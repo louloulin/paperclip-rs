@@ -137,7 +137,12 @@ pub struct InMemoryCompanySearchRateLimiter {
 impl InMemoryCompanySearchRateLimiter {
     /// 与 Node `key(actor)` 函数 1:1 对齐。
     fn key(actor: &CompanySearchRateLimitActor) -> String {
-        format!("{}:{}:{}", actor.company_id, actor.actor_type.as_str(), actor.actor_id)
+        format!(
+            "{}:{}:{}",
+            actor.company_id,
+            actor.actor_type.as_str(),
+            actor.actor_id
+        )
     }
 }
 
@@ -151,9 +156,7 @@ impl CompanySearchRateLimiter for InMemoryCompanySearchRateLimiter {
         let actor_key = Self::key(actor);
 
         let mut hits = self.hits.lock().expect("rate-limit mutex poisoned");
-        let recent_hits = hits
-            .entry(actor_key.clone())
-            .or_insert_with(VecDeque::new);
+        let recent_hits = hits.entry(actor_key.clone()).or_insert_with(VecDeque::new);
 
         // 1. 淘汰窗口外的旧命中
         while let Some(&front) = recent_hits.front() {
@@ -219,7 +222,11 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn actor(company_id: &str, actor_type: CompanySearchActorType, actor_id: &str) -> CompanySearchRateLimitActor {
+    fn actor(
+        company_id: &str,
+        actor_type: CompanySearchActorType,
+        actor_id: &str,
+    ) -> CompanySearchRateLimitActor {
         CompanySearchRateLimitActor {
             company_id: company_id.to_string(),
             actor_type,
@@ -373,8 +380,14 @@ mod tests {
 
     #[test]
     fn r685_actor_type_from_str_round_trip() {
-        assert_eq!(CompanySearchActorType::from_str("agent"), Some(CompanySearchActorType::Agent));
-        assert_eq!(CompanySearchActorType::from_str("board"), Some(CompanySearchActorType::Board));
+        assert_eq!(
+            CompanySearchActorType::from_str("agent"),
+            Some(CompanySearchActorType::Agent)
+        );
+        assert_eq!(
+            CompanySearchActorType::from_str("board"),
+            Some(CompanySearchActorType::Board)
+        );
         assert_eq!(CompanySearchActorType::from_str("user"), None);
         assert_eq!(CompanySearchActorType::Agent.as_str(), "agent");
         assert_eq!(CompanySearchActorType::Board.as_str(), "board");

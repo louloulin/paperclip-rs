@@ -57,7 +57,9 @@ pub fn normalize_responsible_user_denial_code(value: &str) -> Option<Responsible
 pub fn normalize_responsible_user_denial_code_value(
     value: &serde_json::Value,
 ) -> Option<ResponsibleUserDenialCode> {
-    value.as_str().and_then(normalize_responsible_user_denial_code)
+    value
+        .as_str()
+        .and_then(normalize_responsible_user_denial_code)
 }
 
 #[cfg(test)]
@@ -74,7 +76,10 @@ mod tests {
             ResponsibleUserDenialCode::NotEntitled,
             ResponsibleUserDenialCode::Other,
         ] {
-            assert_eq!(ResponsibleUserDenialCode::from_str(code.as_str()), Some(code));
+            assert_eq!(
+                ResponsibleUserDenialCode::from_str(code.as_str()),
+                Some(code)
+            );
         }
     }
 
@@ -113,9 +118,18 @@ mod tests {
 
     #[test]
     fn r706_normalize_value_with_non_string() {
-        assert_eq!(normalize_responsible_user_denial_code_value(&json!(null)), None);
-        assert_eq!(normalize_responsible_user_denial_code_value(&json!(42)), None);
-        assert_eq!(normalize_responsible_user_denial_code_value(&json!(true)), None);
+        assert_eq!(
+            normalize_responsible_user_denial_code_value(&json!(null)),
+            None
+        );
+        assert_eq!(
+            normalize_responsible_user_denial_code_value(&json!(42)),
+            None
+        );
+        assert_eq!(
+            normalize_responsible_user_denial_code_value(&json!(true)),
+            None
+        );
     }
 
     #[test]

@@ -19,9 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
-use crate::bridge_executor::{
-    BridgeCommandRunner, RunnerCommandResult, RunnerExecuteInput,
-};
+use crate::bridge_executor::{BridgeCommandRunner, RunnerCommandResult, RunnerExecuteInput};
 
 // ============================================================================
 // RunnerError - typed 错误
@@ -109,7 +107,11 @@ impl RunnerError {
         if lower.contains("permission denied") {
             return Self::new(RunnerErrorCategory::Spawn, message);
         }
-        if lower.contains("pipe") || lower.contains("stdin") || lower.contains("stdout") || lower.contains("io error") {
+        if lower.contains("pipe")
+            || lower.contains("stdin")
+            || lower.contains("stdout")
+            || lower.contains("io error")
+        {
             return Self::new(RunnerErrorCategory::Io, message);
         }
         if lower.contains("config") || lower.contains("missing") {
@@ -269,11 +271,9 @@ impl BridgeCommandRunner for LocalSandboxRunner {
     async fn execute(&self, input: &RunnerExecuteInput) -> Result<RunnerCommandResult, String> {
         match self.options.mode {
             SandboxMode::Direct => execute_direct(input).await.map_err(|e| e.to_string()),
-            SandboxMode::Bubblewrap => {
-                execute_bwrap(self.options.as_ref(), input)
-                    .await
-                    .map_err(|e| e.to_string())
-            }
+            SandboxMode::Bubblewrap => execute_bwrap(self.options.as_ref(), input)
+                .await
+                .map_err(|e| e.to_string()),
         }
     }
 }
@@ -296,16 +296,19 @@ async fn execute_direct(input: &RunnerExecuteInput) -> Result<RunnerCommandResul
     }
     let mut child = command.spawn()?;
     if let Some(stdin_data) = &input.stdin {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| RunnerError::new(RunnerErrorCategory::Io, "child stdin pipe unavailable"))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            RunnerError::new(RunnerErrorCategory::Io, "child stdin pipe unavailable")
+        })?;
         stdin.write_all(stdin_data.as_bytes()).await?;
         stdin.shutdown().await?;
     }
     let (mut stdout, mut stderr) = (
-        child.stdout.take().ok_or_else(|| RunnerError::new(RunnerErrorCategory::Io, "child stdout pipe unavailable"))?,
-        child.stderr.take().ok_or_else(|| RunnerError::new(RunnerErrorCategory::Io, "child stderr pipe unavailable"))?,
+        child.stdout.take().ok_or_else(|| {
+            RunnerError::new(RunnerErrorCategory::Io, "child stdout pipe unavailable")
+        })?,
+        child.stderr.take().ok_or_else(|| {
+            RunnerError::new(RunnerErrorCategory::Io, "child stderr pipe unavailable")
+        })?,
     );
     let stdout_task = tokio::spawn(async move {
         let mut buf = Vec::new();
@@ -357,22 +360,35 @@ async fn execute_bwrap(
     command.arg("--").arg(&input.command).args(&input.args);
     command
         .envs(&input.env)
-        .stdin(if input.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if input.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     if options.verbose {
-        eprintln!("[local-sandbox] exec: bwrap -- ... {} {:?}", input.command, input.args);
+        eprintln!(
+            "[local-sandbox] exec: bwrap -- ... {} {:?}",
+            input.command, input.args
+        );
     }
     let mut child = command.spawn()?;
     if let Some(stdin_data) = &input.stdin {
-        let mut stdin = child.stdin.take().ok_or_else(|| RunnerError::new(RunnerErrorCategory::Io, "bwrap stdin pipe unavailable"))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            RunnerError::new(RunnerErrorCategory::Io, "bwrap stdin pipe unavailable")
+        })?;
         stdin.write_all(stdin_data.as_bytes()).await?;
         stdin.shutdown().await?;
     }
     let (mut stdout, mut stderr) = (
-        child.stdout.take().ok_or_else(|| RunnerError::new(RunnerErrorCategory::Io, "bwrap stdout pipe unavailable"))?,
-        child.stderr.take().ok_or_else(|| RunnerError::new(RunnerErrorCategory::Io, "bwrap stderr pipe unavailable"))?,
+        child.stdout.take().ok_or_else(|| {
+            RunnerError::new(RunnerErrorCategory::Io, "bwrap stdout pipe unavailable")
+        })?,
+        child.stderr.take().ok_or_else(|| {
+            RunnerError::new(RunnerErrorCategory::Io, "bwrap stderr pipe unavailable")
+        })?,
     );
     let stdout_task = tokio::spawn(async move {
         let mut buf = Vec::new();
@@ -412,23 +428,37 @@ pub fn create_local_sandbox_runner() -> LocalSandboxRunner {
 pub fn create_local_sandbox_runner_from_options(
     options: &serde_json::Value,
 ) -> Result<LocalSandboxRunner, RunnerError> {
-    let mode_str = options.get("mode").and_then(|v| v.as_str()).unwrap_or("auto");
+    let mode_str = options
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let mode: SandboxMode = mode_str.parse()?;
     let bind_ro = options
         .get("bindRo")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec!["/usr".into(), "/lib".into(), "/lib64".into(), "/etc".into()]);
     let bind_rw = options
         .get("bindRw")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec!["/tmp".into()]);
     let unshare_network = options
         .get("unshareNetwork")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let verbose = options.get("verbose").and_then(|v| v.as_bool()).unwrap_or(false);
+    let verbose = options
+        .get("verbose")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     Ok(LocalSandboxRunner::new(LocalSandboxRunnerOptions {
         mode,
         bind_ro,
@@ -489,8 +519,14 @@ impl RunnerRegistry {
     #[must_use]
     pub fn with_defaults(ssh_runner: Option<Arc<dyn BridgeCommandRunner>>) -> Self {
         let mut r = Self::new();
-        r.register(RunnerProviderId::LOCAL, Arc::new(crate::bridge_executor::LocalProcessBridgeRunner));
-        r.register(RunnerProviderId::LOCAL_SANDBOX, Arc::new(create_local_sandbox_runner()));
+        r.register(
+            RunnerProviderId::LOCAL,
+            Arc::new(crate::bridge_executor::LocalProcessBridgeRunner),
+        );
+        r.register(
+            RunnerProviderId::LOCAL_SANDBOX,
+            Arc::new(create_local_sandbox_runner()),
+        );
         if let Some(ssh) = ssh_runner {
             r.register(RunnerProviderId::SSH, ssh);
         }
@@ -503,14 +539,16 @@ impl RunnerRegistry {
     }
 
     #[must_use]
-    pub fn resolve(&self, id: &RunnerProviderId) -> Result<Arc<dyn BridgeCommandRunner>, RunnerError> {
-        self.runners
-            .get(id.as_str())
-            .cloned()
-            .ok_or_else(|| RunnerError::new(
+    pub fn resolve(
+        &self,
+        id: &RunnerProviderId,
+    ) -> Result<Arc<dyn BridgeCommandRunner>, RunnerError> {
+        self.runners.get(id.as_str()).cloned().ok_or_else(|| {
+            RunnerError::new(
                 RunnerErrorCategory::ProviderUnavailable,
                 format!("runner provider `{id}` is not registered"),
-            ))
+            )
+        })
     }
 
     #[must_use]
@@ -554,9 +592,18 @@ mod tests {
 
     #[test]
     fn r566_sandbox_mode_from_str_parses_known_values() {
-        assert_eq!("direct".parse::<SandboxMode>().unwrap(), SandboxMode::Direct);
-        assert_eq!("auto".parse::<SandboxMode>().unwrap(), SandboxMode::auto_detect());
-        assert_eq!("bwrap".parse::<SandboxMode>().unwrap(), SandboxMode::Bubblewrap);
+        assert_eq!(
+            "direct".parse::<SandboxMode>().unwrap(),
+            SandboxMode::Direct
+        );
+        assert_eq!(
+            "auto".parse::<SandboxMode>().unwrap(),
+            SandboxMode::auto_detect()
+        );
+        assert_eq!(
+            "bwrap".parse::<SandboxMode>().unwrap(),
+            SandboxMode::Bubblewrap
+        );
     }
 
     #[test]
@@ -591,7 +638,8 @@ mod tests {
 
     #[test]
     fn r566_runner_error_with_exit_code() {
-        let e = RunnerError::new(RunnerErrorCategory::NonZeroExit, "command failed").with_exit_code(42);
+        let e =
+            RunnerError::new(RunnerErrorCategory::NonZeroExit, "command failed").with_exit_code(42);
         assert_eq!(e.exit_code, Some(42));
         assert!(e.to_string().contains("42"));
     }
@@ -625,7 +673,10 @@ mod tests {
     fn r566_create_local_sandbox_runner_default() {
         let r = create_local_sandbox_runner();
         // mode 可能是 Direct 或 Bubblewrap（取决于机器）
-        assert!(matches!(r.options().mode, SandboxMode::Direct | SandboxMode::Bubblewrap));
+        assert!(matches!(
+            r.options().mode,
+            SandboxMode::Direct | SandboxMode::Bubblewrap
+        ));
     }
 
     #[test]

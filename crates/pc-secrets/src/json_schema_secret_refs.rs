@@ -5,7 +5,6 @@
 //!
 //! Pure logic，无 IO 依赖。
 
-
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
@@ -48,7 +47,9 @@ pub enum SecretRefVersion {
 /// 解析 `{ type: "secret_ref", secretId, version? }` binding。
 ///
 /// 返回 `None`：raw value / 裸 secret-id 字符串 / 类型不匹配 / 格式错误。
-pub fn parse_secret_ref_binding_object(value: &serde_json::Value) -> Option<SecretRefBindingObject> {
+pub fn parse_secret_ref_binding_object(
+    value: &serde_json::Value,
+) -> Option<SecretRefBindingObject> {
     let obj = value.as_object()?;
     if obj.get("type")?.as_str()? != "secret_ref" {
         return None;
@@ -144,7 +145,10 @@ fn walk(node: &serde_json::Value, prefix: &str, paths: &mut HashSet<String>) {
 /// 读 dot-path 对应的值（与 Node `readConfigValueAtPath` 1:1 对齐）。
 ///
 /// 路径不存在 / 中间节点非 object → `None`。
-pub fn read_config_value_at_path<'a>(config: &'a serde_json::Value, dot_path: &str) -> Option<&'a serde_json::Value> {
+pub fn read_config_value_at_path<'a>(
+    config: &'a serde_json::Value,
+    dot_path: &str,
+) -> Option<&'a serde_json::Value> {
     let mut current = config;
     for key in dot_path.split('.') {
         let obj = current.as_object()?;
@@ -182,12 +186,12 @@ pub fn write_config_value_at_path(
 
     let mut cursor = result.as_object_mut().unwrap();
     for key in &keys[..keys.len() - 1] {
-        let needs_new = !cursor
-            .get(*key)
-            .map(|v| v.is_object())
-            .unwrap_or(false);
+        let needs_new = !cursor.get(*key).map(|v| v.is_object()).unwrap_or(false);
         if needs_new {
-            cursor.insert((*key).to_string(), serde_json::Value::Object(serde_json::Map::new()));
+            cursor.insert(
+                (*key).to_string(),
+                serde_json::Value::Object(serde_json::Map::new()),
+            );
         }
         cursor = cursor
             .get_mut(*key)
@@ -218,7 +222,9 @@ mod tests {
     #[test]
     fn r715_is_uuid_valid() {
         assert!(is_uuid_secret_ref("123e4567-e89b-12d3-a456-426614174000"));
-        assert!(is_uuid_secret_ref("  123E4567-E89B-12D3-A456-426614174000  "));
+        assert!(is_uuid_secret_ref(
+            "  123E4567-E89B-12D3-A456-426614174000  "
+        ));
     }
 
     #[test]
@@ -437,7 +443,10 @@ mod tests {
     #[test]
     fn r715_read_nested() {
         let config = json!({"a": {"b": {"c": 42}}});
-        assert_eq!(read_config_value_at_path(&config, "a.b.c"), Some(&json!(42)));
+        assert_eq!(
+            read_config_value_at_path(&config, "a.b.c"),
+            Some(&json!(42))
+        );
     }
 
     #[test]

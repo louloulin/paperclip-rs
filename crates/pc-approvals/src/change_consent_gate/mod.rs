@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/change-consent-gate.ts`（232 行）1:1 复刻。
 //! （原 `pc-change-consent-gate` crate 已下沉到 `pc-approvals::change_consent_gate`）。
 
-
 mod helpers;
 mod service;
 mod types;
@@ -17,6 +16,6 @@ pub use helpers::{
 };
 pub use service::ChangeConsentGateService;
 pub use types::{
-    AGENT_PROFILE_CHANGE_CONSENT_FIELDS,
     codes, mark_result_consumed, AssertConsentedInput, ChangeConsentError, ChangeConsentResult,
+    AGENT_PROFILE_CHANGE_CONSENT_FIELDS,
 };

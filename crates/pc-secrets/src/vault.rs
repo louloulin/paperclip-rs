@@ -26,10 +26,7 @@ pub enum VaultAuth {
     Token(String),
     /// AppRole: `POST /v1/auth/approle/login`。
     /// 响应里 `auth.client_token` 即 Vault token。
-    AppRole {
-        role_id: String,
-        secret_id: String,
-    },
+    AppRole { role_id: String, secret_id: String },
     /// Kubernetes auth: `POST /v1/auth/kubernetes/login`.
     Kubernetes { role: String, jwt: String },
 }
@@ -177,9 +174,7 @@ impl VaultProvider {
             VaultAuth::Token(_) => return Ok(()),
         };
         let url = format!("{}{}", self.addr.trim_end_matches('/'), path);
-        let mut req = client()
-            .post(&url)
-            .json(&payload);
+        let mut req = client().post(&url).json(&payload);
         if !self.namespace.is_empty() {
             req = req.header("X-Vault-Namespace", &self.namespace);
         }
@@ -393,7 +388,9 @@ impl SecretProvider for VaultProvider {
         // Vault health endpoint: GET /v1/sys/health
         let url = format!("{}/v1/sys/health", self.addr().trim_end_matches('/'));
         let req = client().get(&url);
-        match apply_auth_headers(req, self.token(), self.namespace()).send().await
+        match apply_auth_headers(req, self.token(), self.namespace())
+            .send()
+            .await
         {
             Ok(r) => {
                 let s = r.status();
@@ -455,7 +452,6 @@ impl SecretProvider for VaultProvider {
 pub(crate) fn sanitize_path_for_test(path: &str) -> Result<String, String> {
     sanitize_path(path)
 }
-
 
 #[cfg(test)]
 mod auth_tests {

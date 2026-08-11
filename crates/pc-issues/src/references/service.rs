@@ -12,10 +12,14 @@ use pc_repos::{
     Db,
 };
 
+use pc_external_objects::{
+    format_external_object_mention_source_label, ExternalObjectMentionSource,
+    ExternalObjectMentionSourceKind,
+};
+
 use super::extractor::extract_identifiers;
 use super::types::{
-    IssueReferenceMentionView, IssueReferenceSource, ReferenceRelatedIssueSummary,
-    RelatedWorkItem,
+    IssueReferenceMentionView, IssueReferenceSource, ReferenceRelatedIssueSummary, RelatedWorkItem,
 };
 
 /// related work 总览（inbound + outbound）。
@@ -69,7 +73,9 @@ impl IssueReferenceService {
 
     fn require_non_nil(id: Uuid, field: &str) -> IssueReferenceResult<()> {
         if id.is_nil() {
-            Err(IssueReferenceError::Validation(format!("{field} is required")))
+            Err(IssueReferenceError::Validation(format!(
+                "{field} is required"
+            )))
         } else {
             Ok(())
         }
@@ -303,19 +309,21 @@ impl IssueReferenceService {
         let mut outbound: std::collections::HashMap<Uuid, RelatedWorkItem> =
             std::collections::HashMap::new();
         for r in &outbound_rows {
-            let entry = outbound.entry(r.target_issue_id).or_insert_with(|| RelatedWorkItem {
-                issue: ReferenceRelatedIssueSummary {
-                    id: r.target_issue_id,
-                    identifier: None,
-                    title: String::new(),
-                    status: String::new(),
-                    priority: String::new(),
-                    assignee_agent_id: None,
-                    assignee_user_id: None,
-                },
-                mention_count: 0,
-                sources: Vec::new(),
-            });
+            let entry = outbound
+                .entry(r.target_issue_id)
+                .or_insert_with(|| RelatedWorkItem {
+                    issue: ReferenceRelatedIssueSummary {
+                        id: r.target_issue_id,
+                        identifier: None,
+                        title: String::new(),
+                        status: String::new(),
+                        priority: String::new(),
+                        assignee_agent_id: None,
+                        assignee_user_id: None,
+                    },
+                    mention_count: 0,
+                    sources: Vec::new(),
+                });
             entry.mention_count += 1;
             entry.sources.push(IssueReferenceSource {
                 kind: r.source_kind.clone(),
@@ -328,19 +336,21 @@ impl IssueReferenceService {
         let mut inbound: std::collections::HashMap<Uuid, RelatedWorkItem> =
             std::collections::HashMap::new();
         for r in &inbound_rows {
-            let entry = inbound.entry(r.source_issue_id).or_insert_with(|| RelatedWorkItem {
-                issue: ReferenceRelatedIssueSummary {
-                    id: r.source_issue_id,
-                    identifier: None,
-                    title: String::new(),
-                    status: String::new(),
-                    priority: String::new(),
-                    assignee_agent_id: None,
-                    assignee_user_id: None,
-                },
-                mention_count: 0,
-                sources: Vec::new(),
-            });
+            let entry = inbound
+                .entry(r.source_issue_id)
+                .or_insert_with(|| RelatedWorkItem {
+                    issue: ReferenceRelatedIssueSummary {
+                        id: r.source_issue_id,
+                        identifier: None,
+                        title: String::new(),
+                        status: String::new(),
+                        priority: String::new(),
+                        assignee_agent_id: None,
+                        assignee_user_id: None,
+                    },
+                    mention_count: 0,
+                    sources: Vec::new(),
+                });
             entry.mention_count += 1;
             entry.sources.push(IssueReferenceSource {
                 kind: r.source_kind.clone(),
@@ -374,13 +384,19 @@ impl IssueReferenceService {
             }
         }
         out_outbound.sort_by(|a, b| {
-            b.mention_count
-                .cmp(&a.mention_count)
-                .then_with(|| {
-                    let al = a.issue.identifier.clone().unwrap_or_else(|| a.issue.title.clone());
-                    let bl = b.issue.identifier.clone().unwrap_or_else(|| b.issue.title.clone());
-                    al.cmp(&bl)
-                })
+            b.mention_count.cmp(&a.mention_count).then_with(|| {
+                let al = a
+                    .issue
+                    .identifier
+                    .clone()
+                    .unwrap_or_else(|| a.issue.title.clone());
+                let bl = b
+                    .issue
+                    .identifier
+                    .clone()
+                    .unwrap_or_else(|| b.issue.title.clone());
+                al.cmp(&bl)
+            })
         });
 
         let mut out_inbound: Vec<RelatedWorkItem> = inbound.into_values().collect();
@@ -395,13 +411,19 @@ impl IssueReferenceService {
             }
         }
         out_inbound.sort_by(|a, b| {
-            b.mention_count
-                .cmp(&a.mention_count)
-                .then_with(|| {
-                    let al = a.issue.identifier.clone().unwrap_or_else(|| a.issue.title.clone());
-                    let bl = b.issue.identifier.clone().unwrap_or_else(|| b.issue.title.clone());
-                    al.cmp(&bl)
-                })
+            b.mention_count.cmp(&a.mention_count).then_with(|| {
+                let al = a
+                    .issue
+                    .identifier
+                    .clone()
+                    .unwrap_or_else(|| a.issue.title.clone());
+                let bl = b
+                    .issue
+                    .identifier
+                    .clone()
+                    .unwrap_or_else(|| b.issue.title.clone());
+                al.cmp(&bl)
+            })
         });
 
         Ok(IssueReferenceRelatedWork {
@@ -441,13 +463,35 @@ fn row_to_view(r: IssueReferenceMentionRow) -> IssueReferenceMentionView {
     }
 }
 
+/// R567: delegate to pc-external-objects unified formatter so that
+/// source labels (Title / Description / Comment / Document[:key] /
+/// Property[:key] / Plugin) stay consistent with the rest of the system.
+/// Falls back to the raw kind string for unknown kinds so unknown sources
+/// still surface usefully in the UI instead of producing empty labels.
 fn source_label(kind: &str, document_key: Option<&str>) -> String {
-    if kind == "document" {
-        document_key
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "document".to_string())
-    } else {
-        kind.to_string()
+    match ExternalObjectMentionSourceKind::parse(kind) {
+        Some(parsed_kind) => {
+            // For Document/Property we surface the key for context; the
+            // unified formatter already prefixes with "Document: " /
+            // "Property: ".
+            let doc_key_for_doc =
+                if matches!(parsed_kind, ExternalObjectMentionSourceKind::Document) {
+                    document_key
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                } else {
+                    None
+                };
+            let source = ExternalObjectMentionSource {
+                company_id: None,
+                source_issue_id: None,
+                source_kind: parsed_kind,
+                source_record_id: None,
+                document_key: doc_key_for_doc,
+                property_key: None,
+            };
+            format_external_object_mention_source_label(&source)
+        }
+        None => kind.to_string(),
     }
 }

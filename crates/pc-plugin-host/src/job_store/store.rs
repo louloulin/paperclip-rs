@@ -70,7 +70,10 @@ impl PluginJobStore {
                     }
                     if updates.contains(&"resume_from_paused") {
                         self.repo()
-                            .update_job_status(existing_row.id, JobDefinitionStatus::Active.as_str())
+                            .update_job_status(
+                                existing_row.id,
+                                JobDefinitionStatus::Active.as_str(),
+                            )
                             .await?;
                     }
                 }
@@ -108,10 +111,7 @@ impl PluginJobStore {
         Ok(self.repo().get_job_by_key(plugin_id, job_key).await?)
     }
 
-    pub async fn get_job_by_id(
-        &self,
-        job_id: Uuid,
-    ) -> PluginJobStoreResult<Option<PluginJobRow>> {
+    pub async fn get_job_by_id(&self, job_id: Uuid) -> PluginJobStoreResult<Option<PluginJobRow>> {
         Ok(self.repo().get_job_by_id(job_id).await?)
     }
 
@@ -120,7 +120,10 @@ impl PluginJobStore {
         plugin_id: Uuid,
         job_id: Uuid,
     ) -> PluginJobStoreResult<Option<PluginJobRow>> {
-        Ok(self.repo().get_job_by_id_for_plugin(plugin_id, job_id).await?)
+        Ok(self
+            .repo()
+            .get_job_by_id_for_plugin(plugin_id, job_id)
+            .await?)
     }
 
     pub async fn update_job_status(
@@ -128,7 +131,9 @@ impl PluginJobStore {
         job_id: Uuid,
         status: JobDefinitionStatus,
     ) -> PluginJobStoreResult<()> {
-        self.repo().update_job_status(job_id, status.as_str()).await?;
+        self.repo()
+            .update_job_status(job_id, status.as_str())
+            .await?;
         Ok(())
     }
 
@@ -220,7 +225,6 @@ pub fn plugin_job_store(db: Db) -> PluginJobStore {
 }
 
 fn parse_uuid(s: &str, field: &str) -> PluginJobStoreResult<Uuid> {
-    Uuid::parse_str(s).map_err(|_| {
-        PluginJobStoreError::PluginNotFound(format!("invalid uuid for {field}: {s}"))
-    })
+    Uuid::parse_str(s)
+        .map_err(|_| PluginJobStoreError::PluginNotFound(format!("invalid uuid for {field}: {s}")))
 }

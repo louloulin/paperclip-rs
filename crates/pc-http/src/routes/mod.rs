@@ -15,6 +15,7 @@ pub mod built_in_agents;
 pub mod cases;
 pub(crate) mod change_consent;
 pub mod companies;
+pub mod company_events_ws;
 pub mod company_import_paths;
 pub mod company_skill_policy;
 pub mod company_skills;
@@ -62,6 +63,7 @@ pub mod tool_access;
 pub mod tool_connections;
 pub mod tool_gateway;
 pub mod user_profiles;
+pub mod v1;
 pub mod workflows;
 pub mod workspace_command_authz;
 pub mod workspace_runtime_service_authz;
@@ -112,6 +114,7 @@ pub fn router() -> Router<AppState> {
         .merge(tool_connections::router())
         .merge(tool_gateway::router())
         .merge(user_profiles::router())
+        .merge(v1::router())
         .merge(resource_memberships::router())
         .merge(workspace_command_authz::router())
         .merge(workspace_runtime_service_authz::router())
@@ -126,6 +129,7 @@ pub fn router() -> Router<AppState> {
         .merge(labels::router())
         .merge(company_skill_policy::router())
         .merge(company_import_paths::router())
+        .merge(company_events_ws::router())
         .merge(costs::router())
         .merge(dashboard::router())
         .merge(decision_training::router())

@@ -15,7 +15,9 @@ use super::AgentActionAuditPage;
 #[derive(Debug, Clone)]
 pub enum AgentActionAuditHookEvent {
     /// List 前调用。
-    BeforeList { filters: Box<AgentActionAuditFilters> },
+    BeforeList {
+        filters: Box<AgentActionAuditFilters>,
+    },
     /// List 成功后调用，附带返回的 page。
     AfterList {
         page: Box<AgentActionAuditPage>,
@@ -95,15 +97,21 @@ impl RecordingAgentActionAuditHook {
 
 impl AgentActionAuditHook for RecordingAgentActionAuditHook {
     fn before_list(&self, filters: &AgentActionAuditFilters) {
-        self.events.lock().unwrap().push(AgentActionAuditHookEvent::BeforeList {
-            filters: Box::new(filters.clone()),
-        });
+        self.events
+            .lock()
+            .unwrap()
+            .push(AgentActionAuditHookEvent::BeforeList {
+                filters: Box::new(filters.clone()),
+            });
     }
 
     fn after_list(&self, page: &AgentActionAuditPage, filters: &AgentActionAuditFilters) {
-        self.events.lock().unwrap().push(AgentActionAuditHookEvent::AfterList {
-            page: Box::new(page.clone()),
-            filters: Box::new(filters.clone()),
-        });
+        self.events
+            .lock()
+            .unwrap()
+            .push(AgentActionAuditHookEvent::AfterList {
+                page: Box::new(page.clone()),
+                filters: Box::new(filters.clone()),
+            });
     }
 }

@@ -90,8 +90,12 @@ pub fn generate_typescript_types(spec: &OpenApiSpec) -> String {
     names.sort();
 
     for name in names {
-        let Some(schema_ref) = spec.components.schemas.get(name) else { continue };
-        let Some(schema_value) = schema_ref_to_value(schema_ref) else { continue };
+        let Some(schema_ref) = spec.components.schemas.get(name) else {
+            continue;
+        };
+        let Some(schema_value) = schema_ref_to_value(schema_ref) else {
+            continue;
+        };
         let ts = emit::schema_to_typescript(name, &schema_value);
         out.push_str(&ts);
         out.push('\n');
@@ -116,5 +120,3 @@ fn schema_ref_to_value(schema_ref: &SchemaRef) -> Option<serde_json::Value> {
 pub fn schema_to_typescript(name: &str, schema: &Value) -> String {
     emit::schema_to_typescript(name, schema)
 }
-
-

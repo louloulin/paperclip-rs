@@ -150,10 +150,13 @@ pub async fn reconcile_issue_graph_liveness(
     let cutoff = now - chrono::Duration::hours(lookback_hours);
 
     // 7. retire obsolete + retire done blockers
+    //    - 若 opts.company_id.is_some() → 限制到该公司（per-company reconcile，常见路径）
+    //    - 若 opts.company_id.is_none() → None（全局扫描，跨公司 reconcile）
+    let company_filter: Option<Vec<Uuid>> = opts.company_id.map(|c| vec![c]);
     let obsolete_recovery_cleanup: RetireObsoleteResult =
-        retire_obsolete_liveness_recovery_issues(db, &findings).await?;
+        retire_obsolete_liveness_recovery_issues(db, &findings, company_filter.as_deref()).await?;
     let done_recovery_blocker_cleanup: RetireDoneBlockersResult =
-        retire_done_liveness_recovery_blockers(db).await?;
+        retire_done_liveness_recovery_blockers(db, company_filter.as_deref()).await?;
 
     // 8. load dependency updated_at map
     let updated_at_by_issue_key =

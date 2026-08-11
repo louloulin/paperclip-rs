@@ -8,24 +8,24 @@
 //! - 维护 `{plugin_id -> WorkerHandle}` 映射
 //! - 支持 graceful shutdown、health check、job dispatch
 
-pub mod capability_validator;
 pub mod bundled_plugins;
-pub mod log_retention;
-pub mod service_cleanup;
+pub mod capability_validator;
+pub mod config_validator;
 pub mod handle;
+#[cfg(test)]
+mod host_dispatcher_e2e;
+pub mod job_store;
 pub mod jsonrpc;
+pub mod log_retention;
+pub mod manifest_validator;
 pub mod notifications;
 pub mod plugin_event_bus;
 pub mod plugin_install_guard;
-pub mod config_validator;
-pub mod job_store;
-pub mod manifest_validator;
 pub mod plugin_stream_bus;
 pub mod pool;
 pub mod registry;
+pub mod service_cleanup;
 pub mod supervisor;
-#[cfg(test)]
-mod host_dispatcher_e2e;
 
 pub use bundled_plugins::{
     ensure_bundled_plugins, resolve_bundled_catalog_root, resolve_bundled_plugin_installs,

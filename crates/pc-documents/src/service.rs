@@ -153,7 +153,10 @@ impl CreateDocument {
         if self.body.is_empty() {
             return Err(validation("document body must not be empty"));
         }
-        let format = self.format.clone().unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        let format = self
+            .format
+            .clone()
+            .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
         if !ALLOWED_FORMATS.contains(&format.as_str()) {
             return Err(validation(format!(
                 "format must be one of markdown/plain/html, got {format}"
@@ -239,14 +242,10 @@ impl CreateAnnotationThreadInput {
             return Err(validation("selectedText must not be empty"));
         }
         if self.normalized_end < self.normalized_start {
-            return Err(unprocessable(
-                "normalizedEnd must be >= normalizedStart",
-            ));
+            return Err(unprocessable("normalizedEnd must be >= normalizedStart"));
         }
         if self.markdown_end < self.markdown_start {
-            return Err(unprocessable(
-                "markdownEnd must be >= markdownStart",
-            ));
+            return Err(unprocessable("markdownEnd must be >= markdownStart"));
         }
         Ok(())
     }
@@ -348,9 +347,7 @@ impl DocumentService {
 
     fn assert_unlocked(&self, row: &DocumentRow) -> Result<()> {
         if row.locked_at.is_some() {
-            return Err(forbidden(
-                "document is locked; unlock before mutating",
-            ));
+            return Err(forbidden("document is locked; unlock before mutating"));
         }
         Ok(())
     }
@@ -437,8 +434,14 @@ impl DocumentService {
             .ok_or_else(|| validation(format!("document {document_id} not found")))?;
         self.assert_unlocked(&existing)?;
 
-        let new_body = patch.body.clone().unwrap_or_else(|| existing.latest_body.clone());
-        let new_format = patch.format.clone().unwrap_or_else(|| existing.format.clone());
+        let new_body = patch
+            .body
+            .clone()
+            .unwrap_or_else(|| existing.latest_body.clone());
+        let new_format = patch
+            .format
+            .clone()
+            .unwrap_or_else(|| existing.format.clone());
         let new_title = patch.title.clone().or_else(|| existing.title.clone());
 
         let updated = sqlx::query_as::<_, DocumentRow>(
@@ -514,10 +517,7 @@ impl DocumentService {
 
     // ---- revisions ----------------------------------------------------------
 
-    pub async fn list_revisions(
-        &self,
-        document_id: Uuid,
-    ) -> Result<Vec<DocumentRevisionRow>> {
+    pub async fn list_revisions(&self, document_id: Uuid) -> Result<Vec<DocumentRevisionRow>> {
         DocumentRepo::new(&self.db)
             .list_revisions(document_id)
             .await
@@ -651,7 +651,10 @@ impl DocumentService {
             .map_err(map_sql_error)?
             .ok_or_else(|| validation(format!("document {} not found", input.document_id)))?;
         let anchor_state = "anchored".to_string();
-        let anchor_confidence = input.anchor_confidence.clone().unwrap_or_else(|| "high".into());
+        let anchor_confidence = input
+            .anchor_confidence
+            .clone()
+            .unwrap_or_else(|| "high".into());
         let anchor_selector = input.anchor_selector.clone().unwrap_or(Value::Null);
         let thread = sqlx::query_as::<_, AnnotationThreadRow>(
             "INSERT INTO document_annotation_threads                 (company_id, issue_id, document_id, document_key, status, anchor_state,                  original_revision_number, current_revision_number,                  selected_text, prefix_text, suffix_text,                  normalized_start, normalized_end, markdown_start, markdown_end,                  anchor_confidence, anchor_selector,                  created_by_agent_id, created_by_user_id)              VALUES ($1,$2,$3,$4,'open',$5, $6,$6, $7,$8,$9, $10,$11,$12,$13, $14,$15, $16,$17)              RETURNING id, company_id, issue_id, document_id, document_key, status, anchor_state,                 original_revision_id, original_revision_number, current_revision_id,                 current_revision_number, selected_text, prefix_text, suffix_text,                 normalized_start, normalized_end, markdown_start, markdown_end,                 anchor_confidence, anchor_selector, created_by_agent_id, created_by_user_id,                 resolved_by_agent_id, resolved_by_user_id, resolved_at,                 created_at, updated_at",
@@ -756,10 +759,7 @@ impl DocumentService {
 
     // ---- issue-document link ------------------------------------------------
 
-    pub async fn list_issue_documents(
-        &self,
-        issue_id: Uuid,
-    ) -> Result<Vec<DocumentRow>> {
+    pub async fn list_issue_documents(&self, issue_id: Uuid) -> Result<Vec<DocumentRow>> {
         DocumentRepo::new(&self.db)
             .list_issue_documents(issue_id)
             .await
@@ -777,10 +777,7 @@ impl DocumentService {
             .map_err(map_sql_error)
     }
 
-    pub async fn upsert_issue_document(
-        &self,
-        input: UpsertIssueDocument,
-    ) -> Result<DocumentRow> {
+    pub async fn upsert_issue_document(&self, input: UpsertIssueDocument) -> Result<DocumentRow> {
         if input.key.trim().is_empty() {
             return Err(validation("issue document key must not be empty"));
         }
@@ -803,11 +800,7 @@ impl DocumentService {
         Ok(row)
     }
 
-    pub async fn delete_issue_document(
-        &self,
-        issue_id: Uuid,
-        key: &str,
-    ) -> Result<bool> {
+    pub async fn delete_issue_document(&self, issue_id: Uuid, key: &str) -> Result<bool> {
         DocumentRepo::new(&self.db)
             .delete_issue_document(issue_id, key)
             .await

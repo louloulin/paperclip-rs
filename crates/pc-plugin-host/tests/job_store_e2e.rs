@@ -30,7 +30,12 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>();
+    let suffix = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect::<String>();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
@@ -63,13 +68,19 @@ async fn insert_plugin(pool: &PgPool, tag: &str) -> Uuid {
 async fn cleanup(pool: &PgPool, company_id: Uuid, plugin_id: Uuid) {
     // 删除 plugin 会通过 FK CASCADE 自动清理 plugin_jobs + plugin_job_runs (via plugin_id)
     let _ = sqlx::query("DELETE FROM plugins WHERE id = $1")
-        .bind(plugin_id).execute(pool).await;
+        .bind(plugin_id)
+        .execute(pool)
+        .await;
     // 删 company 会 CASCADE 清掉 plugin_job_runs.company_id (孤儿 runs)
     let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
-        .bind(company_id).execute(pool).await;
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
-fn make_store(db: Db) -> PluginJobStore { plugin_job_store(db) }
+fn make_store(db: Db) -> PluginJobStore {
+    plugin_job_store(db)
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn sync_inserts_and_lists_jobs() {
@@ -83,7 +94,10 @@ async fn sync_inserts_and_lists_jobs() {
         PluginJobDeclaration::new("daily", "Daily Run"),
         PluginJobDeclaration::new("hourly", "Hourly"),
     ];
-    store.sync_job_declarations(plugin_id, &decls).await.expect("sync");
+    store
+        .sync_job_declarations(plugin_id, &decls)
+        .await
+        .expect("sync");
 
     let jobs = store.list_jobs(plugin_id, None).await.expect("list");
     assert_eq!(jobs.len(), 2);
@@ -91,7 +105,11 @@ async fn sync_inserts_and_lists_jobs() {
     assert!(keys.contains(&"daily".to_string()));
     assert!(keys.contains(&"hourly".to_string()));
 
-    let daily = store.get_job_by_key(plugin_id, "daily").await.expect("get").expect("exists");
+    let daily = store
+        .get_job_by_key(plugin_id, "daily")
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(daily.status, "active");
 
     cleanup(&pool, company_id, plugin_id).await;
@@ -106,20 +124,35 @@ async fn sync_pauses_removed_declarations() {
 
     let store = make_store(db.clone());
     // 先插入 2 个
-    store.sync_job_declarations(plugin_id, &[
-        PluginJobDeclaration::new("a", "A"),
-        PluginJobDeclaration::new("b", "B"),
-    ]).await.expect("sync 1");
+    store
+        .sync_job_declarations(
+            plugin_id,
+            &[
+                PluginJobDeclaration::new("a", "A"),
+                PluginJobDeclaration::new("b", "B"),
+            ],
+        )
+        .await
+        .expect("sync 1");
 
     // 第二次只声明 a —— b 应被 pause
-    store.sync_job_declarations(plugin_id, &[
-        PluginJobDeclaration::new("a", "A"),
-    ]).await.expect("sync 2");
+    store
+        .sync_job_declarations(plugin_id, &[PluginJobDeclaration::new("a", "A")])
+        .await
+        .expect("sync 2");
 
-    let b = store.get_job_by_key(plugin_id, "b").await.expect("get").expect("exists");
+    let b = store
+        .get_job_by_key(plugin_id, "b")
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(b.status, "paused");
 
-    let a = store.get_job_by_key(plugin_id, "a").await.expect("get").expect("exists");
+    let a = store
+        .get_job_by_key(plugin_id, "a")
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(a.status, "active");
 
     cleanup(&pool, company_id, plugin_id).await;
@@ -133,29 +166,51 @@ async fn run_lifecycle_create_mark_complete() {
     let plugin_id = insert_plugin(&pool, "run").await;
 
     let store = make_store(db.clone());
-    store.sync_job_declarations(plugin_id, &[
-        PluginJobDeclaration::new("j", "J"),
-    ]).await.expect("sync");
-    let job = store.get_job_by_key(plugin_id, "j").await.expect("get").expect("exists");
+    store
+        .sync_job_declarations(plugin_id, &[PluginJobDeclaration::new("j", "J")])
+        .await
+        .expect("sync");
+    let job = store
+        .get_job_by_key(plugin_id, "j")
+        .await
+        .expect("get")
+        .expect("exists");
 
-    let run = store.create_run(CreateJobRunInput {
-        job_id: job.id.to_string(),
-        plugin_id: plugin_id.to_string(),
-        trigger: JobRunTrigger::Manual,
-    }).await.expect("create run");
+    let run = store
+        .create_run(CreateJobRunInput {
+            job_id: job.id.to_string(),
+            plugin_id: plugin_id.to_string(),
+            trigger: JobRunTrigger::Manual,
+        })
+        .await
+        .expect("create run");
     assert_eq!(run.status, "queued");
 
     store.mark_running(run.id).await.expect("mark running");
-    let running = store.get_run_by_id(run.id).await.expect("get run").expect("exists");
+    let running = store
+        .get_run_by_id(run.id)
+        .await
+        .expect("get run")
+        .expect("exists");
     assert_eq!(running.status, "running");
 
-    store.complete_run(run.id, CompleteJobRunInput {
-        status: JobRunStatus::Succeeded,
-        error: None,
-        duration_ms: Some(42),
-    }).await.expect("complete");
+    store
+        .complete_run(
+            run.id,
+            CompleteJobRunInput {
+                status: JobRunStatus::Succeeded,
+                error: None,
+                duration_ms: Some(42),
+            },
+        )
+        .await
+        .expect("complete");
 
-    let done = store.get_run_by_id(run.id).await.expect("get").expect("exists");
+    let done = store
+        .get_run_by_id(run.id)
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(done.status, "succeeded");
     assert_eq!(done.duration_ms, Some(42));
 
@@ -170,14 +225,26 @@ async fn update_job_status_works() {
     let plugin_id = insert_plugin(&pool, "upd").await;
 
     let store = make_store(db.clone());
-    store.sync_job_declarations(plugin_id, &[
-        PluginJobDeclaration::new("j", "J"),
-    ]).await.expect("sync");
-    let job = store.get_job_by_key(plugin_id, "j").await.expect("get").expect("exists");
+    store
+        .sync_job_declarations(plugin_id, &[PluginJobDeclaration::new("j", "J")])
+        .await
+        .expect("sync");
+    let job = store
+        .get_job_by_key(plugin_id, "j")
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(job.status, "active");
 
-    store.update_job_status(job.id, JobDefinitionStatus::Failed).await.expect("update");
-    let after = store.get_job_by_id(job.id).await.expect("get").expect("exists");
+    store
+        .update_job_status(job.id, JobDefinitionStatus::Failed)
+        .await
+        .expect("update");
+    let after = store
+        .get_job_by_id(job.id)
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(after.status, "failed");
 
     cleanup(&pool, company_id, plugin_id).await;

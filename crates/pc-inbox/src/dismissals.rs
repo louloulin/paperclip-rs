@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/inbox-dismissals.ts`（75 行）1:1 复刻。
 //! （原 `pc-inbox-dismissals` crate 已下沉到 `pc-inbox::dismissals`）。
 
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

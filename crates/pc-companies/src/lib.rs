@@ -128,10 +128,25 @@ impl CompanyActor {
 /// 每个事件携带触发它的 actor 信息，让 hook 能写 audit log / 通知。
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompanyLifecycleEvent {
-    Created { id: Uuid, owner_principal_id: String, budget_monthly_cents: Option<i32>, actor: CompanyActor },
-    Updated { id: Uuid, patch: UpdateCompanyPatch, actor: CompanyActor },
-    Archived { id: Uuid, actor: CompanyActor },
-    Removed { id: Uuid, actor: CompanyActor },
+    Created {
+        id: Uuid,
+        owner_principal_id: String,
+        budget_monthly_cents: Option<i32>,
+        actor: CompanyActor,
+    },
+    Updated {
+        id: Uuid,
+        patch: UpdateCompanyPatch,
+        actor: CompanyActor,
+    },
+    Archived {
+        id: Uuid,
+        actor: CompanyActor,
+    },
+    Removed {
+        id: Uuid,
+        actor: CompanyActor,
+    },
 }
 
 /// Hook trait：副作用抽象。
@@ -157,10 +172,7 @@ pub struct RecordingCompanyHook {
 
 #[async_trait]
 impl CompanyHook for RecordingCompanyHook {
-    async fn on_lifecycle(
-        &self,
-        event: CompanyLifecycleEvent,
-    ) -> CompanyServiceResult<()> {
+    async fn on_lifecycle(&self, event: CompanyLifecycleEvent) -> CompanyServiceResult<()> {
         self.events.lock().expect("lock").push(event);
         Ok(())
     }
@@ -213,7 +225,10 @@ impl<'a> CompanyService<'a> {
     }
 
     /// 单公司 stats 聚合。
-    pub async fn stats(&self, company_id: Uuid) -> CompanyServiceResult<pc_repos::company::CompanyStatsRow> {
+    pub async fn stats(
+        &self,
+        company_id: Uuid,
+    ) -> CompanyServiceResult<pc_repos::company::CompanyStatsRow> {
         Ok(self.repo.stats(company_id).await?)
     }
 
@@ -232,10 +247,7 @@ impl<'a> CompanyService<'a> {
     /// - 调用 `repo.create` 拿初始 row
     /// - 调用 `repo.create_owner_membership` 把 owner 加入 company_memberships
     /// - 触发 `CompanyLifecycleEvent::Created` hook
-    pub async fn create(
-        &self,
-        input: CreateCompanyInput,
-    ) -> CompanyServiceResult<CompanyRow> {
+    pub async fn create(&self, input: CreateCompanyInput) -> CompanyServiceResult<CompanyRow> {
         let name = input.name.trim().to_owned();
         if name.is_empty() {
             return Err(CompanyServiceError::InvalidInput(
@@ -350,8 +362,11 @@ impl<'a> CompanyService<'a> {
         let row = self.repo.archive(id).await?;
         if let Some(ref row) = row {
             for hook in &self.hooks {
-                hook.on_lifecycle(CompanyLifecycleEvent::Archived { id: row.id, actor: actor.clone() })
-                    .await?;
+                hook.on_lifecycle(CompanyLifecycleEvent::Archived {
+                    id: row.id,
+                    actor: actor.clone(),
+                })
+                .await?;
             }
         }
         Ok(row)
@@ -362,7 +377,11 @@ impl<'a> CompanyService<'a> {
         let ok = self.repo.delete(id).await?;
         if ok {
             for hook in &self.hooks {
-                hook.on_lifecycle(CompanyLifecycleEvent::Removed { id, actor: CompanyActor::system() }).await?;
+                hook.on_lifecycle(CompanyLifecycleEvent::Removed {
+                    id,
+                    actor: CompanyActor::system(),
+                })
+                .await?;
             }
         }
         Ok(ok)
@@ -400,7 +419,8 @@ impl<'a> CompanyService<'a> {
     pub async fn stats_for_companies(
         &self,
         company_ids: &[Uuid],
-    ) -> CompanyServiceResult<std::collections::HashMap<Uuid, pc_repos::company::CompanyStatsRow>> {
+    ) -> CompanyServiceResult<std::collections::HashMap<Uuid, pc_repos::company::CompanyStatsRow>>
+    {
         Ok(self.repo.stats_for_companies(company_ids).await?)
     }
 
@@ -428,4 +448,3 @@ impl<'a> CompanyService<'a> {
         Ok(self.repo.exists(company_id).await?)
     }
 }
-

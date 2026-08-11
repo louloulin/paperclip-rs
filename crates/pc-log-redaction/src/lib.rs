@@ -126,13 +126,22 @@ mod tests {
     struct MockEnv(Vec<(String, String)>);
     impl Env for MockEnv {
         fn var(&self, key: &str) -> Option<String> {
-            self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+            self.0
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
         }
     }
 
     #[test]
     fn r526_unique_non_empty_dedupes_and_trims() {
-        let v = vec![Some("a".into()), Some(" a ".into()), Some("".into()), None, Some("b".into())];
+        let v = vec![
+            Some("a".into()),
+            Some(" a ".into()),
+            Some("".into()),
+            None,
+            Some("b".into()),
+        ];
         let out = unique_non_empty(v.into_iter());
         assert_eq!(out, vec!["a".to_string(), "b".to_string()]);
     }

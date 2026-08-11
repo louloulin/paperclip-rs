@@ -37,8 +37,12 @@ async fn recording_hook_stores_events_in_order() {
         company_id: Uuid::new_v4(),
         member_id: Uuid::new_v4(),
     };
-    CompanyMemberHook::on_company_member_event(&hook, ev1.clone()).await.unwrap();
-    CompanyMemberHook::on_company_member_event(&hook, ev2.clone()).await.unwrap();
+    CompanyMemberHook::on_company_member_event(&hook, ev1.clone())
+        .await
+        .unwrap();
+    CompanyMemberHook::on_company_member_event(&hook, ev2.clone())
+        .await
+        .unwrap();
     let snap = hook.events_snapshot();
     assert_eq!(snap, vec![ev1, ev2]);
     hook.clear();

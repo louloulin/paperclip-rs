@@ -2,7 +2,6 @@
 //!
 //! 对应 Node `server/src/services/issue-change-receipt.ts`。
 
-
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Issue 变更条目 —— 与 Node `IssueChanges[K]` 1:1 对齐。
@@ -75,9 +74,7 @@ pub fn canonical_id_array(value: serde_json::Value) -> serde_json::Value {
             set.insert(s.clone());
         }
     }
-    serde_json::Value::Array(
-        set.into_iter().map(serde_json::Value::String).collect(),
-    )
+    serde_json::Value::Array(set.into_iter().map(serde_json::Value::String).collect())
 }
 
 /// 深比较两个 `serde_json::Value` 是否相等。
@@ -121,7 +118,9 @@ pub fn build_issue_changes(
             let to_str_len = to.as_str().map(|s| s.chars().count()).unwrap_or(0);
 
             let is_long_text = key == "description"
-                || (key == "title" && (from_str_len > ISSUE_CHANGE_TEXT_BUDGET || to_str_len > ISSUE_CHANGE_TEXT_BUDGET));
+                || (key == "title"
+                    && (from_str_len > ISSUE_CHANGE_TEXT_BUDGET
+                        || to_str_len > ISSUE_CHANGE_TEXT_BUDGET));
 
             if is_long_text {
                 changes.insert(

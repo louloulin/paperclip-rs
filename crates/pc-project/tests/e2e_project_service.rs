@@ -38,7 +38,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -66,13 +74,34 @@ async fn insert_goal(pool: &PgPool, company_id: Uuid) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM project_goals WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM project_workspaces WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM project_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM goals WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM projects WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM project_goals WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM project_workspaces WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM project_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM goals WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM projects WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 fn new_project(company_id: Uuid) -> NewProject {
@@ -145,10 +174,18 @@ async fn list_and_get_return_inserted_row() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].id, row.id);
 
-    let got = svc.get(company_id, row.id).await.expect("get").expect("exists");
+    let got = svc
+        .get(company_id, row.id)
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(got.id, row.id);
 
-    let id_only = svc.get_id_only(row.id).await.expect("get_id_only").expect("exists");
+    let id_only = svc
+        .get_id_only(row.id)
+        .await
+        .expect("get_id_only")
+        .expect("exists");
     assert_eq!(id_only.id, row.id);
 
     cleanup(&pool, company_id).await;
@@ -183,7 +220,11 @@ async fn patch_with_status_change_emits_status_changed() {
     for e in &events {
         match e {
             ProjectHookEvent::Patched { .. } => saw_patched = true,
-            ProjectHookEvent::StatusChanged { old_status, new_status, .. } => {
+            ProjectHookEvent::StatusChanged {
+                old_status,
+                new_status,
+                ..
+            } => {
                 assert_eq!(*old_status, Some(ProjectStatus::Backlog));
                 assert_eq!(*new_status, ProjectStatus::Active);
                 saw_status = true;
@@ -219,7 +260,11 @@ async fn pause_and_resume_transition() {
         .expect("row");
     assert_eq!(paused.status, "paused");
 
-    let resumed = svc.resume(company_id, row.id).await.expect("resume").expect("row");
+    let resumed = svc
+        .resume(company_id, row.id)
+        .await
+        .expect("resume")
+        .expect("row");
     assert_eq!(resumed.status, "active");
 
     cleanup(&pool, company_id).await;
@@ -338,13 +383,19 @@ async fn attach_and_detach_goal() {
     let svc = ProjectService::new(db);
 
     let row = svc.create(new_project(company_id)).await.expect("create");
-    let ok = svc.attach_goal(company_id, row.id, goal_id).await.expect("attach");
+    let ok = svc
+        .attach_goal(company_id, row.id, goal_id)
+        .await
+        .expect("attach");
     assert!(ok);
 
     let goals = svc.goals_for_project(row.id).await.expect("goals");
     assert_eq!(goals.len(), 1);
 
-    let ok = svc.detach_goal(company_id, row.id, goal_id).await.expect("detach");
+    let ok = svc
+        .detach_goal(company_id, row.id, goal_id)
+        .await
+        .expect("detach");
     assert!(ok);
 
     let goals = svc.goals_for_project(row.id).await.expect("goals");

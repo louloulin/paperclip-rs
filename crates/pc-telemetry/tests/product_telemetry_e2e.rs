@@ -36,11 +36,19 @@ async fn dynamic_server(state: Arc<Mutex<Vec<u16>>>, bodies: Arc<Mutex<Vec<Strin
             let mut bytes = vec![0; 16384];
             let size = stream.read(&mut bytes).await.unwrap();
             let request = String::from_utf8(bytes[..size].to_vec()).unwrap();
-            bodies.lock().await.push(request.split("\r\n\r\n").nth(1).unwrap().to_owned());
+            bodies
+                .lock()
+                .await
+                .push(request.split("\r\n\r\n").nth(1).unwrap().to_owned());
             let status = state.lock().await.remove(0);
-            let response = format!("HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-            if stream.write_all(response.as_bytes()).await.is_err() { break; }
-            if state.lock().await.is_empty() { break; }
+            let response =
+                format!("HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                break;
+            }
+            if state.lock().await.is_empty() {
+                break;
+            }
         }
     });
     format!("http://{address}/ingest")
@@ -140,30 +148,36 @@ async fn periodic_flush_can_be_stopped() {
     assert_eq!(bodies.lock().await.len(), 1);
 }
 
-
 #[tokio::test]
 async fn background_retry_recovers_after_endpoint_comes_back() {
     let bodies = Arc::new(Mutex::new(Vec::new()));
     let plan = Arc::new(Mutex::new(vec![429_u16, 202]));
     let endpoint = dynamic_server(plan, Arc::clone(&bodies)).await;
     let dir = tempfile::tempdir().unwrap();
-    let client = std::sync::Arc::new(ProductTelemetryClient::new(
-        ProductTelemetryConfig {
-            endpoint: Some(endpoint),
-            retry_base_delay: std::time::Duration::from_millis(0),
-            retry_max_delay: std::time::Duration::from_millis(20),
-            jitter_ratio: 0.0,
-            max_attempts: 2,
-            max_pending_batches: 4,
-            ..Default::default()
-        },
-        dir.path(),
-        "0.1.0",
-    )
-    .unwrap());
+    let client = std::sync::Arc::new(
+        ProductTelemetryClient::new(
+            ProductTelemetryConfig {
+                endpoint: Some(endpoint),
+                retry_base_delay: std::time::Duration::from_millis(0),
+                retry_max_delay: std::time::Duration::from_millis(20),
+                jitter_ratio: 0.0,
+                max_attempts: 2,
+                max_pending_batches: 4,
+                ..Default::default()
+            },
+            dir.path(),
+            "0.1.0",
+        )
+        .unwrap(),
+    );
     let actor = client.clone().start_background_retry_actor();
-    let event = pc_telemetry::Event { name: "agent.created".into(), occurred_at: String::new(), dimensions: BTreeMap::new() };
-    let batch = pc_telemetry::PendingBatch::for_events(&client, std::slice::from_ref(&event), 1).unwrap();
+    let event = pc_telemetry::Event {
+        name: "agent.created".into(),
+        occurred_at: String::new(),
+        dimensions: BTreeMap::new(),
+    };
+    let batch =
+        pc_telemetry::PendingBatch::for_events(&client, std::slice::from_ref(&event), 1).unwrap();
     client.enqueue_retry(batch, std::time::Instant::now()).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     actor.stop().await;
@@ -199,7 +213,11 @@ async fn stop_cancels_pending_retry_timer() {
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     actor.stop().await;
     let captured = bodies.lock().await;
-    assert!(captured.len() <= 2, "stop should cancel later retries; got {}", captured.len());
+    assert!(
+        captured.len() <= 2,
+        "stop should cancel later retries; got {}",
+        captured.len()
+    );
 }
 
 #[tokio::test]

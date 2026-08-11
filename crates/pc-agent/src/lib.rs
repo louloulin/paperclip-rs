@@ -4,17 +4,17 @@
 
 pub mod action_audit;
 mod actor;
-pub mod invokability;
-pub mod secret_bindings;
-pub mod start_lock;
 mod agent_assignability;
 mod built_in_agent_metadata;
 mod default_agent_instructions;
 mod instructions;
-mod skill_selection;
+pub mod invokability;
 mod permissions;
+pub mod secret_bindings;
 mod service;
+mod skill_selection;
 mod snapshot;
+pub mod start_lock;
 
 pub use actor::{
     spawn_agent_supervisor, AgentSupervisor, ApproveAgentCommand, ClearAgentErrorCommand,
@@ -34,11 +34,9 @@ pub use built_in_agent_metadata::{
 pub use default_agent_instructions::{
     load_default_agent_instructions_bundle, resolve_default_agent_instructions_bundle_role,
     AgentInstructionsRole as DefaultAgentInstructionsRole, DefaultAgentInstructionsError,
-    DefaultAgentInstructionsHook, DefaultAgentInstructionsHookEvent, DefaultAgentInstructionsService,
-    DefaultAgentInstructionsResult, NoopDefaultHook, RecordingDefaultHook,
-};
-pub use skill_selection::{
-    skill_version_selection_map, SkillSelectionEntry, SkillVersionSelectionOptions,
+    DefaultAgentInstructionsHook, DefaultAgentInstructionsHookEvent,
+    DefaultAgentInstructionsResult, DefaultAgentInstructionsService, NoopDefaultHook,
+    RecordingDefaultHook,
 };
 pub use instructions::{
     AgentInstructionsBundle, AgentInstructionsFileDetail, AgentInstructionsFileSummary,
@@ -55,6 +53,9 @@ pub use service::{
     AgentService, ChainOfCommandNode, CreateAgent, CreateAgentKey, NoopAgentHook, OrgChartNode,
     PauseReason, RecordingAgentHook, ResetRuntimeSession, ResetRuntimeState, ResolveByRefResult,
     RevisionContext,
+};
+pub use skill_selection::{
+    skill_version_selection_map, SkillSelectionEntry, SkillVersionSelectionOptions,
 };
 pub use snapshot::{
     contains_redacted_marker, sanitize_snapshot_value, AgentConfigSnapshot, REDACTED_VALUE,

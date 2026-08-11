@@ -255,7 +255,10 @@ mod tests {
             assert!(l.consume("1.2.3.4").allowed);
         }
         // 推进时间超过 windowMs
-        counter.store(1_000_000 + INVITE_RATE_LIMIT_WINDOW_MS + 1, Ordering::SeqCst);
+        counter.store(
+            1_000_000 + INVITE_RATE_LIMIT_WINDOW_MS + 1,
+            Ordering::SeqCst,
+        );
         let r = l.consume("1.2.3.4");
         assert!(r.allowed);
         assert_eq!(r.remaining, 19);

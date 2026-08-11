@@ -158,7 +158,8 @@ mod tests {
         assert!(validate_release_policy(&p).is_err());
         let p2 = serde_json::json!({ "strategy": "scheduled_at", "releaseAt": "  " });
         assert!(validate_release_policy(&p2).is_err());
-        let p3 = serde_json::json!({ "strategy": "scheduled_at", "releaseAt": "2099-01-01T00:00:00Z" });
+        let p3 =
+            serde_json::json!({ "strategy": "scheduled_at", "releaseAt": "2099-01-01T00:00:00Z" });
         assert!(validate_release_policy(&p3).is_ok());
     }
 

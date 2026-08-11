@@ -8,12 +8,11 @@ use crate::types::{RunLivenessClassification, RunLivenessClassificationInput};
 #[derive(Debug, Clone)]
 pub enum RunLivenessHookEvent {
     /// 分类之前调用。
-    BeforeClassify {
-        run_status: String,
-        has_issue: bool,
-    },
+    BeforeClassify { run_status: String, has_issue: bool },
     /// 分类之后调用。
-    AfterClassify { classification: RunLivenessClassification },
+    AfterClassify {
+        classification: RunLivenessClassification,
+    },
 }
 
 /// Run liveness hook trait。
@@ -58,17 +57,21 @@ impl RecordingRunLivenessHook {
 
 impl RunLivenessHook for RecordingRunLivenessHook {
     fn before_classify(&self, input: &RunLivenessClassificationInput) {
-        self.events.lock().unwrap().push(RunLivenessHookEvent::BeforeClassify {
-            run_status: input.run_status.clone(),
-            has_issue: input.issue.is_some(),
-        });
+        self.events
+            .lock()
+            .unwrap()
+            .push(RunLivenessHookEvent::BeforeClassify {
+                run_status: input.run_status.clone(),
+                has_issue: input.issue.is_some(),
+            });
     }
 
     fn after_classify(&self, classification: &RunLivenessClassification) {
-        self.events.lock().unwrap().push(
-            RunLivenessHookEvent::AfterClassify {
+        self.events
+            .lock()
+            .unwrap()
+            .push(RunLivenessHookEvent::AfterClassify {
                 classification: classification.clone(),
-            },
-        );
+            });
     }
 }

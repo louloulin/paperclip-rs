@@ -110,19 +110,37 @@ mod tests {
 
     #[test]
     fn r565_classify_auth_error_variants() {
-        assert_eq!(classify(&AuthError::MissingCredentials), AuthErrorCategory::MissingCredentials);
-        assert_eq!(classify(&AuthError::InvalidToken), AuthErrorCategory::NotFound);
+        assert_eq!(
+            classify(&AuthError::MissingCredentials),
+            AuthErrorCategory::MissingCredentials
+        );
+        assert_eq!(
+            classify(&AuthError::InvalidToken),
+            AuthErrorCategory::NotFound
+        );
         assert_eq!(classify(&AuthError::Expired), AuthErrorCategory::Expired);
     }
 
     #[test]
     fn r565_classify_string_basic_keywords() {
-        assert_eq!(classify_str("missing credentials"), AuthErrorCategory::MissingCredentials);
+        assert_eq!(
+            classify_str("missing credentials"),
+            AuthErrorCategory::MissingCredentials
+        );
         assert_eq!(classify_str("session expired"), AuthErrorCategory::Expired);
-        assert_eq!(classify_str("token already used"), AuthErrorCategory::Replayed);
+        assert_eq!(
+            classify_str("token already used"),
+            AuthErrorCategory::Replayed
+        );
         assert_eq!(classify_str("session revoked"), AuthErrorCategory::Revoked);
-        assert_eq!(classify_str("oauth state mismatch"), AuthErrorCategory::OAuthStateMismatch);
-        assert_eq!(classify_str("email not verified"), AuthErrorCategory::EmailNotVerified);
+        assert_eq!(
+            classify_str("oauth state mismatch"),
+            AuthErrorCategory::OAuthStateMismatch
+        );
+        assert_eq!(
+            classify_str("email not verified"),
+            AuthErrorCategory::EmailNotVerified
+        );
     }
 
     #[test]

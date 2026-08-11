@@ -13,9 +13,7 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use pc_core::Timestamp;
-use pc_invite::{
-    InviteHookEvent, InviteService, NewInvite, RecordingInviteHook,
-};
+use pc_invite::{InviteHookEvent, InviteService, NewInvite, RecordingInviteHook};
 use pc_repos::Db;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -36,7 +34,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -50,8 +56,14 @@ async fn insert_company(pool: &PgPool) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM invites WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM invites WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 fn make_input(company_id: Uuid) -> NewInvite {
@@ -170,7 +182,10 @@ async fn revoke_emits_hook_and_is_idempotent() {
     let created = svc.create(make_input(company_id)).await.expect("create");
     recorder.clear();
 
-    let ok = svc.revoke(company_id, created.row.id).await.expect("revoke");
+    let ok = svc
+        .revoke(company_id, created.row.id)
+        .await
+        .expect("revoke");
     assert!(ok);
 
     let events = recorder.events_snapshot();
@@ -178,7 +193,10 @@ async fn revoke_emits_hook_and_is_idempotent() {
     assert!(matches!(events[0], InviteHookEvent::Revoked { .. }));
 
     recorder.clear();
-    let again = svc.revoke(company_id, created.row.id).await.expect("revoke 2");
+    let again = svc
+        .revoke(company_id, created.row.id)
+        .await
+        .expect("revoke 2");
     assert!(!again);
     assert!(recorder.is_empty());
 
@@ -203,7 +221,9 @@ async fn accept_with_token_emits_accepted_hook() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        InviteHookEvent::Accepted { company_id: cid, .. } => {
+        InviteHookEvent::Accepted {
+            company_id: cid, ..
+        } => {
             assert_eq!(*cid, company_id);
         }
         _ => panic!("expected Accepted"),

@@ -45,7 +45,13 @@ pub fn schema_to_typescript(name: &str, schema: &Value) -> String {
 #[must_use]
 pub fn schema_to_type_expr(schema: &Value, ref_chain: &[String]) -> String {
     match schema {
-        Value::Bool(b) => if *b { "unknown".to_string() } else { "never".to_string() },
+        Value::Bool(b) => {
+            if *b {
+                "unknown".to_string()
+            } else {
+                "never".to_string()
+            }
+        }
         Value::Object(obj) => object_to_type(obj, ref_chain),
         _ => "unknown".to_string(),
     }
@@ -154,10 +160,7 @@ fn array_type(obj: &serde_json::Map<String, Value>, ref_chain: &[String]) -> Str
     format!("{item_type}[]")
 }
 
-fn object_with_properties(
-    obj: &serde_json::Map<String, Value>,
-    ref_chain: &[String],
-) -> String {
+fn object_with_properties(obj: &serde_json::Map<String, Value>, ref_chain: &[String]) -> String {
     let Some(properties) = obj.get("properties").and_then(|v| v.as_object()) else {
         return "Record<string, unknown>".to_string();
     };
@@ -177,7 +180,9 @@ fn object_with_properties(
     prop_names.sort();
 
     for prop_name in prop_names {
-        let Some(prop_schema) = properties.get(prop_name) else { continue };
+        let Some(prop_schema) = properties.get(prop_name) else {
+            continue;
+        };
         let (safe, _) = safe_property_name(prop_name);
         let is_optional = !required.contains(prop_name);
         let suffix = if is_optional { "?" } else { "" };
@@ -304,12 +309,18 @@ mod tests {
 
     #[test]
     fn emit_primitive_string() {
-        assert_eq!(emit("Name", json!({"type": "string"})), "export type Name = string;\n");
+        assert_eq!(
+            emit("Name", json!({"type": "string"})),
+            "export type Name = string;\n"
+        );
     }
 
     #[test]
     fn emit_primitive_integer() {
-        assert_eq!(emit("Count", json!({"type": "integer"})), "export type Count = number;\n");
+        assert_eq!(
+            emit("Count", json!({"type": "integer"})),
+            "export type Count = number;\n"
+        );
     }
 
     #[test]
@@ -339,10 +350,7 @@ mod tests {
 
     #[test]
     fn emit_nullable_via_30_compat() {
-        let out = emit(
-            "Maybe",
-            json!({"type": "string", "nullable": true}),
-        );
+        let out = emit("Maybe", json!({"type": "string", "nullable": true}));
         assert_eq!(out, "export type Maybe = string | null;\n");
     }
 
@@ -358,10 +366,7 @@ mod tests {
 
     #[test]
     fn emit_ref_resolves_to_pascal_name() {
-        let out = emit(
-            "Owner",
-            json!({"$ref": "#/components/schemas/Company"}),
-        );
+        let out = emit("Owner", json!({"$ref": "#/components/schemas/Company"}));
         assert_eq!(out, "export type Owner = Company;\n");
     }
 
@@ -433,8 +438,14 @@ mod tests {
     #[test]
     fn emit_bool_schema_true() {
         // JSON Schema allows boolean schemas: `true` accepts anything, `false` accepts nothing.
-        assert_eq!(emit("Anything", Value::Bool(true)), "export type Anything = unknown;\n");
-        assert_eq!(emit("Nothing", Value::Bool(false)), "export type Nothing = never;\n");
+        assert_eq!(
+            emit("Anything", Value::Bool(true)),
+            "export type Anything = unknown;\n"
+        );
+        assert_eq!(
+            emit("Nothing", Value::Bool(false)),
+            "export type Nothing = never;\n"
+        );
     }
 
     #[test]
@@ -489,10 +500,7 @@ mod tests {
     #[test]
     fn emit_datetime_string_format_kept_as_string() {
         // OpenAPI date-time format → still TS string (no special handling).
-        let out = emit(
-            "Created",
-            json!({"type": "string", "format": "date-time"}),
-        );
+        let out = emit("Created", json!({"type": "string", "format": "date-time"}));
         assert_eq!(out, "export type Created = string;\n");
     }
 

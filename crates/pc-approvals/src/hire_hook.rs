@@ -99,11 +99,20 @@ pub enum HireMode {
 #[async_trait]
 pub trait HireAgentOperations: Send + Sync {
     /// 激活已有 agent（pending_approval → idle）。
-    async fn activate_agent(&self, _company_id: &str, _agent_id: &str, _payload: &HireAgentApprovalPayload) -> Result<(), String> {
+    async fn activate_agent(
+        &self,
+        _company_id: &str,
+        _agent_id: &str,
+        _payload: &HireAgentApprovalPayload,
+    ) -> Result<(), String> {
         Err("activate_agent not implemented".into())
     }
     /// 创建新 agent。
-    async fn create_agent(&self, _company_id: &str, _payload: &HireAgentApprovalPayload) -> Result<String, String> {
+    async fn create_agent(
+        &self,
+        _company_id: &str,
+        _payload: &HireAgentApprovalPayload,
+    ) -> Result<String, String> {
         Err("create_agent not implemented".into())
     }
     /// 创建 budget policy（hire 后）。
@@ -166,12 +175,20 @@ impl<O: HireAgentOperations + 'static> ApprovalHook for HireAgentApprovalHook<O>
         let agent_id_result = match payload.mode() {
             HireMode::ActivateExisting => {
                 let aid = payload.agent_id.clone().unwrap_or_default();
-                match self.ops.activate_agent(&row.company_id.to_string(), &aid, &payload).await {
+                match self
+                    .ops
+                    .activate_agent(&row.company_id.to_string(), &aid, &payload)
+                    .await
+                {
                     Ok(()) => Ok(aid),
                     Err(e) => Err(format!("activate_agent: {e}")),
                 }
             }
-            HireMode::CreateNew => match self.ops.create_agent(&row.company_id.to_string(), &payload).await {
+            HireMode::CreateNew => match self
+                .ops
+                .create_agent(&row.company_id.to_string(), &payload)
+                .await
+            {
                 Ok(id) => Ok(id),
                 Err(e) => Err(format!("create_agent: {e}")),
             },
@@ -351,25 +368,60 @@ mod tests {
 
     #[async_trait]
     impl HireAgentOperations for MockOps {
-        async fn activate_agent(&self, _: &str, _: &str, _: &HireAgentApprovalPayload) -> Result<(), String> {
-            self.activate_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if self.fail_on == Some("activate") { Err("mock activate fail".into()) } else { Ok(()) }
+        async fn activate_agent(
+            &self,
+            _: &str,
+            _: &str,
+            _: &HireAgentApprovalPayload,
+        ) -> Result<(), String> {
+            self.activate_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail_on == Some("activate") {
+                Err("mock activate fail".into())
+            } else {
+                Ok(())
+            }
         }
-        async fn create_agent(&self, _: &str, _: &HireAgentApprovalPayload) -> Result<String, String> {
-            self.create_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if self.fail_on == Some("create") { Err("mock create fail".into()) }
-            else { Ok("new-agent-id".into()) }
+        async fn create_agent(
+            &self,
+            _: &str,
+            _: &HireAgentApprovalPayload,
+        ) -> Result<String, String> {
+            self.create_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail_on == Some("create") {
+                Err("mock create fail".into())
+            } else {
+                Ok("new-agent-id".into())
+            }
         }
-        async fn upsert_budget_policy(&self, _: &str, _: &str, _: &str, _: i64) -> Result<(), String> {
-            self.budget_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if self.fail_on == Some("budget") { Err("mock budget fail".into()) } else { Ok(()) }
+        async fn upsert_budget_policy(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: i64,
+        ) -> Result<(), String> {
+            self.budget_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail_on == Some("budget") {
+                Err("mock budget fail".into())
+            } else {
+                Ok(())
+            }
         }
         async fn terminate_agent(&self, _: &str) -> Result<(), String> {
-            self.terminate_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if self.fail_on == Some("terminate") { Err("mock terminate fail".into()) } else { Ok(()) }
+            self.terminate_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail_on == Some("terminate") {
+                Err("mock terminate fail".into())
+            } else {
+                Ok(())
+            }
         }
         async fn notify_hire_approved(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
-            self.notify_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.notify_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }
@@ -388,9 +440,18 @@ mod tests {
         );
         let outcome = block_on(hook.on_approved(&row));
         assert!(outcome.is_ok());
-        assert_eq!(ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(ops.notify_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            ops.notify_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[test]
@@ -403,9 +464,18 @@ mod tests {
         );
         let outcome = block_on(hook.on_approved(&row));
         assert!(outcome.is_ok());
-        assert_eq!(ops.create_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            ops.create_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]
@@ -418,7 +488,10 @@ mod tests {
         );
         let outcome = block_on(hook.on_approved(&row));
         assert!(outcome.is_ok());
-        assert_eq!(ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]
@@ -428,7 +501,10 @@ mod tests {
         let row = dummy_approval("budget_change", json!({}));
         let outcome = block_on(hook.on_approved(&row));
         assert!(matches!(outcome, ApprovalHookOutcome::Skipped));
-        assert_eq!(ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]
@@ -438,10 +514,19 @@ mod tests {
         let row = dummy_approval("hire_agent", json!({"agentId": "a-1"}));
         let outcome = block_on(hook.on_approved(&row));
         assert!(outcome.is_failed());
-        assert_eq!(ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            ops.activate_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
         // budget/notify 不应被调用（因为 activate 失败）
-        assert_eq!(ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(ops.notify_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            ops.budget_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            ops.notify_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]
@@ -451,7 +536,11 @@ mod tests {
         let row = dummy_approval("hire_agent", json!({"agentId": "a-1"}));
         let outcome = block_on(hook.on_rejected(&row));
         assert!(outcome.is_ok());
-        assert_eq!(ops.terminate_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            ops.terminate_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[test]
@@ -461,7 +550,11 @@ mod tests {
         let row = dummy_approval("hire_agent", json!({"name": "X"}));
         let outcome = block_on(hook.on_rejected(&row));
         assert!(matches!(outcome, ApprovalHookOutcome::Skipped));
-        assert_eq!(ops.terminate_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            ops.terminate_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]

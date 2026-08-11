@@ -69,22 +69,19 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/costs/quota-windows",
             get(quota_windows),
         )
-        .route(
-            "/api/companies/:company_id/budgets/overview",
-            get(budget_overview),
-        )
+        // `/api/companies/:company_id/budgets/overview` canonical registration
+        // lives in routes::budgets (Round 282 removal — 重复注册触发
+        // axum 0.7 "Overlapping method route" panic)
         .route(
             "/api/companies/:company_id/budgets",
             patch(update_company_budget),
         )
-        .route(
-            "/api/companies/:company_id/budgets/policies",
-            get(list_budget_policies).post(upsert_budget_policy),
-        )
-        .route(
-            "/api/companies/:company_id/budget-incidents/:incident_id/resolve",
-            post(resolve_budget_incident),
-        )
+        // `/api/companies/:company_id/budgets/policies` canonical registration
+        // lives in routes::budgets (Round 282 removal — 重复注册触发
+        // axum 0.7 "Overlapping method route" panic)
+        // `/api/companies/:company_id/budget-incidents/:incident_id/resolve`
+        // canonical registration lives in routes::budgets (Round 282 removal —
+        // 重复注册触发 axum 0.7 "Overlapping method route" panic)
         .route(
             "/api/companies/:company_id/finance-events",
             post(create_finance_event),

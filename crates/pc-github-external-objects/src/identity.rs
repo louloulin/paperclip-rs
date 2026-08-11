@@ -106,8 +106,8 @@ pub fn parse_github_canonical_url(
     if !is_valid_repo_segment(owner) || !is_valid_repo_segment(repo) {
         return Err(ParseError::BadExternalId(format!("{owner}/{repo}")));
     }
-    let path_kind = PathKind::from_str(kind_str)
-        .ok_or_else(|| ParseError::WrongKind(kind_str.to_string()))?;
+    let path_kind =
+        PathKind::from_str(kind_str).ok_or_else(|| ParseError::WrongKind(kind_str.to_string()))?;
     let number = raw_number
         .parse::<u64>()
         .map_err(|_| ParseError::InvalidNumber(raw_number.to_string()))?;
@@ -141,14 +141,11 @@ pub fn parse_github_object(
     let kind_str = kind_number.next().unwrap_or("");
     let raw_number = kind_number.next().unwrap_or("");
 
-    if !is_valid_repo_segment(owner)
-        || repo.is_empty()
-        || !is_valid_repo_segment(repo)
-    {
+    if !is_valid_repo_segment(owner) || repo.is_empty() || !is_valid_repo_segment(repo) {
         return Err(ParseError::BadExternalId(external_id.to_string()));
     }
-    let path_kind = PathKind::from_str(kind_str)
-        .ok_or_else(|| ParseError::WrongKind(kind_str.to_string()))?;
+    let path_kind =
+        PathKind::from_str(kind_str).ok_or_else(|| ParseError::WrongKind(kind_str.to_string()))?;
     let number = raw_number
         .parse::<u64>()
         .map_err(|_| ParseError::InvalidNumber(raw_number.to_string()))?;
@@ -197,7 +194,12 @@ pub fn external_id_for(identity: &GitHubObjectIdentity) -> String {
 
 #[must_use]
 pub fn display_title_for(identity: &GitHubObjectIdentity) -> String {
-    format!("{owner}/{repo}#{number}", owner = identity.owner, repo = identity.repo, number = identity.number)
+    format!(
+        "{owner}/{repo}#{number}",
+        owner = identity.owner,
+        repo = identity.repo,
+        number = identity.number
+    )
 }
 
 #[must_use]
@@ -220,12 +222,8 @@ pub mod tests {
 
     #[test]
     fn r525_parse_canonical_pull_request() {
-        let id = parse_github_canonical_url(
-            "https",
-            "github.com",
-            "/rust-lang/cargo/pull/1234",
-        )
-        .unwrap();
+        let id = parse_github_canonical_url("https", "github.com", "/rust-lang/cargo/pull/1234")
+            .unwrap();
         assert_eq!(id.host, "github.com");
         assert_eq!(id.owner, "rust-lang");
         assert_eq!(id.repo, "cargo");
@@ -236,35 +234,21 @@ pub mod tests {
 
     #[test]
     fn r525_parse_canonical_issue() {
-        let id = parse_github_canonical_url(
-            "https",
-            "github.com",
-            "/rust-lang/cargo/issues/42",
-        )
-        .unwrap();
+        let id = parse_github_canonical_url("https", "github.com", "/rust-lang/cargo/issues/42")
+            .unwrap();
         assert_eq!(id.path_kind, PathKind::Issues);
         assert_eq!(id.object_type, ObjectType::Issue);
     }
 
     #[test]
     fn r525_parse_canonical_ghe_host_normalises_www() {
-        let id = parse_github_canonical_url(
-            "https",
-            "Www.GitHub.Com",
-            "/o/r/issues/1",
-        )
-        .unwrap();
+        let id = parse_github_canonical_url("https", "Www.GitHub.Com", "/o/r/issues/1").unwrap();
         assert_eq!(id.host, "github.com");
     }
 
     #[test]
     fn r525_parse_canonical_ghe_host_preserved() {
-        let id = parse_github_canonical_url(
-            "https",
-            "ghe.acme.io",
-            "/o/r/pull/7",
-        )
-        .unwrap();
+        let id = parse_github_canonical_url("https", "ghe.acme.io", "/o/r/pull/7").unwrap();
         assert_eq!(id.host, "ghe.acme.io");
     }
 
@@ -320,11 +304,8 @@ pub mod tests {
 
     #[test]
     fn r525_parse_external_id_with_canonical_url_ghe() {
-        let id = parse_github_object(
-            "o/r#issues/9",
-            Some("https://ghe.acme.io/o/r/issues/9"),
-        )
-        .unwrap();
+        let id =
+            parse_github_object("o/r#issues/9", Some("https://ghe.acme.io/o/r/issues/9")).unwrap();
         assert_eq!(id.host, "ghe.acme.io");
         assert_eq!(id.object_type, ObjectType::Issue);
     }

@@ -337,7 +337,7 @@ async fn retire_obsolete_skips_when_incident_key_matches_current_findings() {
         recommended_action: "test".to_string(),
     };
 
-    let result = retire_obsolete_liveness_recovery_issues(&db, &[finding])
+    let result = retire_obsolete_liveness_recovery_issues(&db, &[finding], Some(&[company_id]))
         .await
         .unwrap();
     assert_eq!(result.retired, 0, "current incident_key → no retire");
@@ -370,7 +370,7 @@ async fn retire_obsolete_cancels_when_source_terminal_and_no_active_run() {
     insert_blocker_relation(&db, company_id, esc, source_id).await;
 
     // Pass empty findings → no current incident_keys → obsolete
-    let result = retire_obsolete_liveness_recovery_issues(&db, &[])
+    let result = retire_obsolete_liveness_recovery_issues(&db, &[], Some(&[company_id]))
         .await
         .unwrap();
     assert_eq!(result.retired, 1, "obsolete escalation → cancelled");
@@ -404,7 +404,7 @@ async fn retire_obsolete_skips_when_source_has_blocker_relationship() {
     let esc = insert_escalation_issue(&db, company_id, agent_id, &incident_key, "todo").await;
     insert_blocker_relation(&db, company_id, esc, source_id).await;
 
-    let result = retire_obsolete_liveness_recovery_issues(&db, &[])
+    let result = retire_obsolete_liveness_recovery_issues(&db, &[], Some(&[company_id]))
         .await
         .unwrap();
     assert_eq!(result.active_skipped, 1, "active blocker chain → skip");
@@ -438,7 +438,7 @@ async fn retire_obsolete_skips_when_recovery_has_active_run() {
     let esc = insert_escalation_issue(&db, company_id, agent_id, &incident_key, "todo").await;
     let _run = insert_active_run(&db, company_id, agent_id, esc).await;
 
-    let result = retire_obsolete_liveness_recovery_issues(&db, &[])
+    let result = retire_obsolete_liveness_recovery_issues(&db, &[], Some(&[company_id]))
         .await
         .unwrap();
     assert_eq!(result.active_skipped, 1, "active run on recovery → skip");
@@ -469,7 +469,9 @@ async fn retire_done_blockers_removes_relations_from_closed_recoveries() {
     let esc = insert_escalation_issue(&db, company_id, agent_id, &incident_key, "done").await;
     insert_blocker_relation(&db, company_id, esc, source_id).await;
 
-    let result = retire_done_liveness_recovery_blockers(&db).await.unwrap();
+    let result = retire_done_liveness_recovery_blockers(&db, Some(&[company_id]))
+        .await
+        .unwrap();
     assert_eq!(result.blocker_relations_removed, 1);
 
     // issue_relations row should be gone
@@ -503,7 +505,9 @@ async fn retire_done_blockers_does_not_touch_open_recoveries() {
     let esc = insert_escalation_issue(&db, company_id, agent_id, &incident_key, "todo").await;
     insert_blocker_relation(&db, company_id, esc, source_id).await;
 
-    let result = retire_done_liveness_recovery_blockers(&db).await.unwrap();
+    let result = retire_done_liveness_recovery_blockers(&db, Some(&[company_id]))
+        .await
+        .unwrap();
     assert_eq!(result.blocker_relations_removed, 0);
 
     let rel_count: (i64,) = sqlx::query_as(
@@ -536,7 +540,7 @@ async fn retire_obsolete_handles_invalid_origin_id_gracefully() {
     )
     .await;
 
-    let result = retire_obsolete_liveness_recovery_issues(&db, &[])
+    let result = retire_obsolete_liveness_recovery_issues(&db, &[], Some(&[company_id]))
         .await
         .unwrap();
     assert_eq!(result.retired, 0, "invalid origin_id → skip silently");

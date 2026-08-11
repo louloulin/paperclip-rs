@@ -228,9 +228,8 @@ fn hex_digit(b: u8) -> Option<u8> {
 fn is_agent_icon_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
-        && s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
-        })
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// 构造 `agent://uuid?i=icon` href（用于测试 + 业务生成）。
@@ -294,9 +293,7 @@ mod tests {
     fn extract_agent_mention_ids_single() {
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
-        let md = format!(
-            "Hey [@a](agent://{id1}) and [@b](agent://{id2}), please check this.",
-        );
+        let md = format!("Hey [@a](agent://{id1}) and [@b](agent://{id2}), please check this.",);
         let ids = extract_agent_mention_ids(&md);
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&id1));
@@ -306,9 +303,7 @@ mod tests {
     #[test]
     fn extract_agent_mention_ids_dedup() {
         let id = Uuid::new_v4();
-        let md = format!(
-            "[a](agent://{id}) and [b](agent://{id}) and [c](agent://{id})",
-        );
+        let md = format!("[a](agent://{id}) and [b](agent://{id}) and [c](agent://{id})",);
         let ids = extract_agent_mention_ids(&md);
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
@@ -318,9 +313,7 @@ mod tests {
     fn extract_agent_mention_ids_with_other_schemes() {
         let agent_id = Uuid::new_v4();
         let pipeline_id = Uuid::new_v4();
-        let md = format!(
-            "[agent](agent://{agent_id}) [pipeline](pipeline://{pipeline_id})",
-        );
+        let md = format!("[agent](agent://{agent_id}) [pipeline](pipeline://{pipeline_id})",);
         let agents = extract_agent_mention_ids(&md);
         let pipelines = extract_pipeline_mention_ids(&md);
         assert_eq!(agents.len(), 1);

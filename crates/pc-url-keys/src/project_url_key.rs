@@ -18,9 +18,8 @@ static UUID_RE: Lazy<Regex> = Lazy::new(|| {
 /// Non-ASCII detector: matches any byte outside `\x00-\x7F`.
 ///
 /// Mirrors Node upstream `NON_ASCII_RE = /[^\x00-\x7F]/`.
-static NON_ASCII_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"[^\x00-\x7F]").expect("valid regex pattern")
-});
+static NON_ASCII_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[^\x00-\x7F]").expect("valid regex pattern"));
 
 /// Normalize a candidate project URL key to lowercase ASCII + `-`.
 ///
@@ -57,7 +56,14 @@ pub fn short_id_from_uuid(value: &str) -> Option<String> {
         return None;
     }
     let trimmed = value.trim();
-    Some(trimmed.replace('-', "").chars().take(8).collect::<String>().to_lowercase())
+    Some(
+        trimmed
+            .replace('-', "")
+            .chars()
+            .take(8)
+            .collect::<String>()
+            .to_lowercase(),
+    )
 }
 
 /// Derive a project URL key from a name and an optional fallback.
@@ -119,14 +125,8 @@ mod tests {
 
     #[test]
     fn r530_normalize_collapses_runs() {
-        assert_eq!(
-            normalize_project_url_key("a   b"),
-            Some("a-b".to_string())
-        );
-        assert_eq!(
-            normalize_project_url_key("a__b"),
-            Some("a-b".to_string())
-        );
+        assert_eq!(normalize_project_url_key("a   b"), Some("a-b".to_string()));
+        assert_eq!(normalize_project_url_key("a__b"), Some("a-b".to_string()));
         assert_eq!(
             normalize_project_url_key("!!!hello!!!"),
             Some("hello".to_string())
@@ -169,14 +169,23 @@ mod tests {
     fn r530_short_id_from_uuid_invalid() {
         assert_eq!(short_id_from_uuid("not-a-uuid"), None);
         assert_eq!(short_id_from_uuid(""), None);
-        assert_eq!(short_id_from_uuid("11111111-2222-3333-7444-555555555555"), None);
+        assert_eq!(
+            short_id_from_uuid("11111111-2222-3333-7444-555555555555"),
+            None
+        );
     }
 
     #[test]
     fn r530_derive_ascii_path_uses_base() {
-        assert_eq!(derive_project_url_key(Some("My Project"), None), "my-project");
         assert_eq!(
-            derive_project_url_key(Some("My Project"), Some("11111111-2222-3333-8444-555555555555")),
+            derive_project_url_key(Some("My Project"), None),
+            "my-project"
+        );
+        assert_eq!(
+            derive_project_url_key(
+                Some("My Project"),
+                Some("11111111-2222-3333-8444-555555555555")
+            ),
             "my-project" // ASCII fast path doesn't add suffix
         );
     }
@@ -185,10 +194,7 @@ mod tests {
     fn r530_derive_non_ascii_appends_short_uuid() {
         // "项目" → base is empty (non-ASCII stripped) → use short UUID
         assert_eq!(
-            derive_project_url_key(
-                Some("项目"),
-                Some("11111111-2222-3333-8444-555555555555")
-            ),
+            derive_project_url_key(Some("项目"), Some("11111111-2222-3333-8444-555555555555")),
             "11111111"
         );
         // Mixed: "Pro项目" → base = "pro" (ASCII kept, 项目 stripped)
@@ -206,10 +212,7 @@ mod tests {
     fn r530_derive_falls_back_to_uuid_only() {
         // No base, UUID fallback → use short UUID
         assert_eq!(
-            derive_project_url_key(
-                Some("项目"),
-                Some("11111111-2222-3333-8444-555555555555")
-            ),
+            derive_project_url_key(Some("项目"), Some("11111111-2222-3333-8444-555555555555")),
             "11111111"
         );
     }
@@ -217,7 +220,10 @@ mod tests {
     #[test]
     fn r530_derive_no_uuid_fallback() {
         // Non-ASCII name but no UUID fallback → use base (whatever survived)
-        assert_eq!(derive_project_url_key(Some("项目"), None), "project".to_string());
+        assert_eq!(
+            derive_project_url_key(Some("项目"), None),
+            "project".to_string()
+        );
         // Fallback is not a UUID → normalize as plain string
         assert_eq!(
             derive_project_url_key(Some("项目"), Some("plain-fallback")),

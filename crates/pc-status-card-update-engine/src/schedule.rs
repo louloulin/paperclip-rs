@@ -36,10 +36,7 @@ pub fn is_within_status_card_active_hours(
     let minute = local.minute() as i32;
     let current = hour * 60 + minute;
 
-    let (start, end) = match (
-        parse_hhmm(&active.start),
-        parse_hhmm(&active.end),
-    ) {
+    let (start, end) = match (parse_hhmm(&active.start), parse_hhmm(&active.end)) {
         (Some(s), Some(e)) => (s, e),
         _ => return true,
     };
@@ -64,9 +61,7 @@ pub fn next_status_card_evaluation_at(
     match policy.mode {
         RefreshMode::Manual => None,
         RefreshMode::Interval => {
-            let minutes = policy
-                .interval_minutes
-                .unwrap_or(DEFAULT_INTERVAL_MINUTES);
+            let minutes = policy.interval_minutes.unwrap_or(DEFAULT_INTERVAL_MINUTES);
             Some(now + chrono::Duration::seconds((minutes as i64) * 60))
         }
         RefreshMode::Reactive => {

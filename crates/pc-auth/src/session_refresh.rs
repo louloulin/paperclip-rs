@@ -202,9 +202,7 @@ pub fn detect_reuse(presented: &SessionRecord, family: &[SessionRecord]) -> Reus
         {
             continue;
         }
-        if sibling.revoked_at.is_none()
-            && sibling.last_rotated_at > presented.last_rotated_at
-        {
+        if sibling.revoked_at.is_none() && sibling.last_rotated_at > presented.last_rotated_at {
             return ReuseOutcome::ReuseDetected;
         }
     }
@@ -301,7 +299,10 @@ mod tests {
         let s2 = touch_session(&p, &s, after);
         assert_eq!(s2.last_used_at, after);
         assert_eq!(s2.expires_at, after + p.idle_window);
-        assert_eq!(s2.last_rotated_at, s.last_rotated_at, "touch must not rotate");
+        assert_eq!(
+            s2.last_rotated_at, s.last_rotated_at,
+            "touch must not rotate"
+        );
     }
 
     #[test]
@@ -312,7 +313,10 @@ mod tests {
         let after = now + Duration::hours(13);
         let s2 = rotate_session(&p, &s, after);
         assert_eq!(s2.last_rotated_at, after);
-        assert_eq!(s2.last_used_at, s.last_used_at, "rotate must not change last_used");
+        assert_eq!(
+            s2.last_used_at, s.last_used_at,
+            "rotate must not change last_used"
+        );
     }
 
     // -------- r512: family tracking + reuse detection --------
@@ -409,7 +413,10 @@ mod tests {
             revoked_at: None,
         };
         let family = vec![presented.clone(), newer];
-        assert_eq!(detect_reuse(&presented, &family), ReuseOutcome::ReuseDetected);
+        assert_eq!(
+            detect_reuse(&presented, &family),
+            ReuseOutcome::ReuseDetected
+        );
     }
 
     #[test]

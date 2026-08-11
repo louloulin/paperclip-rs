@@ -15,14 +15,14 @@ use std::sync::Arc;
 /// Wakeup 调用签名 —— 1:1 对应 Node `(agentId, options) => Promise<unknown>`。
 pub type WakeupFn = Arc<
     dyn for<'a> Fn(
-        &'a str,
-        &'a str,
-        &'a str,
-        String,
-        serde_json::Value,
-    ) -> Pin<Box<dyn Future<Output = serde_json::Value> + Send + 'a>>
-    + Send
-    + Sync,
+            &'a str,
+            &'a str,
+            &'a str,
+            String,
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = serde_json::Value> + Send + 'a>>
+        + Send
+        + Sync,
 >;
 
 /// Wake origin agent 入参 —— 与 Node `WakeOriginAgent` 输入 1:1。
@@ -75,13 +75,20 @@ mod tests {
         let recorded: Arc<Recording> = Arc::new(Recording::default());
         let r = recorded.clone();
         let wakeup: WakeupFn = Arc::new(
-            move |agent_id: &str, source: &str, trigger: &str, reason: String, payload: serde_json::Value| {
+            move |agent_id: &str,
+                  source: &str,
+                  trigger: &str,
+                  reason: String,
+                  payload: serde_json::Value| {
                 let r = r.clone();
                 let agent_id = agent_id.to_string();
                 let source = source.to_string();
                 let trigger = trigger.to_string();
                 Box::pin(async move {
-                    r.calls.lock().unwrap().push((agent_id, source, trigger, reason, payload));
+                    r.calls
+                        .lock()
+                        .unwrap()
+                        .push((agent_id, source, trigger, reason, payload));
                     serde_json::json!({"ok": true})
                 })
             },

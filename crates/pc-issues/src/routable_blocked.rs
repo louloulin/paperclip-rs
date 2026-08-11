@@ -136,7 +136,8 @@ where
             &self,
             agent_id: String,
             opts: AgentUnblockWakeOptions,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+        {
             Box::pin((self.0)(agent_id, opts))
         }
     }
@@ -158,7 +159,8 @@ where
         fn call(
             &self,
             notified_at: DateTime<Utc>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+        {
             Box::pin((self.0)(notified_at))
         }
     }
@@ -226,10 +228,9 @@ mod tests {
 
     #[test]
     fn r697_rollout_constant_is_correct() {
-        let expected: DateTime<Utc> =
-            DateTime::parse_from_rfc3339("2026-07-23T18:13:03.000+00:00")
-                .unwrap()
-                .with_timezone(&Utc);
+        let expected: DateTime<Utc> = DateTime::parse_from_rfc3339("2026-07-23T18:13:03.000+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(rollout_at(), expected);
         assert_eq!(ROUTABLE_BLOCKED_ROLLOUT_AT_MS, expected.timestamp_millis());
     }
@@ -294,7 +295,9 @@ mod tests {
             id: "issue-1".into(),
             status: "blocked".into(),
             unblock_descriptor: Some(IssueUnblockDescriptor {
-                owner: UnblockOwner::Agent { agent_id: "a-7".into() },
+                owner: UnblockOwner::Agent {
+                    agent_id: "a-7".into(),
+                },
                 action: "review-and-resume".into(),
             }),
             blocked_transition_at: Some(rollout_at() + chrono::Duration::minutes(10)),
@@ -444,7 +447,8 @@ mod tests {
     #[tokio::test]
     async fn r697_deliver_propagates_wakeup_error() {
         let issue = test_issue_with_agent_owner();
-        let wake = make_wakeup_fn(|_: String, _: AgentUnblockWakeOptions| async { Err("boom".into()) });
+        let wake =
+            make_wakeup_fn(|_: String, _: AgentUnblockWakeOptions| async { Err("boom".into()) });
         let mark_called = Arc::new(AtomicBool::new(false));
         let mark_inner = mark_called.clone();
         let mark = make_mark_notified_fn(move |_: DateTime<Utc>| {

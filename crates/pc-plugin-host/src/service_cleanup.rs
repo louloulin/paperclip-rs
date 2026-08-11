@@ -139,7 +139,8 @@ impl PluginHostServiceCleanupController {
     }
 
     pub fn teardown(&self, worker_stopped_id: u64, plugin_unloaded_id: u64) {
-        self.lifecycle.off("plugin.worker_stopped", worker_stopped_id);
+        self.lifecycle
+            .off("plugin.worker_stopped", worker_stopped_id);
         self.lifecycle.off("plugin.unloaded", plugin_unloaded_id);
     }
 
@@ -170,26 +171,34 @@ pub fn create_plugin_host_service_cleanup(
 
     // on("plugin.worker_stopped")
     let disposers_for_ws = disposers.clone();
-    let handler_ws: Arc<dyn Fn(&serde_json::Value) + Send + Sync> = Arc::new(move |payload: &serde_json::Value| {
-        let plugin_id = payload.get("pluginId").and_then(|v| v.as_str()).unwrap_or("");
-        let mut map = disposers_for_ws.lock().unwrap();
-        if let Some(dispose) = map.get(plugin_id).cloned() {
-            dispose();
-        }
-    });
+    let handler_ws: Arc<dyn Fn(&serde_json::Value) + Send + Sync> =
+        Arc::new(move |payload: &serde_json::Value| {
+            let plugin_id = payload
+                .get("pluginId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mut map = disposers_for_ws.lock().unwrap();
+            if let Some(dispose) = map.get(plugin_id).cloned() {
+                dispose();
+            }
+        });
     let ws_id = lifecycle.on("plugin.worker_stopped", handler_ws);
 
     // on("plugin.unloaded")
     let disposers_for_pu = disposers.clone();
-    let handler_pu: Arc<dyn Fn(&serde_json::Value) + Send + Sync> = Arc::new(move |payload: &serde_json::Value| {
-        let plugin_id = payload.get("pluginId").and_then(|v| v.as_str()).unwrap_or("");
-        let mut map = disposers_for_pu.lock().unwrap();
-        let dispose = map.get(plugin_id).cloned();
-        if let Some(dispose) = dispose {
-            dispose();
-            map.remove(plugin_id);
-        }
-    });
+    let handler_pu: Arc<dyn Fn(&serde_json::Value) + Send + Sync> =
+        Arc::new(move |payload: &serde_json::Value| {
+            let plugin_id = payload
+                .get("pluginId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mut map = disposers_for_pu.lock().unwrap();
+            let dispose = map.get(plugin_id).cloned();
+            if let Some(dispose) = dispose {
+                dispose();
+                map.remove(plugin_id);
+            }
+        });
     let pu_id = lifecycle.on("plugin.unloaded", handler_pu);
 
     (controller, ws_id, pu_id)
@@ -207,17 +216,20 @@ mod tests {
 
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p1".to_string(), Arc::new(move || {
+        disposers.lock().unwrap().insert(
+            "p1".to_string(),
+            Arc::new(move || {
                 c.fetch_add(1, Ordering::SeqCst);
-            }));
+            }),
+        );
 
         let (_ctrl, _ws_id, _pu_id) =
             create_plugin_host_service_cleanup(lifecycle.clone(), disposers.clone());
 
-        lifecycle.emit("plugin.worker_stopped", &serde_json::json!({"pluginId": "p1"}));
+        lifecycle.emit(
+            "plugin.worker_stopped",
+            &serde_json::json!({"pluginId": "p1"}),
+        );
         assert_eq!(counter.load(Ordering::SeqCst), 1);
         assert!(disposers.lock().unwrap().contains_key("p1"));
     }
@@ -229,12 +241,12 @@ mod tests {
 
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p1".to_string(), Arc::new(move || {
+        disposers.lock().unwrap().insert(
+            "p1".to_string(),
+            Arc::new(move || {
                 c.fetch_add(1, Ordering::SeqCst);
-            }));
+            }),
+        );
 
         let (_ctrl, _ws_id, _pu_id) =
             create_plugin_host_service_cleanup(lifecycle.clone(), disposers.clone());
@@ -251,12 +263,12 @@ mod tests {
 
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p1".to_string(), Arc::new(move || {
+        disposers.lock().unwrap().insert(
+            "p1".to_string(),
+            Arc::new(move || {
                 c.fetch_add(1, Ordering::SeqCst);
-            }));
+            }),
+        );
 
         let (ctrl, _ws_id, _pu_id) =
             create_plugin_host_service_cleanup(lifecycle.clone(), disposers.clone());
@@ -273,15 +285,14 @@ mod tests {
         let disposers: Arc<Mutex<HashMap<String, Disposer>>> = Arc::new(Mutex::new(HashMap::new()));
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p1".to_string(), Arc::new(move || {
+        disposers.lock().unwrap().insert(
+            "p1".to_string(),
+            Arc::new(move || {
                 c.fetch_add(1, Ordering::SeqCst);
-            }));
+            }),
+        );
 
-        let (ctrl, _ws_id, _pu_id) =
-            create_plugin_host_service_cleanup(lifecycle, disposers);
+        let (ctrl, _ws_id, _pu_id) = create_plugin_host_service_cleanup(lifecycle, disposers);
 
         ctrl.handle_worker_event(&PluginWorkerRuntimeEvent::Restarted {
             plugin_id: "p1".to_string(),
@@ -297,21 +308,20 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let c1 = counter.clone();
         let c2 = counter.clone();
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p1".to_string(), Arc::new(move || {
+        disposers.lock().unwrap().insert(
+            "p1".to_string(),
+            Arc::new(move || {
                 c1.fetch_add(1, Ordering::SeqCst);
-            }));
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p2".to_string(), Arc::new(move || {
+            }),
+        );
+        disposers.lock().unwrap().insert(
+            "p2".to_string(),
+            Arc::new(move || {
                 c2.fetch_add(1, Ordering::SeqCst);
-            }));
+            }),
+        );
 
-        let (ctrl, _ws_id, _pu_id) =
-            create_plugin_host_service_cleanup(lifecycle, disposers);
+        let (ctrl, _ws_id, _pu_id) = create_plugin_host_service_cleanup(lifecycle, disposers);
 
         ctrl.dispose_all();
         assert_eq!(counter.load(Ordering::SeqCst), 2);
@@ -340,17 +350,20 @@ mod tests {
         let disposers: Arc<Mutex<HashMap<String, Disposer>>> = Arc::new(Mutex::new(HashMap::new()));
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
-        disposers
-            .lock()
-            .unwrap()
-            .insert("p1".to_string(), Arc::new(move || {
+        disposers.lock().unwrap().insert(
+            "p1".to_string(),
+            Arc::new(move || {
                 c.fetch_add(1, Ordering::SeqCst);
-            }));
+            }),
+        );
 
         let (_ctrl, _ws_id, _pu_id) =
             create_plugin_host_service_cleanup(lifecycle.clone(), disposers);
 
-        lifecycle.emit("plugin.worker_stopped", &serde_json::json!({"pluginId": "p-unknown"}));
+        lifecycle.emit(
+            "plugin.worker_stopped",
+            &serde_json::json!({"pluginId": "p-unknown"}),
+        );
         assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 
@@ -370,7 +383,8 @@ mod tests {
                 plugin_id: "p1".into()
             }
         );
-        let e = PluginWorkerRuntimeEvent::from_parts("plugin.worker.restarted", "p2".into()).unwrap();
+        let e =
+            PluginWorkerRuntimeEvent::from_parts("plugin.worker.restarted", "p2".into()).unwrap();
         assert_eq!(
             e,
             PluginWorkerRuntimeEvent::Restarted {

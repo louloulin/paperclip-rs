@@ -33,9 +33,8 @@ use url::Url;
 /// Regex matching a bare issue identifier like `PAP-123` or `PC1A2-7`.
 ///
 /// Mirrors Node upstream `ISSUE_REFERENCE_IDENTIFIER_RE`.
-pub static ISSUE_REFERENCE_IDENTIFIER_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[A-Z][A-Z0-9]*-\d+$").expect("valid regex pattern")
-});
+pub static ISSUE_REFERENCE_IDENTIFIER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[A-Z][A-Z0-9]*-\d+$").expect("valid regex pattern"));
 
 /// Regex matching any of: bare identifier, absolute URL, or relative path.
 ///
@@ -430,14 +429,8 @@ mod tests {
 
     #[test]
     fn r528_build_href_canonical_form() {
-        assert_eq!(
-            build_issue_reference_href("pap-123"),
-            "/issues/PAP-123"
-        );
-        assert_eq!(
-            build_issue_reference_href("PAP-1"),
-            "/issues/PAP-1"
-        );
+        assert_eq!(build_issue_reference_href("pap-123"), "/issues/PAP-123");
+        assert_eq!(build_issue_reference_href("PAP-1"), "/issues/PAP-1");
     }
 
     #[test]
@@ -468,9 +461,7 @@ mod tests {
     #[test]
     fn r528_parse_absolute_href_with_fragment() {
         assert_eq!(
-            parse_issue_reference_href(
-                "https://paperclip.ing/PAP/issues/pap-789#comment-1"
-            ),
+            parse_issue_reference_href("https://paperclip.ing/PAP/issues/pap-789#comment-1"),
             Some(IssueIdentifierRef {
                 identifier: "PAP-789".to_string()
             })
@@ -524,8 +515,7 @@ mod tests {
 
     #[test]
     fn r528_find_matches_trims_trailing_bracket() {
-        let matches =
-            find_issue_reference_matches("See /issues/PAP-123] for context.");
+        let matches = find_issue_reference_matches("See /issues/PAP-123] for context.");
         assert_eq!(
             matches,
             vec![IssueReferenceMatch {
@@ -584,9 +574,7 @@ mod tests {
     #[test]
     fn r528_extract_dedupes_identifiers() {
         assert_eq!(
-            extract_issue_reference_identifiers(
-                "PAP-1 [again](/issues/pap-1) PAP-2"
-            ),
+            extract_issue_reference_identifiers("PAP-1 [again](/issues/pap-1) PAP-2"),
             vec!["PAP-1".to_string(), "PAP-2".to_string()]
         );
     }

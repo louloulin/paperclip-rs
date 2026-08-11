@@ -17,8 +17,8 @@ pub mod pure;
 pub mod wakeup;
 
 pub use bundle_service::{
-    DecisionBundleError, DecisionBundleHook, DecisionBundleHookEvent, DecisionBundleService,
-    DecisionBundleResult, NoopDecisionBundleHook, RecordingDecisionBundleHook,
+    DecisionBundleError, DecisionBundleHook, DecisionBundleHookEvent, DecisionBundleResult,
+    DecisionBundleService, NoopDecisionBundleHook, RecordingDecisionBundleHook,
 };
 pub use pc_repos::decision_bundle::{
     DecisionBundleDetail, DecisionBundleFilter, DecisionBundleRow, DecisionSummaryRow,
@@ -28,7 +28,7 @@ pub use pure::*;
 pub use wakeup::*;
 
 use async_trait::async_trait;
-use pc_repos::decision::{DecisionRow, DecisionRepo, SignedDecisionRow};
+use pc_repos::decision::{DecisionRepo, DecisionRow, SignedDecisionRow};
 use pc_secrets::DecisionSigningService;
 use serde_json::Value;
 use thiserror::Error;
@@ -173,7 +173,10 @@ impl<'a> DecisionService<'a> {
 
     // ---------- 查询 ----------
 
-    pub async fn list_by_company(&self, company_id: Uuid) -> DecisionServiceResult<Vec<DecisionRow>> {
+    pub async fn list_by_company(
+        &self,
+        company_id: Uuid,
+    ) -> DecisionServiceResult<Vec<DecisionRow>> {
         Ok(self.repo.list_by_company(company_id).await?)
     }
 
@@ -204,7 +207,8 @@ impl<'a> DecisionService<'a> {
         title: &str,
         body: &str,
     ) -> DecisionServiceResult<DecisionRow> {
-        self.create_with_spec(company_id, title, body, &CreateDecisionSpec::new()).await
+        self.create_with_spec(company_id, title, body, &CreateDecisionSpec::new())
+            .await
     }
 
     /// Create a decision with caller-supplied [`createDecisionSpec`].
@@ -289,7 +293,10 @@ impl<'a> DecisionService<'a> {
         reason: &str,
         decided_by_user_id: &str,
     ) -> DecisionServiceResult<DecisionRow> {
-        let changed = self.repo.mark_dismissed(id, reason, decided_by_user_id).await?;
+        let changed = self
+            .repo
+            .mark_dismissed(id, reason, decided_by_user_id)
+            .await?;
         if !changed {
             return Err(DecisionServiceError::NotFound(format!("decision {id}")));
         }
@@ -404,10 +411,7 @@ mod tests {
                 updated_at: now,
             };
             recorder.on_created(&row).await.unwrap();
-            recorder
-                .on_decided(&row, "opt-1")
-                .await
-                .unwrap();
+            recorder.on_decided(&row, "opt-1").await.unwrap();
             recorder.on_dismissed(&row).await.unwrap();
             recorder.on_cancelled(&row).await.unwrap();
         });

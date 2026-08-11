@@ -14,9 +14,7 @@ use uuid::Uuid;
 use pc_auth::{Actor, CompanyMembership};
 
 use crate::mentions::{extract_agent_mention_ids, extract_user_mention_ids};
-use crate::types::{
-    Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource,
-};
+use crate::types::{Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource};
 
 /// 决策时所需的 actor 上下文（与 Node `AuthorizationActor` 的核心字段对齐）。
 #[derive(Debug, Clone, Default, Serialize)]
@@ -222,11 +220,7 @@ pub fn evaluate(actor: &Actor, ctx: &Context, resource: &Resource, action: Actio
                 "anonymous local board in dev mode",
             );
         }
-        return Decision::deny(
-            action,
-            Reason::DenyUnauthenticated,
-            "actor is anonymous",
-        );
+        return Decision::deny(action, Reason::DenyUnauthenticated, "actor is anonymous");
     }
 
     match actor {
@@ -251,11 +245,7 @@ fn evaluate_user(
 ) -> Decision {
     // 3. Instance admin 短路
     if is_instance_admin {
-        return Decision::allow(
-            action,
-            Reason::AllowInstanceAdmin,
-            "user is instance admin",
-        );
+        return Decision::allow(action, Reason::AllowInstanceAdmin, "user is instance admin");
     }
 
     // 4. 本地 board（开发模式）
@@ -268,9 +258,7 @@ fn evaluate_user(
         return Decision::deny(
             action,
             Reason::DenyCompanyBoundary,
-            format!(
-                "user {user_id} has no active membership in company {company_id}"
-            ),
+            format!("user {user_id} has no active membership in company {company_id}"),
         );
     }
 
@@ -285,8 +273,7 @@ fn evaluate_user(
     {
         // assignee 直接改自己被分配的 issue
         if let Some(assignee) = assignee_user_id {
-            if assignee == user_id && matches!(action, Action::IssueMutate | Action::IssueComment)
-            {
+            if assignee == user_id && matches!(action, Action::IssueMutate | Action::IssueComment) {
                 return Decision::allow(
                     action,
                     Reason::AllowDirectChange,
@@ -467,18 +454,13 @@ fn evaluate_agent(
 
     // Issue 维度：self / assignee / mention / parent-report / consent
     if let Resource::Issue {
-        assignee_agent_id,
-        ..
+        assignee_agent_id, ..
     } = resource
     {
         if let Some(assignee) = assignee_agent_id {
             if *assignee == agent_id && matches!(action, Action::IssueComment | Action::IssueMutate)
             {
-                return Decision::allow(
-                    action,
-                    Reason::AllowSelf,
-                    "agent is the issue assignee",
-                );
+                return Decision::allow(action, Reason::AllowSelf, "agent is the issue assignee");
             }
         }
         // Mention grant：当前 actor agent 在 issue 中被 @ 到
@@ -512,11 +494,7 @@ fn evaluate_agent(
         }
         // Self-run：agent 在自己的 run 上 mutate/comment
         if ctx.is_self_run && matches!(action, Action::IssueComment | Action::IssueMutate) {
-            return Decision::allow(
-                action,
-                Reason::AllowSelf,
-                "agent acting on its own run",
-            );
+            return Decision::allow(action, Reason::AllowSelf, "agent acting on its own run");
         }
     }
 
@@ -530,7 +508,10 @@ fn evaluate_agent(
             );
         }
         // Agent 默认无写权限（除非 issue self）
-        if matches!(action, Action::IssueRead | Action::ProjectRead | Action::AgentRead) {
+        if matches!(
+            action,
+            Action::IssueRead | Action::ProjectRead | Action::AgentRead
+        ) {
             return Decision::allow(
                 action,
                 Reason::AllowCompanyAgent,
@@ -545,14 +526,13 @@ fn evaluate_agent(
     }
 
     match action {
-        Action::IssueRead
-        | Action::ProjectRead
-        | Action::AgentRead
-        | Action::CompanyScopeRead => Decision::allow(
-            action,
-            Reason::AllowCompanyAgent,
-            "agent in company can read",
-        ),
+        Action::IssueRead | Action::ProjectRead | Action::AgentRead | Action::CompanyScopeRead => {
+            Decision::allow(
+                action,
+                Reason::AllowCompanyAgent,
+                "agent in company can read",
+            )
+        }
         Action::IssueComment | Action::IssueMutate => {
             // 已由 issue 维度短路；非 self 拒绝
             Decision::deny(
@@ -585,7 +565,12 @@ fn role_meets(required: CompanyRole, actual: CompanyRole) -> bool {
 }
 
 /// 便捷函数：把 Decision 转 Result，allow 则返回 Ok(()), deny 则返回 AuthzError。
-pub fn check(actor: &Actor, ctx: &Context, resource: &Resource, action: Action) -> Result<(), AuthzError> {
+pub fn check(
+    actor: &Actor,
+    ctx: &Context,
+    resource: &Resource,
+    action: Action,
+) -> Result<(), AuthzError> {
     let d = evaluate(actor, ctx, resource, action);
     if d.allowed {
         Ok(())
@@ -952,12 +937,7 @@ mod tests {
         );
         let d = evaluate(
             &user_actor("u1", false),
-            &ctx.with_issue(
-                None,
-                Some("u1".into()),
-                vec![],
-                None,
-            ),
+            &ctx.with_issue(None, Some("u1".into()), vec![], None),
             &Resource::Issue {
                 company_id: c,
                 issue_id: None,
@@ -982,13 +962,7 @@ mod tests {
         let ctx = Context::for_agent(vec![membership(c)], vec![]);
         let d = evaluate(
             &agent_actor(agent_id, c),
-            &ctx.with_extended_issue(
-                vec![agent_id],
-                None,
-                false,
-                false,
-                false,
-            ),
+            &ctx.with_extended_issue(vec![agent_id], None, false, false, false),
             &Resource::Issue {
                 company_id: c,
                 issue_id: None,
@@ -1014,13 +988,7 @@ mod tests {
         let ctx = Context::for_agent(vec![membership(c)], vec![]);
         let d = evaluate(
             &agent_actor(agent_id, c),
-            &ctx.with_extended_issue(
-                vec![],
-                Some(parent_id),
-                true,
-                false,
-                false,
-            ),
+            &ctx.with_extended_issue(vec![], Some(parent_id), true, false, false),
             &Resource::Issue {
                 company_id: c,
                 issue_id: None,
@@ -1045,13 +1013,7 @@ mod tests {
         let ctx = Context::for_agent(vec![membership(c)], vec![]);
         let d = evaluate(
             &agent_actor(agent_id, c),
-            &ctx.with_extended_issue(
-                vec![],
-                None,
-                false,
-                true,
-                false,
-            ),
+            &ctx.with_extended_issue(vec![], None, false, true, false),
             &Resource::Issue {
                 company_id: c,
                 issue_id: None,
@@ -1099,9 +1061,7 @@ mod tests {
     #[test]
     fn with_mentions_from_body_dedupes_repeated_mentions() {
         let agent_id = Uuid::new_v4();
-        let body = format!(
-            "[a](agent://{agent_id}) and [b](agent://{agent_id}) again"
-        );
+        let body = format!("[a](agent://{agent_id}) and [b](agent://{agent_id}) again");
         let ctx = Context::anonymous().with_mentions_from_body(&body);
         assert_eq!(ctx.issue_mentioned_agent_ids, vec![agent_id]);
     }

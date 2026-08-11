@@ -93,9 +93,15 @@ impl ActivityKind {
             Self::PipelineDocumentUpserted => "pipeline.document.upserted",
             Self::PipelineDocumentRevisionRestored => "pipeline.document.revision_restored",
             Self::PipelineCasesBulkReviewed => "pipeline.cases.bulk_reviewed",
-            Self::PipelineCaseAutomationRetryRequested => "pipeline.case.automation.retry_requested",
-            Self::PipelineCaseAutomationSpecificRetryRequested => "pipeline.case.automation.specific_retry_requested",
-            Self::PipelineCaseAutomationCurrentStageRerunRequested => "pipeline.case.automation.current_stage_rerun_requested",
+            Self::PipelineCaseAutomationRetryRequested => {
+                "pipeline.case.automation.retry_requested"
+            }
+            Self::PipelineCaseAutomationSpecificRetryRequested => {
+                "pipeline.case.automation.specific_retry_requested"
+            }
+            Self::PipelineCaseAutomationCurrentStageRerunRequested => {
+                "pipeline.case.automation.current_stage_rerun_requested"
+            }
             Self::DecisionProposed => "decision.proposed",
             Self::DecisionApproved => "decision.approved",
             Self::DecisionRejected => "decision.rejected",

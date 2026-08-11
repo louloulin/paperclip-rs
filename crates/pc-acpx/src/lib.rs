@@ -60,12 +60,12 @@ pub mod prompt_compose;
 pub mod reconcile_skills;
 pub mod remote_execution_env;
 pub mod remote_managed_runtime;
-pub mod sandbox_runner;
 pub mod runtime_progress;
 pub mod sandbox_callback_bridge;
 pub mod sandbox_install_command;
 pub mod sandbox_managed_runtime;
 pub mod sandbox_run_log_stream;
+pub mod sandbox_runner;
 pub mod sandbox_shell;
 pub mod server_utils;
 pub mod server_utils_wake;
@@ -139,13 +139,13 @@ pub use log_redaction::{
     redact_env_for_logs, sanitize_inherited_paperclip_env, InvocationEnvOptions,
     DEFAULT_RESOLVED_COMMAND_ENV_KEY, REDACTED_COMMAND_TEXT_VALUE, REDACTED_LOG_VALUE,
 };
-pub use subprocess_signal::{
-    signal_running_process, Signal, SignalOutcome, SignalRunningProcessInput,
-};
 pub use sandbox_runner::{
     create_local_sandbox_runner, create_local_sandbox_runner_from_options, LocalSandboxRunner,
     LocalSandboxRunnerOptions, RunnerError, RunnerErrorCategory, RunnerProviderId, RunnerRegistry,
     SandboxMode,
+};
+pub use subprocess_signal::{
+    signal_running_process, Signal, SignalOutcome, SignalRunningProcessInput,
 };
 pub use workspace_env::{
     read_env_value_case_insensitive, refresh_paperclip_workspace_env_for_execution,

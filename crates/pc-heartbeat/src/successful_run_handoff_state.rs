@@ -133,7 +133,10 @@ pub struct HandoffActivityWrite {
 /// 从 JSON record 提取 source run id（与 Node 1:1 对齐）。
 ///
 /// 优先级：`sourceRunId` → `source_run_id` → `resumeFromRunId`
-pub fn extract_source_run_id(details: &serde_json::Value, fallback: Option<&str>) -> Option<String> {
+pub fn extract_source_run_id(
+    details: &serde_json::Value,
+    fallback: Option<&str>,
+) -> Option<String> {
     let obj = details.as_object()?;
     for key in ["sourceRunId", "source_run_id", "resumeFromRunId"] {
         if let Some(v) = obj.get(key).and_then(|x| x.as_str()) {
@@ -361,12 +364,7 @@ mod tests {
 
     #[async_trait]
     impl HandoffDataSource for FakeData {
-        async fn live_runs(
-            &self,
-            _: &str,
-            _: &[&str],
-            _: &[String],
-        ) -> Vec<(String, String)> {
+        async fn live_runs(&self, _: &str, _: &[&str], _: &[String]) -> Vec<(String, String)> {
             self.runs.lock().await.clone()
         }
         async fn live_wakes(&self, _: &str, _: &[&str], _: &[String]) -> Vec<String> {
@@ -447,14 +445,8 @@ mod tests {
     #[tokio::test]
     async fn r719_hydrate_picks_first_run() {
         let data = FakeData::default();
-        data.runs
-            .lock()
-            .await
-            .push(("r-1".into(), "i-1".into()));
-        data.runs
-            .lock()
-            .await
-            .push(("r-2".into(), "i-1".into()));
+        data.runs.lock().await.push(("r-1".into(), "i-1".into()));
+        data.runs.lock().await.push(("r-2".into(), "i-1".into()));
         let mut states = HashMap::new();
         states.insert(
             "i-1".into(),
@@ -550,9 +542,7 @@ mod tests {
             Some("r-current")
         );
         assert_eq!(
-            details
-                .get("resolvedBySkipReason")
-                .and_then(|v| v.as_str()),
+            details.get("resolvedBySkipReason").and_then(|v| v.as_str()),
             Some("no_progress")
         );
     }

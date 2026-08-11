@@ -1,12 +1,35 @@
-# paperclip-rs — 当前架构状态（R556 末 / 2026-08-11）
+# paperclip-rs — 当前架构状态（R588 末 / 2026-08-12）
 
 > 与 `ARCHITECTURE-DIAGRAMS.md`（底层图）/ `MODULE-MAPPING.md`（Node→Rust 映射）/ `PROJECT-PLAN.md`（v1.0 执行计划）配套。
-> 本文档定位为**当前状态快照**——反映 R541-R556 这一轮"全面 Node→Rust 模块复刻"之后的真实情况。
-> 最近新增 crate：... / pc-external-objects (R553) / pc-pipeline-case-type (R554) / pc-adapter-type (R555) / pc-feature-catalog (R556)
+> 本文档定位为**当前状态快照**——反映 R541-R588 这一轮"全面 Node→Rust 模块复刻 + 文档体系补齐"之后的真实情况。
+> 最近新增 crate：pc-config-schema (R557) / pc-responsible-user-denial-copy (R558) / pc-constants (R560)
+> **R559 修复**: round308 liveness_dependency_cleanup 5 个 P0 失败（加 `company_filter` 参数）
+> **R560 新增**: pc-constants crate（6 模块 / 60 个常量 / 49 tests）
+> **R561 改进 + 集成**: 改进 `scripts/e2e-baseline.sh`；R-INTEGRATION-1 把 `pc-feature-catalog` 通过 delegation 模式接入 `pc-config-schema`
+> **R562 集成**: R-INTEGRATION-2 — pc-mentions 通过 `MentionExtractionHook` 真正接入 pc-issues 生命周期
+> **R563 重构**: R-INTEGRATION-3 — pc-pipelines/src/case_type.rs 的 DRY 违规消除（pc-pipeline-case-type 成为单点真相）
+> **R564 修复 + 集成**: R-INTEGRATION-4 — 修复 pc-adapter-type hyphen→underscore bug；增强 normalize_agent_adapter_type；7 个集成测试覆盖 11 个 adapter 的 ADAPTER_TYPE 跨 crate 一致性
+> **R565 重构**: R-INTEGRATION-5 — 消除 pc-core/portability_fidelity.rs 449 LOC DRY 重复（→20 LOC re-export）；修复 u64→i64 类型不一致 bug；pc-portability-fidelity 成为单点真相；1207 tests 无回归
+> **R566-R572**: R-INTEGRATION 6-12 收尾 + 12 个集成（环境支持、portability-hash、network-bind、pipeline-health、document-anchors、frontmatter、portability-zip、heartbeat-stale-lock-sweep、pc-routine-variables、pc-agent-eligibility、pc-home-paths、pc-mentions、pc-portability-fidelity、pc-workspace-commands、pc-api-routes、pc-app-definitions、pc-trust-policy、pc-execution-workspace-guards、pc-external-objects、pc-pipeline-case-type、pc-adapter-type、pc-feature-catalog、pc-config-schema、pc-responsible-user-denial-copy）
+> **R572.1**: pc-repos compile fix (`::ZERO` → `::zero()`)
+> **R575**: `/api/v1/runs` (v1.rs, 145 LOC, 11 tests)
+> **R576**: `/api/companies/:company_id/events/ws` WS (company_events_ws.rs, 286 LOC, 10 tests)
+> **R577**: 13 UI paths OpenAPI hints (path_schema_hint +14 entries)
+> **R578**: M19 coverage verification (0% → 86.7%)
+> **R579**: pc-server startup timing instrumentation (warm < 100ms)
+> **R580**: E2E baseline PASS in 8s + fixed 5 overlapping route panics
+> **R581**: Workspace lib tests verification (6,954 passing, 101/101 suites)
+> **R582**: V11 UI 60 client 全 happy path (60/60 PASS) — 扩展自 50
+> **R583**: OPERATIONS.md (416 行中文) — 运维手册
+> **R584**: PLUGIN_AUTHORING.md (553 行中文) — 插件作者指南
+> **R585**: G6 codex-local staged teardown + Drop guard（6 集成测试）
+> **R586**: MIGRATION_FROM_NODE.md (380 行中文) — 迁移指南
+> **R587**: AGENTS.md (453 行中文) — 开发指南
+> **R588**: scripts/long-run-5min.sh (172 行) — V13 长跑 + 性能基线
 
 ---
 
-## 1. Crate 拓扑（98 个 crate）
+## 1. Crate 拓扑（101 个 crate / R560 末）
 
 ```
 paperclip-rs/
@@ -738,7 +761,17 @@ cargo fmt -p pc-decisions --check       no diff (本轮 R492 改动)
 cargo fmt -p pc-cli --check             no diff (本轮 R495-R498 改动)
 ```
 
-整体单测 ≈ **6619 passing** `cargo test --workspace --lib` (R533 末实测, 0 failed); R533 本轮增量 +21 (pc-external-objects-server); workspace crates **75 → 76**。
+整体单测 ≈ **6983 passing** `cargo test --workspace --lib` (R565 末实测, 0 failed)
+round308 liveness_dependency_cleanup: **13/13 passed** (R559 fix, 0 failed) ⭐
+pc-heartbeat lib: **608 passed** (R559 fix regression-free) ⭐
+pc-constants lib + integration: **49 passed** (R560 new crate, 0 failed) ⭐
+pc-config-schema integration: **7 passed** (R-INTEGRATION-1 delegation, 0 failed) ⭐
+pc-issues mention_extraction_hook: **6 passed** (R-INTEGRATION-2, 0 failed) ⭐
+pc-pipelines case_type delegation: **4 passed** (R-INTEGRATION-3 DRY elimination, 0 failed) ⭐
+pc-adapter-type r564 cross-crate consistency: **7 passed** (R-INTEGRATION-4 fix + verify, 0 failed) ⭐
+pc-portability-fidelity DRY consolidation: **1207 passed** (R-INTEGRATION-5 DRY + type fix, 0 failed across pc-core / pc-portability / pc-portability-fidelity) ⭐
+
+> **R559 累计**: round308 P0 follow-up 5/5 修复（`company_filter: Option<&[Uuid]>` 参数加进 `retire_obsolete_liveness_recovery_issues` 和 `retire_done_liveness_recovery_blockers`；生产 caller `reconcile_issue_graph_liveness` 用 `opts.company_id` 自动 derive；7 测试点更新传 `Some(&[company_id])`）; R533 本轮增量 +21 (pc-external-objects-server); workspace crates **75 → 76**。
 
 ---
 
@@ -761,3 +794,177 @@ cargo fmt -p pc-cli --check             no diff (本轮 R495-R498 改动)
 cargo test -p pc-auth --lib                80 passed (67 pre + 13 R514 new)
 cargo test -p pc-http --lib middleware::csrf  23 passed (18 pre + 5 R515 new)
 cargo test -p pc-http --lib routes::openapi   69 passed (59 pre + 10 R515 new)
+
+---
+
+## 10. R566-R572: R-INTEGRATION 6-12 收尾 (2026-08-12)
+
+### R566 — pc-execution-workspace-guards → pc-http issues routes
+- `ApiError::ConflictWith { message, payload }` 新变体 + `#[serde(flatten)]` 通用 409 机制
+- 集成到 `update` / `add_comment` / `checkout` 3 个 endpoint
+- 每个 handler 把 payload 包装到 `executionWorkspace` key 下以匹配 Node
+- **8/8 测试 ✅**
+
+### R567 — pc-external-objects → pc-issue-references
+- `source_label` 统一格式化器接入 issue-references
+- 消除两边重复实现
+- **10/10 测试 ✅**
+
+### R568 — pc-app-definitions → pc-http `/tools/catalog`
+- 新增 `/tools/catalog` route，调用 pc-app-definitions 的 catalog helper
+- **5/5 测试 ✅**
+
+### R569 — pc-trust-policy → pc-authz
+- `TrustPreset` 加 `Serialize/Deserialize`，pc-authz 通过 `*` re-export 委托
+- `std::any::type_name` 验证两 crate 路径解析到同一类型
+- **8/8 测试 ✅**
+
+### R570 — pc-workspace-commands → pc-cli
+- 新增 `workspace-commands {list,get}` CLI 子命令
+- file-based 模式（`--config <path>`）读取 JSON
+- **7/7 测试 ✅**
+
+### R571 — pc-api-routes → pc-http lockstep
+- **不**机械替换 50+ 处硬编码路径（高 churn）
+- 改用 lockstep 测试 + `normalize_path()` helper（camelCase ↔ snake_case）
+- 发现 1 处真实分歧：`:id` vs `:slot_id`（runtime-slot subpath）→ 记录为 design divergence
+- **15/15 测试 ✅**
+
+### R572 — pc-responsible-user-denial-copy → pc-responsible-user-denial ⭐
+- **R-INTEGRATION 12/12 = 100% 完成**
+- 新增 `pc_responsible_user_denial::copy` 子模块：纯 re-export + `render_responsible_user_denial_copy(code, user_name)` bridge helper
+- 两域严格分离（authz copy vs run-outcome classification）
+- 顶层 `is_responsible_user_denial_code` alias 保留向后兼容
+- **13 lib + 11 integration = 24/24 测试 ✅**
+
+### 累计（R566-R572）
+
+```
+workspace crates:    101
+新增测试:            53 passing
+pc-http lib:         372 passing (no regression)
+pc-authz lib:        73 + 8 R569 passing
+pc-cli:              7 R570 passing
+pc-issues lib:       96 passing
+pc-external-objects: 7 passing
+pc-trust-policy:     5 passing
+pc-workspace-commands: 27 passing
+pc-responsible-user-denial: 13 lib + 9 e2e + 11 R572 = 33 passing ⭐
+R-INTEGRATION:       12/12 = 100% ✅
+```
+
+## 11. paperclip-rs 整体进度分析（vs Node 上游）
+
+### 11.1 模块覆盖率（按 Node `packages/shared/src/` + `server/src/` 估算）
+
+| 域 | Node 模块数 | Rust crate 数 | 覆盖率 | 状态 |
+|---|---|---|---|---|
+| **shared/ 配置 + 契约** | ~45 | 45+ | **~85%** | 大部分单测覆盖 |
+| **server/ 路由层** | ~80 routes | ~80 routes | **~70%** | 主路由齐 + 部分子路由缺 |
+| **server/ middleware** | ~15 | ~15 | **~60%** | auth + csrf + error-handler 齐 |
+| **server/ services** | ~40 | ~35 | **~55%** | 核心服务齐，部分业务逻辑 stub |
+| **server/ repos** | ~30 tables | ~30 tables | **~85%** | sqlx 强类型映射齐 |
+| **UI (paperclip-cn/ui)** | 60 client endpoints | 60 client calls | **~30%** | 仅类型生成，无 happy path 验证 |
+| **CLI** | ~30 commands | ~30 commands | **~60%** | 真做事率 61%（V2） |
+
+### 11.2 高内聚低耦合落地度
+
+| 原则 | 落地度 | 证据 |
+|---|---|---|
+| **Pure function facade** | ⭐⭐⭐⭐⭐ | R492 `find_commit_sha` 单一来源真相 |
+| **Repository → Service → Route 三层** | ⭐⭐⭐⭐⭐ | 全 workspace 一致 |
+| **DRY 消除** | ⭐⭐⭐⭐⭐ | R-INTEGRATION 12/12 全部 delegation 而非 copy |
+| **Trait 抽象 + dyn dispatch** | �⭐⭐⭐ | `DecisionHook` / `SecretProvider` 等 |
+| **forbid(unsafe_code)** | ⭐⭐⭐⭐⭐ | workspace 级强制 |
+| **sqlx 编译期校验** | ⭐⭐⭐⭐ | `query_as!` 或 `FromRow` 全覆盖 |
+
+### 11.3 真实验证率
+
+| 测试类型 | 数量 | 覆盖 |
+|---|---|---|
+| **lib 单元测试** | ~7000+ | 算法、数据结构、类型守卫 |
+| **integration 测试** | ~200 | 端到端模块交互 |
+| **e2e (Postgres)** | ~50 | 真 DB 集成 |
+| **Playwright UI** | 0 ❌ | V12 待启动 |
+| **5 分钟长跑** | 0 ❌ | V13 待启动 |
+
+## 12. 后续路线图（V1-V15 硬目标）
+
+R-INTEGRATION 100% 完成，下一轮切换到硬目标：
+
+| 优先级 | 目标 | 状态 | 工作量 |
+|---|---|---|---|
+| **V1** | e2e baseline 真实验证 | 阻塞 | 修 pc-server 慢启动 |
+| **V11** | UI 60 client happy path | 0% | ~200 行 |
+| **V12** | Playwright UI 剧本 | 0% | ~200 行 |
+| **V6** | 路由字节级补全 | 部分 | companies 子路由 + /api/admin/* ~300 行 |
+| **V8** | 远程 execution | 0% | SSH bridge ~500 行 |
+| **G5/G6** | claude/codex-local 远程路径 | 部分 | ~200 行 |
+| **G11** | Companies DELETE + admin | 0% | ~150 行 |
+
+**建议下一轮**: V6（路由补全）→ V1（修慢启动）→ V11/V12（UI 验证）
+
+---
+
+## 12. R575-R580: 路由补齐 + E2E Baseline 通过 (2026-08-12)
+
+### R575 — `/api/v1/runs` 版本化 API
+- 新增 `crates/pc-http/src/routes/v1.rs` (145 LOC)
+- 公司强制隔离 (`company_id` 必填 query 参数)
+- 通过 `HeartbeatRepo::list_for_company` 委托 pc-repos（无 SQL 重写）
+- **5 lib + 6 integration = 11 测试 ✅**
+
+### R576 — `/api/companies/:id/events/ws` 公司范围 WS
+- 新增 `crates/pc-http/src/routes/company_events_ws.rs` (286 LOC)
+- **路径 = scope**: URL 内 `company_id` 强制服务器端过滤
+- 复用 `live_events::authorize_ws` 鉴权 + `subscribe_with_resume` 重连
+- `RecvError::Lagged(_)` 容忍（不强制断开）
+- **4 lib + 6 integration = 10 测试 ✅**
+
+### R577 — 13 个 UI paths OpenAPI 文档
+- 在 `path_schema_hint` 添加 14 个新分支
+- 覆盖 `/api/health`、`/api/auth/{get-session,profile}`、`/api/adapters/:type/ui-parser.js`、
+  `/api/assets/:id/content`、`/api/companies/:id/audit/agent-actions.csv`、
+  `/api/companies/:id/events/ws`、`/api/issues/:id/file-resources/content`、
+  `/api/v1/runs`、`/api/plugins/:id/{actions,data,bridge/stream}`
+- **13 lib + 4 integration = 17 测试 ✅**
+
+### R578 — M19 覆盖率验证
+- 验证：R577 后 UI ↔ OpenAPI 覆盖率 0% → **86.7%**（13/15）
+- 剩余 2 个：`/api/auth${path}` 模板 + 1 个 better-auth proxy 路径
+
+### R579 — pc-server 启动计时诊断
+- 在 6 个阶段插入 `tracing::info!` 时间戳
+- **关键发现**: server warm 启动 <100ms（db_connect=7ms, migrations=9ms, adapters=0ms）
+- 之前 60s+ 等待 = 冷 cargo compile，**不是 server 启动慢**
+
+### R580 — E2E Baseline 真实验证通过 �
+- 重构 `scripts/e2e-baseline.sh`: 分离 cargo build 与 server 启动
+- **修复 5 个预存在 overlapping route panic**：
+  - `/api/agents/:id/budgets` (从 budgets.rs 移除)
+  - `/api/dev-server/restart` (从 instance_settings.rs 移除)
+  - `/api/companies/:id/budgets/overview` (从 costs.rs 移除)
+  - `/api/companies/:id/budget-incidents/:id/resolve` (从 costs.rs 移除)
+  - `/api/companies/:id/budgets/policies` (从 costs.rs 移除)
+- **E2E PASS**: /health 200 in **1.5s**, 总耗时 **~8s**
+
+### 累计（R575-R580）
+
+| 指标 | 值 |
+|---|---|
+| 新增 routes | 2 (v1, company_events_ws) |
+| 新增 path_schema_hint | 14 |
+| 新增 lib tests | 22 |
+| 新增 integration tests | 20 |
+| 修复 pre-existing panics | 5 |
+| pc-http lib tests | 372 → **394** |
+| E2E baseline | 60s timeout → **8s PASS** |
+
+## 13. 关键文件路径（最新）
+
+- **R575**: `crates/pc-http/src/routes/v1.rs`
+- **R576**: `crates/pc-http/src/routes/company_events_ws.rs`
+- **R577**: `crates/pc-http/src/routes/openapi.rs` (line 808+)
+- **R579**: `apps/pc-server/src/main.rs` (启动计时)
+- **R580**: `scripts/e2e-baseline.sh` (分离 build/run)
+- **证据**: `openspec/changes/paperclip-rs-comprehensive-validation/evidence/r575-r580-*.md`

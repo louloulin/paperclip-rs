@@ -11,8 +11,13 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use pc_workspace_commands::{
+    find_workspace_command_definition, list_workspace_command_definitions,
+    list_workspace_service_command_definitions, WorkspaceCommandKind, WorkspaceCommandLifecycle,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -168,6 +173,12 @@ enum Command {
         #[command(subcommand)]
         action: ClientCommand,
     },
+    /// Workspace runtime command introspection (powered by pc-workspace-commands).
+    /// Read a workspace_runtime JSON config and list/match its commands.
+    WorkspaceCommands {
+        #[command(subcommand)]
+        action: WorkspaceCommandsAction,
+    },
     /// Pipeline + pipeline case operations (CLI parity with `paperclip/cli/src/commands/pipelines.ts`)
     Pipelines {
         #[command(subcommand)]
@@ -238,6 +249,26 @@ pub enum WorktreeAction {
     /// Print dev-mode hints (worktree name + derived URL + dev port).
     /// Combines `current` + `url` in a single block for copy-paste.
     Dev,
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkspaceCommandsAction {
+    /// List commands in a workspace_runtime JSON file.
+    List {
+        /// Path to workspace_runtime JSON (e.g. a project_workspaces row metadata).
+        #[arg(long)]
+        config: PathBuf,
+        /// Only show service-kind commands.
+        #[arg(long)]
+        service_only: bool,
+    },
+    /// Look up a single command by id within a workspace_runtime JSON.
+    Get {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -328,6 +359,95 @@ enum ServiceAction {
 }
 
 /// Round 48: pipelines subcommand (CLI parity with `paperclip/cli/src/commands/pipelines.ts`).
+/// R570: R-INTEGRATION-10 -- paperclipai workspace-commands {list|get} reads a
+/// workspace_runtime JSON config and uses pc-workspace-commands helpers to
+/// extract/matching commands. This bridges the shared catalog types (defined
+/// in R548) with the operator-facing CLI.
+fn workspace_commands_command(action: WorkspaceCommandsAction) -> Result<()> {
+    match action {
+        WorkspaceCommandsAction::List {
+            config,
+            service_only,
+        } => {
+            let raw = std::fs::read_to_string(&config)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {}", config.display(), e))?;
+            let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+                anyhow::anyhow!("failed to parse {} as JSON: {}", config.display(), e)
+            })?;
+            let defs = if service_only {
+                list_workspace_service_command_definitions(Some(&value))
+            } else {
+                list_workspace_command_definitions(Some(&value))
+            };
+            if defs.is_empty() {
+                println!("(no workspace commands in {})", config.display());
+                return Ok(());
+            }
+            println!("{:<28} {:<8} {:<10} {}", "id", "kind", "lifecycle", "name");
+            println!("{}", "-".repeat(72));
+            for def in defs {
+                let kind = match def.kind {
+                    WorkspaceCommandKind::Service => "service",
+                    WorkspaceCommandKind::Job => "job",
+                };
+                let lifecycle = def
+                    .lifecycle
+                    .map(|l| match l {
+                        WorkspaceCommandLifecycle::Shared => "shared",
+                        WorkspaceCommandLifecycle::Ephemeral => "ephemeral",
+                    })
+                    .unwrap_or("-");
+                println!("{:<28} {:<8} {:<10} {}", def.id, kind, lifecycle, def.name);
+            }
+            Ok(())
+        }
+        WorkspaceCommandsAction::Get { config, id } => {
+            let raw = std::fs::read_to_string(&config)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {}", config.display(), e))?;
+            let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+                anyhow::anyhow!("failed to parse {} as JSON: {}", config.display(), e)
+            })?;
+            match find_workspace_command_definition(Some(&value), Some(&id)) {
+                Some(def) => {
+                    let kind = match def.kind {
+                        WorkspaceCommandKind::Service => "service",
+                        WorkspaceCommandKind::Job => "job",
+                    };
+                    let lifecycle = def
+                        .lifecycle
+                        .map(|l| match l {
+                            WorkspaceCommandLifecycle::Shared => "shared",
+                            WorkspaceCommandLifecycle::Ephemeral => "ephemeral",
+                        })
+                        .unwrap_or("-");
+                    println!("id:        {}", def.id);
+                    println!("name:      {}", def.name);
+                    println!("kind:      {}", kind);
+                    println!("lifecycle: {}", lifecycle);
+                    if let Some(cmd) = &def.command {
+                        println!("command:   {}", cmd);
+                    }
+                    if let Some(cwd) = &def.cwd {
+                        println!("cwd:       {}", cwd);
+                    }
+                    if let Some(reason) = &def.disabled_reason {
+                        println!("disabled:  {}", reason);
+                    }
+                    Ok(())
+                }
+                None => {
+                    println!(
+                        "workspace command `{}` not found in {}",
+                        id,
+                        config.display()
+                    );
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
 async fn pipelines_command(client: CliClient, action: PipelinesAction) -> Result<()> {
     match action {
         PipelinesAction::List { company, limit } => {
@@ -531,6 +651,7 @@ async fn main() -> Result<()> {
         Command::Heartbeat { action } => heartbeat_command(client.clone(), action).await,
         Command::Auth { action } => auth_command(client.clone(), action).await,
         Command::Client { action } => client_command(client, action).await,
+        Command::WorkspaceCommands { action } => workspace_commands_command(action),
         Command::Pipelines { action } => pipelines_command(client.clone(), action).await,
         Command::Routines { action } => routines_command(client.clone(), action).await,
         Command::Version => {

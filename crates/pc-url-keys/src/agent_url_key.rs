@@ -81,7 +81,10 @@ mod tests {
             normalize_agent_url_key("  CTO_Engineer  "),
             Some("cto-engineer".to_string())
         );
-        assert_eq!(normalize_agent_url_key("researcher2"), Some("researcher2".to_string()));
+        assert_eq!(
+            normalize_agent_url_key("researcher2"),
+            Some("researcher2".to_string())
+        );
         assert_eq!(normalize_agent_url_key(""), None);
         assert_eq!(normalize_agent_url_key("---"), None);
         assert_eq!(normalize_agent_url_key("   "), None);
@@ -90,18 +93,9 @@ mod tests {
     #[test]
     fn r530_normalize_consecutive_separators_collapse() {
         // "a   b" → "a-b" (multiple spaces collapse to single dash)
-        assert_eq!(
-            normalize_agent_url_key("a   b"),
-            Some("a-b".to_string())
-        );
-        assert_eq!(
-            normalize_agent_url_key("a__b"),
-            Some("a-b".to_string())
-        );
-        assert_eq!(
-            normalize_agent_url_key("a -_ b"),
-            Some("a-b".to_string())
-        );
+        assert_eq!(normalize_agent_url_key("a   b"), Some("a-b".to_string()));
+        assert_eq!(normalize_agent_url_key("a__b"), Some("a-b".to_string()));
+        assert_eq!(normalize_agent_url_key("a -_ b"), Some("a-b".to_string()));
     }
 
     #[test]
@@ -150,18 +144,12 @@ mod tests {
         // placeholder. Node upstream does:
         //   value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
         // which matches Rust `prev_dash` collapse algorithm.
-        assert_eq!(
-            normalize_agent_url_key("héllo"),
-            Some("h-llo".to_string())
-        );
+        assert_eq!(normalize_agent_url_key("héllo"), Some("h-llo".to_string()));
         assert_eq!(
             normalize_agent_url_key("hello wörld"),
             Some("hello-w-rld".to_string())
         );
-        assert_eq!(
-            normalize_agent_url_key("项目 pro"),
-            Some("pro".to_string())
-        );
+        assert_eq!(normalize_agent_url_key("项目 pro"), Some("pro".to_string()));
     }
 
     #[test]
@@ -180,7 +168,7 @@ mod tests {
         assert!(!is_uuid_like("11111111-2222-3333-0444-555555555555")); // 0 not in [1-5]
         assert!(!is_uuid_like("11111111-2222-3333-8444-55555555555")); // too short
         assert!(!is_uuid_like("11111111-2222-3333-8444-5555555555555")); // too long
-        // v6+ not supported (Node only checks [1-5])
+                                                                         // v6+ not supported (Node only checks [1-5])
         assert!(!is_uuid_like("11111111-2222-6333-8444-555555555555"));
     }
 
@@ -205,8 +193,14 @@ mod tests {
             derive_agent_url_key(None, Some("Fallback Name")),
             "fallback-name"
         );
-        assert_eq!(derive_agent_url_key(Some(""), Some("Fallback Name")), "fallback-name");
-        assert_eq!(derive_agent_url_key(Some("---"), Some("Fallback Name")), "fallback-name");
+        assert_eq!(
+            derive_agent_url_key(Some(""), Some("Fallback Name")),
+            "fallback-name"
+        );
+        assert_eq!(
+            derive_agent_url_key(Some("---"), Some("Fallback Name")),
+            "fallback-name"
+        );
     }
 
     #[test]

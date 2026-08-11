@@ -38,13 +38,22 @@ pub struct ManifestError {
 /// 验证结果 —— 与 Node `ManifestParseSuccess` / `ManifestParseFailure` 1:1 对齐。
 #[derive(Debug, Clone)]
 pub enum ManifestParseResult<M> {
-    Success { manifest: M },
-    Failure { errors: String, details: Vec<ManifestError> },
+    Success {
+        manifest: M,
+    },
+    Failure {
+        errors: String,
+        details: Vec<ManifestError>,
+    },
 }
 
 impl<M> ManifestParseResult<M> {
-    pub fn is_success(&self) -> bool { matches!(self, Self::Success { .. }) }
-    pub fn is_failure(&self) -> bool { !self.is_success() }
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Success { .. })
+    }
+    pub fn is_failure(&self) -> bool {
+        !self.is_success()
+    }
 }
 
 /// Manifest 验证异常（用于 `parseOrThrow`）。
@@ -75,7 +84,9 @@ pub struct DefaultPluginManifestValidator<S: ManifestSchema> {
 }
 
 impl<S: ManifestSchema> DefaultPluginManifestValidator<S> {
-    pub fn new(schema: S) -> Self { Self { schema } }
+    pub fn new(schema: S) -> Self {
+        Self { schema }
+    }
 }
 
 impl<S: ManifestSchema> PluginManifestValidator<S::Manifest> for DefaultPluginManifestValidator<S> {
@@ -120,7 +131,9 @@ impl<S: ManifestSchema> PluginManifestValidator<S::Manifest> for DefaultPluginMa
         }
     }
 
-    fn get_supported_versions(&self) -> &[u32] { SUPPORTED_VERSIONS }
+    fn get_supported_versions(&self) -> &[u32] {
+        SUPPORTED_VERSIONS
+    }
 }
 
 #[cfg(test)]

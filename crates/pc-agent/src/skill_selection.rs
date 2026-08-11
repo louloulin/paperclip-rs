@@ -24,7 +24,9 @@ pub struct SkillVersionSelectionOptions {
 
 impl Default for SkillVersionSelectionOptions {
     fn default() -> Self {
-        Self { version_pins_enabled: true }
+        Self {
+            version_pins_enabled: true,
+        }
     }
 }
 
@@ -40,13 +42,15 @@ pub fn skill_version_selection_map(
     entries: &[SkillSelectionEntry],
     options: Option<SkillVersionSelectionOptions>,
 ) -> HashMap<String, Option<String>> {
-    let version_pins_enabled = options
-        .map(|o| o.version_pins_enabled)
-        .unwrap_or(true);
+    let version_pins_enabled = options.map(|o| o.version_pins_enabled).unwrap_or(true);
     entries
         .iter()
         .map(|entry| {
-            let v = if version_pins_enabled { entry.version_id.clone() } else { None };
+            let v = if version_pins_enabled {
+                entry.version_id.clone()
+            } else {
+                None
+            };
             (entry.key.clone(), v)
         })
         .collect()
@@ -86,7 +90,9 @@ mod tests {
     fn r689_explicit_pins_enabled_true() {
         let m = skill_version_selection_map(
             &entries(),
-            Some(SkillVersionSelectionOptions { version_pins_enabled: true }),
+            Some(SkillVersionSelectionOptions {
+                version_pins_enabled: true,
+            }),
         );
         assert_eq!(m.get("skill-a"), Some(&Some("v1.0.0".into())));
         assert_eq!(m.get("skill-b"), Some(&None));
@@ -96,7 +102,9 @@ mod tests {
     fn r689_explicit_pins_disabled_returns_none() {
         let m = skill_version_selection_map(
             &entries(),
-            Some(SkillVersionSelectionOptions { version_pins_enabled: false }),
+            Some(SkillVersionSelectionOptions {
+                version_pins_enabled: false,
+            }),
         );
         // 所有版本都被清空成 None
         assert_eq!(m.get("skill-a"), Some(&None));
@@ -115,8 +123,14 @@ mod tests {
     fn r689_duplicate_keys_last_wins() {
         // Node `Map` 语义：后插入的覆盖前面。这里保持一致。
         let input = vec![
-            SkillSelectionEntry { key: "dup".into(), version_id: Some("v1".into()) },
-            SkillSelectionEntry { key: "dup".into(), version_id: Some("v2".into()) },
+            SkillSelectionEntry {
+                key: "dup".into(),
+                version_id: Some("v1".into()),
+            },
+            SkillSelectionEntry {
+                key: "dup".into(),
+                version_id: Some("v2".into()),
+            },
         ];
         let m = skill_version_selection_map(&input, None);
         assert_eq!(m.len(), 1);

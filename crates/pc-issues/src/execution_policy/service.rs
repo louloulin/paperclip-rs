@@ -20,17 +20,13 @@ use uuid::Uuid;
 
 /// Filter out null values from a patch map (null = "no change").
 fn strip_nulls(patch: Map<String, Value>) -> Map<String, Value> {
-    patch
-        .into_iter()
-        .filter(|(_, v)| !v.is_null())
-        .collect()
+    patch.into_iter().filter(|(_, v)| !v.is_null()).collect()
 }
 
 use super::hook::IssueExecutionPolicyHook;
 use super::types::{
     ApplyTransitionOutcome, ApplyTransitionRequest, ClearMonitorRequest, IssueExecutionPolicyError,
-    IssueExecutionPolicyResult,
-    MonitorPatchOutcome, TriggerMonitorRequest,
+    IssueExecutionPolicyResult, MonitorPatchOutcome, TriggerMonitorRequest,
 };
 
 /// 业务 service。
@@ -158,7 +154,9 @@ impl IssueExecutionPolicyService {
             assignee_user_id: request.assignee_user_id,
         };
         let patch = build_initial_issue_monitor_fields(input)?;
-        let outcome = MonitorPatchOutcome { patch: strip_nulls(patch.to_issue_patch()) };
+        let outcome = MonitorPatchOutcome {
+            patch: strip_nulls(patch.to_issue_patch()),
+        };
 
         self.hook
             .after_monitor_change("initial", Uuid::nil(), &outcome)
@@ -183,7 +181,9 @@ impl IssueExecutionPolicyService {
             triggered_at: request.triggered_at,
         };
         let patch = build_issue_monitor_triggered_patch(input);
-        let outcome = MonitorPatchOutcome { patch: strip_nulls(patch) };
+        let outcome = MonitorPatchOutcome {
+            patch: strip_nulls(patch),
+        };
 
         self.hook
             .after_monitor_change("trigger", issue_id, &outcome)
@@ -209,7 +209,9 @@ impl IssueExecutionPolicyService {
             cleared_at: request.cleared_at,
         };
         let patch = build_issue_monitor_cleared_patch(input);
-        let outcome = MonitorPatchOutcome { patch: strip_nulls(patch) };
+        let outcome = MonitorPatchOutcome {
+            patch: strip_nulls(patch),
+        };
 
         self.hook
             .after_monitor_change("clear", issue_id, &outcome)
@@ -230,7 +232,9 @@ impl Default for IssueExecutionPolicyService {
 
 fn parse_clear_reason(s: &str) -> IssueExecutionPolicyResult<IssueExecutionMonitorClearReason> {
     serde_json::from_value::<IssueExecutionMonitorClearReason>(Value::String(s.to_string()))
-        .map_err(|e| IssueExecutionPolicyError::validation(format!("invalid clear reason {s}: {e}")))
+        .map_err(|e| {
+            IssueExecutionPolicyError::validation(format!("invalid clear reason {s}: {e}"))
+        })
 }
 
 fn build_issue_like(row: &pc_repos::issue::IssueRow) -> pc_core::IssueLike {
@@ -257,9 +261,11 @@ fn build_issue_like(row: &pc_repos::issue::IssueRow) -> pc_core::IssueLike {
             None
         },
         monitor_notes: row.monitor_notes.clone(),
-        monitor_scheduled_by: row
-            .monitor_scheduled_by
-            .as_deref()
-            .and_then(|s| serde_json::from_value::<pc_core::IssueMonitorScheduledBy>(serde_json::Value::String(s.to_string())).ok()),
+        monitor_scheduled_by: row.monitor_scheduled_by.as_deref().and_then(|s| {
+            serde_json::from_value::<pc_core::IssueMonitorScheduledBy>(serde_json::Value::String(
+                s.to_string(),
+            ))
+            .ok()
+        }),
     }
 }

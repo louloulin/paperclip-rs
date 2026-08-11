@@ -32,7 +32,11 @@ pub struct OAuthStateRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OAuthStateOutcome {
-    Ok { code_verifier: String, redirect_uri: String, provider: String },
+    Ok {
+        code_verifier: String,
+        redirect_uri: String,
+        provider: String,
+    },
     Expired,
     StateMismatch,
     MissingState,
@@ -147,7 +151,11 @@ mod tests {
         let (s, r) = new_oauth_state("p", "https://app/cb", Duration::minutes(10));
         let outcome = verify_oauth_state(&s, &r, Utc::now());
         match outcome {
-            OAuthStateOutcome::Ok { provider, redirect_uri, .. } => {
+            OAuthStateOutcome::Ok {
+                provider,
+                redirect_uri,
+                ..
+            } => {
                 assert_eq!(provider, "p");
                 assert_eq!(redirect_uri, "https://app/cb");
             }
@@ -177,6 +185,9 @@ mod tests {
     fn r565_verify_oauth_state_expires() {
         let (s, mut r) = new_oauth_state("p", "cb", Duration::seconds(0));
         r.expires_at = Utc::now() - Duration::seconds(1);
-        assert_eq!(verify_oauth_state(&s, &r, Utc::now()), OAuthStateOutcome::Expired);
+        assert_eq!(
+            verify_oauth_state(&s, &r, Utc::now()),
+            OAuthStateOutcome::Expired
+        );
     }
 }

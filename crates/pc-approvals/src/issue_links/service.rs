@@ -84,7 +84,6 @@ impl IssueApprovalHook for RecordingIssueApprovalHook {
 
 #[derive(Debug, thiserror::Error)]
 pub enum IssueApprovalError {
-
     #[error("validation: {0}")]
     Validation(String),
     #[error("issue and approval belong to different companies")]
@@ -160,14 +159,20 @@ impl IssueApprovalService {
         issue_id: Uuid,
     ) -> IssueApprovalResult<Vec<ApprovalForIssueItem>> {
         require_non_nil(issue_id, "issueId")?;
-        self.repo().list_approvals_for_issue(issue_id).await.map_err(|e| IssueApprovalError::Pc(internal(e.to_string())))
+        self.repo()
+            .list_approvals_for_issue(issue_id)
+            .await
+            .map_err(|e| IssueApprovalError::Pc(internal(e.to_string())))
     }
     pub async fn list_issues_for_approval(
         &self,
         approval_id: Uuid,
     ) -> IssueApprovalResult<Vec<IssueForApprovalItem>> {
         require_non_nil(approval_id, "approvalId")?;
-        self.repo().list_issues_for_approval(approval_id).await.map_err(|e| IssueApprovalError::Pc(internal(e.to_string())))
+        self.repo()
+            .list_issues_for_approval(approval_id)
+            .await
+            .map_err(|e| IssueApprovalError::Pc(internal(e.to_string())))
     }
     pub async fn link(
         &self,
@@ -189,7 +194,9 @@ impl IssueApprovalService {
                 }),
             )
             .await;
-        let row: IssueApprovalLinkRow = link_res.map_err(IssueApprovalError::from)?.ok_or(IssueApprovalError::CrossCompany)?;
+        let row: IssueApprovalLinkRow = link_res
+            .map_err(IssueApprovalError::from)?
+            .ok_or(IssueApprovalError::CrossCompany)?;
         self.dispatch(IssueApprovalHookEvent::Linked {
             company_id: row.company_id,
             issue_id: row.issue_id,
@@ -201,7 +208,10 @@ impl IssueApprovalService {
     pub async fn unlink(&self, issue_id: Uuid, approval_id: Uuid) -> IssueApprovalResult<()> {
         require_non_nil(issue_id, "issueId")?;
         require_non_nil(approval_id, "approvalId")?;
-        self.repo().unlink(issue_id, approval_id).await.map_err(|e| IssueApprovalError::Pc(internal(e.to_string())))?;
+        self.repo()
+            .unlink(issue_id, approval_id)
+            .await
+            .map_err(|e| IssueApprovalError::Pc(internal(e.to_string())))?;
         // we don't know company here without re-reading; fire generic event
         self.dispatch(IssueApprovalHookEvent::Unlinked {
             company_id: Uuid::nil(),

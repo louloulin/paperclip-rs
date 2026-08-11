@@ -2,7 +2,7 @@
 //! DTO registry (35 schemas registered by `register_core_dtos`).
 
 use pc_openapi::{register_core_dtos, OpenApiRegistry, CORE_DTO_NAMES};
-use pc_typescript_gen::{generate_typescript_types, schema_to_typescript, schema_to_type_expr};
+use pc_typescript_gen::{generate_typescript_types, schema_to_type_expr, schema_to_typescript};
 use serde_json::json;
 
 fn build_real_spec() -> pc_openapi::OpenApiSpec {
@@ -59,10 +59,7 @@ fn real_spec_no_empty_interface_bodies() {
             if line.starts_with("  ") && line.ends_with(";") {
                 saw_property = true;
             } else if line == "}" {
-                assert!(
-                    saw_property,
-                    "interface with empty body found:\n{ts}"
-                );
+                assert!(saw_property, "interface with empty body found:\n{ts}");
                 in_interface = false;
             }
         }
@@ -150,8 +147,38 @@ fn generated_types_pass_tsc_strict_check() {
 
     // Locate tsc. Prefer the system PATH; fall back to npx tsc.
     let candidates: [(&str, Vec<&str>); 2] = [
-        ("tsc", vec!["--noEmit", "--strict", "--target", "es2020", "--ignoreConfig", "--module", "esnext", "--moduleResolution", "bundler"]),
-        ("npx", vec!["--yes", "typescript@5", "--", "tsc", "--noEmit", "--strict", "--target", "es2020", "--ignoreConfig", "--module", "esnext", "--moduleResolution", "bundler"]),
+        (
+            "tsc",
+            vec![
+                "--noEmit",
+                "--strict",
+                "--target",
+                "es2020",
+                "--ignoreConfig",
+                "--module",
+                "esnext",
+                "--moduleResolution",
+                "bundler",
+            ],
+        ),
+        (
+            "npx",
+            vec![
+                "--yes",
+                "typescript@5",
+                "--",
+                "tsc",
+                "--noEmit",
+                "--strict",
+                "--target",
+                "es2020",
+                "--ignoreConfig",
+                "--module",
+                "esnext",
+                "--moduleResolution",
+                "bundler",
+            ],
+        ),
     ];
 
     let mut last_err = String::new();
@@ -192,13 +219,18 @@ mod tempfile_proxy {
     impl NamedTempFile {
         pub fn new() -> std::io::Result<Self> {
             use std::time::{SystemTime, UNIX_EPOCH};
-            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
             let pid = std::process::id();
             let path = std::env::temp_dir().join(format!("pc-typescript-gen-{pid}-{nanos}.ts"));
             Ok(Self { path })
         }
 
-        pub fn path(&self) -> &Path { &self.path }
+        pub fn path(&self) -> &Path {
+            &self.path
+        }
 
         pub fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
             let mut f = File::create(&self.path)?;

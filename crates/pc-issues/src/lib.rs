@@ -32,8 +32,9 @@ pub mod execution_policy;
 pub mod goal_fallback;
 pub mod label;
 pub mod liveness;
-pub mod references;
+pub mod mention_extraction_hook;
 pub mod recovery_actions;
+pub mod references;
 pub mod rewake_throttle;
 pub mod routable_blocked;
 pub mod thread_interactions;
@@ -41,9 +42,7 @@ pub mod tree_control;
 pub mod visibility;
 
 use async_trait::async_trait;
-use pc_repos::issue::{
-    CreateIssueInput, IssueCommentRow, IssueRepo, IssueRow,
-};
+use pc_repos::issue::{CreateIssueInput, IssueCommentRow, IssueRepo, IssueRow};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -102,9 +101,7 @@ pub struct CreateIssueMinimalInput {
 #[derive(Debug, Clone)]
 pub enum IssueLifecycleEvent {
     /// Issue 被创建（service.create 调用成功后触发）。
-    Created {
-        row: IssueRow,
-    },
+    Created { row: IssueRow },
 }
 
 /// Issue 指派语义描述。
@@ -142,7 +139,6 @@ impl From<&AssignKind> for AssignTarget {
         }
     }
 }
-
 
 /// Hook trait：副作用抽象。
 ///
@@ -184,11 +180,7 @@ pub trait IssueHook: Send + Sync {
 
     /// hook 拿到的 row 已是最新版本（含新的 assignee_* 字段）。
 
-    async fn on_assigned(
-        &self,
-        _row: &IssueRow,
-        _kind: AssignKind,
-    ) -> IssueServiceResult<()> {
+    async fn on_assigned(&self, _row: &IssueRow, _kind: AssignKind) -> IssueServiceResult<()> {
         Ok(())
     }
     /// Issue 新增评论后调用（service.create_comment）。
@@ -234,17 +226,14 @@ impl IssueHook for RecordingIssueHook {
         old_status: &str,
         new_status: &str,
     ) -> IssueServiceResult<()> {
-        self.status_changed
-            .lock()
-            .expect("lock")
-            .push((row.id, old_status.to_string(), new_status.to_string()));
+        self.status_changed.lock().expect("lock").push((
+            row.id,
+            old_status.to_string(),
+            new_status.to_string(),
+        ));
         Ok(())
     }
-    async fn on_assigned(
-        &self,
-        row: &IssueRow,
-        kind: AssignKind,
-    ) -> IssueServiceResult<()> {
+    async fn on_assigned(&self, row: &IssueRow, kind: AssignKind) -> IssueServiceResult<()> {
         self.assigned.lock().expect("lock").push((row.id, kind));
         Ok(())
     }
@@ -304,11 +293,7 @@ impl<'a> IssueService<'a> {
     // ---------- 查询 ----------
 
     /// 按 id 获取 issue（带公司作用域校验）。
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> IssueServiceResult<Option<IssueRow>> {
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> IssueServiceResult<Option<IssueRow>> {
         let row = self.repo.get(id).await?;
         if let Some(ref r) = row {
             if r.company_id != company_id {
@@ -368,7 +353,9 @@ impl<'a> IssueService<'a> {
         input: &CreateIssueMinimalInput,
     ) -> IssueServiceResult<IssueRow> {
         if input.title.trim().is_empty() {
-            return Err(IssueServiceError::InvalidInput("title must not be empty".into()));
+            return Err(IssueServiceError::InvalidInput(
+                "title must not be empty".into(),
+            ));
         }
         if let Some(ref status) = input.status {
             if !is_valid_status(status) {
@@ -487,7 +474,8 @@ impl<'a> IssueService<'a> {
             .ok_or_else(|| IssueServiceError::NotFound(format!("issue {issue_id}")))?;
 
         for hook in &self.hooks {
-            hook.on_status_changed(&updated, &old_status, new_status).await?;
+            hook.on_status_changed(&updated, &old_status, new_status)
+                .await?;
         }
         Ok(updated)
     }
@@ -519,7 +507,6 @@ impl<'a> IssueService<'a> {
             .await?;
         Ok(row)
     }
-
 
     /// 指派 / 重新指派 / 取消指派 issue。
     ///
@@ -558,8 +545,8 @@ impl<'a> IssueService<'a> {
         };
 
         // No-op 检测：assignee 字段完全一致
-        let already_matches = existing.assignee_agent_id == new_agent_id
-            && existing.assignee_user_id == new_user_id;
+        let already_matches =
+            existing.assignee_agent_id == new_agent_id && existing.assignee_user_id == new_user_id;
         if already_matches {
             return Ok(existing);
         }
@@ -652,13 +639,7 @@ impl<'a> IssueService<'a> {
         let author_user_id = user_id;
         let row = self
             .repo
-            .create_comment(
-                company_id,
-                issue_id,
-                author_agent_id,
-                author_user_id,
-                body,
-            )
+            .create_comment(company_id, issue_id, author_agent_id, author_user_id, body)
             .await?;
 
         for hook in &self.hooks {
@@ -703,7 +684,13 @@ pub enum CommentAuthor<'a> {
 
 /// 所有合法的 issue status — 对齐上游 paperclip `ALL_ISSUE_STATUSES`。
 pub const ALL_ISSUE_STATUSES: &[&str] = &[
-    "backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled",
+    "backlog",
+    "todo",
+    "in_progress",
+    "in_review",
+    "blocked",
+    "done",
+    "cancelled",
 ];
 
 fn is_valid_status(s: &str) -> bool {
@@ -711,7 +698,10 @@ fn is_valid_status(s: &str) -> bool {
 }
 
 fn is_valid_priority(s: &str) -> bool {
-    matches!(s, "low" | "normal" | "high" | "urgent" | "p0" | "p1" | "p2" | "p3")
+    matches!(
+        s,
+        "low" | "normal" | "high" | "urgent" | "p0" | "p1" | "p2" | "p3"
+    )
 }
 
 #[cfg(test)]

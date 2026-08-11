@@ -29,7 +29,10 @@ impl EmailAddress {
     pub fn new(address: impl Into<String>) -> Result<Self, EmailSenderError> {
         let address = address.into();
         validate_email_address(&address)?;
-        Ok(Self { address, name: None })
+        Ok(Self {
+            address,
+            name: None,
+        })
     }
 
     /// 构造带 display name 的 email address。
@@ -40,7 +43,9 @@ impl EmailAddress {
         let address = address.into();
         let name = name.into();
         if name.is_empty() {
-            return Err(EmailSenderError::InvalidConfig("display name must be non-empty".into()));
+            return Err(EmailSenderError::InvalidConfig(
+                "display name must be non-empty".into(),
+            ));
         }
         if name.contains('\n') || name.contains('\r') {
             return Err(EmailSenderError::InvalidConfig(
@@ -102,7 +107,9 @@ fn validate_email_address(address: &str) -> Result<(), EmailSenderError> {
     let local = parts.next().unwrap_or("");
     let domain = parts.next().unwrap_or("");
     if local.is_empty() || domain.is_empty() {
-        return Err(EmailSenderError::InvalidFormat("missing local or domain part".into()));
+        return Err(EmailSenderError::InvalidFormat(
+            "missing local or domain part".into(),
+        ));
     }
     if local.contains(char::is_control) || local.contains(' ') {
         return Err(EmailSenderError::InvalidFormat("invalid local part".into()));
@@ -547,7 +554,10 @@ mod tests {
     #[test]
     fn r568_email_sender_error_is_transient() {
         assert!(EmailSenderError::Upstream("oops".into()).is_transient());
-        assert!(EmailSenderError::RateLimited { retry_after_ms: Some(1000) }.is_transient());
+        assert!(EmailSenderError::RateLimited {
+            retry_after_ms: Some(1000)
+        }
+        .is_transient());
         assert!(!EmailSenderError::InvalidConfig("bad".into()).is_transient());
         assert!(!EmailSenderError::AuthFailed("bad".into()).is_transient());
     }

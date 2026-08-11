@@ -81,15 +81,18 @@ mod tests {
             "tags": ["alice", "admin"]
         });
         let out = redact_current_user_value(&v, &opts_alice());
-        assert_eq!(out, json!({
-            "user": "a****",
-            "home": "/home/a****",
-            "metadata": {
-                "owner": "a****",
-                "safe": 42
-            },
-            "tags": ["a****", "admin"]
-        }));
+        assert_eq!(
+            out,
+            json!({
+                "user": "a****",
+                "home": "/home/a****",
+                "metadata": {
+                    "owner": "a****",
+                    "safe": 42
+                },
+                "tags": ["a****", "admin"]
+            })
+        );
     }
 
     #[test]

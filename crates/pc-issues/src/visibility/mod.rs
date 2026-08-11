@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/issue-visibility.ts` 1:1 复刻。
 //! （原 `pc-issue-visibility` crate 已下沉到 `pc-issues::visibility`）。
 
-
 /// 字段名常量 —— 与 Drizzle schema 1:1 对齐。
 pub const ISSUES_HIDDEN_AT: &str = "hidden_at";
 pub const ISSUES_HARNESS_KIND: &str = "harness_kind";
@@ -12,11 +11,7 @@ pub const ISSUES_HARNESS_KIND: &str = "harness_kind";
 ///
 /// `alias` 必须是合法的 SQL identifier（仅字母数字 + `_`），否则返回 `None`。
 pub fn quote_alias(alias: &str) -> Option<String> {
-    if alias.is_empty()
-        || !alias
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if alias.is_empty() || !alias.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
     Some(format!("\"{alias}\""))

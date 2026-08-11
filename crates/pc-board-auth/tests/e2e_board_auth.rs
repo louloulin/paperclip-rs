@@ -1,14 +1,14 @@
 #![forbid(unsafe_code)]
 //! Round 687: pc-board-auth 端到端测试（Postgres 真实环境）。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 
+use pc_board_auth::service::Clock;
 use pc_board_auth::{
     board_auth_service, hash_bearer_token, BoardAccess, BoardApiKeyCreated, BoardAuthService,
     BoardAuthServiceError, ChallengeStatus, CliRequestedAccess,
 };
-use pc_board_auth::service::Clock;
 use pc_repos::board_key::BoardKeyRow;
 use pc_repos::instance_user_role::InstanceUserRoleRepo;
 use pc_repos::Db;
@@ -65,17 +65,18 @@ async fn make_user(db: &Db, tag: &str) -> String {
 
 async fn make_company(db: &Db, tag: &str) -> Uuid {
     let name = format!("Co {} {}", tag, Uuid::new_v4());
-    let prefix = format!("P{:02}{:02}",
+    let prefix = format!(
+        "P{:02}{:02}",
         Uuid::new_v4().as_u128() as u32 % 100,
-        Uuid::new_v4().as_u128() as u32 % 100);
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO companies (name, issue_prefix) VALUES ($1, $2) RETURNING id",
-    )
-    .bind(&name)
-    .bind(&prefix)
-    .fetch_one(db.pool())
-    .await
-    .expect("create company");
+        Uuid::new_v4().as_u128() as u32 % 100
+    );
+    let row: (Uuid,) =
+        sqlx::query_as("INSERT INTO companies (name, issue_prefix) VALUES ($1, $2) RETURNING id")
+            .bind(&name)
+            .bind(&prefix)
+            .fetch_one(db.pool())
+            .await
+            .expect("create company");
     row.0
 }
 
@@ -154,33 +155,21 @@ async fn r687_e2e_list_filters_inactive() {
         .await
         .unwrap();
 
-    let active = svc
-        .list_board_api_keys(&user_id, false)
-        .await
-        .unwrap();
+    let active = svc.list_board_api_keys(&user_id, false).await.unwrap();
     assert_eq!(active.len(), 2);
 
     // revoke k2
     svc.revoke_board_api_key(k2.id, &user_id).await.unwrap();
 
-    let active2 = svc
-        .list_board_api_keys(&user_id, false)
-        .await
-        .unwrap();
+    let active2 = svc.list_board_api_keys(&user_id, false).await.unwrap();
     assert_eq!(active2.len(), 1);
     assert_eq!(active2[0].id, k1.id);
 
-    let all = svc
-        .list_board_api_keys(&user_id, true)
-        .await
-        .unwrap();
+    let all = svc.list_board_api_keys(&user_id, true).await.unwrap();
     assert_eq!(all.len(), 2);
 
     // revoked token 不再可解析
-    let still = svc
-        .find_board_api_key_by_token(&k2.token)
-        .await
-        .unwrap();
+    let still = svc.find_board_api_key_by_token(&k2.token).await.unwrap();
     assert!(still.is_none());
 
     cleanup(&db, TAG).await;
@@ -278,11 +267,7 @@ async fn r687_e2e_cli_auth_challenge_full_lifecycle() {
 
     // 3. approve
     let (status, updated) = svc
-        .approve_cli_auth_challenge(
-            created.challenge.id,
-            &created.challenge_secret,
-            &user_id,
-        )
+        .approve_cli_auth_challenge(created.challenge.id, &created.challenge_secret, &user_id)
         .await
         .unwrap();
     assert_eq!(status, ChallengeStatus::Approved);
@@ -316,12 +301,7 @@ async fn r687_e2e_cli_auth_challenge_wrong_secret_returns_none() {
     let user_id = make_user(&db, TAG).await;
     let svc = board_auth_service(db.clone());
     let created = svc
-        .create_cli_auth_challenge(
-            "x",
-            None,
-            CliRequestedAccess::Board,
-            None,
-        )
+        .create_cli_auth_challenge("x", None, CliRequestedAccess::Board, None)
         .await
         .unwrap();
     let r = svc
@@ -339,20 +319,11 @@ async fn r687_e2e_cli_auth_instance_admin_required_blocks_normal_user() {
     let user_id = make_user(&db, TAG).await;
     let svc = board_auth_service(db.clone());
     let created = svc
-        .create_cli_auth_challenge(
-            "x",
-            None,
-            CliRequestedAccess::InstanceAdminRequired,
-            None,
-        )
+        .create_cli_auth_challenge("x", None, CliRequestedAccess::InstanceAdminRequired, None)
         .await
         .unwrap();
     let err = svc
-        .approve_cli_auth_challenge(
-            created.challenge.id,
-            &created.challenge_secret,
-            &user_id,
-        )
+        .approve_cli_auth_challenge(created.challenge.id, &created.challenge_secret, &user_id)
         .await
         .expect_err("must be forbidden");
     match err {
@@ -398,7 +369,9 @@ async fn r687_e2e_cli_auth_expired_blocks_approve() {
         .await
         .unwrap();
     // 时间推进 11 分钟（> 10min TTL）
-    clock.0.store(1_700_000_000_000 + 11 * 60 * 1000, Ordering::SeqCst);
+    clock
+        .0
+        .store(1_700_000_000_000 + 11 * 60 * 1000, Ordering::SeqCst);
     let (status, _) = svc
         .approve_cli_auth_challenge(created.challenge.id, &created.challenge_secret, &user_id)
         .await
@@ -425,7 +398,9 @@ async fn r687_e2e_assert_current_board_key() {
     assert!(key.revoked_at.is_none());
 
     // revoked 后再断言应报错
-    svc.revoke_board_api_key(created.id, &user_id).await.unwrap();
+    svc.revoke_board_api_key(created.id, &user_id)
+        .await
+        .unwrap();
     let err = svc
         .assert_current_board_key(Some(created.id), Some(&user_id))
         .await

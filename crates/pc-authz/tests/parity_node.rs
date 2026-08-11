@@ -5,9 +5,7 @@
 //! pc-authz 的纯函数 `evaluate()`，无需 DB。
 
 use pc_auth::Actor;
-use pc_authz::{
-    evaluate, Action, CompanyRole, Context, PermissionKey, Reason, Resource,
-};
+use pc_authz::{evaluate, Action, CompanyRole, Context, PermissionKey, Reason, Resource};
 use uuid::Uuid;
 
 fn system() -> Actor {
@@ -119,10 +117,7 @@ fn parity_instance_admin_short_circuits_all_actions() {
     ];
     for action in actions {
         let d = evaluate(&actor, &ctx, &company_resource(c), action);
-        assert!(
-            d.allowed,
-            "instance_admin should allow {action:?}: {d:?}"
-        );
+        assert!(d.allowed, "instance_admin should allow {action:?}: {d:?}");
         assert_eq!(d.reason, Reason::AllowInstanceAdmin);
     }
 }
@@ -190,12 +185,7 @@ fn parity_admin_role_unlocks_admin_actions() {
         PermissionKey::ToolsAdmin,
         PermissionKey::UsersManagePermissions,
     ] {
-        let d = evaluate(
-            &actor,
-            &ctx,
-            &company_resource(c),
-            Action::Permission(key),
-        );
+        let d = evaluate(&actor, &ctx, &company_resource(c), Action::Permission(key));
         assert!(d.allowed, "{key:?} should be allowed for admin");
         assert_eq!(d.reason, Reason::AllowSimpleCompanyMember);
     }
@@ -217,12 +207,7 @@ fn parity_operator_role_lacks_admin_only_keys() {
         PermissionKey::ToolsAdmin,
         PermissionKey::UsersManagePermissions,
     ] {
-        let d = evaluate(
-            &actor,
-            &ctx,
-            &company_resource(c),
-            Action::Permission(key),
-        );
+        let d = evaluate(&actor, &ctx, &company_resource(c), Action::Permission(key));
         assert!(!d.allowed, "{key:?} should be denied for operator");
         assert_eq!(d.reason, Reason::DenyMissingGrant);
     }
@@ -239,7 +224,10 @@ fn parity_issue_assignee_can_mutate() {
         false,
     );
     let mut resource = issue_resource(c);
-    if let Resource::Issue { assignee_user_id, .. } = &mut resource {
+    if let Resource::Issue {
+        assignee_user_id, ..
+    } = &mut resource
+    {
         *assignee_user_id = Some("u1".into());
     }
     let d = evaluate(&actor, &ctx, &resource, Action::IssueMutate);
@@ -286,7 +274,10 @@ fn parity_agent_self_via_assignee_can_mutate() {
     let actor = agent(agent_id, c);
     let ctx = Context::for_agent(vec![membership(c, None)], vec![]);
     let mut resource = issue_resource(c);
-    if let Resource::Issue { assignee_agent_id, .. } = &mut resource {
+    if let Resource::Issue {
+        assignee_agent_id, ..
+    } = &mut resource
+    {
         *assignee_agent_id = Some(agent_id);
     }
     let d = evaluate(&actor, &ctx, &resource, Action::IssueMutate);
@@ -310,8 +301,13 @@ fn parity_agent_mention_grant_allows_comment() {
     let c = Uuid::new_v4();
     let agent_id = Uuid::new_v4();
     let actor = agent(agent_id, c);
-    let ctx = Context::for_agent(vec![membership(c, None)], vec![])
-        .with_extended_issue(vec![agent_id], None, false, false, false);
+    let ctx = Context::for_agent(vec![membership(c, None)], vec![]).with_extended_issue(
+        vec![agent_id],
+        None,
+        false,
+        false,
+        false,
+    );
     let d = evaluate(&actor, &ctx, &issue_resource(c), Action::IssueComment);
     assert!(d.allowed);
     assert_eq!(d.reason, Reason::AllowIssueMentionGrant);
@@ -323,10 +319,18 @@ fn parity_agent_parent_report_allows_comment() {
     let agent_id = Uuid::new_v4();
     let parent_id = Uuid::new_v4();
     let actor = agent(agent_id, c);
-    let ctx = Context::for_agent(vec![membership(c, None)], vec![])
-        .with_extended_issue(vec![], Some(parent_id), true, false, false);
+    let ctx = Context::for_agent(vec![membership(c, None)], vec![]).with_extended_issue(
+        vec![],
+        Some(parent_id),
+        true,
+        false,
+        false,
+    );
     let mut resource = issue_resource(c);
-    if let Resource::Issue { parent_issue_id, .. } = &mut resource {
+    if let Resource::Issue {
+        parent_issue_id, ..
+    } = &mut resource
+    {
         *parent_issue_id = Some(parent_id);
     }
     let d = evaluate(&actor, &ctx, &resource, Action::IssueComment);
@@ -339,8 +343,13 @@ fn parity_agent_consent_grant_allows_mutate() {
     let c = Uuid::new_v4();
     let agent_id = Uuid::new_v4();
     let actor = agent(agent_id, c);
-    let ctx = Context::for_agent(vec![membership(c, None)], vec![])
-        .with_extended_issue(vec![], None, false, true, false);
+    let ctx = Context::for_agent(vec![membership(c, None)], vec![]).with_extended_issue(
+        vec![],
+        None,
+        false,
+        true,
+        false,
+    );
     let d = evaluate(&actor, &ctx, &issue_resource(c), Action::IssueMutate);
     assert!(d.allowed);
     assert_eq!(d.reason, Reason::AllowConsentedChange);
@@ -358,16 +367,8 @@ fn parity_agent_without_grant_cannot_write() {
         PermissionKey::UsersInvite,
         PermissionKey::ToolsAdmin,
     ] {
-        let d = evaluate(
-            &actor,
-            &ctx,
-            &company_resource(c),
-            Action::Permission(key),
-        );
-        assert!(
-            !d.allowed,
-            "agent without grant should not write {key:?}"
-        );
+        let d = evaluate(&actor, &ctx, &company_resource(c), Action::Permission(key));
+        assert!(!d.allowed, "agent without grant should not write {key:?}");
         assert_eq!(d.reason, Reason::DenyNoGrant);
     }
 }

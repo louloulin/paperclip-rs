@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use crate::types::{
-    ChangeKind, FingerprintEntry, RefreshTriggers, StatusCardDeltaChange,
-    StatusCardFingerprint, StatusCardRefreshPolicy,
+    ChangeKind, FingerprintEntry, RefreshTriggers, StatusCardDeltaChange, StatusCardFingerprint,
+    StatusCardRefreshPolicy,
 };
 
 // ============================================================================
@@ -48,10 +48,7 @@ pub fn diff_status_card_fingerprint(
     for (issue_id, next) in current {
         let prior = before.get(issue_id);
 
-        let identifier = next
-            .identifier
-            .clone()
-            .unwrap_or_else(|| issue_id.clone());
+        let identifier = next.identifier.clone().unwrap_or_else(|| issue_id.clone());
         let title = next.title.clone().unwrap_or_default();
 
         match prior {
@@ -221,14 +218,32 @@ mod tests {
     #[test]
     fn r676_diff_marks_new_status_removed() {
         let mut prev = StatusCardFingerprint::new();
-        prev.insert("churn".to_string(), entry("todo", "2026-07-23T10:00:00.000Z"));
-        prev.insert("done".to_string(), entry("in_progress", "2026-07-23T10:00:00.000Z"));
-        prev.insert("removed".to_string(), entry("blocked", "2026-07-23T10:00:00.000Z"));
+        prev.insert(
+            "churn".to_string(),
+            entry("todo", "2026-07-23T10:00:00.000Z"),
+        );
+        prev.insert(
+            "done".to_string(),
+            entry("in_progress", "2026-07-23T10:00:00.000Z"),
+        );
+        prev.insert(
+            "removed".to_string(),
+            entry("blocked", "2026-07-23T10:00:00.000Z"),
+        );
 
         let mut curr = StatusCardFingerprint::new();
-        curr.insert("churn".to_string(), entry("in_progress", "2026-07-23T10:01:00.000Z"));
-        curr.insert("done".to_string(), entry("done", "2026-07-23T10:01:00.000Z"));
-        curr.insert("added".to_string(), entry("todo", "2026-07-23T10:01:00.000Z"));
+        curr.insert(
+            "churn".to_string(),
+            entry("in_progress", "2026-07-23T10:01:00.000Z"),
+        );
+        curr.insert(
+            "done".to_string(),
+            entry("done", "2026-07-23T10:01:00.000Z"),
+        );
+        curr.insert(
+            "added".to_string(),
+            entry("todo", "2026-07-23T10:01:00.000Z"),
+        );
 
         let changes = diff_status_card_fingerprint(Some(&prev), &curr);
         assert_eq!(changes.len(), 4);

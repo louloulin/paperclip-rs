@@ -13,6 +13,9 @@
 
 use pc_acpx::ssh::SshConnectionConfig;
 use pc_adapter_api::{AdapterEventSink, AdapterExecutionContext};
+use pc_adapter_codex_local::codex_remote_home::{
+    stage_remote_codex_home_for_target, StageRemoteCodexHomeInput,
+};
 use pc_adapter_codex_local::{execute_codex_with_monitor, CodexExecArgs};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -281,4 +284,85 @@ async fn codex_execute_codex_with_monitor_dispatches_to_ssh_and_returns_remote_s
         "event sink must stream remote stdout; got {:?}",
         observed
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_managed_home_stages_allowlist_over_real_ssh() {
+    let Some(fixture) = SshLabFixture::start().await else {
+        return;
+    };
+    let local_home = fixture.root_dir.join("managed-codex-home");
+    std::fs::create_dir_all(local_home.join("skills/demo")).expect("create local Codex home");
+    std::fs::write(local_home.join("auth.json"), "auth-bytes").expect("write auth");
+    std::fs::write(local_home.join("config.toml"), "model = \"gpt-5\"\n").expect("write config");
+    std::fs::write(local_home.join("skills/demo/SKILL.md"), "skill-bytes").expect("write skill");
+    std::fs::write(local_home.join("sessions.sqlite"), "must-not-ship")
+        .expect("write runtime state");
+    let remote_home = format!(
+        "{}/.paperclip-runtime/codex/home",
+        fixture.config.remote_workspace_path
+    );
+    let target = pc_acpx::execution_target::adapter_execution_target_from_remote_execution(
+        &ssh_target_json(&fixture),
+        None,
+    )
+    .expect("parse SSH target");
+
+    let result = stage_remote_codex_home_for_target(
+        &target,
+        &StageRemoteCodexHomeInput {
+            local_home,
+            remote_home: remote_home.clone(),
+            run_id: "r598".to_string(),
+        },
+    )
+    .await
+    .expect("stage Codex home over SSH");
+    assert_eq!(result.remote_home, remote_home);
+
+    let read_remote = |path: String| {
+        let config = fixture.config.clone();
+        async move {
+            pc_acpx::ssh::run_ssh_command(
+                &config,
+                &format!("cat {}", pc_acpx::ssh::shell_quote(&path)),
+                &pc_acpx::ssh::SshCommandOptions {
+                    env: BTreeMap::new(),
+                    stdin: None,
+                    timeout_ms: 5_000,
+                    max_buffer: 64 * 1024,
+                },
+            )
+            .await
+            .expect("read staged remote file")
+            .stdout
+        }
+    };
+    assert_eq!(
+        read_remote(format!("{remote_home}/auth.json")).await,
+        "auth-bytes"
+    );
+    assert_eq!(
+        read_remote(format!("{remote_home}/config.toml")).await,
+        "model = \"gpt-5\"\n"
+    );
+    assert_eq!(
+        read_remote(format!("{remote_home}/skills/demo/SKILL.md")).await,
+        "skill-bytes"
+    );
+    let _omitted = pc_acpx::ssh::run_ssh_command(
+        &fixture.config,
+        &format!(
+            "test ! -e {}",
+            pc_acpx::ssh::shell_quote(&format!("{remote_home}/sessions.sqlite"))
+        ),
+        &pc_acpx::ssh::SshCommandOptions {
+            env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: 5_000,
+            max_buffer: 64 * 1024,
+        },
+    )
+    .await
+    .expect("check omitted runtime state");
 }

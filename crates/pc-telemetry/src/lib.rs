@@ -121,13 +121,13 @@ pub mod otlp;
 pub use otlp::{build_otlp_provider, install_global, OtlpConfig};
 
 pub mod feedback_share;
+pub mod global;
 mod product;
 mod retry_queue;
-pub mod global;
 
 pub use product::{
-    load_or_create_state, Event, PendingBatch, PeriodicFlushHandle, ProductTelemetryClient, ProductTelemetryConfig,
-    RetryActorHandle, TelemetryState,
+    load_or_create_state, Event, PendingBatch, PeriodicFlushHandle, ProductTelemetryClient,
+    ProductTelemetryConfig, RetryActorHandle, TelemetryState,
 };
 pub use retry_queue::{RetryBackoff, RetryQueue};
 

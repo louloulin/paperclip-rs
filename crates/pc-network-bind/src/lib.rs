@@ -79,7 +79,9 @@ impl std::fmt::Display for BindMode {
 /// Deployment mode.
 ///
 /// Mirrors Node `DEPLOYMENT_MODES = ["local_trusted", "authenticated"]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentMode {
     #[default]
@@ -106,7 +108,9 @@ impl std::fmt::Display for DeploymentMode {
 /// Deployment exposure (visibility).
 ///
 /// Mirrors Node `DEPLOYMENT_EXPOSURES = ["private", "public"]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum DeploymentExposure {
     #[default]

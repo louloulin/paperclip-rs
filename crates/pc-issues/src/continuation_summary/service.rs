@@ -11,14 +11,14 @@ use uuid::Uuid;
 
 use pc_repos::Db;
 
-use super::hook::{
-    IssueContinuationSummaryHook, NoopIssueContinuationSummaryHook,
+use super::hook::{IssueContinuationSummaryHook, NoopIssueContinuationSummaryHook};
+use super::markdown::{
+    build_continuation_summary_markdown, extract_continuation_summary_next_action,
 };
-use super::markdown::{build_continuation_summary_markdown, extract_continuation_summary_next_action};
 use super::types::{
-    BuildContinuationSummaryInput, IssueContinuationSummaryDocument,
-    IssueSummaryInput, RefreshContinuationSummaryInput, AgentSummaryInput,
-    ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY, ISSUE_CONTINUATION_SUMMARY_TITLE,
+    AgentSummaryInput, BuildContinuationSummaryInput, IssueContinuationSummaryDocument,
+    IssueSummaryInput, RefreshContinuationSummaryInput, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+    ISSUE_CONTINUATION_SUMMARY_TITLE,
 };
 
 /// 顶层公开函数：读取 issue 的 continuation summary document。
@@ -85,8 +85,7 @@ pub async fn refresh_continuation_summary(
 
     let issue = IssueSummaryInput {
         id: issue_row.get::<Uuid, _>("id").to_string(),
-        identifier: issue_row
-            .get::<Option<String>, _>("identifier"),
+        identifier: issue_row.get::<Option<String>, _>("identifier"),
         title: issue_row.get("title"),
         description: issue_row.get("description"),
         status: issue_row.get("status"),
@@ -134,12 +133,11 @@ pub async fn refresh_continuation_summary(
 
     let document_id = if let Some(doc_id) = existing_doc_id {
         // Update existing document
-        let next_rev: i32 = sqlx::query_scalar(
-            "SELECT latest_revision_number FROM documents WHERE id = $1",
-        )
-        .bind(doc_id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let next_rev: i32 =
+            sqlx::query_scalar("SELECT latest_revision_number FROM documents WHERE id = $1")
+                .bind(doc_id)
+                .fetch_one(&mut *tx)
+                .await?;
 
         // Insert revision
         let revision_id = Uuid::new_v4();

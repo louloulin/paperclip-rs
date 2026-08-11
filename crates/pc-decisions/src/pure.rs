@@ -91,7 +91,10 @@ pub fn effect_target_ids(effect: &Value) -> Vec<String> {
         }
     }
     if effect.get("type").and_then(Value::as_str) == Some("resolve_blocker") {
-        if let Some(remove) = effect.get("removeBlockedByIssueIds").and_then(Value::as_array) {
+        if let Some(remove) = effect
+            .get("removeBlockedByIssueIds")
+            .and_then(Value::as_array)
+        {
             for id in remove.iter().filter_map(Value::as_str) {
                 push_unique(&mut result, &mut seen, id);
             }
@@ -142,9 +145,8 @@ pub fn target_actions(options: &Value) -> BTreeMap<String, BTreeSet<EffectAction
             continue;
         };
         for effect in effects {
-            let action = classify_effect_type(
-                effect.get("type").and_then(Value::as_str).unwrap_or(""),
-            );
+            let action =
+                classify_effect_type(effect.get("type").and_then(Value::as_str).unwrap_or(""));
             for id in effect_target_ids(effect) {
                 result.entry(id).or_default().insert(action);
             }
@@ -352,7 +354,8 @@ impl CreateDecisionSpec {
         &self,
         now: chrono::DateTime<chrono::Utc>,
     ) -> chrono::DateTime<chrono::Utc> {
-        self.expires_at.unwrap_or_else(|| now + chrono::Duration::days(7))
+        self.expires_at
+            .unwrap_or_else(|| now + chrono::Duration::days(7))
     }
 }
 
@@ -374,12 +377,18 @@ mod tests {
     #[test]
     fn r492_classify_unknown_defaults_to_mutate() {
         assert_eq!(classify_effect_type(""), EffectAction::Mutate);
-        assert_eq!(classify_effect_type("update_issue_status"), EffectAction::Mutate);
+        assert_eq!(
+            classify_effect_type("update_issue_status"),
+            EffectAction::Mutate
+        );
         assert_eq!(
             classify_effect_type("cancel_issue_tree"),
             EffectAction::Mutate
         );
-        assert_eq!(classify_effect_type("future_unknown_type"), EffectAction::Mutate);
+        assert_eq!(
+            classify_effect_type("future_unknown_type"),
+            EffectAction::Mutate
+        );
     }
 
     #[test]
@@ -451,7 +460,10 @@ mod tests {
                 "blockedByIssueIds": ["i-1", "i-2"],
             },
         });
-        assert_eq!(effect_target_ids(&effect), vec!["i-1".to_string(), "i-2".to_string()]);
+        assert_eq!(
+            effect_target_ids(&effect),
+            vec!["i-1".to_string(), "i-2".to_string()]
+        );
     }
 
     #[test]
@@ -499,11 +511,7 @@ mod tests {
         let result = target_ids(&options);
         assert_eq!(
             result,
-            vec![
-                "i-a".to_string(),
-                "i-b".to_string(),
-                "i-c".to_string(),
-            ]
+            vec!["i-a".to_string(), "i-b".to_string(), "i-c".to_string(),]
         );
     }
 
@@ -641,7 +649,10 @@ mod tests {
     fn r492_interpolate_unicode_text_safe() {
         let mut values = HashMap::new();
         values.insert("topic".to_string(), "目录".to_string());
-        assert_eq!(interpolate("关于 {{input.topic}} 的说明", &values), "关于 目录 的说明");
+        assert_eq!(
+            interpolate("关于 {{input.topic}} 的说明", &values),
+            "关于 目录 的说明"
+        );
     }
 
     // -------- find_commit_sha --------
@@ -651,7 +662,10 @@ mod tests {
         // The re-export must point at the canonical implementation, so
         // semantically equal inputs produce equal outputs.
         let v = json!({"headSha": "abc1234", "nested": {"commitSha": "def5678"}});
-        assert_eq!(find_commit_sha(&v), pc_repos::decision_training::find_commit_sha(&v));
+        assert_eq!(
+            find_commit_sha(&v),
+            pc_repos::decision_training::find_commit_sha(&v)
+        );
     }
 
     #[test]

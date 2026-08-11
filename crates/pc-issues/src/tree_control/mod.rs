@@ -13,7 +13,7 @@ pub use hook::{
 };
 pub use policy::{
     default_release_policy, parse_mode, validate_mode, validate_release_policy,
-    IssueTreeReleasePolicyStrategy, MODE_PAUSE, MODE_STOP, MODE_THROTTLE, MODE_ISOLATE,
+    IssueTreeReleasePolicyStrategy, MODE_ISOLATE, MODE_PAUSE, MODE_STOP, MODE_THROTTLE,
 };
 pub use service::{IssueTreeControlActor, IssueTreeControlError, IssueTreeControlService};
 pub use types::{

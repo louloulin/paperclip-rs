@@ -3,12 +3,11 @@
 //! 对应 Node `server/src/services/trust-preset-resolver.ts` 1:1 复刻。
 //! （原 `pc-trust-preset-resolver` crate 已下沉到 `pc-core::trust_preset_resolver`）。
 
-
-use pc_repos::Db;
 use super::{
     is_issue_within_low_trust_boundary, BoundaryIssue, LowTrustBoundaryWithCompany,
     TrustPresetResolution, LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH,
 };
+use pc_repos::Db;
 use serde::Serialize;
 use thiserror::Error;
 use uuid::Uuid;
@@ -76,17 +75,17 @@ pub struct RuntimeServicesInput {
 }
 
 /// 是否允许在 low-trust review boundary 内启动 runtime 管理工具。
-pub fn is_low_trust_runtime_management_allowed(
-    resolution: &TrustPresetResolution,
-) -> bool {
+pub fn is_low_trust_runtime_management_allowed(resolution: &TrustPresetResolution) -> bool {
     match resolution {
-        TrustPresetResolution::LowTrustReview { boundary, .. } => {
-            boundary
-                .allowed_tool_classes
-                .as_ref()
-                .map(|classes| classes.iter().any(|c| c == LOW_TRUST_RUNTIME_MANAGEMENT_TOOL_CLASS))
-                .unwrap_or(false)
-        }
+        TrustPresetResolution::LowTrustReview { boundary, .. } => boundary
+            .allowed_tool_classes
+            .as_ref()
+            .map(|classes| {
+                classes
+                    .iter()
+                    .any(|c| c == LOW_TRUST_RUNTIME_MANAGEMENT_TOOL_CLASS)
+            })
+            .unwrap_or(false),
         _ => false,
     }
 }
@@ -117,7 +116,9 @@ async fn issue_id_is_descendant_of(
 ) -> bool {
     let mut cursor: Option<String> = Some(issue_id.to_string());
     for _ in 0..LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH {
-        let Some(cur) = cursor.take() else { return false };
+        let Some(cur) = cursor.take() else {
+            return false;
+        };
         if cur == root_issue_id {
             return true;
         }
@@ -135,7 +136,9 @@ async fn issue_id_is_descendant_of(
             Ok(r) => r,
             Err(_) => return false,
         };
-        let Some((row_company, parent_id)) = row else { return false };
+        let Some((row_company, parent_id)) = row else {
+            return false;
+        };
         if row_company != company_id {
             return false;
         }
@@ -149,7 +152,12 @@ pub async fn assert_low_trust_workspace_isolation(
     input: &WorkspaceIsolationInput,
 ) -> Result<(), LowTrustContainmentError> {
     match &input.resolution {
-        TrustPresetResolution::Denied { reason, source: _, detail, .. } => {
+        TrustPresetResolution::Denied {
+            reason,
+            source: _,
+            detail,
+            ..
+        } => {
             return Err(LowTrustContainmentError::Denied {
                 detail: detail.clone(),
                 reason: reason.as_str().to_string(),
@@ -158,7 +166,10 @@ pub async fn assert_low_trust_workspace_isolation(
         TrustPresetResolution::Standard { .. } | TrustPresetResolution::LowTrustReview { .. } => {}
     }
 
-    if !matches!(input.resolution, TrustPresetResolution::LowTrustReview { .. }) {
+    if !matches!(
+        input.resolution,
+        TrustPresetResolution::LowTrustReview { .. }
+    ) {
         return Ok(());
     }
 
@@ -174,9 +185,7 @@ pub async fn assert_low_trust_workspace_isolation(
     };
 
     let in_boundary = match input.issue.as_ref() {
-        Some(issue) => {
-            is_issue_within_boundary(None, boundary, issue).await
-        }
+        Some(issue) => is_issue_within_boundary(None, boundary, issue).await,
         None => false,
     };
     if !in_boundary {
@@ -194,7 +203,12 @@ pub fn assert_low_trust_runtime_services_allowed(
     input: &RuntimeServicesInput,
 ) -> Result<(), LowTrustContainmentError> {
     match &input.resolution {
-        TrustPresetResolution::Denied { reason, source: _, detail, .. } => {
+        TrustPresetResolution::Denied {
+            reason,
+            source: _,
+            detail,
+            ..
+        } => {
             return Err(LowTrustContainmentError::Denied {
                 detail: detail.clone(),
                 reason: reason.as_str().to_string(),
@@ -203,7 +217,10 @@ pub fn assert_low_trust_runtime_services_allowed(
         TrustPresetResolution::Standard { .. } | TrustPresetResolution::LowTrustReview { .. } => {}
     }
 
-    if !matches!(input.resolution, TrustPresetResolution::LowTrustReview { .. }) {
+    if !matches!(
+        input.resolution,
+        TrustPresetResolution::LowTrustReview { .. }
+    ) {
         return Ok(());
     }
     if input.runtime_service_count == 0 {

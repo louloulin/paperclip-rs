@@ -90,7 +90,10 @@ async fn r593_portability_preview_emits_lifecycle_event() {
     let events = hook.events.lock().expect("lock");
     assert_eq!(events.len(), 1);
     match &events[0] {
-        PortabilityLifecycleEvent::Previewed { company_id: cid, counts } => {
+        PortabilityLifecycleEvent::Previewed {
+            company_id: cid,
+            counts,
+        } => {
             assert_eq!(*cid, company_id);
             assert_eq!(counts.issues, 0);
         }
@@ -133,7 +136,10 @@ async fn r593_portability_preview_includes_company_input() {
             ..Default::default()
         },
     };
-    let preview = svc.preview(company_id, input.clone()).await.expect("preview");
+    let preview = svc
+        .preview(company_id, input.clone())
+        .await
+        .expect("preview");
     assert_eq!(preview.include, input.include);
     assert!(preview.include.agents);
     assert!(preview.include.issues);
@@ -149,7 +155,10 @@ async fn r593_portability_list_summaries_empty() {
 
     let issues = svc.list_issue_summaries(company_id).await.expect("issues");
     let agents = svc.list_agent_summaries(company_id).await.expect("agents");
-    let pipelines = svc.list_pipeline_summaries(company_id).await.expect("pipelines");
+    let pipelines = svc
+        .list_pipeline_summaries(company_id)
+        .await
+        .expect("pipelines");
     assert!(issues.is_empty());
     assert!(agents.is_empty());
     assert!(pipelines.is_empty());
@@ -320,7 +329,10 @@ async fn r600_export_emits_lifecycle_event() {
     let events = hook.events.lock().expect("lock");
     assert_eq!(events.len(), 1);
     match &events[0] {
-        PortabilityLifecycleEvent::Exported { company_id: cid, counts } => {
+        PortabilityLifecycleEvent::Exported {
+            company_id: cid,
+            counts,
+        } => {
             assert_eq!(*cid, company_id);
             assert_eq!(counts.agents, 0);
         }
@@ -392,7 +404,10 @@ async fn r630_import_rejects_empty_company_name() {
         })
         .await
         .expect_err("empty name rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 
     cleanup(&pool, source_company_id).await;
 }
@@ -434,7 +449,10 @@ async fn r630_import_rejects_empty_manifest() {
         })
         .await
         .expect_err("empty manifest rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -475,9 +493,10 @@ async fn r630_import_creates_new_company_with_agents_and_issues() {
 
     // Hook fired with Imported event
     let events = (*recorder).events_snapshot();
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, pc_portability::PortabilityLifecycleEvent::Imported { .. })));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        pc_portability::PortabilityLifecycleEvent::Imported { .. }
+    )));
 
     // Cleanup both companies
     cleanup_with_agents(&pool, source_company_id).await;
@@ -489,18 +508,18 @@ async fn r630_import_skip_collision_strategy() {
     let (db, pool) = setup_db().await;
     let source_company_id = insert_company(&pool).await;
     for _ in 0..2 {
-    sqlx::query(
-        "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at) \
+        sqlx::query(
+            "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, now(), now())",
-    )
-    .bind(Uuid::new_v4())
-    .bind(source_company_id)
-    .bind("SkipMe Title")
-    .bind("todo")
-    .bind("medium")
-    .execute(&pool)
-    .await
-    .expect("insert duplicate-title issue");
+        )
+        .bind(Uuid::new_v4())
+        .bind(source_company_id)
+        .bind("SkipMe Title")
+        .bind("todo")
+        .bind("medium")
+        .execute(&pool)
+        .await
+        .expect("insert duplicate-title issue");
     }
 
     let svc = PortabilityService::new(&db);
@@ -530,13 +549,12 @@ async fn r630_import_skip_collision_strategy() {
     cleanup_with_agents(&pool, result.target_company_id).await;
 }
 
-
 #[tokio::test(flavor = "current_thread")]
 async fn r630_import_rename_collision_strategy() {
     let (db, pool) = setup_db().await;
     let source_company_id = insert_company(&pool).await;
     for _ in 0..2 {
-    sqlx::query(
+        sqlx::query(
         "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at)          VALUES ($1, $2, $3, $4, $5, now(), now())",
     )
     .bind(Uuid::new_v4())
@@ -576,14 +594,12 @@ async fn r630_import_rename_collision_strategy() {
     cleanup_with_agents(&pool, result.target_company_id).await;
 }
 
-
-
 #[tokio::test(flavor = "current_thread")]
 async fn r630_import_fail_collision_strategy() {
     let (db, pool) = setup_db().await;
     let source_company_id = insert_company(&pool).await;
     for _ in 0..2 {
-    sqlx::query(
+        sqlx::query(
         "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at)          VALUES ($1, $2, $3, $4, $5, now(), now())",
     )
     .bind(Uuid::new_v4())
@@ -616,12 +632,13 @@ async fn r630_import_fail_collision_strategy() {
         })
         .await
         .expect_err("conflict in Fail strategy");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 
     cleanup_with_agents(&pool, source_company_id).await;
 }
-
-
 
 #[tokio::test(flavor = "current_thread")]
 async fn r630_import_excludes_agents_when_disabled() {
@@ -822,7 +839,10 @@ async fn r633_import_rejects_unsupported_version() {
         })
         .await
         .expect_err("version 2.0 rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 
     // Restore to v1.0 and verify it works
     bad_manifest.version = "1.0".into();
@@ -886,10 +906,16 @@ async fn r634_export_accepts_custom_metadata() {
         .export(company_id, input)
         .await
         .expect("export with metadata");
-    assert_eq!(manifest.metadata.source_hostname.as_deref(), Some("test-host"));
+    assert_eq!(
+        manifest.metadata.source_hostname.as_deref(),
+        Some("test-host")
+    );
     assert_eq!(manifest.metadata.generator_version, "1.0.0");
     assert_eq!(manifest.metadata.generated_by.as_deref(), Some("user-42"));
-    assert_eq!(manifest.metadata.signature_sha256.as_deref(), Some("abc123"));
+    assert_eq!(
+        manifest.metadata.signature_sha256.as_deref(),
+        Some("abc123")
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -941,7 +967,10 @@ async fn r634_import_rejects_empty_generator_version() {
         })
         .await
         .expect_err("empty generator version rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 
     // Restore and verify it works
     bad_manifest.metadata.generator_version = "1.0.0".into();
@@ -1025,7 +1054,8 @@ async fn r635_verify_manifest_signature_detects_tampering() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn r635_verify_manifest_signature_returns_false_when_unsigned() {
-    let binding = setup_db().await; let svc = PortabilityService::new(&(binding.0));
+    let binding = setup_db().await;
+    let svc = PortabilityService::new(&(binding.0));
     let unsigned = pc_portability::ExportManifest {
         version: "1.0".into(),
         company: pc_portability::CompanySummary {
@@ -1119,7 +1149,10 @@ async fn r636_import_rejects_future_generated_at() {
         })
         .await
         .expect_err("future generatedAt rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1164,7 +1197,10 @@ async fn r636_import_rejects_ancient_generated_at() {
         })
         .await
         .expect_err("ancient generatedAt rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1412,10 +1448,7 @@ async fn r639_dry_run_import_reports_counts() {
         .await
         .expect("export");
 
-    let preview = svc
-        .dry_run_import(&manifest)
-        .await
-        .expect("dry_run");
+    let preview = svc.dry_run_import(&manifest).await.expect("dry_run");
     assert_eq!(preview.agents_would_create, 1);
     assert_eq!(preview.issues_would_create, 1);
     assert_eq!(preview.pipelines_would_create, 1);
@@ -1423,13 +1456,11 @@ async fn r639_dry_run_import_reports_counts() {
     assert!(preview.conflicts.is_empty());
 
     // Verify the specific source company has no "DryRun Co" duplicate (would only appear if import had actually run).
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM companies WHERE name = $1",
-    )
-    .bind("DryRun Co")
-    .fetch_one(&pool)
-    .await
-    .expect("count");
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM companies WHERE name = $1")
+        .bind("DryRun Co")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
     assert_eq!(count.0, 0, "dry_run must not create companies");
 
     cleanup(&pool, source_company_id).await;
@@ -1506,7 +1537,10 @@ async fn r639_dry_run_rejects_empty_manifest() {
         .dry_run_import(&empty)
         .await
         .expect_err("empty manifest rejected");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 }
 
 // ===================================================================
@@ -1586,10 +1620,7 @@ async fn r641_counts_for_company_returns_aggregates() {
     .expect("insert project");
 
     let svc = PortabilityService::new(&db);
-    let counts = svc
-        .counts_for_company(company_id)
-        .await
-        .expect("counts");
+    let counts = svc.counts_for_company(company_id).await.expect("counts");
     assert_eq!(counts.agents, 1);
     assert_eq!(counts.issues, 1);
     assert_eq!(counts.projects, 1);
@@ -1668,7 +1699,9 @@ async fn r642_validate_manifest_rejects_empty_entity_lists() {
     let svc = PortabilityService::new(&db);
     let mut manifest = make_valid_manifest();
     manifest.issues.clear();
-    let err = svc.validate_manifest(&manifest).expect_err("empty entities");
+    let err = svc
+        .validate_manifest(&manifest)
+        .expect_err("empty entities");
     assert!(err.to_string().contains("at least one"));
 }
 
@@ -1678,7 +1711,9 @@ async fn r642_validate_manifest_rejects_empty_generator_version() {
     let svc = PortabilityService::new(&db);
     let mut manifest = make_valid_manifest();
     manifest.metadata.generator_version = " ".into();
-    let err = svc.validate_manifest(&manifest).expect_err("empty gen version");
+    let err = svc
+        .validate_manifest(&manifest)
+        .expect_err("empty gen version");
     assert!(err.to_string().contains("generatorVersion"));
 }
 
@@ -1750,21 +1785,27 @@ async fn r644_summarize_counts_all_kinds() {
     let svc = PortabilityService::new(&db);
     let mut manifest = make_valid_manifest();
     // Add agent + pipeline + project
-    manifest.agents.push(pc_repos::company_export::AgentSummary {
-        id: Uuid::new_v4(),
-        name: "A1".into(),
-        role: "general".into(),
-    });
-    manifest.agents.push(pc_repos::company_export::AgentSummary {
-        id: Uuid::new_v4(),
-        name: "A2".into(),
-        role: "general".into(),
-    });
-    manifest.pipelines.push(pc_repos::company_export::PipelineSummary {
-        id: Uuid::new_v4(),
-        key: "k".into(),
-        name: "P1".into(),
-    });
+    manifest
+        .agents
+        .push(pc_repos::company_export::AgentSummary {
+            id: Uuid::new_v4(),
+            name: "A1".into(),
+            role: "general".into(),
+        });
+    manifest
+        .agents
+        .push(pc_repos::company_export::AgentSummary {
+            id: Uuid::new_v4(),
+            name: "A2".into(),
+            role: "general".into(),
+        });
+    manifest
+        .pipelines
+        .push(pc_repos::company_export::PipelineSummary {
+            id: Uuid::new_v4(),
+            key: "k".into(),
+            name: "P1".into(),
+        });
     manifest.projects.push(pc_portability::ProjectSummary {
         id: Uuid::new_v4(),
         name: "Proj".into(),
@@ -1820,7 +1861,10 @@ async fn r645_manifest_from_json_rejects_invalid() {
     let svc = PortabilityService::new(&db);
     let bad = "{not valid json}";
     let err = svc.manifest_from_json(bad).expect_err("invalid");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
     assert!(err.to_string().contains("parse"));
 }
 
@@ -1831,7 +1875,10 @@ async fn r645_manifest_from_json_rejects_wrong_shape() {
     // Missing required fields
     let bad = r#"{"version":"1.0"}"#;
     let err = svc.manifest_from_json(bad).expect_err("missing fields");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::InvalidInput(_)
+    ));
 }
 
 // ===================================================================
@@ -2062,10 +2109,7 @@ async fn r650_count_file_resources_returns_zero_for_empty() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
     let svc = PortabilityService::new(&db);
-    let count = svc
-        .count_file_resources(company_id)
-        .await
-        .expect("count");
+    let count = svc.count_file_resources(company_id).await.expect("count");
     assert_eq!(count, 0);
     cleanup(&pool, company_id).await;
 }
@@ -2091,10 +2135,7 @@ async fn r650_count_file_resources_returns_inserted() {
     }
 
     let svc = PortabilityService::new(&db);
-    let count = svc
-        .count_file_resources(company_id)
-        .await
-        .expect("count");
+    let count = svc.count_file_resources(company_id).await.expect("count");
     assert_eq!(count, 3);
 
     let summaries = svc
@@ -2176,10 +2217,7 @@ async fn r651_summarize_company_empty_returns_zero_counts() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
     let svc = PortabilityService::new(&db);
-    let report = svc
-        .summarize_company(company_id)
-        .await
-        .expect("summarize");
+    let report = svc.summarize_company(company_id).await.expect("summarize");
     assert_eq!(report.company_id, company_id);
     assert!(report.company_name.starts_with("R"));
     assert_eq!(report.counts.total(), 0);
@@ -2198,10 +2236,7 @@ async fn r651_summarize_company_aggregates_counts() {
     let _ = insert_pipeline(&pool, company_id).await;
 
     let svc = PortabilityService::new(&db);
-    let report = svc
-        .summarize_company(company_id)
-        .await
-        .expect("summarize");
+    let report = svc.summarize_company(company_id).await.expect("summarize");
     assert_eq!(report.counts.agents, 1);
     assert_eq!(report.counts.issues, 1);
     assert_eq!(report.counts.pipelines, 1);
@@ -2218,7 +2253,10 @@ async fn r651_summarize_company_rejects_missing() {
         .summarize_company(Uuid::new_v4())
         .await
         .expect_err("missing company");
-    assert!(matches!(err, pc_portability::PortabilityServiceError::NotFound(_)));
+    assert!(matches!(
+        err,
+        pc_portability::PortabilityServiceError::NotFound(_)
+    ));
 }
 
 // ===================================================================
@@ -2230,15 +2268,9 @@ async fn r653_count_issue_relations_returns_zero_for_empty() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
     let svc = PortabilityService::new(&db);
-    let count = svc
-        .count_issue_relations(company_id)
-        .await
-        .expect("count");
+    let count = svc.count_issue_relations(company_id).await.expect("count");
     assert_eq!(count, 0);
-    let rels = svc
-        .list_issue_relations(company_id)
-        .await
-        .expect("list");
+    let rels = svc.list_issue_relations(company_id).await.expect("list");
     assert!(rels.is_empty());
     cleanup(&pool, company_id).await;
 }
@@ -2252,7 +2284,10 @@ async fn r653_list_issue_relations_returns_inserted() {
     let issue_b = Uuid::new_v4();
     let id_a_short = &issue_a.simple().to_string()[..8];
     let id_b_short = &issue_b.simple().to_string()[..8];
-    for (id, identifier) in [(issue_a, format!("ABC-{id_a_short}")), (issue_b, format!("ABC-{id_b_short}"))] {
+    for (id, identifier) in [
+        (issue_a, format!("ABC-{id_a_short}")),
+        (issue_b, format!("ABC-{id_b_short}")),
+    ] {
         sqlx::query(
             "INSERT INTO issues (id, company_id, identifier, title, status, priority, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, 'todo', 'medium', now(), now())",
@@ -2279,16 +2314,10 @@ async fn r653_list_issue_relations_returns_inserted() {
     .expect("insert relation");
 
     let svc = PortabilityService::new(&db);
-    let count = svc
-        .count_issue_relations(company_id)
-        .await
-        .expect("count");
+    let count = svc.count_issue_relations(company_id).await.expect("count");
     assert_eq!(count, 1);
 
-    let rels = svc
-        .list_issue_relations(company_id)
-        .await
-        .expect("list");
+    let rels = svc.list_issue_relations(company_id).await.expect("list");
     assert_eq!(rels.len(), 1);
     assert!(rels[0].issue_identifier.starts_with("ABC-"));
     assert!(rels[0].related_issue_identifier.starts_with("ABC-"));
@@ -2329,10 +2358,7 @@ async fn r653_list_issue_relations_uses_uuid_fallback() {
     .expect("insert relation");
 
     let svc = PortabilityService::new(&db);
-    let rels = svc
-        .list_issue_relations(company_id)
-        .await
-        .expect("list");
+    let rels = svc.list_issue_relations(company_id).await.expect("list");
     assert_eq!(rels.len(), 1);
     // identifier fallback to UUID string
     assert_eq!(rels[0].issue_identifier, issue_a.to_string());

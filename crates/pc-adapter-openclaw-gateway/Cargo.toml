@@ -15,7 +15,18 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+regex-lite = "0.1"
+# introduced in R608: host_security uses url::Url for gateway URL validation
+url = "2"
+# R615 execute path uses chrono::Utc::now() for AdapterEvent timestamps
+chrono = { workspace = true }
+# R616 real WebSocket client (tokio-tungstenite)
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
-uuid = { workspace = true }
-tokio = { workspace = true }
+# 测试时启动本地 echo server
+tokio = { workspace = true, features = ["full", "test-util"] }

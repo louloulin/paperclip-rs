@@ -1,8 +1,6 @@
 //! R615: pc-invite hook contract tests.
 
-use pc_invite::{
-    InviteHook, InviteHookEvent, InviteService, NoopInviteHook, RecordingInviteHook,
-};
+use pc_invite::{InviteHook, InviteHookEvent, InviteService, NoopInviteHook, RecordingInviteHook};
 use pc_repos::Db;
 use serde_json::Value;
 use std::sync::Arc;
@@ -34,8 +32,12 @@ async fn recording_hook_stores_events_in_order() {
         company_id: Uuid::new_v4(),
         invite_id: Uuid::new_v4(),
     };
-    InviteHook::on_invite_event(&hook, ev1.clone()).await.unwrap();
-    InviteHook::on_invite_event(&hook, ev2.clone()).await.unwrap();
+    InviteHook::on_invite_event(&hook, ev1.clone())
+        .await
+        .unwrap();
+    InviteHook::on_invite_event(&hook, ev2.clone())
+        .await
+        .unwrap();
     let snap = hook.events_snapshot();
     assert_eq!(snap, vec![ev1, ev2]);
     hook.clear();

@@ -57,10 +57,12 @@ pub struct IssueLivenessSummary {
 pub fn summarize(findings: &[IssueLivenessFinding]) -> Vec<IssueLivenessSummary> {
     let mut by_company: HashMap<Uuid, IssueLivenessSummary> = HashMap::new();
     for f in findings {
-        let entry = by_company.entry(f.company_id).or_insert_with(|| IssueLivenessSummary {
-            company_id: f.company_id,
-            ..Default::default()
-        });
+        let entry = by_company
+            .entry(f.company_id)
+            .or_insert_with(|| IssueLivenessSummary {
+                company_id: f.company_id,
+                ..Default::default()
+            });
         entry.total_findings += 1;
         bump_counter(&mut entry.by_state, f.state);
         bump_counter(&mut entry.by_severity, f.severity);

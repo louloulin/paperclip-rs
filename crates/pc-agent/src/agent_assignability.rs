@@ -161,14 +161,14 @@ pub async fn assert_assignable_agent(
         return Err(AgentAssignmentError::CrossCompany);
     }
 
-    let company_agents = list_company_agents(db, company_id)
-        .await
-        .map_err(|e| AgentAssignmentError::Conflict {
-            message: format!("db error: {e}"),
-            detail: empty_detail(company_id, agent_id),
-        })?;
-    let eligibility: AgentWorkEligibility =
-        get_agent_work_eligibility(&assignee, &company_agents);
+    let company_agents =
+        list_company_agents(db, company_id)
+            .await
+            .map_err(|e| AgentAssignmentError::Conflict {
+                message: format!("db error: {e}"),
+                detail: empty_detail(company_id, agent_id),
+            })?;
+    let eligibility: AgentWorkEligibility = get_agent_work_eligibility(&assignee, &company_agents);
     let chain: Vec<AncestorChainEntry> = eligibility
         .org_chain_health
         .full_chain
@@ -225,9 +225,13 @@ fn conflict_reason_from_org_chain_health(
 ) -> AgentAssignmentConflictReason {
     use pc_core::agent_eligibility::AgentOrgChainInvalidReason;
     match health.reason {
-        AgentOrgChainInvalidReason::TerminatedAncestor => AgentAssignmentConflictReason::AncestorTerminated,
+        AgentOrgChainInvalidReason::TerminatedAncestor => {
+            AgentAssignmentConflictReason::AncestorTerminated
+        }
         AgentOrgChainInvalidReason::Cycle => AgentAssignmentConflictReason::AncestorCycle,
-        AgentOrgChainInvalidReason::MissingManager => AgentAssignmentConflictReason::AncestorMissing,
+        AgentOrgChainInvalidReason::MissingManager => {
+            AgentAssignmentConflictReason::AncestorMissing
+        }
         AgentOrgChainInvalidReason::Healthy => AgentAssignmentConflictReason::AncestorMissing,
     }
 }
@@ -262,10 +266,7 @@ fn assignment_message(
     }
 }
 
-fn empty_detail(
-    company_id: uuid::Uuid,
-    agent_id: uuid::Uuid,
-) -> AgentAssignmentConflictDetail {
+fn empty_detail(company_id: uuid::Uuid, agent_id: uuid::Uuid) -> AgentAssignmentConflictDetail {
     AgentAssignmentConflictDetail {
         code: "agent_not_assignable",
         reason: AgentAssignmentConflictReason::AncestorMissing,

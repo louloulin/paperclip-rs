@@ -63,8 +63,7 @@ pub fn failure_from_github_response(
         401 => Some(ResolveFailure {
             liveness: LivenessState::AuthRequired,
             error_code: ErrorCode::GithubAuthRequired,
-            error_message: "GitHub authentication is required to refresh this object."
-                .to_string(),
+            error_message: "GitHub authentication is required to refresh this object.".to_string(),
             retry_after_seconds: retry,
         }),
         403 => {
@@ -80,9 +79,8 @@ pub fn failure_from_github_response(
                 Some(ResolveFailure {
                     liveness: LivenessState::AuthRequired,
                     error_code: ErrorCode::GithubForbidden,
-                    error_message:
-                        "GitHub rejected the configured credentials for this object."
-                            .to_string(),
+                    error_message: "GitHub rejected the configured credentials for this object."
+                        .to_string(),
                     retry_after_seconds: retry,
                 })
             }
@@ -90,8 +88,7 @@ pub fn failure_from_github_response(
         429 => Some(ResolveFailure {
             liveness: LivenessState::Unreachable,
             error_code: ErrorCode::GithubRateLimited,
-            error_message: "GitHub returned HTTP 429 while refreshing this object."
-                .to_string(),
+            error_message: "GitHub returned HTTP 429 while refreshing this object.".to_string(),
             retry_after_seconds: retry,
         }),
         s if s >= 500 => Some(ResolveFailure {

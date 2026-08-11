@@ -13,6 +13,11 @@ pub enum ApiError {
     BadRequest(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("conflict: {message}")]
+    ConflictWith {
+        message: String,
+        payload: serde_json::Value,
+    },
     #[error("unprocessable entity: {0}")]
     Unprocessable(String),
     #[error("forbidden: {0}")]
@@ -36,6 +41,7 @@ impl IntoResponse for ApiError {
         let (status, code) = match &self {
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            ApiError::ConflictWith { .. } => (StatusCode::CONFLICT, "conflict"),
             ApiError::Unprocessable(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable_entity")
             }
@@ -46,11 +52,20 @@ impl IntoResponse for ApiError {
             }
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
+        let mut extra = serde_json::Map::new();
+        if let ApiError::ConflictWith { payload, .. } = &self {
+            if let Some(obj) = payload.as_object() {
+                for (k, v) in obj {
+                    extra.insert(k.clone(), v.clone());
+                }
+            }
+        }
         let body = ApiErrorBody {
             error: ApiErrorDetail {
                 code,
                 message: self.to_string(),
             },
+            extra,
         };
         (status, Json(body)).into_response()
     }
@@ -80,6 +95,8 @@ impl From<pc_errors::Error> for ApiError {
 #[derive(Serialize)]
 struct ApiErrorBody {
     error: ApiErrorDetail,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 #[derive(Serialize)]
 struct ApiErrorDetail {

@@ -73,33 +73,39 @@ impl RecordingIssueRewakeThrottleHook {
 
 impl IssueRewakeThrottleHook for RecordingIssueRewakeThrottleHook {
     fn before_evaluate(&self, candidate: &IssueRewakeCandidateInput) {
-        self.events.lock().unwrap().push(
-            IssueRewakeThrottleHookEvent::BeforeEvaluate {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueRewakeThrottleHookEvent::BeforeEvaluate {
                 reason: candidate.reason.clone(),
                 has_wake_comment: candidate.wake_comment_id.is_some(),
                 force_fresh_session: candidate.force_fresh_session,
-            },
-        );
+            });
     }
 
     fn on_not_candidate(&self, reason: &Option<String>) {
-        self.events.lock().unwrap().push(
-            IssueRewakeThrottleHookEvent::OnNotCandidate { reason: reason.clone() },
-        );
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueRewakeThrottleHookEvent::OnNotCandidate {
+                reason: reason.clone(),
+            });
     }
 
     fn after_allowed(&self, no_progress_streak: usize) {
-        self.events.lock().unwrap().push(
-            IssueRewakeThrottleHookEvent::AfterAllowed { no_progress_streak },
-        );
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueRewakeThrottleHookEvent::AfterAllowed { no_progress_streak });
     }
 
     fn after_blocked(&self, no_progress_streak: usize, cooldown_ms: u64) {
-        self.events.lock().unwrap().push(
-            IssueRewakeThrottleHookEvent::AfterBlocked {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueRewakeThrottleHookEvent::AfterBlocked {
                 no_progress_streak,
                 cooldown_ms,
-            },
-        );
+            });
     }
 }

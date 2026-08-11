@@ -2,7 +2,6 @@
 //!
 //! 对应 Node `server/src/services/issue-liveness.ts`。
 
-
 mod classifier;
 mod incident_key;
 mod service;

@@ -14,8 +14,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use super::types::{
-    IssueRecoveryActionInfo, ResolveIssueRecoveryActionRequest,
-    UpsertIssueRecoveryActionRequest,
+    IssueRecoveryActionInfo, ResolveIssueRecoveryActionRequest, UpsertIssueRecoveryActionRequest,
 };
 
 /// Hook 调用事件。
@@ -49,12 +48,7 @@ pub trait IssueRecoveryActionHook: Send + Sync {
     ) -> Result<(), String> {
         Ok(())
     }
-    async fn after_upsert(
-        &self,
-        _action: &IssueRecoveryActionInfo,
-        _is_new: bool,
-    ) {
-    }
+    async fn after_upsert(&self, _action: &IssueRecoveryActionInfo, _is_new: bool) {}
     async fn before_resolve(
         &self,
         _request: &ResolveIssueRecoveryActionRequest,

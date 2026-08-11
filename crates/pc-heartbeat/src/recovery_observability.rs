@@ -170,8 +170,7 @@ pub fn round2(value: f64) -> f64 {
 pub fn utc_week_start(now: DateTime<Utc>, weeks_ago: u32) -> DateTime<Utc> {
     // 计算 UTC midnight
     let date = now.date_naive();
-    let utc_midnight = Utc
-        .from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap());
+    let utc_midnight = Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap());
     // day_of_week: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
     let day_of_week = utc_midnight.weekday().num_days_from_sunday();
     // monday_offset = days since Monday
@@ -251,25 +250,14 @@ pub fn evaluate_recovery_rate_alert(
 #[async_trait]
 pub trait RecoveryDataSource: Send + Sync {
     /// 返回 `(week_start_iso, runs_count)` 周桶 runs。
-    async fn weekly_runs(
-        &self,
-        company_id: &str,
-        since: DateTime<Utc>,
-    ) -> Vec<(String, i64)>;
+    async fn weekly_runs(&self, company_id: &str, since: DateTime<Utc>) -> Vec<(String, i64)>;
 
     /// 返回 `(week_start_iso, actions_count)` 周桶 recovery actions。
-    async fn weekly_actions(
-        &self,
-        company_id: &str,
-        since: DateTime<Utc>,
-    ) -> Vec<(String, i64)>;
+    async fn weekly_actions(&self, company_id: &str, since: DateTime<Utc>) -> Vec<(String, i64)>;
 
     /// 返回按 cause + error_code 分组的 recovery action 计数。
-    async fn cause_groups(
-        &self,
-        company_id: &str,
-        since: DateTime<Utc>,
-    ) -> Vec<RecoveryCauseGroup>;
+    async fn cause_groups(&self, company_id: &str, since: DateTime<Utc>)
+        -> Vec<RecoveryCauseGroup>;
 
     /// 返回 recovery actions + joined issues 投影，供 handoff 分类。
     async fn recovery_action_facts(
@@ -386,19 +374,20 @@ impl<D: RecoveryDataSource> RecoveryObservabilityService<D> {
         let mut routing_by_cause: HashMap<String, RecoveryCauseRouting> = HashMap::new();
         for (cause, facts) in facts_rows {
             let klass = classify_recovery_handoff(&facts);
-            let routing = routing_by_cause
-                .entry(cause.clone())
-                .or_insert_with(|| RecoveryCauseRouting {
-                    cause: cause.clone(),
-                    total: 0,
-                    active: 0,
-                    retried_by_original_succeeded: 0,
-                    handed_back: 0,
-                    owner_completed: 0,
-                    escalated: 0,
-                    false_positive: 0,
-                    cancelled: 0,
-                });
+            let routing =
+                routing_by_cause
+                    .entry(cause.clone())
+                    .or_insert_with(|| RecoveryCauseRouting {
+                        cause: cause.clone(),
+                        total: 0,
+                        active: 0,
+                        retried_by_original_succeeded: 0,
+                        handed_back: 0,
+                        owner_completed: 0,
+                        escalated: 0,
+                        false_positive: 0,
+                        cancelled: 0,
+                    });
             routing.total += 1;
 
             if klass == HandoffClass::Active {
@@ -421,9 +410,7 @@ impl<D: RecoveryDataSource> RecoveryObservabilityService<D> {
             if facts.outcome.as_deref() == Some("false_positive") {
                 routing.false_positive += 1;
             }
-            if facts.status == "cancelled"
-                && facts.outcome.as_deref() != Some("false_positive")
-            {
+            if facts.status == "cancelled" && facts.outcome.as_deref() != Some("false_positive") {
                 routing.cancelled += 1;
             }
 
@@ -460,9 +447,12 @@ impl<D: RecoveryDataSource> RecoveryObservabilityService<D> {
 
         let decided = handoff.handed_back + handoff.owner_completed;
         if decided > 0 {
-            handoff.handed_back_ratio = Some(round2((handoff.handed_back as f64 / decided as f64) * 100.0));
-            handoff.owner_completed_ratio =
-                Some(round2((handoff.owner_completed as f64 / decided as f64) * 100.0));
+            handoff.handed_back_ratio = Some(round2(
+                (handoff.handed_back as f64 / decided as f64) * 100.0,
+            ));
+            handoff.owner_completed_ratio = Some(round2(
+                (handoff.owner_completed as f64 / decided as f64) * 100.0,
+            ));
         }
 
         let mut per_cause_routing: Vec<RecoveryCauseRouting> =
@@ -507,7 +497,10 @@ mod tests {
         // 2025-06-02 是 Monday
         let monday = Utc.with_ymd_and_hms(2025, 6, 2, 10, 0, 0).unwrap();
         let monday_start = utc_week_start(monday, 0);
-        assert_eq!(monday_start.date_naive(), NaiveDate::from_ymd_opt(2025, 6, 2).unwrap());
+        assert_eq!(
+            monday_start.date_naive(),
+            NaiveDate::from_ymd_opt(2025, 6, 2).unwrap()
+        );
         assert_eq!(monday_start.hour(), 0);
     }
 
@@ -545,7 +538,13 @@ mod tests {
 
     // ----- classify -----
 
-    fn facts(status: &str, owner: Option<&str>, ret: Option<&str>, fin: Option<&str>, fin_status: Option<&str>) -> RecoveryActionFacts {
+    fn facts(
+        status: &str,
+        owner: Option<&str>,
+        ret: Option<&str>,
+        fin: Option<&str>,
+        fin_status: Option<&str>,
+    ) -> RecoveryActionFacts {
         RecoveryActionFacts {
             status: status.into(),
             outcome: None,
@@ -582,25 +581,49 @@ mod tests {
 
     #[test]
     fn r714_classify_handed_back_landed_elsewhere() {
-        let f = facts("resolved", Some("manager"), Some("a"), Some("a"), Some("done"));
+        let f = facts(
+            "resolved",
+            Some("manager"),
+            Some("a"),
+            Some("a"),
+            Some("done"),
+        );
         assert_eq!(classify_recovery_handoff(&f), HandoffClass::HandedBack);
     }
 
     #[test]
     fn r714_classify_owner_completed_terminal() {
-        let f = facts("resolved", Some("manager"), Some("a"), Some("manager"), Some("done"));
+        let f = facts(
+            "resolved",
+            Some("manager"),
+            Some("a"),
+            Some("manager"),
+            Some("done"),
+        );
         assert_eq!(classify_recovery_handoff(&f), HandoffClass::OwnerCompleted);
     }
 
     #[test]
     fn r714_classify_owner_completed_in_review_terminal() {
-        let f = facts("resolved", Some("manager"), Some("a"), Some("manager"), Some("in_review"));
+        let f = facts(
+            "resolved",
+            Some("manager"),
+            Some("a"),
+            Some("manager"),
+            Some("in_review"),
+        );
         assert_eq!(classify_recovery_handoff(&f), HandoffClass::OwnerCompleted);
     }
 
     #[test]
     fn r714_classify_other_fallback() {
-        let f = facts("resolved", Some("manager"), Some("a"), Some("manager"), Some("open"));
+        let f = facts(
+            "resolved",
+            Some("manager"),
+            Some("a"),
+            Some("manager"),
+            Some("open"),
+        );
         assert_eq!(classify_recovery_handoff(&f), HandoffClass::Other);
     }
 
@@ -700,7 +723,13 @@ mod tests {
                 // Owner completed: owner == final_assignee, terminal status
                 (
                     "stall".into(),
-                    facts("resolved", Some("mgr"), Some("orig"), Some("mgr"), Some("done")),
+                    facts(
+                        "resolved",
+                        Some("mgr"),
+                        Some("orig"),
+                        Some("mgr"),
+                        Some("done"),
+                    ),
                 ),
                 // Active takeover: owner != return_owner, status=active
                 (
@@ -746,21 +775,27 @@ mod tests {
 
         // weeks > MAX → clamp
         let r1 = svc
-            .report("co", ReportOptions {
-                now: Some(Utc::now()),
-                weeks: Some(9999),
-                ..Default::default()
-            })
+            .report(
+                "co",
+                ReportOptions {
+                    now: Some(Utc::now()),
+                    weeks: Some(9999),
+                    ..Default::default()
+                },
+            )
             .await;
         assert_eq!(r1.window.weeks, MAX_WINDOW_WEEKS);
 
         // weeks == 0 → clamp to 1
         let r2 = svc
-            .report("co", ReportOptions {
-                now: Some(Utc::now()),
-                weeks: Some(0),
-                ..Default::default()
-            })
+            .report(
+                "co",
+                ReportOptions {
+                    now: Some(Utc::now()),
+                    weeks: Some(0),
+                    ..Default::default()
+                },
+            )
             .await;
         assert_eq!(r2.window.weeks, 1);
     }

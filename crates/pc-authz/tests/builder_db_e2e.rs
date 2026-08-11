@@ -38,10 +38,12 @@ async fn cleanup(db: &Db) {
     let _ = db.pool()
         .execute("DELETE FROM principal_permission_grants WHERE granted_by_user_id LIKE 'pc-authz-test-%'")
         .await;
-    let _ = db.pool()
+    let _ = db
+        .pool()
         .execute("DELETE FROM company_memberships WHERE principal_id LIKE 'pc-authz-test-%'")
         .await;
-    let _ = db.pool()
+    let _ = db
+        .pool()
         .execute("DELETE FROM companies WHERE name LIKE 'pc-authz-test-%'")
         .await;
 }

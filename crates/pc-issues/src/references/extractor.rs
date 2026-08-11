@@ -14,9 +14,8 @@ pub static ISSUE_REFERENCE_IDENTIFIER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Z][A-Z0-9]*-\d+$").unwrap());
 
 /// 匹配 token：URL / 路径 / 标识符。
-static ISSUE_REFERENCE_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https?://[^\s<>()]+|\/[^\s<>()]+|[A-Z][A-Z0-9]*-\d+").unwrap()
-});
+static ISSUE_REFERENCE_TOKEN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"https?://[^\s<>()]+|\/[^\s<>()]+|[A-Z][A-Z0-9]*-\d+").unwrap());
 
 /// 一个提取出的引用。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,8 +168,7 @@ fn find_token_matches(text: &str) -> Vec<IdentifierMatch> {
         if cleaned.is_empty() {
             continue;
         }
-        let identifier = normalize_identifier(&cleaned)
-            .or_else(|| parse_issue_href(&cleaned));
+        let identifier = normalize_identifier(&cleaned).or_else(|| parse_issue_href(&cleaned));
         let identifier = match identifier {
             Some(id) => id,
             None => continue,
@@ -227,10 +225,7 @@ mod tests {
 
     #[test]
     fn parse_issue_href_basic() {
-        assert_eq!(
-            parse_issue_href("/issues/pap-1"),
-            Some("PAP-1".to_string())
-        );
+        assert_eq!(parse_issue_href("/issues/pap-1"), Some("PAP-1".to_string()));
         assert_eq!(
             parse_issue_href("https://example.com/issues/pap-1"),
             Some("PAP-1".to_string())
@@ -262,7 +257,10 @@ mod tests {
 
     #[test]
     fn extract_identifiers_dedup() {
-        assert_eq!(extract_identifiers("PAP-1 [link](/issues/pap-1) PAP-1"), vec!["PAP-1"]);
+        assert_eq!(
+            extract_identifiers("PAP-1 [link](/issues/pap-1) PAP-1"),
+            vec!["PAP-1"]
+        );
     }
 
     #[test]

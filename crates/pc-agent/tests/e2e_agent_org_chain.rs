@@ -25,7 +25,12 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix: String = Uuid::new_v4().simple().to_string().chars().take(6).collect();
+    let prefix: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
@@ -98,11 +103,20 @@ fn flatten_chain(nodes: &[ChainOfCommandNode]) -> Vec<Uuid> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn r604_normalize_agent_url_key_basic_rules() {
-    assert_eq!(normalize_agent_url_key("Hello World"), Some("hello-world".into()));
-    assert_eq!(normalize_agent_url_key("  CTO_Engineer  "), Some("cto-engineer".into()));
+    assert_eq!(
+        normalize_agent_url_key("Hello World"),
+        Some("hello-world".into())
+    );
+    assert_eq!(
+        normalize_agent_url_key("  CTO_Engineer  "),
+        Some("cto-engineer".into())
+    );
     assert_eq!(normalize_agent_url_key("---"), None);
     assert_eq!(normalize_agent_url_key(""), None);
-    assert_eq!(normalize_agent_url_key("researcher2"), Some("researcher2".into()));
+    assert_eq!(
+        normalize_agent_url_key("researcher2"),
+        Some("researcher2".into())
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -118,8 +132,7 @@ async fn r604_org_for_company_builds_reports_to_tree() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool, "tree").await;
     let cto = insert_agent(&pool, company_id, "CTO", "executive", "active", None).await;
-    let _eng_lead =
-        insert_agent(&pool, company_id, "Eng Lead", "lead", "active", Some(cto)).await;
+    let _eng_lead = insert_agent(&pool, company_id, "Eng Lead", "lead", "active", Some(cto)).await;
     let _fe_eng = insert_agent(
         &pool,
         company_id,
@@ -140,7 +153,10 @@ async fn r604_org_for_company_builds_reports_to_tree() {
     .await;
 
     let svc = AgentService::new(db);
-    let tree = svc.org_for_company(company_id).await.expect("org_for_company");
+    let tree = svc
+        .org_for_company(company_id)
+        .await
+        .expect("org_for_company");
 
     assert_eq!(tree.len(), 1, "CTO is the only root");
     assert_eq!(tree[0].id, cto);
@@ -168,7 +184,10 @@ async fn r604_org_for_company_excludes_terminated_agents() {
     let _alive = insert_agent(&pool, company_id, "CFO", "executive", "active", Some(cto)).await;
 
     let svc = AgentService::new(db);
-    let tree = svc.org_for_company(company_id).await.expect("org_for_company");
+    let tree = svc
+        .org_for_company(company_id)
+        .await
+        .expect("org_for_company");
 
     assert_eq!(tree.len(), 1);
     assert_eq!(tree[0].id, cto);
@@ -198,9 +217,16 @@ async fn r604_org_for_company_orphan_reports_to_becomes_root() {
     .await;
 
     let svc = AgentService::new(db);
-    let tree = svc.org_for_company(company_id).await.expect("org_for_company");
+    let tree = svc
+        .org_for_company(company_id)
+        .await
+        .expect("org_for_company");
 
-    assert_eq!(tree.len(), 2, "B should be promoted to root when reports_to is invalid");
+    assert_eq!(
+        tree.len(),
+        2,
+        "B should be promoted to root when reports_to is invalid"
+    );
     let ids: Vec<Uuid> = tree.iter().map(|n| n.id).collect();
     assert!(ids.contains(&a));
 
@@ -212,8 +238,15 @@ async fn r604_get_chain_of_command_walks_upward() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool, "chain").await;
     let cto = insert_agent(&pool, company_id, "CTO", "executive", "active", None).await;
-    let vp_eng =
-        insert_agent(&pool, company_id, "VP Eng", "executive", "active", Some(cto)).await;
+    let vp_eng = insert_agent(
+        &pool,
+        company_id,
+        "VP Eng",
+        "executive",
+        "active",
+        Some(cto),
+    )
+    .await;
     let _eng_lead = insert_agent(
         &pool,
         company_id,
@@ -276,7 +309,10 @@ async fn r604_get_chain_of_command_handles_cycle_safely() {
     let chain = svc.get_chain_of_command(a).await.expect("chain");
     assert!(chain.len() < 50, "cycle must be bounded by 50");
     let ids = flatten_chain(&chain);
-    assert!(!ids.contains(&a), "a is the start, must not re-appear in chain");
+    assert!(
+        !ids.contains(&a),
+        "a is the start, must not re-appear in chain"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -402,7 +438,10 @@ async fn r604_org_for_company_empty_company_returns_empty_tree() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool, "empty").await;
     let svc = AgentService::new(db);
-    let tree = svc.org_for_company(company_id).await.expect("org_for_company");
+    let tree = svc
+        .org_for_company(company_id)
+        .await
+        .expect("org_for_company");
     assert!(tree.is_empty());
 
     cleanup(&pool, company_id).await;

@@ -171,10 +171,7 @@ impl LocalFileWorkspaceOperationLogStore {
 
 #[async_trait::async_trait]
 impl WorkspaceOperationLogStore for LocalFileWorkspaceOperationLogStore {
-    async fn begin(
-        &self,
-        input: BeginInput,
-    ) -> Result<WorkspaceOperationLogHandle, LogStoreError> {
+    async fn begin(&self, input: BeginInput) -> Result<WorkspaceOperationLogHandle, LogStoreError> {
         let company = safe_segments(&[input.company_id.as_str()])
             .into_iter()
             .next()
@@ -186,10 +183,12 @@ impl WorkspaceOperationLogStore for LocalFileWorkspaceOperationLogStore {
         let rel_dir = PathBuf::from(&company);
         let rel_path = rel_dir.join(format!("{operation}.ndjson"));
         let abs_dir = resolve_within(&self.base_path, &rel_dir)?;
-        fs::create_dir_all(&abs_dir).await.map_err(|e| LogStoreError::Io {
-            operation: "mkdir log dir",
-            source: e,
-        })?;
+        fs::create_dir_all(&abs_dir)
+            .await
+            .map_err(|e| LogStoreError::Io {
+                operation: "mkdir log dir",
+                source: e,
+            })?;
         let abs_path = resolve_within(&self.base_path, &rel_path)?;
         // 截断创建文件
         let f = OpenOptions::new()
@@ -297,12 +296,10 @@ impl WorkspaceOperationLogStore for LocalFileWorkspaceOperationLogStore {
                 next_offset: Some(requested_offset),
             });
         }
-        let mut f = File::open(&abs_path)
-            .await
-            .map_err(|e| LogStoreError::Io {
-                operation: "open log for read",
-                source: e,
-            })?;
+        let mut f = File::open(&abs_path).await.map_err(|e| LogStoreError::Io {
+            operation: "open log for read",
+            source: e,
+        })?;
         use tokio::io::AsyncSeekExt;
         f.seek(std::io::SeekFrom::Start(start))
             .await
@@ -332,17 +329,18 @@ impl WorkspaceOperationLogStore for LocalFileWorkspaceOperationLogStore {
         } else {
             None
         };
-        Ok(ReadResult { content, next_offset })
+        Ok(ReadResult {
+            content,
+            next_offset,
+        })
     }
 }
 
 async fn sha256_file(path: &Path) -> Result<String, LogStoreError> {
-    let mut f = File::open(path)
-        .await
-        .map_err(|e| LogStoreError::Io {
-            operation: "open for sha256",
-            source: e,
-        })?;
+    let mut f = File::open(path).await.map_err(|e| LogStoreError::Io {
+        operation: "open for sha256",
+        source: e,
+    })?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
@@ -361,4 +359,3 @@ async fn sha256_file(path: &Path) -> Result<String, LogStoreError> {
 pub fn default_base_path(instance_root: &Path) -> PathBuf {
     instance_root.join("data").join("workspace-operation-logs")
 }
-

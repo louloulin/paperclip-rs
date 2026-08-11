@@ -214,13 +214,14 @@ pub(crate) fn author_from(row: &AuthorFromRow) -> PlanReviewContextAuthor {
             id: Some(user_id.clone()),
         };
     }
-    let t = row
-        .author_type
-        .as_deref()
-        .unwrap_or("system");
+    let t = row.author_type.as_deref().unwrap_or("system");
     let valid = matches!(t, "agent" | "user" | "system");
     PlanReviewContextAuthor {
-        author_type: if valid { t.to_string() } else { "system".to_string() },
+        author_type: if valid {
+            t.to_string()
+        } else {
+            "system".to_string()
+        },
         id: None,
     }
 }
@@ -564,10 +565,14 @@ pub async fn get_plan_interaction_context(
     db: &Db,
     input: GetPlanInteractionInput<'_>,
 ) -> sqlx::Result<Option<PlanReviewInteractionContext>> {
-    let Some(interaction_id) = non_empty_string(&Value::String(input.interaction_id.to_string())) else {
+    let Some(interaction_id) = non_empty_string(&Value::String(input.interaction_id.to_string()))
+    else {
         return Ok(None);
     };
-    let Some(row) = PlanReviewDb::fetch_interaction(db, input.company_id, input.issue_id, &interaction_id).await? else {
+    let Some(row) =
+        PlanReviewDb::fetch_interaction(db, input.company_id, input.issue_id, &interaction_id)
+            .await?
+    else {
         return Ok(None);
     };
     let target_value = row.payload.get("target").unwrap_or(&Value::Null);
@@ -593,7 +598,6 @@ pub async fn get_plan_interaction_context(
         resolved_at: row.resolved_at.map(|d| d.to_rfc3339()),
     }))
 }
-
 
 #[derive(Debug, Clone, Copy)]
 pub struct GetPlanInteractionInput<'a> {
@@ -628,14 +632,16 @@ pub async fn build_plan_review_context(
         return Ok(None);
     }
 
-    let plan_document = match PlanReviewDb::fetch_plan_document(db, &input.company_id, &input.issue_id).await? {
-        Some(d) => d,
-        None => return Ok(None),
-    };
+    let plan_document =
+        match PlanReviewDb::fetch_plan_document(db, &input.company_id, &input.issue_id).await? {
+            Some(d) => d,
+            None => return Ok(None),
+        };
 
     let document_id_str = plan_document.document_id.to_string();
     let open_thread_count =
-        PlanReviewDb::count_open_threads(db, &input.company_id, &input.issue_id, &document_id_str).await?;
+        PlanReviewDb::count_open_threads(db, &input.company_id, &input.issue_id, &document_id_str)
+            .await?;
     let thread_rows = PlanReviewDb::fetch_threads(
         db,
         &input.company_id,
@@ -655,7 +661,8 @@ pub async fn build_plan_review_context(
     )
     .await?;
     let comment_count =
-        PlanReviewDb::count_comments(db, &input.company_id, &input.issue_id, &document_id_str).await?;
+        PlanReviewDb::count_comments(db, &input.company_id, &input.issue_id, &document_id_str)
+            .await?;
 
     // Group comments by thread_id.
     let mut comments_by_thread: std::collections::HashMap<Uuid, Vec<CommentRow>> =
@@ -677,17 +684,26 @@ pub async fn build_plan_review_context(
             .selected_text
             .as_deref()
             .map(|s| truncate_text(s, max_anchor_text_chars))
-            .unwrap_or(TruncateResult { text: String::new(), truncated: false });
+            .unwrap_or(TruncateResult {
+                text: String::new(),
+                truncated: false,
+            });
         let prefix = thread
             .prefix_text
             .as_deref()
             .map(|s| truncate_text(s, max_anchor_text_chars))
-            .unwrap_or(TruncateResult { text: String::new(), truncated: false });
+            .unwrap_or(TruncateResult {
+                text: String::new(),
+                truncated: false,
+            });
         let suffix = thread
             .suffix_text
             .as_deref()
             .map(|s| truncate_text(s, max_anchor_text_chars))
-            .unwrap_or(TruncateResult { text: String::new(), truncated: false });
+            .unwrap_or(TruncateResult {
+                text: String::new(),
+                truncated: false,
+            });
         if selected.truncated || prefix.truncated || suffix.truncated {
             truncated = true;
         }

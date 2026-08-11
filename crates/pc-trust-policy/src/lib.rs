@@ -20,7 +20,8 @@ pub const LOW_TRUST_TOOL_CLASSES: [&str; 3] = ["git.read", "github.pr.read", "te
 
 // ---------- enums ----------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TrustPreset {
     Standard,
     LowTrustReview,

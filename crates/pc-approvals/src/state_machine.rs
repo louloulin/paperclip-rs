@@ -205,10 +205,7 @@ mod tests {
             Some(DecisionAction::Cancel)
         );
         assert_eq!(DecisionAction::from_status(ApprovalStatus::Pending), None);
-        assert_eq!(
-            DecisionAction::from_status(ApprovalStatus::Expired),
-            None
-        );
+        assert_eq!(DecisionAction::from_status(ApprovalStatus::Expired), None);
     }
 
     #[test]

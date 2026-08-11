@@ -28,7 +28,12 @@ async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let prefix = format!(
         "R726{}-{}",
         tag,
-        Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>()
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
     );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
@@ -48,7 +53,12 @@ async fn insert_issue(pool: &PgPool, company_id: Uuid, tag: &str) -> Uuid {
     let identifier = format!(
         "R726-{}-{}",
         tag,
-        Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>()
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(6)
+            .collect::<String>()
     );
     sqlx::query(
         "INSERT INTO issues (id, company_id, identifier, title, status, priority, created_at, updated_at) \
@@ -253,7 +263,10 @@ async fn returns_none_when_not_in_planning_mode_and_no_hooks() {
     let (doc_id, rev_id) = insert_document(&pool, company_id).await;
     link_issue_document(&pool, company_id, issue_id, doc_id).await;
     let user_id = insert_user(&pool, "nopln").await;
-    let _t = insert_thread(&pool, company_id, issue_id, doc_id, rev_id, &user_id, "selected").await;
+    let _t = insert_thread(
+        &pool, company_id, issue_id, doc_id, rev_id, &user_id, "selected",
+    )
+    .await;
 
     let ctx = build_plan_review_context(
         &db,
@@ -293,8 +306,26 @@ async fn build_returns_threads_and_comments_in_planning_mode() {
         "Highlighted text",
     )
     .await;
-    insert_comment(&pool, company_id, issue_id, doc_id, thread_id, &user_id, "first comment").await;
-    insert_comment(&pool, company_id, issue_id, doc_id, thread_id, &user_id, "second comment").await;
+    insert_comment(
+        &pool,
+        company_id,
+        issue_id,
+        doc_id,
+        thread_id,
+        &user_id,
+        "first comment",
+    )
+    .await;
+    insert_comment(
+        &pool,
+        company_id,
+        issue_id,
+        doc_id,
+        thread_id,
+        &user_id,
+        "second comment",
+    )
+    .await;
 
     let ctx = build_plan_review_context(
         &db,
@@ -327,7 +358,10 @@ async fn build_returns_threads_and_comments_in_planning_mode() {
     assert_eq!(ctx.totals.included_comment_count, 2);
     assert_eq!(ctx.totals.omitted_comment_count, 0);
     assert!(!ctx.truncated);
-    assert_eq!(ctx.limits.max_threads, PLAN_REVIEW_CONTEXT_LIMITS.max_threads);
+    assert_eq!(
+        ctx.limits.max_threads,
+        PLAN_REVIEW_CONTEXT_LIMITS.max_threads
+    );
     assert!(ctx.interaction.is_none());
 
     cleanup(&pool, company_id).await;
@@ -347,7 +381,10 @@ async fn truncated_flag_set_when_total_chars_exhausted() {
     // 11 comments × 1100 chars each = 12_100 > 12_000 total.
     for _ in 0..11 {
         let body = "a".repeat(1_100);
-        insert_comment(&pool, company_id, issue_id, doc_id, thread_id, &user_id, &body).await;
+        insert_comment(
+            &pool, company_id, issue_id, doc_id, thread_id, &user_id, &body,
+        )
+        .await;
     }
 
     let ctx = build_plan_review_context(
@@ -392,7 +429,16 @@ async fn interaction_is_picked_up_when_not_in_planning_mode() {
             "revisionNumber": 1
         }
     });
-    let interaction_id = insert_interaction(&pool, company_id, issue_id, doc_id, rev_id, payload, json!({})).await;
+    let interaction_id = insert_interaction(
+        &pool,
+        company_id,
+        issue_id,
+        doc_id,
+        rev_id,
+        payload,
+        json!({}),
+    )
+    .await;
 
     let ctx = build_plan_review_context(
         &db,
@@ -490,7 +536,16 @@ async fn interaction_with_wrong_issue_id_is_filtered_out() {
             "revisionNumber": 1
         }
     });
-    let interaction_id = insert_interaction(&pool, company_id, issue_id, doc_id, rev_id, payload, json!({})).await;
+    let interaction_id = insert_interaction(
+        &pool,
+        company_id,
+        issue_id,
+        doc_id,
+        rev_id,
+        payload,
+        json!({}),
+    )
+    .await;
 
     let interaction = get_plan_interaction_context(
         &db,

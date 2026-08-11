@@ -3,6 +3,7 @@
 //! `gemini_local` local CLI adapter: spawns `gemini`, parses its JSONL
 //! output into the shared `AdapterExecutionResult` shape.
 
+pub mod config_schema;
 pub mod execute_helpers;
 pub mod gemini_stream_json;
 pub mod skills;

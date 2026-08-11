@@ -28,9 +28,7 @@ pub fn split_path_segments(value: &str) -> Vec<&str> {
 #[must_use]
 pub fn replace_last_path_segment(path_value: &str, replacement: &str) -> String {
     let normalized = path_value.trim_end_matches(|c| c == '/' || c == '\\');
-    let last_sep = normalized
-        .rfind('/')
-        .max(normalized.rfind('\\'));
+    let last_sep = normalized.rfind('/').max(normalized.rfind('\\'));
     match last_sep {
         None => replacement.to_string(),
         Some(idx) => {

@@ -30,7 +30,9 @@ async fn summary(
 ) -> ApiResult<Json<Value>> {
     let svc = DashboardService::new(&state.db);
     let s = svc.summary(company_id).await.map_err(|e| match e {
-        pc_routines::DashboardError::CompanyNotFound(id) => ApiError::NotFound(format!("company {id}")),
+        pc_routines::DashboardError::CompanyNotFound(id) => {
+            ApiError::NotFound(format!("company {id}"))
+        }
         pc_routines::DashboardError::Repo(r) => ApiError::Internal(r.to_string()),
     })?;
     Ok(Json(json!({

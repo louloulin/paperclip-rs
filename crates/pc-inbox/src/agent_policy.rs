@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/inbox-agent-policy.ts`（58 行）1:1 复刻。
 //! （原 `pc-inbox-agent-policy` crate 已下沉到 `pc-inbox::agent_policy`）。
 
-
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -141,7 +140,12 @@ mod tests {
 
     #[test]
     fn r708_dedup_preserves_first() {
-        let ids = vec!["a".to_string(), "b".to_string(), "a".to_string(), "c".to_string()];
+        let ids = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "a".to_string(),
+            "c".to_string(),
+        ];
         assert_eq!(dedup_agent_ids(&ids), vec!["a", "b", "c"]);
     }
 

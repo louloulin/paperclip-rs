@@ -6,7 +6,7 @@ use pc_budgets::{
     BudgetEnforcementHook, BudgetEnforcementScope, BudgetPolicyStatus, BudgetService,
     BudgetThresholdType, BudgetWindowKind, FullEvaluation, IncidentOutcome, NoopEnforcementHook,
 };
-use pc_repos::budget::{UpsertPolicyInput};
+use pc_repos::budget::UpsertPolicyInput;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -81,15 +81,18 @@ struct CountingHook {
 #[async_trait::async_trait]
 impl BudgetEnforcementHook for CountingHook {
     async fn on_hard_stop(&self, _: &BudgetEnforcementScope) -> pc_budgets::BudgetResult<()> {
-        self.hard_stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.hard_stops
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     async fn on_warning(&self, _: &BudgetEnforcementScope) -> pc_budgets::BudgetResult<()> {
-        self.warnings.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.warnings
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     async fn on_resolve(&self, _: &BudgetEnforcementScope) -> pc_budgets::BudgetResult<()> {
-        self.resolves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.resolves
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 }
@@ -108,13 +111,11 @@ async fn fetch_policy(db: &pc_repos::Db, id: Uuid) -> pc_repos::budget::PolicyRo
 }
 
 async fn count_incidents(db: &pc_repos::Db, policy_id: Uuid) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM budget_incidents WHERE policy_id = $1",
-    )
-    .bind(policy_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("count incidents")
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM budget_incidents WHERE policy_id = $1")
+        .bind(policy_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count incidents")
 }
 
 // ---------------------------------------------------------------------------
@@ -156,9 +157,15 @@ async fn r582_e2e_upsert_idempotent_same_key_updates() {
         updated_by_user_id: Some("user-1".into()),
     };
     let input1 = mk_input(1000);
-    let row1 = svc.upsert_policy(company_id, input1).await.expect("upsert 1");
+    let row1 = svc
+        .upsert_policy(company_id, input1)
+        .await
+        .expect("upsert 1");
     let input2 = mk_input(5000);
-    let row2 = svc.upsert_policy(company_id, input2).await.expect("upsert 2");
+    let row2 = svc
+        .upsert_policy(company_id, input2)
+        .await
+        .expect("upsert 2");
     assert_eq!(row1.id, row2.id, "same scope -> same policy id");
     assert_eq!(row2.amount, 5000);
 }
@@ -182,7 +189,10 @@ async fn r582_e2e_upsert_rejects_invalid_window_kind() {
         is_active: true,
         updated_by_user_id: Some("user-1".into()),
     };
-    let err = svc.upsert_policy(company_id, input).await.expect_err("should reject");
+    let err = svc
+        .upsert_policy(company_id, input)
+        .await
+        .expect_err("should reject");
     assert!(matches!(err, pc_budgets::BudgetError::InvalidWindowKind(_)));
 }
 
@@ -273,16 +283,26 @@ async fn r582_e2e_evaluate_full_idempotent_incident_creation() {
         .evaluate_full(&policy, 900, chrono::Utc::now())
         .await
         .expect("evaluate 1");
-    assert!(matches!(eval1.incident.unwrap(), IncidentOutcome::Created { .. }));
+    assert!(matches!(
+        eval1.incident.unwrap(),
+        IncidentOutcome::Created { .. }
+    ));
 
     // 第二次 — 应返回 AlreadyExists，不重复创建
     let eval2 = svc
         .evaluate_full(&policy, 950, chrono::Utc::now())
         .await
         .expect("evaluate 2");
-    assert!(matches!(eval2.incident.unwrap(), IncidentOutcome::AlreadyExists { .. }));
+    assert!(matches!(
+        eval2.incident.unwrap(),
+        IncidentOutcome::AlreadyExists { .. }
+    ));
 
-    assert_eq!(count_incidents(&db, policy_id).await, 1, "should still have 1 incident");
+    assert_eq!(
+        count_incidents(&db, policy_id).await,
+        1,
+        "should still have 1 incident"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -300,7 +320,8 @@ async fn r582_e2e_resolve_incident_triggers_resolve_hook() {
         .await
         .expect("evaluate");
     let incident_id = match eval.incident.unwrap() {
-        IncidentOutcome::Created { incident: row } | IncidentOutcome::AlreadyExists { incident: row } => row.id,
+        IncidentOutcome::Created { incident: row }
+        | IncidentOutcome::AlreadyExists { incident: row } => row.id,
     };
 
     // 解决 incident
@@ -332,9 +353,15 @@ async fn r582_e2e_list_open_attention_returns_unresolved() {
         .await
         .expect("evaluate");
 
-    let open = svc.list_open_attention(company_id).await.expect("list open");
+    let open = svc
+        .list_open_attention(company_id)
+        .await
+        .expect("list open");
     let open_for_policy: Vec<_> = open.iter().filter(|i| i.policy_id == policy_id).collect();
-    assert!(!open_for_policy.is_empty(), "should have open incidents for our policy");
+    assert!(
+        !open_for_policy.is_empty(),
+        "should have open incidents for our policy"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

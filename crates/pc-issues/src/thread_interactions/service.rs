@@ -17,10 +17,10 @@ use pc_repos::{issue::IssueThreadInteractionRow, Db};
 
 use super::hook::{IssueThreadInteractionHook, NoopIssueThreadInteractionHook};
 use super::types::{
-    ContinuationPolicy, CreateIssueThreadInteractionInput, InteractionActor,
-    InteractionResolution, InteractionStatus, IssueThreadInteractionError,
-    IssueThreadInteractionInfo, IssueThreadInteractionResult, ResolveInteractionInput,
-    SubmitVerdictsInput, INTERACTION_KINDS, INTERACTION_TERMINAL_STATUSES,
+    ContinuationPolicy, CreateIssueThreadInteractionInput, InteractionActor, InteractionResolution,
+    InteractionStatus, IssueThreadInteractionError, IssueThreadInteractionInfo,
+    IssueThreadInteractionResult, ResolveInteractionInput, SubmitVerdictsInput, INTERACTION_KINDS,
+    INTERACTION_TERMINAL_STATUSES,
 };
 
 // ============================================================================
@@ -28,7 +28,10 @@ use super::types::{
 // ============================================================================
 
 /// List interactions for an issue (与 Node `listInteractions` 1:1 对齐).
-pub async fn list_interactions(db: &Db, issue_id: Uuid) -> sqlx::Result<Vec<IssueThreadInteractionRow>> {
+pub async fn list_interactions(
+    db: &Db,
+    issue_id: Uuid,
+) -> sqlx::Result<Vec<IssueThreadInteractionRow>> {
     let repo = pc_repos::issue::IssueRepo::new(db);
     repo.list_interactions(issue_id).await
 }
@@ -40,7 +43,8 @@ pub async fn list_interactions_for_company(
     issue_id: Uuid,
 ) -> sqlx::Result<Vec<IssueThreadInteractionRow>> {
     let repo = pc_repos::issue::IssueRepo::new(db);
-    repo.list_interactions_for_company(company_id, issue_id).await
+    repo.list_interactions_for_company(company_id, issue_id)
+        .await
 }
 
 /// List pending interactions for attention queue.
@@ -53,10 +57,7 @@ pub async fn list_pending_interactions_attention(
 }
 
 /// Get a single interaction by ID.
-pub async fn get_interaction(
-    db: &Db,
-    id: Uuid,
-) -> sqlx::Result<Option<IssueThreadInteractionRow>> {
+pub async fn get_interaction(db: &Db, id: Uuid) -> sqlx::Result<Option<IssueThreadInteractionRow>> {
     let repo = pc_repos::issue::IssueRepo::new(db);
     repo.get_interaction(id).await
 }
@@ -120,7 +121,9 @@ pub async fn create_interaction(
 
     // Check idempotency
     if let Some(key) = &input.idempotency_key {
-        if let Some(existing) = get_idempotent_interaction(db, input.company_id, input.issue_id, key).await? {
+        if let Some(existing) =
+            get_idempotent_interaction(db, input.company_id, input.issue_id, key).await?
+        {
             return Ok(existing);
         }
     }
@@ -180,7 +183,9 @@ pub async fn resolve_interaction(
     let current = repo
         .get_interaction(input.interaction_id)
         .await?
-        .ok_or_else(|| IssueThreadInteractionError::NotFound(format!("interaction {}", input.interaction_id)))?;
+        .ok_or_else(|| {
+            IssueThreadInteractionError::NotFound(format!("interaction {}", input.interaction_id))
+        })?;
 
     // Verify status is pending
     if current.status != "pending" {
@@ -206,7 +211,8 @@ pub async fn resolve_interaction(
         None
     };
     let resolved_by_agent_id = if input.resolved_by_actor.actor_type == "agent" {
-        input.resolved_by_actor
+        input
+            .resolved_by_actor
             .actor_id
             .as_ref()
             .and_then(|s| Uuid::parse_str(s).ok())
@@ -394,7 +400,9 @@ impl IssueThreadInteractionService {
         self.hook.before_create(&input);
         // Idempotency check
         if let Some(key) = &input.idempotency_key {
-            if let Some(existing) = get_idempotent_interaction(db, input.company_id, input.issue_id, key).await? {
+            if let Some(existing) =
+                get_idempotent_interaction(db, input.company_id, input.issue_id, key).await?
+            {
                 self.hook.on_conflict(input.issue_id, &input.kind, key);
                 return Ok(existing);
             }
@@ -434,11 +442,7 @@ impl IssueThreadInteractionService {
     }
 
     /// Get by ID.
-    pub async fn get(
-        &self,
-        db: &Db,
-        id: Uuid,
-    ) -> sqlx::Result<Option<IssueThreadInteractionRow>> {
+    pub async fn get(&self, db: &Db, id: Uuid) -> sqlx::Result<Option<IssueThreadInteractionRow>> {
         get_interaction(db, id).await
     }
 

@@ -1,9 +1,9 @@
 //! R732: e2e for `pc-responsible-user-denial-run-outcomes` against real Postgres.
 
+use pc_repos::Db;
 use pc_responsible_user_denial::run_outcomes::{
     record_responsible_user_denial_on_active_run, RecordDenialInput,
 };
-use pc_repos::Db;
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -24,7 +24,12 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>();
+    let suffix = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect::<String>();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
@@ -178,13 +183,12 @@ async fn returns_none_for_terminal_run() {
     assert!(result.is_none());
 
     // DB row should NOT have been updated.
-    let stored: (Option<String>,) = sqlx::query_as(
-        "SELECT error_code FROM heartbeat_runs WHERE id = $1",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .expect("select");
+    let stored: (Option<String>,) =
+        sqlx::query_as("SELECT error_code FROM heartbeat_runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("select");
     assert!(stored.0.is_none());
 
     cleanup(&pool, company_id).await;

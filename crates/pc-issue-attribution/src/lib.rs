@@ -76,7 +76,11 @@ impl ResponsibleUserInput {
 /// 3. Else → `{ userId: null, source: "none", isAutoDerived: false }`
 #[must_use]
 pub fn derive_responsible_user(issue: &ResponsibleUserInput) -> ResponsibleUserAttribution {
-    if let Some(uid) = issue.responsible_user_id.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(uid) = issue
+        .responsible_user_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         return ResponsibleUserAttribution {
             user_id: Some(uid.to_string()),
             source: ResponsibleUserSource::Explicit,
@@ -84,7 +88,11 @@ pub fn derive_responsible_user(issue: &ResponsibleUserInput) -> ResponsibleUserA
         };
     }
 
-    if let Some(uid) = issue.created_by_user_id.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(uid) = issue
+        .created_by_user_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         return ResponsibleUserAttribution {
             user_id: Some(uid.to_string()),
             source: ResponsibleUserSource::Creator,
@@ -185,7 +193,9 @@ pub fn derive_originating_actor(issue: &OriginatingActorInput) -> Option<Origina
                 via_agent_id: Some(aid.to_string()),
             });
         }
-        return Some(OriginatingActor::Agent { id: aid.to_string() });
+        return Some(OriginatingActor::Agent {
+            id: aid.to_string(),
+        });
     }
 
     if let Some(uid) = non_empty_str(issue.responsible_user_id.as_deref()) {
@@ -211,10 +221,8 @@ mod tests {
 
     #[test]
     fn r532_responsible_prefers_explicit() {
-        let issue = ResponsibleUserInput::new(
-            Some("user-responsible".into()),
-            Some("user-creator".into()),
-        );
+        let issue =
+            ResponsibleUserInput::new(Some("user-responsible".into()), Some("user-creator".into()));
         assert_eq!(
             derive_responsible_user(&issue),
             ResponsibleUserAttribution {
@@ -306,8 +314,7 @@ mod tests {
 
     #[test]
     fn r532_originating_agent_creator_without_responsible_user() {
-        let issue =
-            OriginatingActorInput::new(None, Some("agent-claude".into()), None);
+        let issue = OriginatingActorInput::new(None, Some("agent-claude".into()), None);
         assert_eq!(
             derive_originating_actor(&issue),
             Some(OriginatingActor::Agent {
@@ -318,11 +325,7 @@ mod tests {
 
     #[test]
     fn r532_originating_routine_execution_no_creator() {
-        let issue = OriginatingActorInput::new(
-            None,
-            None,
-            Some("user-responsible".into()),
-        );
+        let issue = OriginatingActorInput::new(None, None, Some("user-responsible".into()));
         assert_eq!(
             derive_originating_actor(&issue),
             Some(OriginatingActor::User {
@@ -370,7 +373,11 @@ mod tests {
 
     #[test]
     fn r532_originating_empty_strings_all_around() {
-        let issue = OriginatingActorInput::new(Some(String::new()), Some(String::new()), Some(String::new()));
+        let issue = OriginatingActorInput::new(
+            Some(String::new()),
+            Some(String::new()),
+            Some(String::new()),
+        );
         assert_eq!(derive_originating_actor(&issue), None);
     }
 

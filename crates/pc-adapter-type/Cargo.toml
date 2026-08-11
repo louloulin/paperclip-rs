@@ -5,9 +5,26 @@ edition.workspace = true
 license.workspace = true
 description = "Agent adapter type validation (port of paperclip packages/shared/src/adapter-type.ts)"
 
+[dev-dependencies]
+pc-adapter-claude-local = { path = "../pc-adapter-claude-local" }
+pc-adapter-codex-local = { path = "../pc-adapter-codex-local" }
+pc-adapter-cursor-cloud = { path = "../pc-adapter-cursor-cloud" }
+pc-adapter-cursor-local = { path = "../pc-adapter-cursor-local" }
+pc-adapter-gemini-local = { path = "../pc-adapter-gemini-local" }
+pc-adapter-grok-local = { path = "../pc-adapter-grok-local" }
+pc-adapter-hermes = { path = "../pc-adapter-hermes" }
+pc-adapter-hermes-gateway = { path = "../pc-adapter-hermes-gateway" }
+pc-adapter-openclaw-gateway = { path = "../pc-adapter-openclaw-gateway" }
+pc-adapter-opencode-local = { path = "../pc-adapter-opencode-local" }
+pc-adapter-pi-local = { path = "../pc-adapter-pi-local" }
+
 [lints]
 workspace = true
 
 [[test]]
 name = "r555_adapter_type"
 path = "tests/r555_adapter_type.rs"
+
+[[test]]
+name = "r564_integration"
+path = "tests/r564_integration.rs"

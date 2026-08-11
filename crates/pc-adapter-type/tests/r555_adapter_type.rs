@@ -40,17 +40,23 @@ fn r555_normalize_whitespace_returns_default() {
 fn r555_normalize_trims_input() {
     assert_eq!(
         normalize_agent_adapter_type(Some("  claude-local  ")),
-        "claude-local"
+        "claude_local"
     );
 }
 
 #[test]
 fn r555_normalize_passes_through_non_empty() {
+    // Hyphen input → underscore output (R564 normalization convention)
     assert_eq!(
         normalize_agent_adapter_type(Some("codex-local")),
-        "codex-local"
+        "codex_local"
     );
+    // Underscore input → unchanged
     assert_eq!(normalize_agent_adapter_type(Some("process")), "process");
+    assert_eq!(
+        normalize_agent_adapter_type(Some("claude_local")),
+        "claude_local"
+    );
 }
 
 #[test]
@@ -95,17 +101,17 @@ fn r555_validate_optional_rejects_empty() {
 fn r555_builtin_recognized_set() {
     for t in [
         "process",
-        "claude-local",
-        "codex-local",
-        "cursor-local",
-        "cursor-cloud",
-        "gemini-local",
-        "grok-local",
+        "claude_local",
+        "codex_local",
+        "cursor_local",
+        "cursor_cloud",
+        "gemini_local",
+        "grok_local",
         "hermes",
-        "hermes-gateway",
-        "openclaw-gateway",
-        "opencode-local",
-        "pi-local",
+        "hermes_gateway",
+        "openclaw_gateway",
+        "opencode_local",
+        "pi_local",
     ] {
         assert!(is_builtin_adapter_type(t), "missing builtin {t}");
     }

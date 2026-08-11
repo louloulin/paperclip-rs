@@ -135,23 +135,23 @@ pub static AUTHORIZATION_BEARER_PATTERN: Lazy<Regex> = Lazy::new(|| {
 /// Inline OpenAI-style `sk-...` keys (12+ alphanum chars).
 ///
 /// Mirrors Node upstream `COMMAND_OPENAI_KEY_RE`.
-pub static OPENAI_KEY_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\bsk-[A-Za-z0-9_-]{12,}\b").expect("valid regex pattern")
-});
+pub static OPENAI_KEY_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\bsk-[A-Za-z0-9_-]{12,}\b").expect("valid regex pattern"));
 
 /// Inline GitHub tokens `gh[pousr]_<20+ alphanum>`.
 ///
 /// Mirrors Node upstream `COMMAND_GITHUB_TOKEN_RE`.
-pub static GITHUB_TOKEN_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b").expect("valid regex pattern")
-});
+pub static GITHUB_TOKEN_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b").expect("valid regex pattern"));
 
 /// Inline JWT shape in free-form text (8+ chars per segment, optional 4th).
 ///
 /// Mirrors Node upstream `COMMAND_JWT_RE`.
 pub static INLINE_JWT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]{8,})?\b")
-        .expect("valid regex pattern")
+    Regex::new(
+        r"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]{8,})?\b",
+    )
+    .expect("valid regex pattern")
 });
 
 // ---------------------------------------------------------------------------
@@ -178,10 +178,7 @@ pub fn is_jwt_like(value: &str) -> bool {
 #[must_use]
 pub fn maybe_contains_secret_text(input: &str) -> bool {
     let lower = input.to_lowercase();
-    SECRET_TEXT_HINTS
-        .iter()
-        .any(|hint| lower.contains(hint))
-        || input.contains('.')
+    SECRET_TEXT_HINTS.iter().any(|hint| lower.contains(hint)) || input.contains('.')
 }
 
 /// Redact inline secret patterns in a free-form string.
@@ -221,7 +218,9 @@ pub fn redact_sensitive_text(input: &str) -> String {
     });
     let s = OPENAI_KEY_PATTERN.replace_all(&s, REDACTED_EVENT_VALUE);
     let s = GITHUB_TOKEN_PATTERN.replace_all(&s, REDACTED_EVENT_VALUE);
-    INLINE_JWT_PATTERN.replace_all(&s, REDACTED_EVENT_VALUE).into_owned()
+    INLINE_JWT_PATTERN
+        .replace_all(&s, REDACTED_EVENT_VALUE)
+        .into_owned()
 }
 
 /// Recursively redact a JSON object, replacing values whose key matches
@@ -405,7 +404,10 @@ mod tests {
         let input = "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz";
         let out = redact_sensitive_text(input);
         assert!(out.contains("***REDACTED***"), "got: {out}");
-        assert!(!out.contains("ghp_abcdefghijklmnopqrstuvwxyz"), "got: {out}");
+        assert!(
+            !out.contains("ghp_abcdefghijklmnopqrstuvwxyz"),
+            "got: {out}"
+        );
     }
 
     #[test]

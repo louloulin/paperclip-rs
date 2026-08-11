@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use pc_errors::{conflict, internal, unprocessable, validation, Error, Result};
-pub use pc_url_keys::{is_uuid_like, normalize_agent_url_key};
 use pc_repos::{
     agent::{
         AgentConfigRecord, AgentConfigRevisionRow, AgentRepo, AgentRow, AgentRuntimeStateRow,
@@ -11,6 +10,7 @@ use pc_repos::{
     company::CompanyRepo,
     Db,
 };
+pub use pc_url_keys::{is_uuid_like, normalize_agent_url_key};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -23,9 +23,17 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentLifecycleEvent {
     /// Agent 被终止。
-    Terminated { id: Uuid, company_id: Uuid, role: String },
+    Terminated {
+        id: Uuid,
+        company_id: Uuid,
+        role: String,
+    },
     /// Agent 被暂停（含原因）。
-    Paused { id: Uuid, company_id: Uuid, reason: String },
+    Paused {
+        id: Uuid,
+        company_id: Uuid,
+        reason: String,
+    },
     /// Agent 被恢复。
     Resumed { id: Uuid, company_id: Uuid },
 }
@@ -35,19 +43,12 @@ pub enum AgentLifecycleEvent {
 /// 默认全部 noop — 调用方可选择性实现。
 #[async_trait]
 pub trait AgentHook: Send + Sync {
-    async fn on_lifecycle(
-        &self,
-        _event: AgentLifecycleEvent,
-    ) -> Result<()> {
+    async fn on_lifecycle(&self, _event: AgentLifecycleEvent) -> Result<()> {
         Ok(())
     }
 
     /// R604: 组织架构图已计算完成（含 agent 数）。
-    async fn on_org_chart_computed(
-        &self,
-        _company_id: Uuid,
-        _count: i64,
-    ) -> Result<()> {
+    async fn on_org_chart_computed(&self, _company_id: Uuid, _count: i64) -> Result<()> {
         Ok(())
     }
 }
@@ -67,19 +68,12 @@ pub struct RecordingAgentHook {
 
 #[async_trait]
 impl AgentHook for RecordingAgentHook {
-    async fn on_lifecycle(
-        &self,
-        event: AgentLifecycleEvent,
-    ) -> Result<()> {
+    async fn on_lifecycle(&self, event: AgentLifecycleEvent) -> Result<()> {
         self.events.lock().expect("lock").push(event);
         Ok(())
     }
 
-    async fn on_org_chart_computed(
-        &self,
-        company_id: Uuid,
-        count: i64,
-    ) -> Result<()> {
+    async fn on_org_chart_computed(&self, company_id: Uuid, count: i64) -> Result<()> {
         self.org_chart_computed
             .lock()
             .expect("lock")
@@ -429,7 +423,10 @@ pub struct AgentService {
 impl AgentService {
     #[must_use]
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     /// R594: 构造带 hook 的 service。
@@ -446,10 +443,7 @@ impl AgentService {
     }
 
     /// R594: 触发 lifecycle event 给所有 hook。
-    async fn dispatch_lifecycle(
-        &self,
-        event: AgentLifecycleEvent,
-    ) -> Result<()> {
+    async fn dispatch_lifecycle(&self, event: AgentLifecycleEvent) -> Result<()> {
         for hook in &self.hooks {
             if let Err(e) = hook.on_lifecycle(event.clone()).await {
                 tracing::warn!(
@@ -672,7 +666,10 @@ impl AgentService {
         if existing.status == "terminated" {
             return Err(conflict("Cannot pause terminated agent"));
         }
-        let updated = repo.pause(id, reason.as_str()).await.map_err(map_sql_error)?;
+        let updated = repo
+            .pause(id, reason.as_str())
+            .await
+            .map_err(map_sql_error)?;
         // R594: 触发 lifecycle hook
         self.dispatch_lifecycle(AgentLifecycleEvent::Paused {
             id,
@@ -986,7 +983,10 @@ impl AgentService {
     // ============================================================
     pub async fn org_for_company(&self, company_id: Uuid) -> Result<Vec<OrgChartNode>> {
         let repo = AgentRepo::new(&self.db);
-        let rows = repo.list_by_company(company_id).await.map_err(map_sql_error)?;
+        let rows = repo
+            .list_by_company(company_id)
+            .await
+            .map_err(map_sql_error)?;
         let company_id_set: HashSet<Uuid> = rows.iter().map(|r| r.id).collect();
         let active: Vec<AgentRow> = rows
             .into_iter()
@@ -1034,11 +1034,7 @@ impl AgentService {
     }
 
     /// R604: 触发 org chart computed 事件给所有 hook。
-    async fn dispatch_org_chart_computed(
-        &self,
-        company_id: Uuid,
-        count: i64,
-    ) -> Result<()> {
+    async fn dispatch_org_chart_computed(&self, company_id: Uuid, count: i64) -> Result<()> {
         for hook in &self.hooks {
             if let Err(e) = hook.on_org_chart_computed(company_id, count).await {
                 tracing::warn!(
@@ -1180,8 +1176,7 @@ fn config_record(snapshot: AgentConfigSnapshot) -> AgentConfigRecord {
 // re-exported from `pc-url-keys` (R530 extraction). They were previously
 // implemented inline here as part of R604.
 
-pub 
-fn map_sql_error(error: sqlx::Error) -> Error {
+pub fn map_sql_error(error: sqlx::Error) -> Error {
     internal(format!("agent database operation failed: {error}"))
 }
 

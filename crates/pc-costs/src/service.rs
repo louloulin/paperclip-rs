@@ -12,10 +12,10 @@ use uuid::Uuid;
 
 use pc_errors::{internal, not_found, validation, Error as PcError, Result};
 pub use pc_repos::cost::{
-    AgentCostWindow, CostByAgent, CostByAgentModel, CostByBiller, CostByProviderModel, CostByProject,
-    CostEventRow, CostRange, CostRepo, CostSummary, CostWindowSpendRow, CreateCostEvent,
-    FinanceByBiller, FinanceByKind, FinanceEventRow, FinanceSummary, IssueCostSummaryRow,
-    NewFinanceEvent,
+    AgentCostWindow, CostByAgent, CostByAgentModel, CostByBiller, CostByProject,
+    CostByProviderModel, CostEventRow, CostRange, CostRepo, CostSummary, CostWindowSpendRow,
+    CreateCostEvent, FinanceByBiller, FinanceByKind, FinanceEventRow, FinanceSummary,
+    IssueCostSummaryRow, NewFinanceEvent,
 };
 use pc_repos::Db;
 
@@ -201,10 +201,7 @@ fn normalize_create(input: &CreateCostEvent) -> Result<()> {
     if input.cost_cents < 0 {
         return Err(validation("costCents must be non-negative"));
     }
-    if input.input_tokens < 0
-        || input.cached_input_tokens < 0
-        || input.output_tokens < 0
-    {
+    if input.input_tokens < 0 || input.cached_input_tokens < 0 || input.output_tokens < 0 {
         return Err(validation("token counts must be non-negative"));
     }
     Ok(())
@@ -255,7 +252,14 @@ pub fn current_utc_month_window(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<
         .single()
         .expect("valid first-of-month");
     let end = Utc
-        .with_ymd_and_hms(if month == 12 { year + 1 } else { year }, if month == 12 { 1 } else { month + 1 }, 1, 0, 0, 0)
+        .with_ymd_and_hms(
+            if month == 12 { year + 1 } else { year },
+            if month == 12 { 1 } else { month + 1 },
+            1,
+            0,
+            0,
+            0,
+        )
         .single()
         .expect("valid first-of-next-month");
     (start, end)
@@ -307,7 +311,10 @@ pub struct CostService {
 
 impl CostService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn CostHook>>) -> Self {
@@ -362,12 +369,11 @@ impl CostService {
         normalize_create(&input)?;
 
         // Confirm agent belongs to same company.
-        let agent_row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM agents WHERE id = $1",
-        )
-        .bind(input.agent_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let agent_row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM agents WHERE id = $1")
+                .bind(input.agent_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         let Some((agent_company,)) = agent_row else {
             return Err(CostFinanceError::NotFound("Agent not found".into()));
         };
@@ -377,7 +383,11 @@ impl CostService {
             ));
         }
 
-        let biller = if input.biller.is_empty() { input.provider.clone() } else { input.biller.clone() };
+        let biller = if input.biller.is_empty() {
+            input.provider.clone()
+        } else {
+            input.biller.clone()
+        };
         let billing_type = if input.billing_type.is_empty() {
             "unknown".into()
         } else {
@@ -419,7 +429,8 @@ impl CostService {
         .await?;
 
         // Recompute monthly spend for the agent and the company.
-        let agent_month = get_monthly_spend_total(&self.db, company_id, Some(input.agent_id)).await?;
+        let agent_month =
+            get_monthly_spend_total(&self.db, company_id, Some(input.agent_id)).await?;
         let company_month = get_monthly_spend_total(&self.db, company_id, None).await?;
 
         sqlx::query("UPDATE agents SET spent_monthly_cents = $1, updated_at = now() WHERE id = $2")
@@ -428,11 +439,13 @@ impl CostService {
             .execute(self.db.pool())
             .await?;
 
-        sqlx::query("UPDATE companies SET spent_monthly_cents = $1, updated_at = now() WHERE id = $2")
-            .bind(company_month)
-            .bind(company_id)
-            .execute(self.db.pool())
-            .await?;
+        sqlx::query(
+            "UPDATE companies SET spent_monthly_cents = $1, updated_at = now() WHERE id = $2",
+        )
+        .bind(company_month)
+        .bind(company_id)
+        .execute(self.db.pool())
+        .await?;
 
         // Emit hooks (order matters: CostEventCreated first, then MonthlySpend).
         self.dispatch(CostHookEvent::CostEventCreated {
@@ -460,11 +473,7 @@ impl CostService {
     // Aggregations — direct repo passthrough
     // -------------------------------------------------------------------------
 
-    pub async fn summary(
-        &self,
-        company_id: Uuid,
-        range: CostRange,
-    ) -> CostResult<CostSummary> {
+    pub async fn summary(&self, company_id: Uuid, range: CostRange) -> CostResult<CostSummary> {
         Ok(self.repo().summary(company_id, range).await?)
     }
 
@@ -508,10 +517,7 @@ impl CostService {
         Ok(self.repo().by_project(company_id, range).await?)
     }
 
-    pub async fn window_spend(
-        &self,
-        company_id: Uuid,
-    ) -> CostResult<Vec<CostWindowSpendRow>> {
+    pub async fn window_spend(&self, company_id: Uuid) -> CostResult<Vec<CostWindowSpendRow>> {
         Ok(self.repo().window_spend(company_id).await?)
     }
 
@@ -523,17 +529,11 @@ impl CostService {
         Ok(self.repo().list_cost_events(company_id, limit).await?)
     }
 
-    pub async fn issue_summary(
-        &self,
-        issue_id: Uuid,
-    ) -> CostResult<Option<IssueCostSummaryRow>> {
+    pub async fn issue_summary(&self, issue_id: Uuid) -> CostResult<Option<IssueCostSummaryRow>> {
         Ok(self.repo().issue_summary(issue_id).await?)
     }
 
-    pub async fn sum_agent_window_cost_cents(
-        &self,
-        window: AgentCostWindow,
-    ) -> CostResult<i64> {
+    pub async fn sum_agent_window_cost_cents(&self, window: AgentCostWindow) -> CostResult<i64> {
         Ok(self.repo().sum_agent_window_cost_cents(window).await?)
     }
 
@@ -619,18 +619,36 @@ mod tests {
 
     #[test]
     fn current_utc_month_window_mid_month() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 8, 15, 12, 0, 0)
+            .single()
+            .unwrap();
         let (start, end) = current_utc_month_window(now);
-        assert_eq!(start, Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).single().unwrap());
-        assert_eq!(end, Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).single().unwrap());
+        assert_eq!(
+            start,
+            Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).single().unwrap()
+        );
+        assert_eq!(
+            end,
+            Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).single().unwrap()
+        );
     }
 
     #[test]
     fn current_utc_month_window_year_boundary() {
-        let now = Utc.with_ymd_and_hms(2026, 12, 31, 23, 0, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 12, 31, 23, 0, 0)
+            .single()
+            .unwrap();
         let (start, end) = current_utc_month_window(now);
-        assert_eq!(start, Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).single().unwrap());
-        assert_eq!(end, Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).single().unwrap());
+        assert_eq!(
+            start,
+            Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).single().unwrap()
+        );
+        assert_eq!(
+            end,
+            Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).single().unwrap()
+        );
     }
 
     #[test]

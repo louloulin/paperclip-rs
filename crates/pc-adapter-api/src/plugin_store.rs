@@ -149,10 +149,7 @@ impl AdapterPluginStore {
         }
     }
 
-    pub async fn get_by_type(
-        &self,
-        kind: &str,
-    ) -> Result<Option<AdapterPluginRecord>, StoreError> {
+    pub async fn get_by_type(&self, kind: &str) -> Result<Option<AdapterPluginRecord>, StoreError> {
         let store = self.read_store().await?;
         Ok(store.into_iter().find(|r| r.kind == kind))
     }
@@ -174,11 +171,7 @@ impl AdapterPluginStore {
     }
 
     /// 切换 disabled 状态。返回 `true` 表示写入了文件；状态未变时返回 `false`。
-    pub async fn set_disabled(
-        &self,
-        kind: &str,
-        disabled: bool,
-    ) -> Result<bool, StoreError> {
+    pub async fn set_disabled(&self, kind: &str, disabled: bool) -> Result<bool, StoreError> {
         let mut settings = self.read_settings().await?;
         let idx = settings.disabled_types.iter().position(|t| t == kind);
         match (disabled, idx) {

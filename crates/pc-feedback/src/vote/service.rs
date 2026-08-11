@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use pc_repos::feedback_vote::{FeedbackVoteRow, NewFeedbackVote};
 use pc_repos::feedback_vote::FeedbackVoteRepo;
+pub use pc_repos::feedback_vote::{FeedbackVoteRow, NewFeedbackVote};
 use pc_repos::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
@@ -149,7 +149,10 @@ pub struct FeedbackVoteService {
 
 impl FeedbackVoteService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn FeedbackVoteHook>>) -> Self {
@@ -239,13 +242,19 @@ impl FeedbackVoteService {
             return Err(FeedbackVoteError::Validation("issueId is required".into()));
         }
         if target_type.trim().is_empty() {
-            return Err(FeedbackVoteError::Validation("targetType must not be empty".into()));
+            return Err(FeedbackVoteError::Validation(
+                "targetType must not be empty".into(),
+            ));
         }
         if target_id.trim().is_empty() {
-            return Err(FeedbackVoteError::Validation("targetId must not be empty".into()));
+            return Err(FeedbackVoteError::Validation(
+                "targetId must not be empty".into(),
+            ));
         }
         if author_user_id.trim().is_empty() {
-            return Err(FeedbackVoteError::Validation("authorUserId must not be empty".into()));
+            return Err(FeedbackVoteError::Validation(
+                "authorUserId must not be empty".into(),
+            ));
         }
         if !ALLOWED_VOTES.contains(&vote) {
             return Err(FeedbackVoteError::Validation(format!(
@@ -255,12 +264,17 @@ impl FeedbackVoteService {
 
         let id = self
             .repo()
-            .create_for_issue(issue_id, target_type, target_id, author_user_id, vote, reason)
+            .create_for_issue(
+                issue_id,
+                target_type,
+                target_id,
+                author_user_id,
+                vote,
+                reason,
+            )
             .await
             .map_err(|e| match e {
-                sqlx::Error::RowNotFound => {
-                    FeedbackVoteError::NotFound("Issue not found".into())
-                }
+                sqlx::Error::RowNotFound => FeedbackVoteError::NotFound("Issue not found".into()),
                 other => FeedbackVoteError::Db(other),
             })?;
 

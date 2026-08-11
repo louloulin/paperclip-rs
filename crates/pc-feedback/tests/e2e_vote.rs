@@ -34,7 +34,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -62,10 +70,22 @@ async fn insert_issue(pool: &PgPool, company_id: Uuid) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM feedback_votes WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM issues WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM feedback_votes WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM issues WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 fn make_input(company_id: Uuid, issue_id: Uuid) -> NewFeedbackVote {
@@ -125,7 +145,10 @@ async fn cast_inserts_row_and_emits_hook() {
     let recorder = Arc::new(RecordingFeedbackVoteHook::default());
     let svc = FeedbackVoteService::with_hooks(db, vec![recorder.clone()]);
 
-    let vote_id = svc.cast(make_input(company_id, issue_id)).await.expect("cast");
+    let vote_id = svc
+        .cast(make_input(company_id, issue_id))
+        .await
+        .expect("cast");
     assert!(!vote_id.is_nil());
 
     let fetched = svc.get_by_id(vote_id).await.expect("get").expect("exists");
@@ -138,7 +161,11 @@ async fn cast_inserts_row_and_emits_hook() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        FeedbackVoteHookEvent::Cast { vote, author_user_id, .. } => {
+        FeedbackVoteHookEvent::Cast {
+            vote,
+            author_user_id,
+            ..
+        } => {
             assert_eq!(vote, "up");
             assert_eq!(author_user_id, "u1");
         }
@@ -166,7 +193,11 @@ async fn cast_for_issue_resolves_company_id_and_emits_hook() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        FeedbackVoteHookEvent::Cast { company_id: cid, vote, .. } => {
+        FeedbackVoteHookEvent::Cast {
+            company_id: cid,
+            vote,
+            ..
+        } => {
             assert_eq!(*cid, company_id);
             assert_eq!(vote, "down");
         }
@@ -183,7 +214,10 @@ async fn cast_for_issue_returns_not_found_for_missing_issue() {
     let res = svc
         .cast_for_issue(Uuid::new_v4(), "agent", "a1", "u", "up", None)
         .await;
-    assert!(matches!(res, Err(pc_feedback::vote::FeedbackVoteError::NotFound(_))));
+    assert!(matches!(
+        res,
+        Err(pc_feedback::vote::FeedbackVoteError::NotFound(_))
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -194,7 +228,9 @@ async fn list_by_issue_returns_recent_first() {
     let issue_id = insert_issue(&pool, company_id).await;
     let svc = FeedbackVoteService::new(db);
 
-    svc.cast(make_input(company_id, issue_id)).await.expect("cast 1");
+    svc.cast(make_input(company_id, issue_id))
+        .await
+        .expect("cast 1");
     svc.cast({
         let mut i = make_input(company_id, issue_id);
         i.target_id = "agent-2".into();
@@ -221,7 +257,9 @@ async fn count_by_issue_returns_inserted_count() {
     let n0 = svc.count_by_issue(issue_id).await.expect("count 0");
     assert_eq!(n0, 0);
 
-    svc.cast(make_input(company_id, issue_id)).await.expect("cast");
+    svc.cast(make_input(company_id, issue_id))
+        .await
+        .expect("cast");
     let n1 = svc.count_by_issue(issue_id).await.expect("count 1");
     assert_eq!(n1, 1);
 

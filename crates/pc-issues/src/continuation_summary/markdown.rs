@@ -10,14 +10,13 @@ use std::sync::LazyLock;
 
 use super::types::{
     BuildContinuationSummaryInput, ContinuationSummaryMode, IssueSummaryInput, RunSummaryInput,
-    ISSUE_CONTINUATION_SUMMARY_MAX_BODY_CHARS, PATH_CANDIDATE_RE,
-    SUMMARY_SECTION_MAX_CHARS, WAITING_FOR_REVIEW_OR_APPROVAL_RE,
+    ISSUE_CONTINUATION_SUMMARY_MAX_BODY_CHARS, PATH_CANDIDATE_RE, SUMMARY_SECTION_MAX_CHARS,
+    WAITING_FOR_REVIEW_OR_APPROVAL_RE,
 };
 
 static MD_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Section extractor: ^##\s+heading\s*$([\s\S]*?)(?=^##\s+|(?![\s\S]))
-    Regex::new(r"(?m)^##\s+([^$\n]+?)\s*$\n([\s\S]*?)(?=^##\s+|\z)")
-        .expect("valid section regex")
+    Regex::new(r"(?m)^##\s+([^$\n]+?)\s*$\n([\s\S]*?)(?=^##\s+|\z)").expect("valid section regex")
 });
 
 /// Truncate text to max chars（与 Node `truncateText` 1:1 对齐）。
@@ -169,7 +168,8 @@ pub fn infer_next_action(
             .to_string();
     }
     if issue.status == "in_review" {
-        return "Wait for reviewer feedback or approval before continuing executor work.".to_string();
+        return "Wait for reviewer feedback or approval before continuing executor work."
+            .to_string();
     }
     if matches!(run.status.as_str(), "failed" | "timed_out") {
         return "Inspect the failed run, fix the cause, and resume from the most recent concrete action above.".to_string();
@@ -203,7 +203,10 @@ pub fn extract_previous_next_action(previous_body: Option<&str>) -> Option<Strin
     let section = extract_markdown_section(previous_body, "Next Action")?;
     section
         .lines()
-        .map(|line| line.trim_start_matches(|c: char| c == '-' || c == '*').trim())
+        .map(|line| {
+            line.trim_start_matches(|c: char| c == '-' || c == '*')
+                .trim()
+        })
         .find(|s| !s.is_empty())
         .map(|s| s.to_string())
 }
@@ -248,11 +251,7 @@ pub fn build_continuation_summary_markdown(input: &BuildContinuationSummaryInput
     });
     if let Some(err) = &run.error {
         let error_line = match run.error_code.as_deref() {
-            Some(code) => format!(
-                "Latest run error ({}): {}",
-                code,
-                truncate_str(err, 500)
-            ),
+            Some(code) => format!("Latest run error ({}): {}", code, truncate_str(err, 500)),
             None => format!("Latest run error: {}", truncate_str(err, 500)),
         };
         recent_actions.push(error_line);
@@ -272,11 +271,9 @@ pub fn build_continuation_summary_markdown(input: &BuildContinuationSummaryInput
     let objective = extract_markdown_section(issue.description.as_deref(), "Objective")
         .or_else(|| issue.description.as_deref().map(|d| d.trim().to_string()))
         .unwrap_or_else(|| "No objective captured.".to_string());
-    let acceptance_criteria = extract_markdown_section(
-        issue.description.as_deref(),
-        "Acceptance Criteria",
-    )
-    .unwrap_or_else(|| "No explicit acceptance criteria captured.".to_string());
+    let acceptance_criteria =
+        extract_markdown_section(issue.description.as_deref(), "Acceptance Criteria")
+            .unwrap_or_else(|| "No explicit acceptance criteria captured.".to_string());
 
     let mode = infer_mode(issue, run);
     let next_action = infer_next_action(
@@ -300,7 +297,10 @@ pub fn build_continuation_summary_markdown(input: &BuildContinuationSummaryInput
         format!(
             "- Agent: {} ({})",
             agent.name,
-            agent.adapter_type.clone().unwrap_or_else(|| "unknown".to_string())
+            agent
+                .adapter_type
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
         ),
         String::new(),
         "## Objective".to_string(),
@@ -329,7 +329,10 @@ pub fn build_continuation_summary_markdown(input: &BuildContinuationSummaryInput
                 format!(
                     "Heartbeat run `{}` invoked adapter `{}`.",
                     run.id,
-                    agent.adapter_type.clone().unwrap_or_else(|| "unknown".to_string())
+                    agent
+                        .adapter_type
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string())
                 ),
                 "Detailed shell/tool commands remain in the run log and transcript.".to_string(),
             ],

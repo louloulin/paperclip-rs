@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 pc-core = { path = "../pc-core" }
 pc-auth = { path = "../pc-auth" }
+pc-trust-policy = { path = "../pc-trust-policy" }
 pc-db = { path = "../pc-db" }
 pc-repos = { path = "../pc-repos" }
 serde = { workspace = true }

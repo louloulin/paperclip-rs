@@ -20,7 +20,9 @@ const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/p
 static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
-    TEST_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 async fn connect() -> Db {

@@ -48,7 +48,9 @@ pub enum ParseError {
     NotHttps(String),
     #[error("canonical URL host is not GitHub: {0}")]
     NotGitHubHost(String),
-    #[error("canonical URL path has wrong arity (expected owner/repo/kind/number, got {0} segments)")]
+    #[error(
+        "canonical URL path has wrong arity (expected owner/repo/kind/number, got {0} segments)"
+    )]
     WrongPathArity(usize),
     #[error("canonical URL kind is not 'pull' or 'issues': {0}")]
     WrongKind(String),
@@ -59,4 +61,3 @@ pub enum ParseError {
     #[error("sanitized canonical URL is not a valid URL: {0}")]
     BadCanonicalUrl(String),
 }
-

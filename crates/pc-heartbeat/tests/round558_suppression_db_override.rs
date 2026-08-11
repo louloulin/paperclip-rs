@@ -7,9 +7,7 @@
 //! 注意：使用 `jsonb_set` / `jsonb -` 显式赋值/删除,避免 `||` merge 在并发测试下产生
 //! 读写竞争。
 
-use pc_heartbeat::wake_dedup::{
-    build_suppression_inputs, resolve_suppression, SuppressionReason,
-};
+use pc_heartbeat::wake_dedup::{build_suppression_inputs, resolve_suppression, SuppressionReason};
 use pc_repos::Db;
 use std::collections::HashMap;
 
@@ -17,9 +15,7 @@ const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/p
 const FLAG_KEY: &str = "enableWorktreeRunExecution";
 
 async fn connect() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0)
-        .await
-        .expect("connect")
+    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect")
 }
 
 /// 显式设置 / 清除 experimental 标志。
@@ -42,11 +38,7 @@ async fn set_flag(db: &Db, value: Option<bool>) {
                  updated_at = now() \
                  WHERE singleton_key = 'default'"
             );
-            sqlx::query(&sql)
-                .bind(&v)
-                .execute(db.pool())
-                .await
-                .unwrap();
+            sqlx::query(&sql).bind(&v).execute(db.pool()).await.unwrap();
         }
         None => {
             sqlx::query(
@@ -135,7 +127,10 @@ async fn r558_db_restore_in_progress_overrides_db_worktree_override() {
         decision.suppressed,
         "DB restore should win over worktree override"
     );
-    assert_eq!(decision.reason, SuppressionReason::DatabaseRestoreInProgress);
+    assert_eq!(
+        decision.reason,
+        SuppressionReason::DatabaseRestoreInProgress
+    );
     set_flag(&db, None).await;
 }
 

@@ -55,8 +55,8 @@ impl HireAgentOperations for DbHireAgentOps {
         agent_id: &str,
         _payload: &HireAgentApprovalPayload,
     ) -> Result<(), String> {
-        let agent_uuid = Uuid::parse_str(agent_id)
-            .map_err(|e| format!("invalid agent_id uuid: {e}"))?;
+        let agent_uuid =
+            Uuid::parse_str(agent_id).map_err(|e| format!("invalid agent_id uuid: {e}"))?;
         let _ = company_id; // approve_pending 不需要 company_id 过滤
         let db = (*self.db).clone();
         let repo = AgentRepo::new(&db);
@@ -75,14 +75,20 @@ impl HireAgentOperations for DbHireAgentOps {
         company_id: &str,
         payload: &HireAgentApprovalPayload,
     ) -> Result<String, String> {
-        let company_uuid = Uuid::parse_str(company_id)
-            .map_err(|e| format!("invalid company_id uuid: {e}"))?;
+        let company_uuid =
+            Uuid::parse_str(company_id).map_err(|e| format!("invalid company_id uuid: {e}"))?;
         let db = (*self.db).clone();
         let input = pc_repos::agent::CreateAgentRecord {
             id: Uuid::new_v4(),
             company_id: company_uuid,
-            name: payload.name.clone().unwrap_or_else(|| "New Agent".to_string()),
-            role: payload.role.clone().unwrap_or_else(|| "general".to_string()),
+            name: payload
+                .name
+                .clone()
+                .unwrap_or_else(|| "New Agent".to_string()),
+            role: payload
+                .role
+                .clone()
+                .unwrap_or_else(|| "general".to_string()),
             title: payload.title.as_deref().map(str::to_string),
             icon: None,
             reports_to: payload
@@ -120,10 +126,10 @@ impl HireAgentOperations for DbHireAgentOps {
         scope_id: &str,
         amount_cents: i64,
     ) -> Result<(), String> {
-        let company_uuid = Uuid::parse_str(company_id)
-            .map_err(|e| format!("invalid company_id uuid: {e}"))?;
-        let scope_uuid = Uuid::parse_str(scope_id)
-            .map_err(|e| format!("invalid scope_id uuid: {e}"))?;
+        let company_uuid =
+            Uuid::parse_str(company_id).map_err(|e| format!("invalid company_id uuid: {e}"))?;
+        let scope_uuid =
+            Uuid::parse_str(scope_id).map_err(|e| format!("invalid scope_id uuid: {e}"))?;
         let db = (*self.db).clone();
         let input = UpsertPolicyInput {
             scope_type: scope_type.into(),
@@ -145,8 +151,8 @@ impl HireAgentOperations for DbHireAgentOps {
     }
 
     async fn terminate_agent(&self, agent_id: &str) -> Result<(), String> {
-        let agent_uuid = Uuid::parse_str(agent_id)
-            .map_err(|e| format!("invalid agent_id uuid: {e}"))?;
+        let agent_uuid =
+            Uuid::parse_str(agent_id).map_err(|e| format!("invalid agent_id uuid: {e}"))?;
         let db = (*self.db).clone();
         AgentRepo::new(&db)
             .terminate(agent_uuid)

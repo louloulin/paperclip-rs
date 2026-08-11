@@ -5,10 +5,7 @@
 use serde_json::Value;
 
 use super::collector::{collect_secret_refs, collect_user_secret_refs};
-use super::types::{
-    BindingTarget, BindingTargetType, SecretBindingResult,
-    SecretBindingSync,
-};
+use super::types::{BindingTarget, BindingTargetType, SecretBindingResult, SecretBindingSync};
 
 /// 同步 agent adapter 的 env bindings 到 secrets service（与 Node `syncAgentAdapterEnvBindings` 1:1 对齐）。
 ///

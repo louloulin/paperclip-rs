@@ -232,9 +232,7 @@ mod tests {
     #[tokio::test]
     async fn r703_single_call_executes() {
         let lock = AgentStartLock::new();
-        let r: i32 = lock
-            .with_lock("agent-1", || async { 42 })
-            .await;
+        let r: i32 = lock.with_lock("agent-1", || async { 42 }).await;
         assert_eq!(r, 42);
     }
 
@@ -274,7 +272,10 @@ mod tests {
         // 必须 a-end 在 b-start 之前
         let a_end = log.iter().position(|s| *s == "a-end").unwrap();
         let b_start = log.iter().position(|s| *s == "b-start").unwrap();
-        assert!(a_end < b_start, "expected a-end before b-start, got {log:?}");
+        assert!(
+            a_end < b_start,
+            "expected a-end before b-start, got {log:?}"
+        );
     }
 
     #[tokio::test]
@@ -318,9 +319,7 @@ mod tests {
     async fn r703_stale_lock_does_not_wait() {
         let (clock, counter) = fake_clock(1_000_000);
         let (warn, warns) = recording_warn();
-        let lock = AgentStartLock::new()
-            .with_clock(clock)
-            .with_warn(warn);
+        let lock = AgentStartLock::new().with_clock(clock).with_warn(warn);
 
         // 模拟已有 stale 锁：直接插入一个 started_at_ms < now - staleMs 的条目
         {
@@ -338,14 +337,15 @@ mod tests {
         counter.store(1_100_000, Ordering::SeqCst);
 
         let started = std::time::Instant::now();
-        let r = lock
-            .with_lock("agent-1", || async { 99 })
-            .await;
+        let r = lock.with_lock("agent-1", || async { 99 }).await;
         let elapsed = started.elapsed();
 
         assert_eq!(r, 99);
         // 不应等待 staleMs（30 秒）
-        assert!(elapsed < Duration::from_millis(500), "stale lock blocked: {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "stale lock blocked: {elapsed:?}"
+        );
 
         let w = warns.lock().unwrap();
         assert!(w.iter().any(|(m, _)| m == "agent_start_lock_stale"));
@@ -354,9 +354,7 @@ mod tests {
     #[tokio::test]
     async fn r703_lock_cleared_after_completion() {
         let lock = AgentStartLock::new();
-        let _: i32 = lock
-            .with_lock("agent-x", || async { 1 })
-            .await;
+        let _: i32 = lock.with_lock("agent-x", || async { 1 }).await;
         assert!(lock.locks.lock().unwrap().is_empty());
     }
 
@@ -402,17 +400,16 @@ mod tests {
 
         // 不推进时间 → 0 elapsed < 50ms stale → 等待 staleMs
         let started = std::time::Instant::now();
-        let _ = lock
-            .with_lock("agent-1", || async { 1 })
-            .await;
+        let _ = lock.with_lock("agent-1", || async { 1 }).await;
         let elapsed = started.elapsed();
 
         // 至少等待 staleMs
-        assert!(elapsed >= Duration::from_millis(50), "should wait ~50ms: {elapsed:?}");
+        assert!(
+            elapsed >= Duration::from_millis(50),
+            "should wait ~50ms: {elapsed:?}"
+        );
 
         let w = warns.lock().unwrap();
         assert!(w.iter().any(|(m, _)| m == "agent_start_lock_timed_out"));
-
-
     }
 }

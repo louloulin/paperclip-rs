@@ -57,10 +57,16 @@ fn map_issue_service_error(e: IssueServiceError) -> ApiError {
     }
 }
 
+use pc_execution_workspace_guards::{
+    is_closed_isolated_execution_workspace, ExecutionWorkspaceGuardTarget,
+    ExecutionWorkspaceMode as GuardWorkspaceMode, ExecutionWorkspaceStatus as GuardWorkspaceStatus,
+};
+use pc_repos::execution::ExecutionRepo;
 use pc_repos::issue_change_receipt::IssueRelationChanges;
 use pc_repos::issue_diagnostics::IssueDiagnosticsRepo;
 use pc_repos::issue_tree_hold::{IssueTreeHoldRepo, NewIssueTreeHold};
 use pc_repos::routine::RoutineRepo;
+
 use pc_repos::task_watchdog_scope::{
     classify_task_watchdog_capability, enqueue_task_watchdog_wake,
     ClassifyTaskWatchdogCapabilityInput, TaskWatchdogWakeInput,
@@ -796,6 +802,51 @@ struct UpdateIssueFullBody {
     blocked_by_issue_ids: Option<Vec<Uuid>>,
 }
 
+/// R566: Helper that mirrors Node `getClosedIssueExecutionWorkspace`.
+/// Looks up the workspace attached to an issue and returns a closed
+/// isolated-workspace payload (if any). When the workspace is closed +
+/// isolated, the caller should respond with 409 carrying the message +
+/// executionWorkspace JSON body.
+async fn get_closed_issue_execution_workspace(
+    db: &pc_db::Db,
+    issue_execution_workspace_id: Option<Uuid>,
+) -> ApiResult<Option<serde_json::Value>> {
+    let Some(ws_id) = issue_execution_workspace_id else {
+        return Ok(None);
+    };
+    let Some(row) = ExecutionRepo::new(db).get_by_id(ws_id).await? else {
+        return Ok(None);
+    };
+    let Some(mode) = GuardWorkspaceMode::parse(&row.mode) else {
+        return Ok(None);
+    };
+    let Some(status) = GuardWorkspaceStatus::parse(&row.status) else {
+        return Ok(None);
+    };
+    let target = ExecutionWorkspaceGuardTarget {
+        closed_at: row.closed_at.map(format_timestamp_for_guard),
+        mode,
+        name: row.name.clone(),
+        status,
+    };
+    if !is_closed_isolated_execution_workspace(Some(&target)) {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::json!({
+        "id": row.id,
+        "companyId": row.company_id,
+        "name": row.name,
+        "mode": row.mode,
+        "status": row.status,
+        "closedAt": row.closed_at,
+        "cleanupReason": row.cleanup_reason,
+    })))
+}
+
+fn format_timestamp_for_guard(ts: pc_core::Timestamp) -> String {
+    ts.as_datetime().to_rfc3339()
+}
+
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -827,6 +878,43 @@ async fn update(
         .get("x-paperclip-run-id")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| Uuid::parse_str(value).ok());
+    // R566: closed isolated execution workspace guard for agent work updates.
+    if actor_agent_id.is_some() {
+        if let Some(payload) =
+            get_closed_issue_execution_workspace(&state.db, previous_issue.execution_workspace_id)
+                .await?
+        {
+            let name = payload
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("workspace")
+                .to_string();
+            let mode = payload
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .and_then(GuardWorkspaceMode::parse)
+                .unwrap_or(GuardWorkspaceMode::Inherit);
+            let status = payload
+                .get("status")
+                .and_then(|v| v.as_str())
+                .and_then(GuardWorkspaceStatus::parse)
+                .unwrap_or(GuardWorkspaceStatus::Archived);
+            let target = ExecutionWorkspaceGuardTarget {
+                closed_at: payload
+                    .get("closedAt")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                mode,
+                name,
+                status,
+            };
+            let message =
+                pc_execution_workspace_guards::get_closed_isolated_execution_workspace_message(
+                    &target,
+                );
+            return Err(ApiError::ConflictWith { message, payload });
+        }
+    }
     let actor_user_id = if actor_agent_id.is_none() {
         crate::state::require_user_id(&state, &headers).await.ok()
     } else {
@@ -1413,6 +1501,42 @@ async fn add_comment(
         return Err(ApiError::BadRequest(
             "comment body must not be empty".into(),
         ));
+    }
+    // R566: closed isolated execution workspace guard fires for ALL comment
+    // POSTs against an issue whose linked workspace is closed + isolated.
+    if let Some(payload_ws) =
+        get_closed_issue_execution_workspace(&state.db, issue.execution_workspace_id).await?
+    {
+        let name = payload_ws
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("workspace")
+            .to_string();
+        let mode = payload_ws
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .and_then(GuardWorkspaceMode::parse)
+            .unwrap_or(GuardWorkspaceMode::Inherit);
+        let status = payload_ws
+            .get("status")
+            .and_then(|v| v.as_str())
+            .and_then(GuardWorkspaceStatus::parse)
+            .unwrap_or(GuardWorkspaceStatus::Archived);
+        let target = ExecutionWorkspaceGuardTarget {
+            closed_at: payload_ws
+                .get("closedAt")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            mode,
+            name,
+            status,
+        };
+        let message =
+            pc_execution_workspace_guards::get_closed_isolated_execution_workspace_message(&target);
+        return Err(ApiError::ConflictWith {
+            message,
+            payload: serde_json::json!({ "executionWorkspace": payload_ws }),
+        });
     }
     let author_user = payload
         .author_user_id
@@ -3616,21 +3740,15 @@ async fn checkout_issue(
     Path(id): Path<Uuid>,
     Json(body): Json<CheckoutBody>,
 ) -> ApiResult<Json<Value>> {
-    // Mirrors Node `/issues/:id/checkout`. Atomically claims the issue for
-    // the agent + run by setting `assignee_agent_id` + `checkout_run_id`.
-    let (company_id, status) = IssueRepo::new(&state.db)
-        .checkout(id, body.agent_id, body.run_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("issue {id}")))?;
-    state
-        .realtime
-        .publish(LiveEvent::new("issue.checked_out", "issue", id).with_company(company_id));
-    Ok(Json(json!({
-        "id": id,
-        "agentId": body.agent_id,
-        "runId": body.run_id,
-        "status": status,
-    })))
+    // NOTE: R566 — the canonical POST `/api/issues/:issue_id/checkout`
+    // endpoint is registered by `routes::issues_checkout_wakeup` (see
+    // that module for the guard integration). This `checkout_issue` is
+    // kept as dead code for reference / future consolidation.
+    let _ = body;
+    let _ = id;
+    Err(ApiError::NotFound(
+        "checkout endpoint registered by issues_checkout_wakeup router".into(),
+    ))
 }
 
 async fn issue_heartbeat_context(
@@ -5719,7 +5837,12 @@ mod round251_tests {
     fn task_watchdog_wake_context_module_exports_build_function() {
         let src = include_str!("issues.rs");
         assert!(
-            src.contains("use pc_repos::task_watchdog_scope::{enqueue_task_watchdog_wake, TaskWatchdogWakeInput}"),
+            src.contains("use pc_execution_workspace_guards::{
+    is_closed_isolated_execution_workspace, ExecutionWorkspaceGuardTarget,
+    ExecutionWorkspaceMode as GuardWorkspaceMode, ExecutionWorkspaceStatus as GuardWorkspaceStatus,
+};
+
+use pc_repos::task_watchdog_scope::{enqueue_task_watchdog_wake, TaskWatchdogWakeInput}"),
             "pc-http/issues.rs must import build_task_watchdog_wake_context types from pc-repos task_watchdog_scope"
         );
     }

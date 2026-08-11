@@ -92,7 +92,9 @@ async fn r581_e2e_approve_pending_updates_status_and_triggers_hook() {
     assert_eq!(row.decision_note.as_deref(), Some("looks good"));
     assert_eq!(row.decided_by_user_id.as_deref(), Some("user-1"));
 
-    let fetched = fetch_approval_by_id(&db, approval_id).await.expect("fetched");
+    let fetched = fetch_approval_by_id(&db, approval_id)
+        .await
+        .expect("fetched");
     assert_eq!(fetched.status, "approved");
     assert_eq!(fetched.decision_note.as_deref(), Some("looks good"));
 
@@ -226,15 +228,23 @@ async fn r581_e2e_list_approval_filters_by_status() {
     let a2 = insert_approval(&db, company_id, serde_json::json!({"k": 2})).await;
     let a3 = insert_approval(&db, company_id, serde_json::json!({"k": 3})).await;
 
-    svc.approve(company_id, a3, "user-1", None).await.expect("approve a3");
+    svc.approve(company_id, a3, "user-1", None)
+        .await
+        .expect("approve a3");
 
-    let pending = svc.list(company_id, Some(ApprovalStatus::Pending)).await.expect("list pending");
+    let pending = svc
+        .list(company_id, Some(ApprovalStatus::Pending))
+        .await
+        .expect("list pending");
     let pending_ids: Vec<Uuid> = pending.iter().map(|r| r.id).collect();
     assert!(pending_ids.contains(&a1));
     assert!(pending_ids.contains(&a2));
     assert!(!pending_ids.contains(&a3));
 
-    let approved = svc.list(company_id, Some(ApprovalStatus::Approved)).await.expect("list approved");
+    let approved = svc
+        .list(company_id, Some(ApprovalStatus::Approved))
+        .await
+        .expect("list approved");
     let approved_ids: Vec<Uuid> = approved.iter().map(|r| r.id).collect();
     assert!(approved_ids.contains(&a3));
     assert!(!approved_ids.contains(&a1));
@@ -266,7 +276,9 @@ async fn r581_e2e_multiple_hooks_all_triggered() {
     let hook_b = Arc::new(RecordingHook::default());
     let svc = ApprovalService::with_hooks(&db, vec![hook_a.clone(), hook_b.clone()]);
 
-    svc.approve(company_id, approval_id, "user-1", None).await.expect("approve");
+    svc.approve(company_id, approval_id, "user-1", None)
+        .await
+        .expect("approve");
     assert_eq!(hook_a.approved.lock().unwrap().len(), 1);
     assert_eq!(hook_b.approved.lock().unwrap().len(), 1);
     assert_eq!(svc.hook_count(), 2);
@@ -280,7 +292,10 @@ async fn r581_e2e_noop_hook_does_nothing() {
     let approval_id = insert_approval(&db, company_id, serde_json::json!({})).await;
 
     let svc = ApprovalService::with_hooks(&db, vec![Arc::new(NoopApprovalHook)]);
-    let row = svc.approve(company_id, approval_id, "user-1", None).await.expect("approve");
+    let row = svc
+        .approve(company_id, approval_id, "user-1", None)
+        .await
+        .expect("approve");
     assert_eq!(row.status, ApprovalStatus::Approved.as_str());
 }
 
@@ -356,14 +371,26 @@ mod r583_db_ops {
         assert_eq!(fetch_agent_status(&db, agent_id).await, "pending_approval");
 
         let ops = DbHireAgentOps::new(db.clone());
-        ops.activate_agent(&company_id.to_string(), &agent_id.to_string(), &HireAgentApprovalPayload {
-            agent_id: Some(agent_id.to_string()),
-            name: None, role: None, title: None, reports_to: None,
-            capabilities: None, adapter_type: None, adapter_config: None,
-            budget_monthly_cents: None, metadata: None, source_builtin_agent_key: None,
-        }).await.expect("activate");
+        ops.activate_agent(
+            &company_id.to_string(),
+            &agent_id.to_string(),
+            &HireAgentApprovalPayload {
+                agent_id: Some(agent_id.to_string()),
+                name: None,
+                role: None,
+                title: None,
+                reports_to: None,
+                capabilities: None,
+                adapter_type: None,
+                adapter_config: None,
+                budget_monthly_cents: None,
+                metadata: None,
+                source_builtin_agent_key: None,
+            },
+        )
+        .await
+        .expect("activate");
         assert_eq!(fetch_agent_status(&db, agent_id).await, "idle");
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -374,19 +401,27 @@ mod r583_db_ops {
         let company_id = insert_company_with_member(&db).await;
         let agent_id = insert_agent_in_status(&db, company_id, "idle").await;
         let ops = DbHireAgentOps::new(db.clone());
-        let result = ops.activate_agent(
-            &company_id.to_string(),
-            &agent_id.to_string(),
-            &HireAgentApprovalPayload {
-                agent_id: Some(agent_id.to_string()),
-                name: None, role: None, title: None, reports_to: None,
-                capabilities: None, adapter_type: None, adapter_config: None,
-                budget_monthly_cents: None, metadata: None, source_builtin_agent_key: None,
-            },
-        ).await;
+        let result = ops
+            .activate_agent(
+                &company_id.to_string(),
+                &agent_id.to_string(),
+                &HireAgentApprovalPayload {
+                    agent_id: Some(agent_id.to_string()),
+                    name: None,
+                    role: None,
+                    title: None,
+                    reports_to: None,
+                    capabilities: None,
+                    adapter_type: None,
+                    adapter_config: None,
+                    budget_monthly_cents: None,
+                    metadata: None,
+                    source_builtin_agent_key: None,
+                },
+            )
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not in pending_approval"));
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -396,25 +431,27 @@ mod r583_db_ops {
 
         let company_id = insert_company_with_member(&db).await;
         let ops = DbHireAgentOps::new(db.clone());
-        let new_id = ops.create_agent(
-            &company_id.to_string(),
-            &HireAgentApprovalPayload {
-                agent_id: None,
-                name: Some("My Bot".into()),
-                role: Some("worker".into()),
-                title: None,
-                reports_to: None,
-                capabilities: Some("code_review".into()),
-                adapter_type: Some("process".into()),
-                adapter_config: Some(serde_json::json!({"cmd": "echo"})),
-                budget_monthly_cents: Some(1000),
-                metadata: None,
-                source_builtin_agent_key: None,
-            },
-        ).await.expect("create");
+        let new_id = ops
+            .create_agent(
+                &company_id.to_string(),
+                &HireAgentApprovalPayload {
+                    agent_id: None,
+                    name: Some("My Bot".into()),
+                    role: Some("worker".into()),
+                    title: None,
+                    reports_to: None,
+                    capabilities: Some("code_review".into()),
+                    adapter_type: Some("process".into()),
+                    adapter_config: Some(serde_json::json!({"cmd": "echo"})),
+                    budget_monthly_cents: Some(1000),
+                    metadata: None,
+                    source_builtin_agent_key: None,
+                },
+            )
+            .await
+            .expect("create");
         let uuid = Uuid::parse_str(&new_id).expect("uuid");
         assert_eq!(fetch_agent_status(&db, uuid).await, "idle");
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -425,9 +462,10 @@ mod r583_db_ops {
         let company_id = insert_company_with_member(&db).await;
         let agent_id = insert_agent_in_status(&db, company_id, "idle").await;
         let ops = DbHireAgentOps::new(db.clone());
-        ops.terminate_agent(&agent_id.to_string()).await.expect("terminate");
+        ops.terminate_agent(&agent_id.to_string())
+            .await
+            .expect("terminate");
         assert_eq!(fetch_agent_status(&db, agent_id).await, "terminated");
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -438,9 +476,14 @@ mod r583_db_ops {
         let company_id = insert_company_with_member(&db).await;
         let ops = DbHireAgentOps::new(db.clone());
         let scope_id = Uuid::new_v4();
-        ops.upsert_budget_policy(&company_id.to_string(), "agent", &scope_id.to_string(), 5000)
-            .await
-            .expect("upsert");
+        ops.upsert_budget_policy(
+            &company_id.to_string(),
+            "agent",
+            &scope_id.to_string(),
+            5000,
+        )
+        .await
+        .expect("upsert");
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM budget_policies WHERE company_id = $1 AND scope_id = $2",
         )
@@ -450,7 +493,6 @@ mod r583_db_ops {
         .await
         .expect("count");
         assert_eq!(count, 1);
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -478,7 +520,10 @@ mod r583_db_ops {
         let hook = Arc::new(HireAgentApprovalHook::new(ops.clone()));
         let svc = ApprovalService::with_hooks(&db, vec![hook, Arc::new(NoopApprovalHook)]);
 
-        let row = svc.approve(company_id, approval_id, "user-1", None).await.expect("approve");
+        let row = svc
+            .approve(company_id, approval_id, "user-1", None)
+            .await
+            .expect("approve");
         assert_eq!(row.status, ApprovalStatus::Approved.as_str());
 
         // agent 应被 activate
@@ -493,7 +538,6 @@ mod r583_db_ops {
         .await
         .expect("count");
         assert_eq!(policy_count, 1, "budget policy should be created for hire");
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -519,11 +563,13 @@ mod r583_db_ops {
         let hook = Arc::new(HireAgentApprovalHook::new(ops.clone()));
         let svc = ApprovalService::with_hooks(&db, vec![hook]);
 
-        let row = svc.reject(company_id, approval_id, "user-1", None).await.expect("reject");
+        let row = svc
+            .reject(company_id, approval_id, "user-1", None)
+            .await
+            .expect("reject");
         assert_eq!(row.status, ApprovalStatus::Rejected.as_str());
         // reject 触发 terminate
         assert_eq!(fetch_agent_status(&db, agent_id).await, "terminated");
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -553,7 +599,10 @@ mod r583_db_ops {
         let hook = Arc::new(HireAgentApprovalHook::new(ops.clone()));
         let svc = ApprovalService::with_hooks(&db, vec![hook]);
 
-        let row = svc.approve(company_id, approval_id, "user-1", None).await.expect("approve");
+        let row = svc
+            .approve(company_id, approval_id, "user-1", None)
+            .await
+            .expect("approve");
         assert_eq!(row.status, ApprovalStatus::Approved.as_str());
 
         // 应有新 agent 被创建
@@ -565,7 +614,6 @@ mod r583_db_ops {
         .await
         .expect("count");
         assert_eq!(new_agent_count, 1);
-
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -574,14 +622,26 @@ mod r583_db_ops {
         let db = pc_repos::Db::from_pool(pool.clone());
 
         let ops = DbHireAgentOps::new(db.clone());
-        let result = ops.activate_agent("not-a-uuid", "also-not-uuid", &HireAgentApprovalPayload {
-            agent_id: Some("also-not-uuid".into()),
-            name: None, role: None, title: None, reports_to: None,
-            capabilities: None, adapter_type: None, adapter_config: None,
-            budget_monthly_cents: None, metadata: None, source_builtin_agent_key: None,
-        }).await;
+        let result = ops
+            .activate_agent(
+                "not-a-uuid",
+                "also-not-uuid",
+                &HireAgentApprovalPayload {
+                    agent_id: Some("also-not-uuid".into()),
+                    name: None,
+                    role: None,
+                    title: None,
+                    reports_to: None,
+                    capabilities: None,
+                    adapter_type: None,
+                    adapter_config: None,
+                    budget_monthly_cents: None,
+                    metadata: None,
+                    source_builtin_agent_key: None,
+                },
+            )
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid"));
-
     }
 }

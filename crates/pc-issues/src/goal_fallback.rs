@@ -65,7 +65,8 @@ pub fn resolve_next_issue_goal_id(input: ResolveNextGoalInput) -> Option<String>
         }
     };
 
-    let resolve_fallback = |target_project_id: Option<String>, target_project_goal_id: Option<String>| {
+    let resolve_fallback = |target_project_id: Option<String>,
+                            target_project_goal_id: Option<String>| {
         if target_project_id.is_some() {
             target_project_goal_id
         } else {
@@ -76,11 +77,17 @@ pub fn resolve_next_issue_goal_id(input: ResolveNextGoalInput) -> Option<String>
     if input.goal_id.is_some() {
         // explicit override; fallback if null
         if input.goal_id.is_some() {
-            return input.goal_id.clone().or_else(|| resolve_fallback(project_id.clone(), project_goal_id.clone()));
+            return input
+                .goal_id
+                .clone()
+                .or_else(|| resolve_fallback(project_id.clone(), project_goal_id.clone()));
         }
     }
 
-    let current_fallback = resolve_fallback(input.current_project_id.clone(), input.current_project_goal_id.clone());
+    let current_fallback = resolve_fallback(
+        input.current_project_id.clone(),
+        input.current_project_goal_id.clone(),
+    );
     let next_fallback = resolve_fallback(project_id.clone(), project_goal_id.clone());
 
     if input.current_goal_id.is_none() {
@@ -200,7 +207,7 @@ mod tests {
     fn r704_next_current_equals_current_fallback_uses_next_fallback() {
         let r = resolve_next_issue_goal_id(ResolveNextGoalInput {
             current_project_id: Some("cp".into()),
-            current_goal_id: Some("cpg".into()),  // === current fallback (project_goal)
+            current_goal_id: Some("cpg".into()), // === current fallback (project_goal)
             current_project_goal_id: Some("cpg".into()),
             project_id: Some("np".into()),
             goal_id: None,
@@ -214,7 +221,7 @@ mod tests {
     fn r704_next_current_differs_from_fallback_keeps_current() {
         let r = resolve_next_issue_goal_id(ResolveNextGoalInput {
             current_project_id: Some("cp".into()),
-            current_goal_id: Some("manual-goal".into()),  // not fallback
+            current_goal_id: Some("manual-goal".into()), // not fallback
             current_project_goal_id: Some("cpg".into()),
             project_id: Some("np".into()),
             goal_id: None,

@@ -9,14 +9,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-
 use uuid::Uuid;
 
-pub use pc_repos::project::{
-    MembershipState, NewProject, ProjectMembershipRow, ProjectPatch, ProjectRow,
-    ProjectStatus, ProjectWorkspaceRow,
-};
 use pc_repos::project::ProjectRepo;
+pub use pc_repos::project::{
+    MembershipState, NewProject, ProjectMembershipRow, ProjectPatch, ProjectRow, ProjectStatus,
+    ProjectWorkspaceRow,
+};
 use pc_repos::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
@@ -194,7 +193,10 @@ pub struct ProjectService {
 
 impl ProjectService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn ProjectHook>>) -> Self {
@@ -251,11 +253,7 @@ impl ProjectService {
         Ok(self.repo().list_all(limit).await?)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> ProjectResult<Option<ProjectRow>> {
+    pub async fn get(&self, company_id: Uuid, id: Uuid) -> ProjectResult<Option<ProjectRow>> {
         if company_id.is_nil() {
             return Err(ProjectError::Validation("companyId is required".into()));
         }
@@ -342,11 +340,7 @@ impl ProjectService {
         Ok(row)
     }
 
-    pub async fn resume(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> ProjectResult<Option<ProjectRow>> {
+    pub async fn resume(&self, company_id: Uuid, id: Uuid) -> ProjectResult<Option<ProjectRow>> {
         if company_id.is_nil() {
             return Err(ProjectError::Validation("companyId is required".into()));
         }
@@ -361,11 +355,7 @@ impl ProjectService {
         Ok(row)
     }
 
-    pub async fn archive(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> ProjectResult<Option<ProjectRow>> {
+    pub async fn archive(&self, company_id: Uuid, id: Uuid) -> ProjectResult<Option<ProjectRow>> {
         if company_id.is_nil() {
             return Err(ProjectError::Validation("companyId is required".into()));
         }
@@ -414,7 +404,10 @@ impl ProjectService {
         if company_id.is_nil() {
             return Err(ProjectError::Validation("companyId is required".into()));
         }
-        Ok(self.repo().list_user_memberships(company_id, user_id).await?)
+        Ok(self
+            .repo()
+            .list_user_memberships(company_id, user_id)
+            .await?)
     }
 
     pub async fn upsert_membership(
@@ -433,7 +426,10 @@ impl ProjectService {
         if user_id.trim().is_empty() {
             return Err(ProjectError::Validation("userId must not be empty".into()));
         }
-        let row = self.repo().upsert_membership(company_id, project_id, user_id, state).await?;
+        let row = self
+            .repo()
+            .upsert_membership(company_id, project_id, user_id, state)
+            .await?;
         self.dispatch(ProjectHookEvent::MembershipUpserted {
             company_id: row.company_id,
             project_id: row.project_id,
@@ -479,7 +475,9 @@ impl ProjectService {
             return Err(ProjectError::Validation("projectId is required".into()));
         }
         if source_type.trim().is_empty() {
-            return Err(ProjectError::Validation("sourceType must not be empty".into()));
+            return Err(ProjectError::Validation(
+                "sourceType must not be empty".into(),
+            ));
         }
         // Build a ProjectWorkspaceRow with sensible defaults and let the
         // repo do the INSERT.
@@ -523,7 +521,10 @@ impl ProjectService {
         if company_id.is_nil() {
             return Err(ProjectError::Validation("companyId is required".into()));
         }
-        let ok = self.repo().set_primary_workspace(project_id, workspace_id).await?;
+        let ok = self
+            .repo()
+            .set_primary_workspace(project_id, workspace_id)
+            .await?;
         if ok {
             self.dispatch(ProjectHookEvent::WorkspaceSetPrimary {
                 company_id,
@@ -548,7 +549,9 @@ impl ProjectService {
         if company_id.is_nil() {
             return Err(ProjectError::Validation("companyId is required".into()));
         }
-        self.repo().attach_goal(company_id, project_id, goal_id).await?;
+        self.repo()
+            .attach_goal(company_id, project_id, goal_id)
+            .await?;
         self.dispatch(ProjectHookEvent::GoalAttached {
             company_id,
             project_id,

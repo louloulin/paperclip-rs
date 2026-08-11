@@ -52,16 +52,21 @@ pub struct PortabilityFidelityWarning {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExportFidelityCounts {
-    pub label_definitions: u64,
-    pub issue_label_references: u64,
-    pub issue_blocker_relations: u64,
-    pub issue_documents: u64,
-    pub issue_work_products: u64,
-    pub issue_attachments: u64,
-    pub approvals: u64,
-    pub cost_events: u64,
-    pub activity_log_entries: u64,
-    pub issue_monitors: u64,
+    // i64 to match sqlx COUNT(*) return type (and the original
+    // pc-core::portability_fidelity::ExportFidelityCounts definition before
+    // R-INTEGRATION-5 consolidated both crates). Counts are conceptually
+    // non-negative but i64 keeps them compatible with sqlx without explicit
+    // casting at every DB call site.
+    pub label_definitions: i64,
+    pub issue_label_references: i64,
+    pub issue_blocker_relations: i64,
+    pub issue_documents: i64,
+    pub issue_work_products: i64,
+    pub issue_attachments: i64,
+    pub approvals: i64,
+    pub cost_events: i64,
+    pub activity_log_entries: i64,
+    pub issue_monitors: i64,
 }
 
 impl ExportFidelityCounts {
@@ -69,7 +74,7 @@ impl ExportFidelityCounts {
         Self::default()
     }
 
-    fn get_by_key(&self, key: &str) -> u64 {
+    fn get_by_key(&self, key: &str) -> i64 {
         match key {
             "labelDefinitions" => self.label_definitions,
             "issueLabelReferences" => self.issue_label_references,
@@ -165,14 +170,14 @@ pub fn normalize_export_fidelity_counts(value: &serde_json::Value) -> Option<Exp
     let mut counts = ExportFidelityCounts::zero();
     for key in EXPORT_FIDELITY_COUNT_KEYS {
         let raw = obj.get(key)?;
-        let n = raw.as_u64()?;
+        let n = raw.as_i64()?;
         counts.set_by_key(key, n);
     }
     Some(counts)
 }
 
 impl ExportFidelityCounts {
-    fn set_by_key(&mut self, key: &str, value: u64) {
+    fn set_by_key(&mut self, key: &str, value: i64) {
         match key {
             "labelDefinitions" => self.label_definitions = value,
             "issueLabelReferences" => self.issue_label_references = value,

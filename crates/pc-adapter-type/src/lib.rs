@@ -14,28 +14,35 @@ pub const DEFAULT_AGENT_ADAPTER_TYPE: &str = "process";
 /// `AGENT_ADAPTER_TYPES` in `constants.ts` for the canonical list.
 pub const KNOWN_BUILTIN_ADAPTER_TYPES: &[&str] = &[
     "process",
-    "claude-local",
-    "codex-local",
-    "cursor-local",
-    "cursor-cloud",
-    "gemini-local",
-    "grok-local",
+    "claude_local",
+    "codex_local",
+    "cursor_local",
+    "cursor_cloud",
+    "gemini_local",
+    "grok_local",
     "hermes",
-    "hermes-gateway",
-    "openclaw-gateway",
-    "opencode-local",
-    "pi-local",
+    "hermes_gateway",
+    "openclaw_gateway",
+    "opencode_local",
+    "pi_local",
 ];
 
-/// Normalize a raw adapter-type string: trim whitespace; if empty, return the
-/// default. Mirrors `z.string().trim().min(1).default("process")`.
+/// Normalize a raw adapter-type string:
+///
+/// 1. trim leading/trailing whitespace
+/// 2. if empty, return the default ("process")
+/// 3. convert hyphens to underscores (matches the convention used by all
+///    built-in adapter crates + `KNOWN_BUILTIN_ADAPTER_TYPES` + Node
+///    upstream `AGENT_ADAPTER_TYPES`)
+///
+/// Mirrors `z.string().trim().min(1).default("process")` + post-trim
+/// normalization.
 pub fn normalize_agent_adapter_type(raw: Option<&str>) -> String {
     let trimmed = raw.map_or("", str::trim);
     if trimmed.is_empty() {
-        DEFAULT_AGENT_ADAPTER_TYPE.to_string()
-    } else {
-        trimmed.to_string()
+        return DEFAULT_AGENT_ADAPTER_TYPE.to_string();
     }
+    trimmed.replace('-', "_")
 }
 
 /// Validate that `value` is a non-empty trimmed string. Returns `Some(trimmed)`
@@ -80,21 +87,25 @@ mod internal_tests {
     #[test]
     fn normalize_trims_whitespace() {
         assert_eq!(
-            normalize_agent_adapter_type(Some("  claude-local  ")),
-            "claude-local"
+            normalize_agent_adapter_type(Some("  claude_local  ")),
+            "claude_local"
         );
     }
 
     #[test]
     fn normalize_passes_through() {
         assert_eq!(
-            normalize_agent_adapter_type(Some("codex-local")),
-            "codex-local"
+            normalize_agent_adapter_type(Some("codex_local")),
+            "codex_local"
         );
     }
 
     #[test]
     fn validate_accepts_non_empty() {
+        // validate_* functions only TRIM — they do NOT normalize format.
+        // Hyphens in input stay hyphens. Use normalize_agent_adapter_type
+        // for hyphen→underscore normalization (which is currently a no-op
+        // since adapters use underscore by convention; see R564).
         assert_eq!(
             validate_agent_adapter_type("claude-local"),
             Some("claude-local".into())
@@ -119,7 +130,7 @@ mod internal_tests {
 
     #[test]
     fn builtin_recognized() {
-        assert!(is_builtin_adapter_type("claude-local"));
+        assert!(is_builtin_adapter_type("claude_local"));
         assert!(is_builtin_adapter_type("process"));
     }
 

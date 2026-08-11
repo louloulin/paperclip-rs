@@ -21,7 +21,8 @@ pub use quota_windows::{
     ProviderQuotaResult, QuotaAdapter, QUOTA_PROVIDER_TIMEOUT_MS,
 };
 pub use service::{
-    compute_window, infer_status, normalize_scope_name, BudgetEnforcementHook, BudgetEnforcementScope,
-    BudgetError, BudgetPolicyStatus, BudgetService, BudgetThresholdType, BudgetWindow, BudgetWindowKind,
-    BudgetResult, FullEvaluation, IncidentOutcome, NoopEnforcementHook,
+    compute_window, infer_status, normalize_scope_name, BudgetEnforcementHook,
+    BudgetEnforcementScope, BudgetError, BudgetPolicyStatus, BudgetResult, BudgetService,
+    BudgetThresholdType, BudgetWindow, BudgetWindowKind, FullEvaluation, IncidentOutcome,
+    NoopEnforcementHook,
 };

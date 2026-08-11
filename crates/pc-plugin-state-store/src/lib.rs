@@ -95,14 +95,9 @@ pub enum StateStoreHookEvent {
         state_key: String,
     },
     /// List 调用。
-    Listed {
-        plugin_id: Uuid,
-        count: usize,
-    },
+    Listed { plugin_id: Uuid, count: usize },
     /// DeleteAll 调用。
-    DeleteAllRemoved {
-        plugin_id: Uuid,
-    },
+    DeleteAllRemoved { plugin_id: Uuid },
 }
 
 /// 扩展点 —— 监听 state 操作。
@@ -249,9 +244,7 @@ impl PluginStateStoreService {
         .await;
 
         let store = plugin_state_store(&self.db);
-        let value = store
-            .get(plugin_id, scope_kind, state_key, opts)
-            .await?;
+        let value = store.get(plugin_id, scope_kind, state_key, opts).await?;
 
         if value.is_some() {
             self.fan_out(StateStoreHookEvent::GetHit {
@@ -273,11 +266,7 @@ impl PluginStateStoreService {
     }
 
     /// Write (upsert) a state value。
-    pub async fn set(
-        &self,
-        plugin_id: Uuid,
-        input: SetPluginStateInput,
-    ) -> StateStoreResult<()> {
+    pub async fn set(&self, plugin_id: Uuid, input: SetPluginStateInput) -> StateStoreResult<()> {
         if !self.capabilities.can_write_state(plugin_id).await {
             return Err(StateStoreError::MissingWriteCapability(
                 "plugin.state.write required",
@@ -313,7 +302,9 @@ impl PluginStateStoreService {
         }
 
         let store = plugin_state_store(&self.db);
-        store.delete(plugin_id, scope_kind, state_key, opts.clone()).await?;
+        store
+            .delete(plugin_id, scope_kind, state_key, opts.clone())
+            .await?;
 
         self.fan_out(StateStoreHookEvent::DeleteRemoved {
             plugin_id,

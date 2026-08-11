@@ -1346,17 +1346,17 @@ pub fn evaluate_daily_cap(
     }
     None
 }
-pub mod systemd_notify;
-pub mod readiness;
 pub mod effective_run_config_fingerprints;
+pub mod readiness;
 pub mod recovery;
+pub mod recovery_observability;
 pub mod retry_policy;
 pub mod run_scratch;
 pub mod run_summary;
 pub mod runtime_status;
 pub mod stop_metadata;
-pub mod recovery_observability;
 pub mod successful_run_handoff_state;
+pub mod systemd_notify;
 pub mod task_watchdog_scope;
 pub mod wake_dedup;
 pub mod wake_dispatch;
@@ -1388,17 +1388,16 @@ pub use recovery_observability::{
 pub use successful_run_handoff_state::{
     extract_source_run_id, hydrate_successful_run_handoff_liveness,
     resolve_required_successful_run_handoff_on_valid_path, HandoffActivityRow,
-    HandoffActivityWrite, HandoffDataSource, ResolveRequiredInput,
-    SuccessfulRunHandoffState, SuccessfulRunHandoffStateKind,
-    SUCCESSFUL_RUN_HANDOFF_LIVE_RUN_STATUSES, SUCCESSFUL_RUN_HANDOFF_LIVE_WAKE_STATUSES,
+    HandoffActivityWrite, HandoffDataSource, ResolveRequiredInput, SuccessfulRunHandoffState,
+    SuccessfulRunHandoffStateKind, SUCCESSFUL_RUN_HANDOFF_LIVE_RUN_STATUSES,
+    SUCCESSFUL_RUN_HANDOFF_LIVE_WAKE_STATUSES,
 };
 pub use task_watchdog_scope::{
     issue_is_in_task_watchdog_subtree, read_task_watchdog_context,
-    resolve_task_watchdog_mutation_scope, task_watchdog_scope_allows_issue_mutation,
-    AgentRunActor, IssueParentProjection, IssueScopeTarget, RunProjection, TaskWatchdogContext,
+    resolve_task_watchdog_mutation_scope, task_watchdog_scope_allows_issue_mutation, AgentRunActor,
+    IssueParentProjection, IssueScopeTarget, RunProjection, TaskWatchdogContext,
     TaskWatchdogDataSource, TaskWatchdogMutationOptions, TaskWatchdogMutationScope,
-    MAX_WATCHDOG_SCOPE_ANCESTRY_DEPTH, TASK_WATCHDOG_ORIGIN_KIND,
-    WatchdogProjection,
+    WatchdogProjection, MAX_WATCHDOG_SCOPE_ANCESTRY_DEPTH, TASK_WATCHDOG_ORIGIN_KIND,
 };
 
 pub use retry_policy::{

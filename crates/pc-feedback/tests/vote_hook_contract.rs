@@ -32,7 +32,9 @@ async fn recording_hook_stores_events() {
         vote: "down".into(),
         author_user_id: "u1".into(),
     };
-    FeedbackVoteHook::on_feedback_vote_event(&hook, ev.clone()).await.unwrap();
+    FeedbackVoteHook::on_feedback_vote_event(&hook, ev.clone())
+        .await
+        .unwrap();
     assert_eq!(hook.len(), 1);
     assert_eq!(hook.events_snapshot()[0], ev);
     hook.clear();
@@ -64,5 +66,7 @@ async fn arc_recorder_works_through_dyn_trait() {
         vote: "up".into(),
         author_user_id: "u".into(),
     };
-    FeedbackVoteHook::on_feedback_vote_event(&*hook, ev).await.unwrap();
+    FeedbackVoteHook::on_feedback_vote_event(&*hook, ev)
+        .await
+        .unwrap();
 }

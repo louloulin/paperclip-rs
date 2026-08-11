@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/remote-http-endpoint-guard.ts`（161 行）1:1 复刻。
 //! （原 `pc-remote-http-endpoint-guard` crate 已下沉到 `pc-core`）。
 
-
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,7 +80,11 @@ pub async fn assert_public_remote_http_endpoint(
 
     let hostname = endpoint
         .host_str()
-        .map(|h| h.trim_start_matches('[').trim_end_matches(']').to_lowercase())
+        .map(|h| {
+            h.trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_lowercase()
+        })
         .unwrap_or_default();
 
     if hostname == "localhost" || hostname.ends_with(".localhost") {
@@ -108,7 +111,10 @@ pub async fn assert_public_remote_http_endpoint(
     if results.is_empty() {
         return Err(RemoteHttpEndpointError::DnsEmpty);
     }
-    if results.iter().any(|r| is_private_or_reserved_ip(&r.address)) {
+    if results
+        .iter()
+        .any(|r| is_private_or_reserved_ip(&r.address))
+    {
         return Err(RemoteHttpEndpointError::PrivateEndpoint);
     }
     Ok(())
@@ -172,20 +178,48 @@ fn is_private_or_reserved_ipv4(address: &str) -> bool {
         return true;
     };
     let (a, b, c) = (octets[0], octets[1], octets[2]);
-    if a == 0 { return true; }
-    if a == 10 { return true; }
-    if a == 100 && b >= 64 && b <= 127 { return true; }
-    if a == 127 { return true; }
-    if a == 169 && b == 254 { return true; }
-    if a == 172 && b >= 16 && b <= 31 { return true; }
-    if a == 192 && b == 0 && c == 0 { return true; }
-    if a == 192 && b == 168 { return true; }
-    if a == 192 && b == 0 && c == 2 { return true; }
-    if a == 192 && b == 88 && c == 99 { return true; }
-    if a == 198 && (b == 18 || b == 19) { return true; }
-    if a == 198 && b == 51 && c == 100 { return true; }
-    if a == 203 && b == 0 && c == 113 { return true; }
-    if a >= 224 { return true; }
+    if a == 0 {
+        return true;
+    }
+    if a == 10 {
+        return true;
+    }
+    if a == 100 && b >= 64 && b <= 127 {
+        return true;
+    }
+    if a == 127 {
+        return true;
+    }
+    if a == 169 && b == 254 {
+        return true;
+    }
+    if a == 172 && b >= 16 && b <= 31 {
+        return true;
+    }
+    if a == 192 && b == 0 && c == 0 {
+        return true;
+    }
+    if a == 192 && b == 168 {
+        return true;
+    }
+    if a == 192 && b == 0 && c == 2 {
+        return true;
+    }
+    if a == 192 && b == 88 && c == 99 {
+        return true;
+    }
+    if a == 198 && (b == 18 || b == 19) {
+        return true;
+    }
+    if a == 198 && b == 51 && c == 100 {
+        return true;
+    }
+    if a == 203 && b == 0 && c == 113 {
+        return true;
+    }
+    if a >= 224 {
+        return true;
+    }
     false
 }
 
@@ -236,8 +270,11 @@ fn is_private_or_reserved_ipv6(address: &str) -> bool {
     if lower.starts_with("fc") || lower.starts_with("fd") {
         return true;
     }
-    if lower.starts_with("fe8") || lower.starts_with("fe9")
-        || lower.starts_with("fea") || lower.starts_with("feb") {
+    if lower.starts_with("fe8")
+        || lower.starts_with("fe9")
+        || lower.starts_with("fea")
+        || lower.starts_with("feb")
+    {
         return true;
     }
     if lower.starts_with("ff") {
@@ -273,19 +310,34 @@ mod tests {
 
     #[test]
     fn r720_parse_url_missing() {
-        assert_eq!(parse_remote_http_endpoint("").unwrap_err(), RemoteHttpEndpointError::UrlMissing);
-        assert_eq!(parse_remote_http_endpoint("   ").unwrap_err(), RemoteHttpEndpointError::UrlMissing);
+        assert_eq!(
+            parse_remote_http_endpoint("").unwrap_err(),
+            RemoteHttpEndpointError::UrlMissing
+        );
+        assert_eq!(
+            parse_remote_http_endpoint("   ").unwrap_err(),
+            RemoteHttpEndpointError::UrlMissing
+        );
     }
 
     #[test]
     fn r720_parse_url_invalid() {
-        assert_eq!(parse_remote_http_endpoint("not-a-url").unwrap_err(), RemoteHttpEndpointError::UrlInvalid);
+        assert_eq!(
+            parse_remote_http_endpoint("not-a-url").unwrap_err(),
+            RemoteHttpEndpointError::UrlInvalid
+        );
     }
 
     #[test]
     fn r720_parse_url_wrong_protocol() {
-        assert_eq!(parse_remote_http_endpoint("ftp://example.com").unwrap_err(), RemoteHttpEndpointError::UrlProtocolInvalid);
-        assert_eq!(parse_remote_http_endpoint("ws://example.com").unwrap_err(), RemoteHttpEndpointError::UrlProtocolInvalid);
+        assert_eq!(
+            parse_remote_http_endpoint("ftp://example.com").unwrap_err(),
+            RemoteHttpEndpointError::UrlProtocolInvalid
+        );
+        assert_eq!(
+            parse_remote_http_endpoint("ws://example.com").unwrap_err(),
+            RemoteHttpEndpointError::UrlProtocolInvalid
+        );
     }
 
     #[test]
@@ -423,36 +475,58 @@ mod tests {
     #[tokio::test]
     async fn r720_assert_allow_private_network_skips() {
         let url = parse_remote_http_endpoint("http://localhost:8080").unwrap();
-        let opts = RemoteHttpEndpointGuardOptions { allow_private_network: true, ..Default::default() };
-        assert_public_remote_http_endpoint(&url, &opts).await.unwrap();
+        let opts = RemoteHttpEndpointGuardOptions {
+            allow_private_network: true,
+            ..Default::default()
+        };
+        assert_public_remote_http_endpoint(&url, &opts)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn r720_assert_localhost_rejected() {
         let url = parse_remote_http_endpoint("http://localhost").unwrap();
         let opts = RemoteHttpEndpointGuardOptions::default();
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::PrivateEndpoint);
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::PrivateEndpoint
+        );
     }
 
     #[tokio::test]
     async fn r720_assert_dot_localhost_rejected() {
         let url = parse_remote_http_endpoint("http://api.localhost").unwrap();
         let opts = RemoteHttpEndpointGuardOptions::default();
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::PrivateEndpoint);
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::PrivateEndpoint
+        );
     }
 
     #[tokio::test]
     async fn r720_assert_literal_private_ip_rejected() {
         let url = parse_remote_http_endpoint("http://10.0.0.1").unwrap();
         let opts = RemoteHttpEndpointGuardOptions::default();
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::PrivateEndpoint);
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::PrivateEndpoint
+        );
     }
 
     #[tokio::test]
     async fn r720_assert_literal_public_ip_ok() {
         let url = parse_remote_http_endpoint("http://8.8.8.8").unwrap();
         let opts = RemoteHttpEndpointGuardOptions::default();
-        assert_public_remote_http_endpoint(&url, &opts).await.unwrap();
+        assert_public_remote_http_endpoint(&url, &opts)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -461,12 +535,23 @@ mod tests {
         #[async_trait]
         impl RemoteHttpEndpointLookup for FakeLookup {
             async fn lookup(&self, _: &str) -> Result<Vec<LookupResult>, String> {
-                Ok(vec![LookupResult { address: "10.0.0.1".into(), family: 4 }])
+                Ok(vec![LookupResult {
+                    address: "10.0.0.1".into(),
+                    family: 4,
+                }])
             }
         }
         let url = parse_remote_http_endpoint("https://example.com").unwrap();
-        let opts = RemoteHttpEndpointGuardOptions { lookup: Some(Arc::new(FakeLookup)), ..Default::default() };
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::PrivateEndpoint);
+        let opts = RemoteHttpEndpointGuardOptions {
+            lookup: Some(Arc::new(FakeLookup)),
+            ..Default::default()
+        };
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::PrivateEndpoint
+        );
     }
 
     #[tokio::test]
@@ -475,12 +560,20 @@ mod tests {
         #[async_trait]
         impl RemoteHttpEndpointLookup for FakeLookup {
             async fn lookup(&self, _: &str) -> Result<Vec<LookupResult>, String> {
-                Ok(vec![LookupResult { address: "8.8.8.8".into(), family: 4 }])
+                Ok(vec![LookupResult {
+                    address: "8.8.8.8".into(),
+                    family: 4,
+                }])
             }
         }
         let url = parse_remote_http_endpoint("https://example.com").unwrap();
-        let opts = RemoteHttpEndpointGuardOptions { lookup: Some(Arc::new(FakeLookup)), ..Default::default() };
-        assert_public_remote_http_endpoint(&url, &opts).await.unwrap();
+        let opts = RemoteHttpEndpointGuardOptions {
+            lookup: Some(Arc::new(FakeLookup)),
+            ..Default::default()
+        };
+        assert_public_remote_http_endpoint(&url, &opts)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -493,8 +586,16 @@ mod tests {
             }
         }
         let url = parse_remote_http_endpoint("https://example.com").unwrap();
-        let opts = RemoteHttpEndpointGuardOptions { lookup: Some(Arc::new(FakeLookup)), ..Default::default() };
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::DnsEmpty);
+        let opts = RemoteHttpEndpointGuardOptions {
+            lookup: Some(Arc::new(FakeLookup)),
+            ..Default::default()
+        };
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::DnsEmpty
+        );
     }
 
     #[tokio::test]
@@ -507,8 +608,16 @@ mod tests {
             }
         }
         let url = parse_remote_http_endpoint("https://example.com").unwrap();
-        let opts = RemoteHttpEndpointGuardOptions { lookup: Some(Arc::new(FakeLookup)), ..Default::default() };
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::DnsFailed);
+        let opts = RemoteHttpEndpointGuardOptions {
+            lookup: Some(Arc::new(FakeLookup)),
+            ..Default::default()
+        };
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::DnsFailed
+        );
     }
 
     #[tokio::test]
@@ -522,25 +631,57 @@ mod tests {
             }
         }
         let url = parse_remote_http_endpoint("https://example.com").unwrap();
-        let opts = RemoteHttpEndpointGuardOptions { lookup: Some(Arc::new(SlowLookup)), dns_timeout_ms: Some(50), ..Default::default() };
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::DnsFailed);
+        let opts = RemoteHttpEndpointGuardOptions {
+            lookup: Some(Arc::new(SlowLookup)),
+            dns_timeout_ms: Some(50),
+            ..Default::default()
+        };
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::DnsFailed
+        );
     }
 
     #[tokio::test]
     async fn r720_assert_bracket_ipv6_host() {
         let url = Url::parse("http://[::1]/").unwrap();
         let opts = RemoteHttpEndpointGuardOptions::default();
-        assert_eq!(assert_public_remote_http_endpoint(&url, &opts).await.unwrap_err(), RemoteHttpEndpointError::PrivateEndpoint);
+        assert_eq!(
+            assert_public_remote_http_endpoint(&url, &opts)
+                .await
+                .unwrap_err(),
+            RemoteHttpEndpointError::PrivateEndpoint
+        );
     }
 
     #[test]
     fn r720_error_codes_match_node() {
-        assert_eq!(RemoteHttpEndpointError::UrlMissing.code(), "mcp_remote_url_missing");
-        assert_eq!(RemoteHttpEndpointError::UrlInvalid.code(), "mcp_remote_url_invalid");
-        assert_eq!(RemoteHttpEndpointError::UrlProtocolInvalid.code(), "mcp_remote_url_invalid");
-        assert_eq!(RemoteHttpEndpointError::PrivateEndpoint.code(), "remote_http_private_endpoint");
-        assert_eq!(RemoteHttpEndpointError::DnsFailed.code(), "remote_http_dns_failed");
-        assert_eq!(RemoteHttpEndpointError::DnsEmpty.code(), "remote_http_dns_failed");
+        assert_eq!(
+            RemoteHttpEndpointError::UrlMissing.code(),
+            "mcp_remote_url_missing"
+        );
+        assert_eq!(
+            RemoteHttpEndpointError::UrlInvalid.code(),
+            "mcp_remote_url_invalid"
+        );
+        assert_eq!(
+            RemoteHttpEndpointError::UrlProtocolInvalid.code(),
+            "mcp_remote_url_invalid"
+        );
+        assert_eq!(
+            RemoteHttpEndpointError::PrivateEndpoint.code(),
+            "remote_http_private_endpoint"
+        );
+        assert_eq!(
+            RemoteHttpEndpointError::DnsFailed.code(),
+            "remote_http_dns_failed"
+        );
+        assert_eq!(
+            RemoteHttpEndpointError::DnsEmpty.code(),
+            "remote_http_dns_failed"
+        );
     }
 
     #[test]

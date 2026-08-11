@@ -725,7 +725,8 @@ mod tests {
 
     #[test]
     fn r557_with_db_override_lifts_worktree_suppression() {
-        let env = std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
+        let env =
+            std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
         let inputs = SuppressionInputs::from_env(&env).with_db_override(true);
         let decision = resolve_suppression(&inputs);
         assert!(!decision.suppressed);
@@ -734,7 +735,8 @@ mod tests {
 
     #[test]
     fn r557_with_db_override_disabled_keeps_worktree_suppression() {
-        let env = std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
+        let env =
+            std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
         let inputs = SuppressionInputs::from_env(&env).with_db_override(false);
         let decision = resolve_suppression(&inputs);
         assert!(decision.suppressed);
@@ -743,7 +745,8 @@ mod tests {
 
     #[test]
     fn r557_db_override_opt_none_keeps_default_false() {
-        let env = std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
+        let env =
+            std::collections::HashMap::from([("PAPERCLIP_IN_WORKTREE".into(), "true".into())]);
         let inputs = SuppressionInputs::from_env(&env).with_db_override_opt(None);
         // 默认 false,与原 from_env 行为一致
         assert!(!inputs.db_worktree_override_armed);
@@ -762,12 +765,18 @@ mod tests {
         // 即使 DB override armed,database_restore_in_progress 仍然是最高优先级
         let env = std::collections::HashMap::from([
             ("PAPERCLIP_IN_WORKTREE".into(), "true".into()),
-            ("PAPERCLIP_DATABASE_RESTORE_IN_PROGRESS".into(), "true".into()),
+            (
+                "PAPERCLIP_DATABASE_RESTORE_IN_PROGRESS".into(),
+                "true".into(),
+            ),
         ]);
         let inputs = SuppressionInputs::from_env(&env).with_db_override(true);
         let decision = resolve_suppression(&inputs);
         assert!(decision.suppressed);
-        assert_eq!(decision.reason, SuppressionReason::DatabaseRestoreInProgress);
+        assert_eq!(
+            decision.reason,
+            SuppressionReason::DatabaseRestoreInProgress
+        );
     }
 
     #[test]

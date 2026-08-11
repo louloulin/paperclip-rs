@@ -47,7 +47,9 @@ pub enum DenialRecordError {
 }
 
 /// `normalizeResponsibleUserDenialCode` — 与 Node 1:1 对齐。
-pub fn normalize_responsible_user_denial_code(value: &Value) -> Option<crate::ResponsibleUserDenialCode> {
+pub fn normalize_responsible_user_denial_code(
+    value: &Value,
+) -> Option<crate::ResponsibleUserDenialCode> {
     normalize_responsible_user_denial_code_value(value)
 }
 
@@ -61,7 +63,11 @@ pub async fn record_responsible_user_denial_on_active_run(
     db: &Db,
     input: RecordDenialInput,
 ) -> Result<Option<ActiveRunOutcome>, DenialRecordError> {
-    let run_id_str = input.run_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let run_id_str = input
+        .run_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let code = input
         .code
         .as_ref()

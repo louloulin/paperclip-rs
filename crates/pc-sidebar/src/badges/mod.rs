@@ -89,7 +89,10 @@ mod tests {
 
     #[test]
     fn r708_normalize_timestamp_unix_ms_string() {
-        assert_eq!(normalize_timestamp_str(Some("1704067200000")), 1_704_067_200_000);
+        assert_eq!(
+            normalize_timestamp_str(Some("1704067200000")),
+            1_704_067_200_000
+        );
     }
 
     #[test]
@@ -103,8 +106,14 @@ mod tests {
         use serde_json::json;
         assert_eq!(normalize_timestamp(Some(&json!(null))), 0);
         assert_eq!(normalize_timestamp(Some(&json!(""))), 0);
-        assert_eq!(normalize_timestamp(Some(&json!("2024-01-01T00:00:00Z"))), 1_704_067_200_000);
-        assert_eq!(normalize_timestamp(Some(&json!(1_704_067_200_000i64))), 1_704_067_200_000);
+        assert_eq!(
+            normalize_timestamp(Some(&json!("2024-01-01T00:00:00Z"))),
+            1_704_067_200_000
+        );
+        assert_eq!(
+            normalize_timestamp(Some(&json!(1_704_067_200_000i64))),
+            1_704_067_200_000
+        );
         assert_eq!(normalize_timestamp(Some(&json!(42))), 42);
         assert_eq!(normalize_timestamp(Some(&json!(true))), 0);
         assert_eq!(normalize_timestamp(Some(&json!([]))), 0);
@@ -137,7 +146,11 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert("key1".to_string(), 1_704_067_200_000);
         assert!(is_dismissed_str(&map, "key1", Some("2024-01-01T00:00:00Z")));
-        assert!(!is_dismissed_str(&map, "key1", Some("2024-06-01T00:00:00Z")));
+        assert!(!is_dismissed_str(
+            &map,
+            "key1",
+            Some("2024-06-01T00:00:00Z")
+        ));
     }
 
     #[test]

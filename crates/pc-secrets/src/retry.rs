@@ -177,10 +177,8 @@ mod tests {
     #[tokio::test]
     async fn retry_exhausts_and_returns_last_error() {
         let policy = RetryPolicy::new(3, Duration::from_millis(1), Duration::from_millis(5));
-        let res: Result<(), _> = retry_string(&policy, || async {
-            Err("HTTP 503".to_string())
-        })
-        .await;
+        let res: Result<(), _> =
+            retry_string(&policy, || async { Err("HTTP 503".to_string()) }).await;
         let err = res.unwrap_err();
         assert_eq!(err.category(), SecretErrorCategory::Upstream);
     }

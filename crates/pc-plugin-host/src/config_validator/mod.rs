@@ -109,7 +109,8 @@ mod tests {
 
     #[test]
     fn r696_minimum_violation() {
-        let schema = json!({"type": "object", "properties": {"n": {"type": "integer", "minimum": 5}}});
+        let schema =
+            json!({"type": "object", "properties": {"n": {"type": "integer", "minimum": 5}}});
         let cfg = json!({"n": 1});
         let r = validate_instance_config(&cfg, &schema).unwrap();
         assert!(!r.valid);

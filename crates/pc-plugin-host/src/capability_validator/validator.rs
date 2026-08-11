@@ -14,8 +14,8 @@ use std::collections::HashSet;
 use tracing::{debug, warn};
 
 use super::capabilities::{
-    feature_capability, launcher_placement_capability, operation_capabilities,
-    parse_ui_slot, ui_slot_capability, ManifestFeature, PluginCapability,
+    feature_capability, launcher_placement_capability, operation_capabilities, parse_ui_slot,
+    ui_slot_capability, ManifestFeature, PluginCapability,
 };
 use super::error::ForbiddenError;
 use super::manifest::PluginManifestV1View;
@@ -132,8 +132,7 @@ impl PluginCapabilityValidator for DefaultPluginCapabilityValidator {
         if required.is_empty() {
             warn!(
                 plugin_id = manifest.id(),
-                operation,
-                "capability check for unknown operation \u{2013} rejecting by default"
+                operation, "capability check for unknown operation \u{2013} rejecting by default"
             );
             return CapabilityCheckResult {
                 allowed: false,
@@ -249,11 +248,17 @@ impl PluginCapabilityValidator for DefaultPluginCapabilityValidator {
             (ManifestFeature::Jobs, !manifest.jobs().is_empty()),
             (ManifestFeature::Webhooks, !manifest.webhooks().is_empty()),
             (ManifestFeature::Database, manifest.has_database()),
-            (ManifestFeature::EnvironmentDrivers, !manifest.environment_drivers().is_empty()),
+            (
+                ManifestFeature::EnvironmentDrivers,
+                !manifest.environment_drivers().is_empty(),
+            ),
             (ManifestFeature::Agents, !manifest.agents().is_empty()),
             (ManifestFeature::Projects, !manifest.projects().is_empty()),
             (ManifestFeature::Routines, !manifest.routines().is_empty()),
-            (ManifestFeature::ObjectReferences, !manifest.object_references().is_empty()),
+            (
+                ManifestFeature::ObjectReferences,
+                !manifest.object_references().is_empty(),
+            ),
         ];
         for (feature, present) in feature_presence {
             if present {

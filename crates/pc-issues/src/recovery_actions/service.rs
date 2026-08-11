@@ -95,7 +95,9 @@ impl IssueRecoveryActionService {
         let repo_input = request.to_repo_input();
 
         // 我们调 pc-repos；upsert_recovery_action 内部已经处理 retry of MAX_UPSERT_RETRIES
-        let row = IssueRepo::new(&self.db).upsert_recovery_action(&repo_input).await?;
+        let row = IssueRepo::new(&self.db)
+            .upsert_recovery_action(&repo_input)
+            .await?;
 
         let info = IssueRecoveryActionInfo::from_row(row);
 
@@ -112,7 +114,9 @@ impl IssueRecoveryActionService {
         _company_id: Uuid,
         source_issue_id: Uuid,
     ) -> IssueRecoveryActionResult<Option<IssueRecoveryActionInfo>> {
-        let row = IssueRepo::new(&self.db).get_active_recovery_action(source_issue_id).await?;
+        let row = IssueRepo::new(&self.db)
+            .get_active_recovery_action(source_issue_id)
+            .await?;
         Ok(row.map(IssueRecoveryActionInfo::from_row))
     }
 
@@ -122,7 +126,9 @@ impl IssueRecoveryActionService {
         company_id: Uuid,
         source_issue_ids: Vec<Uuid>,
     ) -> IssueRecoveryActionResult<ActiveRecoveryActionsByIssue> {
-        let map: HashMap<Uuid, IssueRecoveryActionRow> = IssueRepo::new(&self.db).list_active_recovery_actions_for_issues(company_id, &source_issue_ids).await?;
+        let map: HashMap<Uuid, IssueRecoveryActionRow> = IssueRepo::new(&self.db)
+            .list_active_recovery_actions_for_issues(company_id, &source_issue_ids)
+            .await?;
         let out = map
             .into_iter()
             .map(|(id, row)| (id, IssueRecoveryActionInfo::from_row(row)))
@@ -135,8 +141,13 @@ impl IssueRecoveryActionService {
         &self,
         source_issue_id: Uuid,
     ) -> IssueRecoveryActionResult<Vec<IssueRecoveryActionInfo>> {
-        let rows = IssueRepo::new(&self.db).list_recovery_actions(source_issue_id).await?;
-        Ok(rows.into_iter().map(IssueRecoveryActionInfo::from_row).collect())
+        let rows = IssueRepo::new(&self.db)
+            .list_recovery_actions(source_issue_id)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(IssueRecoveryActionInfo::from_row)
+            .collect())
     }
 
     /// Resolve recovery action。
@@ -167,10 +178,12 @@ impl IssueRecoveryActionService {
             self.resolve_by_kind_cause(&request).await?
         } else if let Some(fingerprint) = &request.fingerprint {
             // 通过 fingerprint 找
-            self.resolve_by_fingerprint(request.source_issue_id, fingerprint, &request).await?
+            self.resolve_by_fingerprint(request.source_issue_id, fingerprint, &request)
+                .await?
         } else {
             // fallback: active action for source
-            self.resolve_fallback_active(request.source_issue_id, &request).await?
+            self.resolve_fallback_active(request.source_issue_id, &request)
+                .await?
         };
 
         let info = row.map(IssueRecoveryActionInfo::from_row);
@@ -186,7 +199,8 @@ impl IssueRecoveryActionService {
         request: &ResolveIssueRecoveryActionRequest,
     ) -> IssueRecoveryActionResult<Option<IssueRecoveryActionRow>> {
         // pc-repos 没有 by-id resolve；只能走 fallback（先找 active for source，再 filter by id）
-        let active = IssueRepo::new(&self.db).get_active_recovery_action(request.source_issue_id)
+        let active = IssueRepo::new(&self.db)
+            .get_active_recovery_action(request.source_issue_id)
             .await?;
         let target = active.filter(|row| row.id == action_id);
         match target {
@@ -212,7 +226,8 @@ impl IssueRecoveryActionService {
     ) -> IssueRecoveryActionResult<Option<IssueRecoveryActionRow>> {
         let kind = request.kind.as_ref().unwrap();
         let cause = request.cause.as_ref().unwrap();
-        let active = IssueRepo::new(&self.db).get_active_recovery_action(request.source_issue_id)
+        let active = IssueRepo::new(&self.db)
+            .get_active_recovery_action(request.source_issue_id)
             .await?;
         let target = active.filter(|row| row.kind == *kind && row.cause == *cause);
         match target {

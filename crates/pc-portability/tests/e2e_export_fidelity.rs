@@ -3,11 +3,11 @@
 //!
 //! 运行: cargo test -p pc-portability --test e2e_export_fidelity -- --include-ignored
 
-use pc_portability::fidelity_collector::collect_export_fidelity_counts;
 use pc_core::portability_fidelity::{
-    build_export_fidelity_warnings, build_export_fidelity_report, ExportFidelityCounts,
+    build_export_fidelity_report, build_export_fidelity_warnings, ExportFidelityCounts,
     PortabilityFidelitySeverity, EXPORT_FIDELITY_REPORT_SCHEMA,
 };
+use pc_portability::fidelity_collector::collect_export_fidelity_counts;
 use pc_repos::Db;
 use serde_json::json;
 use uuid::Uuid;
@@ -20,10 +20,12 @@ async fn connect() -> Db {
 
 async fn cleanup(db: &Db, suffix: &str) {
     let pid = format!("ef-%{suffix}%");
-    let _ = sqlx::query("DELETE FROM labels WHERE company_id IN (SELECT id FROM companies WHERE id::text LIKE $1)")
-        .bind(pid.clone())
-        .execute(db.pool())
-        .await;
+    let _ = sqlx::query(
+        "DELETE FROM labels WHERE company_id IN (SELECT id FROM companies WHERE id::text LIKE $1)",
+    )
+    .bind(pid.clone())
+    .execute(db.pool())
+    .await;
     let _ = sqlx::query("DELETE FROM companies WHERE id::text LIKE $1")
         .bind(pid)
         .execute(db.pool())
@@ -56,7 +58,9 @@ async fn e2e_collect_counts_returns_zero_for_empty_company() {
     let db = connect().await;
     cleanup(&db, "empty").await;
     let cid = make_company(&db, "empty").await;
-    let counts = collect_export_fidelity_counts(&db, cid).await.expect("collect");
+    let counts = collect_export_fidelity_counts(&db, cid)
+        .await
+        .expect("collect");
     assert_eq!(counts, ExportFidelityCounts::ZERO);
     cleanup(&db, "empty").await;
 }
@@ -69,7 +73,9 @@ async fn e2e_collect_counts_for_company_with_labels() {
     make_label(&db, cid, "l1").await;
     make_label(&db, cid, "l2").await;
     make_label(&db, cid, "l3").await;
-    let counts = collect_export_fidelity_counts(&db, cid).await.expect("collect");
+    let counts = collect_export_fidelity_counts(&db, cid)
+        .await
+        .expect("collect");
     assert_eq!(counts.label_definitions, 3);
     cleanup(&db, "lbl").await;
 }
@@ -86,23 +92,33 @@ async fn e2e_warnings_triggered_for_unsupported_data() {
         .await
         .expect("insert approval");
     for _ in 0..3 {
-        sqlx::query("INSERT INTO cost_events (company_id, kind, amount_cents) VALUES ($1, $2, 100)")
-            .bind(cid)
-            .bind(Uuid::new_v4().to_string())
-            .execute(db.pool())
-            .await
-            .expect("insert cost");
+        sqlx::query(
+            "INSERT INTO cost_events (company_id, kind, amount_cents) VALUES ($1, $2, 100)",
+        )
+        .bind(cid)
+        .bind(Uuid::new_v4().to_string())
+        .execute(db.pool())
+        .await
+        .expect("insert cost");
     }
-    let counts = collect_export_fidelity_counts(&db, cid).await.expect("collect");
+    let counts = collect_export_fidelity_counts(&db, cid)
+        .await
+        .expect("collect");
     let warnings = build_export_fidelity_warnings(&counts);
     let codes: Vec<_> = warnings.iter().map(|w| w.code.as_str()).collect();
     assert!(codes.contains(&"approvals_not_exported"));
     assert!(codes.contains(&"cost_history_not_exported"));
     assert!(!codes.contains(&"activity_history_not_exported"));
-    let a = warnings.iter().find(|w| w.code == "approvals_not_exported").unwrap();
+    let a = warnings
+        .iter()
+        .find(|w| w.code == "approvals_not_exported")
+        .unwrap();
     assert!(a.message.contains("1 approval is"));
     assert_eq!(a.severity, PortabilityFidelitySeverity::Warning);
-    let c = warnings.iter().find(|w| w.code == "cost_history_not_exported").unwrap();
+    let c = warnings
+        .iter()
+        .find(|w| w.code == "cost_history_not_exported")
+        .unwrap();
     assert!(c.message.contains("3 cost events are"));
     cleanup(&db, "warn").await;
 }
@@ -113,7 +129,9 @@ async fn e2e_full_report_has_schema_and_counts() {
     cleanup(&db, "full").await;
     let cid = make_company(&db, "full").await;
     make_label(&db, cid, "l1").await;
-    let counts = collect_export_fidelity_counts(&db, cid).await.expect("collect");
+    let counts = collect_export_fidelity_counts(&db, cid)
+        .await
+        .expect("collect");
     let report = build_export_fidelity_report(&cid.to_string(), counts, None);
     assert_eq!(report.schema, EXPORT_FIDELITY_REPORT_SCHEMA);
     assert_eq!(report.company_id, cid.to_string());
@@ -145,7 +163,9 @@ async fn e2e_report_with_empty_counts_no_warnings() {
     let db = connect().await;
     cleanup(&db, "z").await;
     let cid = make_company(&db, "z").await;
-    let counts = collect_export_fidelity_counts(&db, cid).await.expect("collect");
+    let counts = collect_export_fidelity_counts(&db, cid)
+        .await
+        .expect("collect");
     let warnings = build_export_fidelity_warnings(&counts);
     assert!(warnings.is_empty());
     let report = build_export_fidelity_report(&cid.to_string(), counts, None);

@@ -4,8 +4,6 @@
 
 use std::sync::Arc;
 
-
-
 use super::hook::{IssueRewakeThrottleHook, NoopIssueRewakeThrottleHook};
 use super::types::{
     IssueRewakeCandidateInput, IssueRewakeThrottleDecision, IssueRewakeThrottleInput,

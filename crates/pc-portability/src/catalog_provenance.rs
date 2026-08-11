@@ -166,10 +166,7 @@ pub fn read_portable_catalog_provenance(
 
     if let Some(ref sr) = source_ref {
         if !normalized.contains_key("originHash") {
-            normalized.insert(
-                "originHash".to_string(),
-                Value::String(sr.clone()),
-            );
+            normalized.insert("originHash".to_string(), Value::String(sr.clone()));
         }
     }
 
@@ -230,7 +227,10 @@ mod tests {
         assert_eq!(read_catalog_string_list(&v), None);
 
         let v = json!(["a", "  b  "]);
-        assert_eq!(read_catalog_string_list(&v), Some(vec!["a".into(), "b".into()]));
+        assert_eq!(
+            read_catalog_string_list(&v),
+            Some(vec!["a".into(), "b".into()])
+        );
 
         assert_eq!(read_catalog_string_list(&json!("not array")), None);
     }
@@ -333,10 +333,7 @@ mod tests {
         catalog.insert("auditCodes".to_string(), json!(["a", "b", "c"]));
         let meta = json!({ "paperclip": { "catalog": catalog } });
         let p = read_portable_catalog_provenance(&meta, None).expect("provenance");
-        assert_eq!(
-            p.metadata.get("auditCodes"),
-            Some(&json!(["a", "b", "c"]))
-        );
+        assert_eq!(p.metadata.get("auditCodes"), Some(&json!(["a", "b", "c"])));
     }
 
     #[test]

@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use pc_repos::Db;
 use pc_repos::agent_action_audit::{
     AgentActionAuditFilters, AgentActionAuditPage, AgentActionAuditRepo,
 };
+use pc_repos::Db;
 
 use super::hook::{AgentActionAuditHook, NoopAgentActionAuditHook, RecordingAgentActionAuditHook};
 
@@ -78,7 +78,10 @@ impl std::fmt::Debug for AgentActionAuditService {
 
 impl AgentActionAuditService {
     pub fn new(db: Db) -> Self {
-        Self { db, hook: Arc::new(NoopAgentActionAuditHook) }
+        Self {
+            db,
+            hook: Arc::new(NoopAgentActionAuditHook),
+        }
     }
 
     pub fn with_hook(db: Db, hook: Arc<dyn AgentActionAuditHook>) -> Self {

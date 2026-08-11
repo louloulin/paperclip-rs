@@ -33,10 +33,9 @@
 mod service;
 
 pub use service::{
-    CostByAgent, CostByAgentModel, CostByBiller, CostByProviderModel, CostByProject,
+    CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel,
     CostEventCreatedData, CostEventRow, CostFinanceError, CostHook, CostHookEvent, CostRange,
-    CostService, CostSummary, CostWindowSpendRow, CreateCostEvent, FinanceByBiller,
-    FinanceByKind, FinanceEventCreatedData, FinanceEventRow, FinanceSummary,
-    IssueCostSummaryRow, MonthlySpendUpdatedData, NewFinanceEvent, NoopCostHook,
-    RecordingCostHook,
+    CostService, CostSummary, CostWindowSpendRow, CreateCostEvent, FinanceByBiller, FinanceByKind,
+    FinanceEventCreatedData, FinanceEventRow, FinanceSummary, IssueCostSummaryRow,
+    MonthlySpendUpdatedData, NewFinanceEvent, NoopCostHook, RecordingCostHook,
 };

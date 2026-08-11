@@ -23,10 +23,10 @@
 
 #![forbid(unsafe_code)]
 
-use async_trait::async_trait;
 use super::roles::{
     grants_for_human_role, normalize_human_role, Grant, HumanCompanyMembershipRole,
 };
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
@@ -93,11 +93,10 @@ pub struct PrincipalAccessCompatibilityBackfillStats {
 #[async_trait]
 pub trait PrincipalAccessDb: Send + Sync {
     async fn fetch_non_terminal_agents(&self) -> sqlx::Result<Vec<(Uuid, String)>>;
-    async fn insert_agent_memberships(
+    async fn insert_agent_memberships(&self, rows: &[(Uuid, String)]) -> sqlx::Result<u64>;
+    async fn fetch_active_human_memberships(
         &self,
-        rows: &[(Uuid, String)],
-    ) -> sqlx::Result<u64>;
-    async fn fetch_active_human_memberships(&self) -> sqlx::Result<Vec<(Uuid, String, Option<String>)>>;
+    ) -> sqlx::Result<Vec<(Uuid, String, Option<String>)>>;
     async fn upsert_principal_grants(
         &self,
         company_id: Uuid,
@@ -243,7 +242,8 @@ pub async fn ensure_human_role_default_grants(
     db: &Db,
     input: EnsureHumanGrantsInput<'_>,
 ) -> sqlx::Result<i64> {
-    let role_json = serde_json::Value::String(input.membership_role.unwrap_or("operator").to_string());
+    let role_json =
+        serde_json::Value::String(input.membership_role.unwrap_or("operator").to_string());
     let role = normalize_human_role(&role_json, HumanCompanyMembershipRole::Operator);
     let grants: Vec<GrantInput> = grants_for_human_role(role)
         .iter()
@@ -307,25 +307,31 @@ mod tests {
     #[test]
     fn normalize_then_grants_roundtrip_for_each_role() {
         for (name, expected_keys) in [
-            ("owner", &[
-                "agents:create",
-                "agents:configure",
-                "skills:create",
-                "environments:manage",
-                "users:invite",
-                "users:manage_permissions",
-                "tasks:assign",
-                "joins:approve",
-            ][..]),
-            ("admin", &[
-                "agents:create",
-                "agents:configure",
-                "skills:create",
-                "environments:manage",
-                "users:invite",
-                "tasks:assign",
-                "joins:approve",
-            ][..]),
+            (
+                "owner",
+                &[
+                    "agents:create",
+                    "agents:configure",
+                    "skills:create",
+                    "environments:manage",
+                    "users:invite",
+                    "users:manage_permissions",
+                    "tasks:assign",
+                    "joins:approve",
+                ][..],
+            ),
+            (
+                "admin",
+                &[
+                    "agents:create",
+                    "agents:configure",
+                    "skills:create",
+                    "environments:manage",
+                    "users:invite",
+                    "tasks:assign",
+                    "joins:approve",
+                ][..],
+            ),
             ("operator", &["tasks:assign"][..]),
             ("viewer", &[][..]),
             ("member", &["tasks:assign"][..]),

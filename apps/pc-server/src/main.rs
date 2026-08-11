@@ -22,7 +22,7 @@ use pc_adapter_gemini_local::GeminiLocalAdapter;
 use pc_adapter_grok_local::GrokLocalAdapter;
 use pc_adapter_hermes::HermesAdapter;
 use pc_adapter_hermes_gateway::HermesGatewayAdapter;
-use pc_adapter_openclaw_gateway::OpenclawGatewayAdapter;
+use pc_adapter_openclaw_gateway::{OpenclawGatewayAdapter, OpenclawGatewayAdapterV2};
 use pc_adapter_opencode_local::OpencodeLocalAdapter;
 use pc_adapter_pi_local::PiLocalAdapter;
 use pc_config::Config;
@@ -40,7 +40,8 @@ use pc_repos::heartbeat::HeartbeatRepo;
 use pc_repos::settings::SettingsRepo;
 
 use pc_telemetry::{
-    log_banner, ProductTelemetryClient, ProductTelemetryConfig, RetryActorHandle, StartupBanner, TelemetryOptions,
+    log_banner, ProductTelemetryClient, ProductTelemetryConfig, RetryActorHandle, StartupBanner,
+    TelemetryOptions,
 };
 use tokio::signal;
 use tracing::info;
@@ -50,8 +51,18 @@ use tracing::info;
 async fn main() -> anyhow::Result<()> {
     pc_secrets::ensure_decision_signing_secret().context("initialize decision signing secret")?;
 
+    // R579: startup timing instrumentation for e2e baseline debugging.
+    let startup_start = std::time::Instant::now();
+    let startup_phase_started = std::time::Instant::now();
+
     // 1. 加载配置
     let config = Config::from_env().context("load config")?;
+    tracing::info!(
+        phase = "config_load",
+        elapsed_ms = startup_phase_started.elapsed().as_millis() as u64,
+        "startup phase complete"
+    );
+    let startup_phase_started = std::time::Instant::now();
     let cfg = Arc::new(config.clone());
 
     // 2. 遥测
@@ -106,10 +117,11 @@ async fn main() -> anyhow::Result<()> {
     pc_telemetry::global::install(std::sync::Arc::clone(&product_telemetry));
     let product_telemetry_periodic = std::sync::Arc::clone(&product_telemetry)
         .start_periodic_flush(std::time::Duration::from_secs(60));
-    let product_telemetry_actor: RetryActorHandle = std::sync::Arc::clone(&product_telemetry)
-        .start_background_retry_actor();
+    let product_telemetry_actor: RetryActorHandle =
+        std::sync::Arc::clone(&product_telemetry).start_background_retry_actor();
 
     // 4. 连接数据库
+    let db_connect_start = std::time::Instant::now();
     let db = Db::connect(
         &cfg.database.url,
         cfg.database.max_connections,
@@ -117,6 +129,12 @@ async fn main() -> anyhow::Result<()> {
     )
     .await
     .context("connect db")?;
+    tracing::info!(
+        phase = "db_connect",
+        elapsed_ms = db_connect_start.elapsed().as_millis() as u64,
+        "startup phase complete"
+    );
+    let migrations_start = std::time::Instant::now();
 
     // 5. 迁移
     if cfg.database.run_migrations {
@@ -124,6 +142,12 @@ async fn main() -> anyhow::Result<()> {
     } else {
         info!("migrations skipped (PAPERCLIP_DB_RUN_MIGRATIONS=false)");
     }
+    tracing::info!(
+        phase = "migrations",
+        elapsed_ms = migrations_start.elapsed().as_millis() as u64,
+        "startup phase complete"
+    );
+    let adapter_registration_start = std::time::Instant::now();
 
     // 6. 启动 Actor 根运行时并装配 axum 路由（pc-http 56 路由）
     let actors = ActorRegistry::new();
@@ -144,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
             .register(Arc::new(ClaudeLocalAdapter::new()))
             .context("register claude local adapter")?;
         adapters
-            .register(Arc::new(CursorCloudAdapter::new()))
+            .register(Arc::new(build_cursor_cloud_adapter()))
             .context("register cursor cloud adapter")?;
         adapters
             .register(Arc::new(CursorLocalAdapter::new()))
@@ -162,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
             .register(Arc::new(HermesGatewayAdapter::new()))
             .context("register hermes gateway adapter")?;
         adapters
-            .register(Arc::new(OpenclawGatewayAdapter::new()))
+            .register(Arc::new(build_openclaw_gateway_adapter()))
             .context("register openclaw gateway adapter")?;
         adapters
             .register(Arc::new(OpencodeLocalAdapter::new()))
@@ -171,6 +195,11 @@ async fn main() -> anyhow::Result<()> {
             .register(Arc::new(PiLocalAdapter::new()))
             .context("register pi local adapter")?;
     }
+    tracing::info!(
+        phase = "adapter_registration",
+        elapsed_ms = adapter_registration_start.elapsed().as_millis() as u64,
+        "startup phase complete"
+    );
     actors
         .register(
             ActorKey::new("system", "heartbeat-supervisor"),
@@ -183,7 +212,13 @@ async fn main() -> anyhow::Result<()> {
             agent_supervisor.clone(),
         )
         .context("register agent supervisor")?;
+    let heartbeat_recovery_start = std::time::Instant::now();
     recover_heartbeat_runs(&db, &heartbeat).await?;
+    tracing::info!(
+        phase = "heartbeat_recovery",
+        elapsed_ms = heartbeat_recovery_start.elapsed().as_millis() as u64,
+        "startup phase complete"
+    );
     let realtime = RealtimeHandle::start(1024);
     let ws = std::sync::Arc::new(WsState::new(realtime.clone(), "paperclip-rs"));
     let state = AppState::new(
@@ -497,10 +532,21 @@ async fn main() -> anyhow::Result<()> {
         cfg.server.host.parse::<std::net::IpAddr>()?,
         cfg.server.port,
     ));
+    let bind_start = std::time::Instant::now();
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind {addr}"))?;
-    info!(host = %cfg.server.host, port = cfg.server.port, "http listening");
+    tracing::info!(
+        phase = "bind",
+        elapsed_ms = bind_start.elapsed().as_millis() as u64,
+        "startup phase complete"
+    );
+    info!(
+        host = %cfg.server.host,
+        port = cfg.server.port,
+        total_startup_ms = startup_start.elapsed().as_millis() as u64,
+        "http listening"
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -609,4 +655,30 @@ async fn shutdown_signal() {
         () = ctrl_c => info!("ctrl-c received, shutting down"),
         () = terminate => info!("SIGTERM received, shutting down"),
     }
+}
+
+/// 构造 Cursor Cloud 适配器 —— 优先使用真实 reqwest 客户端，回退到 fake。
+fn build_cursor_cloud_adapter() -> CursorCloudAdapter {
+    let base_url = std::env::var("CURSOR_CLOUD_BASE_URL").ok();
+    let api_key = std::env::var("CURSOR_API_KEY").ok();
+    if api_key.as_deref().is_some_and(str::is_empty) == false {
+        CursorCloudAdapter::for_runtime(base_url.unwrap_or_default(), api_key.unwrap_or_default())
+    } else {
+        CursorCloudAdapter::default()
+    }
+}
+
+/// 构造 OpenClaw Gateway 适配器 —— 优先使用真实 tungstenite 客户端，回退到 fake。
+fn build_openclaw_gateway_adapter() -> OpenclawGatewayAdapterV2 {
+    let base_url = std::env::var("OPENCLAW_GATEWAY_URL").ok();
+    let identity_pem = std::env::var("OPENCLAW_GATEWAY_IDENTITY_PEM").ok();
+    let device_id = std::env::var("OPENCLAW_GATEWAY_DEVICE_ID")
+        .unwrap_or_else(|_| "paperclip-runtime".to_owned());
+    let identity = identity_pem.map(|pem| pc_adapter_openclaw_gateway::GatewayDeviceIdentity {
+        device_id,
+        public_key_raw_base64_url: "AAAA".to_owned(),
+        private_key_pem: pem,
+        source: pc_adapter_openclaw_gateway::DeviceIdentitySource::Configured,
+    });
+    OpenclawGatewayAdapterV2::for_runtime(base_url, identity)
 }

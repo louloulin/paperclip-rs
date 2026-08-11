@@ -347,7 +347,9 @@ pub struct ImportInput {
     pub include_projects: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// R630: import 结果。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -420,18 +422,48 @@ pub fn diff_manifests(first: &ExportManifest, second: &ExportManifest) -> Manife
         second.projects.iter().map(|p| p.name.clone()).collect();
 
     ManifestDiff {
-        agents_only_in_first: first_agent_names.difference(&second_agent_names).cloned().collect(),
-        agents_only_in_second: second_agent_names.difference(&first_agent_names).cloned().collect(),
+        agents_only_in_first: first_agent_names
+            .difference(&second_agent_names)
+            .cloned()
+            .collect(),
+        agents_only_in_second: second_agent_names
+            .difference(&first_agent_names)
+            .cloned()
+            .collect(),
         agents_common: first_agent_names.intersection(&second_agent_names).count(),
-        issues_only_in_first: first_issue_titles.difference(&second_issue_titles).cloned().collect(),
-        issues_only_in_second: second_issue_titles.difference(&first_issue_titles).cloned().collect(),
-        issues_common: first_issue_titles.intersection(&second_issue_titles).count(),
-        pipelines_only_in_first: first_pipeline_keys.difference(&second_pipeline_keys).cloned().collect(),
-        pipelines_only_in_second: second_pipeline_keys.difference(&first_pipeline_keys).cloned().collect(),
-        pipelines_common: first_pipeline_keys.intersection(&second_pipeline_keys).count(),
-        projects_only_in_first: first_project_names.difference(&second_project_names).cloned().collect(),
-        projects_only_in_second: second_project_names.difference(&first_project_names).cloned().collect(),
-        projects_common: first_project_names.intersection(&second_project_names).count(),
+        issues_only_in_first: first_issue_titles
+            .difference(&second_issue_titles)
+            .cloned()
+            .collect(),
+        issues_only_in_second: second_issue_titles
+            .difference(&first_issue_titles)
+            .cloned()
+            .collect(),
+        issues_common: first_issue_titles
+            .intersection(&second_issue_titles)
+            .count(),
+        pipelines_only_in_first: first_pipeline_keys
+            .difference(&second_pipeline_keys)
+            .cloned()
+            .collect(),
+        pipelines_only_in_second: second_pipeline_keys
+            .difference(&first_pipeline_keys)
+            .cloned()
+            .collect(),
+        pipelines_common: first_pipeline_keys
+            .intersection(&second_pipeline_keys)
+            .count(),
+        projects_only_in_first: first_project_names
+            .difference(&second_project_names)
+            .cloned()
+            .collect(),
+        projects_only_in_second: second_project_names
+            .difference(&first_project_names)
+            .cloned()
+            .collect(),
+        projects_common: first_project_names
+            .intersection(&second_project_names)
+            .count(),
     }
 }
 
@@ -656,14 +688,18 @@ pub struct ImportPreview {
     pub conflicts: Vec<String>,
 }
 
-
-
 /// Lifecycle event — hook 可以订阅以触发副作用（audit log / 通知）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortabilityLifecycleEvent {
-    Previewed { company_id: Uuid, counts: PortabilityCounts },
+    Previewed {
+        company_id: Uuid,
+        counts: PortabilityCounts,
+    },
     /// R600: export bundle 已生成（manifest 收集完成）。
-    Exported { company_id: Uuid, counts: ExportCounts },
+    Exported {
+        company_id: Uuid,
+        counts: ExportCounts,
+    },
     /// R630/R631/R638: import bundle 已导入（创建新 company + agents + issues + pipelines + projects）。
     Imported {
         source_company_id: Uuid,
@@ -716,10 +752,7 @@ impl RecordingPortabilityHook {
 
 #[async_trait]
 impl PortabilityHook for RecordingPortabilityHook {
-    async fn on_lifecycle(
-        &self,
-        event: PortabilityLifecycleEvent,
-    ) -> PortabilityServiceResult<()> {
+    async fn on_lifecycle(&self, event: PortabilityLifecycleEvent) -> PortabilityServiceResult<()> {
         self.events.lock().expect("lock").push(event);
         Ok(())
     }
@@ -845,7 +878,9 @@ impl<'a> PortabilityService<'a> {
         let agent_summaries = self.repo.list_agent_summaries(company_id).await?;
         let pipeline_summaries = self.repo.list_pipeline_summaries(company_id).await?;
 
-        let project_summaries = self.list_project_summaries(company_id, &input.include).await?;
+        let project_summaries = self
+            .list_project_summaries(company_id, &input.include)
+            .await?;
         let project_count = project_summaries.len();
         let counts = ExportCounts {
             agents: agent_summaries.len(),
@@ -977,9 +1012,7 @@ impl<'a> PortabilityService<'a> {
             .get(company_id)
             .await
             .map_err(|e| PortabilityServiceError::Repo(e.to_string()))?
-            .ok_or_else(|| {
-                PortabilityServiceError::NotFound(format!("company {company_id}"))
-            })?;
+            .ok_or_else(|| PortabilityServiceError::NotFound(format!("company {company_id}")))?;
         let counts = self.counts_for_company(company_id).await?;
         Ok(CompanySummaryReport {
             company_id: company_row.id,
@@ -1112,10 +1145,7 @@ impl<'a> PortabilityService<'a> {
     }
 
     /// R600: 直通 CompanyRepo::get — 验证 company 存在
-    pub async fn company_exists(
-        &self,
-        company_id: Uuid,
-    ) -> PortabilityServiceResult<bool> {
+    pub async fn company_exists(&self, company_id: Uuid) -> PortabilityServiceResult<bool> {
         Ok(pc_repos::company::CompanyRepo::new(self.repo.db)
             .exists(company_id)
             .await?)
@@ -1134,10 +1164,7 @@ impl<'a> PortabilityService<'a> {
     /// - Pipelines（需要 `pc-pipelines::PipelineService::create`，留待 v5+）
     /// - File resources / envInputs（需要 `pc-storage` 接入）
     /// - Side imports（projects / skills / routines / documents）
-    pub async fn import(
-        &self,
-        input: ImportInput,
-    ) -> PortabilityServiceResult<ImportResult> {
+    pub async fn import(&self, input: ImportInput) -> PortabilityServiceResult<ImportResult> {
         // Validate input
         if input.new_company_name.trim().is_empty() {
             return Err(PortabilityServiceError::InvalidInput(
@@ -1195,18 +1222,12 @@ impl<'a> PortabilityService<'a> {
 
         // 1. Create new company
         let new_company = company_repo
-            .create(
-                &input.new_company_name,
-                description.as_deref(),
-            )
+            .create(&input.new_company_name, description.as_deref())
             .await?;
 
         // Create owner membership (best-effort — skip if already exists)
         let _ = company_repo
-            .create_owner_membership(
-                new_company.id,
-                &input.owner_principal_id,
-            )
+            .create_owner_membership(new_company.id, &input.owner_principal_id)
             .await;
 
         let target_company_id = new_company.id;
@@ -1228,11 +1249,7 @@ impl<'a> PortabilityService<'a> {
                     }
                 };
                 agent_repo
-                    .create_simple(
-                        target_company_id,
-                        &resolved_name,
-                        &agent.role,
-                    )
+                    .create_simple(target_company_id, &resolved_name, &agent.role)
                     .await?;
                 agents_created += 1;
             }
@@ -1269,14 +1286,24 @@ impl<'a> PortabilityService<'a> {
 
         // 4. Pipelines (R631)
         let (pipelines_created, pipelines_skipped) = if input.include_pipelines {
-            self.import_pipelines(target_company_id, &input.manifest.pipelines, input.collision_strategy).await?
+            self.import_pipelines(
+                target_company_id,
+                &input.manifest.pipelines,
+                input.collision_strategy,
+            )
+            .await?
         } else {
             (0, 0)
         };
 
         // 5. Projects (R638)
         let (projects_created, projects_skipped) = if input.include_projects {
-            self.import_projects(target_company_id, &input.manifest.projects, input.collision_strategy).await?
+            self.import_projects(
+                target_company_id,
+                &input.manifest.projects,
+                input.collision_strategy,
+            )
+            .await?
         } else {
             (0, 0)
         };
@@ -1462,24 +1489,25 @@ impl<'a> PortabilityService<'a> {
 
         Ok(rows
             .into_iter()
-            .map(|(issue_id, related_id, rel_type, created_at)| IssueRelationEntry {
-                issue_identifier: issue_id,
-                related_issue_identifier: related_id,
-                relation_type: rel_type,
-                created_at,
-            })
+            .map(
+                |(issue_id, related_id, rel_type, created_at)| IssueRelationEntry {
+                    issue_identifier: issue_id,
+                    related_issue_identifier: related_id,
+                    relation_type: rel_type,
+                    created_at,
+                },
+            )
             .collect())
     }
 
     /// R653: 统计 company 的 issue relations 数量。
     pub async fn count_issue_relations(&self, company_id: Uuid) -> PortabilityServiceResult<usize> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM issue_relations WHERE company_id = $1",
-        )
-        .bind(company_id)
-        .fetch_one(self.repo.db.pool())
-        .await
-        .map_err(|e| PortabilityServiceError::Repo(e.to_string()))?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM issue_relations WHERE company_id = $1")
+                .bind(company_id)
+                .fetch_one(self.repo.db.pool())
+                .await
+                .map_err(|e| PortabilityServiceError::Repo(e.to_string()))?;
         Ok(count.0 as usize)
     }
 
@@ -1493,7 +1521,10 @@ impl<'a> PortabilityService<'a> {
             return Ok(Vec::new());
         }
         let project_repo = pc_repos::project::ProjectRepo::new(self.repo.db);
-        let projects = project_repo.list_by_company(company_id, false).await.map_err(|e| PortabilityServiceError::Repo(e.to_string()))?;
+        let projects = project_repo
+            .list_by_company(company_id, false)
+            .await
+            .map_err(|e| PortabilityServiceError::Repo(e.to_string()))?;
         Ok(projects
             .into_iter()
             .map(|p| ProjectSummary {
@@ -1549,7 +1580,8 @@ impl<'a> PortabilityService<'a> {
         let issues = issue_repo
             .count_for_company(company_id)
             .await
-            .map_err(|e| PortabilityServiceError::Repo(e.to_string()))? as usize;
+            .map_err(|e| PortabilityServiceError::Repo(e.to_string()))?
+            as usize;
         let projects = project_repo
             .list_by_company(company_id, false)
             .await
@@ -1642,7 +1674,10 @@ impl<'a> PortabilityService<'a> {
         strategy: CollisionStrategy,
     ) -> PortabilityServiceResult<Option<String>> {
         let project_repo = pc_repos::project::ProjectRepo::new(self.repo.db);
-        let projects = project_repo.list_by_company(company_id, false).await.map_err(|e| PortabilityServiceError::Repo(e.to_string()))?;
+        let projects = project_repo
+            .list_by_company(company_id, false)
+            .await
+            .map_err(|e| PortabilityServiceError::Repo(e.to_string()))?;
         let exists = projects.iter().any(|p| p.name == original);
         if !exists {
             return Ok(Some(original.to_string()));

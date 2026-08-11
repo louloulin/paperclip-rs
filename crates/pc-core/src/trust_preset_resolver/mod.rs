@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/trust-preset-resolver.ts` 1:1 复刻。
 //! （原 `pc-trust-preset-resolver` crate 已下沉到 `pc-core::trust_preset_resolver`）。
 
-
 use std::collections::{BTreeSet, HashMap};
 
 // ============================================================================
@@ -35,7 +34,9 @@ const LOW_TRUST_REVIEW_PRESET_STR: &str = LOW_TRUST_REVIEW_PRESET;
 pub type TrustPreset = String;
 
 /// Policy 来源（与 Node `TrustPresetPolicySource` 1:1 对齐）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustPresetPolicySource {
     Agent,
@@ -224,7 +225,11 @@ fn is_uuid(s: &str) -> bool {
     uuid::Uuid::parse_str(s).is_ok()
 }
 
-fn parse_preset(value: Option<&serde_json::Value>, source: TrustPresetPolicySource, source_presets: HashMap<TrustPresetPolicySource, String>) -> Result<Option<String>, TrustPresetResolution> {
+fn parse_preset(
+    value: Option<&serde_json::Value>,
+    source: TrustPresetPolicySource,
+    source_presets: HashMap<TrustPresetPolicySource, String>,
+) -> Result<Option<String>, TrustPresetResolution> {
     let Some(v) = value else { return Ok(None) };
     let Some(s) = v.as_str() else {
         return Err(deny(
@@ -245,7 +250,11 @@ fn parse_preset(value: Option<&serde_json::Value>, source: TrustPresetPolicySour
     Ok(Some(s.to_string()))
 }
 
-fn parse_review_preset(value: Option<&serde_json::Value>, source: TrustPresetPolicySource, source_presets: HashMap<TrustPresetPolicySource, String>) -> Result<Option<String>, TrustPresetResolution> {
+fn parse_review_preset(
+    value: Option<&serde_json::Value>,
+    source: TrustPresetPolicySource,
+    source_presets: HashMap<TrustPresetPolicySource, String>,
+) -> Result<Option<String>, TrustPresetResolution> {
     let Some(v) = value else { return Ok(None) };
     let Some(obj) = v.as_object() else {
         return Err(deny(
@@ -282,7 +291,10 @@ fn parse_authorization_policy(
         return Err(deny(
             TrustPresetDenyReason::InvalidAuthorizationPolicy,
             Some(source),
-            format!("Invalid authorization policy in {} policy.", source.as_str()),
+            format!(
+                "Invalid authorization policy in {} policy.",
+                source.as_str()
+            ),
             source_presets,
         ));
     };
@@ -292,7 +304,10 @@ fn parse_authorization_policy(
             return Err(deny(
                 TrustPresetDenyReason::InvalidAuthorizationPolicy,
                 Some(source),
-                format!("Invalid authorization policy in {} policy.", source.as_str()),
+                format!(
+                    "Invalid authorization policy in {} policy.",
+                    source.as_str()
+                ),
                 source_presets,
             ));
         }
@@ -305,7 +320,10 @@ fn parse_authorization_policy(
             return Err(deny(
                 TrustPresetDenyReason::InvalidAuthorizationPolicy,
                 Some(source),
-                format!("Invalid authorization policy in {} policy.", source.as_str()),
+                format!(
+                    "Invalid authorization policy in {} policy.",
+                    source.as_str()
+                ),
                 source_presets,
             ));
         }
@@ -316,7 +334,10 @@ fn parse_authorization_policy(
             return Err(deny(
                 TrustPresetDenyReason::InvalidAuthorizationPolicy,
                 Some(source),
-                format!("Invalid authorization policy in {} policy.", source.as_str()),
+                format!(
+                    "Invalid authorization policy in {} policy.",
+                    source.as_str()
+                ),
                 source_presets,
             ));
         }
@@ -493,8 +514,14 @@ fn parse_boundary(
     }
     // strict mode: deny unknown fields
     let allowed: std::collections::HashSet<&str> = [
-        "mode", "companyId", "projectIds", "rootIssueId", "issueIds",
-        "allowedAgentIds", "allowedSecretBindingIds", "allowedToolClasses",
+        "mode",
+        "companyId",
+        "projectIds",
+        "rootIssueId",
+        "issueIds",
+        "allowedAgentIds",
+        "allowedSecretBindingIds",
+        "allowedToolClasses",
         "outputPromotionTarget",
     ]
     .into_iter()
@@ -536,7 +563,8 @@ fn parse_source(
     let top_review_input = raw_policy.and_then(|p| p.get("reviewPreset"));
     let top_review = parse_review_preset(top_review_input, source, source_presets.clone())?;
     // 3. authorizationPolicy shape
-    let auth_obj = parse_authorization_policy(authorization_policy, source, source_presets.clone())?;
+    let auth_obj =
+        parse_authorization_policy(authorization_policy, source, source_presets.clone())?;
     // 4. auth.trustPreset
     let auth_preset_input = auth_obj.as_ref().and_then(|o| o.get("trustPreset"));
     let auth_preset = parse_preset(auth_preset_input, source, source_presets.clone())?;
@@ -548,16 +576,14 @@ fn parse_source(
     let boundary = parse_boundary(auth_boundary_input, source, source_presets.clone())?;
 
     // pick effective trustPreset
-    let effective = top_preset
-        .or(top_review)
-        .or(auth_preset)
-        .or(auth_review);
+    let effective = top_preset.or(top_review).or(auth_preset).or(auth_review);
 
     if let Some(p) = &effective {
         source_presets.insert(source, p.clone());
     }
 
-    let implies_low_trust = effective.as_deref() == Some(LOW_TRUST_REVIEW_PRESET_STR) || boundary.is_some();
+    let implies_low_trust =
+        effective.as_deref() == Some(LOW_TRUST_REVIEW_PRESET_STR) || boundary.is_some();
     let _ = implies_low_trust; // 仅做记录，resolution 时用
     Ok(effective)
 }
@@ -647,7 +673,9 @@ fn merge_boundary(
             base.allowed_tool_classes.as_deref(),
             next.allowed_tool_classes.as_deref(),
         ),
-        output_promotion_target: next.output_promotion_target.or(base.output_promotion_target),
+        output_promotion_target: next
+            .output_promotion_target
+            .or(base.output_promotion_target),
     })
 }
 
@@ -686,13 +714,7 @@ pub fn resolve_core_trust_preset(input: &ResolveCoreTrustPresetInput) -> TrustPr
     ) -> Result<(), TrustPresetResolution> {
         let raw = raw_policy.as_ref().and_then(as_record);
         let auth_input = raw.as_ref().and_then(|p| p.get("authorizationPolicy"));
-        match parse_source(
-            source,
-            company_id,
-            raw.as_ref(),
-            auth_input,
-            source_presets,
-        ) {
+        match parse_source(source, company_id, raw.as_ref(), auth_input, source_presets) {
             Ok(Some(ref p)) if p == LOW_TRUST_REVIEW_PRESET_STR => *any_low_trust = true,
             Ok(_) => {}
             Err(res) => return Err(res),
@@ -721,7 +743,9 @@ pub fn resolve_core_trust_preset(input: &ResolveCoreTrustPresetInput) -> TrustPr
             &mut source_presets,
             &mut all_boundaries,
             &mut any_low_trust,
-        ) { return res; }
+        ) {
+            return res;
+        }
     }
     // 2. project
     if let Some(project) = &input.project {
@@ -732,7 +756,9 @@ pub fn resolve_core_trust_preset(input: &ResolveCoreTrustPresetInput) -> TrustPr
             &mut source_presets,
             &mut all_boundaries,
             &mut any_low_trust,
-        ) { return res; }
+        ) {
+            return res;
+        }
     }
     // 3. issue
     if let Some(issue) = &input.issue {
@@ -743,7 +769,9 @@ pub fn resolve_core_trust_preset(input: &ResolveCoreTrustPresetInput) -> TrustPr
             &mut source_presets,
             &mut all_boundaries,
             &mut any_low_trust,
-        ) { return res; }
+        ) {
+            return res;
+        }
     }
     // 4. run
     if let Some(run) = &input.run {
@@ -754,15 +782,28 @@ pub fn resolve_core_trust_preset(input: &ResolveCoreTrustPresetInput) -> TrustPr
             &mut source_presets,
             &mut all_boundaries,
             &mut any_low_trust,
-        ) { return res; }
+        ) {
+            return res;
+        }
     }
 
     // 5. cross-company check on sources
-    for src in [TrustPresetPolicySource::Agent, TrustPresetPolicySource::Project, TrustPresetPolicySource::Issue, TrustPresetPolicySource::Run] {
+    for src in [
+        TrustPresetPolicySource::Agent,
+        TrustPresetPolicySource::Project,
+        TrustPresetPolicySource::Issue,
+        TrustPresetPolicySource::Run,
+    ] {
         if let Some(p) = match src {
-            TrustPresetPolicySource::Agent => input.agent.as_ref().and_then(|a| a.company_id.clone()),
-            TrustPresetPolicySource::Project => input.project.as_ref().and_then(|p| p.company_id.clone()),
-            TrustPresetPolicySource::Issue => input.issue.as_ref().and_then(|i| i.company_id.clone()),
+            TrustPresetPolicySource::Agent => {
+                input.agent.as_ref().and_then(|a| a.company_id.clone())
+            }
+            TrustPresetPolicySource::Project => {
+                input.project.as_ref().and_then(|p| p.company_id.clone())
+            }
+            TrustPresetPolicySource::Issue => {
+                input.issue.as_ref().and_then(|i| i.company_id.clone())
+            }
             TrustPresetPolicySource::Run => input.run.as_ref().and_then(|r| r.company_id.clone()),
         } {
             if p != input.company_id {
@@ -787,7 +828,13 @@ pub fn resolve_core_trust_preset(input: &ResolveCoreTrustPresetInput) -> TrustPr
     // 6. merge all boundaries
     let mut boundary: Option<LowTrustBoundaryWithCompany> = None;
     for (source, next) in all_boundaries {
-        match merge_boundary(boundary, next, &input.company_id, source, source_presets.clone()) {
+        match merge_boundary(
+            boundary,
+            next,
+            &input.company_id,
+            source,
+            source_presets.clone(),
+        ) {
             Ok(b) => boundary = Some(b),
             Err(res) => return res,
         }
@@ -1021,8 +1068,9 @@ mod tests {
     #[test]
     fn r716_parse_auth_policy_empty() {
         let v = json!({});
-        let r = parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new())
-            .unwrap();
+        let r =
+            parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new())
+                .unwrap();
         assert!(r.is_some());
     }
 
@@ -1033,21 +1081,24 @@ mod tests {
             "reviewPreset": {"id": "low_trust_review", "version": 1, "rawOutputDisposition": "quarantine"},
             "trustBoundary": {"mode": "low_trust_review"}
         });
-        let r = parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new());
+        let r =
+            parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new());
         assert!(r.is_ok());
     }
 
     #[test]
     fn r716_parse_auth_policy_not_object() {
         let v = json!("string");
-        let r = parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new());
+        let r =
+            parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new());
         assert!(r.is_err());
     }
 
     #[test]
     fn r716_parse_auth_policy_trust_preset_wrong_type() {
         let v = json!({"trustPreset": 42});
-        let r = parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new());
+        let r =
+            parse_authorization_policy(Some(&v), TrustPresetPolicySource::Agent, HashMap::new());
         assert!(r.is_err());
     }
 
@@ -1140,10 +1191,19 @@ mod tests {
             ..Default::default()
         });
         match r {
-            TrustPresetResolution::LowTrustReview { preset, boundary, source_presets } => {
+            TrustPresetResolution::LowTrustReview {
+                preset,
+                boundary,
+                source_presets,
+            } => {
                 assert_eq!(preset, "low_trust_review");
                 assert_eq!(boundary.company_id, "co-1");
-                assert_eq!(source_presets.get(&TrustPresetPolicySource::Agent).map(|s| s.as_str()), Some("low_trust_review"));
+                assert_eq!(
+                    source_presets
+                        .get(&TrustPresetPolicySource::Agent)
+                        .map(|s| s.as_str()),
+                    Some("low_trust_review")
+                );
             }
             _ => panic!("expected low_trust_review"),
         }
@@ -1311,35 +1371,55 @@ mod tests {
     #[test]
     fn r716_is_issue_within_root() {
         let b = boundary();
-        let i = BoundaryIssue { company_id: "co-1".into(), id: Some("root-1".into()), project_id: None };
+        let i = BoundaryIssue {
+            company_id: "co-1".into(),
+            id: Some("root-1".into()),
+            project_id: None,
+        };
         assert!(is_issue_within_low_trust_boundary(&b, &i));
     }
 
     #[test]
     fn r716_is_issue_within_issue_ids() {
         let b = boundary();
-        let i = BoundaryIssue { company_id: "co-1".into(), id: Some("issue-1".into()), project_id: None };
+        let i = BoundaryIssue {
+            company_id: "co-1".into(),
+            id: Some("issue-1".into()),
+            project_id: None,
+        };
         assert!(is_issue_within_low_trust_boundary(&b, &i));
     }
 
     #[test]
     fn r716_is_issue_within_project_ids() {
         let b = boundary();
-        let i = BoundaryIssue { company_id: "co-1".into(), id: None, project_id: Some("proj-1".into()) };
+        let i = BoundaryIssue {
+            company_id: "co-1".into(),
+            id: None,
+            project_id: Some("proj-1".into()),
+        };
         assert!(is_issue_within_low_trust_boundary(&b, &i));
     }
 
     #[test]
     fn r716_is_issue_within_cross_company_rejected() {
         let b = boundary();
-        let i = BoundaryIssue { company_id: "co-2".into(), id: Some("root-1".into()), project_id: None };
+        let i = BoundaryIssue {
+            company_id: "co-2".into(),
+            id: Some("root-1".into()),
+            project_id: None,
+        };
         assert!(!is_issue_within_low_trust_boundary(&b, &i));
     }
 
     #[test]
     fn r716_is_issue_within_outside() {
         let b = boundary();
-        let i = BoundaryIssue { company_id: "co-1".into(), id: Some("other".into()), project_id: Some("other-proj".into()) };
+        let i = BoundaryIssue {
+            company_id: "co-1".into(),
+            id: Some("other".into()),
+            project_id: Some("other-proj".into()),
+        };
         assert!(!is_issue_within_low_trust_boundary(&b, &i));
     }
 

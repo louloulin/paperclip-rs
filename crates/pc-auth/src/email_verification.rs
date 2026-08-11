@@ -124,7 +124,10 @@ mod tests {
     #[test]
     fn r565_verify_token_fails_on_wrong_raw() {
         let (_raw, rec) = issue_email_verification("u1", "a@example.com", Duration::hours(24));
-        assert_eq!(verify_email_token("nope", &rec), EmailVerificationOutcome::NotFound);
+        assert_eq!(
+            verify_email_token("nope", &rec),
+            EmailVerificationOutcome::NotFound
+        );
     }
 
     #[test]
@@ -135,7 +138,10 @@ mod tests {
             expires_at: Utc::now() - Duration::seconds(1),
             ..rec
         };
-        assert_eq!(verify_email_token(&raw, &rec2), EmailVerificationOutcome::Expired);
+        assert_eq!(
+            verify_email_token(&raw, &rec2),
+            EmailVerificationOutcome::Expired
+        );
     }
 
     #[test]

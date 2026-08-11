@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/database-backup-health.ts`（153 行）1:1 复刻。
 //! （原 `pc-database-backup-health` crate 已下沉到 `pc-backup::health`）。
 
-
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -173,7 +172,10 @@ fn alert_file_candidates(opts: &InspectDatabaseBackupHealthOptions) -> Vec<Strin
     let parent = {
         let p = PathBuf::from(&opts.backup_dir);
         let parent = p.parent().unwrap_or(Path::new("."));
-        parent.join("db-backup-to-s3.failure").to_string_lossy().to_string()
+        parent
+            .join("db-backup-to-s3.failure")
+            .to_string_lossy()
+            .to_string()
     };
     all.push(Some(primary));
     all.push(Some(parent));
@@ -298,10 +300,7 @@ pub fn inspect_database_backup_health(
         if latest_backup.is_none() {
             warnings.push(DatabaseBackupHealthWarning {
                 code: DatabaseBackupHealthWarningCode::DatabaseBackupMissing,
-                message: format!(
-                    "No .sql.gz database backups found in {}.",
-                    opts.backup_dir
-                ),
+                message: format!("No .sql.gz database backups found in {}.", opts.backup_dir),
             });
         } else if let Some(lb) = &latest_backup {
             if lb.age_hours > max_age_hours as f64 {
@@ -465,7 +464,8 @@ mod tests {
         assert!(cands.contains(&"/backups/db-backup-to-s3.failure".to_string()));
         assert!(cands
             .iter()
-            .any(|c| c.ends_with("/db-backup-to-s3.failure") && c != "/backups/db-backup-to-s3.failure"));
+            .any(|c| c.ends_with("/db-backup-to-s3.failure")
+                && c != "/backups/db-backup-to-s3.failure"));
     }
 
     #[test]
@@ -507,9 +507,7 @@ mod tests {
     #[test]
     fn r712_last_failure_empty_message_fallback() {
         let mut fs = FakeFs::new();
-        fs = fs
-            .with_file("/a", "\n\n")
-            .with_stat("/a", 1_000, 5);
+        fs = fs.with_file("/a", "\n\n").with_stat("/a", 1_000, 5);
         let lf = read_last_failure(&vec!["/a".into()], &fs).unwrap();
         assert_eq!(lf.message, "Database backup failure marker is present.");
     }
@@ -550,9 +548,11 @@ mod tests {
     #[test]
     fn r712_inspect_ok() {
         let mut fs = FakeFs::new();
-        fs = fs
-            .with_dir_entry("/backups", "b1.sql.gz")
-            .with_stat("/backups/b1.sql.gz", now_ms() - 3_600_000, 1024); // 1 小时前
+        fs = fs.with_dir_entry("/backups", "b1.sql.gz").with_stat(
+            "/backups/b1.sql.gz",
+            now_ms() - 3_600_000,
+            1024,
+        ); // 1 小时前
         let opts = base_opts();
         let status = inspect_database_backup_health(&opts, &fs);
         assert_eq!(status.status, BackupHealthLevel::Ok);
@@ -597,7 +597,10 @@ mod tests {
             .with_dir_entry("/backups", "b1.sql.gz")
             .with_stat("/backups/b1.sql.gz", now_ms() - 3_600_000, 1024)
             // alert file
-            .with_file("/backups/db-backup-to-s3.failure", "Backup failed at 2025-01-01")
+            .with_file(
+                "/backups/db-backup-to-s3.failure",
+                "Backup failed at 2025-01-01",
+            )
             .with_stat("/backups/db-backup-to-s3.failure", now_ms() - 3_600_000, 50);
         let opts = base_opts();
         let status = inspect_database_backup_health(&opts, &fs);

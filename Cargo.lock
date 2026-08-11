@@ -2007,8 +2007,12 @@ name = "pc-adapter-cursor-cloud"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
+ "chrono",
+ "futures-util",
  "pc-adapter-api",
  "pc-adapter-process",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2054,6 +2058,7 @@ dependencies = [
  "pc-acpx",
  "pc-adapter-api",
  "pc-adapter-process",
+ "regex-lite",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2068,6 +2073,7 @@ dependencies = [
  "async-trait",
  "pc-adapter-api",
  "pc-adapter-process",
+ "regex-lite",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2080,12 +2086,18 @@ name = "pc-adapter-hermes-gateway"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
+ "chrono",
+ "futures-util",
  "pc-adapter-api",
  "pc-adapter-process",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "url",
  "uuid",
 ]
 
@@ -2094,12 +2106,18 @@ name = "pc-adapter-openclaw-gateway"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "futures-util",
  "pc-adapter-api",
  "pc-adapter-process",
+ "regex-lite",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
  "uuid",
 ]
 
@@ -2162,6 +2180,19 @@ dependencies = [
 [[package]]
 name = "pc-adapter-type"
 version = "0.1.0"
+dependencies = [
+ "pc-adapter-claude-local",
+ "pc-adapter-codex-local",
+ "pc-adapter-cursor-cloud",
+ "pc-adapter-cursor-local",
+ "pc-adapter-gemini-local",
+ "pc-adapter-grok-local",
+ "pc-adapter-hermes",
+ "pc-adapter-hermes-gateway",
+ "pc-adapter-openclaw-gateway",
+ "pc-adapter-opencode-local",
+ "pc-adapter-pi-local",
+]
 
 [[package]]
 name = "pc-agent"
@@ -2260,6 +2291,7 @@ dependencies = [
  "pc-core",
  "pc-db",
  "pc-repos",
+ "pc-trust-policy",
  "serde",
  "serde_json",
  "sqlx",
@@ -2333,6 +2365,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "pc-workspace-commands",
  "rand 0.8.7",
  "reqwest",
  "serde",
@@ -2411,6 +2444,7 @@ dependencies = [
 name = "pc-config-schema"
 version = "0.1.0"
 dependencies = [
+ "pc-feature-catalog",
  "pc-network-bind",
  "serde",
  "serde_json",
@@ -2426,6 +2460,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-constants"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "pc-core"
 version = "0.1.0"
 dependencies = [
@@ -2436,6 +2479,7 @@ dependencies = [
  "hex",
  "hmac",
  "kameo",
+ "pc-portability-fidelity",
  "pc-repos",
  "regex",
  "serde",
@@ -2747,6 +2791,8 @@ dependencies = [
  "pc-adapter-api",
  "pc-adapter-quota",
  "pc-agent",
+ "pc-api-routes",
+ "pc-app-definitions",
  "pc-approvals",
  "pc-auth",
  "pc-authz",
@@ -2757,6 +2803,7 @@ dependencies = [
  "pc-db",
  "pc-decisions",
  "pc-errors",
+ "pc-execution-workspace-guards",
  "pc-heartbeat",
  "pc-issues",
  "pc-openapi",
@@ -2849,6 +2896,8 @@ dependencies = [
  "chrono",
  "pc-core",
  "pc-errors",
+ "pc-external-objects",
+ "pc-mentions",
  "pc-repos",
  "regex",
  "serde",
@@ -2948,6 +2997,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
+ "pc-pipeline-case-type",
  "pc-repos",
  "serde",
  "serde_json",
@@ -3163,6 +3213,7 @@ dependencies = [
  "pc-core",
  "pc-realtime",
  "pc-repos",
+ "pc-responsible-user-denial-copy",
  "serde",
  "serde_json",
  "sqlx",
@@ -3171,6 +3222,10 @@ dependencies = [
  "tracing",
  "uuid",
 ]
+
+[[package]]
+name = "pc-responsible-user-denial-copy"
+version = "0.1.0"
 
 [[package]]
 name = "pc-routine-variables"
@@ -3389,6 +3444,7 @@ dependencies = [
 name = "pc-trust-policy"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
 ]
 
@@ -4627,8 +4683,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -4906,8 +4966,11 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.7",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
+ "url",
  "utf-8",
 ]
 

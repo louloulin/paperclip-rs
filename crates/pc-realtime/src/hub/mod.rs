@@ -230,8 +230,16 @@ mod tests {
         let mut rx_a = hub.subscribe_company("A");
         let mut rx_b = hub.subscribe_company("B");
 
-        hub.publish("A", LiveEventType("x".into()), Some(json!({"v": 1}).as_object().unwrap().clone()));
-        hub.publish("B", LiveEventType("y".into()), Some(json!({"v": 2}).as_object().unwrap().clone()));
+        hub.publish(
+            "A",
+            LiveEventType("x".into()),
+            Some(json!({"v": 1}).as_object().unwrap().clone()),
+        );
+        hub.publish(
+            "B",
+            LiveEventType("y".into()),
+            Some(json!({"v": 2}).as_object().unwrap().clone()),
+        );
 
         let event_a = rx_a.recv().await.unwrap();
         assert_eq!(event_a.company_id, "A");
@@ -308,7 +316,11 @@ mod tests {
     #[tokio::test]
     async fn r677_top_level_publish_uses_global_hub() {
         let mut rx = subscribe_company_live_events("co-top");
-        let event = publish_live_event("co-top", LiveEventType("top".into()), Some(json!({"k": "v"}).as_object().unwrap().clone()));
+        let event = publish_live_event(
+            "co-top",
+            LiveEventType("top".into()),
+            Some(json!({"k": "v"}).as_object().unwrap().clone()),
+        );
         let received = rx.recv().await.unwrap();
         assert_eq!(received.id, event.id);
         assert_eq!(received.payload["k"], "v");

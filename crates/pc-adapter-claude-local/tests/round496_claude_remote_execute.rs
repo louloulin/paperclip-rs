@@ -14,6 +14,9 @@
 
 use pc_acpx::ssh::SshConnectionConfig;
 use pc_adapter_api::{Adapter, AdapterEventSink, AdapterExecutionContext};
+use pc_adapter_claude_local::claude_remote_config::{
+    stage_and_materialize_remote_claude_config, RemoteClaudeConfigMaterializationInput,
+};
 use pc_adapter_claude_local::ClaudeLocalAdapter;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -268,5 +271,85 @@ async fn claude_execute_dispatches_to_ssh_and_parses_remote_stdout() {
     assert_eq!(
         merged.get("sawProtocolEvent").and_then(|v| v.as_bool()),
         Some(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_remote_config_stages_seed_and_materializes_over_ssh() {
+    let Some(fixture) = SshLabFixture::start().await else {
+        return;
+    };
+    let local_seed = fixture.root_dir.join("local-claude-seed");
+    let remote_home = fixture.root_dir.join("remote-home");
+    let remote_seed = format!(
+        "{}/.paperclip-runtime/runs/r597/workspace/.paperclip-runtime/claude/config-seed",
+        fixture.config.remote_workspace_path
+    );
+    let remote_config = format!(
+        "{}/.paperclip-runtime/runs/r597/workspace/.paperclip-runtime/claude/config",
+        fixture.config.remote_workspace_path
+    );
+    std::fs::create_dir_all(&local_seed).expect("create local seed");
+    std::fs::create_dir_all(remote_home.join(".claude")).expect("create remote home");
+    std::fs::write(local_seed.join("settings.json"), "seed-settings").expect("write seed settings");
+    std::fs::write(local_seed.join("credentials.json"), "seed-credentials")
+        .expect("write seed credentials");
+    std::fs::write(remote_home.join(".claude/.credentials.json"), "home-legacy")
+        .expect("write home legacy credentials");
+
+    let mut env = BTreeMap::new();
+    env.insert(
+        "HOME".to_string(),
+        remote_home.to_string_lossy().into_owned(),
+    );
+    let target = pc_acpx::execution_target::adapter_execution_target_from_remote_execution(
+        &ssh_target_json(&fixture),
+        None,
+    )
+    .expect("legacy SSH target parses");
+    let result = stage_and_materialize_remote_claude_config(
+        &target,
+        &local_seed,
+        &RemoteClaudeConfigMaterializationInput {
+            remote_cwd: fixture.config.remote_workspace_path.clone(),
+            remote_claude_config_dir: remote_config.clone(),
+            remote_claude_config_seed_dir: remote_seed,
+            env,
+            timeout_ms: 30_000,
+        },
+    )
+    .await
+    .expect("remote Claude config materialization succeeds");
+    assert!(result.succeeded());
+
+    let read_remote = |path: String| {
+        let config = fixture.config.clone();
+        async move {
+            pc_acpx::ssh::run_ssh_command(
+                &config,
+                &format!("cat {}", pc_acpx::ssh::shell_quote(&path)),
+                &pc_acpx::ssh::SshCommandOptions {
+                    env: BTreeMap::new(),
+                    stdin: None,
+                    timeout_ms: 5_000,
+                    max_buffer: 64 * 1024,
+                },
+            )
+            .await
+            .expect("read remote file")
+            .stdout
+        }
+    };
+    assert_eq!(
+        read_remote(format!("{remote_config}/settings.json")).await,
+        "seed-settings"
+    );
+    assert_eq!(
+        read_remote(format!("{remote_config}/credentials.json")).await,
+        "seed-credentials"
+    );
+    assert_eq!(
+        read_remote(format!("{remote_config}/.credentials.json")).await,
+        "home-legacy"
     );
 }

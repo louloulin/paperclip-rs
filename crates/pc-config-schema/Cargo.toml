@@ -13,7 +13,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 pc-network-bind = { path = "../pc-network-bind" }
+pc-feature-catalog = { path = "../pc-feature-catalog" }
 
 [[test]]
 name = "r557_config_schema"
 path = "tests/r557_config_schema.rs"
+
+[[test]]
+name = "r561_feature_catalog_integration"
+path = "tests/r561_feature_catalog_integration.rs"

@@ -39,8 +39,7 @@ pub fn status_card_changes_hash(changes: &[StatusCardDeltaChange]) -> String {
 /// - 按 key 字典序排序 entries；
 /// - JSON 序列化后做 SHA-256。
 pub fn status_card_fingerprint_hash(fingerprint: &StatusCardFingerprint) -> String {
-    let mut entries: Vec<(&String, &crate::types::FingerprintEntry)> =
-        fingerprint.iter().collect();
+    let mut entries: Vec<(&String, &crate::types::FingerprintEntry)> = fingerprint.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
 
     // To serialize as a JSON object with sorted keys, build a serde_json::Value
@@ -57,7 +56,8 @@ pub fn status_card_fingerprint_hash(fingerprint: &StatusCardFingerprint) -> Stri
         });
         obj.insert(k.clone(), val);
     }
-    let json = serde_json::to_string(&serde_json::Value::Object(obj)).expect("serialize fingerprint");
+    let json =
+        serde_json::to_string(&serde_json::Value::Object(obj)).expect("serialize fingerprint");
     let digest = Sha256::digest(json.as_bytes());
     format!("{:x}", digest)
 }
@@ -204,6 +204,9 @@ mod tests {
                 assignee_user_id: None,
             },
         );
-        assert_eq!(status_card_fingerprint_hash(&a), status_card_fingerprint_hash(&b));
+        assert_eq!(
+            status_card_fingerprint_hash(&a),
+            status_card_fingerprint_hash(&b)
+        );
     }
 }

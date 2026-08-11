@@ -16,9 +16,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pc_errors::{conflict, forbidden, internal, unprocessable, validation, Error, Result};
 use pc_repos::folder::slug::normalize_folder_slug;
-use pc_repos::folder::{
-    CountsQuery, FolderKind, FolderRepo, FolderRow, FolderView, NewFolder,
-};
+use pc_repos::folder::{CountsQuery, FolderKind, FolderRepo, FolderRow, FolderView, NewFolder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -275,13 +273,12 @@ impl FolderService {
 
     /// Fetch a single folder by id (company-scoped) and return its view
     /// (with path / depth / itemCount).
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        folder_id: Uuid,
-    ) -> Result<Option<FolderView>> {
+    pub async fn get(&self, company_id: Uuid, folder_id: Uuid) -> Result<Option<FolderView>> {
         let repo = FolderRepo::new(&self.db);
-        let row = repo.get(company_id, folder_id).await.map_err(map_repo_error)?;
+        let row = repo
+            .get(company_id, folder_id)
+            .await
+            .map_err(map_repo_error)?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -290,8 +287,7 @@ impl FolderService {
             .list_by_kind(company_id, kind)
             .await
             .map_err(map_repo_error)?;
-        let views = pc_repos::folder::view::build_folder_views(&all)
-            .map_err(map_repo_error)?;
+        let views = pc_repos::folder::view::build_folder_views(&all).map_err(map_repo_error)?;
         let counts = CountsQuery::new(&self.db)
             .list_with_counts(company_id, kind)
             .await
@@ -326,7 +322,9 @@ impl FolderService {
                 .map_err(map_repo_error)?
                 .ok_or_else(|| validation(format!("parent folder {parent_id} not found")))?;
             if parent.kind != input.kind.as_str() {
-                return Err(validation("parent folder kind does not match new folder kind"));
+                return Err(validation(
+                    "parent folder kind does not match new folder kind",
+                ));
             }
             if parent.system_key.is_some() {
                 return Err(forbidden("system-managed folders cannot have children"));
@@ -397,8 +395,7 @@ impl FolderService {
             .list_by_kind(created.company_id, parse_kind(&created.kind)?)
             .await
             .map_err(map_repo_error)?;
-        let views = pc_repos::folder::view::build_folder_views(&all)
-            .map_err(map_repo_error)?;
+        let views = pc_repos::folder::view::build_folder_views(&all).map_err(map_repo_error)?;
         let path = views
             .get(&created.id)
             .map(|v| v.path.clone())
@@ -458,8 +455,7 @@ impl FolderService {
             .list_by_kind(company_id, kind)
             .await
             .map_err(map_repo_error)?;
-        let views = pc_repos::folder::view::build_folder_views(&all)
-            .map_err(map_repo_error)?;
+        let views = pc_repos::folder::view::build_folder_views(&all).map_err(map_repo_error)?;
         let path = views
             .get(&updated.id)
             .map(|v| v.path.clone())
@@ -486,7 +482,11 @@ impl FolderService {
 
     pub async fn delete(&self, company_id: Uuid, folder_id: Uuid) -> Result<bool> {
         let repo = FolderRepo::new(&self.db);
-        let existing = match repo.get(company_id, folder_id).await.map_err(map_repo_error)? {
+        let existing = match repo
+            .get(company_id, folder_id)
+            .await
+            .map_err(map_repo_error)?
+        {
             Some(row) => row,
             None => return Ok(false),
         };
@@ -514,9 +514,7 @@ impl FolderService {
 // =============================================================================
 
 fn parse_kind(s: &str) -> Result<FolderKind> {
-    FolderKind::parse(s).ok_or_else(|| {
-        internal(format!("unknown folder kind in row: {s}"))
-    })
+    FolderKind::parse(s).ok_or_else(|| internal(format!("unknown folder kind in row: {s}")))
 }
 
 fn map_repo_error(error: pc_repos::RepoError) -> Error {

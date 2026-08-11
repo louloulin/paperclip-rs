@@ -10,8 +10,8 @@
 
 pub mod import_write_types;
 
-use chrono::{DateTime, Utc};
 use crate::import_write_types::ImportIssueWorkProductRow;
+use chrono::{DateTime, Utc};
 use pc_repos::Db;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -210,7 +210,8 @@ impl<'a> WorkProductService<'a> {
                         .copied()
                         == Some(i);
                 let offset = i * 18;
-                let placeholders: Vec<String> = (0..18).map(|j| format!("${}", offset + j + 1)).collect();
+                let placeholders: Vec<String> =
+                    (0..18).map(|j| format!("${}", offset + j + 1)).collect();
                 if i > 0 {
                     sql.push_str(", ");
                 }
@@ -454,9 +455,7 @@ fn row_to_work_product(row: WorkProductRow) -> WorkProduct {
 }
 
 /// 把 `ImportIssueWorkProductRow` 转 `CreateWorkProductInput`。
-pub fn import_row_to_create_input(
-    row: &ImportIssueWorkProductRow,
-) -> CreateWorkProductInput {
+pub fn import_row_to_create_input(row: &ImportIssueWorkProductRow) -> CreateWorkProductInput {
     CreateWorkProductInput {
         project_id: row.project_id,
         execution_workspace_id: row.execution_workspace_id,

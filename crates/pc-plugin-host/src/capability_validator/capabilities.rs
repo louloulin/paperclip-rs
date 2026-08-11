@@ -50,39 +50,90 @@ impl From<String> for PluginCapability {
 
 pub const PLUGIN_CAPABILITIES: &[&str] = &[
     // Data Read
-    "companies.read", "projects.read", "project.workspaces.read",
-    "execution.workspaces.read", "issues.read", "issue.relations.read",
-    "issue.subtree.read", "issue.comments.read", "issue.interactions.read",
-    "issue.attachments.read", "approvals.read", "issue.documents.read",
-    "agents.read", "goals.read", "goals.create", "goals.update",
-    "activity.read", "costs.read", "issues.orchestration.read",
-    "access.members.read", "access.invites.read", "authorization.grants.read",
-    "authorization.policies.read", "authorization.audit.read",
+    "companies.read",
+    "projects.read",
+    "project.workspaces.read",
+    "execution.workspaces.read",
+    "issues.read",
+    "issue.relations.read",
+    "issue.subtree.read",
+    "issue.comments.read",
+    "issue.interactions.read",
+    "issue.attachments.read",
+    "approvals.read",
+    "issue.documents.read",
+    "agents.read",
+    "goals.read",
+    "goals.create",
+    "goals.update",
+    "activity.read",
+    "costs.read",
+    "issues.orchestration.read",
+    "access.members.read",
+    "access.invites.read",
+    "authorization.grants.read",
+    "authorization.policies.read",
+    "authorization.audit.read",
     "database.namespace.read",
     // Data Write
-    "issues.create", "issues.update", "issue.relations.write", "issues.checkout",
-    "issues.wakeup", "issue.comments.create", "issue.comments.create_human_attributed",
-    "issue.interactions.create", "issue.interactions.respond", "approvals.respond",
-    "issue.documents.write", "projects.managed", "routines.managed", "skills.managed",
-    "agents.pause", "agents.resume", "agents.invoke", "agents.managed",
-    "access.members.write", "access.invites.write", "authorization.grants.write",
-    "authorization.policies.write", "agent.sessions.create", "agent.sessions.list",
-    "agent.sessions.send", "agent.sessions.close", "activity.log.write",
-    "metrics.write", "telemetry.track", "database.namespace.migrate",
-    "database.namespace.write", "external.objects.detect", "external.objects.read",
-    "external.objects.write", "external.objects.refresh",
+    "issues.create",
+    "issues.update",
+    "issue.relations.write",
+    "issues.checkout",
+    "issues.wakeup",
+    "issue.comments.create",
+    "issue.comments.create_human_attributed",
+    "issue.interactions.create",
+    "issue.interactions.respond",
+    "approvals.respond",
+    "issue.documents.write",
+    "projects.managed",
+    "routines.managed",
+    "skills.managed",
+    "agents.pause",
+    "agents.resume",
+    "agents.invoke",
+    "agents.managed",
+    "access.members.write",
+    "access.invites.write",
+    "authorization.grants.write",
+    "authorization.policies.write",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send",
+    "agent.sessions.close",
+    "activity.log.write",
+    "metrics.write",
+    "telemetry.track",
+    "database.namespace.migrate",
+    "database.namespace.write",
+    "external.objects.detect",
+    "external.objects.read",
+    "external.objects.write",
+    "external.objects.refresh",
     // Plugin State
-    "plugin.state.read", "plugin.state.write",
+    "plugin.state.read",
+    "plugin.state.write",
     // Runtime / Integration
-    "events.subscribe", "events.emit", "jobs.schedule", "webhooks.receive",
-    "api.routes.register", "http.outbound", "secrets.read-ref",
-    "environment.drivers.register", "local.folders",
+    "events.subscribe",
+    "events.emit",
+    "jobs.schedule",
+    "webhooks.receive",
+    "api.routes.register",
+    "http.outbound",
+    "secrets.read-ref",
+    "environment.drivers.register",
+    "local.folders",
     // Agent Tools
     "agent.tools.register",
     // UI
-    "instance.settings.register", "ui.sidebar.register", "ui.page.register",
-    "ui.detailTab.register", "ui.dashboardWidget.register",
-    "ui.commentAnnotation.register", "ui.action.register",
+    "instance.settings.register",
+    "ui.sidebar.register",
+    "ui.page.register",
+    "ui.detailTab.register",
+    "ui.dashboardWidget.register",
+    "ui.commentAnnotation.register",
+    "ui.action.register",
 ];
 
 pub fn parse_capability(s: &str) -> Option<PluginCapability> {
@@ -127,11 +178,21 @@ impl PluginUiSlotType {
     pub const COMPANY_SETTINGS_PAGE: &'static str = "companySettingsPage";
 
     pub const ALL: &'static [&'static str] = &[
-        Self::PAGE, Self::DETAIL_TAB, Self::TASK_DETAIL_VIEW, Self::DASHBOARD_WIDGET,
-        Self::SIDEBAR, Self::ROUTE_SIDEBAR, Self::SIDEBAR_PANEL,
-        Self::PROJECT_SIDEBAR_ITEM, Self::GLOBAL_TOOLBAR_BUTTON, Self::TOOLBAR_BUTTON,
-        Self::CONTEXT_MENU_ITEM, Self::COMMENT_ANNOTATION,
-        Self::COMMENT_CONTEXT_MENU_ITEM, Self::SETTINGS_PAGE, Self::COMPANY_SETTINGS_PAGE,
+        Self::PAGE,
+        Self::DETAIL_TAB,
+        Self::TASK_DETAIL_VIEW,
+        Self::DASHBOARD_WIDGET,
+        Self::SIDEBAR,
+        Self::ROUTE_SIDEBAR,
+        Self::SIDEBAR_PANEL,
+        Self::PROJECT_SIDEBAR_ITEM,
+        Self::GLOBAL_TOOLBAR_BUTTON,
+        Self::TOOLBAR_BUTTON,
+        Self::CONTEXT_MENU_ITEM,
+        Self::COMMENT_ANNOTATION,
+        Self::COMMENT_CONTEXT_MENU_ITEM,
+        Self::SETTINGS_PAGE,
+        Self::COMPANY_SETTINGS_PAGE,
     ];
 }
 
@@ -144,14 +205,13 @@ impl std::fmt::Display for PluginUiSlotType {
 /// UI slot 类型 → 所需 capability（与 Node `UI_SLOT_CAPABILITIES` 1:1 对齐）。
 pub fn ui_slot_capability(slot: &str) -> Option<PluginCapability> {
     let cap = match slot {
-        "sidebar" | "sidebarPanel" | "projectSidebarItem" | "routeSidebar" => {
-            "ui.sidebar.register"
-        }
+        "sidebar" | "sidebarPanel" | "projectSidebarItem" | "routeSidebar" => "ui.sidebar.register",
         "page" => "ui.page.register",
         "detailTab" | "taskDetailView" => "ui.detailTab.register",
         "dashboardWidget" => "ui.dashboardWidget.register",
-        "globalToolbarButton" | "toolbarButton" | "contextMenuItem"
-        | "commentContextMenuItem" => "ui.action.register",
+        "globalToolbarButton" | "toolbarButton" | "contextMenuItem" | "commentContextMenuItem" => {
+            "ui.action.register"
+        }
         "commentAnnotation" => "ui.commentAnnotation.register",
         "settingsPage" | "companySettingsPage" => "instance.settings.register",
         _ => return None,
@@ -181,9 +241,19 @@ impl PluginLauncherPlacementZone {
     }
 
     pub const ALL: &'static [&'static str] = &[
-        "page", "detailTab", "taskDetailView", "dashboardWidget", "sidebar",
-        "sidebarPanel", "projectSidebarItem", "globalToolbarButton", "toolbarButton",
-        "contextMenuItem", "commentAnnotation", "commentContextMenuItem", "settingsPage",
+        "page",
+        "detailTab",
+        "taskDetailView",
+        "dashboardWidget",
+        "sidebar",
+        "sidebarPanel",
+        "projectSidebarItem",
+        "globalToolbarButton",
+        "toolbarButton",
+        "contextMenuItem",
+        "commentAnnotation",
+        "commentContextMenuItem",
+        "settingsPage",
     ];
 }
 
@@ -277,9 +347,7 @@ pub fn operation_capabilities(operation: &str) -> Vec<PluginCapability> {
             .map(|(op, caps)| {
                 (
                     *op,
-                    caps.iter()
-                        .map(|c| PluginCapability::new(*c))
-                        .collect(),
+                    caps.iter().map(|c| PluginCapability::new(*c)).collect(),
                 )
             })
             .collect()
@@ -327,7 +395,10 @@ fn build_table() -> &'static [(&'static str, &'static [&'static str])] {
         ("access.invites.read", &["access.invites.read"]),
         ("access.invites.list", &["access.invites.read"]),
         ("authorization.grants.read", &["authorization.grants.read"]),
-        ("authorization.policies.read", &["authorization.policies.read"]),
+        (
+            "authorization.policies.read",
+            &["authorization.policies.read"],
+        ),
         ("authorization.audit.read", &["authorization.audit.read"]),
         ("database.namespace.read", &["database.namespace.read"]),
         // Data Write
@@ -336,9 +407,15 @@ fn build_table() -> &'static [(&'static str, &'static [&'static str])] {
         ("issues.checkout", &["issues.checkout"]),
         ("issues.wakeup", &["issues.wakeup"]),
         ("issue.comments.create", &["issue.comments.create"]),
-        ("issue.comments.create_human_attributed", &["issue.comments.create_human_attributed"]),
+        (
+            "issue.comments.create_human_attributed",
+            &["issue.comments.create_human_attributed"],
+        ),
         ("issue.interactions.create", &["issue.interactions.create"]),
-        ("issue.interactions.respond", &["issue.interactions.respond"]),
+        (
+            "issue.interactions.respond",
+            &["issue.interactions.respond"],
+        ),
         ("approvals.respond", &["approvals.respond"]),
         ("issue.documents.write", &["issue.documents.write"]),
         ("goals.create", &["goals.create"]),
@@ -356,8 +433,14 @@ fn build_table() -> &'static [(&'static str, &'static [&'static str])] {
         ("agents.managed.update", &["agents.managed"]),
         ("access.members.write", &["access.members.write"]),
         ("access.invites.write", &["access.invites.write"]),
-        ("authorization.grants.write", &["authorization.grants.write"]),
-        ("authorization.policies.write", &["authorization.policies.write"]),
+        (
+            "authorization.grants.write",
+            &["authorization.grants.write"],
+        ),
+        (
+            "authorization.policies.write",
+            &["authorization.policies.write"],
+        ),
         // Agent control
         ("agents.invoke", &["agents.invoke"]),
         ("agents.pause", &["agents.pause", "agents.resume"]),
@@ -368,7 +451,10 @@ fn build_table() -> &'static [(&'static str, &'static [&'static str])] {
         ("agent.sessions.send", &["agent.sessions.send"]),
         ("agent.sessions.close", &["agent.sessions.close"]),
         // Database
-        ("database.namespace.migrate", &["database.namespace.migrate"]),
+        (
+            "database.namespace.migrate",
+            &["database.namespace.migrate"],
+        ),
         ("database.namespace.write", &["database.namespace.write"]),
         // External objects
         ("external.objects.detect", &["external.objects.detect"]),
@@ -387,8 +473,14 @@ fn build_table() -> &'static [(&'static str, &'static [&'static str])] {
         ("api.routes.register", &["api.routes.register"]),
         ("http.outbound", &["http.outbound"]),
         ("secrets.read-ref", &["secrets.read-ref"]),
-        ("environment.drivers.register", &["environment.drivers.register"]),
-        ("environment.drivers.list", &["environment.drivers.register"]),
+        (
+            "environment.drivers.register",
+            &["environment.drivers.register"],
+        ),
+        (
+            "environment.drivers.list",
+            &["environment.drivers.register"],
+        ),
         ("local.folders.read", &["local.folders"]),
         ("local.folders.list", &["local.folders"]),
         ("local.folders.write", &["local.folders"]),
@@ -403,9 +495,18 @@ fn build_table() -> &'static [(&'static str, &'static [&'static str])] {
         ("ui.sidebar.register", &["ui.sidebar.register"]),
         ("ui.page.register", &["ui.page.register"]),
         ("ui.detailTab.register", &["ui.detailTab.register"]),
-        ("ui.dashboardWidget.register", &["ui.dashboardWidget.register"]),
-        ("ui.commentAnnotation.register", &["ui.commentAnnotation.register"]),
+        (
+            "ui.dashboardWidget.register",
+            &["ui.dashboardWidget.register"],
+        ),
+        (
+            "ui.commentAnnotation.register",
+            &["ui.commentAnnotation.register"],
+        ),
         ("ui.action.register", &["ui.action.register"]),
-        ("instance.settings.register", &["instance.settings.register"]),
+        (
+            "instance.settings.register",
+            &["instance.settings.register"],
+        ),
     ]
 }

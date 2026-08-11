@@ -128,7 +128,9 @@ mod tests {
         .await;
 
         let url = format!("http://{addr}/");
-        let resp = gh_fetch(&url, Some("secret-token")).await.expect("fetch OK");
+        let resp = gh_fetch(&url, Some("secret-token"))
+            .await
+            .expect("fetch OK");
         assert!(resp.status().is_success());
     }
 
@@ -152,6 +154,9 @@ mod tests {
         let client = Client::new();
         let builder = client.get("not a url");
         let result = gh_fetch_with(&client, builder).await;
-        assert!(matches!(result, Err(GitHubFetchError::InvalidUrl(_)) | Err(GitHubFetchError::Transport(_))));
+        assert!(matches!(
+            result,
+            Err(GitHubFetchError::InvalidUrl(_)) | Err(GitHubFetchError::Transport(_))
+        ));
     }
 }

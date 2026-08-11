@@ -27,10 +27,7 @@ use crate::AppState;
 /// Pure function so unit tests can cover all branches without an [`AppState`].
 pub fn csrf_protected_in_openapi(path: &str, method: &str) -> bool {
     let method_upper = method.to_uppercase();
-    if !matches!(
-        method_upper.as_str(),
-        "POST" | "PUT" | "PATCH" | "DELETE"
-    ) {
+    if !matches!(method_upper.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
         return false;
     }
     !csrf_path_allowed(path)
@@ -634,10 +631,12 @@ pub fn path_schema_hint(path: &str, method: &str) -> Option<PathSchemaHint> {
             request: Some("Inbox"),
             response: Some("Inbox"),
         }),
-        ("/api/companies/{company_id}/inbox-dismissals/{item_key}", "DELETE") => Some(PathSchemaHint {
-            request: None,
-            response: None,
-        }),
+        ("/api/companies/{company_id}/inbox-dismissals/{item_key}", "DELETE") => {
+            Some(PathSchemaHint {
+                request: None,
+                response: None,
+            })
+        }
         ("/api/companies/{company_id}/inbox-dismissals/dismiss", "POST") => Some(PathSchemaHint {
             request: Some("Inbox"),
             response: Some("Inbox"),
@@ -691,7 +690,6 @@ pub fn path_schema_hint(path: &str, method: &str) -> Option<PathSchemaHint> {
             request: None,
             response: None,
         }),
-
 
         // R513: admin user directory + company-access management.
         ("/api/admin/users", "GET") => Some(PathSchemaHint {
@@ -803,6 +801,67 @@ pub fn path_schema_hint(path: &str, method: &str) -> Option<PathSchemaHint> {
         ("/api/skills/{skill_name}", "GET") => Some(PathSchemaHint {
             request: None,
             response: None,
+        }),
+
+        // R577: UI client paths registered for OpenAPI M19 coverage.
+        // Path strings are factual API contracts; hints carry no Node.js
+        // source. Types reference the schema names already registered by
+        // pc-openapi.
+        ("/api/health", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("Health"),
+        }),
+        ("/api/health/dev-server/restart", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("DevServerRestart"),
+        }),
+        ("/api/auth/get-session", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("Session"),
+        }),
+        ("/api/auth/profile", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("UserProfile"),
+        }),
+        ("/api/auth/profile", "PATCH") => Some(PathSchemaHint {
+            request: Some("UserProfileUpdate"),
+            response: Some("UserProfile"),
+        }),
+        ("/api/adapters/{type}/ui-parser.js", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("JsSource"),
+        }),
+        ("/api/assets/{asset_id}/content", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("AssetContent"),
+        }),
+        ("/api/companies/{company_id}/audit/agent-actions.csv", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("CsvExport"),
+        }),
+        ("/api/companies/{company_id}/events/ws", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("LiveEventStream"),
+        }),
+        ("/api/issues/{issue_id}/file-resources/content", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("FileResourceContent"),
+        }),
+        ("/api/v1/runs", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("RunList"),
+        }),
+        ("/api/plugins/{plugin_id}/actions/{key}", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("PluginAction"),
+        }),
+        ("/api/plugins/{plugin_id}/data/{key}", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("PluginData"),
+        }),
+        ("/api/plugins/{plugin_id}/bridge/stream/{channel}", "GET") => Some(PathSchemaHint {
+            request: None,
+            response: Some("BridgeStream"),
         }),
 
         _ => None,
@@ -970,9 +1029,9 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
             // GET). This left OpenAPI consumers blind to half the API
             // surface.
             let mut verbs = std::collections::BTreeSet::new();
-            for raw_token in tail.split(|c: char| {
-                c == '(' || c == ')' || c == ',' || c == '.' || c.is_whitespace()
-            }) {
+            for raw_token in tail
+                .split(|c: char| c == '(' || c == ')' || c == ',' || c == '.' || c.is_whitespace())
+            {
                 let token = raw_token.trim_start_matches('.');
                 if matches!(token, "get" | "post" | "put" | "patch" | "delete") {
                     verbs.insert(token.to_string());
@@ -1012,10 +1071,7 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
                     // know they must send the X-CSRF-Token header.
                     if csrf_protected_in_openapi(&normalized_path, verb) {
                         if let Some(op_obj) = op.as_object_mut() {
-                            op_obj.insert(
-                                "security".to_string(),
-                                json!([{"csrfToken": []}]),
-                            );
+                            op_obj.insert("security".to_string(), json!([{"csrfToken": []}]));
                         }
                     }
                     obj.insert(method.clone(), op);
@@ -1334,12 +1390,7 @@ mod tests {
             ),
             // R511: 25 additional hints (cases sub-resources + goals PATCH/DELETE +
             // inbox dismissals + folders CRUD + legacy folder endpoints).
-            (
-                "/api/cases/{case_id}/events",
-                "GET",
-                Some("CaseList"),
-                None,
-            ),
+            ("/api/cases/{case_id}/events", "GET", Some("CaseList"), None),
             (
                 "/api/cases/{case_id}/issue-links",
                 "POST",
@@ -1352,12 +1403,7 @@ mod tests {
                 Some("Case"),
                 Some("Case"),
             ),
-            (
-                "/api/cases/{case_id}/breakdown",
-                "POST",
-                Some("Case"),
-                None,
-            ),
+            ("/api/cases/{case_id}/breakdown", "POST", Some("Case"), None),
             (
                 "/api/cases/{case_id}/review",
                 "POST",
@@ -1461,26 +1507,91 @@ mod tests {
             ("/api/folders/{id}", "DELETE", None, None),
             // R513: 25 additional hints — admin + companies sub-resources + invites + skills.
             ("/api/admin/users", "GET", Some("AdminUserList"), None),
-            ("/api/admin/users/{user_id}/company-access", "GET", None, None),
-            ("/api/admin/users/{user_id}/company-access", "PUT", None, None),
-            ("/api/admin/users/{user_id}/promote-instance-admin", "POST", Some("AdminUser"), None),
-            ("/api/admin/users/{user_id}/demote-instance-admin", "POST", Some("AdminUser"), None),
-            ("/api/companies/{company_id}/members", "GET", Some("CompanyMemberList"), None),
+            (
+                "/api/admin/users/{user_id}/company-access",
+                "GET",
+                None,
+                None,
+            ),
+            (
+                "/api/admin/users/{user_id}/company-access",
+                "PUT",
+                None,
+                None,
+            ),
+            (
+                "/api/admin/users/{user_id}/promote-instance-admin",
+                "POST",
+                Some("AdminUser"),
+                None,
+            ),
+            (
+                "/api/admin/users/{user_id}/demote-instance-admin",
+                "POST",
+                Some("AdminUser"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/members",
+                "GET",
+                Some("CompanyMemberList"),
+                None,
+            ),
             // R522: companies aggregation endpoints now have real schemas.
-            ("/api/companies/{company_id}/stats", "GET", Some("CompanyStats"), None),
-            ("/api/companies/{company_id}/timeline", "GET", Some("CompanyTimelineResult"), None),
-            ("/api/companies/{company_id}/artifacts", "GET", Some("CompanyArtifactList"), None),
-            ("/api/companies/{company_id}/org", "GET", Some("CompanyOrgChart"), None),
+            (
+                "/api/companies/{company_id}/stats",
+                "GET",
+                Some("CompanyStats"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/timeline",
+                "GET",
+                Some("CompanyTimelineResult"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/artifacts",
+                "GET",
+                Some("CompanyArtifactList"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/org",
+                "GET",
+                Some("CompanyOrgChart"),
+                None,
+            ),
             ("/api/companies/{company_id}/org.svg", "GET", None, None),
             ("/api/companies/{company_id}/org.png", "GET", None, None),
-            ("/api/companies/{company_id}/agents", "POST", Some("Agent"), Some("Agent")),
-            ("/api/companies/{company_id}/archive", "POST", Some("Company"), None),
-            ("/api/companies/stats", "GET", Some("CompanyStatsList"), None),
+            (
+                "/api/companies/{company_id}/agents",
+                "POST",
+                Some("Agent"),
+                Some("Agent"),
+            ),
+            (
+                "/api/companies/{company_id}/archive",
+                "POST",
+                Some("Company"),
+                None,
+            ),
+            (
+                "/api/companies/stats",
+                "GET",
+                Some("CompanyStatsList"),
+                None,
+            ),
             ("/api/companies/issues", "GET", None, None),
             ("/api/companies/import/preview", "POST", None, None),
             ("/api/companies/import/jobs/{job_id}", "GET", None, None),
             ("/api/invites/{invite_id}", "GET", Some("Invite"), None),
-            ("/api/invites/{invite_id}/accept", "POST", Some("Invite"), None),
+            (
+                "/api/invites/{invite_id}/accept",
+                "POST",
+                Some("Invite"),
+                None,
+            ),
             ("/api/invites/{invite_id}/onboarding", "GET", None, None),
             ("/api/invites/{invite_id}/logo", "GET", None, None),
             ("/api/skills/available", "GET", None, None),
@@ -1788,19 +1899,34 @@ mod tests {
 
     #[test]
     fn r511_inbox_dismissals_all_verbs() {
-        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals", "GET").expect("hint");
+        let h =
+            path_schema_hint("/api/companies/{company_id}/inbox-dismissals", "GET").expect("hint");
         assert_eq!(h.response, Some("InboxList"));
-        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals", "POST").expect("hint");
+        let h =
+            path_schema_hint("/api/companies/{company_id}/inbox-dismissals", "POST").expect("hint");
         assert_eq!(h.request, Some("Inbox"));
         assert_eq!(h.response, Some("Inbox"));
-        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals/{item_key}", "DELETE").expect("hint");
+        let h = path_schema_hint(
+            "/api/companies/{company_id}/inbox-dismissals/{item_key}",
+            "DELETE",
+        )
+        .expect("hint");
         assert!(h.request.is_none());
         assert!(h.response.is_none());
-        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals/dismiss", "POST").expect("hint");
+        let h = path_schema_hint(
+            "/api/companies/{company_id}/inbox-dismissals/dismiss",
+            "POST",
+        )
+        .expect("hint");
         assert_eq!(h.request, Some("Inbox"));
-        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals/snooze", "POST").expect("hint");
+        let h = path_schema_hint(
+            "/api/companies/{company_id}/inbox-dismissals/snooze",
+            "POST",
+        )
+        .expect("hint");
         assert_eq!(h.request, Some("Inbox"));
-        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals/count", "GET").expect("hint");
+        let h = path_schema_hint("/api/companies/{company_id}/inbox-dismissals/count", "GET")
+            .expect("hint");
         assert!(h.request.is_none());
         assert!(h.response.is_none());
     }
@@ -1809,9 +1935,11 @@ mod tests {
     fn r513_admin_users_routes_round_trip() {
         let h = path_schema_hint("/api/admin/users", "GET").expect("hint");
         assert_eq!(h.response, Some("AdminUserList"));
-        let h = path_schema_hint("/api/admin/users/{user_id}/promote-instance-admin", "POST").expect("hint");
+        let h = path_schema_hint("/api/admin/users/{user_id}/promote-instance-admin", "POST")
+            .expect("hint");
         assert_eq!(h.response, Some("AdminUser"));
-        let h = path_schema_hint("/api/admin/users/{user_id}/demote-instance-admin", "POST").expect("hint");
+        let h = path_schema_hint("/api/admin/users/{user_id}/demote-instance-admin", "POST")
+            .expect("hint");
         assert_eq!(h.response, Some("AdminUser"));
         let h = path_schema_hint("/api/admin/users/{user_id}/company-access", "GET").expect("hint");
         assert!(h.request.is_none());
@@ -1853,9 +1981,16 @@ mod tests {
         assert!(h.response.is_none());
         let h = path_schema_hint("/api/invites/{invite_id}/logo", "GET").expect("hint");
         assert!(h.response.is_none());
-        for path in ["/api/skills/available", "/api/skills/catalog", "/api/skills/index"] {
+        for path in [
+            "/api/skills/available",
+            "/api/skills/catalog",
+            "/api/skills/index",
+        ] {
             let h = path_schema_hint(path, "GET").expect("hint");
-            assert!(h.response.is_none(), "skills endpoint {path} should have minimal response");
+            assert!(
+                h.response.is_none(),
+                "skills endpoint {path} should have minimal response"
+            );
         }
         let h = path_schema_hint("/api/skills/{skill_name}", "GET").expect("hint");
         assert!(h.response.is_none());
@@ -1863,22 +1998,29 @@ mod tests {
 
     #[test]
     fn r511_folders_crud_and_legacy() {
-
         let h = path_schema_hint("/api/companies/{company_id}/folders", "GET").expect("hint");
         assert_eq!(h.response, Some("FolderList"));
         let h = path_schema_hint("/api/companies/{company_id}/folders", "POST").expect("hint");
         assert_eq!(h.request, Some("Folder"));
         assert_eq!(h.response, Some("Folder"));
-        let h = path_schema_hint("/api/companies/{company_id}/folders/ensure-my", "POST").expect("hint");
+        let h = path_schema_hint("/api/companies/{company_id}/folders/ensure-my", "POST")
+            .expect("hint");
         assert!(h.request.is_none());
         assert_eq!(h.response, Some("Folder"));
-        let h = path_schema_hint("/api/companies/{company_id}/folders/{folder_id}", "PATCH").expect("hint");
+        let h = path_schema_hint("/api/companies/{company_id}/folders/{folder_id}", "PATCH")
+            .expect("hint");
         assert_eq!(h.request, Some("Folder"));
-        let h = path_schema_hint("/api/companies/{company_id}/folders/{folder_id}", "DELETE").expect("hint");
+        let h = path_schema_hint("/api/companies/{company_id}/folders/{folder_id}", "DELETE")
+            .expect("hint");
         assert!(h.response.is_none());
-        let h = path_schema_hint("/api/companies/{company_id}/folders/{folder_id}/move", "POST").expect("hint");
+        let h = path_schema_hint(
+            "/api/companies/{company_id}/folders/{folder_id}/move",
+            "POST",
+        )
+        .expect("hint");
         assert_eq!(h.response, Some("Folder"));
-        let h = path_schema_hint("/api/companies/{company_id}/folders/items/move", "POST").expect("hint");
+        let h = path_schema_hint("/api/companies/{company_id}/folders/items/move", "POST")
+            .expect("hint");
         assert!(h.request.is_none());
         assert!(h.response.is_none());
         let h = path_schema_hint("/api/folders", "GET").expect("hint");
@@ -1943,7 +2085,12 @@ mod tests {
             ("/api/approvals", "POST", Some("Approval"), Some("Approval")),
             ("/api/approvals/{id}", "GET", Some("Approval"), None),
             ("/api/pipelines", "GET", Some("PipelineList"), None),
-            ("/api/heartbeat-runs/{run_id}", "GET", Some("HeartbeatRun"), None),
+            (
+                "/api/heartbeat-runs/{run_id}",
+                "GET",
+                Some("HeartbeatRun"),
+                None,
+            ),
             ("/api/issues/{id}", "GET", Some("Issue"), None),
             ("/api/decisions/{id}", "GET", Some("Decision"), None),
             ("/api/pipelines/{id}", "GET", Some("Pipeline"), None),
@@ -1956,45 +2103,165 @@ mod tests {
             ("/api/goals", "GET", Some("GoalList"), None),
             ("/api/goals", "POST", Some("Goal"), Some("Goal")),
             ("/api/goals/{id}", "GET", Some("Goal"), None),
-            ("/api/approvals/{id}", "PATCH", Some("Approval"), Some("Approval")),
+            (
+                "/api/approvals/{id}",
+                "PATCH",
+                Some("Approval"),
+                Some("Approval"),
+            ),
             ("/api/approvals/{id}", "DELETE", None, None),
-            ("/api/pipelines/{id}", "PATCH", Some("Pipeline"), Some("Pipeline")),
-            ("/api/pipelines/{id}/archive", "POST", Some("Pipeline"), None),
+            (
+                "/api/pipelines/{id}",
+                "PATCH",
+                Some("Pipeline"),
+                Some("Pipeline"),
+            ),
+            (
+                "/api/pipelines/{id}/archive",
+                "POST",
+                Some("Pipeline"),
+                None,
+            ),
             ("/api/pipelines", "POST", Some("Pipeline"), Some("Pipeline")),
             ("/api/routines", "POST", Some("Routine"), Some("Routine")),
-            ("/api/routines/{id}", "PATCH", Some("Routine"), Some("Routine")),
+            (
+                "/api/routines/{id}",
+                "PATCH",
+                Some("Routine"),
+                Some("Routine"),
+            ),
             ("/api/heartbeat", "POST", Some("HeartbeatRun"), None),
-            ("/api/companies/{id}", "PATCH", Some("Company"), Some("Company")),
+            (
+                "/api/companies/{id}",
+                "PATCH",
+                Some("Company"),
+                Some("Company"),
+            ),
             ("/api/companies/{id}", "DELETE", None, None),
             ("/api/agents/{id}", "PATCH", Some("Agent"), Some("Agent")),
             ("/api/agents/{id}", "DELETE", None, None),
             ("/api/issues/{id}", "PATCH", Some("Issue"), Some("Issue")),
             ("/api/issues/{id}", "DELETE", None, None),
-            ("/api/decisions/{id}", "PATCH", Some("Decision"), Some("Decision")),
+            (
+                "/api/decisions/{id}",
+                "PATCH",
+                Some("Decision"),
+                Some("Decision"),
+            ),
             ("/api/decisions/{id}", "DELETE", None, None),
             ("/api/routines", "GET", Some("RoutineList"), None),
             ("/api/cases/{case_id}/events", "GET", Some("CaseList"), None),
-            ("/api/cases/{case_id}/issue-links", "POST", Some("Case"), Some("Case")),
-            ("/api/cases/{case_id}/links", "POST", Some("Case"), Some("Case")),
+            (
+                "/api/cases/{case_id}/issue-links",
+                "POST",
+                Some("Case"),
+                Some("Case"),
+            ),
+            (
+                "/api/cases/{case_id}/links",
+                "POST",
+                Some("Case"),
+                Some("Case"),
+            ),
             ("/api/cases/{case_id}/breakdown", "POST", Some("Case"), None),
-            ("/api/cases/{case_id}/review", "POST", Some("Case"), Some("Case")),
-            ("/api/cases/{case_id}/children", "GET", Some("CaseList"), None),
-            ("/api/issues/{issue_id}/cases", "GET", Some("CaseList"), None),
+            (
+                "/api/cases/{case_id}/review",
+                "POST",
+                Some("Case"),
+                Some("Case"),
+            ),
+            (
+                "/api/cases/{case_id}/children",
+                "GET",
+                Some("CaseList"),
+                None,
+            ),
+            (
+                "/api/issues/{issue_id}/cases",
+                "GET",
+                Some("CaseList"),
+                None,
+            ),
             ("/api/goals/{id}", "PATCH", Some("Goal"), Some("Goal")),
             ("/api/goals/{id}", "DELETE", None, None),
-            ("/api/companies/{company_id}/inbox-dismissals", "GET", Some("InboxList"), None),
-            ("/api/companies/{company_id}/inbox-dismissals", "POST", Some("Inbox"), Some("Inbox")),
-            ("/api/companies/{company_id}/inbox-dismissals/{item_key}", "DELETE", None, None),
-            ("/api/companies/{company_id}/inbox-dismissals/dismiss", "POST", Some("Inbox"), Some("Inbox")),
-            ("/api/companies/{company_id}/inbox-dismissals/snooze", "POST", Some("Inbox"), Some("Inbox")),
-            ("/api/companies/{company_id}/inbox-dismissals/count", "GET", None, None),
-            ("/api/companies/{company_id}/folders", "GET", Some("FolderList"), None),
-            ("/api/companies/{company_id}/folders", "POST", Some("Folder"), Some("Folder")),
-            ("/api/companies/{company_id}/folders/ensure-my", "POST", Some("Folder"), None),
-            ("/api/companies/{company_id}/folders/{folder_id}", "PATCH", Some("Folder"), Some("Folder")),
-            ("/api/companies/{company_id}/folders/{folder_id}", "DELETE", None, None),
-            ("/api/companies/{company_id}/folders/{folder_id}/move", "POST", Some("Folder"), None),
-            ("/api/companies/{company_id}/folders/items/move", "POST", None, None),
+            (
+                "/api/companies/{company_id}/inbox-dismissals",
+                "GET",
+                Some("InboxList"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/inbox-dismissals",
+                "POST",
+                Some("Inbox"),
+                Some("Inbox"),
+            ),
+            (
+                "/api/companies/{company_id}/inbox-dismissals/{item_key}",
+                "DELETE",
+                None,
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/inbox-dismissals/dismiss",
+                "POST",
+                Some("Inbox"),
+                Some("Inbox"),
+            ),
+            (
+                "/api/companies/{company_id}/inbox-dismissals/snooze",
+                "POST",
+                Some("Inbox"),
+                Some("Inbox"),
+            ),
+            (
+                "/api/companies/{company_id}/inbox-dismissals/count",
+                "GET",
+                None,
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/folders",
+                "GET",
+                Some("FolderList"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/folders",
+                "POST",
+                Some("Folder"),
+                Some("Folder"),
+            ),
+            (
+                "/api/companies/{company_id}/folders/ensure-my",
+                "POST",
+                Some("Folder"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/folders/{folder_id}",
+                "PATCH",
+                Some("Folder"),
+                Some("Folder"),
+            ),
+            (
+                "/api/companies/{company_id}/folders/{folder_id}",
+                "DELETE",
+                None,
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/folders/{folder_id}/move",
+                "POST",
+                Some("Folder"),
+                None,
+            ),
+            (
+                "/api/companies/{company_id}/folders/items/move",
+                "POST",
+                None,
+                None,
+            ),
             ("/api/folders", "GET", Some("FolderList"), None),
             ("/api/folders", "POST", Some("Folder"), Some("Folder")),
             ("/api/folders/{id}", "DELETE", None, None),
@@ -2007,7 +2274,10 @@ mod tests {
                 dup_count += 1;
             }
         }
-        assert_eq!(dup_count, 0, "every (path,method) must produce a unique operationId");
+        assert_eq!(
+            dup_count, 0,
+            "every (path,method) must produce a unique operationId"
+        );
     }
 
     #[test]
@@ -2102,8 +2372,8 @@ mod tests {
             ("/api/auth/sign-in/email", "POST"),
             ("/api/auth/sign-up/email", "POST"),
             ("/api/auth/refresh", "POST"),
-            ("/live-events", "GET"),  // already filtered by method
-            ("/openapi.json", "POST"),  // whitelisted even for POST
+            ("/live-events", "GET"),   // already filtered by method
+            ("/openapi.json", "POST"), // whitelisted even for POST
             ("/api/openapi.json", "POST"),
             ("/health", "DELETE"),
             ("/_plugins/foo/ui/index.html", "POST"),
@@ -2208,7 +2478,10 @@ mod tests {
                 .unwrap()
                 .insert("security".to_string(), json!([{"csrfToken": []}]));
         }
-        assert!(op.get("security").is_none(), "auth signin should not have csrf security");
+        assert!(
+            op.get("security").is_none(),
+            "auth signin should not have csrf security"
+        );
     }
 
     #[test]
@@ -2305,10 +2578,19 @@ mod tests {
         let spec = reg.build();
         let schemas = &spec.to_json_value()["components"]["schemas"];
 
-        for name in ["CompanyStats", "CompanyStatsList", "CompanyTimelineResult",
-                     "CompanyArtifact", "CompanyArtifactList", "CompanyOrgChart"] {
+        for name in [
+            "CompanyStats",
+            "CompanyStatsList",
+            "CompanyTimelineResult",
+            "CompanyArtifact",
+            "CompanyArtifactList",
+            "CompanyOrgChart",
+        ] {
             assert!(
-                schemas.as_object().map(|o| o.contains_key(name)).unwrap_or(false),
+                schemas
+                    .as_object()
+                    .map(|o| o.contains_key(name))
+                    .unwrap_or(false),
                 "missing schema {name} in components.schemas"
             );
         }
@@ -2320,20 +2602,22 @@ mod tests {
         // non-None response schema (except org.svg/org.png which return binary).
         for (path, expected_resp) in [
             ("/api/companies/{company_id}/stats", Some("CompanyStats")),
-            ("/api/companies/{company_id}/timeline", Some("CompanyTimelineResult")),
-            ("/api/companies/{company_id}/artifacts", Some("CompanyArtifactList")),
+            (
+                "/api/companies/{company_id}/timeline",
+                Some("CompanyTimelineResult"),
+            ),
+            (
+                "/api/companies/{company_id}/artifacts",
+                Some("CompanyArtifactList"),
+            ),
             ("/api/companies/{company_id}/org", Some("CompanyOrgChart")),
             ("/api/companies/stats", Some("CompanyStatsList")),
             // org.svg / org.png still None (binary image response).
             ("/api/companies/{company_id}/org.svg", None),
             ("/api/companies/{company_id}/org.png", None),
         ] {
-            let h = path_schema_hint(path, "GET")
-                .unwrap_or_else(|| panic!("no hint for {path}"));
-            assert_eq!(
-                h.response, expected_resp,
-                "response mismatch for {path}"
-            );
+            let h = path_schema_hint(path, "GET").unwrap_or_else(|| panic!("no hint for {path}"));
+            assert_eq!(h.response, expected_resp, "response mismatch for {path}");
         }
     }
 
@@ -2342,8 +2626,14 @@ mod tests {
         // R522: 6 new schemas registered; CORE_DTO_NAMES length 35 → 41.
         use pc_openapi::CORE_DTO_NAMES;
         assert_eq!(CORE_DTO_NAMES.len(), 41);
-        for name in ["CompanyStats", "CompanyStatsList", "CompanyTimelineResult",
-                     "CompanyArtifact", "CompanyArtifactList", "CompanyOrgChart"] {
+        for name in [
+            "CompanyStats",
+            "CompanyStatsList",
+            "CompanyTimelineResult",
+            "CompanyArtifact",
+            "CompanyArtifactList",
+            "CompanyOrgChart",
+        ] {
             assert!(
                 CORE_DTO_NAMES.contains(&name),
                 "CORE_DTO_NAMES missing {name}"
@@ -2351,7 +2641,7 @@ mod tests {
         }
     }
 
-        #[test]
+    #[test]
     fn r522_get_companies_now_has_security_path_level_via_post() {
         // R515 + R522 combined: with POST now registered on /api/companies,
         // the path-level security is present. The GET method on the same
@@ -2361,6 +2651,121 @@ mod tests {
         let post = entry.get("post").expect("POST present");
         let get = entry.get("get").expect("GET present");
         assert!(post.get("security").is_some(), "POST needs CSRF security");
-        assert!(get.get("security").is_none(), "GET should not have security");
+        assert!(
+            get.get("security").is_none(),
+            "GET should not have security"
+        );
+    }
+
+    // ── R577: UI client paths covered by OpenAPI hints ──
+
+    #[test]
+    fn r577_hint_health_returns_health_schema() {
+        let h = path_schema_hint("/api/health", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("Health"));
+        assert!(h.request.is_none());
+    }
+
+    #[test]
+    fn r577_hint_dev_server_restart_returns_dev_server_schema() {
+        let h = path_schema_hint("/api/health/dev-server/restart", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("DevServerRestart"));
+    }
+
+    #[test]
+    fn r577_hint_auth_get_session_returns_session() {
+        let h = path_schema_hint("/api/auth/get-session", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("Session"));
+    }
+
+    #[test]
+    fn r577_hint_auth_profile_get_and_patch() {
+        let g = path_schema_hint("/api/auth/profile", "GET").expect("GET hint");
+        assert_eq!(g.response.as_deref(), Some("UserProfile"));
+        let p = path_schema_hint("/api/auth/profile", "PATCH").expect("PATCH hint");
+        assert_eq!(p.request.as_deref(), Some("UserProfileUpdate"));
+        assert_eq!(p.response.as_deref(), Some("UserProfile"));
+    }
+
+    #[test]
+    fn r577_hint_adapter_ui_parser_returns_js_source() {
+        let h = path_schema_hint("/api/adapters/{type}/ui-parser.js", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("JsSource"));
+    }
+
+    #[test]
+    fn r577_hint_asset_content_returns_asset_content() {
+        let h = path_schema_hint("/api/assets/{asset_id}/content", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("AssetContent"));
+    }
+
+    #[test]
+    fn r577_hint_agent_actions_csv_returns_csv() {
+        let h = path_schema_hint("/api/companies/{company_id}/audit/agent-actions.csv", "GET")
+            .expect("hint");
+        assert_eq!(h.response.as_deref(), Some("CsvExport"));
+    }
+
+    #[test]
+    fn r577_hint_company_events_ws_returns_live_stream() {
+        let h = path_schema_hint("/api/companies/{company_id}/events/ws", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("LiveEventStream"));
+    }
+
+    #[test]
+    fn r577_hint_file_resources_content() {
+        let h =
+            path_schema_hint("/api/issues/{issue_id}/file-resources/content", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("FileResourceContent"));
+    }
+
+    #[test]
+    fn r577_hint_v1_runs_returns_run_list() {
+        let h = path_schema_hint("/api/v1/runs", "GET").expect("hint");
+        assert_eq!(h.response.as_deref(), Some("RunList"));
+    }
+
+    #[test]
+    fn r577_hint_plugin_actions_and_data() {
+        let a = path_schema_hint("/api/plugins/{plugin_id}/actions/{key}", "GET").expect("hint");
+        assert_eq!(a.response.as_deref(), Some("PluginAction"));
+        let d = path_schema_hint("/api/plugins/{plugin_id}/data/{key}", "GET").expect("hint");
+        assert_eq!(d.response.as_deref(), Some("PluginData"));
+    }
+
+    #[test]
+    fn r577_hint_plugin_bridge_stream() {
+        let h = path_schema_hint("/api/plugins/{plugin_id}/bridge/stream/{channel}", "GET")
+            .expect("hint");
+        assert_eq!(h.response.as_deref(), Some("BridgeStream"));
+    }
+
+    #[test]
+    fn r577_total_hint_count_increased() {
+        // R577 added 14 hints; coverage of the 13 UI paths + the
+        // pre-existing /api/health which was already scanned.
+        // Verify that the new hint paths are recognized.
+        let ui_paths = [
+            "/api/health",
+            "/api/health/dev-server/restart",
+            "/api/auth/get-session",
+            "/api/auth/profile",
+            "/api/adapters/{type}/ui-parser.js",
+            "/api/assets/{asset_id}/content",
+            "/api/companies/{company_id}/audit/agent-actions.csv",
+            "/api/companies/{company_id}/events/ws",
+            "/api/issues/{issue_id}/file-resources/content",
+            "/api/v1/runs",
+            "/api/plugins/{plugin_id}/actions/{key}",
+            "/api/plugins/{plugin_id}/data/{key}",
+            "/api/plugins/{plugin_id}/bridge/stream/{channel}",
+        ];
+        let mut found = 0;
+        for path in ui_paths {
+            if path_schema_hint(path, "GET").is_some() {
+                found += 1;
+            }
+        }
+        assert_eq!(found, 13, "all 13 UI paths must have R577 hints");
     }
 }

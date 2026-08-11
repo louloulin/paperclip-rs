@@ -22,8 +22,7 @@ use super::types::{
     IssueGraphLivenessInput, IssueLivenessAgentInput, IssueLivenessDependencyPathEntry,
     IssueLivenessExecutionPathInput, IssueLivenessFinding, IssueLivenessIssueInput,
     IssueLivenessOwnerCandidate, IssueLivenessOwnerCandidateReason, IssueLivenessRelationInput,
-    IssueLivenessSeverity,
-    IssueLivenessState, IssueLivenessWaitingPathInput,
+    IssueLivenessSeverity, IssueLivenessState, IssueLivenessWaitingPathInput,
 };
 
 // -----------------------------------------------------------------------------
@@ -31,7 +30,10 @@ use super::types::{
 // -----------------------------------------------------------------------------
 
 fn issue_label(issue: &IssueLivenessIssueInput) -> String {
-    issue.identifier.clone().unwrap_or_else(|| issue.id.to_string())
+    issue
+        .identifier
+        .clone()
+        .unwrap_or_else(|| issue.id.to_string())
 }
 
 fn path_entry(issue: &IssueLivenessIssueInput) -> IssueLivenessDependencyPathEntry {
@@ -51,8 +53,7 @@ fn is_invokable_agent(
         None => false,
         Some(a) => {
             let org_row = to_org_row(a);
-            let company_org: Vec<AgentOrgRow> =
-                company_agents.iter().map(to_org_row).collect();
+            let company_org: Vec<AgentOrgRow> = company_agents.iter().map(to_org_row).collect();
             evaluate_agent_invokability(Some(&org_row), &company_org).is_invokable()
         }
     }
@@ -91,20 +92,12 @@ fn has_waiting_path(
 }
 
 fn read_record(value: Option<&Value>) -> Option<Value> {
-    value.and_then(|v| {
-        if v.is_object() {
-            Some(v.clone())
-        } else {
-            None
-        }
-    })
+    value.and_then(|v| if v.is_object() { Some(v.clone()) } else { None })
 }
 
 fn read_positive_integer(value: Option<&Value>) -> Option<i64> {
     match value {
-        Some(v) => v
-            .as_i64()
-            .filter(|n| *n > 0),
+        Some(v) => v.as_i64().filter(|n| *n > 0),
         None => None,
     }
 }
@@ -229,16 +222,24 @@ fn add_owner_candidate(
     source_issue_id: uuid::Uuid,
 ) {
     let Some(agent_id) = agent_id else { return };
-    eprintln!("DBG: add_owner_candidate id={} reason={:?} seen={}", agent_id, reason, seen.contains(&agent_id));
+    eprintln!(
+        "DBG: add_owner_candidate id={} reason={:?} seen={}",
+        agent_id,
+        reason,
+        seen.contains(&agent_id)
+    );
     if seen.contains(&agent_id) {
         return;
     }
     let agent = company_agents.iter().find(|a| a.id == agent_id);
     match agent {
-        None => { eprintln!("DBG:   agent not in company_agents"); return; },
+        None => {
+            eprintln!("DBG:   agent not in company_agents");
+            return;
+        }
         Some(a) => {
             if a.company_id != company_id {
-                        return;
+                return;
             }
             if !is_invokable_agent(Some(a), company_agents) {
                 return;
@@ -348,7 +349,11 @@ fn owner_candidates_for_recovery_issue(
     );
 
     let invokable_agents = ordered_invokable_agents(agents, issue.company_id);
-    eprintln!("DBG: invokable_agents count={} ids={:?}", invokable_agents.len(), invokable_agents.iter().map(|a| a.id).collect::<Vec<_>>());
+    eprintln!(
+        "DBG: invokable_agents count={} ids={:?}",
+        invokable_agents.len(),
+        invokable_agents.iter().map(|a| a.id).collect::<Vec<_>>()
+    );
     for agent in &invokable_agents {
         if agent.reports_to.is_none() {
             add_owner_candidate(
@@ -412,12 +417,13 @@ fn build_finding(input: FindingInput<'_>) -> IssueLivenessFinding {
         state: input.state,
         severity: input.severity,
         reason: input.reason,
-        dependency_path: input.dependency_path.iter().map(|i| path_entry(*i)).collect(),
+        dependency_path: input
+            .dependency_path
+            .iter()
+            .map(|i| path_entry(*i))
+            .collect(),
         recovery_issue_id: input.recovery_issue.id,
-        recommended_owner_agent_id: input
-            .recommended_owner_candidate_agent_ids
-            .first()
-            .copied(),
+        recommended_owner_agent_id: input.recommended_owner_candidate_agent_ids.first().copied(),
         recommended_owner_candidate_agent_ids: input.recommended_owner_candidate_agent_ids,
         recommended_owner_candidates: input.recommended_owner_candidates,
         recommended_action: input.recommended_action,
@@ -435,9 +441,7 @@ fn build_finding(input: FindingInput<'_>) -> IssueLivenessFinding {
 ///
 /// 输入：完整 issue graph + agent 列表 + execution / waiting paths。
 /// 输出：所有 liveness findings。
-pub fn classify_issue_graph_liveness(
-    input: &IssueGraphLivenessInput,
-) -> Vec<IssueLivenessFinding> {
+pub fn classify_issue_graph_liveness(input: &IssueGraphLivenessInput) -> Vec<IssueLivenessFinding> {
     let now_ms = input
         .now
         .as_ref()
@@ -540,12 +544,8 @@ pub fn classify_issue_graph_liveness(
             return None;
         }
 
-        let owner_candidates = owner_candidates_for_recovery_issue(
-            review_issue,
-            &input.agents,
-            &agents_by_id,
-            true,
-        );
+        let owner_candidates =
+            owner_candidates_for_recovery_issue(review_issue, &input.agents, &agents_by_id, true);
 
         let participant = review_issue
             .execution_state
@@ -659,12 +659,8 @@ pub fn classify_issue_graph_liveness(
                                     blocker: &IssueLivenessIssueInput,
                                     dependency_path: &[&IssueLivenessIssueInput]|
      -> Option<IssueLivenessFinding> {
-        let owner_candidates = owner_candidates_for_recovery_issue(
-            blocker,
-            &input.agents,
-            &agents_by_id,
-            true,
-        );
+        let owner_candidates =
+            owner_candidates_for_recovery_issue(blocker, &input.agents, &agents_by_id, true);
 
         if blocker.status == "cancelled" {
             return Some(build_finding(FindingInput {
@@ -759,17 +755,20 @@ pub fn classify_issue_graph_liveness(
             return None;
         }
 
-        let blocker_agent = agents_by_id.get(&blocker.assignee_agent_id.unwrap()).copied();
-        let blocker_eligibility_invalid_org = blocker_agent
-            .map(|a| {
-                let org_row = to_org_row(a);
-                let company_org: Vec<AgentOrgRow> =
-                    input.agents.iter().map(to_org_row).collect();
-                let inv = evaluate_agent_invokability(Some(&org_row), &company_org);
-                (inv, org_row.status)
-            });
+        let blocker_agent = agents_by_id
+            .get(&blocker.assignee_agent_id.unwrap())
+            .copied();
+        let blocker_eligibility_invalid_org = blocker_agent.map(|a| {
+            let org_row = to_org_row(a);
+            let company_org: Vec<AgentOrgRow> = input.agents.iter().map(to_org_row).collect();
+            let inv = evaluate_agent_invokability(Some(&org_row), &company_org);
+            (inv, org_row.status)
+        });
 
-        eprintln!("DBG: blocker_eligibility_invalid_org = {:?}", blocker_eligibility_invalid_org.is_some());
+        eprintln!(
+            "DBG: blocker_eligibility_invalid_org = {:?}",
+            blocker_eligibility_invalid_org.is_some()
+        );
         match blocker_eligibility_invalid_org {
             None => Some(build_finding(FindingInput {
                 issue: source,
@@ -851,7 +850,11 @@ pub fn classify_issue_graph_liveness(
         ) -> Option<IssueLivenessFinding>,
         has_explicit_waiting_path: &impl Fn(&IssueLivenessIssueInput) -> bool,
     ) -> Option<IssueLivenessFinding> {
-        eprintln!("DBG: DFS current={} path_len={}", current.id, dependency_path.len());
+        eprintln!(
+            "DBG: DFS current={} path_len={}",
+            current.id,
+            dependency_path.len()
+        );
         if seen.contains(&current.id) {
             return None;
         }
@@ -909,9 +912,7 @@ pub fn classify_issue_graph_liveness(
                         return false;
                     }
                     match issues_by_id.get(&relation.blocker_issue_id) {
-                        Some(b) => {
-                            b.company_id == issue.company_id && b.status != "done"
-                        }
+                        Some(b) => b.company_id == issue.company_id && b.status != "done",
                         None => false,
                     }
                 })

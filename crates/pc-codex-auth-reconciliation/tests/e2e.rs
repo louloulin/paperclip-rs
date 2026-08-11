@@ -1,9 +1,11 @@
 //! R728: e2e for `pc-codex-auth-reconciliation` against real Postgres.
 
-use pc_adapter_codex_local::codex_home::{ReconcileManagedCodexHomeInput, ReconcileManagedCodexHomeStatus};
+use pc_adapter_codex_local::codex_home::{
+    ReconcileManagedCodexHomeInput, ReconcileManagedCodexHomeStatus,
+};
 use pc_codex_auth_reconciliation::{
     classify_api_key_binding, parse_adapter_env, AdapterCodexLocalReconciler, ApiKeyBinding,
-    CodexAuthReconciliationError, CodexAuthReconciliationService, CodexAuthReconciler,
+    CodexAuthReconciler, CodexAuthReconciliationError, CodexAuthReconciliationService,
     CodexLocalAgentRow, ReconcileManagedCodexHomeResult,
 };
 use pc_repos::Db;
@@ -28,7 +30,12 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>();
+    let suffix = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect::<String>();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
@@ -104,8 +111,7 @@ impl CodexAuthReconciler for StubReconciler {
     async fn reconcile(
         &self,
         _input: ReconcileManagedCodexHomeInput,
-    ) -> Result<ReconcileManagedCodexHomeResult, CodexAuthReconciliationError>
-    {
+    ) -> Result<ReconcileManagedCodexHomeResult, CodexAuthReconciliationError> {
         Ok(ReconcileManagedCodexHomeResult {
             status: self.status.clone(),
             home: self.home.clone(),
@@ -124,10 +130,8 @@ async fn list_filters_only_codex_local() {
 
     let svc = CodexAuthReconciliationService::new(db.clone());
     let rows = svc.list_codex_local_agents().await.expect("list");
-    let rows_for_company: Vec<&CodexLocalAgentRow> = rows
-        .iter()
-        .filter(|r| r.company_id == company_id)
-        .collect();
+    let rows_for_company: Vec<&CodexLocalAgentRow> =
+        rows.iter().filter(|r| r.company_id == company_id).collect();
     assert_eq!(rows_for_company.len(), 1);
 
     cleanup(&pool, company_id).await;
@@ -178,7 +182,10 @@ async fn counts_seeded_with_correct_agent_id() {
 
     assert!(summary.seeded >= 1);
     assert!(
-        summary.seeded_agent_ids.iter().any(|s| s == &agent_id.to_string()),
+        summary
+            .seeded_agent_ids
+            .iter()
+            .any(|s| s == &agent_id.to_string()),
         "seeded_agent_ids should contain our agent id, got {:?}",
         summary.seeded_agent_ids
     );
@@ -251,11 +258,12 @@ async fn counts_failed_without_panicking() {
         async fn reconcile(
             &self,
             _input: ReconcileManagedCodexHomeInput,
-        ) -> Result<ReconcileManagedCodexHomeResult, CodexAuthReconciliationError>
-        {
-            Err(pc_codex_auth_reconciliation::CodexAuthReconciliationError::AdapterIo(
-                std::io::Error::other("boom"),
-            ))
+        ) -> Result<ReconcileManagedCodexHomeResult, CodexAuthReconciliationError> {
+            Err(
+                pc_codex_auth_reconciliation::CodexAuthReconciliationError::AdapterIo(
+                    std::io::Error::other("boom"),
+                ),
+            )
         }
     }
     let reconciler = Arc::new(FailingReconciler);

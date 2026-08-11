@@ -93,7 +93,9 @@ pub fn decide_provider(
     SecretDecision::Rejected {
         reason: format!(
             "no usable provider; preferred={:?}, fallback={}, excluded={}",
-            context.preferred_provider_id, context.fallback_chain.len(), context.exclude.len()
+            context.preferred_provider_id,
+            context.fallback_chain.len(),
+            context.exclude.len()
         ),
         tried,
     }
@@ -120,7 +122,10 @@ mod tests {
         };
         let d = decide_provider(&reg, &ctx);
         match d {
-            SecretDecision::Selected { provider_id, from_fallback } => {
+            SecretDecision::Selected {
+                provider_id,
+                from_fallback,
+            } => {
                 assert_eq!(provider_id, "local_encrypted");
                 assert!(!from_fallback);
             }
@@ -138,7 +143,10 @@ mod tests {
         };
         let d = decide_provider(&reg, &ctx);
         match d {
-            SecretDecision::Selected { provider_id, from_fallback } => {
+            SecretDecision::Selected {
+                provider_id,
+                from_fallback,
+            } => {
                 assert_eq!(provider_id, "local_encrypted");
                 assert!(from_fallback, "should mark as from_fallback");
             }

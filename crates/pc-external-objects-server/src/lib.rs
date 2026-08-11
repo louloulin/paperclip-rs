@@ -25,7 +25,9 @@
 //! Node 上游在 `server/src/services/external-objects.ts` 等多处用;
 //! Rust port 让 pc-server 业务层直接调用 5 个 derive fn, 不重复实现.
 
-use pc_issue_references::{parse_issue_reference_href, strip_markdown_code, trim_trailing_punctuation};
+use pc_issue_references::{
+    parse_issue_reference_href, strip_markdown_code, trim_trailing_punctuation,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -152,7 +154,11 @@ pub fn canonicalize_external_object_url(
 
     let mut query_param_hashes: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
-    let mut identity_params: Vec<&str> = options.identity_query_params.iter().map(String::as_str).collect();
+    let mut identity_params: Vec<&str> = options
+        .identity_query_params
+        .iter()
+        .map(String::as_str)
+        .collect();
     identity_params.sort();
     for key in identity_params {
         let values: Vec<String> = url
@@ -302,7 +308,10 @@ mod tests {
             "See PAP-1, /issues/PAP-2, https://paperclip.ing/PAP/issues/PAP-3, and https://github.com/acme/app/pull/4.",
         );
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].matched_text, "https://github.com/acme/app/pull/4");
+        assert_eq!(
+            matches[0].matched_text,
+            "https://github.com/acme/app/pull/4"
+        );
         assert_eq!(matches[0].index, 70);
         assert_eq!(matches[0].length, 34);
     }
@@ -334,8 +343,7 @@ mod tests {
 
     #[test]
     fn r533_url_matches_trims_trailing_punctuation() {
-        let matches =
-            find_external_object_url_matches("see https://example.com/page.");
+        let matches = find_external_object_url_matches("see https://example.com/page.");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].matched_text, "https://example.com/page");
     }
@@ -351,11 +359,19 @@ mod tests {
     fn r533_canonicalize_strips_query_and_fragment_by_default() {
         // Upstream test 3
         let opts = ExternalObjectUrlCanonicalizationOptions::default();
-        let result =
-            canonicalize_external_object_url("HTTPS://GitHub.com/acme/app/pull/1?token=secret#discussion", &opts)
-                .expect("canonicalization should succeed");
-        assert_eq!(result.sanitized_canonical_url, "https://github.com/acme/app/pull/1");
-        assert_eq!(result.sanitized_display_url, "https://github.com/acme/app/pull/1");
+        let result = canonicalize_external_object_url(
+            "HTTPS://GitHub.com/acme/app/pull/1?token=secret#discussion",
+            &opts,
+        )
+        .expect("canonicalization should succeed");
+        assert_eq!(
+            result.sanitized_canonical_url,
+            "https://github.com/acme/app/pull/1"
+        );
+        assert_eq!(
+            result.sanitized_display_url,
+            "https://github.com/acme/app/pull/1"
+        );
         assert_eq!(result.canonical_identity.scheme, "https");
         assert_eq!(result.canonical_identity.host, "github.com");
         assert_eq!(result.canonical_identity.path, "/acme/app/pull/1");
@@ -398,7 +414,10 @@ mod tests {
         assert_eq!(id_hash.len(), 64, "sha256 hex should be 64 chars");
         assert!(!id_hash.contains("secret-run"));
         // Same id value → same identity hash
-        assert_eq!(second.canonical_identity_hash, first.canonical_identity_hash);
+        assert_eq!(
+            second.canonical_identity_hash,
+            first.canonical_identity_hash
+        );
     }
 
     #[test]
@@ -418,8 +437,8 @@ mod tests {
     #[test]
     fn r533_canonicalize_normalizes_empty_path_to_slash() {
         let opts = ExternalObjectUrlCanonicalizationOptions::default();
-        let result = canonicalize_external_object_url("https://example.com", &opts)
-            .expect("should succeed");
+        let result =
+            canonicalize_external_object_url("https://example.com", &opts).expect("should succeed");
         assert_eq!(result.canonical_identity.path, "/");
     }
 
@@ -465,8 +484,18 @@ mod tests {
     fn r533_scoped_key_includes_company_id() {
         // Upstream test 7
         let base_args = || ("github", "pull_request", "hash");
-        let a = build_external_object_scoped_identity_key("company-a", base_args().0, base_args().1, base_args().2);
-        let b = build_external_object_scoped_identity_key("company-b", base_args().0, base_args().1, base_args().2);
+        let a = build_external_object_scoped_identity_key(
+            "company-a",
+            base_args().0,
+            base_args().1,
+            base_args().2,
+        );
+        let b = build_external_object_scoped_identity_key(
+            "company-b",
+            base_args().0,
+            base_args().1,
+            base_args().2,
+        );
         assert_ne!(a, b);
     }
 

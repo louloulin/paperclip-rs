@@ -7,19 +7,20 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 /// Issue identifier mention 模式：`[A-Z][A-Z0-9]{0,9}-\d{1,7}`。
-/// 
+///
 /// Node `ISSUE_IDENTIFIER_MENTION_PATTERN = /\b[A-Z][A-Z0-9]{0,9}-\d{1,7}\b/g`。
 static ISSUE_IDENTIFIER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[A-Z][A-Z0-9]{0,9}-\d{1,7}\b")
-        .expect("valid identifier pattern")
+    Regex::new(r"\b[A-Z][A-Z0-9]{0,9}-\d{1,7}\b").expect("valid identifier pattern")
 });
 
 /// Issue link mention 模式：`/issues/<uuid>`。
 ///
 /// Node `ISSUE_LINK_MENTION_PATTERN = /\/issues\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b/g`。
 static ISSUE_LINK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"/issues/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b")
-        .expect("valid issue link pattern")
+    Regex::new(
+        r"/issues/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b",
+    )
+    .expect("valid issue link pattern")
 });
 
 /// Mention 提取结果。
@@ -73,7 +74,10 @@ mod tests {
         let md = "PAP-15357 and pap-99 (lowercase) plus SC2-4 moved.";
         let mentions = extract_issue_mentions(md);
         // 只匹配 uppercase identifier
-        assert_eq!(mentions.identifiers, vec!["PAP-15357".to_string(), "SC2-4".to_string()]);
+        assert_eq!(
+            mentions.identifiers,
+            vec!["PAP-15357".to_string(), "SC2-4".to_string()]
+        );
     }
 
     #[test]
@@ -97,7 +101,10 @@ mod tests {
     fn r676_dedups_repeated_mentions() {
         let md = "PAP-1, PAP-1, PAP-2";
         let mentions = extract_issue_mentions(md);
-        assert_eq!(mentions.identifiers, vec!["PAP-1".to_string(), "PAP-2".to_string()]);
+        assert_eq!(
+            mentions.identifiers,
+            vec!["PAP-1".to_string(), "PAP-2".to_string()]
+        );
     }
 
     #[test]
@@ -115,7 +122,10 @@ mod tests {
         ].join("\n");
         let mentions = extract_issue_mentions(&md);
         // 注：Node 测试预期只包含 1 个 issue_id，因为 /issues/PAP-15357 不是 UUID 格式
-        assert_eq!(mentions.identifiers, vec!["PAP-15357".to_string(), "SC2-4".to_string()]);
+        assert_eq!(
+            mentions.identifiers,
+            vec!["PAP-15357".to_string(), "SC2-4".to_string()]
+        );
         assert_eq!(
             mentions.issue_ids,
             vec!["0f5a2c71-9f5c-4b6c-8a9e-1b2c3d4e5f60".to_string()]

@@ -9,12 +9,11 @@ use uuid::Uuid;
 use pc_repos::Db;
 
 use super::helpers::{
-    expand_target_keys_for_legacy_compatibility, payload_has_displayed_diff,
-    read_non_empty_string, request_confirmation_result_consumed,
+    expand_target_keys_for_legacy_compatibility, payload_has_displayed_diff, read_non_empty_string,
+    request_confirmation_result_consumed,
 };
 use super::types::{
-    codes, mark_result_consumed, AssertConsentedInput, ChangeConsentError,
-    ChangeConsentResult,
+    codes, mark_result_consumed, AssertConsentedInput, ChangeConsentError, ChangeConsentResult,
 };
 
 // ============================================================================
@@ -35,7 +34,10 @@ impl ChangeConsentGateService {
     ///
     /// 成功：返回 `Ok(true)`，并把命中的 `request_confirmation.result` 标记为"已消费"。
     /// 失败：返回 `Forbidden`（含 code）。
-    pub async fn assert_consented(&self, input: &AssertConsentedInput) -> ChangeConsentResult<bool> {
+    pub async fn assert_consented(
+        &self,
+        input: &AssertConsentedInput,
+    ) -> ChangeConsentResult<bool> {
         // 1. actor agent id 必须非空
         let actor_agent_id = input
             .actor_agent_id
@@ -59,20 +61,18 @@ impl ChangeConsentGateService {
             })?;
 
         // 3. target keys 必须非空
-        let actor_run_id_uuid = Uuid::parse_str(&actor_run_id).map_err(|_| {
-            ChangeConsentError::Forbidden {
+        let actor_run_id_uuid =
+            Uuid::parse_str(&actor_run_id).map_err(|_| ChangeConsentError::Forbidden {
                 message: "actor run id must be a valid uuid".to_string(),
                 code: codes::REFLECTION_COACH_MUTATION_RUN_ID_REQUIRED,
                 details: Value::Null,
-            }
-        })?;
-        let actor_agent_id_uuid = Uuid::parse_str(&actor_agent_id).map_err(|_| {
-            ChangeConsentError::Forbidden {
+            })?;
+        let actor_agent_id_uuid =
+            Uuid::parse_str(&actor_agent_id).map_err(|_| ChangeConsentError::Forbidden {
                 message: "actor agent id must be a valid uuid".to_string(),
                 code: codes::REFLECTION_COACH_MUTATION_RUN_ID_REQUIRED,
                 details: Value::Null,
-            }
-        })?;
+            })?;
 
         let target_keys: Vec<String> = input
             .target_keys
@@ -171,9 +171,9 @@ impl ChangeConsentGateService {
             return Err(gate_required_error(&target_keys));
         };
 
-        let accepted_id: Uuid = accepted.try_get("id").map_err(|e| {
-            ChangeConsentError::Repo(format!("missing id column: {e}"))
-        })?;
+        let accepted_id: Uuid = accepted
+            .try_get("id")
+            .map_err(|e| ChangeConsentError::Repo(format!("missing id column: {e}")))?;
 
         // 6. 把命中行标记为 consumed
         let original_result: Value = accepted

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use chrono::{Duration, Utc};
 use pc_core::Timestamp;
 use pc_inbox::{
-    InboxAgentPolicyService, InboxAgentPolicyMode, InboxHookEvent, InboxService,
+    InboxAgentPolicyMode, InboxAgentPolicyService, InboxHookEvent, InboxService,
     RecordingInboxHook, UpdateInboxAgentPolicyInput,
 };
 use pc_repos::Db;
@@ -38,7 +38,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -66,11 +74,26 @@ async fn insert_agent(pool: &PgPool, company_id: Uuid) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM inbox_dismissals WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM user_inbox_agent_policies WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM agents WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM inbox_dismissals WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM user_inbox_agent_policies WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM agents WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -82,7 +105,10 @@ async fn dismiss_emits_dismissed_hook() {
     let recorder = Arc::new(RecordingInboxHook::default());
     let svc = InboxService::with_hooks(db, vec![recorder.clone()]);
 
-    let row = svc.dismiss(company_id, "u1", "issue-1").await.expect("dismiss");
+    let row = svc
+        .dismiss(company_id, "u1", "issue-1")
+        .await
+        .expect("dismiss");
     assert_eq!(row.user_id, "u1");
     assert_eq!(row.item_key, "issue-1");
     assert_eq!(row.kind, "dismiss");
@@ -124,7 +150,10 @@ async fn snooze_emits_snoozed_hook() {
     let svc = InboxService::with_hooks(db, vec![recorder.clone()]);
 
     let until = Timestamp::from_dt(Utc::now() + Duration::hours(1));
-    let row = svc.snooze(company_id, "u1", "issue-1", until).await.expect("snooze");
+    let row = svc
+        .snooze(company_id, "u1", "issue-1", until)
+        .await
+        .expect("snooze");
     assert_eq!(row.kind, "snooze");
     assert_eq!(row.snoozed_until, Some(until));
 
@@ -172,7 +201,10 @@ async fn restore_emits_hook_only_on_actual_delete() {
 
     // Second restore returns false and does NOT emit hook
     recorder.clear();
-    let again = svc.restore(company_id, "u", "k").await.expect("restore again");
+    let again = svc
+        .restore(company_id, "u", "k")
+        .await
+        .expect("restore again");
     assert!(!again);
     assert!(recorder.is_empty());
 
@@ -203,7 +235,10 @@ async fn count_active_for_company_returns_zero_initially() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
     let svc = InboxService::new(db);
-    let n = svc.count_active(company_id, Timestamp::now()).await.expect("count");
+    let n = svc
+        .count_active(company_id, Timestamp::now())
+        .await
+        .expect("count");
     assert_eq!(n, 0);
     cleanup(&pool, company_id).await;
 }
@@ -247,13 +282,21 @@ async fn inbox_policy_update_emits_hook_with_allowed_count() {
         .await
         .expect("update");
     assert!(policy.materialized);
-    assert_eq!(policy.allowed_agent_ids.len(), 2, "expected dedup to keep 2 ids");
+    assert_eq!(
+        policy.allowed_agent_ids.len(),
+        2,
+        "expected dedup to keep 2 ids"
+    );
     assert_eq!(policy.mode, InboxAgentPolicyMode::Allowlist);
 
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        InboxHookEvent::AgentPolicyUpdated { mode, allowed_count, .. } => {
+        InboxHookEvent::AgentPolicyUpdated {
+            mode,
+            allowed_count,
+            ..
+        } => {
             assert_eq!(*mode, InboxAgentPolicyMode::Allowlist);
             assert_eq!(*allowed_count, 2);
         }
@@ -283,7 +326,10 @@ async fn inbox_policy_open_mode_ignores_allowed_ids() {
         .await
         .expect("update");
     assert_eq!(policy.mode, InboxAgentPolicyMode::Open);
-    assert!(policy.allowed_agent_ids.is_empty(), "Open mode should drop ids");
+    assert!(
+        policy.allowed_agent_ids.is_empty(),
+        "Open mode should drop ids"
+    );
 
     cleanup(&pool, company_id).await;
 }

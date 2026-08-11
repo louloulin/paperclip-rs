@@ -20,12 +20,12 @@ use uuid::Uuid;
 
 use crate::email_sender::{EmailAddress, EmailMessage, EmailSender, EmailSenderError};
 use crate::email_verification::{
-    consume_email_verification, issue_email_verification, verify_email_token, EmailVerificationOutcome,
-    EmailVerificationRecord,
+    consume_email_verification, issue_email_verification, verify_email_token,
+    EmailVerificationOutcome, EmailVerificationRecord,
 };
 use crate::session_refresh::{
-    check_session, new_session_record, rotate_session, SessionCheckOutcome, SessionPolicy,
-    detect_reuse, is_revoked, mark_revoked, ReuseOutcome,
+    check_session, detect_reuse, is_revoked, mark_revoked, new_session_record, rotate_session,
+    ReuseOutcome, SessionCheckOutcome, SessionPolicy,
 };
 
 // ============================================================================
@@ -172,15 +172,26 @@ pub trait UserStore: Send + Sync {
     async fn create_user(&self, user: &UserRecord) -> Result<(), AuthServiceError>;
     async fn find_by_email(&self, email: &str) -> Result<Option<UserRecord>, AuthServiceError>;
     async fn find_by_id(&self, id: &str) -> Result<Option<UserRecord>, AuthServiceError>;
-    async fn mark_email_verified(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), AuthServiceError>;
-    async fn update_password(&self, user_id: &str, password_hash: &str) -> Result<(), AuthServiceError>;
+    async fn mark_email_verified(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), AuthServiceError>;
+    async fn update_password(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> Result<(), AuthServiceError>;
 }
 
 /// session 存储抽象。
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     async fn create_session(&self, session: &SessionRecord) -> Result<(), AuthServiceError>;
-    async fn find_by_token_hash(&self, token_hash: &str) -> Result<Option<SessionRecord>, AuthServiceError>;
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<SessionRecord>, AuthServiceError>;
     async fn delete_by_token_hash(&self, token_hash: &str) -> Result<(), AuthServiceError>;
     async fn rotate(
         &self,
@@ -207,9 +218,15 @@ pub trait SessionStore: Send + Sync {
 #[async_trait]
 pub trait VerificationStore: Send + Sync {
     async fn put(&self, record: &EmailVerificationRecord) -> Result<(), AuthServiceError>;
-    async fn get_by_user(&self, user_id: &str) -> Result<Option<EmailVerificationRecord>, AuthServiceError>;
+    async fn get_by_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<EmailVerificationRecord>, AuthServiceError>;
     async fn delete(&self, user_id: &str) -> Result<(), AuthServiceError>;
-    async fn find_by_token_hash(&self, token_hash: &str) -> Result<Option<EmailVerificationRecord>, AuthServiceError>;
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<EmailVerificationRecord>, AuthServiceError>;
 }
 
 // ============================================================================
@@ -247,13 +264,21 @@ impl UserStore for InMemoryUserStore {
         let g = self.inner.lock().expect("user store mutex");
         Ok(g.get(id).cloned())
     }
-    async fn mark_email_verified(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), AuthServiceError> {
+    async fn mark_email_verified(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), AuthServiceError> {
         let mut g = self.inner.lock().expect("user store mutex");
         let user = g.get_mut(user_id).ok_or(AuthServiceError::UserNotFound)?;
         user.email_verified_at = Some(at);
         Ok(())
     }
-    async fn update_password(&self, user_id: &str, password_hash: &str) -> Result<(), AuthServiceError> {
+    async fn update_password(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> Result<(), AuthServiceError> {
         let mut g = self.inner.lock().expect("user store mutex");
         let user = g.get_mut(user_id).ok_or(AuthServiceError::UserNotFound)?;
         user.password_hash = password_hash.to_string();
@@ -300,7 +325,10 @@ impl SessionStore for InMemorySessionStore {
         g.insert(session.token_hash.clone(), session.clone());
         Ok(())
     }
-    async fn find_by_token_hash(&self, token_hash: &str) -> Result<Option<SessionRecord>, AuthServiceError> {
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<SessionRecord>, AuthServiceError> {
         let g = self.inner.lock().expect("session store mutex");
         Ok(g.get(token_hash).cloned())
     }
@@ -381,7 +409,10 @@ impl VerificationStore for InMemoryVerificationStore {
         g.insert(record.user_id.clone(), record.clone());
         Ok(())
     }
-    async fn get_by_user(&self, user_id: &str) -> Result<Option<EmailVerificationRecord>, AuthServiceError> {
+    async fn get_by_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<EmailVerificationRecord>, AuthServiceError> {
         let g = self.inner.lock().expect("verification store mutex");
         Ok(g.get(user_id).cloned())
     }
@@ -390,7 +421,10 @@ impl VerificationStore for InMemoryVerificationStore {
         g.remove(user_id);
         Ok(())
     }
-    async fn find_by_token_hash(&self, token_hash: &str) -> Result<Option<EmailVerificationRecord>, AuthServiceError> {
+    async fn find_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<EmailVerificationRecord>, AuthServiceError> {
         let g = self.inner.lock().expect("verification store mutex");
         Ok(g.values().find(|r| r.token_hash == token_hash).cloned())
     }
@@ -408,7 +442,9 @@ pub struct NormalizedSignUpInput {
     pub name: Option<String>,
 }
 
-pub fn validate_sign_up_input(input: &SignUpInput) -> Result<NormalizedSignUpInput, AuthServiceError> {
+pub fn validate_sign_up_input(
+    input: &SignUpInput,
+) -> Result<NormalizedSignUpInput, AuthServiceError> {
     let email = input.email.trim().to_lowercase();
     if email.is_empty() {
         return Err(AuthServiceError::InvalidEmail("empty".into()));
@@ -416,7 +452,11 @@ pub fn validate_sign_up_input(input: &SignUpInput) -> Result<NormalizedSignUpInp
     // 复用 R568 的 EmailAddress 校验
     let _ = EmailAddress::new(&email).map_err(|e| AuthServiceError::InvalidEmail(e.to_string()))?;
     validate_password_strength(&input.password)?;
-    let name = input.name.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let name = input
+        .name
+        .as_ref()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty());
     Ok(NormalizedSignUpInput {
         email,
         password: input.password.clone(),
@@ -439,10 +479,14 @@ pub fn validate_sign_in_input(input: &SignInInput) -> Result<(), AuthServiceErro
 /// 校验密码强度。要求：长度 >= 8，包含字母 + 数字。
 pub fn validate_password_strength(password: &str) -> Result<(), AuthServiceError> {
     if password.len() < 8 {
-        return Err(AuthServiceError::WeakPassword("must be at least 8 characters".into()));
+        return Err(AuthServiceError::WeakPassword(
+            "must be at least 8 characters".into(),
+        ));
     }
     if password.len() > 256 {
-        return Err(AuthServiceError::WeakPassword("must be at most 256 characters".into()));
+        return Err(AuthServiceError::WeakPassword(
+            "must be at most 256 characters".into(),
+        ));
     }
     let has_letter = password.chars().any(|c| c.is_ascii_alphabetic());
     let has_digit = password.chars().any(|c| c.is_ascii_digit());
@@ -496,14 +540,17 @@ impl AuthService {
         verifications: Arc<dyn VerificationStore>,
         email: Arc<dyn EmailSender>,
     ) -> Self {
-        Self { config, users, sessions, verifications, email }
+        Self {
+            config,
+            users,
+            sessions,
+            verifications,
+            email,
+        }
     }
 
     /// 便捷构造：全部用 in-memory store（仅用于测试）。
-    pub fn in_memory(
-        config: AuthServiceConfig,
-        email: Arc<dyn EmailSender>,
-    ) -> Self {
+    pub fn in_memory(config: AuthServiceConfig, email: Arc<dyn EmailSender>) -> Self {
         Self::new(
             config,
             Arc::new(InMemoryUserStore::new()),
@@ -530,7 +577,10 @@ impl AuthService {
 
     /// 注册新用户。如果 require_email_verification，会发验证邮件并返回
     /// `verification_token`（仅用于测试 / 调试；生产不应在响应里返回）。
-    pub async fn sign_up_email(&self, input: &SignUpInput) -> Result<SignUpResult, AuthServiceError> {
+    pub async fn sign_up_email(
+        &self,
+        input: &SignUpInput,
+    ) -> Result<SignUpResult, AuthServiceError> {
         let normalized = validate_sign_up_input(input)?;
         // 1. 查重
         if self.users.find_by_email(&normalized.email).await?.is_some() {
@@ -579,10 +629,14 @@ impl AuthService {
     }
 
     /// 登录。如果 require_email_verification，邮箱未验证时返回 EmailNotVerified。
-    pub async fn sign_in_email(&self, input: &SignInInput) -> Result<SignInResult, AuthServiceError> {
+    pub async fn sign_in_email(
+        &self,
+        input: &SignInInput,
+    ) -> Result<SignInResult, AuthServiceError> {
         validate_sign_in_input(input)?;
         let email = input.email.trim().to_lowercase();
-        let user = self.users
+        let user = self
+            .users
             .find_by_email(&email)
             .await?
             .ok_or(AuthServiceError::InvalidCredentials)?;
@@ -619,9 +673,15 @@ impl AuthService {
                 let _ = consume_email_verification(record);
                 Ok(user_id)
             }
-            EmailVerificationOutcome::Expired => Err(AuthServiceError::Other("verification token expired".into())),
-            EmailVerificationOutcome::AlreadyConsumed => Err(AuthServiceError::Other("verification token already consumed".into())),
-            EmailVerificationOutcome::NotFound => Err(AuthServiceError::Other("verification token not found".into())),
+            EmailVerificationOutcome::Expired => {
+                Err(AuthServiceError::Other("verification token expired".into()))
+            }
+            EmailVerificationOutcome::AlreadyConsumed => Err(AuthServiceError::Other(
+                "verification token already consumed".into(),
+            )),
+            EmailVerificationOutcome::NotFound => Err(AuthServiceError::Other(
+                "verification token not found".into(),
+            )),
         }
     }
 
@@ -635,7 +695,8 @@ impl AuthService {
     /// 刷新 session：旋转 token。
     pub async fn refresh_session(&self, old_token: &str) -> Result<SignInResult, AuthServiceError> {
         let old_hash = Self::hash_token(old_token);
-        let old = self.sessions
+        let old = self
+            .sessions
             .find_by_token_hash(&old_hash)
             .await?
             .ok_or(AuthServiceError::SessionNotFound)?;
@@ -650,7 +711,9 @@ impl AuthService {
         match check_session(&self.config.session_policy, &record, Utc::now()) {
             SessionCheckOutcome::Revoked => {
                 // 旧 token 已作废 —— 当作重用信号，作废整个 family。
-                self.sessions.invalidate_family(old.family_id, Utc::now()).await?;
+                self.sessions
+                    .invalidate_family(old.family_id, Utc::now())
+                    .await?;
                 return Err(AuthServiceError::SessionReuseDetected);
             }
             SessionCheckOutcome::ExpiredAbsolute | SessionCheckOutcome::ExpiredIdle => {
@@ -673,7 +736,9 @@ impl AuthService {
             })
             .collect();
         if detect_reuse(&record, &pure_family).is_reuse() {
-            self.sessions.invalidate_family(old.family_id, Utc::now()).await?;
+            self.sessions
+                .invalidate_family(old.family_id, Utc::now())
+                .await?;
             return Err(AuthServiceError::SessionReuseDetected);
         }
         let now = Utc::now();
@@ -721,17 +786,20 @@ impl AuthService {
         raw_token: &str,
     ) -> Result<(), AuthServiceError> {
         let from = self.from_address()?;
-        let to = EmailAddress::new(&user.email)
-            .map_err(|e| AuthServiceError::Other(e.to_string()))?;
+        let to =
+            EmailAddress::new(&user.email).map_err(|e| AuthServiceError::Other(e.to_string()))?;
         let mut vars = std::collections::HashMap::new();
-        vars.insert("name".into(), user.name.clone().unwrap_or_else(|| user.email.clone()));
+        vars.insert(
+            "name".into(),
+            user.name.clone().unwrap_or_else(|| user.email.clone()),
+        );
         vars.insert("email".into(), user.email.clone());
         vars.insert("token".into(), raw_token.to_string());
-        vars.insert("ttl_hours".into(), self.config.verification_ttl_hours.to_string());
-        let subject = crate::email_sender::render_template(
-            "Verify your Paperclip email",
-            &vars,
+        vars.insert(
+            "ttl_hours".into(),
+            self.config.verification_ttl_hours.to_string(),
         );
+        let subject = crate::email_sender::render_template("Verify your Paperclip email", &vars);
         let body = crate::email_sender::render_template(
             "Hi {name},\n\nPlease verify your email ({email}) by using this token:\n\n  {token}\n\nThis token expires in {ttl_hours} hours.\n",
             &vars,
@@ -742,7 +810,10 @@ impl AuthService {
     }
 
     /// 通过 hash 查找 verification record。
-    async fn find_verification_by_token(&self, raw_token: &str) -> Result<EmailVerificationRecord, AuthServiceError> {
+    async fn find_verification_by_token(
+        &self,
+        raw_token: &str,
+    ) -> Result<EmailVerificationRecord, AuthServiceError> {
         let hash = Self::hash_token(raw_token);
         self.verifications
             .find_by_token_hash(&hash)
@@ -778,8 +849,7 @@ mod tests {
         config.require_email_verification = require_email_verification;
         let sessions = Arc::new(InMemorySessionStore::new());
         let users: Arc<dyn UserStore> = Arc::new(InMemoryUserStore::new());
-        let verifications: Arc<dyn VerificationStore> =
-            Arc::new(InMemoryVerificationStore::new());
+        let verifications: Arc<dyn VerificationStore> = Arc::new(InMemoryVerificationStore::new());
         let svc = AuthService::new(config, users, sessions.clone(), verifications, email);
         (svc, sessions, log_email)
     }
@@ -836,7 +906,10 @@ mod tests {
         };
         let result = svc.sign_up_email(&input).await.unwrap();
         assert!(!result.user_id.is_empty());
-        assert!(result.verification_token.is_some(), "should issue verification token");
+        assert!(
+            result.verification_token.is_some(),
+            "should issue verification token"
+        );
         // 邮件已发送
         let messages = log.messages();
         assert_eq!(messages.len(), 1);
@@ -868,10 +941,13 @@ mod tests {
             name: None,
         };
         svc.sign_up_email(&input).await.unwrap();
-        let r = svc.sign_in_email(&SignInInput {
-            email: "BOB@example.com".into(),
-            password: "hunter2pw".into(),
-        }).await.unwrap();
+        let r = svc
+            .sign_in_email(&SignInInput {
+                email: "BOB@example.com".into(),
+                password: "hunter2pw".into(),
+            })
+            .await
+            .unwrap();
         assert!(!r.session_token.is_empty());
     }
 
@@ -884,10 +960,13 @@ mod tests {
             name: None,
         };
         svc.sign_up_email(&input).await.unwrap();
-        let err = svc.sign_in_email(&SignInInput {
-            email: "bob@example.com".into(),
-            password: "WRONG-PASSWORD".into(),
-        }).await.unwrap_err();
+        let err = svc
+            .sign_in_email(&SignInInput {
+                email: "bob@example.com".into(),
+                password: "WRONG-PASSWORD".into(),
+            })
+            .await
+            .unwrap_err();
         assert_eq!(err, AuthServiceError::InvalidCredentials);
     }
 
@@ -901,10 +980,13 @@ mod tests {
         };
         svc.sign_up_email(&input).await.unwrap();
         // 未验证邮箱前不能 sign in
-        let err = svc.sign_in_email(&SignInInput {
-            email: "carol@example.com".into(),
-            password: "hunter2pw".into(),
-        }).await.unwrap_err();
+        let err = svc
+            .sign_in_email(&SignInInput {
+                email: "carol@example.com".into(),
+                password: "hunter2pw".into(),
+            })
+            .await
+            .unwrap_err();
         assert_eq!(err, AuthServiceError::EmailNotVerified);
     }
 
@@ -922,10 +1004,13 @@ mod tests {
         let user_id = svc.verify_email(&token).await.unwrap();
         assert_eq!(user_id, r.user_id);
         // 现在可以 sign in
-        let r2 = svc.sign_in_email(&SignInInput {
-            email: "dan@example.com".into(),
-            password: "hunter2pw".into(),
-        }).await.unwrap();
+        let r2 = svc
+            .sign_in_email(&SignInInput {
+                email: "dan@example.com".into(),
+                password: "hunter2pw".into(),
+            })
+            .await
+            .unwrap();
         assert_eq!(r2.user_id, r.user_id);
     }
 
@@ -957,7 +1042,9 @@ mod tests {
             Arc::new(InMemoryUserStore::new()),
             Arc::new(InMemorySessionStore::new()),
             verifications,
-            Arc::new(LogEmailSender::new(EmailAddress::new("noreply@paperclip.local").unwrap())),
+            Arc::new(LogEmailSender::new(
+                EmailAddress::new("noreply@paperclip.local").unwrap(),
+            )),
         );
         let err = svc.verify_email(raw).await.unwrap_err();
         assert!(matches!(err, AuthServiceError::Other(_)));
@@ -1005,13 +1092,22 @@ mod tests {
             name: None,
         };
         let r1 = svc.sign_up_email(&input).await.unwrap();
-        let family1 = store.find_family_for_token(&r1.session_token).await.unwrap();
+        let family1 = store
+            .find_family_for_token(&r1.session_token)
+            .await
+            .unwrap();
         let family_id_1 = family1.first().map(|r| r.family_id);
         let r2 = svc.refresh_session(&r1.session_token).await.unwrap();
-        let family2 = store.find_family_for_token(&r2.session_token).await.unwrap();
+        let family2 = store
+            .find_family_for_token(&r2.session_token)
+            .await
+            .unwrap();
         let family_id_2 = family2.first().map(|r| r.family_id);
         let r3 = svc.refresh_session(&r2.session_token).await.unwrap();
-        let family3 = store.find_family_for_token(&r3.session_token).await.unwrap();
+        let family3 = store
+            .find_family_for_token(&r3.session_token)
+            .await
+            .unwrap();
         let family_id_3 = family3.first().map(|r| r.family_id);
         // family_id 保持稳定；成员数随轮换递增。
         assert_eq!(family_id_1, family_id_2);
@@ -1039,10 +1135,16 @@ mod tests {
         let err = svc.refresh_session(&legit.session_token).await.unwrap_err();
         assert_eq!(err, AuthServiceError::SessionReuseDetected);
         // 此时整个 family 已被作废 —— 即便合法的新 token 也无法再 refresh。
-        let err2 = svc.refresh_session(&rotated.session_token).await.unwrap_err();
+        let err2 = svc
+            .refresh_session(&rotated.session_token)
+            .await
+            .unwrap_err();
         assert_eq!(err2, AuthServiceError::SessionReuseDetected);
         // 验证 store 中 family 全部 revoked
-        let family = store.find_family_for_token(&rotated.session_token).await.unwrap();
+        let family = store
+            .find_family_for_token(&rotated.session_token)
+            .await
+            .unwrap();
         for r in &family {
             assert!(r.revoked_at.is_some(), "all family members must be revoked");
         }

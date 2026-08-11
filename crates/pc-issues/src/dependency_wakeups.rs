@@ -17,12 +17,8 @@ pub const ISSUE_BLOCKERS_RESOLVED_WAKE_REASON: &str = "issue_blockers_resolved";
 ///
 /// 这些状态表示 wakeup 仍在处理中或已完成；再次发现相同 idempotency key 的
 /// wakeup 时应跳过（避免重复入队）。
-pub const IDEMPOTENT_DEPENDENCY_WAKE_STATUSES: &[&str] = &[
-    "queued",
-    "deferred_issue_execution",
-    "claimed",
-    "completed",
-];
+pub const IDEMPOTENT_DEPENDENCY_WAKE_STATUSES: &[&str] =
+    &["queued", "deferred_issue_execution", "claimed", "completed"];
 
 /// 输入参数 —— 与 Node 入参 1:1 对齐。
 #[derive(Debug, Clone)]
@@ -83,7 +79,10 @@ mod tests {
 
     #[test]
     fn r708_wake_reason_constant() {
-        assert_eq!(ISSUE_BLOCKERS_RESOLVED_WAKE_REASON, "issue_blockers_resolved");
+        assert_eq!(
+            ISSUE_BLOCKERS_RESOLVED_WAKE_REASON,
+            "issue_blockers_resolved"
+        );
     }
 
     #[test]

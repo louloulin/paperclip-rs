@@ -36,7 +36,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("F{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "F{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -151,11 +159,14 @@ async fn hook_recorder_helpers_work() {
     assert!(recorder.is_empty());
     assert_eq!(recorder.len(), 0);
 
-    recorder.on_folder_event(FolderHookEvent::Deleted {
-        id: Uuid::nil(),
-        company_id: Uuid::nil(),
-        kind: "routine".into(),
-    }).await.expect("hook");
+    recorder
+        .on_folder_event(FolderHookEvent::Deleted {
+            id: Uuid::nil(),
+            company_id: Uuid::nil(),
+            kind: "routine".into(),
+        })
+        .await
+        .expect("hook");
 
     assert_eq!(recorder.len(), 1);
     assert!(!recorder.is_empty());

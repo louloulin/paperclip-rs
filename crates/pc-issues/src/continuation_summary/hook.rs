@@ -16,7 +16,9 @@ pub enum IssueContinuationSummaryHookEvent {
     /// Refresh 之前调用。
     BeforeRefresh { issue_id: Uuid, run_id: String },
     /// Refresh 之后调用（成功 upsert）。
-    AfterRefresh { document: IssueContinuationSummaryDocument },
+    AfterRefresh {
+        document: IssueContinuationSummaryDocument,
+    },
 }
 
 /// Issue continuation summary hook trait。
@@ -63,12 +65,13 @@ impl RecordingIssueContinuationSummaryHook {
 
 impl IssueContinuationSummaryHook for RecordingIssueContinuationSummaryHook {
     fn before_build(&self, issue_id: &str, run_id: &str) {
-        self.events.lock().unwrap().push(
-            IssueContinuationSummaryHookEvent::BeforeBuild {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueContinuationSummaryHookEvent::BeforeBuild {
                 issue_id: issue_id.to_string(),
                 run_id: run_id.to_string(),
-            },
-        );
+            });
     }
 
     fn after_build(&self, body_len: usize) {
@@ -79,19 +82,21 @@ impl IssueContinuationSummaryHook for RecordingIssueContinuationSummaryHook {
     }
 
     fn before_refresh(&self, input: &RefreshContinuationSummaryInput) {
-        self.events.lock().unwrap().push(
-            IssueContinuationSummaryHookEvent::BeforeRefresh {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueContinuationSummaryHookEvent::BeforeRefresh {
                 issue_id: input.issue_id,
                 run_id: input.run.id.clone(),
-            },
-        );
+            });
     }
 
     fn after_refresh(&self, doc: &IssueContinuationSummaryDocument) {
-        self.events.lock().unwrap().push(
-            IssueContinuationSummaryHookEvent::AfterRefresh {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueContinuationSummaryHookEvent::AfterRefresh {
                 document: doc.clone(),
-            },
-        );
+            });
     }
 }

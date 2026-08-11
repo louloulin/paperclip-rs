@@ -243,16 +243,14 @@ mod tests {
             } else {
                 None
             },
-            approved_at: approved_at.map(|ms| {
-                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).unwrap()
-            }),
+            approved_at: approved_at
+                .map(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).unwrap()),
             cancelled_at: if cancelled {
                 Some(chrono::Utc::now())
             } else {
                 None
             },
-            expires_at: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(expires_at)
-                .unwrap(),
+            expires_at: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(expires_at).unwrap(),
             created_at: chrono::Utc::now(),
             board_api_key_id: board_key_id,
         }
@@ -271,7 +269,10 @@ mod tests {
     fn r687_challenge_status_expired() {
         // expires_at = 1000, now = 2000 → expired
         let r = fake_row(false, None, 1_000, None);
-        assert_eq!(challenge_status_for_row(&r, 2_000), ChallengeStatus::Expired);
+        assert_eq!(
+            challenge_status_for_row(&r, 2_000),
+            ChallengeStatus::Expired
+        );
     }
 
     #[test]
@@ -287,16 +288,16 @@ mod tests {
     #[test]
     fn r687_challenge_status_pending() {
         let r = fake_row(false, None, 1_000_000, None);
-        assert_eq!(
-            challenge_status_for_row(&r, 0),
-            ChallengeStatus::Pending
-        );
+        assert_eq!(challenge_status_for_row(&r, 0), ChallengeStatus::Pending);
     }
 
     #[test]
     fn r687_challenge_status_expired_boundary() {
         // expires_at == now → expired (Node 用 `<=`)
         let r = fake_row(false, None, 1_000, None);
-        assert_eq!(challenge_status_for_row(&r, 1_000), ChallengeStatus::Expired);
+        assert_eq!(
+            challenge_status_for_row(&r, 1_000),
+            ChallengeStatus::Expired
+        );
     }
 }

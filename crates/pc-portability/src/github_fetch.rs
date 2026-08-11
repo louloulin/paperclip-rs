@@ -45,7 +45,10 @@ pub fn resolve_raw_github_url(
 ) -> String {
     let p = file_path.trim_start_matches('/');
     if is_github_dot_com(hostname) {
-        format!("https://raw.githubusercontent.com/{}/{}/{}/{}", owner, repo, ref_, p)
+        format!(
+            "https://raw.githubusercontent.com/{}/{}/{}/{}",
+            owner, repo, ref_, p
+        )
     } else {
         format!("https://{}/raw/{}/{}/{}/{}", hostname, owner, repo, ref_, p)
     }
@@ -84,7 +87,9 @@ pub async fn gh_fetch<F: GhFetcher + ?Sized>(
         }
         Err(_) => {
             // 其它错误（如 InvalidUrl）也包装为 CannotConnect，使用 URL hostname
-            Err(GhFetchError::CannotConnect { hostname: url_hostname })
+            Err(GhFetchError::CannotConnect {
+                hostname: url_hostname,
+            })
         }
     }
 }
@@ -126,7 +131,10 @@ mod tests {
     #[test]
     fn r691_resolve_raw_github_url_dot_com() {
         let u = resolve_raw_github_url("github.com", "rust-lang", "rust", "main", "README.md");
-        assert_eq!(u, "https://raw.githubusercontent.com/rust-lang/rust/main/README.md");
+        assert_eq!(
+            u,
+            "https://raw.githubusercontent.com/rust-lang/rust/main/README.md"
+        );
     }
 
     #[test]
@@ -166,7 +174,9 @@ mod tests {
             should_fail: false,
             captured: Mutex::new(Vec::new()),
         };
-        let body = gh_fetch(&m, "https://api.github.com/repos/foo/bar").await.unwrap();
+        let body = gh_fetch(&m, "https://api.github.com/repos/foo/bar")
+            .await
+            .unwrap();
         assert_eq!(body, "body");
         assert_eq!(
             *m.captured.lock().unwrap(),

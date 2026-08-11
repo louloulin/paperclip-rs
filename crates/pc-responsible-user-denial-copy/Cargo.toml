@@ -1,0 +1,13 @@
+[package]
+name = "pc-responsible-user-denial-copy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Responsible-user authorization denial copy contract (port of paperclip packages/shared/src/responsible-user-denial.ts)"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "r558_responsible_user_denial_copy"
+path = "tests/r558_responsible_user_denial_copy.rs"

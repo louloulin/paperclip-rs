@@ -43,10 +43,7 @@ pub enum IssueTreeControlHookEvent {
 
 #[async_trait]
 pub trait IssueTreeControlHook: Send + Sync {
-    async fn on_issue_tree_control_event(
-        &self,
-        _event: IssueTreeControlHookEvent,
-    ) -> PcResult<()> {
+    async fn on_issue_tree_control_event(&self, _event: IssueTreeControlHookEvent) -> PcResult<()> {
         Ok(())
     }
 }
@@ -79,10 +76,7 @@ impl RecordingIssueTreeControlHook {
 
 #[async_trait]
 impl IssueTreeControlHook for RecordingIssueTreeControlHook {
-    async fn on_issue_tree_control_event(
-        &self,
-        e: IssueTreeControlHookEvent,
-    ) -> PcResult<()> {
+    async fn on_issue_tree_control_event(&self, e: IssueTreeControlHookEvent) -> PcResult<()> {
         self.events.lock().expect("mutex").push(e);
         Ok(())
     }

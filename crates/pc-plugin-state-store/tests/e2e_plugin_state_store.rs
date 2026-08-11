@@ -203,7 +203,12 @@ async fn upsert_overwrites_existing_value() {
         .unwrap();
 
     let v = store
-        .get(plugin_id, PluginStateScopeKind::Instance, "k", ScopeOptions::default())
+        .get(
+            plugin_id,
+            PluginStateScopeKind::Instance,
+            "k",
+            ScopeOptions::default(),
+        )
         .await
         .unwrap();
     assert_eq!(v, Some(json!(2)));

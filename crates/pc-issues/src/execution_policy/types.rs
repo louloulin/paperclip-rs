@@ -10,10 +10,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use pc_core::{
-    IssueExecutionDecision, IssueExecutionPolicy,
-    ReviewRequest,
-};
+use pc_core::{IssueExecutionDecision, IssueExecutionPolicy, ReviewRequest};
 use pc_repos::issue::IssueRow;
 
 // -----------------------------------------------------------------------------
@@ -25,7 +22,10 @@ use pc_repos::issue::IssueRow;
 pub enum IssueExecutionPolicyError {
     /// pc-core 拒绝（policy 校验失败 / monitor 越界 / review rounds 用完）
     #[error("policy transition rejected: {message}")]
-    Transition { message: String, clear_reason: Option<String> },
+    Transition {
+        message: String,
+        clear_reason: Option<String>,
+    },
     /// DB 错误
     #[error(transparent)]
     Db(#[from] sqlx::Error),
@@ -47,7 +47,9 @@ impl From<pc_core::PolicyTransitionError> for IssueExecutionPolicyError {
     fn from(e: pc_core::PolicyTransitionError) -> Self {
         Self::Transition {
             message: e.message,
-            clear_reason: e.clear_reason.map(|r| serde_json::to_string(&r).unwrap_or_default()),
+            clear_reason: e
+                .clear_reason
+                .map(|r| serde_json::to_string(&r).unwrap_or_default()),
         }
     }
 }
@@ -170,9 +172,7 @@ fn apply_field(row: &mut IssueRow, key: &str, value: &serde_json::Value) {
             }
         }
         "assigneeAgentId" => {
-            row.assignee_agent_id = value
-                .as_str()
-                .and_then(|s| Uuid::parse_str(s).ok());
+            row.assignee_agent_id = value.as_str().and_then(|s| Uuid::parse_str(s).ok());
         }
         "assigneeUserId" => {
             row.assignee_user_id = value.as_str().map(|s| s.to_string());
@@ -208,9 +208,7 @@ fn apply_field(row: &mut IssueRow, key: &str, value: &serde_json::Value) {
             row.monitor_notes = value.as_str().map(|s| s.to_string());
         }
         "monitorScheduledBy" => {
-            row.monitor_scheduled_by = value
-                .as_str()
-                .map(|s| s.to_string());
+            row.monitor_scheduled_by = value.as_str().map(|s| s.to_string());
         }
         _ => {}
     }

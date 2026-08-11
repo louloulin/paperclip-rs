@@ -23,13 +23,23 @@ async fn add_and_list_round_trip() {
     let dir = TempDir::new().expect("tempdir");
     let store = AdapterPluginStore::new(dir.path().to_path_buf());
 
-    store.add(make_record("claude-local", "droid-pkg-a")).await.expect("add a");
-    store.add(make_record("codex-local", "droid-pkg-b")).await.expect("add b");
+    store
+        .add(make_record("claude-local", "droid-pkg-a"))
+        .await
+        .expect("add a");
+    store
+        .add(make_record("codex-local", "droid-pkg-b"))
+        .await
+        .expect("add b");
 
     let list = store.list().await.expect("list");
     assert_eq!(list.len(), 2);
 
-    let a = store.get_by_type("claude-local").await.expect("get").expect("exists");
+    let a = store
+        .get_by_type("claude-local")
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(a.package_name, "droid-pkg-a");
     assert_eq!(a.version.as_deref(), Some("1.0.0"));
 
@@ -46,8 +56,14 @@ async fn add_replaces_same_kind() {
     let dir = TempDir::new().expect("tempdir");
     let store = AdapterPluginStore::new(dir.path().to_path_buf());
 
-    store.add(make_record("claude-local", "old")).await.expect("add old");
-    store.add(make_record("claude-local", "new")).await.expect("add new");
+    store
+        .add(make_record("claude-local", "old"))
+        .await
+        .expect("add old");
+    store
+        .add(make_record("claude-local", "new"))
+        .await
+        .expect("add new");
 
     let list = store.list().await.expect("list");
     assert_eq!(list.len(), 1);
@@ -60,21 +76,39 @@ async fn disabled_toggle_persists_to_disk() {
     let dir = TempDir::new().expect("tempdir");
     let store = AdapterPluginStore::new(dir.path().to_path_buf());
 
-    assert!(!store.is_disabled("claude-local").await.expect("is_disabled"));
-    assert_eq!(store.get_disabled_types().await.expect("get"), Vec::<String>::new());
+    assert!(!store
+        .is_disabled("claude-local")
+        .await
+        .expect("is_disabled"));
+    assert_eq!(
+        store.get_disabled_types().await.expect("get"),
+        Vec::<String>::new()
+    );
 
     let changed = store.set_disabled("claude-local", true).await.expect("set");
     assert!(changed);
-    assert!(store.is_disabled("claude-local").await.expect("is_disabled 2"));
+    assert!(store
+        .is_disabled("claude-local")
+        .await
+        .expect("is_disabled 2"));
     let types = store.get_disabled_types().await.expect("get2");
     assert_eq!(types, vec!["claude-local".to_string()]);
 
-    let changed2 = store.set_disabled("claude-local", true).await.expect("set2");
+    let changed2 = store
+        .set_disabled("claude-local", true)
+        .await
+        .expect("set2");
     assert!(!changed2);
 
-    let changed3 = store.set_disabled("claude-local", false).await.expect("set3");
+    let changed3 = store
+        .set_disabled("claude-local", false)
+        .await
+        .expect("set3");
     assert!(changed3);
-    assert!(!store.is_disabled("claude-local").await.expect("is_disabled 3"));
+    assert!(!store
+        .is_disabled("claude-local")
+        .await
+        .expect("is_disabled 3"));
 
     let settings_path = dir.path().join("adapter-settings.json");
     assert!(settings_path.exists(), "settings file should exist");
@@ -90,7 +124,10 @@ async fn ensure_dirs_creates_plugin_dir() {
     assert!(path.exists());
     assert!(path.ends_with("adapter-plugins"));
 
-    store.add(make_record("codex-local", "pkg")).await.expect("add");
+    store
+        .add(make_record("codex-local", "pkg"))
+        .await
+        .expect("add");
     assert!(path.exists());
     let _ = dir.close();
 }

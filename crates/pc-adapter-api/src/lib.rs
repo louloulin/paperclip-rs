@@ -254,11 +254,19 @@ pub struct HireApprovedResult {
 
 impl HireApprovedResult {
     pub fn ok() -> Self {
-        Self { ok: true, error: None, detail: None }
+        Self {
+            ok: true,
+            error: None,
+            detail: None,
+        }
     }
 
     pub fn failure(error: impl Into<String>, detail: Option<String>) -> Self {
-        Self { ok: false, error: Some(error.into()), detail }
+        Self {
+            ok: false,
+            error: Some(error.into()),
+            detail,
+        }
     }
 }
 

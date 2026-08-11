@@ -2,7 +2,6 @@
 //!
 //! 与 Node `server/src/services/change-consent-gate.ts` 1:1 对齐。
 
-
 use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
@@ -92,7 +91,10 @@ impl AssertConsentedInput {
 /// ```
 pub fn mark_result_consumed(mut result: Value, actor_run_id: &str, consumed_at: &str) -> Value {
     if let Some(obj) = result.as_object_mut() {
-        obj.insert("consumedAt".to_string(), Value::String(consumed_at.to_string()));
+        obj.insert(
+            "consumedAt".to_string(),
+            Value::String(consumed_at.to_string()),
+        );
         obj.insert(
             "consumedByRunId".to_string(),
             Value::String(actor_run_id.to_string()),

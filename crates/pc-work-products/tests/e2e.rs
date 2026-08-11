@@ -1,7 +1,7 @@
 //! R736: e2e for `pc-work-products` against real Postgres.
 
-use pc_work_products::import_write_types::ImportIssueWorkProductRow;
 use pc_repos::Db;
+use pc_work_products::import_write_types::ImportIssueWorkProductRow;
 use pc_work_products::{
     import_row_to_create_input, CreateWorkProductInput, UpdateWorkProductPatch, WorkProductService,
 };
@@ -25,7 +25,12 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>();
+    let suffix = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect::<String>();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
@@ -61,7 +66,12 @@ async fn insert_issue(pool: &PgPool, company_id: Uuid, tag: &str) -> Uuid {
     let identifier = format!(
         "R736-{}-{}",
         tag,
-        Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>()
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(6)
+            .collect::<String>()
     );
     sqlx::query(
         "INSERT INTO issues (id, company_id, identifier, title, status, priority, request_depth, created_at, updated_at) \
@@ -239,7 +249,11 @@ async fn primary_does_not_clear_other_types() {
         .expect("some");
 
     // pr 不应该被 doc 的 primary 创建清除
-    let pr = svc.get_by_id(pr_primary.id).await.expect("get").expect("some");
+    let pr = svc
+        .get_by_id(pr_primary.id)
+        .await
+        .expect("get")
+        .expect("some");
     assert!(pr.is_primary);
 
     cleanup(&pool, company_id).await;

@@ -178,6 +178,7 @@ pub async fn load_liveness_dependency_updated_at_by_issue(
 pub async fn retire_obsolete_liveness_recovery_issues(
     db: &Db,
     findings: &[IssueLivenessFinding],
+    company_filter: Option<&[Uuid]>,
 ) -> sqlx::Result<RetireObsoleteResult> {
     let mut result = RetireObsoleteResult::default();
 
@@ -196,16 +197,36 @@ pub async fn retire_obsolete_liveness_recovery_issues(
     }
 
     // 2. 列出 open escalation issues
-    let open_recoveries = sqlx::query(
-        "SELECT id, company_id, origin_id FROM issues \
-         WHERE origin_kind = $1 \
-           AND hidden_at IS NULL \
-           AND status::text != ALL($2)",
-    )
-    .bind(ESCALATION_ORIGIN_KIND)
-    .bind(TERMINAL_STATUSES)
-    .fetch_all(db.pool())
-    .await?;
+    // - company_filter.is_some()：限制到指定公司（推荐用于隔离测试 / 生产 per-company 调用）
+    // - company_filter.is_none() 或空数组：全局扫描（与 Node 一致；用于跨公司全局清理）
+    let open_recoveries = match company_filter {
+        Some(filter) if !filter.is_empty() => {
+            sqlx::query(
+                "SELECT id, company_id, origin_id FROM issues \
+             WHERE origin_kind = $1 \
+               AND company_id = ANY($3::uuid[]) \
+               AND hidden_at IS NULL \
+               AND status::text != ALL($2)",
+            )
+            .bind(ESCALATION_ORIGIN_KIND)
+            .bind(TERMINAL_STATUSES)
+            .bind(filter)
+            .fetch_all(db.pool())
+            .await?
+        }
+        _ => {
+            sqlx::query(
+                "SELECT id, company_id, origin_id FROM issues \
+             WHERE origin_kind = $1 \
+               AND hidden_at IS NULL \
+               AND status::text != ALL($2)",
+            )
+            .bind(ESCALATION_ORIGIN_KIND)
+            .bind(TERMINAL_STATUSES)
+            .fetch_all(db.pool())
+            .await?
+        }
+    };
 
     for row in open_recoveries {
         let recovery_id: Uuid = row.try_get("id")?;
@@ -299,18 +320,39 @@ pub async fn retire_obsolete_liveness_recovery_issues(
 /// 在 source issue 上的 'blocks' 关系。
 pub async fn retire_done_liveness_recovery_blockers(
     db: &Db,
+    company_filter: Option<&[Uuid]>,
 ) -> sqlx::Result<RetireDoneBlockersResult> {
     let mut result = RetireDoneBlockersResult::default();
-    let closed_recoveries = sqlx::query(
-        "SELECT id, company_id, origin_id FROM issues \
-         WHERE origin_kind = $1 \
-           AND hidden_at IS NULL \
-           AND status::text = ANY($2)",
-    )
-    .bind(ESCALATION_ORIGIN_KIND)
-    .bind(TERMINAL_STATUSES)
-    .fetch_all(db.pool())
-    .await?;
+    // - company_filter.is_some()：限制到指定公司（推荐用于隔离测试 / 生产 per-company 调用）
+    // - company_filter.is_none() 或空数组：全局扫描（与 Node 一致；用于跨公司全局清理）
+    let closed_recoveries = match company_filter {
+        Some(filter) if !filter.is_empty() => {
+            sqlx::query(
+                "SELECT id, company_id, origin_id FROM issues \
+             WHERE origin_kind = $1 \
+               AND company_id = ANY($3::uuid[]) \
+               AND hidden_at IS NULL \
+               AND status::text = ANY($2)",
+            )
+            .bind(ESCALATION_ORIGIN_KIND)
+            .bind(TERMINAL_STATUSES)
+            .bind(filter)
+            .fetch_all(db.pool())
+            .await?
+        }
+        _ => {
+            sqlx::query(
+                "SELECT id, company_id, origin_id FROM issues \
+             WHERE origin_kind = $1 \
+               AND hidden_at IS NULL \
+             AND status::text = ANY($2)",
+            )
+            .bind(ESCALATION_ORIGIN_KIND)
+            .bind(TERMINAL_STATUSES)
+            .fetch_all(db.pool())
+            .await?
+        }
+    };
     for row in closed_recoveries {
         let recovery_id: Uuid = row.try_get("id")?;
         let recovery_company_id: Uuid = row.try_get("company_id")?;

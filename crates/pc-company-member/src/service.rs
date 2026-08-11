@@ -9,10 +9,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use pc_repos::company_member::CompanyMemberRepo;
 pub use pc_repos::company_member::{
     CompanyMemberRow, MemberFilter, MemberPatch, MemberStatus, UserDirectoryEntry,
 };
-use pc_repos::company_member::CompanyMemberRepo;
 use pc_repos::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
@@ -133,7 +133,10 @@ pub struct CompanyMemberService {
 
 impl CompanyMemberService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn CompanyMemberHook>>) -> Self {
@@ -202,7 +205,9 @@ impl CompanyMemberService {
             ));
         }
         if user_id.trim().is_empty() {
-            return Err(CompanyMemberError::Validation("userId must not be empty".into()));
+            return Err(CompanyMemberError::Validation(
+                "userId must not be empty".into(),
+            ));
         }
         Ok(self.repo().find_by_user(company_id, user_id).await?)
     }
@@ -219,10 +224,7 @@ impl CompanyMemberService {
         Ok(self.repo().user_directory(company_id).await?)
     }
 
-    pub async fn count_active_for_company(
-        &self,
-        company_id: Uuid,
-    ) -> CompanyMemberResult<i64> {
+    pub async fn count_active_for_company(&self, company_id: Uuid) -> CompanyMemberResult<i64> {
         if company_id.is_nil() {
             return Err(CompanyMemberError::Validation(
                 "companyId is required".into(),
@@ -251,9 +253,14 @@ impl CompanyMemberService {
             ));
         }
         if user_id.trim().is_empty() {
-            return Err(CompanyMemberError::Validation("userId must not be empty".into()));
+            return Err(CompanyMemberError::Validation(
+                "userId must not be empty".into(),
+            ));
         }
-        Ok(self.repo().has_active_membership(company_id, user_id).await?)
+        Ok(self
+            .repo()
+            .has_active_membership(company_id, user_id)
+            .await?)
     }
 
     pub async fn is_active_member(
@@ -267,17 +274,18 @@ impl CompanyMemberService {
             ));
         }
         if user_id.trim().is_empty() {
-            return Err(CompanyMemberError::Validation("userId must not be empty".into()));
+            return Err(CompanyMemberError::Validation(
+                "userId must not be empty".into(),
+            ));
         }
         Ok(self.repo().is_active_member(user_id, company_id).await?)
     }
 
-    pub async fn list_company_ids_for_user(
-        &self,
-        user_id: &str,
-    ) -> CompanyMemberResult<Vec<Uuid>> {
+    pub async fn list_company_ids_for_user(&self, user_id: &str) -> CompanyMemberResult<Vec<Uuid>> {
         if user_id.trim().is_empty() {
-            return Err(CompanyMemberError::Validation("userId must not be empty".into()));
+            return Err(CompanyMemberError::Validation(
+                "userId must not be empty".into(),
+            ));
         }
         Ok(self.repo().list_company_ids_for_user(user_id).await?)
     }
@@ -288,7 +296,9 @@ impl CompanyMemberService {
         user_id: &str,
     ) -> CompanyMemberResult<Vec<(Uuid, String, Option<String>, Option<String>)>> {
         if user_id.trim().is_empty() {
-            return Err(CompanyMemberError::Validation("userId must not be empty".into()));
+            return Err(CompanyMemberError::Validation(
+                "userId must not be empty".into(),
+            ));
         }
         Ok(self.repo().list_for_user_with_company(user_id).await?)
     }
@@ -303,7 +313,10 @@ impl CompanyMemberService {
                 "principalId must not be empty".into(),
             ));
         }
-        Ok(self.repo().list_active_for_principal_user(principal_id).await?)
+        Ok(self
+            .repo()
+            .list_active_for_principal_user(principal_id)
+            .await?)
     }
 
     /// Replace the full company access set for a user (atomic transaction).
@@ -313,9 +326,14 @@ impl CompanyMemberService {
         company_ids: &[Uuid],
     ) -> CompanyMemberResult<()> {
         if user_id.trim().is_empty() {
-            return Err(CompanyMemberError::Validation("userId must not be empty".into()));
+            return Err(CompanyMemberError::Validation(
+                "userId must not be empty".into(),
+            ));
         }
-        Ok(self.repo().replace_user_companies(user_id, company_ids).await?)
+        Ok(self
+            .repo()
+            .replace_user_companies(user_id, company_ids)
+            .await?)
     }
 
     // -------------------------------------------------------------------------
@@ -357,11 +375,7 @@ impl CompanyMemberService {
     }
 
     /// Soft-archive a member (status = 'archived'). Mirrors Node archive.
-    pub async fn archive(
-        &self,
-        company_id: Uuid,
-        member_id: Uuid,
-    ) -> CompanyMemberResult<bool> {
+    pub async fn archive(&self, company_id: Uuid, member_id: Uuid) -> CompanyMemberResult<bool> {
         if company_id.is_nil() {
             return Err(CompanyMemberError::Validation(
                 "companyId is required".into(),
@@ -392,7 +406,10 @@ mod tests {
         assert_eq!(MemberStatus::Active.as_str(), "active");
         assert_eq!(MemberStatus::Archived.as_str(), "archived");
         assert_eq!(MemberStatus::parse("active"), Some(MemberStatus::Active));
-        assert_eq!(MemberStatus::parse("archived"), Some(MemberStatus::Archived));
+        assert_eq!(
+            MemberStatus::parse("archived"),
+            Some(MemberStatus::Archived)
+        );
         assert_eq!(MemberStatus::parse("nope"), None);
     }
 

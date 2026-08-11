@@ -13,9 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use super::types::{
-    ApplyTransitionOutcome, ApplyTransitionRequest, MonitorPatchOutcome,
-};
+use super::types::{ApplyTransitionOutcome, ApplyTransitionRequest, MonitorPatchOutcome};
 
 // -----------------------------------------------------------------------------
 // Hook event
@@ -50,10 +48,7 @@ pub enum IssueExecutionPolicyHookEvent {
 #[async_trait]
 pub trait IssueExecutionPolicyHook: Send + Sync {
     /// 默认 noop；可在 hook 内改 input / 拒绝（返回 Err）
-    async fn before_transition(
-        &self,
-        _request: &ApplyTransitionRequest,
-    ) -> Result<(), String> {
+    async fn before_transition(&self, _request: &ApplyTransitionRequest) -> Result<(), String> {
         Ok(())
     }
     async fn after_transition(
@@ -111,13 +106,13 @@ impl RecordingIssueExecutionPolicyHook {
 
 #[async_trait]
 impl IssueExecutionPolicyHook for RecordingIssueExecutionPolicyHook {
-    async fn before_transition(
-        &self,
-        request: &ApplyTransitionRequest,
-    ) -> Result<(), String> {
-        self.events.lock().unwrap().push(IssueExecutionPolicyHookEvent::BeforeTransition {
-            issue_id: request.issue.id,
-        });
+    async fn before_transition(&self, request: &ApplyTransitionRequest) -> Result<(), String> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueExecutionPolicyHookEvent::BeforeTransition {
+                issue_id: request.issue.id,
+            });
         Ok(())
     }
     async fn after_transition(
@@ -125,11 +120,14 @@ impl IssueExecutionPolicyHook for RecordingIssueExecutionPolicyHook {
         request: &ApplyTransitionRequest,
         outcome: &ApplyTransitionOutcome,
     ) {
-        self.events.lock().unwrap().push(IssueExecutionPolicyHookEvent::AfterTransition {
-            issue_id: request.issue.id,
-            has_decision: outcome.decision.is_some(),
-            patch_size: outcome.patch.len(),
-        });
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueExecutionPolicyHookEvent::AfterTransition {
+                issue_id: request.issue.id,
+                has_decision: outcome.decision.is_some(),
+                patch_size: outcome.patch.len(),
+            });
     }
     async fn before_monitor_change(
         &self,
@@ -148,10 +146,13 @@ impl IssueExecutionPolicyHook for RecordingIssueExecutionPolicyHook {
         issue_id: uuid::Uuid,
         outcome: &MonitorPatchOutcome,
     ) {
-        self.events.lock().unwrap().push(IssueExecutionPolicyHookEvent::AfterMonitorChange {
-            issue_id,
-            kind,
-            patch_size: outcome.patch.len(),
-        });
+        self.events
+            .lock()
+            .unwrap()
+            .push(IssueExecutionPolicyHookEvent::AfterMonitorChange {
+                issue_id,
+                kind,
+                patch_size: outcome.patch.len(),
+            });
     }
 }

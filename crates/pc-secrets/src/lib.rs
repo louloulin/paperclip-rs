@@ -25,24 +25,24 @@ pub mod vault;
 pub use aws::AwsSecretsManagerProvider;
 pub use cache::{CacheEntry, CacheStats, SecretCache};
 pub use decision::{decide_provider, SecretDecision, SecretDecisionContext};
+pub use decision_signing::{
+    canonical, canonical_number, ensure_decision_signing_secret, resolve_decision_signing_secret,
+    sign_decision_spec, sign_decision_spec_with_secret, verify_decision_spec,
+    verify_decision_spec_with_secret, DecisionSigningError, DecisionSigningKeyStore,
+    DecisionSigningService, DECISION_SIGNING_VERSION, MIN_DECISION_SIGNING_SECRET_LENGTH,
+};
 pub use error::{SecretErrorCategory, SecretProviderError};
 pub use rotation::{
     evaluate_rotation, RotationEvaluation, RotationEvaluationInput, RotationPolicyConfig,
     RotationReason,
 };
 pub use service::{cache_key, SecretService, SecretServiceError, SecretServiceResult};
-pub use decision_signing::{
-    ensure_decision_signing_secret, resolve_decision_signing_secret, sign_decision_spec,
-    sign_decision_spec_with_secret, verify_decision_spec, verify_decision_spec_with_secret,
-    DecisionSigningError, DecisionSigningKeyStore, DecisionSigningService, canonical, canonical_number,
-    DECISION_SIGNING_VERSION, MIN_DECISION_SIGNING_SECRET_LENGTH,
-};
 pub mod json_schema_secret_refs;
 
 pub use json_schema_secret_refs::{
     collect_secret_ref_paths, is_uuid_secret_ref, parse_secret_ref_binding_object,
     read_config_value_at_path, write_config_value_at_path, SecretRefBindingObject,
-    SecretRefVersion
+    SecretRefVersion,
 };
 
 pub use gcp::GcpSecretManagerProvider;

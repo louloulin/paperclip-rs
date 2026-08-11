@@ -157,8 +157,7 @@ mod tests {
 
         fn get_quota_windows(
             &self,
-        ) -> Pin<Box<dyn Future<Output = Result<ProviderQuotaResult, String>> + Send>>
-        {
+        ) -> Pin<Box<dyn Future<Output = Result<ProviderQuotaResult, String>> + Send>> {
             let mut guard = self.result.lock().unwrap();
             guard.take().expect("no future available")
         }
@@ -269,8 +268,8 @@ mod tests {
         assert!(r.error.as_ref().unwrap().contains("timed out"));
     }
 
-    fn make_hanging_adapter_future() -> impl Future<Output = Result<ProviderQuotaResult, String>> + Send
-    {
+    fn make_hanging_adapter_future(
+    ) -> impl Future<Output = Result<ProviderQuotaResult, String>> + Send {
         async {
             tokio::time::sleep(Duration::from_secs(60)).await;
             Ok(ProviderQuotaResult::ok("anthropic", vec![]))

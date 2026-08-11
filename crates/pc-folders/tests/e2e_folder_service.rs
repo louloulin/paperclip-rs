@@ -14,9 +14,7 @@
 
 use std::sync::Arc;
 
-use pc_folders::{
-    CreateFolder, FolderHookEvent, FolderPatch, FolderService, RecordingFolderHook,
-};
+use pc_folders::{CreateFolder, FolderHookEvent, FolderPatch, FolderService, RecordingFolderHook};
 use pc_repos::{folder::FolderKind, Db};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -125,7 +123,12 @@ async fn r606_create_root_folder_dispatches_created() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        FolderHookEvent::Created { id, parent_id, path, .. } => {
+        FolderHookEvent::Created {
+            id,
+            parent_id,
+            path,
+            ..
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(*parent_id, None);
             assert_eq!(path, "inbox");
@@ -291,7 +294,11 @@ async fn r606_create_nested_folder_builds_path() {
         .await
         .expect("child");
 
-    let view = svc.get(company_id, child.id).await.expect("get").expect("some");
+    let view = svc
+        .get(company_id, child.id)
+        .await
+        .expect("get")
+        .expect("some");
     assert_eq!(view.path, "engineering/backend");
     assert_eq!(view.depth, 2);
     assert_eq!(view.parent_id, Some(parent.id));
@@ -456,7 +463,12 @@ async fn r606_update_parent_dispatches_moved() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        FolderHookEvent::Moved { id, old_parent_id, new_parent_id, .. } => {
+        FolderHookEvent::Moved {
+            id,
+            old_parent_id,
+            new_parent_id,
+            ..
+        } => {
             assert_eq!(*id, c.id);
             assert_eq!(*old_parent_id, None);
             assert_eq!(*new_parent_id, Some(a.id));
@@ -614,7 +626,10 @@ async fn r606_delete_folder_with_children_rejected() {
     .await
     .expect("child");
 
-    let err = svc.delete(company_id, parent.id).await.expect_err("has children");
+    let err = svc
+        .delete(company_id, parent.id)
+        .await
+        .expect_err("has children");
     assert!(matches!(err, pc_errors::Error::Unprocessable { .. }));
 
     cleanup(&pool, company_id).await;
@@ -627,7 +642,10 @@ async fn r606_delete_nonexistent_returns_false() {
     let company_id = insert_company(&pool).await;
 
     let svc = FolderService::new(db.clone());
-    let removed = svc.delete(company_id, Uuid::new_v4()).await.expect("delete");
+    let removed = svc
+        .delete(company_id, Uuid::new_v4())
+        .await
+        .expect("delete");
     assert!(!removed);
 
     cleanup(&pool, company_id).await;
@@ -769,7 +787,10 @@ async fn r606_hierarchy_cycle_detection_via_update() {
         .await
         .expect_err("cycle");
     assert!(
-        matches!(err, pc_errors::Error::Unprocessable { .. } | pc_errors::Error::Internal { .. }),
+        matches!(
+            err,
+            pc_errors::Error::Unprocessable { .. } | pc_errors::Error::Internal { .. }
+        ),
         "got: {err:?}"
     );
 

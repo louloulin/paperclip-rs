@@ -15,12 +15,12 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use pc_repos::Db;
 use pc_core::source_trust_resolver::{
     build_low_trust_source_trust, is_low_trust_quarantined,
     redact_quarantined_body_for_higher_trust, sanitize_quarantined_comment_for_higher_trust,
     SourceTrustMetadata, LOW_TRUST_QUARANTINED_BODY,
 };
+use pc_repos::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
@@ -344,12 +344,8 @@ pub async fn load_pipeline_conversation_body_document_context(
     db: &Db,
     input: LoadPipelineContextInput,
 ) -> sqlx::Result<PipelineConversationBodyDocumentContext> {
-    let body_row = PipelineConversationDb::fetch_body_document(
-        db,
-        &input.company_id,
-        &input.case_id,
-    )
-    .await?;
+    let body_row =
+        PipelineConversationDb::fetch_body_document(db, &input.company_id, &input.case_id).await?;
 
     let Some(body_row) = body_row else {
         return Ok(PipelineConversationBodyDocumentContext {
@@ -391,15 +387,21 @@ pub async fn load_pipeline_conversation_body_document_context(
         return Ok(context);
     };
 
-    let threads =
-        PipelineConversationDb::fetch_open_annotation_threads(db, &input.company_id, conversation_issue_id, doc_id).await?;
+    let threads = PipelineConversationDb::fetch_open_annotation_threads(
+        db,
+        &input.company_id,
+        conversation_issue_id,
+        doc_id,
+    )
+    .await?;
     if threads.is_empty() {
         return Ok(context);
     }
 
     let thread_uuids: Vec<Uuid> = threads.iter().map(|t| t.id).collect();
     let comments =
-        PipelineConversationDb::fetch_annotation_comments(db, &input.company_id, &thread_uuids).await?;
+        PipelineConversationDb::fetch_annotation_comments(db, &input.company_id, &thread_uuids)
+            .await?;
 
     // Bucket comments by thread, up to MAX_ANNOTATION_COMMENTS_PER_THREAD.
     let mut comments_by_thread: std::collections::HashMap<Uuid, Vec<AnnotationCommentRow>> =
@@ -482,7 +484,11 @@ pub struct RedactBodyInput {
 
 impl pc_core::source_trust_resolver::RedactableBody for RedactBodyInput {
     fn body(&self) -> Option<&str> {
-        if self.body.is_empty() { None } else { Some(&self.body) }
+        if self.body.is_empty() {
+            None
+        } else {
+            Some(&self.body)
+        }
     }
     fn source_trust(&self) -> Option<&SourceTrustMetadata> {
         self.source_trust.as_ref()
@@ -547,22 +553,51 @@ pub fn format_pipeline_conversation_body_document_context_markdown(
         source_trust: body_doc.source_trust.clone(),
     });
     let redact_body_anchors = is_low_trust_quarantined(body_doc.source_trust.as_ref());
-    lines.push(format!("- Case document key: {}", serde_json::to_string(&body_doc.case_document_key).unwrap_or_default()));
-    lines.push(format!("- Conversation issue document key: {}", serde_json::to_string(&body_doc.conversation_issue_document_key).unwrap_or_default()));
-    lines.push(format!("- Title: {}", serde_json::to_string(&body_doc.title).unwrap_or_default()));
-    lines.push(format!("- Format: {}", serde_json::to_string(&body_doc.format).unwrap_or_default()));
-    lines.push(format!("- Latest revision id: {}", serde_json::to_string(&body_doc.latest_revision_id).unwrap_or_default()));
-    lines.push(format!("- Latest revision number: {}", body_doc.latest_revision_number));
+    lines.push(format!(
+        "- Case document key: {}",
+        serde_json::to_string(&body_doc.case_document_key).unwrap_or_default()
+    ));
+    lines.push(format!(
+        "- Conversation issue document key: {}",
+        serde_json::to_string(&body_doc.conversation_issue_document_key).unwrap_or_default()
+    ));
+    lines.push(format!(
+        "- Title: {}",
+        serde_json::to_string(&body_doc.title).unwrap_or_default()
+    ));
+    lines.push(format!(
+        "- Format: {}",
+        serde_json::to_string(&body_doc.format).unwrap_or_default()
+    ));
+    lines.push(format!(
+        "- Latest revision id: {}",
+        serde_json::to_string(&body_doc.latest_revision_id).unwrap_or_default()
+    ));
+    lines.push(format!(
+        "- Latest revision number: {}",
+        body_doc.latest_revision_number
+    ));
     lines.push(format!(
         "- Body truncated in context: {}",
-        if body_doc.latest_body_truncated { "true" } else { "false" }
+        if body_doc.latest_body_truncated {
+            "true"
+        } else {
+            "false"
+        }
     ));
-    lines.push(format!("- Source trust: {}", serde_json::to_string(&body_doc.source_trust).unwrap_or_default()));
+    lines.push(format!(
+        "- Source trust: {}",
+        serde_json::to_string(&body_doc.source_trust).unwrap_or_default()
+    ));
     lines.push("".to_string());
     lines.push("Current body document text (untrusted):".to_string());
     let fence = fence_markdown(
         &safe_body_document.body,
-        if body_doc.format == "markdown" { "markdown" } else { "text" },
+        if body_doc.format == "markdown" {
+            "markdown"
+        } else {
+            "text"
+        },
     );
     lines.push(fence);
     lines.push("".to_string());
@@ -603,7 +638,8 @@ pub fn format_pipeline_conversation_body_document_context_markdown(
             })
         }).collect::<Vec<_>>()
     });
-    let pretty = serde_json::to_string_pretty(&threads_json).unwrap_or_else(|_| threads_json.to_string());
+    let pretty =
+        serde_json::to_string_pretty(&threads_json).unwrap_or_else(|_| threads_json.to_string());
     lines.push(pretty);
     lines.push("```".to_string());
     Some(lines.join("\n"))
@@ -663,11 +699,13 @@ mod tests {
     #[test]
     fn low_trust_body_gets_quarantined() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
-            issue_id: "i-1".to_string(),
-            run_id: None,
-            agent_id: None,
-        });
+        let trust = build_low_trust_source_trust(
+            pc_core::source_trust_resolver::LowTrustSourceTrustInput {
+                issue_id: "i-1".to_string(),
+                run_id: None,
+                agent_id: None,
+            },
+        );
         let redacted = redact_quarantined_body_for_higher_trust(RedactBodyInput {
             body: "secret".to_string(),
             source_trust: Some(trust),
@@ -690,11 +728,13 @@ mod tests {
     #[test]
     fn is_low_trust_quarantined_matches_low_trust_preset() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
-            issue_id: "i-1".to_string(),
-            run_id: None,
-            agent_id: None,
-        });
+        let trust = build_low_trust_source_trust(
+            pc_core::source_trust_resolver::LowTrustSourceTrustInput {
+                issue_id: "i-1".to_string(),
+                run_id: None,
+                agent_id: None,
+            },
+        );
         assert!(is_low_trust_quarantined(Some(&trust)));
     }
 
@@ -709,11 +749,13 @@ mod tests {
     #[test]
     fn low_trust_comment_gets_sanitized() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
-            issue_id: "i-1".to_string(),
-            run_id: None,
-            agent_id: None,
-        });
+        let trust = build_low_trust_source_trust(
+            pc_core::source_trust_resolver::LowTrustSourceTrustInput {
+                issue_id: "i-1".to_string(),
+                run_id: None,
+                agent_id: None,
+            },
+        );
         let s = sanitize_quarantined_comment_for_higher_trust(RedactCommentInput {
             body: "secret comment".to_string(),
             source_trust: Some(trust),
@@ -744,11 +786,13 @@ mod tests {
     #[test]
     fn format_with_body_document_includes_fence() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
-            issue_id: "i-1".to_string(),
-            run_id: None,
-            agent_id: None,
-        });
+        let trust = build_low_trust_source_trust(
+            pc_core::source_trust_resolver::LowTrustSourceTrustInput {
+                issue_id: "i-1".to_string(),
+                run_id: None,
+                agent_id: None,
+            },
+        );
         let ctx = PipelineConversationBodyDocumentContext {
             case_id: "c-2".to_string(),
             body_document: Some(PipelineConversationBodyDocument {
@@ -799,11 +843,13 @@ mod tests {
     #[test]
     fn format_low_trust_redacts_anchor_text_but_keeps_comment_metadata() {
         let mut trust = SourceTrustMetadata::standard();
-        let trust = build_low_trust_source_trust(pc_core::source_trust_resolver::LowTrustSourceTrustInput {
-            issue_id: "i-1".to_string(),
-            run_id: None,
-            agent_id: None,
-        });
+        let trust = build_low_trust_source_trust(
+            pc_core::source_trust_resolver::LowTrustSourceTrustInput {
+                issue_id: "i-1".to_string(),
+                run_id: None,
+                agent_id: None,
+            },
+        );
         let thread = PipelineConversationAnnotationThread {
             id: "t-1".to_string(),
             status: "open".to_string(),

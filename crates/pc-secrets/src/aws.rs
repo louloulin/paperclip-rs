@@ -536,7 +536,6 @@ impl SecretProvider for AwsSecretsManagerProvider {
     }
 }
 
-
 #[cfg(test)]
 mod assume_role_tests {
     use super::*;
@@ -569,7 +568,10 @@ mod assume_role_tests {
                 "paperclip-session",
                 "ext-1",
             );
-        assert_eq!(p.assume_role_config().unwrap().external_id.as_deref(), Some("ext-1"));
+        assert_eq!(
+            p.assume_role_config().unwrap().external_id.as_deref(),
+            Some("ext-1")
+        );
     }
 
     #[test]
@@ -578,7 +580,10 @@ mod assume_role_tests {
         let future = Utc::now() + chrono::Duration::hours(1);
         p.set_temporary_credentials("ASIA", "tmp-secret", "session-token", future);
         assert_eq!(p.credentials().access_key, "ASIA");
-        assert_eq!(p.credentials().session_token.as_deref(), Some("session-token"));
+        assert_eq!(
+            p.credentials().session_token.as_deref(),
+            Some("session-token")
+        );
         assert!(!p.credentials().is_expired());
     }
 
@@ -655,6 +660,9 @@ mod assume_role_tests {
         let serialized = serde_json::to_string(&v).unwrap();
         assert!(serialized.contains("aws_secrets_manager_v1"));
         let back: PreparedSecretVersion = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(back.external_ref.unwrap(), "arn:aws:secretsmanager:us-east-1:secret:demo");
+        assert_eq!(
+            back.external_ref.unwrap(),
+            "arn:aws:secretsmanager:us-east-1:secret:demo"
+        );
     }
 }

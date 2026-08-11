@@ -1462,7 +1462,15 @@ mod tests {
         let v = case_schema();
         let required = v["required"].as_array().expect("required");
         let names: Vec<&str> = required.iter().filter_map(|r| r.as_str()).collect();
-        for field in ["id", "companyId", "caseNumber", "identifier", "caseType", "title", "status"] {
+        for field in [
+            "id",
+            "companyId",
+            "caseNumber",
+            "identifier",
+            "caseType",
+            "title",
+            "status",
+        ] {
             assert!(
                 names.contains(&field),
                 "Case.required must include `{field}`, got {names:?}"
@@ -1475,8 +1483,18 @@ mod tests {
         let v = case_schema();
         let en = v["properties"]["status"]["enum"].as_array().expect("enum");
         let values: Vec<&str> = en.iter().filter_map(|e| e.as_str()).collect();
-        for s in ["draft", "in_progress", "in_review", "approved", "done", "cancelled"] {
-            assert!(values.contains(&s), "Case.status enum missing `{s}`, got {values:?}");
+        for s in [
+            "draft",
+            "in_progress",
+            "in_review",
+            "approved",
+            "done",
+            "cancelled",
+        ] {
+            assert!(
+                values.contains(&s),
+                "Case.status enum missing `{s}`, got {values:?}"
+            );
         }
     }
 
@@ -1499,7 +1517,10 @@ mod tests {
         let en = v["properties"]["level"]["enum"].as_array().expect("enum");
         let values: Vec<&str> = en.iter().filter_map(|e| e.as_str()).collect();
         for s in ["mission", "company", "team", "project", "task"] {
-            assert!(values.contains(&s), "Goal.level enum missing `{s}`, got {values:?}");
+            assert!(
+                values.contains(&s),
+                "Goal.level enum missing `{s}`, got {values:?}"
+            );
         }
     }
 
@@ -1508,7 +1529,14 @@ mod tests {
         let v = inbox_schema();
         let required = v["required"].as_array().expect("required");
         let names: Vec<&str> = required.iter().filter_map(|r| r.as_str()).collect();
-        for field in ["id", "companyId", "userId", "itemKey", "kind", "dismissedAt"] {
+        for field in [
+            "id",
+            "companyId",
+            "userId",
+            "itemKey",
+            "kind",
+            "dismissedAt",
+        ] {
             assert!(
                 names.contains(&field),
                 "Inbox.required must include `{field}`, got {names:?}"
@@ -1602,7 +1630,6 @@ mod tests {
         }
     }
 
-
     // -------- r513: admin + companies sub-resources --------
 
     #[test]
@@ -1635,7 +1662,14 @@ mod tests {
         let v = invite_schema();
         let required = v["required"].as_array().expect("required");
         let names: Vec<&str> = required.iter().filter_map(|r| r.as_str()).collect();
-        for field in ["id", "companyId", "inviteType", "allowedJoinTypes", "tokenHash", "expiresAt"] {
+        for field in [
+            "id",
+            "companyId",
+            "inviteType",
+            "allowedJoinTypes",
+            "tokenHash",
+            "expiresAt",
+        ] {
             assert!(
                 names.contains(&field),
                 "Invite.required must include `{field}`, got {names:?}"
@@ -1670,7 +1704,11 @@ mod tests {
     #[test]
     fn r513_list_schemas_reference_correct_single_schemas() {
         for (list_name, list_value, expected_ref) in [
-            ("CompanyMemberList", company_member_list_schema(), "CompanyMember"),
+            (
+                "CompanyMemberList",
+                company_member_list_schema(),
+                "CompanyMember",
+            ),
             ("InviteList", invite_list_schema(), "Invite"),
             ("AdminUserList", admin_user_list_schema(), "AdminUser"),
         ] {

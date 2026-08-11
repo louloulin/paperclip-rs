@@ -72,7 +72,9 @@ fn read_desired_state(value: Option<&serde_json::Value>) -> Option<RuntimeState>
     RuntimeState::from_str(s)
 }
 
-fn read_service_states(value: Option<&serde_json::Value>) -> Option<BTreeMap<String, RuntimeState>> {
+fn read_service_states(
+    value: Option<&serde_json::Value>,
+) -> Option<BTreeMap<String, RuntimeState>> {
     let obj = value?.as_object()?;
     let mut result = BTreeMap::new();
     for (k, v) in obj {
@@ -136,7 +138,11 @@ pub fn merge_project_workspace_runtime_config(
         if let Some(obj) = next_metadata.as_object_mut() {
             obj.remove("runtimeConfig");
         }
-        if next_metadata.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        if next_metadata
+            .as_object()
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             return None;
         }
         return Some(next_metadata);
@@ -177,7 +183,11 @@ pub fn merge_project_workspace_runtime_config(
         if let Some(obj) = next_metadata.as_object_mut() {
             obj.remove("runtimeConfig");
         }
-        if next_metadata.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        if next_metadata
+            .as_object()
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
             Some(next_metadata)
@@ -203,9 +213,7 @@ mod tests {
 
     #[test]
     fn r706_read_metadata_without_runtime_config_returns_null() {
-        assert!(
-            read_project_workspace_runtime_config(Some(&json!({"foo": "bar"}))).is_none()
-        );
+        assert!(read_project_workspace_runtime_config(Some(&json!({"foo": "bar"}))).is_none());
     }
 
     #[test]
@@ -365,7 +373,11 @@ mod tests {
 
     #[test]
     fn r706_runtime_state_round_trip() {
-        for s in [RuntimeState::Running, RuntimeState::Stopped, RuntimeState::Manual] {
+        for s in [
+            RuntimeState::Running,
+            RuntimeState::Stopped,
+            RuntimeState::Manual,
+        ] {
             assert_eq!(RuntimeState::from_str(s.as_str()), Some(s));
         }
         assert_eq!(RuntimeState::from_str("unknown"), None);

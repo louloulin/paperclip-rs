@@ -10,12 +10,12 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use pc_repos::inbox::InboxRepo;
 pub use pc_repos::inbox::{InboxDismissalRow, NewDismissal};
+use pc_repos::inbox_agent_policy::InboxAgentPolicyRepo;
 pub use pc_repos::inbox_agent_policy::{
     InboxAgentPolicy, InboxAgentPolicyMode, UpdateInboxAgentPolicyInput,
 };
-use pc_repos::inbox::InboxRepo;
-use pc_repos::inbox_agent_policy::InboxAgentPolicyRepo;
 use pc_repos::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
@@ -159,7 +159,10 @@ pub struct InboxService {
 
 impl InboxService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn InboxHook>>) -> Self {
@@ -221,7 +224,10 @@ impl InboxService {
                 "snoozed_until must be in the future".into(),
             ));
         }
-        let row = self.repo().snooze(company_id, user_id, item_key, until).await?;
+        let row = self
+            .repo()
+            .snooze(company_id, user_id, item_key, until)
+            .await?;
         self.dispatch(InboxHookEvent::Snoozed {
             company_id,
             user_id: user_id.to_string(),
@@ -269,7 +275,10 @@ impl InboxService {
         now: pc_core::Timestamp,
     ) -> InboxResult<Vec<InboxDismissalRow>> {
         validate_company_user_item(company_id, user_id, "")?;
-        Ok(self.repo().list_active_for_user(company_id, user_id, now).await?)
+        Ok(self
+            .repo()
+            .list_active_for_user(company_id, user_id, now)
+            .await?)
     }
 
     pub async fn get(
@@ -310,7 +319,10 @@ pub struct InboxAgentPolicyService {
 
 impl InboxAgentPolicyService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn InboxHook>>) -> Self {
@@ -334,11 +346,7 @@ impl InboxAgentPolicyService {
         InboxAgentPolicyRepo::new(&self.db)
     }
 
-    pub async fn get(
-        &self,
-        company_id: Uuid,
-        user_id: &str,
-    ) -> InboxResult<InboxAgentPolicy> {
+    pub async fn get(&self, company_id: Uuid, user_id: &str) -> InboxResult<InboxAgentPolicy> {
         if company_id.is_nil() {
             return Err(InboxError::Validation("companyId is required".into()));
         }
@@ -400,9 +408,18 @@ mod tests {
     fn policy_mode_roundtrips_lowercase() {
         let m = InboxAgentPolicyMode::Open;
         assert_eq!(m.as_str(), "open");
-        assert_eq!(InboxAgentPolicyMode::parse("open"), Some(InboxAgentPolicyMode::Open));
-        assert_eq!(InboxAgentPolicyMode::parse("allowlist"), Some(InboxAgentPolicyMode::Allowlist));
-        assert_eq!(InboxAgentPolicyMode::parse("disabled"), Some(InboxAgentPolicyMode::Disabled));
+        assert_eq!(
+            InboxAgentPolicyMode::parse("open"),
+            Some(InboxAgentPolicyMode::Open)
+        );
+        assert_eq!(
+            InboxAgentPolicyMode::parse("allowlist"),
+            Some(InboxAgentPolicyMode::Allowlist)
+        );
+        assert_eq!(
+            InboxAgentPolicyMode::parse("disabled"),
+            Some(InboxAgentPolicyMode::Disabled)
+        );
         assert_eq!(InboxAgentPolicyMode::parse("nope"), None);
     }
 }

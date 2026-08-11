@@ -79,11 +79,9 @@ fn replace_word_bounded(haystack: &str, needle: &str, replacement: &str) -> Stri
     let mut out = String::with_capacity(haystack.len());
     let mut rest = haystack;
     while let Some(pos) = rest.find(needle) {
-        let before_ok = pos == 0
-            || !is_word_char(rest.as_bytes()[pos - 1]);
+        let before_ok = pos == 0 || !is_word_char(rest.as_bytes()[pos - 1]);
         let after_idx = pos + needle.len();
-        let after_ok = after_idx >= rest.len()
-            || !is_word_char(rest.as_bytes()[after_idx]);
+        let after_ok = after_idx >= rest.len() || !is_word_char(rest.as_bytes()[after_idx]);
         if before_ok && after_ok {
             out.push_str(&rest[..pos]);
             out.push_str(replacement);

@@ -134,8 +134,7 @@ pub static PLANNING_ONLY_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 
 /// Next steps prefix: "Next steps:" / "Plan:".
 pub static NEXT_STEPS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"(?im)^\s*(?:next steps?|plan)\s*:")
-        .expect("valid next steps regex")
+    regex::Regex::new(r"(?im)^\s*(?:next steps?|plan)\s*:").expect("valid next steps regex")
 });
 
 /// Generic blocker re.

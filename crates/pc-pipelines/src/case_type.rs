@@ -1,12 +1,21 @@
-//! Pipeline case type derivation (port of `packages/shared/src/pipeline-case-type.ts`).
+//! Pipeline case type — thin delegation to `pc-pipeline-case-type`.
 //!
-//! A case's "type" is **not** a field anyone fills in — it is simply *which
-//! pipeline the case lives in* (one pipeline per kind of thing). We derive it
-//! from the pipeline so it can be used internally for display and ingest
-//! sanity-checks without any new user-facing field or lifecycle machinery.
+//! R-INTEGRATION-3 (R563): the case_type helpers previously lived in this
+//! module as a duplicate implementation. They have been consolidated so that
+//! `pc-pipeline-case-type` (R554) is the single source of truth. This module
+//! re-exports the canonical API under the `pc_pipelines::case_type::` path so
+//! existing callers (and the test suite) continue to compile unchanged.
 //!
-//! The pipeline key is a stable slug and is the canonical type identifier; we
-//! fall back to the pipeline id if a key is somehow absent.
+//! What stays local:
+//! - `CaseTypePipelineRef` newtype (kept as a thin wrapper to avoid breaking
+//!   the public surface; auto-deref / conversion delegates to the canonical
+//!   type)
+//! - 3 integration tests that exercise the delegation end-to-end
+//!
+//! What moved:
+//! - `derive_case_type` and `case_type_matches_pipeline` → `pc-pipeline-case-type`
+
+use pc_pipeline_case_type as canonical;
 
 /// Minimal reference shape — anything with at least an `id` and optional `key`.
 #[derive(Debug, Clone)]
@@ -29,135 +38,83 @@ impl CaseTypePipelineRef {
         self.key = Some(key.into());
         self
     }
-}
 
-/// Derive the canonical case type for a pipeline.
-///
-/// Returns `pipeline.key.trim()` if non-empty, otherwise `pipeline.id`.
-///
-/// Mirrors Node upstream `deriveCaseType`.
-#[must_use]
-pub fn derive_case_type(pipeline: &CaseTypePipelineRef) -> String {
-    let key = pipeline.key.as_deref().unwrap_or("").trim();
-    if key.is_empty() {
-        pipeline.id.clone()
-    } else {
-        key.to_string()
+    /// Convert to the canonical `pc_pipeline_case_type::CaseTypePipelineRef`.
+    fn to_canonical(&self) -> canonical::CaseTypePipelineRef {
+        canonical::CaseTypePipelineRef {
+            id: self.id.clone(),
+            key: self.key.clone(),
+        }
     }
 }
 
-/// Ingest sanity-check: a case being ingested into a pipeline must match that
-/// pipeline's derived type.
+/// Derive a case's "type" from its pipeline reference.
 ///
-/// Returns true when the (optional) declared type is absent or already agrees
-/// with the pipeline — i.e. nothing to correct.
+/// Mirrors Node upstream `deriveCaseType`. The pipeline key (trimmed) is the
+/// canonical type identifier; we fall back to the pipeline id if a key is
+/// somehow absent. Delegates to `pc_pipeline_case_type::derive_case_type`.
+pub fn derive_case_type(pipeline: &CaseTypePipelineRef) -> String {
+    canonical::derive_case_type(&pipeline.to_canonical())
+}
+
+/// Sanity check: does the declared case_type (as ingested) match the
+/// pipeline's derived case_type?
 ///
-/// Mirrors Node upstream `caseTypeMatchesPipeline`.
-#[must_use]
+/// Mirrors Node upstream `caseTypeMatchesPipeline`. Delegates to
+/// `pc_pipeline_case_type::case_type_matches_pipeline`.
 pub fn case_type_matches_pipeline(
     declared_case_type: Option<&str>,
     pipeline: &CaseTypePipelineRef,
 ) -> bool {
-    match declared_case_type {
-        None => true,
-        Some(t) if t.is_empty() => true,
-        Some(t) => t == derive_case_type(pipeline),
-    }
+    canonical::case_type_matches_pipeline(declared_case_type, &pipeline.to_canonical())
 }
 
 #[cfg(test)]
-mod tests {
+mod delegation_tests {
     use super::*;
 
     #[test]
-    fn r531_derive_uses_key_when_present() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
+    fn delegate_derive_uses_key_when_present() {
+        let p = CaseTypePipelineRef::new("pln-abc").with_key("support");
         assert_eq!(derive_case_type(&p), "support");
     }
 
     #[test]
-    fn r531_derive_falls_back_to_id_when_key_missing() {
-        let p = CaseTypePipelineRef::new("pln-123");
-        assert_eq!(derive_case_type(&p), "pln-123");
+    fn delegate_derive_falls_back_to_id_when_no_key() {
+        let p = CaseTypePipelineRef::new("pln-xyz");
+        assert_eq!(derive_case_type(&p), "pln-xyz");
     }
 
     #[test]
-    fn r531_derive_falls_back_to_id_when_key_empty_string() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("");
-        assert_eq!(derive_case_type(&p), "pln-123");
-    }
+    fn delegate_matches_handles_none_empty_some_and_mismatch() {
+        let p = CaseTypePipelineRef::new("pln-1").with_key("k");
 
-    #[test]
-    fn r531_derive_falls_back_to_id_when_key_whitespace() {
-        // Node: `key.trim()` then fallback. Whitespace-only counts as empty.
-        let p = CaseTypePipelineRef::new("pln-123").with_key("   ");
-        assert_eq!(derive_case_type(&p), "pln-123");
-    }
-
-    #[test]
-    fn r531_derive_trims_key_whitespace() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("  support  ");
-        assert_eq!(derive_case_type(&p), "support");
-    }
-
-    #[test]
-    fn r531_derive_preserves_key_with_internal_whitespace() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support urgent");
-        assert_eq!(derive_case_type(&p), "support urgent");
-    }
-
-    #[test]
-    fn r531_matches_returns_true_when_declared_is_none() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
+        // declared None → true (no correction needed)
         assert!(case_type_matches_pipeline(None, &p));
-    }
-
-    #[test]
-    fn r531_matches_returns_true_when_declared_is_empty() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
+        // declared Some("") → true (no correction needed)
         assert!(case_type_matches_pipeline(Some(""), &p));
+        // declared Some("k") → match
+        assert!(case_type_matches_pipeline(Some("k"), &p));
+        // declared Some("other") → no match
+        assert!(!case_type_matches_pipeline(Some("other"), &p));
     }
 
     #[test]
-    fn r531_matches_returns_true_when_declared_equals_key() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
-        assert!(case_type_matches_pipeline(Some("support"), &p));
-    }
+    fn delegation_produces_same_results_as_canonical_directly() {
+        // Verifies the wrapper is faithful (zero semantic drift)
+        let p_local = CaseTypePipelineRef::new("pln-abc").with_key(" support ");
+        let p_canonical = canonical::CaseTypePipelineRef {
+            id: "pln-abc".to_string(),
+            key: Some(" support ".to_string()),
+        };
 
-    #[test]
-    fn r531_matches_returns_false_when_declared_differs_from_key() {
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
-        assert!(!case_type_matches_pipeline(Some("billing"), &p));
-    }
-
-    #[test]
-    fn r531_matches_uses_id_fallback_when_key_missing() {
-        // When pipeline has no key, derive uses id; declared must match id.
-        let p = CaseTypePipelineRef::new("pln-123");
-        assert!(case_type_matches_pipeline(Some("pln-123"), &p));
-        assert!(!case_type_matches_pipeline(Some("support"), &p));
-    }
-
-    #[test]
-    fn r531_matches_uses_id_fallback_when_key_empty() {
-        // Same as above but with explicit empty key.
-        let p = CaseTypePipelineRef::new("pln-123").with_key("");
-        assert!(case_type_matches_pipeline(Some("pln-123"), &p));
-        assert!(!case_type_matches_pipeline(Some("support"), &p));
-    }
-
-    #[test]
-    fn r531_matches_exact_string_comparison() {
-        // Not case-insensitive: "Support" ≠ "support"
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
-        assert!(!case_type_matches_pipeline(Some("Support"), &p));
-    }
-
-    #[test]
-    fn r531_matches_no_trim_on_declared() {
-        // Node doesn't trim declared, only the derived value (key).
-        let p = CaseTypePipelineRef::new("pln-123").with_key("support");
-        // declared " support" has leading space; derive gives "support"
-        assert!(!case_type_matches_pipeline(Some(" support"), &p));
+        assert_eq!(
+            derive_case_type(&p_local),
+            canonical::derive_case_type(&p_canonical),
+        );
+        assert_eq!(
+            case_type_matches_pipeline(Some("support"), &p_local),
+            canonical::case_type_matches_pipeline(Some("support"), &p_canonical),
+        );
     }
 }

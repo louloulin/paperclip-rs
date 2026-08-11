@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
+use crate::{LiveEvent, RealtimeHandle};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use crate::{LiveEvent, RealtimeHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
@@ -20,7 +20,10 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientFrame {
     /// 订阅（可选按 company_id 过滤）
-    Subscribe { #[serde(default)] company_id: Option<Uuid> },
+    Subscribe {
+        #[serde(default)]
+        company_id: Option<Uuid>,
+    },
     /// 心跳
     Ping,
 }
@@ -60,7 +63,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
     let mut rx = state.realtime.subscribe();
 
     // 1. 发送 Welcome
-    let welcome = ServerFrame::Welcome { client_id, server: &state.server_name };
+    let welcome = ServerFrame::Welcome {
+        client_id,
+        server: &state.server_name,
+    };
     if let Ok(s) = serde_json::to_string(&welcome) {
         if sender.send(Message::Text(s)).await.is_err() {
             return;

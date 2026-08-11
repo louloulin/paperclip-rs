@@ -93,10 +93,7 @@ pub enum RetentionHookEvent {
         cutoff: DateTime<Utc>,
     },
     /// sweep 失败（错误已被吞咽，但可通知上层）。
-    SweepFailed {
-        retention_days: i64,
-        error: String,
-    },
+    SweepFailed { retention_days: i64, error: String },
 }
 
 /// 扩展点 —— 让上层（telemetry / metrics / admin UI）监听 sweep 生命周期事件。
@@ -150,10 +147,7 @@ impl<B: PruneBackend> PluginLogRetentionService<B> {
     }
 
     pub fn with_hooks(backend: Arc<B>, hooks: Vec<Arc<dyn PluginLogRetentionHook>>) -> Self {
-        Self {
-            backend,
-            hooks,
-        }
+        Self { backend, hooks }
     }
 
     /// 触发一次 sweep，fan-out 钩子。
@@ -315,7 +309,10 @@ impl RecordingRetentionHook {
     }
 
     pub fn events_snapshot(&self) -> Vec<RetentionHookEvent> {
-        self.events.try_lock().map(|g| g.clone()).unwrap_or_default()
+        self.events
+            .try_lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -420,10 +417,7 @@ mod tests {
         assert_eq!(deleted, 42);
         let events = recorder.events_snapshot_async().await;
         assert_eq!(events.len(), 2);
-        assert!(matches!(
-            events[0],
-            RetentionHookEvent::SweepStarted { .. }
-        ));
+        assert!(matches!(events[0], RetentionHookEvent::SweepStarted { .. }));
         assert!(matches!(
             events[1],
             RetentionHookEvent::SweepCompleted { .. }
@@ -446,9 +440,8 @@ mod tests {
         );
         assert!(svc.sweep(7).await.is_err());
         let events = recorder.events_snapshot_async().await;
-        assert!(events.iter().any(|e| matches!(
-            e,
-            RetentionHookEvent::SweepFailed { .. }
-        )));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RetentionHookEvent::SweepFailed { .. })));
     }
 }

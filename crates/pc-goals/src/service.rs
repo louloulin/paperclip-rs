@@ -135,7 +135,11 @@ impl CreateGoal {
         }
         Ok(NormalizedCreate {
             title,
-            description: self.description.as_deref().map(str::trim).map(str::to_owned),
+            description: self
+                .description
+                .as_deref()
+                .map(str::trim)
+                .map(str::to_owned),
         })
     }
 }
@@ -253,11 +257,7 @@ impl GoalService {
             .map_err(map_repo_error)
     }
 
-    pub async fn count_by_status(
-        &self,
-        company_id: Uuid,
-        status: GoalStatus,
-    ) -> Result<i64> {
+    pub async fn count_by_status(&self, company_id: Uuid, status: GoalStatus) -> Result<i64> {
         GoalRepo::new(&self.db)
             .count_by_status(company_id, status)
             .await
@@ -268,15 +268,9 @@ impl GoalService {
     /// 1. active company-level root goal
     /// 2. any company-level root goal
     /// 3. any company-level goal (non-root fallback)
-    pub async fn get_default_company_goal(
-        &self,
-        company_id: Uuid,
-    ) -> Result<Option<GoalRow>> {
+    pub async fn get_default_company_goal(&self, company_id: Uuid) -> Result<Option<GoalRow>> {
         let repo = GoalRepo::new(&self.db);
-        let rows = repo
-            .list_roots(company_id)
-            .await
-            .map_err(map_repo_error)?;
+        let rows = repo.list_roots(company_id).await.map_err(map_repo_error)?;
         if let Some(active) = rows
             .iter()
             .find(|g| g.level == "company" && g.status == "active")
@@ -393,10 +387,9 @@ impl GoalService {
         // dispatch event(s) — if parent changed, emit ParentChanged; otherwise
         // if status changed emit StatusChanged; if either or both changed,
         // also emit Updated.
-        let parent_changed = repo_patch.parent_id.is_some()
-            && existing.parent_id != updated.parent_id;
-        let status_changed =
-            repo_patch.status.is_some() && existing.status != updated.status;
+        let parent_changed =
+            repo_patch.parent_id.is_some() && existing.parent_id != updated.parent_id;
+        let status_changed = repo_patch.status.is_some() && existing.status != updated.status;
 
         if parent_changed {
             self.dispatch(GoalHookEvent::ParentChanged {
@@ -430,7 +423,11 @@ impl GoalService {
 
     pub async fn delete(&self, company_id: Uuid, goal_id: Uuid) -> Result<bool> {
         let repo = GoalRepo::new(&self.db);
-        let existing = match repo.get(company_id, goal_id).await.map_err(map_repo_error)? {
+        let existing = match repo
+            .get(company_id, goal_id)
+            .await
+            .map_err(map_repo_error)?
+        {
             Some(row) => row,
             None => return Ok(false),
         };

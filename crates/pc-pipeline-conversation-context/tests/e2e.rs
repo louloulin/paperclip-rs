@@ -1,15 +1,15 @@
 //! R727: e2e for `pc-pipeline-conversation-context` against real Postgres.
 
+use pc_core::source_trust_resolver::{
+    build_low_trust_source_trust, LowTrustSourceTrustInput, SourceTrustMetadata,
+    LOW_TRUST_QUARANTINED_BODY,
+};
 use pc_pipeline_conversation_context::{
     format_pipeline_conversation_body_document_context_markdown,
     load_pipeline_conversation_body_document_context, LoadPipelineContextInput,
     MAX_CONTEXT_BODY_CHARS,
 };
 use pc_repos::Db;
-use pc_core::source_trust_resolver::{
-    build_low_trust_source_trust, LowTrustSourceTrustInput, SourceTrustMetadata,
-    LOW_TRUST_QUARANTINED_BODY,
-};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -33,7 +33,12 @@ async fn insert_company(pool: &PgPool, tag: &str) -> Uuid {
     let prefix = format!(
         "R727{}-{}",
         tag,
-        Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>()
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
     );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
@@ -53,7 +58,12 @@ async fn insert_issue(pool: &PgPool, company_id: Uuid, tag: &str) -> Uuid {
     let identifier = format!(
         "R727-{}-{}",
         tag,
-        Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>()
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(6)
+            .collect::<String>()
     );
     sqlx::query(
         "INSERT INTO issues (id, company_id, identifier, title, status, priority, created_at, updated_at) \
@@ -219,7 +229,6 @@ async fn cleanup(pool: &PgPool, company_id: Uuid) {
         .await;
 }
 
-
 async fn insert_pipeline(pool: &PgPool, company_id: Uuid, tag: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
@@ -228,7 +237,15 @@ async fn insert_pipeline(pool: &PgPool, company_id: Uuid, tag: &str) -> Uuid {
     )
     .bind(id)
     .bind(company_id)
-    .bind(format!("R727-pl-{tag}-{}", Uuid::new_v4().simple().to_string().chars().take(6).collect::<String>()))
+    .bind(format!(
+        "R727-pl-{tag}-{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(6)
+            .collect::<String>()
+    ))
     .bind(format!("R727 pipeline {tag}"))
     .execute(pool)
     .await
@@ -250,7 +267,13 @@ async fn insert_pipeline_stage(pool: &PgPool, pipeline_id: Uuid) -> Uuid {
     id
 }
 
-async fn insert_pipeline_case(pool: &PgPool, company_id: Uuid, pipeline_id: Uuid, stage_id: Uuid, tag: &str) -> Uuid {
+async fn insert_pipeline_case(
+    pool: &PgPool,
+    company_id: Uuid,
+    pipeline_id: Uuid,
+    stage_id: Uuid,
+    tag: &str,
+) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO pipeline_cases (id, company_id, pipeline_id, stage_id, case_key, title, fields, version, created_at, updated_at) \
@@ -267,7 +290,6 @@ async fn insert_pipeline_case(pool: &PgPool, company_id: Uuid, pipeline_id: Uuid
     .expect("insert case");
     id
 }
-
 
 async fn setup_case_with_body(
     pool: &PgPool,
@@ -311,7 +333,8 @@ async fn loads_body_document_with_high_trust() {
     let _guard = TEST_LOCK.lock().await;
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool, "high").await;
-    let (case_id, doc_id, rev_id) = setup_case_with_body(&pool, company_id, "high", "safe body content", None).await;
+    let (case_id, doc_id, rev_id) =
+        setup_case_with_body(&pool, company_id, "high", "safe body content", None).await;
 
     let ctx = load_pipeline_conversation_body_document_context(
         &db,
@@ -368,7 +391,10 @@ async fn redacts_low_trust_body_on_load() {
 
     let body = ctx.body_document.expect("body document");
     assert_eq!(body.latest_body, LOW_TRUST_QUARANTINED_BODY);
-    assert_eq!(body.source_trust.as_ref().map(|t| &t.preset), Some(&trust.preset));
+    assert_eq!(
+        body.source_trust.as_ref().map(|t| &t.preset),
+        Some(&trust.preset)
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -379,7 +405,8 @@ async fn loads_threads_and_comments_for_conversation_issue() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool, "thr").await;
     let issue_id = insert_issue(&pool, company_id, "thr").await;
-    let (case_id, doc_id, rev_id) = setup_case_with_body(&pool, company_id, "thr", "body", None).await;
+    let (case_id, doc_id, rev_id) =
+        setup_case_with_body(&pool, company_id, "thr", "body", None).await;
 
     let t1 = insert_thread(&pool, company_id, issue_id, doc_id, rev_id).await;
     let _t2 = insert_thread(&pool, company_id, issue_id, doc_id, rev_id).await;
@@ -434,7 +461,16 @@ async fn low_trust_body_redacts_anchor_text_but_keeps_high_trust_comment() {
     .await;
 
     let thread_id = insert_thread(&pool, company_id, issue_id, doc_id, rev_id).await;
-    insert_comment(&pool, company_id, issue_id, doc_id, thread_id, "high trust comment", None).await;
+    insert_comment(
+        &pool,
+        company_id,
+        issue_id,
+        doc_id,
+        thread_id,
+        "high trust comment",
+        None,
+    )
+    .await;
 
     let ctx = load_pipeline_conversation_body_document_context(
         &db,
@@ -508,8 +544,8 @@ async fn markdown_rendering_for_loaded_context() {
     .await
     .expect("load");
 
-    let md = format_pipeline_conversation_body_document_context_markdown(Some(&ctx))
-        .expect("markdown");
+    let md =
+        format_pipeline_conversation_body_document_context_markdown(Some(&ctx)).expect("markdown");
     assert!(md.contains("## Pipeline Item Body Document"));
     assert!(md.contains(&case_id.to_string()));
     assert!(md.contains("hello world"));
@@ -532,7 +568,8 @@ async fn preserves_threads_ordering() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool, "ord").await;
     let issue_id = insert_issue(&pool, company_id, "ord").await;
-    let (case_id, doc_id, rev_id) = setup_case_with_body(&pool, company_id, "ord", "body", None).await;
+    let (case_id, doc_id, rev_id) =
+        setup_case_with_body(&pool, company_id, "ord", "body", None).await;
 
     // Insert threads; SQL orders by updated_at DESC, id DESC.
     let t_early = insert_thread(&pool, company_id, issue_id, doc_id, rev_id).await;

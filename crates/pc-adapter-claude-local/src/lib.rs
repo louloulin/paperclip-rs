@@ -19,6 +19,7 @@ pub mod claude_errors;
 pub mod claude_models;
 pub mod claude_permissions;
 pub mod claude_prompt_cache;
+pub mod claude_remote_config;
 pub mod claude_session_resume;
 pub mod claude_stream_json;
 pub mod claude_test;
@@ -481,19 +482,80 @@ impl ClaudeLocalAdapter {
                 .emit(pc_adapter_api::AdapterEvent::stdout(line.clone()))
                 .await;
         }
+        let mut env = execution_env.env;
+
+        // R596：对齐 Node execute.ts 的 managed Claude config 分支。
+        // 先同步本地托管 seed，再在远端创建运行级 config，并在 bridge
+        // 启动前设置 CLAUDE_CONFIG_DIR，确保 Claude CLI 继承最终路径。
+        let runtime_execution_target = pc_acpx::execution_target::read_adapter_execution_target(
+            context.execution_target.as_ref(),
+            None,
+        );
+        let explicit_claude_config_dir = context
+            .adapter_config
+            .get("env")
+            .and_then(Value::as_object)
+            .and_then(|config_env| config_env.get("CLAUDE_CONFIG_DIR"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(target) = runtime_execution_target.as_ref() {
+            if execution_target_decision.is_remote && explicit_claude_config_dir.is_none() {
+                let company_id = context.env.get("PAPERCLIP_COMPANY_ID").map(String::as_str);
+                let local_seed_dir = crate::claude_config::resolve_managed_claude_config_seed_dir(
+                    &context.env,
+                    company_id,
+                )
+                .map_err(|error| AdapterError::InvalidConfiguration(error.to_string()))?;
+                let remote_cwd = pc_acpx::execution_target::adapter_execution_target_remote_cwd(
+                    Some(target),
+                    &execution_target_decision.execution_cwd,
+                );
+                let remote_runtime_root = pc_acpx::remote_managed_runtime::resolve_runtime_root_dir(
+                    &remote_cwd,
+                    "claude",
+                );
+                let remote_seed_dir = format!("{remote_runtime_root}/config-seed");
+                let remote_config_dir = format!("{remote_runtime_root}/config");
+                let _ = events
+                    .clone()
+                    .emit(pc_adapter_api::AdapterEvent::stdout(format!(
+                        "[paperclip] Materializing Claude auth/config into {remote_config_dir}.\n"
+                    )))
+                    .await;
+                let materialization =
+                    crate::claude_remote_config::stage_and_materialize_remote_claude_config(
+                        target,
+                        std::path::Path::new(&local_seed_dir),
+                        &crate::claude_remote_config::RemoteClaudeConfigMaterializationInput {
+                            remote_cwd,
+                            remote_claude_config_dir: remote_config_dir.clone(),
+                            remote_claude_config_seed_dir: remote_seed_dir,
+                            env: env.clone(),
+                            timeout_ms: timeout_sec.unwrap_or(15.0).max(15.0).mul_add(1000.0, 0.0)
+                                as u64,
+                        },
+                    )
+                    .await
+                    .map_err(AdapterError::InvalidConfiguration)?;
+                let _ = materialization;
+                env.insert("CLAUDE_CONFIG_DIR".to_string(), remote_config_dir);
+            }
+        }
+
         // R492：真实 bridge 启动（对齐 Node claude execute.ts 的
         // `startAdapterExecutionTargetPaperclipBridge` 分支）。SSH target →
-        // 完整启动；sandbox / 本地 → None（保持 env-only）。
+        // 完整启动；sandbox / 本地 → None（保持 env-only）。配置物化必须
+        // 先完成，随后 bridge env 才覆盖 PAPERCLIP_* 键。
         let mut started_bridge: Option<pc_acpx::bridge_executor::StartedAdapterBridge> = None;
-        let env = if execution_env.bridge_plan.is_some() {
+        if execution_env.bridge_plan.is_some() {
             let events_for_bridge_log = events.clone();
             match crate::claude_remote_workspace::start_claude_execution_bridge(
                 &context.run_id.to_string(),
-                &context.env,
+                &env,
                 context.execution_target.as_ref(),
                 timeout_sec,
                 Some(Arc::new(move |line: &str| {
-                    // 启动日志经 events sink 下发（对齐 Node onLog 同步回调）。
                     let sink = events_for_bridge_log.clone();
                     let line = line.to_string();
                     tokio::spawn(async move {
@@ -504,9 +566,6 @@ impl ClaudeLocalAdapter {
             .await
             {
                 Ok(Some(bridge)) => {
-                    // 真实 bridge env 覆盖（对齐 Node
-                    // `Object.assign(env, paperclipBridge.env)`）。
-                    let mut env = execution_env.env;
                     for (key, value) in &bridge.env {
                         env.insert(key.clone(), value.clone());
                     }
@@ -518,14 +577,12 @@ impl ClaudeLocalAdapter {
                         ))
                         .await;
                     started_bridge = Some(bridge);
-                    env
                 }
-                Ok(None) => execution_env.env,
+                Ok(None) => {}
                 Err(error) => return Err(AdapterError::InvalidConfiguration(error)),
             }
-        } else {
-            execution_env.env
-        };
+        }
+
         // R493：process session bridge（对齐 Node execute.ts
         // `useRemoteProcessSession` 分支 + `settleRemoteBridgeStarts`）。
         // Rust sandbox target 尚无 provider runner，gate 的

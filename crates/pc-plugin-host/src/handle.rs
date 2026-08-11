@@ -58,9 +58,18 @@ impl WorkerState {
         }
         match self {
             Self::Starting => matches!(next, Self::Ready | Self::Failed | Self::Error),
-            Self::Ready => matches!(next, Self::Busy | Self::Running | Self::Stopping | Self::Error | Self::Crashed),
-            Self::Busy | Self::Running => matches!(next, Self::Ready | Self::Stopping | Self::Error | Self::Crashed),
-            Self::Error => matches!(next, Self::Starting | Self::Stopping | Self::Failed | Self::Crashed),
+            Self::Ready => matches!(
+                next,
+                Self::Busy | Self::Running | Self::Stopping | Self::Error | Self::Crashed
+            ),
+            Self::Busy | Self::Running => matches!(
+                next,
+                Self::Ready | Self::Stopping | Self::Error | Self::Crashed
+            ),
+            Self::Error => matches!(
+                next,
+                Self::Starting | Self::Stopping | Self::Failed | Self::Crashed
+            ),
             Self::Stopping => matches!(next, Self::Stopped | Self::Failed),
             Self::Stopped | Self::Failed | Self::Crashed => matches!(next, Self::Starting),
         }

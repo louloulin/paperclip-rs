@@ -14,6 +14,8 @@ chrono = { workspace = true }
 pc-core = { path = "../pc-core" }
 pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
+pc-mentions = { path = "../pc-mentions" }
+pc-external-objects = { path = "../pc-external-objects" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

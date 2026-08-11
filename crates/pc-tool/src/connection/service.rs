@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use pc_errors::{internal, Error as PcError, Result as PcResult};
-use pc_repos::{tool_connection::{ToolConnectionRepo, ToolConnectionRow}, Db};
+use pc_repos::{
+    tool_connection::{ToolConnectionRepo, ToolConnectionRow},
+    Db,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;

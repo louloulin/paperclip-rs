@@ -42,7 +42,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("D{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "D{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -129,7 +137,8 @@ async fn r608_create_dispatches_created() {
             format: None,
             body: "# Title
 
-Hello.".into(),
+Hello."
+                .into(),
             created_by_user_id: Some("u1".into()),
             created_by_agent_id: None,
         })
@@ -378,7 +387,11 @@ async fn r608_restore_revision_creates_new_revision() {
     assert_eq!(new_rev.revision_number, 3, "create rev 3 from rev 1");
     assert_eq!(new_rev.body, "first", "restored body matches rev 1");
 
-    let after = svc.get_in_company(company_id, row.id).await.expect("get").expect("some");
+    let after = svc
+        .get_in_company(company_id, row.id)
+        .await
+        .expect("get")
+        .expect("some");
     assert_eq!(after.latest_body, "first");
     assert_eq!(after.latest_revision_number, 3);
 
@@ -619,10 +632,7 @@ async fn r608_annotation_comment_validates_author_type() {
         .expect("create comment");
     assert_eq!(comment.body, "first comment");
 
-    let comments = svc
-        .list_annotation_comments(thread.id)
-        .await
-        .expect("list");
+    let comments = svc.list_annotation_comments(thread.id).await.expect("list");
     assert_eq!(comments.len(), 1);
 
     cleanup(&pool, company_id).await;

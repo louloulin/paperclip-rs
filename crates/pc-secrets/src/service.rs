@@ -315,7 +315,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.as_deref(), Some("cached-value"));
-        assert_eq!(called.load(Ordering::SeqCst), 0, "loader should not run on cache hit");
+        assert_eq!(
+            called.load(Ordering::SeqCst),
+            0,
+            "loader should not run on cache hit"
+        );
     }
 
     #[tokio::test]
@@ -341,7 +345,11 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(r2.as_deref(), Some("loader-value"), "second call should be cached");
+        assert_eq!(
+            r2.as_deref(),
+            Some("loader-value"),
+            "second call should be cached"
+        );
         assert_eq!(called.load(Ordering::SeqCst), 1);
     }
 
@@ -393,7 +401,9 @@ mod tests {
         let cid = uuid::Uuid::new_v4();
         let sid = uuid::Uuid::new_v4();
         s.cache.put(&cache_key(cid, sid), "sync-cached");
-        let r = s.resolve_cached_sync(cid, sid, || Ok(Some("loader".into()))).unwrap();
+        let r = s
+            .resolve_cached_sync(cid, sid, || Ok(Some("loader".into())))
+            .unwrap();
         assert_eq!(r.as_deref(), Some("sync-cached"));
     }
 
@@ -439,7 +449,10 @@ mod tests {
     fn r570_cache_key_format() {
         let cid = uuid::Uuid::nil();
         let sid = uuid::Uuid::nil();
-        assert_eq!(cache_key(cid, sid), "secret:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000");
+        assert_eq!(
+            cache_key(cid, sid),
+            "secret:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000"
+        );
     }
 
     #[test]

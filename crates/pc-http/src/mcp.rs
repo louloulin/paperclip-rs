@@ -158,14 +158,14 @@ pub fn parse_sse_events(body_text: &str) -> Vec<std::collections::HashMap<String
 ///
 /// 返回：找到的 JSON 解析值；如果 `data:` 都不可解析为 JSON-RPC，则回退到第一个解析成功的值；
 /// 如果 `data:` 全部解析失败，抛 [`McpHttpError::NoDataEvents`]。
-pub fn first_json_rpc_from_events(
-    body_text: &str,
-) -> McpHttpResult<Value> {
+pub fn first_json_rpc_from_events(body_text: &str) -> McpHttpResult<Value> {
     let events = parse_sse_events(body_text);
     let mut last_error: Option<String> = None;
     let mut first_parsed: Option<Value> = None;
     for event in &events {
-        let Some(data) = event.get(SSE_FIELD_DATA) else { continue };
+        let Some(data) = event.get(SSE_FIELD_DATA) else {
+            continue;
+        };
         let parsed: Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(e) => {
@@ -199,18 +199,25 @@ pub fn first_json_rpc_from_events(
 /// - `contentType` 含 `text/event-stream` → SSE 解析
 /// - 否则 → 直接 `JSON.parse(bodyText)`
 /// - 异常包装到 [`McpHttpError`]
-pub fn parse_mcp_http_response_body(body_text: &str, content_type: Option<&str>) -> McpHttpResult<Value> {
+pub fn parse_mcp_http_response_body(
+    body_text: &str,
+    content_type: Option<&str>,
+) -> McpHttpResult<Value> {
     let is_event_stream = content_type
         .map(|ct| ct.to_lowercase().contains("text/event-stream"))
         .unwrap_or(false);
     if !is_event_stream {
-        return serde_json::from_str(body_text).map_err(|e| McpHttpError::ParseError(e.to_string()));
+        return serde_json::from_str(body_text)
+            .map_err(|e| McpHttpError::ParseError(e.to_string()));
     }
     first_json_rpc_from_events(body_text)
 }
 
 /// 同 [`parse_mcp_http_response_body`] 但返回 `serde_json::Value` (与签名一致)。
-pub fn parse_mcp_http_response_value(body_text: &str, content_type: Option<&str>) -> McpHttpResult<Value> {
+pub fn parse_mcp_http_response_value(
+    body_text: &str,
+    content_type: Option<&str>,
+) -> McpHttpResult<Value> {
     parse_mcp_http_response_body(body_text, content_type)
 }
 
@@ -260,7 +267,9 @@ mod tests {
     fn r681_looks_like_json_rpc_message_matches_node() {
         assert!(looks_like_json_rpc_message(&json!({"result": 1})));
         assert!(looks_like_json_rpc_message(&json!({"error": {"code": 1}})));
-        assert!(looks_like_json_rpc_message(&json!({"method": "tools/list"})));
+        assert!(looks_like_json_rpc_message(
+            &json!({"method": "tools/list"})
+        ));
         assert!(looks_like_json_rpc_message(&json!({"id": 1})));
         assert!(!looks_like_json_rpc_message(&json!({"foo": "bar"})));
         assert!(!looks_like_json_rpc_message(&json!(null)));
@@ -315,8 +324,7 @@ mod tests {
     #[test]
     fn r681_parse_sse_response_body_with_json_rpc_message() {
         let body = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
-        let v = parse_mcp_http_response_body(body, Some("text/event-stream"))
-            .expect("parse sse");
+        let v = parse_mcp_http_response_body(body, Some("text/event-stream")).expect("parse sse");
         assert_eq!(v["jsonrpc"], "2.0");
         assert_eq!(v["id"], 1);
     }
@@ -325,15 +333,13 @@ mod tests {
     fn r681_parse_sse_response_body_picks_first_json_rpc() {
         // 两个 events，第一个不是 JSON-RPC (heartbeat)，第二个是
         let body = "data: heartbeat\n\ndata: {\"id\":2,\"result\":42}\n\n";
-        let v = parse_mcp_http_response_body(body, Some("text/event-stream"))
-            .expect("parse sse");
+        let v = parse_mcp_http_response_body(body, Some("text/event-stream")).expect("parse sse");
         assert_eq!(v["id"], 2);
         assert_eq!(v["result"], 42);
     }
 
     #[test]
-    fn r681_empty_sse_body_returns_error()
-    {
+    fn r681_empty_sse_body_returns_error() {
         let body = "";
         let err = parse_mcp_http_response_body(body, Some("text/event-stream")).unwrap_err();
         match err {
@@ -380,8 +386,7 @@ mod tests {
     #[test]
     fn r681_crlf_in_sse_body_normalized() {
         let body = "data: {\"id\":1}\r\n\r\n";
-        let v = parse_mcp_http_response_body(body, Some("text/event-stream"))
-            .expect("crlf parse");
+        let v = parse_mcp_http_response_body(body, Some("text/event-stream")).expect("crlf parse");
         assert_eq!(v["id"], 1);
     }
 

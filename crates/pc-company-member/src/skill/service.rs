@@ -305,16 +305,34 @@ impl CompanySkillService {
                 "key, slug, and name are required for fork".into(),
             ));
         }
-        let _ = new_key; let _ = new_slug; // repo generates fork-specific key/slug
-        if let Some(s) = created_by_user_id { if s.trim().is_empty() { return Err(CompanySkillError::Validation("userId must not be empty".into())); } }
+        let _ = new_key;
+        let _ = new_slug; // repo generates fork-specific key/slug
+        if let Some(s) = created_by_user_id {
+            if s.trim().is_empty() {
+                return Err(CompanySkillError::Validation(
+                    "userId must not be empty".into(),
+                ));
+            }
+        }
         let new_id = Uuid::new_v4();
-        self.repo().fork_from_skill(target_company_id, source_skill_id, new_id, new_name).await?;
+        self.repo()
+            .fork_from_skill(target_company_id, source_skill_id, new_id, new_name)
+            .await?;
         // Update creator on the new row
         if let Some(uid) = created_by_user_id {
-            sqlx::query("UPDATE company_skills SET created_by_user_id=$1, updated_at=now() WHERE id=$2")
-                .bind(uid).bind(new_id).execute(self.db.pool()).await?;
+            sqlx::query(
+                "UPDATE company_skills SET created_by_user_id=$1, updated_at=now() WHERE id=$2",
+            )
+            .bind(uid)
+            .bind(new_id)
+            .execute(self.db.pool())
+            .await?;
         }
-        let row = self.repo().get(target_company_id, new_id).await?.ok_or(CompanySkillError::NotFound(new_id))?;
+        let row = self
+            .repo()
+            .get(target_company_id, new_id)
+            .await?
+            .ok_or(CompanySkillError::NotFound(new_id))?;
         self.dispatch(CompanySkillHookEvent::Forked {
             company_id: target_company_id,
             skill_id: row.id,
@@ -331,7 +349,9 @@ impl CompanySkillService {
         if user_id.trim().is_empty() {
             return Err(CompanySkillError::Validation("userId is required".into()));
         }
-        self.repo().star(company_id, skill_id, None, Some(user_id)).await?;
+        self.repo()
+            .star(company_id, skill_id, None, Some(user_id))
+            .await?;
         self.dispatch(CompanySkillHookEvent::Starred {
             company_id,
             skill_id,
@@ -347,7 +367,9 @@ impl CompanySkillService {
         if user_id.trim().is_empty() {
             return Err(CompanySkillError::Validation("userId is required".into()));
         }
-        self.repo().unstar(company_id, skill_id, None, Some(user_id)).await?;
+        self.repo()
+            .unstar(company_id, skill_id, None, Some(user_id))
+            .await?;
         self.dispatch(CompanySkillHookEvent::Unstarred {
             company_id,
             skill_id,
@@ -370,7 +392,9 @@ impl CompanySkillService {
                 "name must not be empty".into(),
             ));
         }
-        if !self.repo().rename_skill(company_id, id, new_name).await? { return Err(CompanySkillError::NotFound(id)); }
+        if !self.repo().rename_skill(company_id, id, new_name).await? {
+            return Err(CompanySkillError::NotFound(id));
+        }
         let row = self
             .repo()
             .get(company_id, id)

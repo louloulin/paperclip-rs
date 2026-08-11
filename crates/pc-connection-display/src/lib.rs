@@ -32,15 +32,13 @@ pub struct HumanizableConnection {
 
 /// Match a bare IPv4 address with optional `:port`.
 /// Mirrors Node upstream: `^\d{1,3}(\.\d{1,3}){3}(:\d+)?$`
-static IPV4_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$").expect("valid regex pattern")
-});
+static IPV4_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$").expect("valid regex pattern"));
 
 /// Match `host:port` (no scheme).
 /// Mirrors Node upstream: `^[a-z0-9.-]+:\d+$`
-static HOST_PORT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-z0-9.-]+:\d+$").expect("valid regex pattern")
-});
+static HOST_PORT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-z0-9.-]+:\d+$").expect("valid regex pattern"));
 
 /// Optional overrides for [`humanize_connection_display_name`].
 #[derive(Debug, Clone, Default)]
@@ -115,7 +113,10 @@ fn title_case_identifier(value: &str) -> String {
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();
-            let first = chars.next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+            let first = chars
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_default();
             format!("{first}{}", chars.as_str().to_lowercase())
         })
         .collect::<Vec<String>>()
@@ -138,7 +139,9 @@ fn plugin_package_label(raw: &str) -> Option<String> {
         leaf = leaf[idx + 1..].to_string();
     }
     // Drop the `plugin-` / `plugin_` scaffolding leftover.
-    if leaf.len() > 7 && (leaf[..7].eq_ignore_ascii_case("plugin-") || leaf[..7].eq_ignore_ascii_case("plugin_")) {
+    if leaf.len() > 7
+        && (leaf[..7].eq_ignore_ascii_case("plugin-") || leaf[..7].eq_ignore_ascii_case("plugin_"))
+    {
         leaf = leaf[7..].to_string();
     } else if leaf.len() > 7 && leaf.to_lowercase().starts_with("plugin") {
         // Shorter forms like `pluginX` — fallback: keep as-is
@@ -233,10 +236,7 @@ pub fn connection_display_secondary_hint(input: ConnectionInput<'_>) -> Option<S
 
 /// Convenience wrapper for the raw-string form.
 #[must_use]
-pub fn humanize_connection_display_name_str(
-    raw: &str,
-    options: &HumanizeOptions,
-) -> String {
+pub fn humanize_connection_display_name_str(raw: &str, options: &HumanizeOptions) -> String {
     humanize_connection_display_name(ConnectionInput::Raw(raw), options)
 }
 
@@ -256,10 +256,22 @@ mod tests {
     #[test]
     fn r529_hides_raw_ips_and_hosts_behind_generic_label() {
         let opts = HumanizeOptions::new();
-        assert_eq!(humanize_connection_display_name_str("127.0.0.1", &opts), "Custom app");
-        assert_eq!(humanize_connection_display_name_str("127.0.0.1:8931", &opts), "Custom app");
-        assert_eq!(humanize_connection_display_name_str("localhost", &opts), "Custom app");
-        assert_eq!(humanize_connection_display_name_str("example.com:8080", &opts), "Custom app");
+        assert_eq!(
+            humanize_connection_display_name_str("127.0.0.1", &opts),
+            "Custom app"
+        );
+        assert_eq!(
+            humanize_connection_display_name_str("127.0.0.1:8931", &opts),
+            "Custom app"
+        );
+        assert_eq!(
+            humanize_connection_display_name_str("localhost", &opts),
+            "Custom app"
+        );
+        assert_eq!(
+            humanize_connection_display_name_str("example.com:8080", &opts),
+            "Custom app"
+        );
         assert_eq!(
             humanize_connection_display_name_str("https://mcp.example.com/sse", &opts),
             "Custom app"
@@ -274,10 +286,7 @@ mod tests {
             "Briefs"
         );
         assert_eq!(
-            humanize_connection_display_name_str(
-                "Plugin: acme.plugin-weekly-report",
-                &opts
-            ),
+            humanize_connection_display_name_str("Plugin: acme.plugin-weekly-report", &opts),
             "Weekly Report"
         );
     }
@@ -311,8 +320,14 @@ mod tests {
     #[test]
     fn r529_passes_through_normal_human_app_names() {
         let opts = HumanizeOptions::new();
-        assert_eq!(humanize_connection_display_name_str("Zapier", &opts), "Zapier");
-        assert_eq!(humanize_connection_display_name_str("Notion", &opts), "Notion");
+        assert_eq!(
+            humanize_connection_display_name_str("Zapier", &opts),
+            "Zapier"
+        );
+        assert_eq!(
+            humanize_connection_display_name_str("Notion", &opts),
+            "Notion"
+        );
         assert_eq!(
             humanize_connection_display_name_str("Google Drive", &opts),
             "Google Drive"
@@ -343,12 +358,15 @@ mod tests {
         let conn = HumanizableConnection {
             name: "Plugin: acme.plugin-briefs".to_string(),
         };
+        assert_eq!(humanize_connection_display_name_obj(&conn, &opts), "Briefs");
         assert_eq!(
-            humanize_connection_display_name_obj(&conn, &opts),
-            "Briefs"
+            humanize_connection_display_name_str("", &opts),
+            "Custom app"
         );
-        assert_eq!(humanize_connection_display_name_str("", &opts), "Custom app");
-        assert_eq!(humanize_connection_display_name_str("  ", &opts), "Custom app");
+        assert_eq!(
+            humanize_connection_display_name_str("  ", &opts),
+            "Custom app"
+        );
     }
 
     #[test]
@@ -410,12 +428,18 @@ mod tests {
         let conn = HumanizableConnection {
             name: "Zapier".to_string(),
         };
-        assert_eq!(connection_display_secondary_hint(ConnectionInput::Object(&conn)), None);
+        assert_eq!(
+            connection_display_secondary_hint(ConnectionInput::Object(&conn)),
+            None
+        );
         assert_eq!(
             connection_display_secondary_hint(ConnectionInput::Raw("Plugin: acme.plugin-briefs")),
             None
         );
-        assert_eq!(connection_display_secondary_hint(ConnectionInput::Raw("")), None);
+        assert_eq!(
+            connection_display_secondary_hint(ConnectionInput::Raw("")),
+            None
+        );
     }
 
     #[test]
@@ -433,8 +457,14 @@ mod tests {
     fn r529_title_case_identifier_handles_mixed_input() {
         assert_eq!(title_case_identifier("update_note"), "Update Note");
         assert_eq!(title_case_identifier("send-email"), "Send Email");
-        assert_eq!(title_case_identifier("paperclip.briefs"), "Paperclip Briefs");
-        assert_eq!(title_case_identifier("create_issue-event"), "Create Issue Event");
+        assert_eq!(
+            title_case_identifier("paperclip.briefs"),
+            "Paperclip Briefs"
+        );
+        assert_eq!(
+            title_case_identifier("create_issue-event"),
+            "Create Issue Event"
+        );
         assert_eq!(title_case_identifier(""), "");
         assert_eq!(title_case_identifier("---"), "");
         assert_eq!(title_case_identifier("single"), "Single");
@@ -447,7 +477,7 @@ mod tests {
         assert!(!looks_like_network_address("999.999.999")); // only 3 segments
         assert!(!looks_like_network_address("1.2.3")); // only 3 segments
         assert!(!looks_like_network_address("abc.def.ghi.jkl")); // not digits
-        // host:port requires digits after colon
+                                                                 // host:port requires digits after colon
         assert!(!looks_like_network_address("example.com")); // no port
         assert!(looks_like_network_address("example.com:443"));
     }

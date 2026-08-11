@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/adapter-registry-bootstrap.ts`（97 行）1:1 复刻。
 //! （原 `pc-adapter-registry-bootstrap` crate 已下沉到 `pc-adapter-api`）。
 
-
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -111,12 +110,12 @@ pub fn parse_adapter_registry_env(
         })?
     };
 
-    let parsed: serde_json::Value =
-        serde_json::from_str(&raw_text).map_err(|e| RegistryBootstrapError::InvalidJson(e.to_string()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw_text)
+        .map_err(|e| RegistryBootstrapError::InvalidJson(e.to_string()))?;
 
     validate_registry(&parsed)?;
-    let list: AdapterRegistryList =
-        serde_json::from_value(parsed).map_err(|e| RegistryBootstrapError::ValidationFailed(e.to_string()))?;
+    let list: AdapterRegistryList = serde_json::from_value(parsed)
+        .map_err(|e| RegistryBootstrapError::ValidationFailed(e.to_string()))?;
     Ok(Some(list))
 }
 
@@ -127,9 +126,9 @@ fn validate_registry(value: &serde_json::Value) -> RegistryBootstrapResult<()> {
         .ok_or_else(|| RegistryBootstrapError::ValidationFailed("expected array".into()))?;
 
     for (idx, entry) in arr.iter().enumerate() {
-        let obj = entry
-            .as_object()
-            .ok_or_else(|| RegistryBootstrapError::ValidationFailed(format!("[{idx}]: not object")))?;
+        let obj = entry.as_object().ok_or_else(|| {
+            RegistryBootstrapError::ValidationFailed(format!("[{idx}]: not object"))
+        })?;
 
         // adapterType: required, non-empty string
         let adapter_type = obj
@@ -139,7 +138,9 @@ fn validate_registry(value: &serde_json::Value) -> RegistryBootstrapResult<()> {
             })?
             .as_str()
             .ok_or_else(|| {
-                RegistryBootstrapError::ValidationFailed(format!("[{idx}]: adapterType must be string"))
+                RegistryBootstrapError::ValidationFailed(format!(
+                    "[{idx}]: adapterType must be string"
+                ))
             })?;
         if adapter_type.is_empty() {
             return Err(RegistryBootstrapError::ValidationFailed(format!(
@@ -274,8 +275,10 @@ pub fn reconcile_adapter_availability(
     };
 
     let known_types: HashSet<String> = known.list_adapter_types().into_iter().collect();
-    let declared: HashMap<String, &AdapterRegistryEntry> =
-        registry.iter().map(|e| (e.adapter_type.clone(), e)).collect();
+    let declared: HashMap<String, &AdapterRegistryEntry> = registry
+        .iter()
+        .map(|e| (e.adapter_type.clone(), e))
+        .collect();
 
     // 1. declared 中未知 type → 抛错
     let missing: Vec<String> = declared
@@ -284,7 +287,9 @@ pub fn reconcile_adapter_availability(
         .cloned()
         .collect();
     if !missing.is_empty() {
-        return Err(RegistryBootstrapError::UnknownAdapterTypes(missing.join(", ")));
+        return Err(RegistryBootstrapError::UnknownAdapterTypes(
+            missing.join(", "),
+        ));
     }
 
     let mut enabled = Vec::new();
@@ -304,7 +309,11 @@ pub fn reconcile_adapter_availability(
         }
     }
 
-    info!(?enabled, ?disabled, "reconciled adapter availability from PAPERCLIP_ADAPTERS");
+    info!(
+        ?enabled,
+        ?disabled,
+        "reconciled adapter availability from PAPERCLIP_ADAPTERS"
+    );
     Ok(ReconcileResult { enabled, disabled })
 }
 
@@ -349,17 +358,17 @@ mod tests {
 
     #[test]
     fn r711_parse_returns_none_when_env_values_empty() {
-        let env = env_from(&[("PAPERCLIP_ADAPTERS", "  "), ("PAPERCLIP_ADAPTERS_FILE", "  ")]);
+        let env = env_from(&[
+            ("PAPERCLIP_ADAPTERS", "  "),
+            ("PAPERCLIP_ADAPTERS_FILE", "  "),
+        ]);
         let r = parse_adapter_registry_env(&env).unwrap();
         assert!(r.is_none());
     }
 
     #[test]
     fn r711_parse_inline_json_minimal() {
-        let env = env_from(&[(
-            "PAPERCLIP_ADAPTERS",
-            r#"[{"adapterType":"claude_local"}]"#,
-        )]);
+        let env = env_from(&[("PAPERCLIP_ADAPTERS", r#"[{"adapterType":"claude_local"}]"#)]);
         let r = parse_adapter_registry_env(&env).unwrap().unwrap();
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].adapter_type, "claude_local");

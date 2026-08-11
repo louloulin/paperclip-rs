@@ -88,13 +88,19 @@ async fn r587_decision_create_validates_inputs() {
         .create(bad_company, "", "body")
         .await
         .expect_err("empty title rejected");
-    assert!(matches!(err1, pc_decisions::DecisionServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err1,
+        pc_decisions::DecisionServiceError::InvalidInput(_)
+    ));
 
     let err2 = svc
         .create(bad_company, "title", "")
         .await
         .expect_err("empty body rejected");
-    assert!(matches!(err2, pc_decisions::DecisionServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err2,
+        pc_decisions::DecisionServiceError::InvalidInput(_)
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -244,8 +250,7 @@ async fn r587_decision_list_by_company() {
 
     let svc = DecisionService::new(&db, &signing);
     for i in 0..3 {
-        svc
-            .create(company_id, &format!("D{i}"), "body")
+        svc.create(company_id, &format!("D{i}"), "body")
             .await
             .expect("create");
     }

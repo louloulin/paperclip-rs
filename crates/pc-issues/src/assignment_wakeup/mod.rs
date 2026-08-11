@@ -2,7 +2,6 @@
 //!
 //! 对应 Node `server/src/services/issue-assignment-wakeup.ts`。
 
-
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -93,7 +92,9 @@ pub trait Wakeup: Send + Sync {
         &self,
         agent_id: &str,
         options: WakeupOptions,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + '_>>;
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + '_>,
+    >;
 }
 
 /// Issue 信息（最小子集）—— 与 Node 入参 1:1 对齐。

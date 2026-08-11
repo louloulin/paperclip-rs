@@ -125,6 +125,90 @@ pub async fn stage_codex_home_for_sync(
     Ok(staged_home)
 }
 
+/// 安全删除 staging tmpdir，幂等（对齐 Node `fs.rm(..., {recursive, force})`）。
+///
+/// `force=true` 语义：容忍 ENOENT（已被清理）；其他错误吞掉但 `tracing::warn`
+/// （teardown 是 best-effort，绝不 panic）。
+///
+/// 调用模式：
+/// ```ignore
+/// let staged = stage_codex_home_for_sync(...).await?;
+/// // ... run adapter ...
+/// teardown_staged_codex_home(&staged).await; // run 出口调用
+/// ```
+pub async fn teardown_staged_codex_home(staged_home: &Path) {
+    match tokio::fs::remove_dir_all(staged_home).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // 已被清理（force=true 等价）
+        }
+        Err(e) => {
+            eprintln!(
+                "[pc-codex-home-staging] teardown warning: {} (staged_home={}, error={})",
+                "best-effort cleanup failed (non-fatal)",
+                staged_home.display(),
+                e,
+            );
+        }
+    }
+}
+
+/// Drop guard：自动 teardown（绑定到 RAII 生命周期）。
+///
+/// 推荐用法：把 guard 存在 run-state 里；run 结束时自动 Drop 触发
+/// cleanup。无需手工 await。
+///
+/// ```ignore
+/// let staged = stage_codex_home_for_sync(...).await?;
+/// let _guard = StagedCodexHomeGuard::new(staged);
+/// // ... run adapter ...
+/// // _guard drop → 自动 teardown
+/// ```
+pub struct StagedCodexHomeGuard {
+    staged_home: PathBuf,
+    disarmed: bool,
+}
+
+impl StagedCodexHomeGuard {
+    pub fn new(staged_home: PathBuf) -> Self {
+        Self {
+            staged_home,
+            disarmed: false,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.staged_home
+    }
+
+    /// 显式 disarm：阻止 Drop 时 teardown。常用于「我想把 staging 留下供
+    /// 调试 / 留作 artifact」。
+    pub fn disarm(mut self) -> PathBuf {
+        self.disarmed = true;
+        std::mem::replace(&mut self.staged_home, PathBuf::new())
+    }
+}
+
+impl Drop for StagedCodexHomeGuard {
+    fn drop(&mut self) {
+        if self.disarmed || self.staged_home.as_os_str().is_empty() {
+            return;
+        }
+        // 同步删除（Drop 不能 await）；ENOENT 容忍，其他 warn
+        let path = self.staged_home.clone();
+        std::fs::remove_dir_all(&path).unwrap_or_else(|e| {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "[pc-codex-home-staging] Drop teardown warning: {} (staged_home={}, error={})",
+                    "best-effort cleanup failed (non-fatal)",
+                    path.display(),
+                    e,
+                );
+            }
+        });
+    }
+}
+
 /// 拷贝白名单中的一项（文件 / 目录 / 符号链接）到 staging 目录。
 ///
 /// 缺失 / 不可 stat → 跳过（keyring 模式下没有 `auth.json`，某些 home

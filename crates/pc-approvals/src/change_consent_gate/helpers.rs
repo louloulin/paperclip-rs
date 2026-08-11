@@ -4,8 +4,7 @@
 
 use serde_json::Value;
 
-use super::types::{AGENT_PROFILE_CHANGE_CONSENT_FIELDS, mark_result_consumed};
-
+use super::types::{mark_result_consumed, AGENT_PROFILE_CHANGE_CONSENT_FIELDS};
 
 // ============================================================================
 // Target key builders
@@ -181,12 +180,8 @@ fn legacy_target_keys_for(target_key: &str) -> Vec<String> {
 
     if let Some(source) = target_key.strip_prefix("skill-import:") {
         if !source.is_empty() {
-            out.push(format!(
-                "reflection-coach:company-skill-import:{source}"
-            ));
-            out.push(format!(
-                "reflection-coach:company-skill-catalog:{source}"
-            ));
+            out.push(format!("reflection-coach:company-skill-import:{source}"));
+            out.push(format!("reflection-coach:company-skill-catalog:{source}"));
         }
         return out;
     }
@@ -229,16 +224,13 @@ mod tests {
             agent_instructions_change_target_key("a1"),
             "agent:a1:instructions"
         );
-        assert_eq!(
-            agent_profile_change_target_key("a1"),
-            "agent:a1:profile"
-        );
+        assert_eq!(agent_profile_change_target_key("a1"), "agent:a1:profile");
         assert_eq!(skill_change_target_key("s1"), "skill:s1");
-        assert_eq!(skill_slug_change_target_key("my-skill"), "skill-slug:my-skill");
         assert_eq!(
-            skill_import_change_target_key("gh"),
-            "skill-import:gh"
+            skill_slug_change_target_key("my-skill"),
+            "skill-slug:my-skill"
         );
+        assert_eq!(skill_import_change_target_key("gh"), "skill-import:gh");
         assert_eq!(
             skills_scan_projects_change_target_key(),
             "skills:scan-projects"
@@ -268,7 +260,9 @@ mod tests {
             "description": "x",
         })));
         assert!(!touches_agent_profile_change_consent_fields(&json!(null)));
-        assert!(!touches_agent_profile_change_consent_fields(&json!("string")));
+        assert!(!touches_agent_profile_change_consent_fields(&json!(
+            "string"
+        )));
     }
 
     #[test]
@@ -360,9 +354,7 @@ mod tests {
     #[test]
     fn legacy_target_keys_for_preserves_unmatched() {
         // 未匹配的 key 仅返回自身（去重阶段会保留）
-        let r = expand_target_keys_for_legacy_compatibility(&[
-            "some:unknown:target".to_string(),
-        ]);
+        let r = expand_target_keys_for_legacy_compatibility(&["some:unknown:target".to_string()]);
         assert_eq!(r, vec!["some:unknown:target".to_string()]);
     }
 

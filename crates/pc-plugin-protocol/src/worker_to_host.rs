@@ -24,9 +24,8 @@ pub fn parse_params<T: for<'de> Deserialize<'de>>(
     params: Option<Value>,
 ) -> Result<T, JsonRpcError> {
     let value = params.unwrap_or(Value::Null);
-    serde_json::from_value::<T>(value).map_err(|err| {
-        invalid_params(format!("invalid params for worker → host request: {err}"))
-    })
+    serde_json::from_value::<T>(value)
+        .map_err(|err| invalid_params(format!("invalid params for worker → host request: {err}")))
 }
 
 /// 当目标类型 `T` 的所有字段都是 `Option`（例如 `GetStateParams`）时，
@@ -213,11 +212,7 @@ pub struct NotifyResult {
 /// 任何实现都可以 `match` `method` 后转 typed `Params`。
 pub trait WorkerToHostHandler: Send + Sync {
     /// 处理一个 typed worker → host 方法。
-    fn handle(
-        &self,
-        method: &str,
-        params: Option<Value>,
-    ) -> Result<Value, JsonRpcError>;
+    fn handle(&self, method: &str, params: Option<Value>) -> Result<Value, JsonRpcError>;
 }
 
 impl<T> WorkerToHostHandler for T
@@ -364,19 +359,27 @@ mod tests {
     impl WorkerToHostDispatcher for CollectingHandler {
         fn on_progress(&self, params: ProgressParams) -> ProgressResult {
             *self.progress.lock().unwrap() = Some(params);
-            ProgressResult { accepted: Some(true) }
+            ProgressResult {
+                accepted: Some(true),
+            }
         }
         fn on_log(&self, params: LogParams) -> LogResult {
             *self.log.lock().unwrap() = Some(params);
-            LogResult { accepted: Some(true) }
+            LogResult {
+                accepted: Some(true),
+            }
         }
         fn on_emit_event(&self, params: EmitEventParams) -> EmitEventResult {
             *self.emit_event.lock().unwrap() = Some(params);
-            EmitEventResult { delivered: Some(true) }
+            EmitEventResult {
+                delivered: Some(true),
+            }
         }
         fn on_get_state(&self, params: GetStateParams) -> GetStateResult {
             *self.get_state.lock().unwrap() = Some(params);
-            GetStateResult { value: json!({"k":"v"}) }
+            GetStateResult {
+                value: json!({"k":"v"}),
+            }
         }
         fn on_set_state(&self, params: SetStateParams) -> SetStateResult {
             *self.set_state.lock().unwrap() = Some(params);
@@ -384,15 +387,21 @@ mod tests {
         }
         fn on_data_query(&self, params: DataQueryParams) -> DataQueryResult {
             *self.data_query.lock().unwrap() = Some(params);
-            DataQueryResult { rows: json!([1, 2, 3]) }
+            DataQueryResult {
+                rows: json!([1, 2, 3]),
+            }
         }
         fn on_data_mutate(&self, params: DataMutateParams) -> DataMutateResult {
             *self.data_mutate.lock().unwrap() = Some(params);
-            DataMutateResult { result: json!({"ok": true}) }
+            DataMutateResult {
+                result: json!({"ok": true}),
+            }
         }
         fn on_tool_invoke(&self, params: ToolInvokeParams) -> ToolInvokeResult {
             *self.tool_invoke.lock().unwrap() = Some(params);
-            ToolInvokeResult { result: json!("done") }
+            ToolInvokeResult {
+                result: json!("done"),
+            }
         }
         fn on_activity_log(&self, params: ActivityLogParams) -> ActivityLogResult {
             *self.activity_log.lock().unwrap() = Some(params);
@@ -441,7 +450,8 @@ mod tests {
             "resourceId": "00000000-0000-0000-0000-000000000001",
             "data": {"k": "v"}
         });
-        let value = dispatch_worker_to_host_request(m::EMIT_EVENT, Some(params.clone()), &h).unwrap();
+        let value =
+            dispatch_worker_to_host_request(m::EMIT_EVENT, Some(params.clone()), &h).unwrap();
         assert_eq!(value, json!({ "delivered": true }));
         let captured = h.emit_event.lock().unwrap().clone().unwrap();
         assert_eq!(captured.event, "issue.created");
@@ -531,7 +541,8 @@ mod tests {
     #[test]
     fn r563_invalid_params_returns_invalid_params_error() {
         let h = CollectingHandler::default();
-        let err = dispatch_worker_to_host_request(m::PROGRESS, Some(json!("not-an-object")), &h).unwrap_err();
+        let err = dispatch_worker_to_host_request(m::PROGRESS, Some(json!("not-an-object")), &h)
+            .unwrap_err();
         assert_eq!(err.code, JsonRpcErrorCode::InvalidParams.as_i32());
     }
 

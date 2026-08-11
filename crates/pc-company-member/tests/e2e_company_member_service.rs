@@ -36,7 +36,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -79,9 +87,17 @@ async fn insert_membership(pool: &PgPool, company_id: Uuid, user_id: &str, role:
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM \"user\" WHERE id LIKE 'R614u-%'").execute(pool).await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM \"user\" WHERE id LIKE 'R614u-%'")
+        .execute(pool)
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -261,8 +277,14 @@ async fn count_active_and_total() {
     insert_membership(&pool, company_id, &u2, "member").await;
 
     let svc = CompanyMemberService::new(db);
-    let active = svc.count_active_for_company(company_id).await.expect("count_active");
-    let total = svc.count_for_company(company_id).await.expect("count_total");
+    let active = svc
+        .count_active_for_company(company_id)
+        .await
+        .expect("count_active");
+    let total = svc
+        .count_for_company(company_id)
+        .await
+        .expect("count_total");
     assert_eq!(active, 2);
     assert_eq!(total, 2);
 
@@ -305,10 +327,7 @@ async fn list_company_ids_and_principal_user() {
     insert_membership(&pool, company_id, &user_id, "member").await;
 
     let svc = CompanyMemberService::new(db);
-    let ids = svc
-        .list_company_ids_for_user(&user_id)
-        .await
-        .expect("ids");
+    let ids = svc.list_company_ids_for_user(&user_id).await.expect("ids");
     assert!(ids.contains(&company_id));
 
     let active = svc
@@ -339,10 +358,7 @@ async fn replace_user_companies_atomically_swaps_access() {
         .expect("replace");
 
     // c1 membership should be gone; c2 should be present.
-    let ids = svc
-        .list_company_ids_for_user(&user_id)
-        .await
-        .expect("ids");
+    let ids = svc.list_company_ids_for_user(&user_id).await.expect("ids");
     assert!(!ids.contains(&c1));
     assert!(ids.contains(&c2));
 

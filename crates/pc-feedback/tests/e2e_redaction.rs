@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use pc_feedback::{RecordingRedactionHook, RedactionHookEvent, RedactionService};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn redact_bearer_and_jwt() {
@@ -45,7 +45,10 @@ async fn sanitize_value_runs_both() {
 async fn hook_records() {
     let h = Arc::new(RecordingRedactionHook::default());
     let s = RedactionService::with_hooks(vec![h.clone()]);
-    s.redact_async("Authorization: Bearer abcdefghijklmnop").await;
+    s.redact_async("Authorization: Bearer abcdefghijklmnop")
+        .await;
     let snapshot = h.events_snapshot();
-    assert!(snapshot.iter().any(|e| matches!(e, RedactionHookEvent::Redacted { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, RedactionHookEvent::Redacted { .. })));
 }

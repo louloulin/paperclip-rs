@@ -94,10 +94,7 @@ pub fn company_resource(company_id: Uuid) -> Resource {
 ///
 /// 单次 DB 查询:通过 `build_context` 获取 memberships + role +
 /// is_instance_admin 后,在内存中逐 membership 调用 `evaluate`。
-pub async fn enforce_environments_manage(
-    db: &Db,
-    actor: &AuthContext,
-) -> Result<(), AuthzError> {
+pub async fn enforce_environments_manage(db: &Db, actor: &AuthContext) -> Result<(), AuthzError> {
     let ctx = build_context(db, &actor.actor).await;
     let action = Action::Permission(PermissionKey::EnvironmentsManage);
 
@@ -106,7 +103,9 @@ pub async fn enforce_environments_manage(
     let probe = evaluate(
         &actor.actor,
         &ctx,
-        &Resource::Company { company_id: Uuid::nil() },
+        &Resource::Company {
+            company_id: Uuid::nil(),
+        },
         action,
     );
     if probe.allowed && probe.reason != crate::types::Reason::DenyCompanyBoundary {
@@ -128,8 +127,7 @@ pub async fn enforce_environments_manage(
     }
 
     Err(AuthzError::Forbidden(
-        "environments:manage requires instance admin or Admin role in some active company"
-            .into(),
+        "environments:manage requires instance admin or Admin role in some active company".into(),
     ))
 }
 
@@ -159,7 +157,9 @@ mod tests {
         use pc_auth::Actor;
         let ctx = Context::anonymous();
         let actor = Actor::Anonymous;
-        let resource = Resource::Company { company_id: Uuid::nil() };
+        let resource = Resource::Company {
+            company_id: Uuid::nil(),
+        };
         let action = Action::Permission(PermissionKey::EnvironmentsManage);
         let decision = evaluate(&actor, &ctx, &resource, action);
         assert!(!decision.allowed);
@@ -172,7 +172,9 @@ mod tests {
         use pc_auth::Actor;
         let ctx = Context::anonymous();
         let actor = Actor::System;
-        let resource = Resource::Company { company_id: Uuid::nil() };
+        let resource = Resource::Company {
+            company_id: Uuid::nil(),
+        };
         let action = Action::Permission(PermissionKey::EnvironmentsManage);
         let decision = evaluate(&actor, &ctx, &resource, action);
         assert!(decision.allowed);
@@ -193,7 +195,9 @@ mod tests {
             memberships: vec![],
             run_id: None,
         };
-        let resource = Resource::Company { company_id: Uuid::nil() };
+        let resource = Resource::Company {
+            company_id: Uuid::nil(),
+        };
         let action = Action::Permission(PermissionKey::EnvironmentsManage);
         let decision = evaluate(&actor, &ctx, &resource, action);
         assert!(decision.allowed);

@@ -19,11 +19,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use uuid::Uuid;
 
-use serde::{Deserialize, Serialize};
 use pc_core::Timestamp;
 use pc_repos::budget::{
     BudgetRepo, IncidentRow, NewIncidentInput, PolicyRow, ResolveIncidentInput, UpsertPolicyInput,
 };
+use serde::{Deserialize, Serialize};
 
 /// 时间窗口类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -199,7 +199,11 @@ pub fn compute_window(kind: BudgetWindowKind, now: DateTime<Utc>) -> BudgetWindo
                 .with_ymd_and_hms(year, month, 1, 0, 0, 0)
                 .single()
                 .expect("first day of month is valid");
-            let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+            let (ny, nm) = if month == 12 {
+                (year + 1, 1)
+            } else {
+                (year, month + 1)
+            };
             let end = Utc
                 .with_ymd_and_hms(ny, nm, 1, 0, 0, 0)
                 .single()
@@ -207,14 +211,8 @@ pub fn compute_window(kind: BudgetWindowKind, now: DateTime<Utc>) -> BudgetWindo
             BudgetWindow { start, end }
         }
         BudgetWindowKind::Lifetime => BudgetWindow {
-            start: Utc
-                .with_ymd_and_hms(1970, 1, 1, 0, 0, 0)
-                .single()
-                .unwrap(),
-            end: Utc
-                .with_ymd_and_hms(9999, 1, 1, 0, 0, 0)
-                .single()
-                .unwrap(),
+            start: Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap(),
+            end: Utc.with_ymd_and_hms(9999, 1, 1, 0, 0, 0).single().unwrap(),
         },
     }
 }
@@ -353,7 +351,11 @@ impl<'a> BudgetService<'a> {
         Ok(self.repo.list_open_attention(company_id).await?)
     }
 
-    pub async fn get_incident(&self, company_id: Uuid, id: Uuid) -> BudgetResult<Option<IncidentRow>> {
+    pub async fn get_incident(
+        &self,
+        company_id: Uuid,
+        id: Uuid,
+    ) -> BudgetResult<Option<IncidentRow>> {
         Ok(self.repo.get_incident(company_id, id).await?)
     }
 
@@ -486,14 +488,24 @@ impl<'a> BudgetService<'a> {
         match status {
             BudgetPolicyStatus::Warning => {
                 result.incident = Some(
-                    self.record_incident_if_needed(policy, observed, BudgetThresholdType::Soft, now)
-                        .await?,
+                    self.record_incident_if_needed(
+                        policy,
+                        observed,
+                        BudgetThresholdType::Soft,
+                        now,
+                    )
+                    .await?,
                 );
             }
             BudgetPolicyStatus::HardStop => {
                 result.incident = Some(
-                    self.record_incident_if_needed(policy, observed, BudgetThresholdType::Hard, now)
-                        .await?,
+                    self.record_incident_if_needed(
+                        policy,
+                        observed,
+                        BudgetThresholdType::Hard,
+                        now,
+                    )
+                    .await?,
                 );
             }
             BudgetPolicyStatus::Ok => {}
@@ -676,7 +688,10 @@ mod tests {
 
     #[test]
     fn r575_window_kind_roundtrip() {
-        for k in [BudgetWindowKind::CalendarMonthUtc, BudgetWindowKind::Lifetime] {
+        for k in [
+            BudgetWindowKind::CalendarMonthUtc,
+            BudgetWindowKind::Lifetime,
+        ] {
             assert_eq!(BudgetWindowKind::parse(k.as_str()), Some(k));
         }
         assert_eq!(BudgetWindowKind::parse("bogus"), None);
@@ -713,15 +728,18 @@ mod tests {
     #[async_trait]
     impl BudgetEnforcementHook for CountingHook {
         async fn on_hard_stop(&self, _: &BudgetEnforcementScope) -> BudgetResult<()> {
-            self.hard_stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.hard_stops
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
         async fn on_warning(&self, _: &BudgetEnforcementScope) -> BudgetResult<()> {
-            self.warnings.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.warnings
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
         async fn on_resolve(&self, _: &BudgetEnforcementScope) -> BudgetResult<()> {
-            self.resolves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.resolves
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }
@@ -813,8 +831,15 @@ mod tests {
     #[test]
     fn r579_full_evaluation_status_has_incident_some() {
         // 仅断言 status 与 incident 的 enum variant 关系（不构造 IncidentRow）
-        let eval_ok = FullEvaluation { status: BudgetPolicyStatus::Ok, incident: None, hook_triggered: false };
-        assert!(eval_ok.incident.is_none(), "Ok status should have no incident");
+        let eval_ok = FullEvaluation {
+            status: BudgetPolicyStatus::Ok,
+            incident: None,
+            hook_triggered: false,
+        };
+        assert!(
+            eval_ok.incident.is_none(),
+            "Ok status should have no incident"
+        );
 
         // 对于 Warning/HardStop 我们构造 "Some" 但不能实例化 IncidentRow。
         // 业务 API 测试需要在 e2e（真实 DB）中覆盖，这里仅检查 enum 形状。
@@ -834,8 +859,14 @@ mod tests {
                 BudgetPolicyStatus::Ok => None,
             }
         }
-        assert_eq!(to_threshold(BudgetPolicyStatus::Warning), Some(BudgetThresholdType::Soft));
-        assert_eq!(to_threshold(BudgetPolicyStatus::HardStop), Some(BudgetThresholdType::Hard));
+        assert_eq!(
+            to_threshold(BudgetPolicyStatus::Warning),
+            Some(BudgetThresholdType::Soft)
+        );
+        assert_eq!(
+            to_threshold(BudgetPolicyStatus::HardStop),
+            Some(BudgetThresholdType::Hard)
+        );
         assert_eq!(to_threshold(BudgetPolicyStatus::Ok), None);
     }
 

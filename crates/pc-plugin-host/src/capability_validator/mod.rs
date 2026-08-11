@@ -33,10 +33,9 @@ pub mod validator;
 // ============================================================================
 
 pub use capabilities::{
-    feature_capability, is_valid_capability, launcher_placement_capability,
-    operation_capabilities, parse_capability, parse_ui_slot, ui_slot_capability,
-    ManifestFeature, PluginCapability, PluginLauncherPlacementZone, PluginUiSlotType,
-    PLUGIN_CAPABILITIES,
+    feature_capability, is_valid_capability, launcher_placement_capability, operation_capabilities,
+    parse_capability, parse_ui_slot, ui_slot_capability, ManifestFeature, PluginCapability,
+    PluginLauncherPlacementZone, PluginUiSlotType, PLUGIN_CAPABILITIES,
 };
 
 pub use error::ForbiddenError;

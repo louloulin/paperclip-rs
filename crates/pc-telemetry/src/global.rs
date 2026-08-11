@@ -35,19 +35,33 @@ pub fn install_for_tests(client: Arc<ProductTelemetryClient>) -> Arc<ProductTele
 }
 
 pub fn current() -> Option<Arc<ProductTelemetryClient>> {
-    slot().lock().expect("telemetry global mutex poisoned").as_ref().map(Arc::clone)
+    slot()
+        .lock()
+        .expect("telemetry global mutex poisoned")
+        .as_ref()
+        .map(Arc::clone)
 }
 
 /// Fire-and-forget event submission. The event is enqueued synchronously into the
 /// global client so test ordering is deterministic; actual network delivery is
 /// driven by the client's periodic flush or explicit `flush()` call.
 pub fn track(name: impl Into<String>, dimensions: BTreeMap<String, Value>) {
-    let client = match current() { Some(c) => c, None => return };
+    let client = match current() {
+        Some(c) => c,
+        None => return,
+    };
     let name = name.into();
     let queue = client.queue.clone();
     drop(client);
-    let mut guard = match queue.try_lock() { Ok(g) => g, Err(_) => return };
-    guard.push(crate::Event { name, occurred_at: chrono::Utc::now().to_rfc3339(), dimensions });
+    let mut guard = match queue.try_lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    guard.push(crate::Event {
+        name,
+        occurred_at: chrono::Utc::now().to_rfc3339(),
+        dimensions,
+    });
 }
 
 /// Test-only convenience: install a disabled client so route handlers can call
@@ -58,7 +72,10 @@ pub fn install_disabled_for_tests() -> Arc<ProductTelemetryClient> {
     }
     let client = Arc::new(
         ProductTelemetryClient::new(
-            ProductTelemetryConfig { enabled: false, ..Default::default() },
+            ProductTelemetryConfig {
+                enabled: false,
+                ..Default::default()
+            },
             std::path::Path::new("."),
             "test",
         )

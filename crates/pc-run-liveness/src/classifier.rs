@@ -7,11 +7,10 @@ use std::sync::LazyLock;
 
 use crate::types::{
     RunLivenessActionability, RunLivenessClassification, RunLivenessClassificationInput,
-    RunLivenessEvidenceInput, RunLivenessIssueInput, RunLivenessState,
-    APPROVAL_REQUIRED_RE, BLOCKER_RE, EXTERNAL_BLOCKER_RE, MANAGER_REVIEW_RE,
-    NEGATED_BLOCKER_RE, NEXT_STEPS_RE, PLAN_TASK_DESCRIPTION_RE, PLAN_TASK_TITLE_RE,
-    PLANNING_ONLY_RE, RUNNABLE_RE, UNMANAGED_BACKGROUND_TASK_LIVENESS_REASON,
-    UNMANAGED_BACKGROUND_TASK_STOP_REASON,
+    RunLivenessEvidenceInput, RunLivenessIssueInput, RunLivenessState, APPROVAL_REQUIRED_RE,
+    BLOCKER_RE, EXTERNAL_BLOCKER_RE, MANAGER_REVIEW_RE, NEGATED_BLOCKER_RE, NEXT_STEPS_RE,
+    PLANNING_ONLY_RE, PLAN_TASK_DESCRIPTION_RE, PLAN_TASK_TITLE_RE, RUNNABLE_RE,
+    UNMANAGED_BACKGROUND_TASK_LIVENESS_REASON, UNMANAGED_BACKGROUND_TASK_STOP_REASON,
 };
 
 static NOISY_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -35,9 +34,8 @@ static NEXT_ACTION_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid next action line regex")
 });
 
-static MD_LIST_PREFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:[-*]|\d+\.)\s+").expect("valid list prefix regex")
-});
+static MD_LIST_PREFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:[-*]|\d+\.)\s+").expect("valid list prefix regex"));
 
 const REASON_MAX_LEN: usize = 500;
 const NEXT_ACTION_MAX_LEN: usize = 500;
@@ -77,10 +75,14 @@ fn has_unmanaged_background_task_evidence(result_json: Option<&Value>) -> bool {
     let Some(obj) = result_json.and_then(|v| v.as_object()) else {
         return false;
     };
-    if obj.get("stopReason").and_then(|v| v.as_str()) == Some(UNMANAGED_BACKGROUND_TASK_STOP_REASON) {
+    if obj.get("stopReason").and_then(|v| v.as_str()) == Some(UNMANAGED_BACKGROUND_TASK_STOP_REASON)
+    {
         return true;
     }
-    if let Some(evidence) = obj.get("unmanagedBackgroundTask").and_then(|v| v.as_object()) {
+    if let Some(evidence) = obj
+        .get("unmanagedBackgroundTask")
+        .and_then(|v| v.as_object())
+    {
         let stopped = evidence.get("stopped").and_then(|v| v.as_bool()) == Some(true);
         let stop_reason = evidence.get("stopReason").and_then(|v| v.as_str());
         let reason = evidence.get("reason").and_then(|v| v.as_str());
@@ -220,14 +222,14 @@ pub fn is_planning_or_document_task(issue: Option<&RunLivenessIssueInput>) -> bo
 }
 
 /// Normalize evidence (与 Node `normalizeEvidence` 1:1 对齐).
-fn normalize_evidence(
-    evidence: Option<&RunLivenessEvidenceInput>,
-) -> RunLivenessEvidenceInput {
+fn normalize_evidence(evidence: Option<&RunLivenessEvidenceInput>) -> RunLivenessEvidenceInput {
     match evidence {
         Some(e) => RunLivenessEvidenceInput {
             issue_comments_created: normalize_count(Some(e.issue_comments_created)),
             document_revisions_created: normalize_count(Some(e.document_revisions_created)),
-            plan_document_revisions_created: normalize_count(Some(e.plan_document_revisions_created)),
+            plan_document_revisions_created: normalize_count(Some(
+                e.plan_document_revisions_created,
+            )),
             work_products_created: normalize_count(Some(e.work_products_created)),
             workspace_operations_created: normalize_count(Some(e.workspace_operations_created)),
             activity_events_created: normalize_count(Some(e.activity_events_created)),
@@ -262,22 +264,40 @@ pub fn has_concrete_action_evidence(evidence: Option<&RunLivenessEvidenceInput>)
 fn evidence_reason(evidence: &RunLivenessEvidenceInput) -> String {
     let mut parts: Vec<String> = Vec::new();
     if evidence.issue_comments_created > 0 {
-        parts.push(format!("{} issue comment(s)", evidence.issue_comments_created));
+        parts.push(format!(
+            "{} issue comment(s)",
+            evidence.issue_comments_created
+        ));
     }
     if evidence.document_revisions_created > 0 {
-        parts.push(format!("{} document revision(s)", evidence.document_revisions_created));
+        parts.push(format!(
+            "{} document revision(s)",
+            evidence.document_revisions_created
+        ));
     }
     if evidence.work_products_created > 0 {
-        parts.push(format!("{} work product(s)", evidence.work_products_created));
+        parts.push(format!(
+            "{} work product(s)",
+            evidence.work_products_created
+        ));
     }
     if evidence.workspace_operations_created > 0 {
-        parts.push(format!("{} workspace operation(s)", evidence.workspace_operations_created));
+        parts.push(format!(
+            "{} workspace operation(s)",
+            evidence.workspace_operations_created
+        ));
     }
     if evidence.activity_events_created > 0 {
-        parts.push(format!("{} activity event(s)", evidence.activity_events_created));
+        parts.push(format!(
+            "{} activity event(s)",
+            evidence.activity_events_created
+        ));
     }
     if evidence.tool_or_action_events_created > 0 {
-        parts.push(format!("{} tool/action event(s)", evidence.tool_or_action_events_created));
+        parts.push(format!(
+            "{} tool/action event(s)",
+            evidence.tool_or_action_events_created
+        ));
     }
     parts.join(", ")
 }
@@ -330,7 +350,8 @@ fn extract_next_action_from_text(text: &str) -> Option<String> {
         }
         let line = strip_markdown_list_prefix(raw_line);
         if let Some(caps) = NEXT_ACTION_LINE_RE.captures(&line) {
-            let same_line = strip_markdown_list_prefix(caps.get(1).map(|m| m.as_str()).unwrap_or(""));
+            let same_line =
+                strip_markdown_list_prefix(caps.get(1).map(|m| m.as_str()).unwrap_or(""));
             if !same_line.is_empty() {
                 return Some(same_line);
             }
@@ -407,9 +428,11 @@ pub fn classify_run_actionability(
     // External blocker: explicit EXTERNAL_BLOCKER_RE OR (BLOCKER_RE with cred/secret/etc keyword)
     let has_external_or_cred_blocker = EXTERNAL_BLOCKER_RE.is_match(&text)
         || (BLOCKER_RE.is_match(&text)
-            && Regex::new(r"(?i)\b(?:credential|secret|api key|token|access|input|clarification)\b")
-                .map(|re| re.is_match(&text))
-                .unwrap_or(false));
+            && Regex::new(
+                r"(?i)\b(?:credential|secret|api key|token|access|input|clarification)\b",
+            )
+            .map(|re| re.is_match(&text))
+            .unwrap_or(false));
     if has_external_or_cred_blocker {
         return RunLivenessActionability::BlockedExternal;
     }
@@ -423,9 +446,7 @@ pub fn classify_run_actionability(
 }
 
 /// Classify run liveness (与 Node `classifyRunLiveness` 1:1 对齐).
-pub fn classify_run_liveness(
-    input: &RunLivenessClassificationInput,
-) -> RunLivenessClassification {
+pub fn classify_run_liveness(input: &RunLivenessClassificationInput) -> RunLivenessClassification {
     let evidence = normalize_evidence(input.evidence.as_ref());
     let continuation_attempt = normalize_continuation_attempt(input.continuation_attempt);
     let actionability = classify_run_actionability(input);
@@ -514,7 +535,10 @@ pub fn classify_run_liveness(
     if concrete_evidence {
         return output(
             RunLivenessState::Advanced,
-            format!("Run produced concrete action evidence: {}", evidence_reason(&evidence)),
+            format!(
+                "Run produced concrete action evidence: {}",
+                evidence_reason(&evidence)
+            ),
             None,
         );
     }

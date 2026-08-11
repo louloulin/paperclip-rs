@@ -30,14 +30,16 @@ pub mod trust;
 pub mod types;
 
 pub use builder::{build_context, build_context_with_issue_body};
-pub use http::{company_resource, denial_to_string, enforce, enforce_environments_manage, enforce_issue, enforce_permission};
+pub use http::{
+    company_resource, denial_to_string, enforce, enforce_environments_manage, enforce_issue,
+    enforce_permission,
+};
 pub use mentions::{
     build_agent_mention_href, build_user_mention_href, extract_agent_mention_ids,
     extract_pipeline_mention_ids, extract_routine_mention_ids, extract_skill_mention_ids,
     extract_user_mention_ids, parse_agent_mention_href, parse_user_mention_href,
-    ParsedAgentMention, ParsedUserMention,
-    AGENT_MENTION_SCHEME, PIPELINE_MENTION_SCHEME, PROJECT_MENTION_SCHEME,
-    ROUTINE_MENTION_SCHEME, SKILL_MENTION_SCHEME, USER_MENTION_SCHEME,
+    ParsedAgentMention, ParsedUserMention, AGENT_MENTION_SCHEME, PIPELINE_MENTION_SCHEME,
+    PROJECT_MENTION_SCHEME, ROUTINE_MENTION_SCHEME, SKILL_MENTION_SCHEME, USER_MENTION_SCHEME,
 };
 pub use policy::{evaluate, principal_type_of, AuthzError, Context};
 pub use trust::{
@@ -47,18 +49,18 @@ pub use trust::{
     TrustPresetSource, LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH, LOW_TRUST_REVIEW_PRESET,
     LOW_TRUST_REVIEW_PRESET_VERSION, LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
 };
-pub use types::{
-    Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource,
-};
+pub use types::{Action, CompanyRole, Decision, PermissionKey, PrincipalType, Reason, Resource};
 
 // 兼容旧 API（保留 DefaultPolicy + Action 旧枚举）。
-pub use crate::compat::{Action as LegacyAction, AuthzError as LegacyAuthzError, Company, DefaultPolicy, Issue, Project};
+pub use crate::compat::{
+    Action as LegacyAction, AuthzError as LegacyAuthzError, Company, DefaultPolicy, Issue, Project,
+};
 pub mod compat {
     //! 向后兼容旧 stub API（迁移期使用，新代码请直接用 [`crate::policy`]）。
+    use pc_core::Actor;
     use serde::Serialize;
     use thiserror::Error;
     use uuid::Uuid;
-    use pc_core::Actor;
 
     #[derive(Debug, Error, Serialize)]
     pub enum AuthzError {

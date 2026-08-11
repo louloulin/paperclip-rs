@@ -36,8 +36,7 @@ pub use service::{
 
 // Re-export shared types from pc-repos so downstream callers don't need to depend on pc-repos directly.
 pub use pc_repos::agent_action_audit::{
-    encode_cursor, decode_cursor, normalize_limit, AgentActionAuditEntity,
-    AgentActionAuditFilters, AgentActionAuditItem, AgentActionAuditPage,
-    AgentActionAuditRepo, AuditCommentSnippet, AuditDocumentSnippet, AuditIssueSnippet,
-    CursorError, DEFAULT_LIMIT, MAX_LIMIT,
+    decode_cursor, encode_cursor, normalize_limit, AgentActionAuditEntity, AgentActionAuditFilters,
+    AgentActionAuditItem, AgentActionAuditPage, AgentActionAuditRepo, AuditCommentSnippet,
+    AuditDocumentSnippet, AuditIssueSnippet, CursorError, DEFAULT_LIMIT, MAX_LIMIT,
 };

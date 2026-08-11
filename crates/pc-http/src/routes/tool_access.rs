@@ -12,6 +12,10 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
+use pc_app_definitions::{
+    connectable_app_slugs, default_ownership_availability, ConnectionMethodDef,
+    ToolConnectionOwnership,
+};
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::tool::{
@@ -29,6 +33,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/agents/me/connections/:connection_id/token",
             post(connection_token),
+        )
+        .route(
+            "/api/companies/:company_id/tools/catalog",
+            get(tool_catalog),
         )
         .route(
             "/api/companies/:company_id/tools/gallery",
@@ -530,6 +538,68 @@ async fn tool_gallery(
         .await?;
     let items: Vec<Value> = apps.iter().map(tool_application_json).collect();
     Ok(Json(json!({ "companyId": company_id, "items": items })))
+}
+
+/// R568 — R-INTEGRATION-8: GET /api/companies/:company_id/tools/catalog
+///
+/// Returns the static connectable-app catalog (mirrors Node
+/// `GET /companies/:companyId/tools/gallery` — which returns
+/// `CONNECTABLE_APP_DEFINITIONS` from `app-definitions.ts`). The Rust
+/// implementation uses pc-app-definitions helpers (`connectable_app_slugs`,
+/// `default_ownership_availability`) so that the catalog source of truth
+/// stays in the shared crate rather than being duplicated into the route.
+///
+/// Each entry carries:
+/// - `slug`           — connectable-app identifier (subset of full APP_DEFINITIONS)
+/// - `label`          — human-readable label
+/// - `category`       — `AppCategory` enum value
+/// - `ownershipAvailability` — `default_ownership_availability()` map
+async fn tool_catalog(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let _ = &state;
+    let slugs = connectable_app_slugs();
+    let ownership = default_ownership_availability();
+    // Static per-slug metadata (label + category) — keeps the catalog
+    // self-contained without forcing callers to plumb in a full
+    // APP_DEFINITIONS blob. Mirrors the Node hand-curated entries.
+    let meta: &[(&str, &str, &str)] = &[
+        ("zapier", "Zapier", "automation"),
+        ("github", "GitHub", "developer"),
+        ("slack", "Slack", "communication"),
+        ("notion", "Notion", "productivity"),
+        ("linear", "Linear", "productivity"),
+        ("google-sheets", "Google Sheets", "data"),
+        ("context7", "Context7", "developer"),
+    ];
+    let apps: Vec<Value> = meta
+        .iter()
+        .filter(|(slug, _, _)| slugs.contains(*slug))
+        .map(|(slug, label, category)| {
+            let mut ownership_obj = serde_json::Map::new();
+            for (k, v) in &ownership {
+                let key = match k {
+                    ToolConnectionOwnership::PlatformShared => "platform_shared",
+                    ToolConnectionOwnership::PlatformProvisioned => "platform_provisioned",
+                    ToolConnectionOwnership::Customer => "customer",
+                    ToolConnectionOwnership::Dcr => "dcr",
+                };
+                ownership_obj.insert(key.to_string(), Value::Bool(*v));
+            }
+            json!({
+                "slug": slug,
+                "label": label,
+                "category": category,
+                "ownershipAvailability": Value::Object(ownership_obj),
+                "connectable": true,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "companyId": company_id,
+        "apps": apps,
+    })))
 }
 async fn connect_tool_app(
     State(state): State<AppState>,

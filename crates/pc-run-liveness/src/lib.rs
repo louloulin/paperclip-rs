@@ -30,8 +30,9 @@ mod service;
 mod types;
 
 pub use classifier::{
-    classify_run_actionability, classify_run_liveness, declared_blocker, has_concrete_action_evidence,
-    has_useful_output, is_planning_or_document_task, looks_like_planning_only,
+    classify_run_actionability, classify_run_liveness, declared_blocker,
+    has_concrete_action_evidence, has_useful_output, is_planning_or_document_task,
+    looks_like_planning_only,
 };
 pub use hook::{
     NoopRunLivenessHook, RecordingRunLivenessHook, RunLivenessHook, RunLivenessHookEvent,

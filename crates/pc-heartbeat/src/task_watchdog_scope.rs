@@ -2,7 +2,6 @@
 //!
 //! 对应 Node `server/src/services/task-watchdog-scope.ts`。
 
-
 use std::collections::HashSet;
 
 use async_trait::async_trait;
@@ -130,7 +129,11 @@ pub fn is_plain_record(value: &serde_json::Value) -> bool {
 pub fn read_string(value: &serde_json::Value) -> Option<String> {
     value.as_str().and_then(|s| {
         let t = s.trim();
-        if t.is_empty() { None } else { Some(t.to_string()) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
     })
 }
 
@@ -144,10 +147,17 @@ pub fn read_string_opt(value: Option<&serde_json::Value>) -> Option<String> {
 /// 支持两种 context 形态：
 /// 1. `{ taskWatchdog: { watchedIssueId, stopFingerprint } }`
 /// 2. `{ watchedIssueId, stopFingerprint }`（顶层）
-pub fn read_task_watchdog_context(context_snapshot: Option<&serde_json::Value>) -> Option<TaskWatchdogContext> {
+pub fn read_task_watchdog_context(
+    context_snapshot: Option<&serde_json::Value>,
+) -> Option<TaskWatchdogContext> {
     let context = context_snapshot.and_then(|v| if v.is_object() { Some(v) } else { None })?;
-    let task_watchdog = context.get("taskWatchdog").and_then(|v| if v.is_object() { Some(v) } else { None });
-    if task_watchdog.is_none() && context.get("taskWatchdog") != Some(&serde_json::Value::Bool(true)) {
+    let task_watchdog =
+        context
+            .get("taskWatchdog")
+            .and_then(|v| if v.is_object() { Some(v) } else { None });
+    if task_watchdog.is_none()
+        && context.get("taskWatchdog") != Some(&serde_json::Value::Bool(true))
+    {
         return None;
     }
     let empty = serde_json::Value::Object(serde_json::Map::new());
@@ -174,14 +184,22 @@ pub async fn resolve_task_watchdog_mutation_scope(
     }
     let agent_id = match actor.agent_id.as_deref().and_then(|s| {
         let t = s.trim();
-        if t.is_empty() { None } else { Some(t.to_string()) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
     }) {
         Some(s) => s,
         None => return TaskWatchdogMutationScope::None,
     };
     let run_id = match actor.run_id.as_deref().and_then(|s| {
         let t = s.trim();
-        if t.is_empty() { None } else { Some(t.to_string()) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
     }) {
         Some(s) => s,
         None => return TaskWatchdogMutationScope::None,
@@ -215,7 +233,8 @@ pub async fn resolve_task_watchdog_mutation_scope(
         Some(s) => s,
         None => {
             return TaskWatchdogMutationScope::Invalid {
-                detail: "Task-watchdog run context is missing a persisted watched issue id.".to_string(),
+                detail: "Task-watchdog run context is missing a persisted watched issue id."
+                    .to_string(),
             }
         }
     };
@@ -227,7 +246,8 @@ pub async fn resolve_task_watchdog_mutation_scope(
         Some(w) => w,
         None => {
             return TaskWatchdogMutationScope::Invalid {
-                detail: "Task-watchdog run context is not backed by an active persisted watchdog.".to_string(),
+                detail: "Task-watchdog run context is not backed by an active persisted watchdog."
+                    .to_string(),
             }
         }
     };
@@ -632,7 +652,13 @@ mod tests {
         };
         let scope = resolve_task_watchdog_mutation_scope(&data, &actor).await;
         match scope {
-            TaskWatchdogMutationScope::Watchdog { watchdog_id, watched_issue_id, watchdog_issue_id, stop_fingerprint, .. } => {
+            TaskWatchdogMutationScope::Watchdog {
+                watchdog_id,
+                watched_issue_id,
+                watchdog_issue_id,
+                stop_fingerprint,
+                ..
+            } => {
                 assert_eq!(watchdog_id, "w-1");
                 assert_eq!(watched_issue_id, "i-1");
                 assert_eq!(watchdog_issue_id.as_deref(), Some("i-2"));
@@ -743,7 +769,11 @@ mod tests {
             watchdog_issue_id: Some("i-2".into()),
             stop_fingerprint: None,
         };
-        let issue = IssueScopeTarget { id: "i-2".into(), company_id: "co-1".into(), parent_id: None };
+        let issue = IssueScopeTarget {
+            id: "i-2".into(),
+            company_id: "co-1".into(),
+            parent_id: None,
+        };
         let r = task_watchdog_scope_allows_issue_mutation(
             &data,
             scope,
@@ -767,7 +797,11 @@ mod tests {
             watchdog_issue_id: Some("i-2".into()),
             stop_fingerprint: None,
         };
-        let issue = IssueScopeTarget { id: "i-2".into(), company_id: "co-2".into(), parent_id: None };
+        let issue = IssueScopeTarget {
+            id: "i-2".into(),
+            company_id: "co-2".into(),
+            parent_id: None,
+        };
         let r = task_watchdog_scope_allows_issue_mutation(
             &data,
             scope,
@@ -793,7 +827,11 @@ mod tests {
             watchdog_issue_id: None,
             stop_fingerprint: None,
         };
-        let issue = IssueScopeTarget { id: "i-other".into(), company_id: "co-1".into(), parent_id: None };
+        let issue = IssueScopeTarget {
+            id: "i-other".into(),
+            company_id: "co-1".into(),
+            parent_id: None,
+        };
         let r = task_watchdog_scope_allows_issue_mutation(
             &data,
             scope,
@@ -819,12 +857,18 @@ mod tests {
             watchdog_issue_id: Some("i-2".into()),
             stop_fingerprint: None,
         };
-        let issue = IssueScopeTarget { id: "i-2".into(), company_id: "co-1".into(), parent_id: None };
+        let issue = IssueScopeTarget {
+            id: "i-2".into(),
+            company_id: "co-1".into(),
+            parent_id: None,
+        };
         let r = task_watchdog_scope_allows_issue_mutation(
             &data,
             scope,
             &issue,
-            TaskWatchdogMutationOptions { allow_watchdog_issue: Some(false) },
+            TaskWatchdogMutationOptions {
+                allow_watchdog_issue: Some(false),
+            },
         )
         .await;
         match r {
@@ -837,7 +881,11 @@ mod tests {
     async fn r718_scope_non_watchdog_passthrough() {
         let data = FakeData::default();
         let scope = TaskWatchdogMutationScope::None;
-        let issue = IssueScopeTarget { id: "i-x".into(), company_id: "co-1".into(), parent_id: None };
+        let issue = IssueScopeTarget {
+            id: "i-x".into(),
+            company_id: "co-1".into(),
+            parent_id: None,
+        };
         let r = task_watchdog_scope_allows_issue_mutation(
             &data,
             scope.clone(),

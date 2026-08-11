@@ -12,8 +12,8 @@ use pc_errors::{internal, Error as PcError};
 use pc_repos::{
     issue::{IssueRepo, IssueRow},
     issue_tree_hold::{
-        IssueTreeHoldFullRow, IssueTreeHoldMemberRow, IssueTreeHoldRepo,
-        NewIssueTreeHold, NewIssueTreeHoldMember, ReleaseHoldError, ReleaseHoldInput,
+        IssueTreeHoldFullRow, IssueTreeHoldMemberRow, IssueTreeHoldRepo, NewIssueTreeHold,
+        NewIssueTreeHoldMember, ReleaseHoldError, ReleaseHoldInput,
     },
     Db,
 };
@@ -209,13 +209,9 @@ impl IssueTreeControlService {
         let mode_enum = validate_mode(mode).map_err(IssueTreeControlError::Validation)?;
 
         // 验证 root 存在并属于 company
-        let root = self
-            .issue_repo()
-            .get(root_issue_id)
-            .await?
-            .ok_or_else(|| {
-                IssueTreeControlError::NotFound(format!("root issue {root_issue_id}"))
-            })?;
+        let root = self.issue_repo().get(root_issue_id).await?.ok_or_else(|| {
+            IssueTreeControlError::NotFound(format!("root issue {root_issue_id}"))
+        })?;
         if root.company_id != company_id {
             return Err(IssueTreeControlError::CompanyMismatch {
                 actual: root.company_id,
@@ -328,20 +324,18 @@ impl IssueTreeControlService {
         require_non_nil(company_id, "companyId")?;
         require_non_nil(root_issue_id, "rootIssueId")?;
         let mode_enum = validate_mode(mode).map_err(IssueTreeControlError::Validation)?;
-        actor.validate().map_err(IssueTreeControlError::Validation)?;
+        actor
+            .validate()
+            .map_err(IssueTreeControlError::Validation)?;
         let policy = release_policy
             .cloned()
             .unwrap_or_else(default_release_policy);
         validate_release_policy(&policy).map_err(IssueTreeControlError::Validation)?;
 
         // 验证 root 存在并属于 company
-        let root = self
-            .issue_repo()
-            .get(root_issue_id)
-            .await?
-            .ok_or_else(|| {
-                IssueTreeControlError::NotFound(format!("root issue {root_issue_id}"))
-            })?;
+        let root = self.issue_repo().get(root_issue_id).await?.ok_or_else(|| {
+            IssueTreeControlError::NotFound(format!("root issue {root_issue_id}"))
+        })?;
         if root.company_id != company_id {
             return Err(IssueTreeControlError::CompanyMismatch {
                 actual: root.company_id,
@@ -350,7 +344,9 @@ impl IssueTreeControlService {
         }
 
         // 拒绝覆盖已有 active hold
-        if let Some((existing_id, existing_mode)) = self.repo().find_active_for_root(root_issue_id).await? {
+        if let Some((existing_id, existing_mode)) =
+            self.repo().find_active_for_root(root_issue_id).await?
+        {
             return Err(IssueTreeControlError::Conflict(format!(
                 "root already has active hold {existing_id} (mode={existing_mode:?});                  release it first"
             )));
@@ -389,8 +385,7 @@ impl IssueTreeControlService {
         let mut parent_map: std::collections::HashMap<Uuid, Uuid> =
             std::collections::HashMap::new();
         // 重新计算 depth（用 BFS）
-        let mut depth_map: std::collections::HashMap<Uuid, i32> =
-            std::collections::HashMap::new();
+        let mut depth_map: std::collections::HashMap<Uuid, i32> = std::collections::HashMap::new();
         depth_map.insert(root_issue_id, 0);
         let mut bfs: Vec<(Uuid, i32)> = vec![(root_issue_id, 0)];
         while let Some((parent, depth)) = bfs.pop() {
@@ -484,7 +479,9 @@ impl IssueTreeControlService {
         require_non_nil(company_id, "companyId")?;
         require_non_nil(root_issue_id, "rootIssueId")?;
         require_non_nil(hold_id, "holdId")?;
-        actor.validate().map_err(IssueTreeControlError::Validation)?;
+        actor
+            .validate()
+            .map_err(IssueTreeControlError::Validation)?;
 
         // 查 hold 验证存在 + company 匹配
         let existing = self
@@ -538,9 +535,9 @@ impl IssueTreeControlService {
             mode: released.mode,
             reason: released.release_reason,
             released_at: released.released_at.unwrap_or(Timestamp::now()),
-            released_by_actor_type: released.released_by_actor_type.unwrap_or_else(|| {
-                actor.actor_type.clone()
-            }),
+            released_by_actor_type: released
+                .released_by_actor_type
+                .unwrap_or_else(|| actor.actor_type.clone()),
         };
         self.dispatch(IssueTreeControlHookEvent::Released {
             company_id,
@@ -564,23 +561,28 @@ impl IssueTreeControlService {
     ) -> IssueTreeControlResult<Vec<IssueTreeHoldSummary>> {
         require_non_nil(company_id, "companyId")?;
         // list_by_company 返回的元组结构： (id, root_issue_id, mode, status, reason, released_at, created_at)
-        let rows = self.repo().list_by_company(company_id, include_released).await?;
+        let rows = self
+            .repo()
+            .list_by_company(company_id, include_released)
+            .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, root_issue_id, mode, status, reason, released_at, created_at)| {
-                IssueTreeHoldSummary {
-                    id,
-                    company_id,
-                    root_issue_id,
-                    mode,
-                    status,
-                    reason,
-                    release_policy: serde_json::Value::Null,
-                    released_at,
-                    created_at,
-                    updated_at: created_at,
-                }
-            })
+            .map(
+                |(id, root_issue_id, mode, status, reason, released_at, created_at)| {
+                    IssueTreeHoldSummary {
+                        id,
+                        company_id,
+                        root_issue_id,
+                        mode,
+                        status,
+                        reason,
+                        release_policy: serde_json::Value::Null,
+                        released_at,
+                        created_at,
+                        updated_at: created_at,
+                    }
+                },
+            )
             .collect())
     }
 
@@ -590,9 +592,15 @@ impl IssueTreeControlService {
         root_issue_id: Uuid,
     ) -> IssueTreeControlResult<Vec<IssueTreeHoldSummary>> {
         require_non_nil(root_issue_id, "rootIssueId")?;
-        let rows = self.repo().list_by_root(root_issue_id, "active", 200).await?;
+        let rows = self
+            .repo()
+            .list_by_root(root_issue_id, "active", 200)
+            .await?;
         // 同时取已 released 的
-        let released_rows = self.repo().list_by_root(root_issue_id, "released", 200).await?;
+        let released_rows = self
+            .repo()
+            .list_by_root(root_issue_id, "released", 200)
+            .await?;
         let mut out: Vec<IssueTreeHoldSummary> = rows
             .into_iter()
             .map(|r| IssueTreeHoldSummary {
@@ -648,10 +656,7 @@ impl IssueTreeControlService {
     // ---- 5. 计数 ----
 
     /// 计数 company 的 active holds。
-    pub async fn count_active_holds(
-        &self,
-        company_id: Uuid,
-    ) -> IssueTreeControlResult<i64> {
+    pub async fn count_active_holds(&self, company_id: Uuid) -> IssueTreeControlResult<i64> {
         require_non_nil(company_id, "companyId")?;
         let holds = self
             .repo()
@@ -761,4 +766,3 @@ fn row_to_preview(row: &IssueRow, parent_id: Option<Uuid>, depth: i32) -> IssueT
         assignee_user_id: row.assignee_user_id.clone(),
     }
 }
-

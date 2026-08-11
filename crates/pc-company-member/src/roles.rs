@@ -94,27 +94,73 @@ pub fn grants_for_human_role(role: HumanCompanyMembershipRole) -> Vec<Grant> {
     use permission_keys::*;
     match role {
         HumanCompanyMembershipRole::Owner => vec![
-            Grant { permission_key: AGENTS_CREATE, scope: None },
-            Grant { permission_key: AGENTS_CONFIGURE, scope: None },
-            Grant { permission_key: SKILLS_CREATE, scope: None },
-            Grant { permission_key: ENVIRONMENTS_MANAGE, scope: None },
-            Grant { permission_key: USERS_INVITE, scope: None },
-            Grant { permission_key: USERS_MANAGE_PERMISSIONS, scope: None },
-            Grant { permission_key: TASKS_ASSIGN, scope: None },
-            Grant { permission_key: JOINS_APPROVE, scope: None },
+            Grant {
+                permission_key: AGENTS_CREATE,
+                scope: None,
+            },
+            Grant {
+                permission_key: AGENTS_CONFIGURE,
+                scope: None,
+            },
+            Grant {
+                permission_key: SKILLS_CREATE,
+                scope: None,
+            },
+            Grant {
+                permission_key: ENVIRONMENTS_MANAGE,
+                scope: None,
+            },
+            Grant {
+                permission_key: USERS_INVITE,
+                scope: None,
+            },
+            Grant {
+                permission_key: USERS_MANAGE_PERMISSIONS,
+                scope: None,
+            },
+            Grant {
+                permission_key: TASKS_ASSIGN,
+                scope: None,
+            },
+            Grant {
+                permission_key: JOINS_APPROVE,
+                scope: None,
+            },
         ],
         HumanCompanyMembershipRole::Admin => vec![
-            Grant { permission_key: AGENTS_CREATE, scope: None },
-            Grant { permission_key: AGENTS_CONFIGURE, scope: None },
-            Grant { permission_key: SKILLS_CREATE, scope: None },
-            Grant { permission_key: ENVIRONMENTS_MANAGE, scope: None },
-            Grant { permission_key: USERS_INVITE, scope: None },
-            Grant { permission_key: TASKS_ASSIGN, scope: None },
-            Grant { permission_key: JOINS_APPROVE, scope: None },
+            Grant {
+                permission_key: AGENTS_CREATE,
+                scope: None,
+            },
+            Grant {
+                permission_key: AGENTS_CONFIGURE,
+                scope: None,
+            },
+            Grant {
+                permission_key: SKILLS_CREATE,
+                scope: None,
+            },
+            Grant {
+                permission_key: ENVIRONMENTS_MANAGE,
+                scope: None,
+            },
+            Grant {
+                permission_key: USERS_INVITE,
+                scope: None,
+            },
+            Grant {
+                permission_key: TASKS_ASSIGN,
+                scope: None,
+            },
+            Grant {
+                permission_key: JOINS_APPROVE,
+                scope: None,
+            },
         ],
-        HumanCompanyMembershipRole::Operator => vec![
-            Grant { permission_key: TASKS_ASSIGN, scope: None },
-        ],
+        HumanCompanyMembershipRole::Operator => vec![Grant {
+            permission_key: TASKS_ASSIGN,
+            scope: None,
+        }],
         HumanCompanyMembershipRole::Viewer => vec![],
     }
 }
@@ -140,7 +186,10 @@ pub fn resolve_human_invite_role(
     let Some(scoped_obj) = scoped.as_object() else {
         return HumanCompanyMembershipRole::Operator;
     };
-    let role_value = scoped_obj.get("role").cloned().unwrap_or(serde_json::Value::Null);
+    let role_value = scoped_obj
+        .get("role")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     normalize_human_role(&role_value, HumanCompanyMembershipRole::Operator)
 }
 
@@ -169,7 +218,10 @@ mod tests {
     fn r699_normalize_known_roles() {
         for r in HUMAN_COMPANY_MEMBERSHIP_ROLES {
             let v = json!(r.as_str());
-            assert_eq!(normalize_human_role(&v, HumanCompanyMembershipRole::Viewer), *r);
+            assert_eq!(
+                normalize_human_role(&v, HumanCompanyMembershipRole::Viewer),
+                *r
+            );
         }
     }
 
@@ -201,7 +253,9 @@ mod tests {
         let grants = grants_for_human_role(HumanCompanyMembershipRole::Owner);
         assert_eq!(grants.len(), 8);
         assert!(grants.iter().any(|g| g.permission_key == "agents:create"));
-        assert!(grants.iter().any(|g| g.permission_key == "users:manage_permissions"));
+        assert!(grants
+            .iter()
+            .any(|g| g.permission_key == "users:manage_permissions"));
         assert!(grants.iter().any(|g| g.permission_key == "tasks:assign"));
         assert!(grants.iter().any(|g| g.permission_key == "joins:approve"));
     }
@@ -210,7 +264,9 @@ mod tests {
     fn r699_admin_lacks_users_manage_permissions() {
         let grants = grants_for_human_role(HumanCompanyMembershipRole::Admin);
         assert_eq!(grants.len(), 7);
-        assert!(!grants.iter().any(|g| g.permission_key == "users:manage_permissions"));
+        assert!(!grants
+            .iter()
+            .any(|g| g.permission_key == "users:manage_permissions"));
     }
 
     #[test]

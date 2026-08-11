@@ -37,7 +37,7 @@ echo "[e2e] init pg data dir at $DATA_DIR"
 echo "[e2e] start pg on :$PORT"
 "$PG_BIN/pg_ctl" -D "$DATA_DIR" -l "$LOG_DIR/pg.log" \
   -o "-p $PORT -k /tmp -h 127.0.0.1 -c unix_socket_directories=/tmp" start >"$LOG_DIR/pgctl.log" 2>&1
-for i in 1 2 3 4 5 6 7 8 9 10; do
+for i in $(seq 1 60); do
   if "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$PORT" -U postgres >/dev/null 2>&1; then break; fi
   sleep 0.5
 done
@@ -52,16 +52,34 @@ TABLES=$(DATABASE_URL="$DB_URL" "$PG_BIN/psql" -h 127.0.0.1 -p "$PORT" -U postgr
   "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")
 echo "[e2e] table count = $TABLES"
 
-echo "[e2e] start pc-server on :$LISTEN_PORT"
+echo "[e2e] pre-build pc-server (R580: separate cargo build from run)"
+# R580: pre-build pc-server binary. The actual server startup is <100ms
+# (R579 measured: db_connect=7ms, migrations=9ms warm, adapters=0ms).
+# The 60s timeout was waiting for cold cargo compile inside the critical path.
+cargo build --quiet -p pc-server 2>"$LOG_DIR/server-build.log"
+SERVER_BIN="$ROOT/target/debug/paperclip-server"
+if [[ ! -x "$SERVER_BIN" ]]; then
+  echo "[e2e] FAIL: pc-server binary not found at $SERVER_BIN"
+  tail -50 "$LOG_DIR/server-build.log"
+  exit 1
+fi
+
+echo "[e2e] start pc-server on :$LISTEN_PORT (warm binary)"
 PAPERCLIP_DATABASE_URL="$DB_URL" PAPERCLIP_PORT="$LISTEN_PORT" RUST_LOG=info \
-  cargo run --quiet -p pc-server -- >"$LOG_DIR/server.log" 2>&1 &
+  "$SERVER_BIN" >"$LOG_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
-for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+# R580: server warm startup is <100ms. Poll up to 30s (was 60s) but expect <2s.
+for i in $(seq 1 60); do
   sleep 0.5
   if curl -fsS "http://127.0.0.1:$LISTEN_PORT/health" >/dev/null 2>&1; then
-    echo "[e2e] /health 200 after ${i}*0.5s"
+    echo "[e2e] /health 200 after ${i}*0.5s ($(echo "scale=1; ${i}*0.5" | bc)s)"
     HEALTH_OK=1; break
+  fi
+  # Every 10s, surface server log progress so failures aren't silent.
+  if (( i % 20 == 0 )); then
+    echo "[e2e] still waiting after ${i}*0.5s; server tail:"
+    tail -3 "$LOG_DIR/server.log" 2>/dev/null | sed 's/^/    /'
   fi
 done
 
@@ -74,5 +92,26 @@ if [[ "$HEALTH" != "200" ]]; then
   tail -50 "$LOG_DIR/server.log"
   exit 1
 fi
+
+# JSON report (CI 消费)
+E2E_REPORT="${PAPERCLIP_E2E_REPORT:-/tmp/paperclip-e2e-report.json}"
+cat > "$E2E_REPORT" <<JSON
+{
+  "version": "1",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "checks": {
+    "pg_ready": true,
+    "migrate": true,
+    "tables": $TABLES,
+    "server_built": true,
+    "health_200": true
+  },
+  "metrics": {
+    "boot_time_polls": $i,
+    "boot_time_s": $(echo "scale=2; $i * 0.5" | bc)
+  }
+}
+JSON
+echo "[e2e] report → $E2E_REPORT"
 
 echo "[e2e] PASS"

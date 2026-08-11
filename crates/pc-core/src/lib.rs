@@ -9,11 +9,10 @@ pub mod actor_runtime;
 pub mod adapter_registry_bootstrap;
 pub mod agent_eligibility;
 pub mod attention;
-pub mod cron;
 pub mod catalog_provenance;
+pub mod cron;
 pub mod dev_server_status;
 pub mod error;
-pub mod feature_flags;
 pub mod execution_allowlist;
 pub mod execution_policy_bootstrap;
 pub mod execution_workspace_branch_reconcile_assertions;
@@ -22,6 +21,7 @@ pub mod execution_workspace_overview;
 pub mod execution_workspace_policy;
 pub mod execution_workspace_row_to_typed;
 pub mod feature_catalog;
+pub mod feature_flags;
 pub mod git_status_paths;
 pub mod hash;
 pub mod id;
@@ -34,17 +34,17 @@ pub mod mcp_http;
 pub mod money;
 pub mod portability_fidelity;
 pub mod portable_path;
-pub mod remote_http_endpoint_guard;
 pub mod project_workspace_runtime_config;
+pub mod remote_http_endpoint_guard;
 pub mod routable_blocked;
 pub mod runtime_skill_selections;
 pub mod source_trust;
 pub mod source_trust_resolver;
-pub mod trust_preset_resolver;
 pub mod stable_string;
 pub mod timestamp;
 pub mod tool_content_guards;
 pub mod tool_profile_binding;
+pub mod trust_preset_resolver;
 pub mod workspace_branch_incoherence;
 pub mod workspace_branch_incoherence_explain;
 pub mod workspace_dirty_quarantine_formatter;
@@ -176,9 +176,9 @@ pub use portability_fidelity::{
 };
 pub use portable_path::normalize_portable_path;
 pub use remote_http_endpoint_guard::{
-    parse_remote_http_endpoint, assert_public_remote_http_endpoint,
+    assert_public_remote_http_endpoint, parse_remote_http_endpoint, LookupResult,
     RemoteHttpEndpointError, RemoteHttpEndpointGuardOptions, RemoteHttpEndpointLookup,
-    LookupResult, DEFAULT_DNS_TIMEOUT_MS,
+    DEFAULT_DNS_TIMEOUT_MS,
 };
 pub use routable_blocked::{
     deliver_agent_unblock_notification, routable_blocked_rollout_at, AgentWakeupRequest,

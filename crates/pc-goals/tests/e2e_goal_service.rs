@@ -15,9 +15,7 @@
 
 use std::sync::Arc;
 
-use pc_goals::{
-    CreateGoal, GoalHookEvent, GoalPatch, GoalService, RecordingGoalHook,
-};
+use pc_goals::{CreateGoal, GoalHookEvent, GoalPatch, GoalService, RecordingGoalHook};
 use pc_repos::{
     goal::{GoalLevel, GoalStatus},
     Db,
@@ -41,7 +39,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("G{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "G{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -115,7 +121,9 @@ async fn r607_create_root_goal_dispatches_created() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        GoalHookEvent::Created { id, title, level, .. } => {
+        GoalHookEvent::Created {
+            id, title, level, ..
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(title, "Ship Q3");
             assert_eq!(level, "company");
@@ -223,7 +231,10 @@ async fn r607_update_title_dispatches_updated() {
 
     let events = recorder.events_snapshot();
     assert!(events.len() >= 1);
-    assert!(matches!(events.last().unwrap(), GoalHookEvent::Updated { .. }));
+    assert!(matches!(
+        events.last().unwrap(),
+        GoalHookEvent::Updated { .. }
+    ));
 
     cleanup(&pool, company_id).await;
 }
@@ -354,7 +365,10 @@ async fn r607_update_cycle_detection() {
         .await
         .expect_err("cycle");
     assert!(
-        matches!(err, pc_errors::Error::Unprocessable { .. } | pc_errors::Error::Internal { .. }),
+        matches!(
+            err,
+            pc_errors::Error::Unprocessable { .. } | pc_errors::Error::Internal { .. }
+        ),
         "got: {err:?}"
     );
 
@@ -403,7 +417,10 @@ async fn r607_delete_with_children_rejected() {
         .await
         .expect("c");
 
-    let err = svc.delete(company_id, p.id).await.expect_err("has children");
+    let err = svc
+        .delete(company_id, p.id)
+        .await
+        .expect_err("has children");
     assert!(matches!(err, pc_errors::Error::Unprocessable { .. }));
 
     cleanup(&pool, company_id).await;
@@ -416,7 +433,10 @@ async fn r607_delete_nonexistent_returns_false() {
     let company_id = insert_company(&pool).await;
 
     let svc = GoalService::new(db);
-    let removed = svc.delete(company_id, Uuid::new_v4()).await.expect("delete");
+    let removed = svc
+        .delete(company_id, Uuid::new_v4())
+        .await
+        .expect("delete");
     assert!(!removed);
 
     cleanup(&pool, company_id).await;

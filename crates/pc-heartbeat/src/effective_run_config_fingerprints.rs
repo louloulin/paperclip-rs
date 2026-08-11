@@ -5,8 +5,6 @@
 //!
 //! Pure logic — no DB, no I/O。
 
-
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use once_cell::sync::Lazy;
@@ -21,7 +19,8 @@ use sha2::{Digest, Sha256};
 
 pub const EFFECTIVE_RUN_CONFIG_FINGERPRINT_VERSION: u32 = 1;
 pub const EFFECTIVE_RUN_CONFIG_FINGERPRINT_ALGORITHM: &str = "sha256";
-pub const EFFECTIVE_RUN_CONFIG_FINGERPRINT_CATEGORIES: [&str; 3] = ["session", "workspace", "lease"];
+pub const EFFECTIVE_RUN_CONFIG_FINGERPRINT_CATEGORIES: [&str; 3] =
+    ["session", "workspace", "lease"];
 
 pub type EffectiveRunConfigFingerprintCategory = &'static str;
 pub type EffectiveRunConfigChangedCategory = &'static str;
@@ -147,12 +146,11 @@ pub fn create_effective_run_config_subcategory_fingerprints<T: AsRef<str>>(
     input: SubcategoryInput<'_, T>,
 ) -> BTreeMap<String, String> {
     let category = input.category;
-    let canonical_parent =
-        canonicalize_effective_run_config_category(CanonicalizeCategoryInput {
-            category,
-            value: Some(&input.value),
-            secret_manifest: input.secret_manifest,
-        });
+    let canonical_parent = canonicalize_effective_run_config_category(CanonicalizeCategoryInput {
+        category,
+        value: Some(&input.value),
+        secret_manifest: input.secret_manifest,
+    });
     let record = canonical_record(&canonical_parent);
     let mut out = BTreeMap::new();
     for sub in input.subcategories {
@@ -258,7 +256,9 @@ fn fingerprint_for_category<'a>(
 // Implementation: fingerprints
 // ---------------------------------------------------------------------
 
-fn create_category_fingerprint(input: CategoryFingerprintInput<'_>) -> EffectiveRunConfigFingerprint {
+fn create_category_fingerprint(
+    input: CategoryFingerprintInput<'_>,
+) -> EffectiveRunConfigFingerprint {
     let canonical = canonicalize_effective_run_config_category(CanonicalizeCategoryInput {
         category: input.category,
         value: input.value,
@@ -341,10 +341,7 @@ fn canonicalize_value(value: &Value, context: &CanonicalizeContext<'_>) -> Optio
     }
     if let Some(obj) = value.as_object() {
         if is_secret_ref_binding(value) {
-            return Some(canonical_secret_ref_binding(
-                obj,
-                &context.path.join("."),
-            ));
+            return Some(canonical_secret_ref_binding(obj, &context.path.join(".")));
         }
         let mut canonical_object: Map<String, Value> = Map::new();
         for key in obj.keys() {
@@ -420,10 +417,7 @@ fn redacted_value() -> Value {
     serde_json::json!({"type": "redacted", "present": true})
 }
 
-fn canonicalize_env_record(
-    env_value: &Value,
-    context: &CanonicalizeContext<'_>,
-) -> Option<Value> {
+fn canonicalize_env_record(env_value: &Value, context: &CanonicalizeContext<'_>) -> Option<Value> {
     let env_obj = match env_value.as_object() {
         Some(o) => o,
         None => return OMIT,
@@ -468,20 +462,27 @@ fn canonicalize_env_record(
         return OMIT;
     }
     Some(Value::Object(
-        canonical_env
-            .into_iter()
-            .collect::<Map<String, Value>>(),
+        canonical_env.into_iter().collect::<Map<String, Value>>(),
     ))
 }
 
 fn canonical_secret_metadata(entry: &EffectiveRunConfigSecretVersionMetadata) -> Value {
     let mut out = Map::new();
-    out.insert("type".to_string(), Value::String("secret_metadata".to_string()));
-    out.insert("configPath".to_string(), Value::String(entry.config_path.clone()));
+    out.insert(
+        "type".to_string(),
+        Value::String("secret_metadata".to_string()),
+    );
+    out.insert(
+        "configPath".to_string(),
+        Value::String(entry.config_path.clone()),
+    );
     if let Some(env_key) = &entry.env_key {
         out.insert("envKey".to_string(), Value::String(env_key.clone()));
     }
-    out.insert("secretId".to_string(), Value::String(entry.secret_id.clone()));
+    out.insert(
+        "secretId".to_string(),
+        Value::String(entry.secret_id.clone()),
+    );
     out.insert("version".to_string(), entry.version.clone());
     if let Some(b) = &entry.binding_id {
         out.insert("bindingId".to_string(), Value::String(b.clone()));
@@ -501,7 +502,10 @@ fn canonical_secret_metadata(entry: &EffectiveRunConfigSecretVersionMetadata) ->
 fn canonical_secret_ref_binding(value: &Map<String, Value>, config_path: &str) -> Value {
     let mut out = Map::new();
     out.insert("type".to_string(), Value::String("secret_ref".to_string()));
-    out.insert("configPath".to_string(), Value::String(config_path.to_string()));
+    out.insert(
+        "configPath".to_string(),
+        Value::String(config_path.to_string()),
+    );
     if let Some(secret_id) = read_string(value.get("secretId")) {
         out.insert("secretId".to_string(), Value::String(secret_id));
     }
@@ -526,9 +530,7 @@ fn is_secret_ref_binding(value: &Value) -> bool {
 // Implementation: secret manifest index
 // ---------------------------------------------------------------------
 
-fn build_secret_manifest_index(
-    manifest: Option<&[Value]>,
-) -> SecretManifestIndex {
+fn build_secret_manifest_index(manifest: Option<&[Value]>) -> SecretManifestIndex {
     let mut idx = SecretManifestIndex::default();
     let Some(manifest) = manifest else {
         return idx;
@@ -540,8 +542,7 @@ fn build_secret_manifest_index(
                     .insert(normalized.config_path.clone(), normalized.clone());
             }
             if let Some(env_key) = &normalized.env_key {
-                idx.by_env_key
-                    .insert(env_key.clone(), normalized.clone());
+                idx.by_env_key.insert(env_key.clone(), normalized.clone());
             }
         }
     }
@@ -667,8 +668,10 @@ static SESSION_HOST_PATH_KEYS: Lazy<BTreeSet<&'static str>> = Lazy::new(|| {
 });
 
 static TIMESTAMP_NOISE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(created|updated|started|finished|completed|cancelled|resolved|used|heartbeat)At$")
-        .expect("TIMESTAMP_NOISE_RE")
+    Regex::new(
+        r"(?i)(created|updated|started|finished|completed|cancelled|resolved|used|heartbeat)At$",
+    )
+    .expect("TIMESTAMP_NOISE_RE")
 });
 static TIMESTAMP_NOISE_NEG_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)(revision|version)").expect("TIMESTAMP_NOISE_NEG_RE"));
@@ -895,11 +898,16 @@ mod tests {
     fn sensitive_keys_are_redacted() {
         let v = canonicalize_effective_run_config_category(CanonicalizeCategoryInput {
             category: "session",
-            value: Some(&json!({"apiKey": "sk-abc", "name": "ok", "Authorization": "Bearer xyz", "token": "t"})),
+            value: Some(
+                &json!({"apiKey": "sk-abc", "name": "ok", "Authorization": "Bearer xyz", "token": "t"}),
+            ),
             secret_manifest: None,
         });
         assert_eq!(v["apiKey"], json!({"type": "redacted", "present": true}));
-        assert_eq!(v["Authorization"], json!({"type": "redacted", "present": true}));
+        assert_eq!(
+            v["Authorization"],
+            json!({"type": "redacted", "present": true})
+        );
         assert_eq!(v["token"], json!({"type": "redacted", "present": true}));
         assert_eq!(v["name"], json!("ok"));
     }
@@ -920,7 +928,9 @@ mod tests {
     fn host_noise_keys_are_omitted() {
         let v = canonicalize_effective_run_config_category(CanonicalizeCategoryInput {
             category: "session",
-            value: Some(&json!({"homeDir": "/home/x", "tmpDir": "/tmp", "agentHome": "/a", "keep": 1})),
+            value: Some(
+                &json!({"homeDir": "/home/x", "tmpDir": "/tmp", "agentHome": "/a", "keep": 1}),
+            ),
             secret_manifest: None,
         });
         assert!(v.get("homeDir").is_none());
@@ -933,7 +943,9 @@ mod tests {
     fn timestamp_noise_keys_are_omitted() {
         let v = canonicalize_effective_run_config_category(CanonicalizeCategoryInput {
             category: "session",
-            value: Some(&json!({"createdAt": "2024-01-01", "updatedAt": "t", "finishedAt": "t", "revision": 7, "version": "1.0"})),
+            value: Some(
+                &json!({"createdAt": "2024-01-01", "updatedAt": "t", "finishedAt": "t", "revision": 7, "version": "1.0"}),
+            ),
             secret_manifest: None,
         });
         assert!(v.get("createdAt").is_none());
@@ -1067,7 +1079,10 @@ mod tests {
         };
         let a = create_effective_run_config_fingerprints(&input);
         let b = create_effective_run_config_fingerprints(&input);
-        assert_eq!(a.session_fingerprint.fingerprint, b.session_fingerprint.fingerprint);
+        assert_eq!(
+            a.session_fingerprint.fingerprint,
+            b.session_fingerprint.fingerprint
+        );
         assert!(a.session_fingerprint.fingerprint.starts_with("v1:sha256:"));
     }
 
@@ -1079,7 +1094,10 @@ mod tests {
         b.session = Some(json!({"k": 2}));
         let fa = create_effective_run_config_fingerprints(&a);
         let fb = create_effective_run_config_fingerprints(&b);
-        assert_ne!(fa.session_fingerprint.fingerprint, fb.session_fingerprint.fingerprint);
+        assert_ne!(
+            fa.session_fingerprint.fingerprint,
+            fb.session_fingerprint.fingerprint
+        );
     }
 
     #[test]
@@ -1090,7 +1108,10 @@ mod tests {
         b.session = Some(json!({"b": 2, "a": 1}));
         let fa = create_effective_run_config_fingerprints(&a);
         let fb = create_effective_run_config_fingerprints(&b);
-        assert_eq!(fa.session_fingerprint.fingerprint, fb.session_fingerprint.fingerprint);
+        assert_eq!(
+            fa.session_fingerprint.fingerprint,
+            fb.session_fingerprint.fingerprint
+        );
     }
 
     #[test]
@@ -1101,7 +1122,10 @@ mod tests {
         b.session = Some(json!({"apiKey": "secret-b"}));
         let fa = create_effective_run_config_fingerprints(&a);
         let fb = create_effective_run_config_fingerprints(&b);
-        assert_eq!(fa.session_fingerprint.fingerprint, fb.session_fingerprint.fingerprint);
+        assert_eq!(
+            fa.session_fingerprint.fingerprint,
+            fb.session_fingerprint.fingerprint
+        );
     }
 
     #[test]
@@ -1112,7 +1136,10 @@ mod tests {
         b.session = Some(json!({"runId": "xyz", "name": "x"}));
         let fa = create_effective_run_config_fingerprints(&a);
         let fb = create_effective_run_config_fingerprints(&b);
-        assert_eq!(fa.session_fingerprint.fingerprint, fb.session_fingerprint.fingerprint);
+        assert_eq!(
+            fa.session_fingerprint.fingerprint,
+            fb.session_fingerprint.fingerprint
+        );
     }
 
     #[test]
@@ -1122,7 +1149,10 @@ mod tests {
             ..Default::default()
         };
         let f = create_effective_run_config_fingerprints(&input);
-        assert!(f.session_fingerprint.canonical_json.contains(r#""a":{"x":3,"y":2}"#));
+        assert!(f
+            .session_fingerprint
+            .canonical_json
+            .contains(r#""a":{"x":3,"y":2}"#));
         assert!(f.session_fingerprint.canonical_json.contains(r#""z":1"#));
     }
 

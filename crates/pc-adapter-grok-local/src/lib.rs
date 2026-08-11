@@ -13,6 +13,8 @@ use serde_json::Value;
 
 pub mod execute_helpers;
 pub mod grok_jsonl;
+pub mod grok_test;
+pub mod skills;
 
 pub use execute_helpers::{resolve_grok_billing_type, GrokBillingType};
 

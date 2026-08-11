@@ -3,7 +3,6 @@
 //! 对应 Node `server/src/services/tool-runtime-metrics.ts`（57 行）1:1 复刻。
 //! （原 `pc-tool-runtime-metrics` crate 已下沉到 `pc-tool`）。
 
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -109,10 +108,7 @@ impl RecordingMetricHook {
 
     /// 同步版本的 `len()` —— 方便不进入 async context 也能查询。
     pub fn len(&self) -> usize {
-        self.events
-            .try_lock()
-            .map(|g| g.len())
-            .unwrap_or(0)
+        self.events.try_lock().map(|g| g.len()).unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -205,12 +201,8 @@ impl<R: MetricCounterRepo> ToolRuntimeMetricsService<R> {
 
     /// 从 `Arc<R>` 构造并接入 hooks。
     pub fn from_repo_with_hooks(repo: Arc<R>, hooks: Vec<Arc<dyn MetricHook>>) -> Self {
-        Self {
-            repo,
-            hooks,
-        }
+        Self { repo, hooks }
     }
-
 
     /// 累加一次 metric counter。
     ///
@@ -348,8 +340,6 @@ fn metric_to_static(metric: &str) -> &'static str {
     Box::leak(metric.to_string().into_boxed_str())
 }
 
-
-
 /// 静态 helper 容器 —— 不依赖任何 R，方便测试 / 上层直接调用关联函数。
 pub struct ToolRuntimeMetrics;
 
@@ -360,7 +350,6 @@ impl ToolRuntimeMetrics {
         minute_bucket(at)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -374,9 +363,7 @@ mod tests {
 
     #[test]
     fn r708_minute_bucket_truncates_seconds_and_nanos() {
-        let at = Utc
-            .with_ymd_and_hms(2024, 1, 1, 12, 30, 45)
-            .unwrap()
+        let at = Utc.with_ymd_and_hms(2024, 1, 1, 12, 30, 45).unwrap()
             + chrono::Duration::milliseconds(700);
         let b = minute_bucket(at);
         assert_eq!(b.hour(), 12);
@@ -455,7 +442,9 @@ mod tests {
         let e = MetricHookEvent::AuditWriteFailureRecorded {
             company_id: Uuid::new_v4(),
         };
-        assert!(MetricHook::on_metric_event(&NoopMetricHook, e).await.is_ok());
+        assert!(MetricHook::on_metric_event(&NoopMetricHook, e)
+            .await
+            .is_ok());
     }
 
     #[test]

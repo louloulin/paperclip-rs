@@ -187,7 +187,7 @@ mod tests {
         let counts = ExportFidelityCounts {
             approvals: 2,
             cost_events: 3,
-            ..ExportFidelityCounts::ZERO
+            ..ExportFidelityCounts::zero()
         };
         let report = ExportFidelityReport {
             schema: EXPORT_FIDELITY_REPORT_SCHEMA.to_string(),

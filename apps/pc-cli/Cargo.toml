@@ -20,6 +20,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+pc-workspace-commands = { path = "../../crates/pc-workspace-commands" }
 rand = { workspace = true }
 base64 = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

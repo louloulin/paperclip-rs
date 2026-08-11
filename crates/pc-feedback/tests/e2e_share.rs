@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use chrono::{TimeZone, Utc};
 use pc_feedback::share::{
     build_feedback_share_object_key, encode_feedback_share_payload, FeedbackShareConfig,
-    FeedbackShareHookEvent, FeedbackShareService, FeedbackTraceBundle, HttpFeedbackTraceShareClient,
-    RecordingFeedbackShareHook,
+    FeedbackShareHookEvent, FeedbackShareService, FeedbackTraceBundle,
+    HttpFeedbackTraceShareClient, RecordingFeedbackShareHook,
 };
-use chrono::{TimeZone, Utc};
+use std::sync::Arc;
 
 fn bundle(trace_id: &str, company_id: &str) -> FeedbackTraceBundle {
     FeedbackTraceBundle::minimal(trace_id, company_id)
@@ -12,7 +12,9 @@ fn bundle(trace_id: &str, company_id: &str) -> FeedbackTraceBundle {
 
 #[tokio::test]
 async fn build_object_key_and_encode_payload() {
-    let s = FeedbackShareService::new(HttpFeedbackTraceShareClient::new(&FeedbackShareConfig::new(None, None)));
+    let s = FeedbackShareService::new(HttpFeedbackTraceShareClient::new(
+        &FeedbackShareConfig::new(None, None),
+    ));
     let b = bundle("trace-1", "comp-1");
     let at = Utc.with_ymd_and_hms(2026, 8, 10, 12, 30, 45).unwrap();
     let key = s.build_object_key_async(&b, at).await.unwrap();
@@ -27,7 +29,9 @@ async fn build_object_key_and_encode_payload() {
 
 #[tokio::test]
 async fn validation_paths() {
-    let s = FeedbackShareService::new(HttpFeedbackTraceShareClient::new(&FeedbackShareConfig::new(None, None)));
+    let s = FeedbackShareService::new(HttpFeedbackTraceShareClient::new(
+        &FeedbackShareConfig::new(None, None),
+    ));
     let mut b = bundle("trace-2", "comp-2");
     b.trace_id = "".into();
     let at = Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
@@ -42,10 +46,13 @@ async fn validation_paths() {
 async fn upload_emits_failed_event_when_endpoint_unreachable() {
     let cfg = FeedbackShareConfig::new(Some("http://127.0.0.1:1".into()), Some("tok".into()));
     let h = Arc::new(RecordingFeedbackShareHook::default());
-    let s = FeedbackShareService::with_hooks(HttpFeedbackTraceShareClient::new(&cfg), vec![h.clone()]);
+    let s =
+        FeedbackShareService::with_hooks(HttpFeedbackTraceShareClient::new(&cfg), vec![h.clone()]);
     let b = bundle("trace-3", "comp-3");
     let res = s.upload(&b).await;
     assert!(res.is_err());
     let snapshot = h.events_snapshot();
-    assert!(snapshot.iter().any(|e| matches!(e, FeedbackShareHookEvent::UploadFailed { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, FeedbackShareHookEvent::UploadFailed { .. })));
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/v11-ui-happy-path.sh — V11 UI 60 client 全 happy path
 #
-# 真实启动：临时 PG16 → pc-migrate up → pc-server → curl 50 个 client 端点
+# 真实启动：临时 PG16 → pc-migrate up → pc-server → curl 60 个 client 端点
 # 每个 client 一个 GET 请求主路径；状态码 200/401/403/404/422 都视为合约正确
 # （未认证默认 401；只读 list 在无数据时 200 空数组；嵌套路径 404 也算路由正确）
 # 任一 client 连不上（000/500/panic）才记 fail。
@@ -39,21 +39,30 @@ echo "[v11] pc-migrate up"
 PAPERCLIP_DATABASE_URL="$DB_URL" RUST_LOG=warn \
   cargo run --quiet -p pc-migrate -- up >"$LOG_DIR/migrate-v11.log" 2>&1
 
-echo "[v11] start pc-server :$SRV_PORT"
+echo "[v11] pre-build pc-server (R580 pattern: separate cargo build from run)"
+cargo build --quiet -p pc-server 2>"$LOG_DIR/server-build-v11.log"
+SERVER_BIN="$ROOT/target/debug/paperclip-server"
+if [[ ! -x "$SERVER_BIN" ]]; then
+  echo "[v11] FAIL: pc-server binary not found at $SERVER_BIN"
+  tail -50 "$LOG_DIR/server-build-v11.log"
+  exit 1
+fi
+
+echo "[v11] start pc-server :$SRV_PORT (warm binary)"
 PAPERCLIP_DATABASE_URL="$DB_URL" PAPERCLIP_PORT="$SRV_PORT" RUST_LOG=warn \
-  nohup cargo run --quiet -p pc-server -- >"$LOG_DIR/server-v11.log" 2>&1 &
+  "$SERVER_BIN" >"$LOG_DIR/server-v11.log" 2>&1 &
 SRV_PID=$!
 
-# Wait for listening
-for i in $(seq 1 120); do
-  if grep -q "http listening" "$LOG_DIR/server-v11.log" 2>/dev/null; then
-    echo "[v11] server ready after ${i}s"
+# Wait for ready: poll /health every 0.5s up to 30s (warm startup is <100ms per R579)
+for i in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:$SRV_PORT/health" >/dev/null 2>&1; then
+    echo "[v11] server ready after $(echo "scale=1; ${i}*0.5" | bc)s"
     break
   fi
-  sleep 1
+  sleep 0.5
 done
 
-# 50 client endpoints (one per client file) — main list/get route
+# 60 client endpoints (one per client file) — main list/get route
 # Format: client_file|method|path|expected_status_codes
 ENDPOINTS=(
   "access|GET|/api/access|200,401"
@@ -61,10 +70,10 @@ ENDPOINTS=(
   "adapters|GET|/api/adapters|200,401"
   "agents|GET|/api/agents|200,401"
   "approvals|GET|/api/approvals|200,401"
-  "artifacts|GET|/api/artifacts|200,401"
+  "artifacts|GET|/api/companies/00000000-0000-0000-0000-000000000000/artifacts|200,401,404"
   "assets|GET|/api/assets|200,401"
   "attention|GET|/api/attention|200,401"
-  "audit|GET|/api/audit|200,401"
+  "audit|GET|/api/tool-gateway/audit|200,401"
   "auth|GET|/api/auth/get-session|200,401"
   "budgets|GET|/api/budgets|200,401"
   "builtInAgents|GET|/api/built-in-agents|200,401"
@@ -78,12 +87,12 @@ ENDPOINTS=(
   "document-annotations|GET|/api/document-annotations|200,401"
   "environments|GET|/api/environments|200,401"
   "execution-workspaces|GET|/api/execution-workspaces|200,401"
-  "externalObjects|GET|/api/external-objects|200,401"
+  "externalObjects|GET|/api/issues/00000000-0000-0000-0000-000000000000/external-objects|200,401,404"
   "file-resources|GET|/api/file-resources|200,401"
   "folders|GET|/api/companies/00000000-0000-0000-0000-000000000000/folders|200,401,404"
   "goals|GET|/api/goals|200,401"
   "health|GET|/api/health|200"
-  "heartbeats|GET|/api/heartbeats|200,401"
+  "heartbeats|GET|/api/companies/00000000-0000-0000-0000-000000000000/heartbeat-runs|200,401,404"
   "inboxDismissals|GET|/api/inbox-dismissals|200,401"
   "inbox-agent-policy|GET|/api/inbox-agent-policy|200,401"
   "instanceSettings|GET|/api/instance-settings|200,401"
@@ -105,7 +114,17 @@ ENDPOINTS=(
   "userProfiles|GET|/api/user-profiles|200,401"
   "workTimeline|GET|/api/work-timeline|200,401"
   "workspace-runtime-control|GET|/api/workspace-runtime-control|200,401"
-  "companies-query|GET|/api/companies|200,401"
+  "issue-runs|GET|/api/issues/00000000-0000-0000-0000-000000000000/runs|200,401,404"
+  "issue-live-runs|GET|/api/issues/00000000-0000-0000-0000-000000000000/live-runs|200,401,404"
+  "issue-active-run|GET|/api/issues/00000000-0000-0000-0000-000000000000/active-run|200,401,404"
+  "issue-activity|GET|/api/issues/00000000-0000-0000-0000-000000000000/activity|200,401,404"
+  "issue-documents|GET|/api/issues/00000000-0000-0000-0000-000000000000/documents|200,401,404"
+  "heartbeat-run|GET|/api/heartbeat-runs/00000000-0000-0000-0000-000000000000|200,401,404"
+  "company-stats|GET|/api/companies/00000000-0000-0000-0000-000000000000/stats|200,401,404"
+  "company-timeline|GET|/api/companies/00000000-0000-0000-0000-000000000000/timeline|200,401,404"
+  "company-members|GET|/api/companies/00000000-0000-0000-0000-000000000000/members|200,401,404"
+  "company-org|GET|/api/companies/00000000-0000-0000-0000-000000000000/org|200,401,404"
+  "company-search|GET|/api/companies/00000000-0000-0000-0000-000000000000/search?q=test|200,401,404"
 )
 
 PASS=0

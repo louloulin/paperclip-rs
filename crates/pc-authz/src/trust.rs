@@ -18,33 +18,30 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Trust preset 枚举（与原 `TRUST_PRESETS` 对齐）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum TrustPreset {
-    Standard,
-    LowTrustReview,
-}
+// R569: R-INTEGRATION-9 — delegate `TrustPreset` enum + LOW_TRUST_*
+// constants to `pc-trust-policy` so the canonical types live in one
+// place. The `pc-authz::trust` module still owns `LowTrustBoundary`,
+// `DenyReason`, `TrustPresetResolution`, `TrustPresetSource`, and the
+// trust-preset *resolver* logic — only the duplicated types/constants
+// are delegated.
 
-impl TrustPreset {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TrustPreset::Standard => "standard",
-            TrustPreset::LowTrustReview => "low_trust_review",
-        }
-    }
-    pub fn from_str_opt(s: &str) -> Option<Self> {
-        match s {
-            "standard" => Some(Self::Standard),
-            "low_trust_review" => Some(Self::LowTrustReview),
-            _ => None,
-        }
-    }
-}
+/// Re-export `TrustPreset` from `pc-trust-policy` (single source of truth).
+pub use pc_trust_policy::TrustPreset;
 
-pub const LOW_TRUST_REVIEW_PRESET: &str = "low_trust_review";
-pub const LOW_TRUST_REVIEW_PRESET_VERSION: u32 = 1;
-pub const LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION: &str = "quarantine";
+pub use pc_trust_policy::{
+    LOW_TRUST_REVIEW_PRESET, LOW_TRUST_REVIEW_PRESET_VERSION,
+    LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
+};
+
+/// pc-authz-specific depth limit not present in pc-trust-policy (it is
+/// a resolver implementation detail, not a shared constant).
 pub const LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH: u32 = 12;
+
+/// Backwards-compatible alias for callers using `from_str_opt` on the
+/// pc-authz-local name. Delegates to `pc_trust_policy::TrustPreset::parse`.
+pub fn trust_preset_from_str_opt(s: &str) -> Option<TrustPreset> {
+    TrustPreset::parse(s)
+}
 
 /// Low-trust boundary 配置（与原 `LowTrustBoundary` 对齐）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -146,7 +143,7 @@ fn extract_trust_preset(policy: Option<&serde_json::Value>) -> Option<TrustPrese
     as_record(policy)
         .and_then(|r| r.get("trustPreset"))
         .and_then(|v| v.as_str())
-        .and_then(TrustPreset::from_str_opt)
+        .and_then(TrustPreset::parse)
 }
 
 fn extract_low_trust_boundary(
@@ -254,9 +251,15 @@ pub fn resolve_core_trust_preset(input: &ResolveInput) -> TrustPresetResolution 
             merged.company_id.get_or_insert(input.company_id);
             merged.project_ids.extend(b.project_ids.iter().copied());
             merged.issue_ids.extend(b.issue_ids.iter().copied());
-            merged.allowed_agent_ids.extend(b.allowed_agent_ids.iter().copied());
-            merged.allowed_secret_binding_ids.extend(b.allowed_secret_binding_ids.iter().copied());
-            merged.allowed_tool_classes.extend(b.allowed_tool_classes.iter().cloned());
+            merged
+                .allowed_agent_ids
+                .extend(b.allowed_agent_ids.iter().copied());
+            merged
+                .allowed_secret_binding_ids
+                .extend(b.allowed_secret_binding_ids.iter().copied());
+            merged
+                .allowed_tool_classes
+                .extend(b.allowed_tool_classes.iter().cloned());
             if b.root_issue_id.is_some() {
                 merged.root_issue_id = b.root_issue_id;
             }
@@ -325,7 +328,11 @@ pub fn is_agent_within_boundary(boundary: &LowTrustBoundary, agent_id: Uuid) -> 
 
 /// 检查 tool class 是否在 boundary 允许范围内。
 pub fn is_tool_class_within_boundary(boundary: &LowTrustBoundary, tool_class: &str) -> bool {
-    boundary.allowed_tool_classes.is_empty() || boundary.allowed_tool_classes.iter().any(|c| c == tool_class)
+    boundary.allowed_tool_classes.is_empty()
+        || boundary
+            .allowed_tool_classes
+            .iter()
+            .any(|c| c == tool_class)
 }
 
 #[cfg(test)]
@@ -337,8 +344,11 @@ mod tests {
     fn trust_preset_round_trip() {
         assert_eq!(TrustPreset::Standard.as_str(), "standard");
         assert_eq!(TrustPreset::LowTrustReview.as_str(), "low_trust_review");
-        assert_eq!(TrustPreset::from_str_opt("low_trust_review"), Some(TrustPreset::LowTrustReview));
-        assert_eq!(TrustPreset::from_str_opt("unknown"), None);
+        assert_eq!(
+            TrustPreset::parse("low_trust_review"),
+            Some(TrustPreset::LowTrustReview)
+        );
+        assert_eq!(TrustPreset::parse("unknown"), None);
     }
 
     #[test]
@@ -447,11 +457,16 @@ mod tests {
         };
         let r = resolve_core_trust_preset(&input);
         match r {
-            TrustPresetResolution::LowTrustReview { boundary, source_presets } => {
+            TrustPresetResolution::LowTrustReview {
+                boundary,
+                source_presets,
+            } => {
                 assert!(source_presets.contains_key("agent"));
                 assert!(source_presets.contains_key("project"));
                 assert!(boundary.project_ids.contains(&project_id));
-                assert!(boundary.allowed_tool_classes.contains(&"git.read".to_string()));
+                assert!(boundary
+                    .allowed_tool_classes
+                    .contains(&"git.read".to_string()));
             }
             _ => panic!("expected low_trust_review with merged boundary"),
         }

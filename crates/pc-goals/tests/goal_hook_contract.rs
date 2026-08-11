@@ -12,8 +12,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pc_goals::{
-    CreateGoal, GoalHook, GoalHookEvent, GoalPatch, GoalService, NoopGoalHook,
-    RecordingGoalHook,
+    CreateGoal, GoalHook, GoalHookEvent, GoalPatch, GoalService, NoopGoalHook, RecordingGoalHook,
 };
 use pc_repos::{
     goal::{GoalLevel, GoalStatus},
@@ -39,7 +38,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("H{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "H{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -127,7 +134,9 @@ async fn hook_recorder_captures_create_event() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        GoalHookEvent::Created { id, title, level, .. } => {
+        GoalHookEvent::Created {
+            id, title, level, ..
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(title, "captured");
             assert_eq!(level, "task");
@@ -144,10 +153,13 @@ async fn hook_recorder_helpers_work() {
     assert!(recorder.is_empty());
     assert_eq!(recorder.len(), 0);
 
-    recorder.on_goal_event(GoalHookEvent::Deleted {
-        id: Uuid::nil(),
-        company_id: Uuid::nil(),
-    }).await.expect("hook");
+    recorder
+        .on_goal_event(GoalHookEvent::Deleted {
+            id: Uuid::nil(),
+            company_id: Uuid::nil(),
+        })
+        .await
+        .expect("hook");
 
     assert_eq!(recorder.len(), 1);
     assert!(!recorder.is_empty());

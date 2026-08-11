@@ -10,14 +10,14 @@
 //! 设计目标：保持与原 UI 期望的 schema 字段名一致，避免破坏前端类型生成。
 
 pub mod builder;
+pub mod dto_schemas;
 pub mod path;
 pub mod schema;
 pub mod serializers;
-pub mod dto_schemas;
 pub mod spec;
 
 pub use builder::OpenApiRegistry;
+pub use dto_schemas::{register_core_dtos, CORE_DTO_NAMES};
 pub use path::{HttpMethod, OpenApiPath};
 pub use schema::SchemaRef;
-pub use dto_schemas::{register_core_dtos, CORE_DTO_NAMES};
 pub use spec::{Contact, ExternalDocs, Info, License, OpenApiSpec, Server};

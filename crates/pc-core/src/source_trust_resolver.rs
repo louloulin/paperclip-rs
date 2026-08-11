@@ -5,7 +5,6 @@
 //!
 //! 提供 [`SourceTrustResolver`] trait 抽象 IO；纯规则部分见 [`crate::source_trust`]。
 
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -117,9 +116,7 @@ pub type SourceTrustResult<T> = std::result::Result<T, SourceTrustError>;
 // ============================================================================
 
 /// 检查 source trust 是否为低信任 quarantined 状态（与 Node `isLowTrustQuarantined` 1:1 对齐）。
-pub fn is_low_trust_quarantined(
-    source_trust: Option<&SourceTrustMetadata>,
-) -> bool {
+pub fn is_low_trust_quarantined(source_trust: Option<&SourceTrustMetadata>) -> bool {
     let Some(st) = source_trust else { return false };
     st.preset == LOW_TRUST_REVIEW_PRESET && st.disposition == "quarantined"
 }
@@ -223,11 +220,7 @@ pub struct PromotedSourceTrustInput {
 #[async_trait]
 pub trait SourceTrustResolver: Send + Sync {
     /// 查询 agent（按 id + companyId）
-    async fn find_agent(
-        &self,
-        company_id: &str,
-        agent_id: &str,
-    ) -> Option<AgentTrustProjection>;
+    async fn find_agent(&self, company_id: &str, agent_id: &str) -> Option<AgentTrustProjection>;
 
     /// 查询 project（按 id + companyId）
     async fn find_project(
@@ -237,11 +230,7 @@ pub trait SourceTrustResolver: Send + Sync {
     ) -> Option<ProjectTrustProjection>;
 
     /// 查询 run（按 id + companyId）
-    async fn find_run(
-        &self,
-        company_id: &str,
-        run_id: &str,
-    ) -> Option<RunTrustProjection>;
+    async fn find_run(&self, company_id: &str, run_id: &str) -> Option<RunTrustProjection>;
 }
 
 /// Agent 投影（与 Node 端 agent 查询字段 1:1 对齐）。
@@ -376,13 +365,13 @@ pub async fn resolve_actor_source_trust_for_issue(
             )))
         }
         TrustPresetResolution::Standard { .. } => Ok(None),
-        TrustPresetResolution::LowTrustReview { .. } => Ok(Some(
-            build_low_trust_source_trust(LowTrustSourceTrustInput {
+        TrustPresetResolution::LowTrustReview { .. } => Ok(Some(build_low_trust_source_trust(
+            LowTrustSourceTrustInput {
                 issue_id: issue.id.clone(),
                 run_id: actor.run_id.clone(),
                 agent_id: Some(agent_id.clone()),
-            }),
-        )),
+            },
+        ))),
     }
 }
 
@@ -612,7 +601,11 @@ mod tests {
 
     #[tokio::test]
     async fn r717_resolve_non_agent_returns_none() {
-        let r = FakeResolver { agent: None, project: None, run: None };
+        let r = FakeResolver {
+            agent: None,
+            project: None,
+            run: None,
+        };
         let actor = SourceTrustActor {
             actor_type: "user".into(),
             actor_id: "u-1".into(),

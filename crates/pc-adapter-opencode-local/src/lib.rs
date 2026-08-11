@@ -7,6 +7,7 @@ pub mod execute_helpers;
 pub mod skills;
 
 pub use execute_helpers::{claude_skills_home, resolve_opencode_biller};
+pub mod opencode_models;
 pub mod opencode_stream_json;
 
 pub use opencode_stream_json::{

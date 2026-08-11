@@ -8,13 +8,23 @@
 //!   "responsible-user 被拒" 业务闭环
 //! - 低耦合：`run_outcomes` 子模块依赖本 crate 顶层的 `normalize_*` / `is_valid_code`
 //!
+//! ## R572 扩展: copy 合约桥接
+//!
+//! 本 crate 现在也作为 **`pc-responsible-user-denial-copy`** 在 server 端的统一入口：
+//! server middleware / error handler 通过 [`copy`] 模块拿到 copy-side 代码常量 +
+//! 用户可见文案渲染，run-outcome 端通过 [`codes`] + [`run_outcomes`] 处理分类与持久化。
+//! 两个域（authz copy vs run-outcome classification）保持完全分离。
+//!
 //! ## 与 Node 的对应
 //! - Node `services/responsible-user-denial-run-outcomes.ts`：
 //!   - `normalizeResponsibleUserDenialCode` → [`normalize_responsible_user_denial_code_value`]
 //!   - `recordResponsibleUserDenialOnActiveRun` → [`run_outcomes::record_responsible_user_denial_on_active_run`]
+//! - Node `server/src/middleware/auth.ts:364` 发出 `"RESPONSIBLE_USER_UNAVAILABLE"` 等
+//!   copy-side 代码 → [`copy`] 模块通过 `pc-responsible-user-denial-copy` 渲染文案。
 
 #![forbid(unsafe_code)]
 
+pub mod copy;
 pub mod run_outcomes;
 
 mod codes;

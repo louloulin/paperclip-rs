@@ -336,7 +336,10 @@ mod tests {
 
     #[test]
     fn r688_source_string_matches_node() {
-        assert_eq!(NotifyHireApprovedSource::JoinRequest.as_str(), "join_request");
+        assert_eq!(
+            NotifyHireApprovedSource::JoinRequest.as_str(),
+            "join_request"
+        );
         assert_eq!(NotifyHireApprovedSource::Approval.as_str(), "approval");
     }
 

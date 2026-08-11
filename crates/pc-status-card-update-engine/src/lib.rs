@@ -36,16 +36,18 @@ mod types;
 pub use finalization::{
     failure_reason_for_issue, is_stalled_generation, StalledStatus, STALLED_GENERATION_STATUSES,
 };
-pub use fingerprint::{build_status_card_fingerprint, diff_status_card_fingerprint, filter_status_card_changes};
+pub use fingerprint::{
+    build_status_card_fingerprint, diff_status_card_fingerprint, filter_status_card_changes,
+};
 pub use hashing::{status_card_changes_hash, status_card_fingerprint_hash};
 pub use mentions::{extract_issue_mentions, IssueMentions};
 pub use policy::{
-    choose_status_card_update_kind, evaluate_status_card_policy,
-    ChooseStatusCardUpdateKindInput, EvaluateStatusCardPolicyInput,
+    choose_status_card_update_kind, evaluate_status_card_policy, ChooseStatusCardUpdateKindInput,
+    EvaluateStatusCardPolicyInput,
 };
 pub use schedule::{is_within_status_card_active_hours, next_status_card_evaluation_at};
 pub use types::{
-    ActiveHours, ChangeKind, EngineError, EngineResult, FingerprintEntry,
-    PolicyAction, PolicyDecision, RefreshMode, RefreshTriggers, StatusCardDeltaChange,
-    StatusCardFingerprint, StatusCardRefreshPolicy, UpdateKind,
+    ActiveHours, ChangeKind, EngineError, EngineResult, FingerprintEntry, PolicyAction,
+    PolicyDecision, RefreshMode, RefreshTriggers, StatusCardDeltaChange, StatusCardFingerprint,
+    StatusCardRefreshPolicy, UpdateKind,
 };

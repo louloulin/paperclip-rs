@@ -78,9 +78,15 @@ pub enum AgentInvokabilityBlockReason {
 #[derive(Debug, Clone)]
 pub enum OrgChainHealth {
     Healthy,
-    TerminatedAncestor { first_invalid_ancestor: Option<AgentOrgRow> },
-    Cycle { first_invalid_ancestor: Option<AgentOrgRow> },
-    Missing { first_invalid_ancestor: Option<AgentOrgRow> },
+    TerminatedAncestor {
+        first_invalid_ancestor: Option<AgentOrgRow>,
+    },
+    Cycle {
+        first_invalid_ancestor: Option<AgentOrgRow>,
+    },
+    Missing {
+        first_invalid_ancestor: Option<AgentOrgRow>,
+    },
 }
 
 /// 评估结果 —— 与 Node `AgentInvokability` 1:1 对齐。
@@ -103,7 +109,11 @@ impl AgentInvokability {
 
 /// 直接判定不可调用的状态集合 —— 与 Node `DIRECT_NON_INVOKABLE_STATUSES` 1:1 对齐。
 pub fn direct_non_invokable_statuses() -> &'static [AgentStatus] {
-    &[AgentStatus::Paused, AgentStatus::Terminated, AgentStatus::PendingApproval]
+    &[
+        AgentStatus::Paused,
+        AgentStatus::Terminated,
+        AgentStatus::PendingApproval,
+    ]
 }
 
 fn status_block_reason(status: AgentStatus) -> Option<AgentInvokabilityBlockReason> {
@@ -156,15 +166,24 @@ pub fn evaluate_agent_invokability(
 
     // org chain 不健康
     let (reason, first_invalid_ancestor) = match &health {
-        OrgChainHealth::TerminatedAncestor { first_invalid_ancestor } => {
-            (AgentInvokabilityBlockReason::ManagerTerminated, first_invalid_ancestor.clone())
-        }
-        OrgChainHealth::Cycle { first_invalid_ancestor } => {
-            (AgentInvokabilityBlockReason::ReportingCycle, first_invalid_ancestor.clone())
-        }
-        OrgChainHealth::Missing { first_invalid_ancestor } => {
-            (AgentInvokabilityBlockReason::ManagerMissing, first_invalid_ancestor.clone())
-        }
+        OrgChainHealth::TerminatedAncestor {
+            first_invalid_ancestor,
+        } => (
+            AgentInvokabilityBlockReason::ManagerTerminated,
+            first_invalid_ancestor.clone(),
+        ),
+        OrgChainHealth::Cycle {
+            first_invalid_ancestor,
+        } => (
+            AgentInvokabilityBlockReason::ReportingCycle,
+            first_invalid_ancestor.clone(),
+        ),
+        OrgChainHealth::Missing {
+            first_invalid_ancestor,
+        } => (
+            AgentInvokabilityBlockReason::ManagerMissing,
+            first_invalid_ancestor.clone(),
+        ),
         OrgChainHealth::Healthy => unreachable!(),
     };
 
@@ -182,10 +201,7 @@ pub fn evaluate_agent_invokability(
 
 /// 计算 org chain 健康状态 —— 等价于 Node `getAgentWorkEligibility` 中的
 /// `orgChainHealth` 部分。
-fn compute_org_chain_health(
-    agent: &AgentOrgRow,
-    company_agents: &[AgentOrgRow],
-) -> OrgChainHealth {
+fn compute_org_chain_health(agent: &AgentOrgRow, company_agents: &[AgentOrgRow]) -> OrgChainHealth {
     // DFS 上溯 reports_to
     let by_id: HashMap<&str, &AgentOrgRow> =
         company_agents.iter().map(|a| (a.id.as_str(), a)).collect();
@@ -269,9 +285,11 @@ pub fn list_invalid_org_chain_descendant_ids(
 pub fn should_cancel_runs_for_non_invokable_agent(result: &AgentInvokability) -> bool {
     match result {
         AgentInvokability::Invokable => false,
-        AgentInvokability::NotInvokable { reason, invalid_org_chain, .. } => {
-            *reason == AgentInvokabilityBlockReason::Terminated || *invalid_org_chain
-        }
+        AgentInvokability::NotInvokable {
+            reason,
+            invalid_org_chain,
+            ..
+        } => *reason == AgentInvokabilityBlockReason::Terminated || *invalid_org_chain,
     }
 }
 
@@ -315,7 +333,11 @@ mod tests {
         let agents: Vec<AgentOrgRow> = vec![a.clone()];
         let r = evaluate_agent_invokability(Some(&a), &agents);
         match r {
-            AgentInvokability::NotInvokable { reason, invalid_org_chain, .. } => {
+            AgentInvokability::NotInvokable {
+                reason,
+                invalid_org_chain,
+                ..
+            } => {
                 assert_eq!(reason, AgentInvokabilityBlockReason::Paused);
                 assert!(!invalid_org_chain);
             }
@@ -329,7 +351,11 @@ mod tests {
         let agents: Vec<AgentOrgRow> = vec![a.clone()];
         let r = evaluate_agent_invokability(Some(&a), &agents);
         match r {
-            AgentInvokability::NotInvokable { reason, invalid_org_chain, .. } => {
+            AgentInvokability::NotInvokable {
+                reason,
+                invalid_org_chain,
+                ..
+            } => {
                 assert_eq!(reason, AgentInvokabilityBlockReason::Terminated);
                 assert!(!invalid_org_chain);
             }
@@ -356,7 +382,11 @@ mod tests {
         let child = row("c1", AgentStatus::Active, Some("m1"));
         let r = evaluate_agent_invokability(Some(&child), &[mgr.clone(), child.clone()]);
         match r {
-            AgentInvokability::NotInvokable { reason, invalid_org_chain, .. } => {
+            AgentInvokability::NotInvokable {
+                reason,
+                invalid_org_chain,
+                ..
+            } => {
                 assert_eq!(reason, AgentInvokabilityBlockReason::ManagerTerminated);
                 assert!(invalid_org_chain);
             }
@@ -370,7 +400,11 @@ mod tests {
         let agents = vec![child.clone()];
         let r = evaluate_agent_invokability(Some(&child), &agents);
         match r {
-            AgentInvokability::NotInvokable { reason, invalid_org_chain, .. } => {
+            AgentInvokability::NotInvokable {
+                reason,
+                invalid_org_chain,
+                ..
+            } => {
                 assert_eq!(reason, AgentInvokabilityBlockReason::ManagerMissing);
                 assert!(invalid_org_chain);
             }
@@ -386,7 +420,11 @@ mod tests {
         let agents = vec![a.clone(), b.clone()];
         let r = evaluate_agent_invokability(Some(&a), &agents);
         match r {
-            AgentInvokability::NotInvokable { reason, invalid_org_chain, .. } => {
+            AgentInvokability::NotInvokable {
+                reason,
+                invalid_org_chain,
+                ..
+            } => {
                 assert_eq!(reason, AgentInvokabilityBlockReason::ReportingCycle);
                 assert!(invalid_org_chain);
             }

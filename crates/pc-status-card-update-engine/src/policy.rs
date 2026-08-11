@@ -5,11 +5,11 @@
 use chrono::{DateTime, Utc};
 
 use crate::schedule::is_within_status_card_active_hours;
+use crate::types::{PolicyDecision, StatusCardRefreshPolicy, UpdateKind};
 use crate::types::{
     DEFAULT_DAILY_TOKEN_CAP, DEFAULT_INTERVAL_MINUTES, DEFAULT_MAX_UPDATES_PER_HOUR,
     DEFAULT_REACTIVE_DEBOUNCE_SECONDS, REACTIVE_DEBOUNCE_MAX_SECONDS,
 };
-use crate::types::{PolicyDecision, StatusCardRefreshPolicy, UpdateKind};
 
 /// 决定 update 类别（与 Node `chooseStatusCardUpdateKind` 1:1 对齐）。
 ///
@@ -151,7 +151,10 @@ mod tests {
             incremental_count: 2,
             ..Default::default()
         };
-        assert_eq!(choose_status_card_update_kind(&input), UpdateKind::Incremental);
+        assert_eq!(
+            choose_status_card_update_kind(&input),
+            UpdateKind::Incremental
+        );
     }
 
     #[test]
@@ -302,7 +305,10 @@ mod tests {
             tokens_today: 999_999,
             manual: true,
         };
-        assert!(matches!(evaluate_status_card_policy(&input), PolicyDecision::Run));
+        assert!(matches!(
+            evaluate_status_card_policy(&input),
+            PolicyDecision::Run
+        ));
     }
 
     #[test]
@@ -362,6 +368,9 @@ mod tests {
             tokens_today: 0,
             manual: false,
         };
-        assert!(matches!(evaluate_status_card_policy(&input), PolicyDecision::Run));
+        assert!(matches!(
+            evaluate_status_card_policy(&input),
+            PolicyDecision::Run
+        ));
     }
 }

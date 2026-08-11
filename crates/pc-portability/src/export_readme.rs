@@ -122,9 +122,7 @@ pub fn role_label(role: &str) -> &str {
 }
 
 /// 生成 Mermaid TD flowchart 字符串。无 agents 时返回 `None`。
-pub fn generate_org_chart_mermaid(
-    agents: &[ManifestAgent],
-) -> Option<String> {
+pub fn generate_org_chart_mermaid(agents: &[ManifestAgent]) -> Option<String> {
     if agents.is_empty() {
         return None;
     }
@@ -188,10 +186,7 @@ pub fn skill_source_label(skill: &ManifestSkill) -> String {
 }
 
 /// 生成 README.md。
-pub fn generate_readme(
-    manifest: &CompanyPortabilityManifest,
-    options: &ReadmeOptions,
-) -> String {
+pub fn generate_readme(manifest: &CompanyPortabilityManifest, options: &ReadmeOptions) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push(format!("# {}", options.company_name));
@@ -250,10 +245,7 @@ pub fn generate_readme(
                 .reports_to_slug
                 .clone()
                 .unwrap_or_else(|| "\u{2014}".to_string());
-            lines.push(format!(
-                "| {} | {} | {} |",
-                agent.name, label, reports_to
-            ));
+            lines.push(format!("| {} | {} | {} |", agent.name, label, reports_to));
         }
         lines.push(String::new());
     }
@@ -280,7 +272,10 @@ pub fn generate_readme(
         lines.push("| Skill | Description | Source |".to_string());
         lines.push("|-------|-------------|--------|".to_string());
         for skill in &manifest.skills {
-            let desc = skill.description.clone().unwrap_or_else(|| "\u{2014}".to_string());
+            let desc = skill
+                .description
+                .clone()
+                .unwrap_or_else(|| "\u{2014}".to_string());
             let source = skill_source_label(skill);
             lines.push(format!("| {} | {} | {} |", skill.name, desc, source));
         }

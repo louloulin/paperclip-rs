@@ -1,8 +1,8 @@
 //! R613: pc-project hook contract tests.
 
 use pc_project::{
-    MembershipState, NoopProjectHook, ProjectHook, ProjectHookEvent, ProjectService,
-    ProjectStatus, RecordingProjectHook,
+    MembershipState, NoopProjectHook, ProjectHook, ProjectHookEvent, ProjectService, ProjectStatus,
+    RecordingProjectHook,
 };
 use pc_repos::Db;
 use serde_json::Value;
@@ -37,8 +37,12 @@ async fn recording_hook_stores_events_in_order() {
         old_status: Some(ProjectStatus::Backlog),
         new_status: ProjectStatus::Active,
     };
-    ProjectHook::on_project_event(&hook, ev1.clone()).await.unwrap();
-    ProjectHook::on_project_event(&hook, ev2.clone()).await.unwrap();
+    ProjectHook::on_project_event(&hook, ev1.clone())
+        .await
+        .unwrap();
+    ProjectHook::on_project_event(&hook, ev2.clone())
+        .await
+        .unwrap();
     let snap = hook.events_snapshot();
     assert_eq!(snap, vec![ev1, ev2]);
     hook.clear();

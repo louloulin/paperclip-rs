@@ -14,10 +14,7 @@ use pc_issues::{
     AssignKind, AssignTarget, CommentAuthor, CreateIssueMinimalInput, IssueHook, IssueService,
     NoopIssueHook, RecordingIssueHook,
 };
-use pc_repos::{
-    issue::IssueRepo,
-    Db,
-};
+use pc_repos::{issue::IssueRepo, Db};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -86,12 +83,7 @@ async fn insert_agent(pool: &PgPool, company_id: Uuid) -> Uuid {
     id
 }
 
-async fn insert_issue(
-    pool: &PgPool,
-    company_id: Uuid,
-    title: &str,
-    status: &str,
-) -> Uuid {
+async fn insert_issue(pool: &PgPool, company_id: Uuid, title: &str, status: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO issues (id, company_id, title, status, priority, created_at, updated_at)          VALUES ($1, $2, $3, $4, 'normal', now(), now())",
@@ -147,7 +139,10 @@ async fn r602_count_by_status_returns_breakdown() {
     insert_issue(&pool, company_id, "c", "done").await;
 
     let svc = IssueService::new(&db);
-    let counts = svc.count_by_status(company_id).await.expect("status_counts");
+    let counts = svc
+        .count_by_status(company_id)
+        .await
+        .expect("status_counts");
     let map: std::collections::HashMap<String, i64> = counts.into_iter().collect();
     assert_eq!(map.get("todo").copied().unwrap_or(0), 2);
     assert_eq!(map.get("done").copied().unwrap_or(0), 1);
@@ -166,10 +161,7 @@ async fn r602_list_by_company_filters_correctly() {
     insert_issue(&pool, company_b, "b1", "todo").await;
 
     let svc = IssueService::new(&db);
-    let all_a = svc
-        .list_by_company(company_a, None)
-        .await
-        .expect("list a");
+    let all_a = svc.list_by_company(company_a, None).await.expect("list a");
     assert_eq!(all_a.len(), 2);
     assert!(all_a.iter().all(|r| r.company_id == company_a));
 
@@ -288,7 +280,10 @@ async fn r602_create_rejects_invalid_status_and_priority() {
         priority: None,
         created_by_user_id: None,
     };
-    let err = svc.create(company_id, &bad_status).await.expect_err("rejected");
+    let err = svc
+        .create(company_id, &bad_status)
+        .await
+        .expect_err("rejected");
     assert!(matches!(err, pc_issues::IssueServiceError::InvalidInput(_)));
 
     let bad_priority = CreateIssueMinimalInput {
@@ -298,7 +293,10 @@ async fn r602_create_rejects_invalid_status_and_priority() {
         priority: Some("z9".into()),
         created_by_user_id: None,
     };
-    let err = svc.create(company_id, &bad_priority).await.expect_err("rejected");
+    let err = svc
+        .create(company_id, &bad_priority)
+        .await
+        .expect_err("rejected");
     assert!(matches!(err, pc_issues::IssueServiceError::InvalidInput(_)));
 
     cleanup(&pool, company_id).await;
@@ -493,7 +491,10 @@ async fn r602_update_status_multiple_hooks_all_called() {
     let r2 = Arc::new(RecordingIssueHook::default());
     let svc = IssueService::with_hooks(
         &db,
-        vec![r1.clone() as Arc<dyn IssueHook>, r2.clone() as Arc<dyn IssueHook>],
+        vec![
+            r1.clone() as Arc<dyn IssueHook>,
+            r2.clone() as Arc<dyn IssueHook>,
+        ],
     );
     let _ = svc
         .update_status(company_id, issue_id, "in_progress")
@@ -555,7 +556,11 @@ async fn r602_v3_assign_to_user_clears_agent() {
     let svc = IssueService::new(&db).add_hook(recorder.clone());
 
     let updated = svc
-        .assign(company_id, issue_id, AssignTarget::User("alice".to_string()))
+        .assign(
+            company_id,
+            issue_id,
+            AssignTarget::User("alice".to_string()),
+        )
         .await
         .expect("user assign");
     assert_eq!(updated.assignee_user_id.as_deref(), Some("alice"));
@@ -577,15 +582,13 @@ async fn r602_v3_unassign_clears_both_fields() {
     let company_id = insert_company(&pool).await;
     let issue_id = insert_issue(&pool, company_id, "to-unassign", "todo").await;
     let agent_id = insert_agent(&pool, company_id).await;
-    sqlx::query(
-        "UPDATE issues SET assignee_agent_id = $1, assignee_user_id = $2 WHERE id = $3",
-    )
-    .bind(agent_id)
-    .bind("bob")
-    .bind(issue_id)
-    .execute(&pool)
-    .await
-    .expect("pre-assign");
+    sqlx::query("UPDATE issues SET assignee_agent_id = $1, assignee_user_id = $2 WHERE id = $3")
+        .bind(agent_id)
+        .bind("bob")
+        .bind(issue_id)
+        .execute(&pool)
+        .await
+        .expect("pre-assign");
 
     let svc = IssueService::new(&db);
     let updated = svc
@@ -638,7 +641,11 @@ async fn r602_v3_assign_unknown_issue_returns_not_found() {
 
     let svc = IssueService::new(&db);
     let err = svc
-        .assign(company_id, Uuid::new_v4(), AssignTarget::Agent(Uuid::new_v4()))
+        .assign(
+            company_id,
+            Uuid::new_v4(),
+            AssignTarget::Agent(Uuid::new_v4()),
+        )
         .await
         .expect_err("not found");
     assert!(matches!(err, pc_issues::IssueServiceError::NotFound(_)));
@@ -683,7 +690,12 @@ async fn r602_v4_create_comment_persists_and_fires_hook() {
     let svc = IssueService::new(&db).add_hook(recorder.clone());
 
     let comment = svc
-        .create_comment(company_id, issue_id, CommentAuthor::Agent(agent_id), "first comment")
+        .create_comment(
+            company_id,
+            issue_id,
+            CommentAuthor::Agent(agent_id),
+            "first comment",
+        )
         .await
         .expect("create comment");
     assert_eq!(comment.body, "first comment");
@@ -708,9 +720,14 @@ async fn r602_v4_list_comments_returns_in_created_order() {
     let agent_id = insert_agent(&pool, company_id).await;
 
     let svc = IssueService::new(&db);
-    svc.create_comment(company_id, issue_id, CommentAuthor::Agent(agent_id), "alpha")
-        .await
-        .expect("alpha");
+    svc.create_comment(
+        company_id,
+        issue_id,
+        CommentAuthor::Agent(agent_id),
+        "alpha",
+    )
+    .await
+    .expect("alpha");
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     svc.create_comment(company_id, issue_id, CommentAuthor::Agent(agent_id), "beta")
         .await
@@ -829,7 +846,10 @@ async fn r602_v4_create_comment_multiple_hooks_all_called() {
     let r2 = Arc::new(RecordingIssueHook::default());
     let svc = IssueService::with_hooks(
         &db,
-        vec![r1.clone() as Arc<dyn IssueHook>, r2.clone() as Arc<dyn IssueHook>],
+        vec![
+            r1.clone() as Arc<dyn IssueHook>,
+            r2.clone() as Arc<dyn IssueHook>,
+        ],
     );
     let _ = svc
         .create_comment(company_id, issue_id, CommentAuthor::Agent(agent_id), "hi")
@@ -874,7 +894,10 @@ async fn r602_get_via_repo_returns_full_row_for_completeness() {
         .list_by_company(company_id, None)
         .await
         .expect("repo list");
-    let via_service = svc.list_by_company(company_id, None).await.expect("svc list");
+    let via_service = svc
+        .list_by_company(company_id, None)
+        .await
+        .expect("svc list");
     assert_eq!(direct.len(), via_service.len());
     cleanup(&pool, company_id).await;
     let _ = json!({});

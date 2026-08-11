@@ -82,7 +82,11 @@ async fn r594_terminate_emits_lifecycle_event() {
     let events = hook.events.lock().expect("lock");
     assert_eq!(events.len(), 1);
     match &events[0] {
-        AgentLifecycleEvent::Terminated { id, company_id: cid, role } => {
+        AgentLifecycleEvent::Terminated {
+            id,
+            company_id: cid,
+            role,
+        } => {
             assert_eq!(*id, agent_id);
             assert_eq!(*cid, company_id);
             assert_eq!(role, "general");
@@ -131,7 +135,9 @@ async fn r594_resume_emits_lifecycle_event() {
     let svc = AgentService::with_hooks(db.clone(), vec![hook.clone()]);
 
     // 先 pause 再 resume
-    svc.pause(agent_id, PauseReason::Manual).await.expect("pause");
+    svc.pause(agent_id, PauseReason::Manual)
+        .await
+        .expect("pause");
     let _ = hook.events.lock().expect("lock").clear();
 
     let resumed = svc.resume(agent_id).await.expect("resume");

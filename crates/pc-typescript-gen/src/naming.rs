@@ -66,7 +66,9 @@ pub fn safe_property_name(name: &str) -> (String, bool) {
 
 fn is_valid_identifier(s: &str) -> bool {
     let mut chars = s.chars();
-    let Some(first) = chars.next() else { return false };
+    let Some(first) = chars.next() else {
+        return false;
+    };
     if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
         return false;
     }

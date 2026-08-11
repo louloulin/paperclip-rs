@@ -46,8 +46,9 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/budgets/overview",
             get(budgets_overview),
         )
-        // Agent 维度
-        .route("/api/agents/:agent_id/budgets", get(agent_budgets))
+    // Agent 维度的 `/api/agents/:agent_id/budgets` 注册在 routes::agents
+    // (Round 282 removal — 重复注册会触发 axum 0.7 的
+    // "Overlapping method route" panic)
 }
 
 // =============================================================================

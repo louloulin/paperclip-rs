@@ -25,7 +25,9 @@ mod tests {
         ) -> pc_plugin_protocol::ProgressResult {
             assert_eq!(params.run_id, "run-progress");
             assert_eq!(params.percent, 50.0);
-            pc_plugin_protocol::ProgressResult { accepted: Some(true) }
+            pc_plugin_protocol::ProgressResult {
+                accepted: Some(true),
+            }
         }
     }
 
@@ -63,8 +65,15 @@ mod tests {
             pc_plugin_protocol::methods::worker_to_host::PROGRESS,
             json!({ "runId": "run-progress", "percent": 50.0, "message": "halfway" }),
         );
-        let value = handler.handle(pc_plugin_protocol::methods::worker_to_host::PROGRESS,
-            serde_json::from_str::<Value>(&line).ok().and_then(|v| v.get("params").cloned())).await.unwrap();
+        let value = handler
+            .handle(
+                pc_plugin_protocol::methods::worker_to_host::PROGRESS,
+                serde_json::from_str::<Value>(&line)
+                    .ok()
+                    .and_then(|v| v.get("params").cloned()),
+            )
+            .await
+            .unwrap();
         assert_eq!(value, json!({ "accepted": true }));
         let resp = decode_response(&line);
         assert_eq!(resp["method"], "progress");
@@ -76,10 +85,16 @@ mod tests {
         let handler: Arc<dyn WorkerToHostHandler> = Arc::new(StateEcho);
         let params = json!({ "key": "lastRun" });
         let value = handler
-            .handle(pc_plugin_protocol::methods::worker_to_host::GET_STATE, Some(params))
+            .handle(
+                pc_plugin_protocol::methods::worker_to_host::GET_STATE,
+                Some(params),
+            )
             .await
             .unwrap();
-        assert_eq!(value, json!({ "value": { "key": "lastRun", "echo": true } }));
+        assert_eq!(
+            value,
+            json!({ "value": { "key": "lastRun", "echo": true } })
+        );
     }
 
     #[tokio::test]

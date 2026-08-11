@@ -9,6 +9,7 @@ pub mod codex_errors;
 pub mod codex_execution_env;
 pub mod codex_home;
 pub mod codex_home_staging;
+pub mod codex_remote_home;
 pub mod codex_remote_workspace;
 pub mod codex_session_params;
 pub mod codex_session_resume;
@@ -26,6 +27,7 @@ pub use execute_helpers::{
 };
 
 use async_trait::async_trait;
+use futures_core::future::BoxFuture;
 use pc_adapter_api::{
     Adapter, AdapterDescriptor, AdapterError, AdapterEventSink, AdapterExecutionContext,
     AdapterExecutionResult, UsageSummary,
@@ -614,20 +616,100 @@ impl Adapter for CodexLocalAdapter {
                 .emit(pc_adapter_api::AdapterEvent::stdout(line.clone()))
                 .await;
         }
+        let mut env = execution_env.env;
+        let mut remote_codex_auth_target: Option<
+            pc_acpx::execution_target::AdapterExecutionTarget,
+        > = None;
+        let mut remote_codex_auth_home: Option<String> = None;
+        let mut host_codex_auth_path: Option<String> = None;
+
+        // R598：对齐 Node Codex ACPX 的 managed-home asset seam。当前 Rust
+        // 具备真实 SSH staging；sandbox provider 仍由后续 runner 接入。
+        let runtime_execution_target = pc_acpx::execution_target::read_adapter_execution_target(
+            context.execution_target.as_ref(),
+            None,
+        );
+        if let Some(target) = runtime_execution_target.as_ref() {
+            if target.as_ssh().is_some() {
+                let configured_home = context
+                    .adapter_config
+                    .get("env")
+                    .and_then(Value::as_object)
+                    .and_then(|config_env| config_env.get("CODEX_HOME"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .or_else(|| {
+                        context
+                            .env
+                            .get("CODEX_HOME")
+                            .map(String::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned)
+                    });
+                let company_id = context.env.get("PAPERCLIP_COMPANY_ID").map(String::as_str);
+                let local_home = match configured_home {
+                    Some(home) => home,
+                    None => {
+                        crate::codex_home::resolve_managed_codex_home_dir(&context.env, company_id)
+                            .map_err(|error| {
+                                AdapterError::InvalidConfiguration(error.to_string())
+                            })?
+                    }
+                };
+                let remote_home = pc_acpx::execution_target::resolve_remote_codex_home(
+                    Some(target),
+                    &execution_target_decision.execution_cwd,
+                )
+                .ok_or_else(|| {
+                    AdapterError::InvalidConfiguration(
+                        "remote Codex target did not resolve CODEX_HOME".to_string(),
+                    )
+                })?;
+                crate::codex_remote_home::stage_remote_codex_home_for_target(
+                    target,
+                    &crate::codex_remote_home::StageRemoteCodexHomeInput {
+                        local_home: std::path::PathBuf::from(local_home),
+                        remote_home: remote_home.clone(),
+                        run_id: context.run_id.to_string(),
+                    },
+                )
+                .await
+                .map_err(AdapterError::InvalidConfiguration)?;
+                env.insert("CODEX_HOME".to_string(), remote_home);
+                remote_codex_auth_target = Some(target.clone());
+                remote_codex_auth_home = env.get("CODEX_HOME").cloned();
+                let home = context
+                    .env
+                    .get("HOME")
+                    .map(String::as_str)
+                    .unwrap_or_default();
+                host_codex_auth_path = Some(
+                    std::path::PathBuf::from(crate::codex_home::resolve_shared_codex_home_dir(
+                        &context.env,
+                        home,
+                    ))
+                    .join("auth.json")
+                    .to_string_lossy()
+                    .into_owned(),
+                );
+            }
+        }
+
         // R492：真实 bridge 启动（对齐 Node execute.ts 的
-        // `startAdapterExecutionTargetPaperclipBridge` 分支）。SSH target →
-        // 完整启动；sandbox / 本地 → None（保持 env-only）。
+        // `startAdapterExecutionTargetPaperclipBridge` 分支）。配置 staging
+        // 完成后再启动 bridge，bridge env 最后覆盖 PAPERCLIP_* 键。
         let mut started_bridge: Option<pc_acpx::bridge_executor::StartedAdapterBridge> = None;
-        let env = if execution_env.bridge_plan.is_some() {
+        if execution_env.bridge_plan.is_some() {
             let events_for_bridge_log = events.clone();
             match crate::codex_bridge_env::start_codex_execution_bridge(
                 &context.run_id.to_string(),
-                &context.env,
+                &env,
                 context.execution_target.as_ref(),
                 timeout_sec,
                 Some(Arc::new(move |line: &str| {
-                    // 启动日志经 events sink 下发（闭包保持同步发射语义：
-                    // 对齐 Node onLog 同步回调）。
                     let sink = events_for_bridge_log.clone();
                     let line = line.to_string();
                     tokio::spawn(async move {
@@ -638,9 +720,6 @@ impl Adapter for CodexLocalAdapter {
             .await
             {
                 Ok(Some(bridge)) => {
-                    // 真实 bridge env 覆盖（对齐 Node
-                    // `Object.assign(env, paperclipBridge.env)`）。
-                    let mut env = execution_env.env;
                     for (key, value) in &bridge.env {
                         env.insert(key.clone(), value.clone());
                     }
@@ -652,14 +731,11 @@ impl Adapter for CodexLocalAdapter {
                         ))
                         .await;
                     started_bridge = Some(bridge);
-                    env
                 }
-                Ok(None) => execution_env.env,
+                Ok(None) => {}
                 Err(error) => return Err(AdapterError::InvalidConfiguration(error)),
             }
-        } else {
-            execution_env.env
-        };
+        }
         // R493：process session bridge（对齐 Node execute.ts
         // `useRemoteProcessSession` 分支 + `settleRemoteBridgeStarts`）。
         // Rust sandbox target 尚无 provider runner，gate 的
@@ -875,7 +951,48 @@ impl Adapter for CodexLocalAdapter {
         result.result_json = Some(result_json);
         Ok(result)
     }
-    .await;
+        .await;
+        if let (Some(target), Some(remote_home), Some(host_auth_path)) = (
+            remote_codex_auth_target,
+            remote_codex_auth_home,
+            host_codex_auth_path,
+        ) {
+            let log_events = events.clone();
+            let read_target = target.clone();
+            let read_home = remote_home.clone();
+            let read_sandbox_auth: crate::auth_copyback::ReadSandboxAuthFn = Arc::new(move || {
+                let target = read_target.clone();
+                let home = read_home.clone();
+                Box::pin(async move {
+                    crate::codex_remote_home::read_remote_codex_auth(&target, &home).await
+                }) as BoxFuture<'static, std::io::Result<Vec<u8>>>
+            });
+            let log: crate::auth_copyback::LogFn = Arc::new(move |line: String| {
+                let events = log_events.clone();
+                Box::pin(async move {
+                    let _ = events
+                        .emit(pc_adapter_api::AdapterEvent::stdout(line))
+                        .await;
+                }) as BoxFuture<'static, ()>
+            });
+            if let Err(error) = crate::auth_copyback::copy_back_codex_auth(
+                crate::auth_copyback::CopyBackCodexAuthInput {
+                    read_sandbox_auth,
+                    host_auth_path,
+                    log,
+                },
+                Box::new(crate::auth_copyback::CodexAuthMergeDecider),
+            )
+            .await
+            {
+                let _ = events
+                    .clone()
+                    .emit(pc_adapter_api::AdapterEvent::stderr(format!(
+                        "[paperclip] Codex auth copy-back failed (non-fatal): {error}\n"
+                    )))
+                    .await;
+            }
+        }
         // R492+R493 teardown：双 bridge 在所有出口停止（对齐 Node
         // `cleanupRemoteBridges` 的
         // `Promise.allSettled([processSessionBridge?.stop(), paperclipBridge?.stop()])`：

@@ -58,7 +58,11 @@ async fn r590_company_service_create_emits_lifecycle_event() {
     let events = hook.events.lock().expect("lock");
     assert_eq!(events.len(), 1);
     match &events[0] {
-        CompanyLifecycleEvent::Created { id, owner_principal_id, .. } => {
+        CompanyLifecycleEvent::Created {
+            id,
+            owner_principal_id,
+            ..
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(owner_principal_id, "user-test-1");
         }

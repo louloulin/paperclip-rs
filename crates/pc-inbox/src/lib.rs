@@ -18,12 +18,12 @@ pub mod dismissals;
 mod service;
 
 pub use agent_policy::{
-    compute_allowed_agent_ids, default_inbox_agent_policy, dedup_agent_ids,
-    find_invalid_agent_ids, find_invalid_agent_ids_from_map,
+    compute_allowed_agent_ids, dedup_agent_ids, default_inbox_agent_policy, find_invalid_agent_ids,
+    find_invalid_agent_ids_from_map,
 };
 pub use dismissals::{compute_snoozed_until, InboxDismissalKind};
 pub use service::{
-    InboxAgentPolicy, InboxAgentPolicyMode, InboxAgentPolicyService, InboxDismissalRow,
-    InboxError, InboxHook, InboxHookEvent, InboxService, NewDismissal, NoopInboxHook,
-    RecordingInboxHook, UpdateInboxAgentPolicyInput,
+    InboxAgentPolicy, InboxAgentPolicyMode, InboxAgentPolicyService, InboxDismissalRow, InboxError,
+    InboxHook, InboxHookEvent, InboxService, NewDismissal, NoopInboxHook, RecordingInboxHook,
+    UpdateInboxAgentPolicyInput,
 };

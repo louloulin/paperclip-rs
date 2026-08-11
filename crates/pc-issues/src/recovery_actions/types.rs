@@ -11,9 +11,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use pc_repos::issue::{
-    IssueRecoveryActionRow, UpsertRecoveryAction,
-};
+use pc_repos::issue::{IssueRecoveryActionRow, UpsertRecoveryAction};
 
 // -----------------------------------------------------------------------------
 // Constants (与 Node ACTIVE_RECOVERY_ACTION_STATUSES / MAX_UPSERT_RETRIES 对齐)
@@ -46,12 +44,7 @@ pub const VALID_RECOVERY_ACTION_OUTCOMES: &[&str] = &[
 ];
 
 /// Recovery action 合法 owner_type 集合。
-pub const VALID_RECOVERY_ACTION_OWNER_TYPES: &[&str] = &[
-    "agent",
-    "user",
-    "system",
-    "board",
-];
+pub const VALID_RECOVERY_ACTION_OWNER_TYPES: &[&str] = &["agent", "user", "system", "board"];
 
 /// Recovery action 合法 kind 集合。
 pub const VALID_RECOVERY_ACTION_KINDS: &[&str] = &[
@@ -139,7 +132,10 @@ impl IssueRecoveryActionInfo {
     }
 
     pub fn is_resolved(&self) -> bool {
-        matches!(self.status.as_str(), "resolved" | "cancelled" | "expired" | "stale")
+        matches!(
+            self.status.as_str(),
+            "resolved" | "cancelled" | "expired" | "stale"
+        )
     }
 }
 
@@ -266,4 +262,3 @@ pub type IssueRecoveryActionResult<T> = std::result::Result<T, IssueRecoveryActi
 
 /// `list_active_for_issues` 返回的 map 别名。
 pub type ActiveRecoveryActionsByIssue = HashMap<Uuid, IssueRecoveryActionInfo>;
-

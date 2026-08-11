@@ -19,11 +19,7 @@ pub fn build_issue_graph_liveness_incident_key(input: IncidentKeyInput<'_>) -> S
 
     format!(
         "{}:{}:{}:{}:{}",
-        ISSUE_GRAPH_LIVENESS_INCIDENT_PREFIX,
-        input.company_id,
-        input.issue_id,
-        input.state,
-        leaf
+        ISSUE_GRAPH_LIVENESS_INCIDENT_PREFIX, input.company_id, input.issue_id, input.state, leaf
     )
 }
 
@@ -31,9 +27,7 @@ pub fn build_issue_graph_liveness_incident_key(input: IncidentKeyInput<'_>) -> S
 ///
 /// 返回 `Some((companyId, issueId, state, leafIssueId))` 当格式正确；
 /// 否则 `None`。
-pub fn parse_issue_graph_liveness_incident_key(
-    incident_key: &str,
-) -> Option<ParsedIncidentKey> {
+pub fn parse_issue_graph_liveness_incident_key(incident_key: &str) -> Option<ParsedIncidentKey> {
     let parts: Vec<&str> = incident_key.split(':').collect();
     if parts.len() != 5 || parts[0] != ISSUE_GRAPH_LIVENESS_INCIDENT_PREFIX {
         return None;

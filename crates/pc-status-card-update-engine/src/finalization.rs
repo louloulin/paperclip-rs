@@ -160,7 +160,11 @@ mod tests {
 
     #[test]
     fn r706_stalled_status_enum_round_trip() {
-        for s in [StalledStatus::Done, StalledStatus::Cancelled, StalledStatus::Blocked] {
+        for s in [
+            StalledStatus::Done,
+            StalledStatus::Cancelled,
+            StalledStatus::Blocked,
+        ] {
             assert_eq!(StalledStatus::from_str(s.as_str()), Some(s));
         }
         assert_eq!(StalledStatus::from_str("unknown"), None);

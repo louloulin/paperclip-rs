@@ -3,19 +3,28 @@ name = "pc-adapter-hermes-gateway"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Paperclip Hermes Gateway adapter"
+description = "Paperclip Hermes gateway adapter"
 
 [lints]
 workspace = true
 
 [dependencies]
+uuid = { workspace = true }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-adapter-process = { path = "../pc-adapter-process" }
 async-trait = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+url = "2"
+# R622 SSE + Dashboard REST 客户端
+reqwest = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 uuid = { workspace = true }
 tokio = { workspace = true }
+axum = { workspace = true, features = ["macros"] }

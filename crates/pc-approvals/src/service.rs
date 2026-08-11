@@ -26,11 +26,12 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use pc_repos::approval::{
-    ApprovalCommentRow, ApprovalFilter, ApprovalRow, ApprovalStatus, NewApproval, NewApprovalComment,
+    ApprovalCommentRow, ApprovalFilter, ApprovalRow, ApprovalStatus, NewApproval,
+    NewApprovalComment,
 };
 
-use pc_repos::approval::ApprovalRepo;
 use pc_core::Timestamp;
+use pc_repos::approval::ApprovalRepo;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApprovalServiceError {
@@ -145,7 +146,13 @@ impl<'a> ApprovalService<'a> {
     ) -> ApprovalServiceResult<ApprovalRow> {
         let row = self
             .repo
-            .decide(company_id, id, ApprovalStatus::Approved, decided_by_user_id, note)
+            .decide(
+                company_id,
+                id,
+                ApprovalStatus::Approved,
+                decided_by_user_id,
+                note,
+            )
             .await?
             .ok_or_else(|| ApprovalServiceError::NotFound(format!("approval {id}")))?;
 
@@ -166,7 +173,13 @@ impl<'a> ApprovalService<'a> {
     ) -> ApprovalServiceResult<ApprovalRow> {
         let row = self
             .repo
-            .decide(company_id, id, ApprovalStatus::Rejected, decided_by_user_id, note)
+            .decide(
+                company_id,
+                id,
+                ApprovalStatus::Rejected,
+                decided_by_user_id,
+                note,
+            )
             .await?
             .ok_or_else(|| ApprovalServiceError::NotFound(format!("approval {id}")))?;
 
@@ -283,11 +296,7 @@ impl<'a> ApprovalService<'a> {
     // 内部：触发 hooks
     // ------------------------------------------------------------------
 
-    async fn run_hooks(
-        &self,
-        row: &ApprovalRow,
-        phase: HookPhase,
-    ) -> ApprovalServiceResult<()> {
+    async fn run_hooks(&self, row: &ApprovalRow, phase: HookPhase) -> ApprovalServiceResult<()> {
         for (idx, hook) in self.hooks.iter().enumerate() {
             let outcome = match phase {
                 HookPhase::Approved => hook.on_approved(row).await,
@@ -464,7 +473,10 @@ mod tests {
                 ApprovalHookOutcome::Failed(m) => assert_eq!(m, "boom"),
                 _ => panic!("expected Failed"),
             }
-            assert!(matches!(h.on_rejected(&row).await, ApprovalHookOutcome::Skipped));
+            assert!(matches!(
+                h.on_rejected(&row).await,
+                ApprovalHookOutcome::Skipped
+            ));
         });
     }
 
@@ -473,9 +485,18 @@ mod tests {
         let h = NoopApprovalHook;
         let row = dummy_approval(Uuid::new_v4());
         block_on(async {
-            assert!(matches!(h.on_approved(&row).await, ApprovalHookOutcome::Skipped));
-            assert!(matches!(h.on_rejected(&row).await, ApprovalHookOutcome::Skipped));
-            assert!(matches!(h.on_cancelled(&row).await, ApprovalHookOutcome::Skipped));
+            assert!(matches!(
+                h.on_approved(&row).await,
+                ApprovalHookOutcome::Skipped
+            ));
+            assert!(matches!(
+                h.on_rejected(&row).await,
+                ApprovalHookOutcome::Skipped
+            ));
+            assert!(matches!(
+                h.on_cancelled(&row).await,
+                ApprovalHookOutcome::Skipped
+            ));
         });
     }
 

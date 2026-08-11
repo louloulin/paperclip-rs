@@ -1,17 +1,21 @@
-use std::sync::Arc;
 use pc_environment::{
-    EnvironmentDriver, EnvironmentService, EnvironmentStatus, LeasePolicy, NewEnvironment,
-    NewEnvironmentLease, RecordingEnvironmentHook, EnvironmentHookEvent,
+    EnvironmentDriver, EnvironmentHookEvent, EnvironmentService, EnvironmentStatus, LeasePolicy,
+    NewEnvironment, NewEnvironmentLease, RecordingEnvironmentHook,
 };
 use pc_repos::Db;
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 const URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn setup() -> (Db, PgPool) {
-    let p = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(URL).await.unwrap();
+    let p = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(URL)
+        .await
+        .unwrap();
     (Db::connect(URL, 4, 1).await.unwrap(), p)
 }
 async fn company(p: &PgPool) -> Uuid {
@@ -22,9 +26,17 @@ async fn company(p: &PgPool) -> Uuid {
     id
 }
 async fn cleanup(p: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM environment_leases WHERE company_id=$1").bind(company_id).execute(p).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id=$1").bind(company_id).execute(p).await;
-    let _ = sqlx::query("DELETE FROM environments WHERE name LIKE 'pc-env-%'").execute(p).await;
+    let _ = sqlx::query("DELETE FROM environment_leases WHERE company_id=$1")
+        .bind(company_id)
+        .execute(p)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id=$1")
+        .bind(company_id)
+        .execute(p)
+        .await;
+    let _ = sqlx::query("DELETE FROM environments WHERE name LIKE 'pc-env-%'")
+        .execute(p)
+        .await;
 }
 fn new_env() -> NewEnvironment {
     NewEnvironment {
@@ -51,17 +63,31 @@ async fn env_crud_and_hooks() {
     assert_eq!(got.id, row.id);
     let by_name = s.get_by_name(&row.name).await.unwrap().unwrap();
     assert_eq!(by_name.id, row.id);
-    let changed = s.update_status(row.id, EnvironmentStatus::Disabled).await.unwrap();
+    let changed = s
+        .update_status(row.id, EnvironmentStatus::Disabled)
+        .await
+        .unwrap();
     assert!(changed);
-    let merged = s.merge_env_vars(row.id, serde_json::json!({"NEW":"Z"})).await.unwrap();
+    let merged = s
+        .merge_env_vars(row.id, serde_json::json!({"NEW":"Z"}))
+        .await
+        .unwrap();
     assert!(merged);
     let deleted = s.delete(row.id).await.unwrap();
     assert!(deleted);
     let snapshot = h.events_snapshot();
-    assert!(snapshot.iter().any(|e| matches!(e, EnvironmentHookEvent::Created { .. })));
-    assert!(snapshot.iter().any(|e| matches!(e, EnvironmentHookEvent::StatusChanged { .. })));
-    assert!(snapshot.iter().any(|e| matches!(e, EnvironmentHookEvent::EnvVarsMerged { .. })));
-    assert!(snapshot.iter().any(|e| matches!(e, EnvironmentHookEvent::Deleted { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, EnvironmentHookEvent::Created { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, EnvironmentHookEvent::StatusChanged { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, EnvironmentHookEvent::EnvVarsMerged { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, EnvironmentHookEvent::Deleted { .. })));
     cleanup(&p, Uuid::nil()).await;
 }
 
@@ -73,13 +99,21 @@ async fn lease_lifecycle() {
     let h = Arc::new(RecordingEnvironmentHook::default());
     let s = EnvironmentService::with_hooks(db, vec![h.clone()]);
     let env = s.create(new_env()).await.unwrap();
-    let now = pc_core::Timestamp::now(); let expires = pc_core::Timestamp::from_dt(now.as_datetime() + chrono::Duration::hours(1));
-    let lease = s.acquire_lease(NewEnvironmentLease {
-        company_id: cid, environment_id: env.id,
-        execution_workspace_id: None, issue_id: None, heartbeat_run_id: None,
-        lease_policy: LeasePolicy::Ephemeral, provider: Some("docker".into()),
-        expires_at: Some(expires),
-    }).await.unwrap();
+    let now = pc_core::Timestamp::now();
+    let expires = pc_core::Timestamp::from_dt(now.as_datetime() + chrono::Duration::hours(1));
+    let lease = s
+        .acquire_lease(NewEnvironmentLease {
+            company_id: cid,
+            environment_id: env.id,
+            execution_workspace_id: None,
+            issue_id: None,
+            heartbeat_run_id: None,
+            lease_policy: LeasePolicy::Ephemeral,
+            provider: Some("docker".into()),
+            expires_at: Some(expires),
+        })
+        .await
+        .unwrap();
     let active = s.active_lease_for_environment(env.id).await.unwrap();
     assert!(active.is_some());
     let company_leases = s.list_leases_for_company(cid, true).await.unwrap();
@@ -90,8 +124,12 @@ async fn lease_lifecycle() {
     let after = s.active_lease_for_environment(env.id).await.unwrap();
     assert!(after.is_none());
     let snapshot = h.events_snapshot();
-    assert!(snapshot.iter().any(|e| matches!(e, EnvironmentHookEvent::LeaseAcquired { .. })));
-    assert!(snapshot.iter().any(|e| matches!(e, EnvironmentHookEvent::LeaseReleased { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, EnvironmentHookEvent::LeaseAcquired { .. })));
+    assert!(snapshot
+        .iter()
+        .any(|e| matches!(e, EnvironmentHookEvent::LeaseReleased { .. })));
     cleanup(&p, cid).await;
     let _ = s.delete(env.id).await;
 }
@@ -105,10 +143,21 @@ async fn validation_and_guards() {
     let mut bad = new_env();
     bad.name = "  ".into();
     assert!(s.create(bad).await.is_err());
-    assert!(s.merge_env_vars(Uuid::nil(), serde_json::json!({})).await.is_err());
-    assert!(s.acquire_lease(NewEnvironmentLease {
-        company_id: Uuid::nil(), environment_id: Uuid::new_v4(),
-        execution_workspace_id: None, issue_id: None, heartbeat_run_id: None,
-        lease_policy: LeasePolicy::Ephemeral, provider: None, expires_at: None,
-    }).await.is_err());
+    assert!(s
+        .merge_env_vars(Uuid::nil(), serde_json::json!({}))
+        .await
+        .is_err());
+    assert!(s
+        .acquire_lease(NewEnvironmentLease {
+            company_id: Uuid::nil(),
+            environment_id: Uuid::new_v4(),
+            execution_workspace_id: None,
+            issue_id: None,
+            heartbeat_run_id: None,
+            lease_policy: LeasePolicy::Ephemeral,
+            provider: None,
+            expires_at: None,
+        })
+        .await
+        .is_err());
 }

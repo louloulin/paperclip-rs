@@ -7,6 +7,7 @@ members = [
     "crates/pc-http",
     "crates/pc-telemetry",
     "crates/pc-config",
+    "crates/pc-constants",
     "crates/pc-core",
     "crates/pc-db",
     "crates/pc-auth",
@@ -81,6 +82,7 @@ members = [
     "crates/pc-adapter-type",
     "crates/pc-feature-catalog",
     "crates/pc-config-schema",
+    "crates/pc-responsible-user-denial-copy",
     "crates/pc-typescript-gen",
     "crates/pc-portability",
     "crates/pc-issues",
@@ -115,6 +117,13 @@ tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 async-stream = "0.3"
 async-trait = "0.1"
+
+# HTTP 客户端（用于 Cursor Cloud 等 REST adapter）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# WebSocket (用于 openclaw-gateway 等长连接 adapter)
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots", "url"] }
+futures-util = "0.3"
 
 # HTTP / Web
 axum = { version = "0.7", features = ["macros", "ws"] }

@@ -122,7 +122,10 @@ async fn service_add_hook_appends() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn cost_range_default_is_unbounded() {
-    let r = CostRange { from: None, to: None };
+    let r = CostRange {
+        from: None,
+        to: None,
+    };
     assert!(r.from.is_none());
     assert!(r.to.is_none());
 }

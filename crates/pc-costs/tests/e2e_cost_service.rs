@@ -13,9 +13,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use pc_costs::{
-    CostEventRow, CostRange, CostService, NewFinanceEvent, RecordingCostHook,
-};
+use pc_costs::{CostEventRow, CostRange, CostService, NewFinanceEvent, RecordingCostHook};
 use pc_repos::Db;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -36,7 +34,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, budget_monthly_cents, created_at, updated_at)          VALUES ($1, $2, 'active', $3, 1000000, now(), now())",
     )
@@ -64,11 +70,26 @@ async fn insert_agent(pool: &PgPool, company_id: Uuid) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM cost_events WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM finance_events WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM agents WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM cost_events WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM finance_events WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM agents WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 fn make_cost_event(agent_id: Uuid) -> pc_costs::CreateCostEvent {
@@ -166,38 +187,39 @@ async fn create_cost_event_happy_path_inserts_row() {
     assert_eq!(row.cost_cents, 5);
 
     // The row should be listable.
-    let listed = svc
-        .list_cost_events(company_id, 50)
-        .await
-        .expect("list");
+    let listed = svc.list_cost_events(company_id, 50).await.expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, row.id);
 
     // summary should reflect the spend.
     let summary = svc
-        .summary(company_id, CostRange { from: None, to: None })
+        .summary(
+            company_id,
+            CostRange {
+                from: None,
+                to: None,
+            },
+        )
         .await
         .expect("summary");
     assert_eq!(summary.spend_cents, 5);
     assert_eq!(summary.budget_cents, 1000000);
 
     // agents.spent_monthly_cents should have been refreshed.
-    let agent_cents: (i32,) = sqlx::query_as(
-        "SELECT spent_monthly_cents FROM agents WHERE id = $1",
-    )
-    .bind(agent_id)
-    .fetch_one(&pool)
-    .await
-    .expect("agent cents");
+    let agent_cents: (i32,) =
+        sqlx::query_as("SELECT spent_monthly_cents FROM agents WHERE id = $1")
+            .bind(agent_id)
+            .fetch_one(&pool)
+            .await
+            .expect("agent cents");
     assert_eq!(agent_cents.0, 5);
 
-    let company_cents: (i32,) = sqlx::query_as(
-        "SELECT spent_monthly_cents FROM companies WHERE id = $1",
-    )
-    .bind(company_id)
-    .fetch_one(&pool)
-    .await
-    .expect("company cents");
+    let company_cents: (i32,) =
+        sqlx::query_as("SELECT spent_monthly_cents FROM companies WHERE id = $1")
+            .bind(company_id)
+            .fetch_one(&pool)
+            .await
+            .expect("company cents");
     assert_eq!(company_cents.0, 5);
 
     cleanup(&pool, company_id).await;
@@ -219,20 +241,24 @@ async fn create_cost_event_emits_both_hooks() {
         .expect("create");
 
     let events = recorder.events_snapshot();
-    assert_eq!(events.len(), 2, "expected CostEventCreated + MonthlySpendUpdated");
+    assert_eq!(
+        events.len(),
+        2,
+        "expected CostEventCreated + MonthlySpendUpdated"
+    );
     let first = &events[0];
     let second = &events[1];
-    let is_created = |e: &pc_costs::CostHookEvent| matches!(
-        e,
-        pc_costs::CostHookEvent::CostEventCreated { .. }
-    );
-    let is_monthly = |e: &pc_costs::CostHookEvent| matches!(
-        e,
-        pc_costs::CostHookEvent::MonthlySpendUpdated { .. }
-    );
+    let is_created =
+        |e: &pc_costs::CostHookEvent| matches!(e, pc_costs::CostHookEvent::CostEventCreated { .. });
+    let is_monthly = |e: &pc_costs::CostHookEvent| {
+        matches!(e, pc_costs::CostHookEvent::MonthlySpendUpdated { .. })
+    };
     assert!(is_created(first) || is_monthly(first));
     assert!(is_created(second) || is_monthly(second));
-    assert!(is_created(first) != is_monthly(first), "events must be different kinds");
+    assert!(
+        is_created(first) != is_monthly(first),
+        "events must be different kinds"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -252,7 +278,13 @@ async fn by_agent_returns_aggregated_rows() {
     }
 
     let rows = svc
-        .by_agent(company_id, CostRange { from: None, to: None })
+        .by_agent(
+            company_id,
+            CostRange {
+                from: None,
+                to: None,
+            },
+        )
         .await
         .expect("by_agent");
     assert_eq!(rows.len(), 1);
@@ -303,9 +335,7 @@ async fn create_finance_event_rejects_invalid_direction() {
         direction: Some("sideways".into()),
         ..Default::default()
     };
-    let res = svc
-        .create_finance_event(Uuid::new_v4(), input)
-        .await;
+    let res = svc.create_finance_event(Uuid::new_v4(), input).await;
     assert!(res.is_err());
 }
 
@@ -382,7 +412,13 @@ async fn finance_summary_returns_zero_for_empty() {
 
     let svc = CostService::new(db);
     let summary = svc
-        .finance_summary(company_id, CostRange { from: None, to: None })
+        .finance_summary(
+            company_id,
+            CostRange {
+                from: None,
+                to: None,
+            },
+        )
         .await
         .expect("finance_summary");
     assert_eq!(summary.debit_cents, 0);
@@ -440,6 +476,5 @@ async fn cost_event_row_serializes_to_camel_case_json() {
 
     cleanup(&pool, company_id).await;
 }
-
 
 // Working variant that documents the expected behavior. Skipped due to upstream SQL bug.

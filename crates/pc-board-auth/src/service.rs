@@ -16,8 +16,7 @@ use uuid::Uuid;
 use crate::types::{
     BoardAccess, BoardApiKeyCreated, BoardApiKeyListItem, BoardAuthServiceError,
     BoardAuthServiceResult, BoardMembership, BoardUserSummary, ChallengeStatus,
-    CliAuthChallengeCreated, CliAuthChallengeDescription, CliAuthChallengeRow,
-    CliRequestedAccess,
+    CliAuthChallengeCreated, CliAuthChallengeDescription, CliAuthChallengeRow, CliRequestedAccess,
 };
 
 use crate::{
@@ -74,18 +73,17 @@ impl BoardAuthService {
         let member_repo = CompanyMemberRepo::new(&self.db);
         let admin_repo = InstanceUserRoleRepo::new(&self.db);
 
-        let user_summary = user_repo
-            .find_summary_by_id(user_id)
-            .await?
-            .map(|row| BoardUserSummary {
-                id: row.id,
-                name: row.name,
-                email: row.email,
-            });
+        let user_summary =
+            user_repo
+                .find_summary_by_id(user_id)
+                .await?
+                .map(|row| BoardUserSummary {
+                    id: row.id,
+                    name: row.name,
+                    email: row.email,
+                });
 
-        let member_pairs = member_repo
-            .list_active_for_principal_user(user_id)
-            .await?;
+        let member_pairs = member_repo.list_active_for_principal_user(user_id).await?;
         let memberships: Vec<BoardMembership> = member_pairs
             .into_iter()
             .map(|(company_id, role)| BoardMembership {
@@ -124,7 +122,10 @@ impl BoardAuthService {
             access.company_ids.iter().copied().collect();
 
         if company_ids.is_empty() {
-            if let Some(rid) = requested_company_id.map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(rid) = requested_company_id
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 if let Ok(id) = Uuid::parse_str(rid) {
                     company_ids.insert(id);
                 }
@@ -217,9 +218,7 @@ impl BoardAuthService {
             )),
         };
         let repo = BoardKeyRepo::new(&self.db);
-        let row = repo
-            .create(user_id, name.trim(), &key_hash, exp)
-            .await?;
+        let row = repo.create(user_id, name.trim(), &key_hash, exp).await?;
         Ok(BoardApiKeyCreated {
             id: row.id,
             name: row.name,
@@ -275,9 +274,8 @@ impl BoardAuthService {
     ) -> BoardAuthServiceResult<CliAuthChallengeCreated> {
         let challenge_secret = create_cli_auth_secret();
         let pending_board_token = create_board_api_token();
-        let expires_at = pc_core::Timestamp::from_timestamp_millis(
-            self.now_ms() + CLI_AUTH_CHALLENGE_TTL_MS,
-        );
+        let expires_at =
+            pc_core::Timestamp::from_timestamp_millis(self.now_ms() + CLI_AUTH_CHALLENGE_TTL_MS);
         let label_base = client_name
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -351,13 +349,11 @@ impl BoardAuthService {
 
         let (company_name, approved_by) = futures::try_join!(
             async {
-                Ok::<_, BoardAuthServiceError>(
-                    if let Some(cid) = challenge.requested_company_id {
-                        company_repo.find_name_by_id(cid).await?
-                    } else {
-                        None
-                    },
-                )
+                Ok::<_, BoardAuthServiceError>(if let Some(cid) = challenge.requested_company_id {
+                    company_repo.find_name_by_id(cid).await?
+                } else {
+                    None
+                })
             },
             async {
                 Ok::<_, BoardAuthServiceError>(
@@ -431,9 +427,8 @@ impl BoardAuthService {
 
         let mut board_key_id = challenge.board_api_key_id;
         if board_key_id.is_none() {
-            let expires_at = pc_core::Timestamp::from_timestamp_millis(
-                self.now_ms() + BOARD_API_KEY_TTL_MS,
-            );
+            let expires_at =
+                pc_core::Timestamp::from_timestamp_millis(self.now_ms() + BOARD_API_KEY_TTL_MS);
             let row = sqlx::query_as::<_, BoardKeyRow>(
                 "INSERT INTO board_api_keys (user_id, name, key_hash, expires_at) \
                  VALUES ($1, $2, $3, $4) \
@@ -523,9 +518,7 @@ impl BoardAuthService {
         let key = repo
             .find_by_id_and_user(key_id, user_id)
             .await?
-            .ok_or_else(|| {
-                BoardAuthServiceError::NotFound("Board API key not found".into())
-            })?;
+            .ok_or_else(|| BoardAuthServiceError::NotFound("Board API key not found".into()))?;
         if key.revoked_at.is_some() {
             return Err(BoardAuthServiceError::NotFound(
                 "Board API key not found".into(),

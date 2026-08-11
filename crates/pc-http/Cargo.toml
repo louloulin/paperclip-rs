@@ -38,6 +38,9 @@ pc-plugin-protocol = { path = "../pc-plugin-protocol" }
 pc-workflow = { path = "../pc-workflow" }
 pc-storage = { path = "../pc-storage" }
 pc-plugin-ui-static = { path = "../pc-plugin-ui-static" }
+pc-app-definitions = { path = "../pc-app-definitions" }
+pc-api-routes = { path = "../pc-api-routes" }
+pc-execution-workspace-guards = { path = "../pc-execution-workspace-guards" }
 dirs = "5"
 pc-activity = { path = "../pc-activity" }
 

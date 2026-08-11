@@ -14,8 +14,8 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use key_store::DecisionSigningKeyStore;
 pub use canonical::{canonical, canonical_number};
+pub use key_store::DecisionSigningKeyStore;
 
 pub const DECISION_SIGNING_VERSION: &str = "decision-spec-v1";
 pub const MIN_DECISION_SIGNING_SECRET_LENGTH: usize = 32;

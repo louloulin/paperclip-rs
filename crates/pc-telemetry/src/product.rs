@@ -130,7 +130,11 @@ pub struct PendingBatch {
 }
 
 impl PendingBatch {
-    pub fn for_events(client: &ProductTelemetryClient, events: &[Event], next_attempt: u32) -> anyhow::Result<Self> {
+    pub fn for_events(
+        client: &ProductTelemetryClient,
+        events: &[Event],
+        next_attempt: u32,
+    ) -> anyhow::Result<Self> {
         let body = client.build_body(events)?;
         let batch_id = {
             let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
@@ -138,7 +142,11 @@ impl PendingBatch {
             sha2::Digest::update(&mut hasher, &body);
             format!("{:x}", sha2::Digest::finalize(hasher))[..32].to_owned()
         };
-        Ok(Self { batch_id, body, next_attempt })
+        Ok(Self {
+            batch_id,
+            body,
+            next_attempt,
+        })
     }
 }
 
@@ -161,7 +169,9 @@ impl ProductTelemetryClient {
         version: &str,
     ) -> anyhow::Result<Self> {
         let state = load_or_create_state(state_dir, version)?;
-        let pending = Arc::new(Mutex::new(RetryQueue::new(config.max_pending_batches.max(1))));
+        let pending = Arc::new(Mutex::new(RetryQueue::new(
+            config.max_pending_batches.max(1),
+        )));
         let next_attempt = Arc::new(Mutex::new(HashMap::new()));
         let actor_signal = Arc::new(Notify::new());
         Ok(Self {
@@ -223,7 +233,11 @@ impl ProductTelemetryClient {
     }
 
     pub fn hash_private_ref(&self, value: &str) -> String {
-        format!("{:x}", Sha256::digest(format!("{}{value}", self.state.salt)))[..16].to_owned()
+        format!(
+            "{:x}",
+            Sha256::digest(format!("{}{value}", self.state.salt))
+        )[..16]
+            .to_owned()
     }
 
     fn primary_endpoint(&self) -> String {
@@ -277,9 +291,16 @@ impl ProductTelemetryClient {
         for attempt in 1..=self.config.max_attempts {
             match self.post_with_fallback(primary, body.clone()).await? {
                 SendOutcome::Ok => return Ok(()),
-                SendOutcome::Terminal(status) => anyhow::bail!("terminal telemetry status {status}"),
+                SendOutcome::Terminal(status) => {
+                    anyhow::bail!("terminal telemetry status {status}")
+                }
                 SendOutcome::Retry(delay) if attempt < self.config.max_attempts => {
-                    tokio::time::sleep(delay.unwrap_or(self.compute_backoff(attempt)).min(self.config.retry_max_delay)).await;
+                    tokio::time::sleep(
+                        delay
+                            .unwrap_or(self.compute_backoff(attempt))
+                            .min(self.config.retry_max_delay),
+                    )
+                    .await;
                 }
                 SendOutcome::Retry(_) => anyhow::bail!("telemetry retry attempts exhausted"),
             }
@@ -287,8 +308,13 @@ impl ProductTelemetryClient {
         unreachable!()
     }
 
-    async fn post_with_fallback(&self, primary: &str, body: Vec<u8>) -> anyhow::Result<SendOutcome> {
-        let endpoints = std::iter::once(primary).chain(self.config.fallback_endpoints.iter().map(String::as_str));
+    async fn post_with_fallback(
+        &self,
+        primary: &str,
+        body: Vec<u8>,
+    ) -> anyhow::Result<SendOutcome> {
+        let endpoints = std::iter::once(primary)
+            .chain(self.config.fallback_endpoints.iter().map(String::as_str));
         let mut last_error = None;
         for endpoint in endpoints {
             match self
@@ -311,7 +337,10 @@ impl ProductTelemetryClient {
                     return Ok(SendOutcome::Retry(delay));
                 }
                 Ok(response) if matches!(response.status().as_u16(), 502 | 503 | 504) => {
-                    last_error = Some(anyhow::anyhow!("transient telemetry status {}", response.status()));
+                    last_error = Some(anyhow::anyhow!(
+                        "transient telemetry status {}",
+                        response.status()
+                    ));
                 }
                 Ok(response) => return Ok(SendOutcome::Terminal(response.status().as_u16())),
                 Err(error) => last_error = Some(error.into()),
@@ -330,7 +359,10 @@ impl ProductTelemetryClient {
             tracing::warn!(batch_id = %evicted.batch_id, "dropping evicted retry batch");
             self.next_attempt.lock().await.remove(&evicted.batch_id);
         }
-        self.next_attempt.lock().await.insert(batch.batch_id.clone(), batch.next_attempt);
+        self.next_attempt
+            .lock()
+            .await
+            .insert(batch.batch_id.clone(), batch.next_attempt);
         self.actor_signal.notify_one();
     }
 
@@ -361,7 +393,10 @@ impl ProductTelemetryClient {
     }
 
     async fn retry_one(&self, batch: PendingBatch) {
-        match self.post_with_fallback(&self.primary_endpoint(), batch.body.clone()).await {
+        match self
+            .post_with_fallback(&self.primary_endpoint(), batch.body.clone())
+            .await
+        {
             Ok(SendOutcome::Ok) | Ok(SendOutcome::Terminal(_)) => {
                 self.next_attempt.lock().await.remove(&batch.batch_id);
             }
@@ -373,9 +408,14 @@ impl ProductTelemetryClient {
                     return;
                 }
                 let backoff = self.compute_backoff(next_attempt);
-                let due = Instant::now() + delay.unwrap_or(backoff).min(self.config.retry_max_delay);
+                let due =
+                    Instant::now() + delay.unwrap_or(backoff).min(self.config.retry_max_delay);
                 self.enqueue_retry(
-                    PendingBatch { batch_id: batch.batch_id, body: batch.body, next_attempt },
+                    PendingBatch {
+                        batch_id: batch.batch_id,
+                        body: batch.body,
+                        next_attempt,
+                    },
                     due,
                 )
                 .await;
