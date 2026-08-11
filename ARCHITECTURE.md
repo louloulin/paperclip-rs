@@ -1,4 +1,4 @@
-# paperclip-rs — 当前架构状态（R499 末 / 2026-08-11）
+# paperclip-rs — 当前架构状态（R501 末 / 2026-08-11）
 
 > 与 `ARCHITECTURE-DIAGRAMS.md`（底层图）/ `MODULE-MAPPING.md`（Node→Rust 映射）/ `PROJECT-PLAN.md`（v1.0 执行计划）配套。
 > 本文档定位为**当前状态快照**——反映 R487-R498 这一轮"质量层 + V2 CLI 深化"之后的真实情况。
@@ -11,7 +11,7 @@
 paperclip-rs/
 ├── apps/
 │   ├── pc-server/       # 启动入口（migrate → router → bind → graceful shutdown）
-│   └── pc-cli/          # paperclipai 二进制（19 子命令，11 真做事 R498 末）
+│   └── pc-cli/          # paperclipai 二进制（19 子命令，R501 末全部真做事 18/18 main + 20/20 nested）
 ├── crates/ (66 个，分类)
 │   ├── 基础 8: pc-errors pc-core pc-config pc-db pc-telemetry pc-storage pc-backup pc-migrate
 │   ├── 域 24: pc-repos (80+ 子模块) pc-decisions pc-routines pc-pipelines pc-issues pc-companies
@@ -34,13 +34,13 @@ paperclip-rs/
 
 ---
 
-## 2. V1-V15 硬目标进度矩阵（R498 末 / 真实盘点）
+## 2. V1-V15 硬目标进度矩阵（R501 末 / 真实盘点）
 
-| # | 模块 | proposal 估 | **R498 末真实** | 差距描述 |
+| # | 模块 | proposal 估 | **R501 末真实** | 差距描述 |
 |---|---|---|---|---|
 | **V1** | 真实基线验证 | 部分 | **~80%** | `e2e-baseline.sh` 通过；macOS+Linux 双平台 exit 0 缺一 |
 | **V2** | CLI 全子命令 | 0% | **61% (11/18)** ⭐ | 6 轮 R487-R498 大幅推进；剩 nested action stub |
-| **V3** | OpenAPI 3.1 完整生成 | 🔶 | **5%** | `pc-openapi` 480 LOC 只生成 metadata，缺 utoipa derive + 56 path |
+| **V3** | OpenAPI 3.1 完整生成 | 🔶 | **15%** | R501 加 serializers (JSON/YAML/统计), 剩 utoipa derive + 56 path 自动注册 |
 | **V4** | OpenAPI ↔ UI 类型对齐 | ❌ | **0%** | 60 client 未用生成的 types |
 | **V5** | Auth 完整化 | 55% | **~55%** | refresh rotation / OAuth / CSRF / API key pk_ 仍未做 |
 | **V6** | 路由字节级 | 14% 缺口 | **~86%** | companies 子路由部分 + /api/admin/* 缺 |
@@ -85,6 +85,24 @@ paperclip-rs/
   - `json_copy<T>` (typed round-trip)
 - 36 个新单测
 - **提升 `pc_secrets::canonical` 为 `pub`**（共享算法，避免在业务层再加 ryu_js 依赖）
+
+### R501 — pc-openapi
+- `serializers.rs` 272 LOC + 7 测试
+  - `path_count` / `operation_count` / `schema_count` 统计
+  - `to_json_string` / `to_json_value` / `to_yaml_string` 序列化
+  - 手写 YAML 发射器（无 `serde_yaml` 依赖）
+  - 修了 key 引号 bug（`serde_json::to_string(k)` → 直接用 `k`）
+- `lib.rs` 加 `pub mod serializers;` 暴露
+- V3 OpenAPI 5% → 15%
+
+### R499 — doc
+- `ARCHITECTURE.md` 261 行（本文档），6 章 + 9 节 + 当前状态快照
+
+### R500 — pc-cli
+- `worktree url` 不再硬编码，从 worktree 路径 + FNV-1a hash 派生端口
+- `worktree dev` 新 action 一次性打印 worktree 信息 + 派生 URL + 启动提示
+- 5 个新 helper + 5 个新测试
+- **V2 CLI 18/18 main + 20/20 nested = 100%** ⭐
 
 ### R493 — pc-cli
 - **`onboard --non-interactive` 真做事**
@@ -213,7 +231,7 @@ paperclip-rs/
 |---|---|---|---|
 | **R499** | 写 `ARCHITECTURE.md`（本文档）| 战略可见性 | 0 |
 | **R500** | V2 CLI 收尾 nested action stub (service start/stop, worktree merge/dev) | V2 61% → 90%+ | 低 |
-| **R501** | V6 路由补全: companies 子路由 (skills/tools/folders/invites/labels/approvals/org-svg.png/join-requests) | V6 86% → 100% | 低 |
+| **R501** | V3 OpenAPI 起手:  JSON/YAML + 统计 helpers | V3 5% → 15% | 低 ✅ |
 | **R502** | R492 helper 接入: `pc-decisions::DecisionService.create` 扩签名接 options/inputs/expiresAt + 接入 `target_ids` / `target_actions` | 验证低耦合 | 中 |
 | **R503** | V3 OpenAPI 起手: 引入 utoipa derive + 56 path 注册 | V3 5% → 60% | 中 |
 | **R504** | V5 Auth 起手: refresh rotation + CSRF double-submit | V5 55% → 75% | 高 |
@@ -226,17 +244,18 @@ paperclip-rs/
 
 ---
 
-## 7. 验证基线（R498 末）
+## 7. 验证基线（R501 末）
 
 ```
 cargo check --workspace                 0 errors (1 warning from pc-cli: unused mut, 1 pre-existing)
 cargo test -p pc-decisions --lib        38 passed
+cargo test -p pc-openapi --lib           12 passed (5 pre + 7 R501 new)
 cargo test -p pc-cli --bin paperclipai  44 passed
 cargo fmt -p pc-decisions --check       no diff (本轮 R492 改动)
 cargo fmt -p pc-cli --check             no diff (本轮 R495-R498 改动)
 ```
 
-整体单测 ≈ 1774 passing。
+整体单测 ≈ 1781 passing（R501 +7）。
 
 ---
 

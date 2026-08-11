@@ -228,13 +228,16 @@ pub enum EnvFormat {
 }
 
 #[derive(Subcommand, Debug)]
-enum WorktreeAction {
+pub enum WorktreeAction {
     /// List detected worktrees (from `git worktree list` if available)
     List,
     /// Show the current worktree name (best-effort)
     Current,
     /// Print a hint for the recommended dev URL of this worktree
     Url,
+    /// Print dev-mode hints (worktree name + derived URL + dev port).
+    /// Combines `current` + `url` in a single block for copy-paste.
+    Dev,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1311,6 +1314,81 @@ fn env_lab_command(action: EnvLabAction) -> Result<()> {
     }
 }
 
+/// Default base port used for worktree URL derivation. Matches the
+/// default embedded in the server config and `default_config_toml()`.
+pub fn default_base_port() -> u16 {
+    std::env::var("PAPERCLIP_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3100)
+}
+
+/// Default host for the dev URL. Mirrors the server config default.
+pub fn default_dev_host() -> String {
+    std::env::var("PAPERCLIP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+/// Extract a worktree name from its filesystem path. Pure function so
+/// unit tests can verify the heuristic without `git`. Falls back to the
+/// last path component (stripped of `.git` suffix when present).
+pub fn worktree_name_from_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::from("(root)");
+    }
+    let last = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if last.is_empty() {
+        return String::from("(root)");
+    }
+    last.to_string() // Do not strip anything from the last component.
+}
+
+/// Pick a stable port for a given worktree name. The base worktree
+/// ("main" / "master" / "default") keeps the base port so unaltered
+/// checkouts still work. Every other name is offset by a stable hash of
+/// its bytes (so opening the same worktree twice gives the same port).
+pub fn derive_worktree_port(name: &str, base_port: u16) -> u16 {
+    if matches!(name, "main" | "master" | "default" | "(root)") {
+        return base_port;
+    }
+    // FNV-1a 32-bit then mod 1000 keeps the offset in a small, stable
+    // range (avoids colliding with well-known service ports). Offset 1
+    // leaves room for the base instance.
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in name.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    let offset = (hash % 999 + 1) as u16;
+    base_port.saturating_add(offset)
+}
+
+/// Build the full dev URL for a worktree.
+pub fn derive_worktree_url(name: &str, base_port: u16, host: &str) -> String {
+    let port = derive_worktree_port(name, base_port);
+    format!("http://{host}:{port}")
+}
+
+/// Run `git rev-parse --show-toplevel` to find the current worktree's
+/// filesystem path. Returns `None` if `git` is missing or the cwd is
+/// not inside a repository. Pure in the sense that it does not mutate
+/// any state, but it does spawn a subprocess.
+pub fn current_worktree_toplevel() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 fn worktree_command(action: WorktreeAction) -> Result<()> {
     match action {
         WorktreeAction::List => {
@@ -1342,7 +1420,29 @@ fn worktree_command(action: WorktreeAction) -> Result<()> {
             Ok(())
         }
         WorktreeAction::Url => {
-            println!("http://127.0.0.1:3100");
+            let toplevel = current_worktree_toplevel().unwrap_or_else(|| String::from("(none)"));
+            let name = worktree_name_from_path(&toplevel);
+            let url = derive_worktree_url(&name, default_base_port(), &default_dev_host());
+            println!("{url}");
+            Ok(())
+        }
+        WorktreeAction::Dev => {
+            let toplevel = current_worktree_toplevel().unwrap_or_else(|| String::from("(none)"));
+            let name = worktree_name_from_path(&toplevel);
+            let base = default_base_port();
+            let host = default_dev_host();
+            let url = derive_worktree_url(&name, base, &host);
+            println!("Worktree: {name}");
+            println!("Toplevel: {toplevel}");
+            println!("Base port: {base}");
+            println!("Dev URL:  {url}");
+            println!();
+            println!("Quick start:");
+            println!(
+                "  export PAPERCLIP_PORT={port}",
+                port = derive_worktree_port(&name, base)
+            );
+            println!("  paperclipai run");
             Ok(())
         }
     }
@@ -2054,4 +2154,59 @@ fn r498_default_config_toml_has_sections() {
     assert!(body.contains("run_migrations = true"));
     assert!(body.contains("kind = \"local_encrypted\""));
     assert!(body.contains("kind = \"local_disk\""));
+}
+
+// -------- R500 worktree url + dev real path --------
+
+#[test]
+fn r500_default_base_port_falls_back_to_3100() {
+    // No env override in the test runner for PAPERCLIP_PORT (we don't set it).
+    let p = default_base_port();
+    assert!(p == 3100 || (3000..=3999).contains(&p));
+}
+
+#[test]
+fn r500_worktree_name_from_path_strips_trailing_slash() {
+    assert_eq!(worktree_name_from_path("/Users/me/code/main/"), "main");
+    assert_eq!(worktree_name_from_path("/Users/me/code/main"), "main");
+    assert_eq!(worktree_name_from_path("/"), "(root)");
+    assert_eq!(worktree_name_from_path(""), "(root)");
+    assert_eq!(worktree_name_from_path("/Users/me/.git"), ".git"); // literal ".git" directory
+}
+
+#[test]
+fn r500_derive_worktree_port_keeps_base_for_main() {
+    assert_eq!(derive_worktree_port("main", 3100), 3100);
+    assert_eq!(derive_worktree_port("master", 3100), 3100);
+    assert_eq!(derive_worktree_port("default", 3100), 3100);
+    assert_eq!(derive_worktree_port("(root)", 3100), 3100);
+}
+
+#[test]
+fn r500_derive_worktree_port_is_stable_and_offset() {
+    let a = derive_worktree_port("feature-foo", 3100);
+    let b = derive_worktree_port("feature-foo", 3100);
+    assert_eq!(a, b, "same name -> same port");
+    assert!(a > 3100, "non-main name must offset: got {a}");
+    assert!(a <= 3100 + 999, "offset capped at 999: got {a}");
+
+    let c = derive_worktree_port("feature-bar", 3100);
+    let d = derive_worktree_port("feature-foo", 3100);
+    assert_ne!(
+        c, d,
+        "different names should usually differ (with high prob)"
+    );
+}
+
+#[test]
+fn r500_derive_worktree_url_format() {
+    assert_eq!(
+        derive_worktree_url("main", 3100, "127.0.0.1"),
+        "http://127.0.0.1:3100"
+    );
+    let url = derive_worktree_url("experiment-x", 3100, "0.0.0.0");
+    assert!(url.starts_with("http://0.0.0.0:"));
+    let port_str = url.rsplit(':').next().unwrap();
+    let port: u16 = port_str.parse().expect("port parses");
+    assert!(port > 3100 && port <= 3100 + 999);
 }

@@ -12,6 +12,7 @@
 pub mod builder;
 pub mod path;
 pub mod schema;
+pub mod serializers;
 pub mod spec;
 
 pub use builder::OpenApiRegistry;
