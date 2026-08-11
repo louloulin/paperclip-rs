@@ -1,6 +1,6 @@
 //! 真实数据库集成测试：覆盖 25 个仓储的关键列表查询路径。
 //!
-//! 前置：`DATABASE_URL` 对应的 `PostgreSQL` 库已运行 cargo run -p pc-migrate-smoke 完成 196 条迁移。
+//! 前置：`DATABASE_URL` 对应的 `PostgreSQL` 库已运行 `cargo run -p pc-migrate -- up` 完成 196 条迁移。
 
 use pc_db::Db;
 use pc_repos::{

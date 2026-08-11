@@ -14,6 +14,7 @@
 
 pub mod db_ops;
 pub mod hire_hook;
+pub mod issue_links;
 pub mod service;
 pub mod state_machine;
 

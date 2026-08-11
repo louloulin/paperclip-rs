@@ -3,6 +3,7 @@
 //! Agent 领域服务与基于 kameo 的串行化命令入口。
 
 mod actor;
+mod agent_assignability;
 mod built_in_agent_metadata;
 mod default_agent_instructions;
 mod instructions;
@@ -17,6 +18,10 @@ pub use actor::{
     ResetRuntimeSessionCommand, ResumeAgentCommand, RevokeAgentKeyCommand,
     RollbackConfigRevisionCommand, TerminateAgentCommand, UpdateAgentCommand,
     UpdateAgentPermissionsCommand,
+};
+pub use agent_assignability::{
+    assert_assignable_agent, AgentAssignmentConflictDetail, AgentAssignmentConflictReason,
+    AgentAssignmentError, AgentAssignmentKind,
 };
 pub use built_in_agent_metadata::{
     built_in_agent_markers_equal, read_built_in_agent_marker, with_built_in_agent_marker,

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! `pc-status-card-finalization` —— 状态卡 "stalled generation" 终结化的纯逻辑 helper。
+//! 状态卡 "stalled generation" 终结化的纯逻辑 helper（原 `pc-status-card-finalization` 已下沉）。
 //!
 //! 对应 Node `server/src/services/status-card-finalization.ts`（73 行）。
 //!

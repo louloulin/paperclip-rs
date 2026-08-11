@@ -25,6 +25,7 @@
 //! - **低耦合**：上游调用方只需 import 需要的函数。
 //! - **可测**：纯函数 + 单测覆盖。
 
+mod finalization;
 mod fingerprint;
 mod hashing;
 mod mentions;
@@ -32,6 +33,9 @@ mod policy;
 mod schedule;
 mod types;
 
+pub use finalization::{
+    failure_reason_for_issue, is_stalled_generation, StalledStatus, STALLED_GENERATION_STATUSES,
+};
 pub use fingerprint::{build_status_card_fingerprint, diff_status_card_fingerprint, filter_status_card_changes};
 pub use hashing::{status_card_changes_hash, status_card_fingerprint_hash};
 pub use mentions::{extract_issue_mentions, IssueMentions};
