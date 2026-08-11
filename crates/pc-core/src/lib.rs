@@ -31,6 +31,7 @@ pub mod mcp_http;
 pub mod money;
 pub mod portability_fidelity;
 pub mod portable_path;
+pub mod remote_http_endpoint_guard;
 pub mod project_workspace_runtime_config;
 pub mod routable_blocked;
 pub mod runtime_skill_selections;
@@ -169,6 +170,11 @@ pub use portability_fidelity::{
     EXPORT_FIDELITY_COUNT_KEYS, EXPORT_FIDELITY_REPORT_SCHEMA,
 };
 pub use portable_path::normalize_portable_path;
+pub use remote_http_endpoint_guard::{
+    parse_remote_http_endpoint, assert_public_remote_http_endpoint,
+    RemoteHttpEndpointError, RemoteHttpEndpointGuardOptions, RemoteHttpEndpointLookup,
+    LookupResult, DEFAULT_DNS_TIMEOUT_MS,
+};
 pub use routable_blocked::{
     deliver_agent_unblock_notification, routable_blocked_rollout_at, AgentWakeupRequest,
     DeliverAgentUnblockNotificationInput, IssueUnblockContextSnapshot, IssueUnblockDescriptor,

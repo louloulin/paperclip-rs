@@ -12,6 +12,7 @@
 //! - 低耦合：通过 trait 抽象副作用，调用方按需注入
 //! - 可测：trait-based hook 便于测试时替换
 
+pub mod change_consent_gate;
 pub mod db_ops;
 pub mod hire_approved;
 pub mod hire_hook;

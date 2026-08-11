@@ -21,7 +21,7 @@ tracing = "0.1"
 uuid = { workspace = true }
 regex = { workspace = true }
 sqlx = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

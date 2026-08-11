@@ -26,12 +26,19 @@
 
 pub mod assignment_wakeup;
 pub mod change_receipt;
+pub mod continuation_summary;
 pub mod dependency_wakeups;
+pub mod execution_policy;
 pub mod goal_fallback;
 pub mod label;
+pub mod liveness;
 pub mod references;
+pub mod recovery_actions;
 pub mod rewake_throttle;
 pub mod routable_blocked;
+pub mod thread_interactions;
+pub mod tree_control;
+pub mod visibility;
 
 use async_trait::async_trait;
 use pc_repos::issue::{

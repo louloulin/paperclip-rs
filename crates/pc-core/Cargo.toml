@@ -28,3 +28,4 @@ async-trait = { workspace = true }
 kameo = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true, optional = true }
+url = "2"
