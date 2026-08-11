@@ -395,7 +395,10 @@ impl OAuthFlowState {
     /// 典型 TTL: 10 分钟
     pub const DEFAULT_TTL_SECS: i64 = 600;
 
-    pub fn callback_expired(initiated_at: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> bool {
+    pub fn callback_expired(
+        initiated_at: chrono::DateTime<chrono::Utc>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> bool {
         let elapsed = now.signed_duration_since(initiated_at);
         elapsed.num_seconds() > Self::DEFAULT_TTL_SECS
     }
@@ -408,7 +411,10 @@ mod oauth_flow_state_tests {
     #[test]
     fn r561_oauth_state_as_str() {
         assert_eq!(OAuthFlowState::Pending.as_str(), "pending");
-        assert_eq!(OAuthFlowState::AwaitingCallback.as_str(), "awaiting_callback");
+        assert_eq!(
+            OAuthFlowState::AwaitingCallback.as_str(),
+            "awaiting_callback"
+        );
         assert_eq!(OAuthFlowState::Authorized.as_str(), "authorized");
         assert_eq!(OAuthFlowState::Refreshed.as_str(), "refreshed");
         assert_eq!(OAuthFlowState::Failed.as_str(), "failed");
@@ -493,7 +499,10 @@ mod oauth_flow_state_tests {
             OAuthFlowState::Expired,
             OAuthFlowState::Revoked,
         ] {
-            assert!(!s.can_transition_to(s), "self-transition should be rejected for {s:?}");
+            assert!(
+                !s.can_transition_to(s),
+                "self-transition should be rejected for {s:?}"
+            );
         }
     }
 

@@ -1,6 +1,8 @@
 //! R610: pc-assets hook contract tests.
 
-use pc_repos::asset_service::{AssetHook, AssetHookEvent, AssetService, NoopAssetHook, RecordingAssetHook};
+use pc_repos::asset_service::{
+    AssetHook, AssetHookEvent, AssetService, NoopAssetHook, RecordingAssetHook,
+};
 use pc_repos::Db;
 use serde_json::Value;
 use std::sync::Arc;

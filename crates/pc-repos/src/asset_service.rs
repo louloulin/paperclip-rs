@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use crate::asset::{AssetRow, CreateAssetRecord};
 use crate::asset::AssetRepo;
+pub use crate::asset::{AssetRow, CreateAssetRecord};
 use crate::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
@@ -143,7 +143,10 @@ pub struct AssetService {
 
 impl AssetService {
     pub fn new(db: Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     pub fn with_hooks(db: Db, hooks: Vec<Arc<dyn AssetHook>>) -> Self {
@@ -213,20 +216,23 @@ impl AssetService {
         if company_id.is_nil() {
             return Err(AssetError::Validation("companyId is required".into()));
         }
-        Ok(self.repo().list_by_company_with_provider(company_id, provider, limit).await?)
+        Ok(self
+            .repo()
+            .list_by_company_with_provider(company_id, provider, limit)
+            .await?)
     }
 
-    pub async fn delete_by_id(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> AssetResult<bool> {
+    pub async fn delete_by_id(&self, company_id: Uuid, id: Uuid) -> AssetResult<bool> {
         if company_id.is_nil() {
             return Err(AssetError::Validation("companyId is required".into()));
         }
         let deleted = self.repo().delete_by_id(id).await?;
         if deleted {
-            self.dispatch(AssetHookEvent::Deleted { company_id, asset_id: id }).await;
+            self.dispatch(AssetHookEvent::Deleted {
+                company_id,
+                asset_id: id,
+            })
+            .await;
         }
         Ok(deleted)
     }

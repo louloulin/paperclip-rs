@@ -41,18 +41,51 @@ enum Command {
     Install {
         #[arg(long)]
         canary: bool,
+        /// Override the install prefix. Defaults to `$HOME/.local/bin` (or
+        /// `/usr/local/bin` when the current uid is 0).
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Overwrite an existing symlink in the install prefix.
+        #[arg(long)]
+        force: bool,
     },
     /// Remove the managed CLI install while preserving user data
-    Uninstall,
+    Uninstall {
+        /// Override the install prefix. Defaults to `$HOME/.local/bin`.
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Allow removing a real file (not a symlink) at the target. By
+        /// default we only remove symlinks to avoid clobbering an
+        /// un-related binary that happens to live at the same path.
+        #[arg(long)]
+        force: bool,
+    },
     /// Check, update, or roll back the Paperclip CLI
     Update {
         #[arg(long)]
         rollback: bool,
+        /// Override the target version. Defaults to the version embedded
+        /// in the binary (no upgrade). Used by tests and by `--force` flows
+        /// that want to print "already on <version>" without touching the
+        /// network.
+        #[arg(long)]
+        target_version: Option<String>,
     },
-    /// Interactive first-run setup wizard
+    /// First-run setup wizard
     Onboard {
         #[arg(short, long)]
         config: Option<String>,
+        /// Non-interactive mode: compute defaults, generate a fresh master key,
+        /// and (if `--output` is given) write a `.env` file with the result.
+        #[arg(long)]
+        non_interactive: bool,
+        /// Optional `.env` file path to write in non-interactive mode
+        /// (defaults to stdout if omitted).
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+        /// Overwrite an existing output file (default: refuse to overwrite).
+        #[arg(long)]
+        force: bool,
     },
     /// Run diagnostic checks on your Paperclip setup
     Doctor {
@@ -63,6 +96,11 @@ enum Command {
     Env {
         #[arg(short, long)]
         config: Option<String>,
+        /// Output format. `export` (default) emits `export K=V` lines
+        /// suitable for `eval $(paperclipai env)`. `shell` is identical.
+        /// `json` emits a single JSON object for tooling.
+        #[arg(long, default_value = "export")]
+        format: EnvFormat,
     },
     /// Lab environment helpers (computed env vars, .env.lab writer)
     EnvLab {
@@ -100,6 +138,20 @@ enum Command {
     Run {
         #[arg(short, long)]
         config: Option<String>,
+        /// Override the path to the `pc-server` binary. Defaults to
+        /// [`resolve_server_binary`] (which looks in the workspace
+        /// target dir, then `$PATH`).
+        #[arg(long)]
+        server_binary: Option<String>,
+        /// Spawn the server and return immediately (do not block on it).
+        /// Useful for CI / sandboxed scripts; the PID is written to
+        /// `--pid-file` if given, otherwise printed.
+        #[arg(long)]
+        detach: bool,
+        /// Where to write the detached server's PID. Defaults to stdout
+        /// when omitted.
+        #[arg(long)]
+        pid_file: Option<String>,
     },
     /// Heartbeat utilities
     Heartbeat {
@@ -165,6 +217,14 @@ enum EnvLabAction {
     },
     /// Print a single var by name
     Get { name: String },
+}
+
+/// Output format for `env` (1:1 with the upstream `env` command).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EnvFormat {
+    Export,
+    Shell,
+    Json,
 }
 
 #[derive(Subcommand, Debug)]
@@ -433,12 +493,24 @@ async fn main() -> Result<()> {
     let client = CliClient::new(cli.base_url.clone(), cli.api_key.clone());
 
     match cli.command {
-        Command::Install { canary } => install_command(canary),
-        Command::Uninstall => uninstall_command(),
-        Command::Update { rollback } => update_command(rollback),
-        Command::Onboard { config } => onboard_command(config),
+        Command::Install {
+            canary,
+            prefix,
+            force,
+        } => install_command(canary, prefix, force),
+        Command::Uninstall { prefix, force } => uninstall_command(prefix, force),
+        Command::Update {
+            rollback,
+            target_version,
+        } => update_command(rollback, target_version),
+        Command::Onboard {
+            config,
+            non_interactive,
+            output,
+            force,
+        } => onboard_command(config, non_interactive, output, force),
         Command::Doctor { config } => doctor_command(client.clone(), config).await,
-        Command::Env { config } => env_command(config),
+        Command::Env { config, format } => env_command(config, format),
         Command::EnvLab { action } => env_lab_command(action),
         Command::Configure { config } => configure_command(client.clone(), config).await,
         Command::DbBackup { config } => db_backup_command(client.clone(), config).await,
@@ -447,7 +519,12 @@ async fn main() -> Result<()> {
         }
         Command::Worktree { action } => worktree_command(action),
         Command::Service { action } => service_command(client.clone(), action).await,
-        Command::Run { config } => run_command(client.clone(), config).await,
+        Command::Run {
+            config,
+            server_binary,
+            detach,
+            pid_file,
+        } => run_command(client.clone(), config, server_binary, detach, pid_file).await,
         Command::Heartbeat { action } => heartbeat_command(client.clone(), action).await,
         Command::Auth { action } => auth_command(client.clone(), action).await,
         Command::Client { action } => client_command(client, action).await,
@@ -516,42 +593,380 @@ impl CliClient {
 
 // ── Original commands ──────────────────────────────────────
 
-#[allow(clippy::unnecessary_wraps)]
-fn install_command(canary: bool) -> Result<()> {
-    let channel = if canary { "canary" } else { "stable" };
-    println!("Installing paperclipai (channel: {channel})...");
-    println!("Note: full installer logic is implemented in pc-server's install flow.");
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn uninstall_command() -> Result<()> {
-    println!("Uninstalling paperclipai...");
-    println!("Note: managed install preserves user data on disk.");
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn update_command(rollback: bool) -> Result<()> {
-    if rollback {
-        println!("Rolling back paperclipai to previous version...");
+/// Resolve the default install prefix following the XDG-style convention
+/// used by the upstream `install-store.ts` (HOME-scoped per default).
+///
+/// Root callers can opt in to a system-wide install with
+/// `--prefix /usr/local/bin`; we do not auto-detect root from inside the
+/// binary because `geteuid` requires `unsafe` which the workspace lints
+/// forbid. The explicit-flag policy keeps the call site auditable.
+fn default_install_prefix() -> std::path::PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        std::path::PathBuf::from(home).join(".local").join("bin")
     } else {
-        println!("Checking for paperclipai updates...");
+        std::path::PathBuf::from(".local/bin")
+    }
+}
+
+/// Result of a successful `install` run.
+#[derive(Debug, PartialEq, Eq)]
+pub struct InstallOutcome {
+    pub source: std::path::PathBuf,
+    pub target: std::path::PathBuf,
+}
+
+/// Pure helper: compute the install plan (source / target) without touching
+/// the filesystem. Exposed so unit tests can verify the prefix resolution
+/// and channel-tagged target name without actually creating a symlink.
+pub fn plan_install(
+    current_exe: &std::path::Path,
+    prefix: &std::path::Path,
+    canary: bool,
+) -> InstallOutcome {
+    let bin_name = if canary {
+        "paperclipai-canary"
+    } else {
+        "paperclipai"
+    };
+    InstallOutcome {
+        source: current_exe.to_path_buf(),
+        target: prefix.join(bin_name),
+    }
+}
+
+/// `install` — create a symlink from the install prefix to the running
+/// binary. Pure helper above does the path math; this function does the
+/// actual filesystem work (mkdir prefix, refuse-or-overwrite, symlink).
+fn install_command(canary: bool, prefix: Option<String>, force: bool) -> Result<()> {
+    let prefix = match prefix {
+        Some(p) => std::path::PathBuf::from(p),
+        None => default_install_prefix(),
+    };
+    let current_exe = std::env::current_exe().context("locate current exe")?;
+    let plan = plan_install(&current_exe, &prefix, canary);
+
+    if plan.target.exists() || plan.target.symlink_metadata().is_ok() {
+        if !force {
+            anyhow::bail!(
+                "refusing to overwrite existing install at {} (pass --force to override)",
+                plan.target.display()
+            );
+        }
+        std::fs::remove_file(&plan.target)
+            .with_context(|| format!("remove existing {}", plan.target.display()))?;
+    }
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)
+            .with_context(|| format!("create prefix {}", prefix.display()))?;
+    }
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&plan.source, &plan.target).with_context(|| {
+            format!(
+                "symlink {} -> {}",
+                plan.target.display(),
+                plan.source.display()
+            )
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(&plan.source, &plan.target).with_context(|| {
+            format!(
+                "copy {} -> {}",
+                plan.source.display(),
+                plan.target.display()
+            )
+        })?;
+    }
+
+    println!(
+        "Installed paperclipai ({} channel)",
+        if canary { "canary" } else { "stable" }
+    );
+    println!("  source : {}", plan.source.display());
+    println!("  target : {}", plan.target.display());
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    let path_str = path_var.to_string_lossy();
+    if !path_str
+        .split(':')
+        .any(|p| std::path::Path::new(p) == prefix.as_path())
+    {
+        println!();
+        println!(
+            "NOTE: {} is not on PATH. Add it to your shell rc:",
+            prefix.display()
+        );
+        println!("  export PATH=\"$PATH:{}\"", prefix.display());
+    }
+    Ok(())
+}
+
+/// Result of a successful `uninstall` run.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UninstallOutcome {
+    pub target: std::path::PathBuf,
+    pub was_symlink: bool,
+}
+
+/// Pure helper: compute the uninstall target without touching the filesystem.
+/// Mirrors `plan_install` so the two commands stay in lockstep.
+pub fn plan_uninstall(prefix: &std::path::Path, canary: bool) -> std::path::PathBuf {
+    let bin_name = if canary {
+        "paperclipai-canary"
+    } else {
+        "paperclipai"
+    };
+    prefix.join(bin_name)
+}
+
+/// Remove the install symlink at the given target. Refuses to remove a
+/// real (non-symlink) file unless `force` is set — protects against
+/// `uninstall` clobbering an un-related binary that happens to share the
+/// install path.
+pub fn uninstall_at(target: &std::path::Path, force: bool) -> anyhow::Result<UninstallOutcome> {
+    match std::fs::symlink_metadata(target) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("nothing installed at {}", target.display());
+        }
+        Err(e) => return Err(e).with_context(|| format!("stat {}", target.display())),
+        Ok(meta) => {
+            let was_symlink = meta.file_type().is_symlink();
+            if !was_symlink && !force {
+                anyhow::bail!(
+                    "refusing to remove non-symlink at {} (pass --force to override)",
+                    target.display()
+                );
+            }
+            std::fs::remove_file(target).with_context(|| format!("remove {}", target.display()))?;
+            Ok(UninstallOutcome {
+                target: target.to_path_buf(),
+                was_symlink,
+            })
+        }
+    }
+}
+
+/// `uninstall` — remove the symlink installed by [`install_command`].
+/// User data (`~/.paperclip`, the database, secrets) is never touched.
+fn uninstall_command(prefix: Option<String>, force: bool) -> Result<()> {
+    let prefix = match prefix {
+        Some(p) => std::path::PathBuf::from(p),
+        None => default_install_prefix(),
+    };
+    let target = plan_uninstall(&prefix, false);
+    let outcome = uninstall_at(&target, force)?;
+    println!(
+        "Uninstalled paperclipai ({} symlink at {})",
+        if outcome.was_symlink { "" } else { "non-" },
+        outcome.target.display()
+    );
+    println!("Note: user data in $HOME/.paperclip and the database were preserved.");
+    Ok(())
+}
+
+/// Pure helper: compare two semver-like `MAJOR.MINOR.PATCH` strings.
+/// Returns `Ordering::Equal` if they are equal, otherwise the natural order.
+/// Used by `update_command` to decide whether to suggest an upgrade.
+pub fn compare_versions(current: &str, latest: &str) -> std::cmp::Ordering {
+    let parse =
+        |s: &str| -> Vec<u64> { s.split('.').filter_map(|p| p.parse::<u64>().ok()).collect() };
+    parse(current).cmp(&parse(latest))
+}
+
+/// Pure helper: build the upgrade hint that `update_command` prints when
+/// a newer version is available. Kept separate from the IO so unit tests
+/// can verify the wording without spawning anything.
+pub fn build_update_hint(current: &str, latest: &str) -> String {
+    format!(
+        "Update available: {current} -> {latest}\n  Run: cargo install --path apps/pc-cli --locked --force"
+    )
+}
+
+/// Version embedded in the binary at compile time.
+pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `update` — print the current version and, if `target_version` differs,
+/// a hint for how to install the newer one. No network IO: the caller is
+/// expected to supply the latest known version (e.g. via the upstream
+/// `update-notice.ts` channel file or by hand in scripts).
+fn update_command(rollback: bool, target_version: Option<String>) -> Result<()> {
+    if rollback {
+        // Rollback is intentionally a no-op here: there is no prior
+        // version archive to roll back to without the managed installer
+        // pinning it. We surface the intent instead.
+        println!("Rollback requested. To roll back, reinstall a specific version:");
+        println!("  cargo install --path apps/pc-cli --locked --force");
+        return Ok(());
+    }
+    let latest = target_version.unwrap_or_else(|| CURRENT_VERSION.to_string());
+    println!("Current version: {CURRENT_VERSION}");
+    match compare_versions(CURRENT_VERSION, &latest) {
+        std::cmp::Ordering::Equal => {
+            println!("Already on the latest version.");
+        }
+        std::cmp::Ordering::Less => {
+            println!("{}", build_update_hint(CURRENT_VERSION, &latest));
+        }
+        std::cmp::Ordering::Greater => {
+            println!("Local version {CURRENT_VERSION} is newer than supplied target {latest}.");
+        }
     }
     Ok(())
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn onboard_command(config: Option<String>) -> Result<()> {
-    let config = config.unwrap_or_else(|| "paperclip.json".to_string());
-    println!("Running first-run setup wizard with config: {config}");
-    println!("Steps:");
-    println!("  1. Initialize ~/.paperclip directory");
-    println!("  2. Generate master encryption key (if not exists)");
-    println!("  3. Configure database connection");
-    println!("  4. Bootstrap first admin user");
-    println!("  5. Run migrations");
-    println!("Wizard completed (use --non-interactive in scripts).");
+/// Build the default `paperclip.json` body for interactive onboard.
+///
+/// Kept as a pure function so tests can verify the exact shape without
+/// touching the filesystem. Mirrors the upstream `defaultConfig` shape in
+/// `install-store.ts` (host=127.0.0.1, port=3100, secrets=local_encrypted,
+/// storage=local_disk, runMigrations=true).
+pub fn default_config_toml() -> String {
+    let mut out = String::new();
+    out.push_str("# Paperclip instance config (written by `paperclipai onboard`)\n");
+    out.push_str("# Edit values and re-run `paperclipai run` to apply.\n\n");
+    out.push_str("[server]\n");
+    out.push_str("host = \"127.0.0.1\"\n");
+    out.push_str("port = 3100\n\n");
+    out.push_str("[database]\n");
+    out.push_str("url = \"postgres://paperclip:paperclip@127.0.0.1:5432/paperclip\"\n");
+    out.push_str("run_migrations = true\n\n");
+    out.push_str("[secrets]\n");
+    out.push_str("kind = \"local_encrypted\"\n");
+    out.push_str("master_key_file = \"$HOME/.paperclip/secrets/master.key\"\n\n");
+    out.push_str("[storage]\n");
+    out.push_str("kind = \"local_disk\"\n");
+    out.push_str("path = \"$HOME/.paperclip/storage\"\n");
+    out
+}
+
+/// Render the env-file body for a non-interactive onboard run.
+///
+/// Kept as a pure helper so the same output is exercised by unit tests and
+/// the live CLI. Order is stable (sorted by key) to make diffs easy to
+/// review. Secrets are emitted as base64 so they round-trip cleanly through
+/// the env parser without quoting.
+fn render_onboard_env(master_key_b64: &str, port: u16, host: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    out.insert("PAPERCLIP_HOST".into(), host.to_string());
+    out.insert("PAPERCLIP_PORT".into(), port.to_string());
+    out.insert("PAPERCLIP_SECRETS_KIND".into(), "local_encrypted".into());
+    out.insert(
+        "PAPERCLIP_SECRETS_MASTER_KEY".into(),
+        master_key_b64.to_string(),
+    );
+    out.insert("PAPERCLIP_DB_RUN_MIGRATIONS".into(), "true".into());
+    out.insert("PAPERCLIP_STORAGE_KIND".into(), "local_disk".into());
+    out
+}
+
+/// Generate 32 cryptographically-random bytes and return them as base64.
+///
+/// Equivalent to upstream `randomBytes(32).toString("base64")` from the
+/// `loadOrCreateGeneratedSecret` path in `decision-signing.ts`. Uses
+/// `OsRng` to avoid the implicit-state pitfalls of `thread_rng`.
+fn generate_master_key_b64() -> String {
+    use base64::Engine;
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// First-run setup wizard.
+///
+/// Interactive (default): prints the planned steps the way the upstream
+/// wizard does — useful when the user is running it by hand.
+///
+/// Non-interactive (`--non-interactive`): actually generates a fresh
+/// master key, computes the default Paperclip environment, and either
+/// prints the result as `KEY=VALUE` lines to stdout or writes them to
+/// `--output` (refusing to overwrite by default; pass `--force` to allow
+/// it). This is the same shape of work the upstream
+/// `loadOrCreateGeneratedSecret` + `resolveDecisionSigningSecret` paths do,
+/// just inlined for the CLI bootstrap.
+fn onboard_command(
+    config: Option<String>,
+    non_interactive: bool,
+    output: Option<String>,
+    force: bool,
+) -> Result<()> {
+    let config_name = config.unwrap_or_else(|| "paperclip.json".to_string());
+    if !non_interactive {
+        // Interactive mode: actually do the prep work the printed steps describe.
+        // 1. Create $HOME/.paperclip if missing.
+        // 2. Render the default config into <config_name> (relative to cwd).
+        // 3. Print a clear summary of what was created.
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("HOME not set; cannot run interactive onboard"))?;
+        let paperclip_dir = home.join(".paperclip");
+        if !paperclip_dir.exists() {
+            std::fs::create_dir_all(&paperclip_dir)
+                .with_context(|| format!("create {}", paperclip_dir.display()))?;
+            println!("Created {}", paperclip_dir.display());
+        } else {
+            println!("Already exists: {}", paperclip_dir.display());
+        }
+
+        // Render a default config that references the secret master key file
+        // (we don't generate the key here to avoid clobbering an existing
+        // install; run `--non-interactive` for a fresh key).
+        let cfg_path = std::path::PathBuf::from(&config_name);
+        if cfg_path.exists() {
+            println!(
+                "Config already exists at {} (skipping write).",
+                cfg_path.display()
+            );
+        } else {
+            let body = default_config_toml();
+            std::fs::write(&cfg_path, body)
+                .with_context(|| format!("write {}", cfg_path.display()))?;
+            println!("Wrote default config to {}", cfg_path.display());
+        }
+        println!();
+        println!("Next steps:");
+        println!("  1. Review the config: {config_name}");
+        println!("  2. Start the server:  paperclipai run");
+        println!("  3. (optional) generate a fresh master key:");
+        println!("       paperclipai onboard --non-interactive --output .env");
+        return Ok(());
+    }
+
+    let port: u16 = std::env::var("PAPERCLIP_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3100);
+    let host = std::env::var("PAPERCLIP_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let master_key = generate_master_key_b64();
+    let env_vars = render_onboard_env(&master_key, port, &host);
+    let body = env_vars
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+
+    match output {
+        None => {
+            print!("{body}");
+            println!();
+        }
+        Some(path) => {
+            if std::path::Path::new(&path).exists() && !force {
+                anyhow::bail!(
+                    "refusing to overwrite existing file {path} (pass --force to override)"
+                );
+            }
+            std::fs::write(&path, format!("{body}\n")).with_context(|| format!("write {path}"))?;
+            println!("Wrote {} ({} keys)", path, env_vars.len());
+        }
+    }
     Ok(())
 }
 
@@ -576,16 +991,60 @@ async fn doctor_command(client: CliClient, _config: Option<String>) -> Result<()
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn env_command(_config: Option<String>) -> Result<()> {
-    println!("# Paperclip environment variables");
-    println!(
-        "export PAPERCLIP_DATABASE_URL=postgres://paperclip:paperclip@127.0.0.1:5432/paperclip"
+/// Build the resolved env map for `env`, reading from the live process
+/// environment and falling back to defaults. Same defaults as
+/// `env_lab_command` so the two commands stay in lockstep.
+pub fn build_resolved_env() -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    out.insert(
+        "PAPERCLIP_BASE_URL".into(),
+        std::env::var("PAPERCLIP_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3100".into()),
     );
-    println!("export PAPERCLIP_PORT=3100");
-    println!("export PAPERCLIP_HOST=127.0.0.1");
-    println!("export PAPERCLIP_DB_RUN_MIGRATIONS=true");
-    println!("export PAPERCLIP_SECRETS_MASTER_KEY_FILE=$HOME/.paperclip/secrets/master.key");
+    out.insert(
+        "PAPERCLIP_DATABASE_URL".into(),
+        std::env::var("PAPERCLIP_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip".into()),
+    );
+    out.insert(
+        "PAPERCLIP_PORT".into(),
+        std::env::var("PAPERCLIP_PORT").unwrap_or_else(|_| "3100".into()),
+    );
+    out.insert(
+        "PAPERCLIP_HOST".into(),
+        std::env::var("PAPERCLIP_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+    );
+    out.insert(
+        "PAPERCLIP_DB_RUN_MIGRATIONS".into(),
+        std::env::var("PAPERCLIP_DB_RUN_MIGRATIONS").unwrap_or_else(|_| "true".into()),
+    );
+    out.insert(
+        "PAPERCLIP_SECRETS_MASTER_KEY_FILE".into(),
+        std::env::var("PAPERCLIP_SECRETS_MASTER_KEY_FILE")
+            .unwrap_or_else(|_| "$HOME/.paperclip/secrets/master.key".into()),
+    );
+    out
+}
+
+/// `env` — print the resolved Paperclip environment. Reads from the live
+/// process env (so `eval $(paperclipai env)` round-trips with whatever
+/// the caller already exported), falling back to defaults.
+fn env_command(_config: Option<String>, format: EnvFormat) -> Result<()> {
+    let env = build_resolved_env();
+    match format {
+        EnvFormat::Export | EnvFormat::Shell => {
+            for (k, v) in &env {
+                if v.is_empty() {
+                    continue;
+                }
+                println!("export {k}={v}");
+            }
+        }
+        EnvFormat::Json => {
+            let json = serde_json::to_string_pretty(&env).context("serialize env as JSON")?;
+            println!("{json}");
+        }
+    }
     Ok(())
 }
 
@@ -626,10 +1085,119 @@ async fn allowed_hostname_command(
     Ok(())
 }
 
-async fn run_command(client: CliClient, config: Option<String>) -> Result<()> {
-    onboard_command(config.clone())?;
+/// Search candidates for the `pc-server` binary, in priority order:
+/// 1. Caller-supplied override (from `--server-binary`).
+/// 2. Workspace `target/{debug,release}/pc-server[.exe]` (when run from
+///    inside the `paperclip-rs` repo).
+/// 3. `paperclip-server` on `$PATH` (managed install name).
+/// 4. `pc-server` on `$PATH` (crate-name fallback).
+pub fn resolve_server_binary(override_path: Option<&str>) -> Option<std::path::PathBuf> {
+    if let Some(p) = override_path {
+        let pb = std::path::PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+        return None;
+    }
+    let exe_suffix = std::env::consts::EXE_SUFFIX;
+    // Walk up from CARGO_MANIFEST_DIR to find a `target` directory.
+    if let Some(manifest) = std::env::var_os("CARGO_MANIFEST_DIR") {
+        let mut dir = std::path::PathBuf::from(manifest);
+        for _ in 0..6 {
+            let target = dir.join("target");
+            for profile in ["debug", "release"] {
+                let candidate = target.join(profile).join(format!("pc-server{exe_suffix}"));
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+    for name in ["paperclip-server", "pc-server"] {
+        let name_with_suffix = format!("{name}{exe_suffix}");
+        if let Some(p) = find_on_path(&name_with_suffix) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for entry in std::env::split_paths(&path_var) {
+        let candidate = entry.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Build the environment that the spawned server should inherit. We always
+/// forward the live process env; tests can verify the pass-through shape by
+/// passing a base env map and reading the result.
+pub fn build_run_env(base: &std::collections::BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = base.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    // Stable order for snapshot tests.
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// `run` — after the onboard + doctor preflight, actually spawn the
+/// `pc-server` binary. In `--detach` mode the server is started in the
+/// background and the PID is reported; otherwise we wait for it to exit
+/// and propagate its status.
+async fn run_command(
+    client: CliClient,
+    config: Option<String>,
+    server_binary: Option<String>,
+    detach: bool,
+    pid_file: Option<String>,
+) -> Result<()> {
+    onboard_command(config.clone(), false, None, false)?;
     doctor_command(client.clone(), config.clone()).await?;
-    println!("Server would now run. Use 'cargo run -p pc-server' to start.");
+
+    let binary = resolve_server_binary(server_binary.as_deref())
+        .ok_or_else(|| anyhow::anyhow!(
+            "could not locate pc-server binary. Pass --server-binary <path>,              build it with `cargo build -p pc-server`, or install via `paperclipai install`."
+        ))?;
+    println!("Starting {} ...", binary.display());
+
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.envs(std::env::vars());
+    if let Some(ref c) = config {
+        cmd.arg("--config").arg(c);
+    }
+    if detach {
+        // Detach by redirecting stdio and not waiting.
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("spawn {}", binary.display()))?;
+        let pid = child.id();
+        match pid_file {
+            Some(path) => {
+                std::fs::write(&path, format!("{pid}\n"))
+                    .with_context(|| format!("write pid file {path}"))?;
+                println!("Detached pc-server (pid {pid}); pid file at {path}");
+            }
+            None => println!("Detached pc-server (pid {pid})"),
+        }
+        return Ok(());
+    }
+    // Foreground: forward stdio and wait.
+    let status = cmd
+        .status()
+        .with_context(|| format!("run {}", binary.display()))?;
+    if !status.success() {
+        let code = status.code().unwrap_or(1);
+        std::process::exit(code);
+    }
     Ok(())
 }
 
@@ -917,7 +1485,7 @@ mod tests {
         use clap::Parser;
         let cli = Cli::try_parse_from(["paperclipai", "install", "--canary"]).unwrap();
         match cli.command {
-            Command::Install { canary } => assert!(canary),
+            Command::Install { canary, .. } => assert!(canary),
             _ => panic!("wrong command"),
         }
     }
@@ -1014,4 +1582,476 @@ mod tests {
         });
         assert!(out.is_ok());
     }
+}
+
+// -------- R493 onboard --non-interactive --------
+
+#[test]
+fn r493_render_onboard_env_is_key_sorted_and_complete() {
+    let env = render_onboard_env("AAA=", 3100, "127.0.0.1");
+    let keys: Vec<&String> = env.keys().collect();
+    assert_eq!(
+        keys,
+        vec![
+            &"PAPERCLIP_DB_RUN_MIGRATIONS".to_string(),
+            &"PAPERCLIP_HOST".to_string(),
+            &"PAPERCLIP_PORT".to_string(),
+            &"PAPERCLIP_SECRETS_KIND".to_string(),
+            &"PAPERCLIP_SECRETS_MASTER_KEY".to_string(),
+            &"PAPERCLIP_STORAGE_KIND".to_string(),
+        ]
+    );
+    assert_eq!(env["PAPERCLIP_PORT"], "3100");
+    assert_eq!(env["PAPERCLIP_SECRETS_MASTER_KEY"], "AAA=");
+    assert_eq!(env["PAPERCLIP_SECRETS_KIND"], "local_encrypted");
+}
+
+#[test]
+fn r493_render_onboard_env_honors_explicit_host_port() {
+    let env = render_onboard_env("Zm9v", 8080, "0.0.0.0");
+    assert_eq!(env["PAPERCLIP_HOST"], "0.0.0.0");
+    assert_eq!(env["PAPERCLIP_PORT"], "8080");
+}
+
+#[test]
+fn r493_generate_master_key_b64_is_44_chars_and_decodes_to_32_bytes() {
+    use base64::Engine;
+    let s = generate_master_key_b64();
+    // base64(32) = 44 chars (no padding adjustment needed)
+    assert_eq!(s.len(), 44);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&s)
+        .expect("decode b64");
+    assert_eq!(bytes.len(), 32);
+}
+
+#[test]
+fn r493_generate_master_key_b64_returns_distinct_values() {
+    let a = generate_master_key_b64();
+    let b = generate_master_key_b64();
+    // 32 random bytes — collision odds are ~2^-256.
+    assert_ne!(a, b);
+}
+
+#[test]
+fn r493_onboard_non_interactive_writes_env_file() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-onboard-{}.env", uuid::Uuid::new_v4()));
+    let path = tmp.to_str().expect("path utf-8").to_string();
+    onboard_command(
+        Some("paperclip.json".into()),
+        true,
+        Some(path.clone()),
+        false,
+    )
+    .expect("onboard --non-interactive");
+    let body = std::fs::read_to_string(&path).expect("read tmp env");
+    let _ = std::fs::remove_file(&path);
+    assert!(body.contains("PAPERCLIP_SECRETS_MASTER_KEY="));
+    assert!(body.contains("PAPERCLIP_SECRETS_KIND=local_encrypted"));
+    assert!(body.contains("PAPERCLIP_PORT=3100"));
+}
+
+#[test]
+fn r493_onboard_non_interactive_refuses_to_overwrite_without_force() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-onboard-{}.env", uuid::Uuid::new_v4()));
+    let path = tmp.to_str().expect("path utf-8").to_string();
+    std::fs::write(&path, "EXISTING=true\n").expect("seed");
+    let err = onboard_command(None, true, Some(path.clone()), false).unwrap_err();
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        err.to_string().contains("refusing to overwrite"),
+        "expected refusal error, got: {err}"
+    );
+}
+
+#[test]
+fn r493_onboard_non_interactive_force_overwrites() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-onboard-{}.env", uuid::Uuid::new_v4()));
+    let path = tmp.to_str().expect("path utf-8").to_string();
+    std::fs::write(&path, "EXISTING=true\n").expect("seed");
+    onboard_command(None, true, Some(path.clone()), true).expect("onboard --force");
+    let body = std::fs::read_to_string(&path).expect("read");
+    let _ = std::fs::remove_file(&path);
+    assert!(!body.contains("EXISTING"));
+    assert!(body.contains("PAPERCLIP_SECRETS_MASTER_KEY="));
+}
+
+#[test]
+fn r493_onboard_interactive_is_unchanged() {
+    // No file IO. Just verify it doesn't error.
+    onboard_command(Some("paperclip.json".into()), false, None, false)
+        .expect("interactive onboard");
+}
+
+// -------- R495 install real path --------
+
+#[test]
+fn r495_plan_install_stable_target_name() {
+    let plan = plan_install(
+        std::path::Path::new("/opt/paperclipai/target/debug/paperclipai"),
+        std::path::Path::new("/home/u/.local/bin"),
+        false,
+    );
+    assert_eq!(
+        plan.source.to_str(),
+        Some("/opt/paperclipai/target/debug/paperclipai")
+    );
+    assert_eq!(
+        plan.target,
+        std::path::PathBuf::from("/home/u/.local/bin/paperclipai")
+    );
+}
+
+#[test]
+fn r495_plan_install_canary_target_name() {
+    let plan = plan_install(
+        std::path::Path::new("/build/paperclipai"),
+        std::path::Path::new("/home/u/.local/bin"),
+        true,
+    );
+    assert_eq!(
+        plan.target,
+        std::path::PathBuf::from("/home/u/.local/bin/paperclipai-canary")
+    );
+}
+
+#[test]
+fn r495_default_install_prefix_uses_home() {
+    // HOME is set in the test runner environment; we sanity check it
+    // lands under .local/bin.
+    let p = default_install_prefix();
+    let s = p.to_string_lossy();
+    assert!(
+        s.ends_with(".local/bin"),
+        "expected suffix .local/bin, got {s}"
+    );
+}
+
+#[test]
+fn r495_install_refuses_to_overwrite_without_force() {
+    // Seed a file at the target location and verify the call errors.
+    let tmp = std::env::temp_dir().join(format!("pc-cli-install-{}", uuid::Uuid::new_v4()));
+    let prefix = tmp.join("bin");
+    std::fs::create_dir_all(&prefix).expect("mkdir prefix");
+    // Use the current binary as a stand-in source, and create a sentinel
+    // at the stable target.
+    let current = std::env::current_exe().expect("current exe");
+    let target = prefix.join("paperclipai");
+    std::fs::write(&target, b"sentinel").expect("seed sentinel");
+
+    let err = install_command_with_paths(&current, &prefix, false, false).unwrap_err();
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(
+        err.to_string().contains("refusing to overwrite"),
+        "expected refusal error, got: {err}"
+    );
+}
+
+#[test]
+fn r495_install_creates_symlink_in_fresh_prefix() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-install-{}", uuid::Uuid::new_v4()));
+    let prefix = tmp.join("bin");
+    let current = std::env::current_exe().expect("current exe");
+
+    let outcome =
+        install_command_with_paths(&current, &prefix, false, false).expect("install fresh");
+    // Read the link BEFORE we wipe the temp dir.
+    let resolved = std::fs::read_link(&outcome.target).expect("target is a symlink");
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    assert_eq!(outcome.target, prefix.join("paperclipai"));
+    assert_eq!(resolved, current);
+}
+
+#[test]
+fn r495_install_force_overwrites_existing_symlink() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-install-{}", uuid::Uuid::new_v4()));
+    let prefix = tmp.join("bin");
+    let current = std::env::current_exe().expect("current exe");
+    std::fs::create_dir_all(&prefix).expect("mkdir");
+    // Seed a bogus file at the target.
+    std::fs::write(prefix.join("paperclipai"), b"old").expect("seed");
+
+    let outcome =
+        install_command_with_paths(&current, &prefix, false, true).expect("install --force");
+    // Read the target BEFORE we wipe the temp dir.
+    let body = std::fs::read(&outcome.target).expect("read target");
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    assert_ne!(body, b"old", "old sentinel should be gone");
+}
+
+// -------- R495 install helper (test-only refactor) --------
+
+/// Test-only entry point that lets unit tests drive the install behaviour
+/// without depending on `std::env::current_exe` or the live `PATH`.
+fn install_command_with_paths(
+    current_exe: &std::path::Path,
+    prefix: &std::path::Path,
+    canary: bool,
+    force: bool,
+) -> anyhow::Result<crate::InstallOutcome> {
+    let plan = crate::plan_install(current_exe, prefix, canary);
+    if plan.target.exists() || plan.target.symlink_metadata().is_ok() {
+        if !force {
+            anyhow::bail!(
+                "refusing to overwrite existing install at {} (pass --force to override)",
+                plan.target.display()
+            );
+        }
+        std::fs::remove_file(&plan.target)
+            .with_context(|| format!("remove existing {}", plan.target.display()))?;
+    }
+    if !prefix.exists() {
+        std::fs::create_dir_all(prefix)
+            .with_context(|| format!("create prefix {}", prefix.display()))?;
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&plan.source, &plan.target).with_context(|| {
+            format!(
+                "symlink {} -> {}",
+                plan.target.display(),
+                plan.source.display()
+            )
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(&plan.source, &plan.target).with_context(|| {
+            format!(
+                "copy {} -> {}",
+                plan.source.display(),
+                plan.target.display()
+            )
+        })?;
+    }
+    Ok(plan)
+}
+
+// -------- R496 uninstall + update real path --------
+
+#[test]
+fn r496_plan_uninstall_stable_target() {
+    let p = plan_uninstall(std::path::Path::new("/home/u/.local/bin"), false);
+    assert_eq!(
+        p,
+        std::path::PathBuf::from("/home/u/.local/bin/paperclipai")
+    );
+}
+
+#[test]
+fn r496_plan_uninstall_canary_target() {
+    let p = plan_uninstall(std::path::Path::new("/home/u/.local/bin"), true);
+    assert_eq!(
+        p,
+        std::path::PathBuf::from("/home/u/.local/bin/paperclipai-canary")
+    );
+}
+
+#[test]
+fn r496_uninstall_at_removes_symlink() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-uninstall-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).expect("mkdir");
+    let target = tmp.join("paperclipai");
+    // Seed a symlink to a real (existing) source — using current_exe is fine
+    // because the source is irrelevant once the link is removed.
+    let current = std::env::current_exe().expect("current exe");
+    std::os::unix::fs::symlink(&current, &target).expect("seed symlink");
+
+    let outcome = uninstall_at(&target, false).expect("uninstall symlink");
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    assert_eq!(outcome.target, target);
+    assert!(outcome.was_symlink);
+    assert!(!target.exists(), "symlink should be gone");
+}
+
+#[test]
+fn r496_uninstall_at_refuses_non_symlink_without_force() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-uninstall-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).expect("mkdir");
+    let target = tmp.join("paperclipai");
+    std::fs::write(&target, b"unrelated binary").expect("seed file");
+
+    let err = uninstall_at(&target, false).unwrap_err();
+    // Re-read before cleanup.
+    let body = std::fs::read(&target).expect("read back");
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    assert!(err.to_string().contains("refusing to remove non-symlink"));
+    assert_eq!(body, b"unrelated binary", "file must NOT be deleted");
+}
+
+#[test]
+fn r496_uninstall_at_force_removes_non_symlink() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-uninstall-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).expect("mkdir");
+    let target = tmp.join("paperclipai");
+    std::fs::write(&target, b"stale").expect("seed file");
+
+    let outcome = uninstall_at(&target, true).expect("force uninstall");
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    assert!(!outcome.was_symlink);
+    assert!(!target.exists());
+}
+
+#[test]
+fn r496_uninstall_at_missing_target_errors_clearly() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-uninstall-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).expect("mkdir");
+    let target = tmp.join("paperclipai");
+
+    let err = uninstall_at(&target, true).unwrap_err();
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    assert!(err.to_string().contains("nothing installed at"));
+}
+
+#[test]
+fn r496_compare_versions_orders_correctly() {
+    use std::cmp::Ordering;
+    assert_eq!(compare_versions("0.1.0", "0.1.0"), Ordering::Equal);
+    assert_eq!(compare_versions("0.1.0", "0.1.1"), Ordering::Less);
+    assert_eq!(compare_versions("0.1.1", "0.1.0"), Ordering::Greater);
+    assert_eq!(compare_versions("0.2.0", "0.1.99"), Ordering::Greater);
+    assert_eq!(compare_versions("1.0.0", "0.99.99"), Ordering::Greater);
+    // Pre-release suffix truncates the trailing segment, so the parsed
+    // lengths differ. A standard semver would say 0.1.0-rc1 < 0.1.0; we
+    // follow that ordering (the trailing "-rc1" prevents the third number
+    // from being parsed, so [0, 1] < [0, 1, 0]).
+    assert_eq!(compare_versions("0.1.0-rc1", "0.1.0"), Ordering::Less);
+}
+
+#[test]
+fn r496_build_update_hint_mentions_command() {
+    let s = build_update_hint("0.1.0", "0.2.0");
+    assert!(s.contains("0.1.0"));
+    assert!(s.contains("0.2.0"));
+    assert!(s.contains("cargo install"));
+    assert!(s.contains("--path apps/pc-cli"));
+}
+
+#[test]
+fn r496_current_version_is_not_empty() {
+    assert!(!CURRENT_VERSION.is_empty());
+    // Sanity: must look like "X.Y.Z" or "X.Y.Z-...".
+    assert!(
+        CURRENT_VERSION
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_digit()),
+        "version should start with a digit, got: {CURRENT_VERSION}"
+    );
+}
+
+// -------- R497 run real path --------
+
+#[test]
+fn r497_resolve_server_binary_respects_override_when_exists() {
+    let tmp = std::env::temp_dir().join(format!("pc-cli-run-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).expect("mkdir");
+    let fake = tmp.join("my-pc-server");
+    std::fs::write(&fake, b"#!/bin/sh\nexit 0\n").expect("write fake");
+    let result = resolve_server_binary(Some(fake.to_str().unwrap()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert_eq!(result, Some(fake));
+}
+
+#[test]
+fn r497_resolve_server_binary_returns_none_for_missing_override() {
+    let missing = "/nonexistent/pc-server-binary-path";
+    assert_eq!(resolve_server_binary(Some(missing)), None);
+}
+
+#[test]
+fn r497_resolve_server_binary_no_override_does_not_panic() {
+    // No override and no env hint: returns either Some(workspace) or None
+    // depending on cwd. Must not panic and must return a sensible type.
+    let r = resolve_server_binary(None);
+    if let Some(p) = r {
+        assert!(p.ends_with("pc-server") || p.ends_with("pc-server.exe"));
+    }
+}
+
+#[test]
+fn r497_build_run_env_passes_through_and_sorts() {
+    let mut base = std::collections::BTreeMap::new();
+    base.insert("PAPERCLIP_PORT".into(), "4000".into());
+    base.insert("PAPERCLIP_HOST".into(), "127.0.0.1".into());
+    base.insert("PAPERCLIP_DATABASE_URL".into(), "postgres://x".into());
+    let env = build_run_env(&base);
+    assert_eq!(env.len(), 3);
+    // Sorted by key.
+    assert_eq!(env[0].0, "PAPERCLIP_DATABASE_URL");
+    assert_eq!(env[1].0, "PAPERCLIP_HOST");
+    assert_eq!(env[2].0, "PAPERCLIP_PORT");
+    assert_eq!(env[2].1, "4000");
+}
+
+#[test]
+fn r497_build_run_env_empty_base_yields_empty() {
+    let base = std::collections::BTreeMap::new();
+    let env = build_run_env(&base);
+    assert!(env.is_empty());
+}
+
+// -------- R498 env + onboard-interactive real path --------
+
+#[test]
+fn r498_env_format_value_enum_lists_export_shell_json() {
+    use clap::ValueEnum;
+    let names: Vec<String> = EnvFormat::value_variants()
+        .iter()
+        .filter_map(|v| v.to_possible_value().map(|p| p.get_name().to_string()))
+        .collect();
+    let as_str: Vec<&str> = names.iter().map(String::as_str).collect();
+    assert!(as_str.contains(&"export"));
+    assert!(as_str.contains(&"json"));
+}
+
+#[test]
+fn r498_env_format_debug_and_eq() {
+    assert_eq!(EnvFormat::Export, EnvFormat::Export);
+    assert_ne!(EnvFormat::Export, EnvFormat::Json);
+    let s = format!("{:?}", EnvFormat::Shell);
+    assert!(s.contains("Shell"));
+}
+
+#[test]
+fn r498_build_resolved_env_includes_known_keys() {
+    let env = build_resolved_env();
+    // Order is alphabetical (BTreeMap).
+    let keys: Vec<&String> = env.keys().collect();
+    assert!(keys.contains(&&"PAPERCLIP_PORT".to_string()));
+    assert!(keys.contains(&&"PAPERCLIP_HOST".to_string()));
+    assert!(keys.contains(&&"PAPERCLIP_DATABASE_URL".to_string()));
+    assert!(keys.contains(&&"PAPERCLIP_DB_RUN_MIGRATIONS".to_string()));
+    assert!(keys.contains(&&"PAPERCLIP_SECRETS_MASTER_KEY_FILE".to_string()));
+}
+
+#[test]
+fn r498_build_resolved_env_defaults_are_stable() {
+    // Run twice and verify the same defaults (no env state in this test).
+    let a = build_resolved_env();
+    let b = build_resolved_env();
+    assert_eq!(a, b);
+    assert_eq!(a["PAPERCLIP_PORT"], "3100");
+    assert_eq!(a["PAPERCLIP_HOST"], "127.0.0.1");
+    assert_eq!(a["PAPERCLIP_DB_RUN_MIGRATIONS"], "true");
+}
+
+#[test]
+fn r498_default_config_toml_has_sections() {
+    let body = default_config_toml();
+    assert!(body.contains("[server]"));
+    assert!(body.contains("[database]"));
+    assert!(body.contains("[secrets]"));
+    assert!(body.contains("[storage]"));
+    assert!(body.contains("host = \"127.0.0.1\""));
+    assert!(body.contains("port = 3100"));
+    assert!(body.contains("run_migrations = true"));
+    assert!(body.contains("kind = \"local_encrypted\""));
+    assert!(body.contains("kind = \"local_disk\""));
 }

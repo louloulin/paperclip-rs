@@ -26,8 +26,8 @@
 
 use async_trait::async_trait;
 use pc_repos::pipeline::{
-    PipelineCaseEventRow, PipelineCaseIssueLinkRow, PipelineCaseRow, PipelineRepo,
-    PipelineRow, PipelineStageRow, PipelineTransitionRow,
+    PipelineCaseEventRow, PipelineCaseIssueLinkRow, PipelineCaseRow, PipelineRepo, PipelineRow,
+    PipelineStageRow, PipelineTransitionRow,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -100,6 +100,32 @@ impl StageKind {
             _ => None,
         }
     }
+
+    /// 是否是 terminal kind（`done` / `cancelled`）—— case 进入后不再前进。
+    ///
+    /// 与 Node `isTerminalKind(kind)` 1:1 对齐。
+    /// 用于判断 `terminal_kind` / `terminal_at` 字段是否需要写入。
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Done | Self::Cancelled)
+    }
+}
+
+/// 归一化 stage kind 字符串：
+/// - `"open"` 旧别名 → `StageKind::Working`（与 Node `normalizeStageKind` 一致）
+/// - `"working" / "review" / "done" / "cancelled"` → 对应 enum
+/// - 其它 → `Err(msg)`，调用方映射为 `unprocessable("validation")`
+///
+/// 与 Node `normalizeStageKind(kind)` 1:1 对齐。
+/// 高内聚：纯字符串到 enum 的映射；无 IO。
+/// 低耦合：仅依赖 `StageKind::from_db_str`。
+pub fn normalize_stage_kind(kind: &str) -> Result<StageKind, String> {
+    if kind == "open" {
+        return Ok(StageKind::Working);
+    }
+    StageKind::from_db_str(kind).ok_or_else(|| {
+        "Pipeline stage kind must be working, review, done, or cancelled".to_string()
+    })
 }
 
 /// 创建 pipeline stage 的最小输入。
@@ -410,10 +436,7 @@ pub trait PipelineHook: Send + Sync {
         Ok(())
     }
     /// Pipeline stage 更新后调用（任一字段变更）。
-    async fn on_stage_updated(
-        &self,
-        _stage: &PipelineStageRow,
-    ) -> PipelineServiceResult<()> {
+    async fn on_stage_updated(&self, _stage: &PipelineStageRow) -> PipelineServiceResult<()> {
         Ok(())
     }
     /// Pipeline stage 硬删除后调用。
@@ -451,10 +474,7 @@ pub trait PipelineHook: Send + Sync {
     // -------- Case lifecycle hooks（R603 v4） --------
 
     /// Pipeline case 创建后调用。
-    async fn on_case_created(
-        &self,
-        _case: &PipelineCaseRow,
-    ) -> PipelineServiceResult<()> {
+    async fn on_case_created(&self, _case: &PipelineCaseRow) -> PipelineServiceResult<()> {
         Ok(())
     }
     /// Pipeline case 阶段转换后调用（service.update_case_stage）。
@@ -524,7 +544,6 @@ pub trait PipelineHook: Send + Sync {
         Ok(())
     }
 
-
     // -------- R603 v6.5: documents 子资源 lifecycle hooks --------
 
     /// pipeline document 被 upsert 后调用（service.put_pipeline_document）。
@@ -554,7 +573,6 @@ pub trait PipelineHook: Send + Sync {
     ) -> PipelineServiceResult<()> {
         Ok(())
     }
-
 
     // -------- R603 v6.6: bulk review + automation retry --------
 
@@ -617,17 +635,17 @@ pub struct RecordingPipelineHook {
     // R603 v2: stage 子资源
     pub stage_created: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (pipeline_id, stage_id)
     pub stage_updated: std::sync::Mutex<Vec<Uuid>>,         // stage_id
-    pub stage_deleted: std::sync::Mutex<Vec<(Uuid, Uuid)>>,  // (stage_id, pipeline_id)
+    pub stage_deleted: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (stage_id, pipeline_id)
     // R603 v3: transition 子资源
-    pub transition_created: std::sync::Mutex<Vec<Uuid>>,          // transition_id
-    pub transition_deleted: std::sync::Mutex<Vec<(Uuid, Uuid)>>,  // (transition_id, pipeline_id)
+    pub transition_created: std::sync::Mutex<Vec<Uuid>>, // transition_id
+    pub transition_deleted: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (transition_id, pipeline_id)
     // R603 v4: case 子资源
-    pub case_created: std::sync::Mutex<Vec<Uuid>>,                // case_id
+    pub case_created: std::sync::Mutex<Vec<Uuid>>, // case_id
     pub case_stage_transitioned: std::sync::Mutex<Vec<(Uuid, Uuid, Uuid)>>, // (case_id, from_id, to_id)
-    pub case_deleted: std::sync::Mutex<Vec<(Uuid, Uuid)>>,        // (case_id, company_id)
-    pub case_event_recorded: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (case_id, event_id)
+    pub case_deleted: std::sync::Mutex<Vec<(Uuid, Uuid)>>,                  // (case_id, company_id)
+    pub case_event_recorded: std::sync::Mutex<Vec<(Uuid, Uuid)>>,           // (case_id, event_id)
     // R603 v6.1: case issue link 子资源
-    pub case_issue_linked: std::sync::Mutex<Vec<(Uuid, Uuid)>>,   // (case_id, link_id)
+    pub case_issue_linked: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (case_id, link_id)
     pub case_issue_unlinked: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (link_id, case_id)
     // R603 v6.4: 子资源 lifecycle
     pub transitions_replaced: std::sync::Mutex<Vec<(Uuid, Uuid, u64)>>, // (pipeline_id, company_id, count)
@@ -640,7 +658,8 @@ pub struct RecordingPipelineHook {
     pub cases_bulk_reviewed: std::sync::Mutex<Vec<(Uuid, i64, i64, i64)>>, // (company_id, succeeded, failed, total)
     pub case_automation_retry_requested: std::sync::Mutex<Vec<(Uuid, Uuid, i32, i32)>>, // (case_id, company_id, from, to)
     pub case_automation_specific_retry_requested: std::sync::Mutex<Vec<(Uuid, Uuid, Uuid)>>, // (case_id, company_id, automation_id)
-    pub case_automation_current_stage_rerun_requested: std::sync::Mutex<Vec<(Uuid, Uuid, Uuid, i32)>>, // (case_id, company_id, stage_id, version)
+    pub case_automation_current_stage_rerun_requested:
+        std::sync::Mutex<Vec<(Uuid, Uuid, Uuid, i32)>>, // (case_id, company_id, stage_id, version)
 }
 
 #[async_trait]
@@ -672,10 +691,7 @@ impl PipelineHook for RecordingPipelineHook {
             .push((pipeline_id, stage.id));
         Ok(())
     }
-    async fn on_stage_updated(
-        &self,
-        stage: &PipelineStageRow,
-    ) -> PipelineServiceResult<()> {
+    async fn on_stage_updated(&self, stage: &PipelineStageRow) -> PipelineServiceResult<()> {
         self.stage_updated.lock().expect("lock").push(stage.id);
         Ok(())
     }
@@ -711,10 +727,7 @@ impl PipelineHook for RecordingPipelineHook {
             .push((transition_id, pipeline_id));
         Ok(())
     }
-    async fn on_case_created(
-        &self,
-        case: &PipelineCaseRow,
-    ) -> PipelineServiceResult<()> {
+    async fn on_case_created(&self, case: &PipelineCaseRow) -> PipelineServiceResult<()> {
         self.case_created.lock().expect("lock").push(case.id);
         Ok(())
     }
@@ -724,17 +737,14 @@ impl PipelineHook for RecordingPipelineHook {
         from_stage_id: Uuid,
         to_stage_id: Uuid,
     ) -> PipelineServiceResult<()> {
-        self.case_stage_transitioned
-            .lock()
-            .expect("lock")
-            .push((case.id, from_stage_id, to_stage_id));
+        self.case_stage_transitioned.lock().expect("lock").push((
+            case.id,
+            from_stage_id,
+            to_stage_id,
+        ));
         Ok(())
     }
-    async fn on_case_deleted(
-        &self,
-        case_id: Uuid,
-        company_id: Uuid,
-    ) -> PipelineServiceResult<()> {
+    async fn on_case_deleted(&self, case_id: Uuid, company_id: Uuid) -> PipelineServiceResult<()> {
         self.case_deleted
             .lock()
             .expect("lock")
@@ -817,10 +827,12 @@ impl PipelineHook for RecordingPipelineHook {
         key: String,
         revision_id: Uuid,
     ) -> PipelineServiceResult<()> {
-        self.document_revision_restored
-            .lock()
-            .expect("lock")
-            .push((pipeline_id, company_id, key, revision_id));
+        self.document_revision_restored.lock().expect("lock").push((
+            pipeline_id,
+            company_id,
+            key,
+            revision_id,
+        ));
         Ok(())
     }
 
@@ -1064,11 +1076,7 @@ impl<'a> PipelineService<'a> {
     ///
     /// 注意：当前 PipelineRepo 没有 archive API；本子集通过 SQL 直写 archived_at。
     /// 后续 R603 v2 可扩展为完整 PipelineStage 业务时一并补 repo.archive。
-    pub async fn archive(
-        &self,
-        company_id: Uuid,
-        id: Uuid,
-    ) -> PipelineServiceResult<PipelineRow> {
+    pub async fn archive(&self, company_id: Uuid, id: Uuid) -> PipelineServiceResult<PipelineRow> {
         let existing = self.ensure_in_company(company_id, id).await?;
         if existing.archived_at.is_some() {
             return Ok(existing);
@@ -1212,7 +1220,8 @@ impl<'a> PipelineService<'a> {
             .get_stage(stage_id)
             .await?
             .ok_or_else(|| PipelineServiceError::NotFound(format!("stage {stage_id}")))?;
-        self.stage_pipeline_or(company_id, stage.pipeline_id).await?;
+        self.stage_pipeline_or(company_id, stage.pipeline_id)
+            .await?;
 
         let is_empty = patch.name.is_none()
             && patch.kind.is_none()
@@ -1351,7 +1360,12 @@ impl<'a> PipelineService<'a> {
 
         let transition = self
             .repo
-            .create_transition(pipeline_id, input.from_stage_id, input.to_stage_id, label_ref)
+            .create_transition(
+                pipeline_id,
+                input.from_stage_id,
+                input.to_stage_id,
+                label_ref,
+            )
             .await?;
         for hook in &self.hooks {
             hook.on_transition_created(&transition).await?;
@@ -1374,12 +1388,11 @@ impl<'a> PipelineService<'a> {
     ) -> PipelineServiceResult<bool> {
         // 通过 transition 取 pipeline_id → company 校验
         // repo 没有 get_transition，用直接 SQL 查。
-        let pipeline_id_opt: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT pipeline_id FROM pipeline_transitions WHERE id = $1",
-        )
-        .bind(transition_id)
-        .fetch_optional(self.repo.db.pool())
-        .await?;
+        let pipeline_id_opt: Option<uuid::Uuid> =
+            sqlx::query_scalar("SELECT pipeline_id FROM pipeline_transitions WHERE id = $1")
+                .bind(transition_id)
+                .fetch_optional(self.repo.db.pool())
+                .await?;
         let pipeline_id = match pipeline_id_opt {
             Some(p) => p,
             None => return Ok(false),
@@ -1395,7 +1408,8 @@ impl<'a> PipelineService<'a> {
         let deleted = self.repo.delete_transition(transition_id).await?;
         if deleted {
             for hook in &self.hooks {
-                hook.on_transition_deleted(transition_id, pipeline_id).await?;
+                hook.on_transition_deleted(transition_id, pipeline_id)
+                    .await?;
             }
         }
         Ok(deleted)
@@ -1503,11 +1517,8 @@ impl<'a> PipelineService<'a> {
         }
 
         // 校验 stage 属于 pipeline
-        let stage = self
-            .repo
-            .get_stage(input.stage_id)
-            .await?
-            .ok_or_else(|| {
+        let stage =
+            self.repo.get_stage(input.stage_id).await?.ok_or_else(|| {
                 PipelineServiceError::NotFound(format!("stage {}", input.stage_id))
             })?;
         if stage.pipeline_id != pipeline_id {
@@ -1523,9 +1534,7 @@ impl<'a> PipelineService<'a> {
                 .repo
                 .get_case(parent_id)
                 .await?
-                .ok_or_else(|| {
-                    PipelineServiceError::NotFound(format!("case {parent_id}"))
-                })?;
+                .ok_or_else(|| PipelineServiceError::NotFound(format!("case {parent_id}")))?;
             if parent.company_id != company_id || parent.pipeline_id != pipeline_id {
                 return Err(PipelineServiceError::InvalidInput(format!(
                     "parent_case_id {parent_id} is not in this company/pipeline"
@@ -1643,7 +1652,13 @@ impl<'a> PipelineService<'a> {
 
         let claimed = self
             .repo
-            .claim_case(case_id, owner_type, owner_agent_id, owner_user_id, input.lease_token)
+            .claim_case(
+                case_id,
+                owner_type,
+                owner_agent_id,
+                owner_user_id,
+                input.lease_token,
+            )
             .await?
             .ok_or_else(|| PipelineServiceError::NotFound(format!("case {case_id}")))?;
         Ok(claimed)
@@ -1835,8 +1850,12 @@ impl<'a> PipelineService<'a> {
 
         // 同时触发 stage transitioned + case event recorded hook（与 e2e 行为一致）。
         for hook in &self.hooks {
-            hook.on_case_stage_transitioned(&updated_case, input.from_stage_id, updated_case.stage_id)
-                .await?;
+            hook.on_case_stage_transitioned(
+                &updated_case,
+                input.from_stage_id,
+                updated_case.stage_id,
+            )
+            .await?;
             hook.on_case_event_recorded(&updated_case, &event).await?;
         }
         Ok(updated_case)
@@ -1911,9 +1930,13 @@ impl<'a> PipelineService<'a> {
                 }
             })
             .collect();
-        let count = self.repo.replace_transitions(pipeline_id, &transitions).await?;
+        let count = self
+            .repo
+            .replace_transitions(pipeline_id, &transitions)
+            .await?;
         for hook in &self.hooks {
-            hook.on_transitions_replaced(pipeline_id, company_id, count).await?;
+            hook.on_transitions_replaced(pipeline_id, company_id, count)
+                .await?;
         }
         Ok(count)
     }
@@ -1957,9 +1980,7 @@ impl<'a> PipelineService<'a> {
                 created_by_agent_id: None,
                 origin_run_id: None,
             };
-            let row = self
-                .create_case(company_id, pipeline_id, &minimal)
-                .await?;
+            let row = self.create_case(company_id, pipeline_id, &minimal).await?;
             created_rows.push(row);
         }
         Ok(created_rows)
@@ -2005,7 +2026,10 @@ impl<'a> PipelineService<'a> {
         stage_id: Uuid,
         input: &PatchStageAutomationEnvInput,
     ) -> PipelineServiceResult<bool> {
-        let env = input.automation_env.clone().unwrap_or_else(|| serde_json::json!({}));
+        let env = input
+            .automation_env
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({}));
         let existing = self
             .repo
             .get_stage_config(stage_id)
@@ -2020,7 +2044,8 @@ impl<'a> PipelineService<'a> {
         let ok = self.repo.set_stage_config(stage_id, &new_cfg).await?;
         if ok {
             for hook in &self.hooks {
-                hook.on_stage_automation_env_updated(stage_id, env.clone()).await?;
+                hook.on_stage_automation_env_updated(stage_id, env.clone())
+                    .await?;
             }
         }
         Ok(ok)
@@ -2039,7 +2064,10 @@ impl<'a> PipelineService<'a> {
         key: &str,
     ) -> PipelineServiceResult<Option<serde_json::Value>> {
         self.ensure_in_company(company_id, pipeline_id).await?;
-        Ok(self.repo.get_pipeline_document_meta(pipeline_id, key).await?)
+        Ok(self
+            .repo
+            .get_pipeline_document_meta(pipeline_id, key)
+            .await?)
     }
 
     /// Upsert pipeline document（key 在 (pipeline_id, key) 上唯一）。
@@ -2101,10 +2129,7 @@ impl<'a> PipelineService<'a> {
         revision_id: Uuid,
     ) -> PipelineServiceResult<bool> {
         self.ensure_in_company(company_id, pipeline_id).await?;
-        let ok = self
-            .repo
-            .touch_pipeline_document(pipeline_id, key)
-            .await?;
+        let ok = self.repo.touch_pipeline_document(pipeline_id, key).await?;
         if ok {
             for hook in &self.hooks {
                 hook.on_pipeline_document_revision_restored(
@@ -2139,7 +2164,10 @@ impl<'a> PipelineService<'a> {
             chrono::DateTime<chrono::Utc>,
         )>,
     > {
-        let rows = self.repo.list_attention_pipelines(company_id, limit).await?;
+        let rows = self
+            .repo
+            .list_attention_pipelines(company_id, limit)
+            .await?;
         Ok(rows)
     }
 
@@ -2211,9 +2239,15 @@ impl<'a> PipelineService<'a> {
         }
         let total = items.len() as i64;
         for hook in &self.hooks {
-            hook.on_cases_bulk_reviewed(company_id, succeeded, failed, total).await?;
+            hook.on_cases_bulk_reviewed(company_id, succeeded, failed, total)
+                .await?;
         }
-        Ok(BulkReviewResult { results, succeeded, failed, total })
+        Ok(BulkReviewResult {
+            results,
+            succeeded,
+            failed,
+            total,
+        })
     }
 
     /// 读取 case automation retry plan（read-only，无副作用）。
@@ -2228,13 +2262,15 @@ impl<'a> PipelineService<'a> {
             .ok_or_else(|| PipelineServiceError::NotFound(format!("case {case_id}")))?;
         let (company_id, pipeline_id, stage_id, version, pending_suggestion) = row;
         let stage_row = self.repo.get_stage(stage_id).await?;
-        let target_stage = stage_row.map(|s| serde_json::json!({
-            "id": s.id,
-            "key": s.key,
-            "name": s.name,
-            "kind": s.kind,
-            "config": s.config,
-        }));
+        let target_stage = stage_row.map(|s| {
+            serde_json::json!({
+                "id": s.id,
+                "key": s.key,
+                "name": s.name,
+                "kind": s.kind,
+                "config": s.config,
+            })
+        });
         Ok(CaseAutomationRetryPlan {
             case_id,
             pipeline_id,
@@ -2311,8 +2347,10 @@ impl<'a> PipelineService<'a> {
             .ok_or_else(|| PipelineServiceError::NotFound(format!("case {case_id}")))?;
         let (company_id, stage_id, version) = row;
         for hook in &self.hooks {
-            hook.on_case_automation_current_stage_rerun_requested(case_id, company_id, stage_id, version)
-                .await?;
+            hook.on_case_automation_current_stage_rerun_requested(
+                case_id, company_id, stage_id, version,
+            )
+            .await?;
         }
         Ok((case_id, stage_id, version))
     }
@@ -2435,7 +2473,11 @@ mod unit_tests {
             assert_eq!(StageKind::from_db_str(s), Some(kind));
         }
         assert_eq!(StageKind::from_db_str("nope"), None);
-        assert_eq!(StageKind::from_db_str("open"), None, "open is not a valid DB kind");
+        assert_eq!(
+            StageKind::from_db_str("open"),
+            None,
+            "open is not a valid DB kind"
+        );
     }
 
     #[test]
@@ -2481,5 +2523,87 @@ mod unit_tests {
         let hook = RecordingPipelineHook::default();
         assert_eq!(hook.transition_created.lock().unwrap().len(), 0);
         assert_eq!(hook.transition_deleted.lock().unwrap().len(), 0);
+    }
+
+    // ============ R490: StageKind as_str / from_db_str ============
+
+    #[test]
+    fn r490_stage_kind_as_str_round_trip() {
+        for kind in [
+            StageKind::Working,
+            StageKind::Review,
+            StageKind::Done,
+            StageKind::Cancelled,
+        ] {
+            let s = kind.as_str();
+            assert_eq!(StageKind::from_db_str(s), Some(kind));
+        }
+    }
+
+    #[test]
+    fn r490_stage_kind_as_str_values() {
+        assert_eq!(StageKind::Working.as_str(), "working");
+        assert_eq!(StageKind::Review.as_str(), "review");
+        assert_eq!(StageKind::Done.as_str(), "done");
+        assert_eq!(StageKind::Cancelled.as_str(), "cancelled");
+    }
+
+    #[test]
+    fn r490_stage_kind_from_db_str_invalid_returns_none() {
+        assert_eq!(StageKind::from_db_str(""), None);
+        assert_eq!(StageKind::from_db_str("OPEN"), None); // 大小写敏感
+        assert_eq!(StageKind::from_db_str("working "), None); // 不 trim
+        assert_eq!(StageKind::from_db_str("not_a_kind"), None);
+    }
+
+    #[test]
+    fn r490_stage_kind_is_terminal() {
+        assert!(!StageKind::Working.is_terminal());
+        assert!(!StageKind::Review.is_terminal());
+        assert!(StageKind::Done.is_terminal());
+        assert!(StageKind::Cancelled.is_terminal());
+    }
+
+    // ============ R490: normalize_stage_kind ============
+
+    #[test]
+    fn r490_normalize_stage_kind_open_alias_to_working() {
+        // Node "open" 是早期别名，复刻保持 1:1
+        assert_eq!(normalize_stage_kind("open"), Ok(StageKind::Working));
+    }
+
+    #[test]
+    fn r490_normalize_stage_kind_canonical_kinds() {
+        assert_eq!(normalize_stage_kind("working"), Ok(StageKind::Working));
+        assert_eq!(normalize_stage_kind("review"), Ok(StageKind::Review));
+        assert_eq!(normalize_stage_kind("done"), Ok(StageKind::Done));
+        assert_eq!(normalize_stage_kind("cancelled"), Ok(StageKind::Cancelled));
+    }
+
+    #[test]
+    fn r490_normalize_stage_kind_invalid_returns_error() {
+        let err = normalize_stage_kind("invalid_kind").unwrap_err();
+        assert!(err.contains("working, review, done, or cancelled"));
+        let err = normalize_stage_kind("").unwrap_err();
+        assert!(err.contains("working, review, done, or cancelled"));
+    }
+
+    // ============ R490: CaseEventKind as_str ============
+
+    #[test]
+    fn r490_case_event_kind_as_str_values() {
+        assert_eq!(CaseEventKind::Created.as_str(), "created");
+        assert_eq!(CaseEventKind::Transitioned.as_str(), "transitioned");
+        assert_eq!(CaseEventKind::Commented.as_str(), "commented");
+        assert_eq!(CaseEventKind::Other.as_str(), "other");
+    }
+
+    // ============ R490: CaseActorKind as_str ============
+
+    #[test]
+    fn r490_case_actor_kind_as_str_values() {
+        assert_eq!(CaseActorKind::User.as_str(), "user");
+        assert_eq!(CaseActorKind::Agent.as_str(), "agent");
+        assert_eq!(CaseActorKind::System.as_str(), "system");
     }
 }

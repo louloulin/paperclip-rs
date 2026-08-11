@@ -13,6 +13,7 @@
 //! - 可测：service 单元测试不依赖 HTTP 层
 
 pub mod bundle_service;
+pub mod pure;
 pub mod wakeup;
 
 pub use bundle_service::{
@@ -23,6 +24,7 @@ pub use pc_repos::decision_bundle::{
     DecisionBundleDetail, DecisionBundleFilter, DecisionBundleRow, DecisionSummaryRow,
     NewDecisionBundle,
 };
+pub use pure::*;
 pub use wakeup::*;
 
 use async_trait::async_trait;

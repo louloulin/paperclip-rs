@@ -11,12 +11,12 @@
 use std::sync::Arc;
 
 use pc_pipelines::{
-    CaseActorKind, CaseEventKind, CaseOwner, ClaimCaseInput, CreateCaseEventInput,
-    CreateCaseMinimalInput, CreateCasesBatchInput, CreatePipelineInput, CreateStageMinimalInput,
-    CreateTransitionInput, LinkCaseIssueInput, PatchStageAutomationEnvInput, PipelineService,
-    PipelineServiceError, RecordingPipelineHook, ReplaceTransitionsInput, StageKind,
-    TransitionCaseInput, UpdateCaseStageInput, UpdatePipelinePatch, UpdateStagePatch,
-    UpsertPipelineDocumentInput, BulkReviewItem, BulkReviewResult,
+    BulkReviewItem, BulkReviewResult, CaseActorKind, CaseEventKind, CaseOwner, ClaimCaseInput,
+    CreateCaseEventInput, CreateCaseMinimalInput, CreateCasesBatchInput, CreatePipelineInput,
+    CreateStageMinimalInput, CreateTransitionInput, LinkCaseIssueInput,
+    PatchStageAutomationEnvInput, PipelineService, PipelineServiceError, RecordingPipelineHook,
+    ReplaceTransitionsInput, StageKind, TransitionCaseInput, UpdateCaseStageInput,
+    UpdatePipelinePatch, UpdateStagePatch, UpsertPipelineDocumentInput,
 };
 use pc_repos::{pipeline::PipelineRepo, Db};
 use sqlx::PgPool;
@@ -51,12 +51,7 @@ async fn insert_company(pool: &PgPool) -> Uuid {
     id
 }
 
-async fn insert_pipeline(
-    pool: &PgPool,
-    company_id: Uuid,
-    key: &str,
-    name: &str,
-) -> Uuid {
+async fn insert_pipeline(pool: &PgPool, company_id: Uuid, key: &str, name: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO pipelines (id, company_id, key, name, description, enforce_transitions, \
@@ -99,18 +94,14 @@ async fn insert_stage(
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
     // cases → transitions → stages → pipelines（FK cascade 取决于 schema；显式删更稳）
-    let _ = sqlx::query(
-        "DELETE FROM pipeline_case_issue_links WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .execute(pool)
-    .await;
-    let _ = sqlx::query(
-        "DELETE FROM pipeline_cases WHERE company_id = $1",
-    )
-    .bind(company_id)
-    .execute(pool)
-    .await;
+    let _ = sqlx::query("DELETE FROM pipeline_case_issue_links WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM pipeline_cases WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM pipeline_documents WHERE company_id = $1")
         .bind(company_id)
         .execute(pool)
@@ -240,7 +231,10 @@ async fn r603_create_rejects_empty_key_and_name() {
         .create(company_id, &bad_key)
         .await
         .expect_err("rejected");
-    assert!(matches!(err, pc_pipelines::PipelineServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_pipelines::PipelineServiceError::InvalidInput(_)
+    ));
 
     let bad_name = CreatePipelineInput {
         key: "good".into(),
@@ -251,7 +245,10 @@ async fn r603_create_rejects_empty_key_and_name() {
         .create(company_id, &bad_name)
         .await
         .expect_err("rejected");
-    assert!(matches!(err, pc_pipelines::PipelineServiceError::InvalidInput(_)));
+    assert!(matches!(
+        err,
+        pc_pipelines::PipelineServiceError::InvalidInput(_)
+    ));
 
     cleanup(&pool, company_id).await;
 }
@@ -270,7 +267,10 @@ async fn r603_update_partial_persists_and_fires_hook() {
         name: Some("Renamed".into()),
         description: None,
     };
-    let updated = svc.update(company_id, pipeline_id, &patch).await.expect("update");
+    let updated = svc
+        .update(company_id, pipeline_id, &patch)
+        .await
+        .expect("update");
     assert_eq!(updated.name, "Renamed");
 
     let logged = recorder.updated.lock().unwrap();
@@ -291,7 +291,10 @@ async fn r603_update_empty_patch_is_noop() {
     let svc = PipelineService::new(&db).add_hook(recorder.clone());
 
     let patch = UpdatePipelinePatch::default();
-    let returned = svc.update(company_id, pipeline_id, &patch).await.expect("noop");
+    let returned = svc
+        .update(company_id, pipeline_id, &patch)
+        .await
+        .expect("noop");
     assert_eq!(returned.name, "X");
 
     assert_eq!(
@@ -338,17 +341,23 @@ async fn r603_archive_sets_archived_at_and_fires_hook() {
     let svc = PipelineService::new(&db).add_hook(recorder.clone());
 
     let archived = svc.archive(company_id, pipeline_id).await.expect("archive");
-    eprintln!("[DBG_TEST] archive.after FIRST archive: archived_at.is_some={}", archived.archived_at.is_some());
+    eprintln!(
+        "[DBG_TEST] archive.after FIRST archive: archived_at.is_some={}",
+        archived.archived_at.is_some()
+    );
     assert!(archived.archived_at.is_some(), "archived_at should be set");
 
     {
         let logged = recorder.archived.lock().unwrap();
         assert_eq!(logged.len(), 1);
         assert_eq!(logged[0], pipeline_id);
-    }  // drop MutexGuard before next await
+    } // drop MutexGuard before next await
 
     // 重复 archive 应为 no-op，不重复触发 hook
-    let again = svc.archive(company_id, pipeline_id).await.expect("re-archive");
+    let again = svc
+        .archive(company_id, pipeline_id)
+        .await
+        .expect("re-archive");
     assert!(again.archived_at.is_some());
     assert_eq!(
         recorder.archived.lock().unwrap().len(),
@@ -382,7 +391,10 @@ async fn r603_repo_consistency_check() {
 
     let svc = PipelineService::new(&db);
     let via_svc = svc.list_by_company(company_id).await.expect("svc");
-    let direct = PipelineRepo::new(&db).list_by_company(company_id).await.expect("repo");
+    let direct = PipelineRepo::new(&db)
+        .list_by_company(company_id)
+        .await
+        .expect("repo");
     assert_eq!(via_svc.len(), direct.len());
 
     cleanup(&pool, company_id).await;
@@ -416,8 +428,14 @@ async fn r603v2_list_stages_isolates_companies() {
     assert_eq!(b_stages.len(), 1);
 
     // 跨公司：company_b 看 company_a 的 pipeline → NotFound
-    let err = svc.list_stages(company_b, pipe_a).await.expect_err("cross-company");
-    assert!(matches!(err, pc_pipelines::PipelineServiceError::NotFound(_)));
+    let err = svc
+        .list_stages(company_b, pipe_a)
+        .await
+        .expect_err("cross-company");
+    assert!(matches!(
+        err,
+        pc_pipelines::PipelineServiceError::NotFound(_)
+    ));
 
     cleanup(&pool, company_a).await;
     cleanup(&pool, company_b).await;
@@ -650,7 +668,10 @@ async fn r603v2_create_stage_cross_company_is_notfound() {
         .create_stage(company_b, pipe_a, &input)
         .await
         .expect_err("cross-company create");
-    assert!(matches!(err, pc_pipelines::PipelineServiceError::NotFound(_)));
+    assert!(matches!(
+        err,
+        pc_pipelines::PipelineServiceError::NotFound(_)
+    ));
 
     cleanup(&pool, company_a).await;
     cleanup(&pool, company_b).await;
@@ -660,10 +681,7 @@ async fn r603v2_create_stage_cross_company_is_notfound() {
 // R603 v3: transition 子资源 e2e 测试
 // ===========================================================================
 
-async fn two_stages(
-    pool: &PgPool,
-    pipeline_id: Uuid,
-) -> (Uuid, Uuid) {
+async fn two_stages(pool: &PgPool, pipeline_id: Uuid) -> (Uuid, Uuid) {
     let a = insert_stage(pool, pipeline_id, "a", "A", "working", 0).await;
     let b = insert_stage(pool, pipeline_id, "b", "B", "review", 1).await;
     (a, b)
@@ -780,7 +798,10 @@ async fn r603v3_create_transition_rejects_self_loop_and_bad_stages() {
         .create_transition(company_id, pipeline_id, &unknown)
         .await
         .expect_err("unknown from_stage");
-    assert!(matches!(err, pc_pipelines::PipelineServiceError::NotFound(_)));
+    assert!(matches!(
+        err,
+        pc_pipelines::PipelineServiceError::NotFound(_)
+    ));
 
     cleanup(&pool, company_id).await;
     cleanup(&pool, company_b).await;
@@ -917,15 +938,27 @@ async fn r603v3_list_transitions_isolates_companies() {
     .await
     .expect("create b");
 
-    let a_list = svc.list_transitions(company_a, pipe_a).await.expect("list a");
+    let a_list = svc
+        .list_transitions(company_a, pipe_a)
+        .await
+        .expect("list a");
     assert_eq!(a_list.len(), 1);
 
-    let b_list = svc.list_transitions(company_b, pipe_b).await.expect("list b");
+    let b_list = svc
+        .list_transitions(company_b, pipe_b)
+        .await
+        .expect("list b");
     assert_eq!(b_list.len(), 1);
 
     // 跨公司访问 → NotFound
-    let err = svc.list_transitions(company_b, pipe_a).await.expect_err("cross");
-    assert!(matches!(err, pc_pipelines::PipelineServiceError::NotFound(_)));
+    let err = svc
+        .list_transitions(company_b, pipe_a)
+        .await
+        .expect_err("cross");
+    assert!(matches!(
+        err,
+        pc_pipelines::PipelineServiceError::NotFound(_)
+    ));
 
     cleanup(&pool, company_a).await;
     cleanup(&pool, company_b).await;
@@ -952,7 +985,10 @@ async fn r603v3_label_trim_whitespace_becomes_none() {
         )
         .await
         .expect("create");
-    assert!(t.label.is_none(), "whitespace-only label should be coerced to None");
+    assert!(
+        t.label.is_none(),
+        "whitespace-only label should be coerced to None"
+    );
 
     cleanup(&pool, company_id).await;
 }
@@ -993,7 +1029,10 @@ async fn r603v4_create_case_persists_and_fires_hook() {
         created_by_agent_id: None,
         origin_run_id: None,
     };
-    let case = svc.create_case(company_id, pipe_id, &input).await.expect("create");
+    let case = svc
+        .create_case(company_id, pipe_id, &input)
+        .await
+        .expect("create");
     assert_eq!(case.case_key, "case-1");
     assert_eq!(case.title, "First Case");
     assert_eq!(case.stage_id, s1);
@@ -1150,9 +1189,15 @@ async fn r603v4_get_and_list_case_isolates_companies() {
     assert!(unknown.is_none());
 
     // list_cases: 各自公司
-    let a_list = svc.list_cases(company_a, pipe_a, None).await.expect("list a");
+    let a_list = svc
+        .list_cases(company_a, pipe_a, None)
+        .await
+        .expect("list a");
     assert_eq!(a_list.len(), 1);
-    let b_list = svc.list_cases(company_b, pipe_b, None).await.expect("list b");
+    let b_list = svc
+        .list_cases(company_b, pipe_b, None)
+        .await
+        .expect("list b");
     assert_eq!(b_list.len(), 1);
 
     let _ = cb;
@@ -1334,12 +1379,18 @@ async fn r603v4_delete_case_persists_and_fires_hook() {
     } // drop guard
 
     // 二次删除 → false
-    let again = svc.delete_case(company_id, case.id).await.expect("delete 2");
+    let again = svc
+        .delete_case(company_id, case.id)
+        .await
+        .expect("delete 2");
     assert!(!again);
 
     // 跨公司 → false
     let company_b = insert_company(&pool).await;
-    let cross = svc.delete_case(company_b, case.id).await.expect("delete cross");
+    let cross = svc
+        .delete_case(company_b, case.id)
+        .await
+        .expect("delete cross");
     assert!(!cross);
 
     cleanup(&pool, company_id).await;
@@ -1393,7 +1444,10 @@ async fn r603v4_claim_and_release_case_writes_lease() {
     assert!(claimed.lease_expires_at.is_some());
 
     // release
-    let released = svc.release_case(company_id, case.id).await.expect("release");
+    let released = svc
+        .release_case(company_id, case.id)
+        .await
+        .expect("release");
     assert!(released.lease_owner_type.is_none());
     assert!(released.lease_agent_id.is_none());
     assert!(released.lease_user_id.is_none());
@@ -1481,7 +1535,6 @@ async fn r603v4_case_event_record_and_list() {
 
     cleanup(&pool, company_id).await;
 }
-
 
 // ============================================================================
 // R603 v6.1: case issue link 子资源 service 测试
@@ -1697,15 +1750,20 @@ async fn r603v6_1_list_case_links_isolates_companies() {
     assert!(matches!(err, PipelineServiceError::NotFound(_)));
 
     // 用正确的 company_id → 1 行
-    let list_a = svc.list_case_links(company_a, case_a).await.expect("list a");
+    let list_a = svc
+        .list_case_links(company_a, case_a)
+        .await
+        .expect("list a");
     assert_eq!(list_a.len(), 1);
-    let list_b = svc.list_case_links(company_b, case_b).await.expect("list b");
+    let list_b = svc
+        .list_case_links(company_b, case_b)
+        .await
+        .expect("list b");
     assert_eq!(list_b.len(), 1);
 
     cleanup(&pool, company_a).await;
     cleanup(&pool, company_b).await;
 }
-
 
 // ============================================================================
 // R603 v6.2: transition_case service 测试
@@ -1732,7 +1790,10 @@ async fn r603v6_2_transition_case_atomic_persists_case_and_event_and_fires_hook(
         created_by_agent_id: None,
         origin_run_id: None,
     };
-    let case = svc.create_case(company_id, pipe_id, &input).await.expect("create");
+    let case = svc
+        .create_case(company_id, pipe_id, &input)
+        .await
+        .expect("create");
     {
         let _guard = recorder.case_created.lock().unwrap();
     }
@@ -1763,7 +1824,10 @@ async fn r603v6_2_transition_case_atomic_persists_case_and_event_and_fires_hook(
     }
 
     // event 被写入
-    let events = svc.list_case_events(company_id, case.id).await.expect("events");
+    let events = svc
+        .list_case_events(company_id, case.id)
+        .await
+        .expect("events");
     let transitioned_event = events
         .iter()
         .find(|e| e.r#type == "transitioned")
@@ -1885,7 +1949,6 @@ async fn r603v6_2_transition_case_optimistic_lock_failure() {
 
     cleanup(&pool, company_id).await;
 }
-
 
 // ============================================================================
 // R603 v6.4: 子资源 service 测试
@@ -2075,7 +2138,6 @@ async fn r603v6_4_get_intake_form_returns_empty_for_unset() {
     cleanup(&pool, company_id).await;
 }
 
-
 // ===========================================================================
 // R603 v6.5: documents 子资源
 // ===========================================================================
@@ -2257,9 +2319,7 @@ async fn r603v6_5_documents_isolate_companies() {
     .await
     .expect("put");
 
-    let res = svc
-        .get_pipeline_document(company_b, pipe_a, "spec")
-        .await;
+    let res = svc.get_pipeline_document(company_b, pipe_a, "spec").await;
     assert!(matches!(res, Err(PipelineServiceError::NotFound(_))));
 
     let res2 = svc
@@ -2277,7 +2337,6 @@ async fn r603v6_5_documents_isolate_companies() {
     cleanup(&pool, company_a).await;
     cleanup(&pool, company_b).await;
 }
-
 
 // ===========================================================================
 // R603 v6.6: pipelines-attention + bulk review + automation retry
@@ -2298,7 +2357,10 @@ async fn r603v6_6_list_attention_pipelines_returns_rows() {
         .expect("attn");
     // 公司内创建了 1 个 pipeline；review_count=0（无 in_review cases）
     assert!(rows.iter().any(|(id, _, _, _, _, _)| *id == pipe_id));
-    let my_row = rows.iter().find(|(id, _, _, _, _, _)| *id == pipe_id).unwrap();
+    let my_row = rows
+        .iter()
+        .find(|(id, _, _, _, _, _)| *id == pipe_id)
+        .unwrap();
     assert_eq!(my_row.1, "P");
     assert_eq!(my_row.3, 0); // review_count
 
@@ -2391,7 +2453,11 @@ async fn r603v6_6_bulk_review_cases_unsupported_decision_counted_as_failure() {
     assert_eq!(result.succeeded, 0);
     assert_eq!(result.failed, 1);
     assert!(!result.results[0].ok);
-    assert!(result.results[0].error.as_deref().unwrap().contains("unsupported"));
+    assert!(result.results[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("unsupported"));
 
     cleanup(&pool, company_id).await;
 }

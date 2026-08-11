@@ -50,10 +50,7 @@ impl<'a> IssueReferenceMentionRepo<'a> {
         Self { db }
     }
 
-    pub async fn insert(
-        &self,
-        m: &NewIssueReferenceMention<'_>,
-    ) -> sqlx::Result<Option<Uuid>> {
+    pub async fn insert(&self, m: &NewIssueReferenceMention<'_>) -> sqlx::Result<Option<Uuid>> {
         let row: Option<(Uuid,)> = sqlx::query_as(
             "INSERT INTO issue_reference_mentions                 (company_id, source_issue_id, target_issue_id, source_kind,                  source_record_id, document_key, matched_text)              VALUES ($1,$2,$3,$4,$5,$6,$7)              RETURNING id",
         )
@@ -184,7 +181,11 @@ impl<'a> IssueReferenceMentionRepo<'a> {
             .await
     }
 
-    pub async fn count_for_source(&self, company_id: Uuid, source_issue_id: Uuid) -> sqlx::Result<i64> {
+    pub async fn count_for_source(
+        &self,
+        company_id: Uuid,
+        source_issue_id: Uuid,
+    ) -> sqlx::Result<i64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(DISTINCT target_issue_id) FROM issue_reference_mentions              WHERE company_id = $1 AND source_issue_id = $2",
         )
@@ -195,7 +196,11 @@ impl<'a> IssueReferenceMentionRepo<'a> {
         Ok(n)
     }
 
-    pub async fn count_for_target(&self, company_id: Uuid, target_issue_id: Uuid) -> sqlx::Result<i64> {
+    pub async fn count_for_target(
+        &self,
+        company_id: Uuid,
+        target_issue_id: Uuid,
+    ) -> sqlx::Result<i64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(DISTINCT source_issue_id) FROM issue_reference_mentions              WHERE company_id = $1 AND target_issue_id = $2",
         )
@@ -231,7 +236,13 @@ mod tests {
 
     #[test]
     fn list_cols_contains_expected() {
-        for col in ["id", "company_id", "source_issue_id", "target_issue_id", "source_kind"] {
+        for col in [
+            "id",
+            "company_id",
+            "source_issue_id",
+            "target_issue_id",
+            "source_kind",
+        ] {
             assert!(LIST_COLS.contains(col), "missing column {col}");
         }
     }

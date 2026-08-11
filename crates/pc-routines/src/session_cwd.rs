@@ -65,9 +65,7 @@ pub fn normalize_cwd(cwd: &str) -> String {
 /// - null / undefined / 空字符串 → false
 /// - 否则 normalize 后命中集合 → true
 pub fn is_unsafe_session_workspace_cwd(cwd: Option<&str>) -> bool {
-    let value = cwd
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty());
+    let value = cwd.map(|s| s.trim()).filter(|s| !s.is_empty());
     let Some(value) = value else {
         return false;
     };

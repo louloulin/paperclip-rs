@@ -64,7 +64,9 @@ pub struct ChunkOptions {
 
 impl Default for ChunkOptions {
     fn default() -> Self {
-        Self { max_rows: DEFAULT_INSERT_CHUNK_ROWS }
+        Self {
+            max_rows: DEFAULT_INSERT_CHUNK_ROWS,
+        }
     }
 }
 
@@ -223,8 +225,14 @@ mod tests {
 
     #[test]
     fn r680_chunk_size_caps_by_params_when_columns_high() {
-        let cols: Vec<(&str, serde_json::Value)> =
-            (0..200).map(|i| (Box::leak(format!("c{i}").into_boxed_str()) as &str, json!(i))).collect();
+        let cols: Vec<(&str, serde_json::Value)> = (0..200)
+            .map(|i| {
+                (
+                    Box::leak(format!("c{i}").into_boxed_str()) as &str,
+                    json!(i),
+                )
+            })
+            .collect();
         let rows = vec![row(cols); 1000];
         let opts = ChunkOptions::new().with_max_rows(500);
         let chunks = chunk_rows_for_insert(rows, opts);
@@ -238,7 +246,12 @@ mod tests {
     #[test]
     fn r680_chunk_size_at_least_one_when_columns_exceed_max() {
         let cols: Vec<(&str, serde_json::Value)> = (0..70_000)
-            .map(|i| (Box::leak(format!("c{i}").into_boxed_str()) as &str, json!(i)))
+            .map(|i| {
+                (
+                    Box::leak(format!("c{i}").into_boxed_str()) as &str,
+                    json!(i),
+                )
+            })
             .collect();
         let rows = vec![row(cols); 3];
         let opts = ChunkOptions::new().with_max_rows(500);
@@ -271,7 +284,10 @@ mod tests {
     fn r680_helper_chunk_size_matches_logic() {
         assert_eq!(chunk_size(5, ChunkOptions::new().with_max_rows(1000)), 1000);
         assert_eq!(chunk_size(2000, ChunkOptions::new().with_max_rows(500)), 32);
-        assert_eq!(chunk_size(70_000, ChunkOptions::new().with_max_rows(500)), 1);
+        assert_eq!(
+            chunk_size(70_000, ChunkOptions::new().with_max_rows(500)),
+            1
+        );
     }
 
     #[test]

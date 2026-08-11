@@ -49,8 +49,14 @@ async fn insert_company(pool: &sqlx::PgPool) -> Uuid {
 }
 
 async fn cleanup(pool: &sqlx::PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM routine_runs WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM routine_triggers WHERE company_id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM routine_runs WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM routine_triggers WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
     if let Ok(doc_ids) = sqlx::query_scalar::<_, Uuid>(
         "SELECT document_id FROM routine_documents WHERE company_id = $1",
     )
@@ -59,16 +65,40 @@ async fn cleanup(pool: &sqlx::PgPool, company_id: Uuid) {
     .await
     {
         for doc_id in &doc_ids {
-            let _ = sqlx::query("DELETE FROM document_revisions WHERE document_id = $1").bind(doc_id).execute(pool).await;
-            let _ = sqlx::query("DELETE FROM document_annotations WHERE document_id = $1").bind(doc_id).execute(pool).await;
-            let _ = sqlx::query("DELETE FROM documents WHERE id = $1").bind(doc_id).execute(pool).await;
+            let _ = sqlx::query("DELETE FROM document_revisions WHERE document_id = $1")
+                .bind(doc_id)
+                .execute(pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM document_annotations WHERE document_id = $1")
+                .bind(doc_id)
+                .execute(pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM documents WHERE id = $1")
+                .bind(doc_id)
+                .execute(pool)
+                .await;
         }
     }
-    let _ = sqlx::query("DELETE FROM routine_documents WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM routine_revisions WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM routines WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM routine_documents WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM routine_revisions WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM routines WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 /// Hook that always returns Err — used to verify error isolation.
@@ -144,10 +174,13 @@ async fn hook_recorder_helpers_work() {
 
     // 直接 push events through trait
     use pc_routines::RoutineHook;
-    recorder.on_routine_event(RoutineHookEvent::Archived {
-        id: Uuid::nil(),
-        company_id: Uuid::nil(),
-    }).await.expect("hook");
+    recorder
+        .on_routine_event(RoutineHookEvent::Archived {
+            id: Uuid::nil(),
+            company_id: Uuid::nil(),
+        })
+        .await
+        .expect("hook");
 
     assert_eq!(recorder.len(), 1);
     assert!(!recorder.is_empty());
@@ -244,7 +277,10 @@ async fn hook_receives_archived_event_on_delete() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        RoutineHookEvent::Archived { id, company_id: cid } => {
+        RoutineHookEvent::Archived {
+            id,
+            company_id: cid,
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(*cid, company_id);
         }
@@ -300,7 +336,9 @@ async fn hook_receives_trigger_lifecycle_events() {
     .expect("update trigger");
 
     // delete
-    svc.delete_trigger(t.trigger.id).await.expect("delete trigger");
+    svc.delete_trigger(t.trigger.id)
+        .await
+        .expect("delete trigger");
 
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 3);

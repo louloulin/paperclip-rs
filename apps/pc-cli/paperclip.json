@@ -1,0 +1,18 @@
+# Paperclip instance config (written by `paperclipai onboard`)
+# Edit values and re-run `paperclipai run` to apply.
+
+[server]
+host = "127.0.0.1"
+port = 3100
+
+[database]
+url = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip"
+run_migrations = true
+
+[secrets]
+kind = "local_encrypted"
+master_key_file = "$HOME/.paperclip/secrets/master.key"
+
+[storage]
+kind = "local_disk"
+path = "$HOME/.paperclip/storage"

@@ -1,6 +1,6 @@
 use serde_json::{Number, Value};
 
-pub(super) fn canonical(value: &Value) -> String {
+pub fn canonical(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
@@ -26,7 +26,7 @@ pub(super) fn canonical(value: &Value) -> String {
     }
 }
 
-fn canonical_number(value: &Number) -> String {
+pub fn canonical_number(value: &Number) -> String {
     let value = value
         .as_f64()
         .expect("serde_json numbers are representable as JavaScript numbers");

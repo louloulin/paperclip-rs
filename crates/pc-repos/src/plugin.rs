@@ -525,10 +525,7 @@ impl<'a> PluginRepo<'a> {
     }
 
     /// R740: get job by primary key (UUID)（Node `getJobById`）。
-    pub async fn get_job_by_id(
-        &self,
-        job_id: Uuid,
-    ) -> sqlx::Result<Option<PluginJobRow>> {
+    pub async fn get_job_by_id(&self, job_id: Uuid) -> sqlx::Result<Option<PluginJobRow>> {
         sqlx::query_as::<_, PluginJobRow>(
             "SELECT id, plugin_id, job_key, schedule, status, last_run_at, next_run_at, created_at, updated_at \
              FROM plugin_jobs WHERE id = $1",
@@ -555,19 +552,13 @@ impl<'a> PluginRepo<'a> {
     }
 
     /// R740: update job status（Node `updateJobStatus`）。
-    pub async fn update_job_status(
-        &self,
-        job_id: Uuid,
-        status: &str,
-    ) -> RepoResult<u64> {
-        let n = sqlx::query(
-            "UPDATE plugin_jobs SET status = $2, updated_at = now() WHERE id = $1",
-        )
-        .bind(job_id)
-        .bind(status)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
+    pub async fn update_job_status(&self, job_id: Uuid, status: &str) -> RepoResult<u64> {
+        let n = sqlx::query("UPDATE plugin_jobs SET status = $2, updated_at = now() WHERE id = $1")
+            .bind(job_id)
+            .bind(status)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected();
         Ok(n)
     }
 
@@ -591,10 +582,7 @@ impl<'a> PluginRepo<'a> {
     }
 
     /// R740: delete all jobs for a plugin（Node `deleteAllJobs`）。
-    pub async fn delete_all_jobs(
-        &self,
-        plugin_id: Uuid,
-    ) -> RepoResult<u64> {
+    pub async fn delete_all_jobs(&self, plugin_id: Uuid) -> RepoResult<u64> {
         let n = sqlx::query("DELETE FROM plugin_jobs WHERE plugin_id = $1")
             .bind(plugin_id)
             .execute(self.db.pool())
@@ -669,10 +657,7 @@ impl<'a> PluginRepo<'a> {
     }
 
     /// R740: get run by primary key（Node `getRunById`）。
-    pub async fn get_run_by_id(
-        &self,
-        run_id: Uuid,
-    ) -> sqlx::Result<Option<PluginJobRunRow>> {
+    pub async fn get_run_by_id(&self, run_id: Uuid) -> sqlx::Result<Option<PluginJobRunRow>> {
         sqlx::query_as::<_, PluginJobRunRow>(
             "SELECT id, job_id, plugin_id, company_id, trigger, status, duration_ms, error, logs, \
                     started_at, finished_at, created_at \

@@ -440,12 +440,11 @@ impl<'a> UserProfileRepo<'a> {
         &self,
         user_id: &str,
     ) -> RepoResult<Option<BoardUserSummaryRow>> {
-        let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-            r#"SELECT id, name, email FROM "user" WHERE id = $1"#
-        )
-        .bind(user_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let row: Option<(String, Option<String>, Option<String>)> =
+            sqlx::query_as(r#"SELECT id, name, email FROM "user" WHERE id = $1"#)
+                .bind(user_id)
+                .fetch_optional(self.db.pool())
+                .await?;
         Ok(row.map(|(id, name, email)| BoardUserSummaryRow { id, name, email }))
     }
     pub async fn list_recent(

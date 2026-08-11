@@ -34,7 +34,7 @@ pub use service::{cache_key, SecretService, SecretServiceError, SecretServiceRes
 pub use decision_signing::{
     ensure_decision_signing_secret, resolve_decision_signing_secret, sign_decision_spec,
     sign_decision_spec_with_secret, verify_decision_spec, verify_decision_spec_with_secret,
-    DecisionSigningError, DecisionSigningKeyStore, DecisionSigningService,
+    DecisionSigningError, DecisionSigningKeyStore, DecisionSigningService, canonical, canonical_number,
     DECISION_SIGNING_VERSION, MIN_DECISION_SIGNING_SECRET_LENGTH,
 };
 pub mod json_schema_secret_refs;

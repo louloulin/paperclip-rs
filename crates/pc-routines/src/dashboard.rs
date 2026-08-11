@@ -29,8 +29,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use pc_errors::Error as PcError;
-use pc_repos::{agent::AgentRepo, approval::ApprovalRepo, company::CompanyRepo, cost::CostRepo,
-                heartbeat::HeartbeatRepo, issue::IssueRepo, project::ProjectRepo, Db};
+use pc_repos::{
+    agent::AgentRepo, approval::ApprovalRepo, company::CompanyRepo, cost::CostRepo,
+    heartbeat::HeartbeatRepo, issue::IssueRepo, project::ProjectRepo, Db,
+};
 
 /// Dashboard 业务错误。
 #[derive(Debug, Error)]
@@ -57,7 +59,6 @@ impl From<sqlx::Error> for DashboardError {
         DashboardError::Repo(pc_repos::RepoError::from(e))
     }
 }
-
 
 /// 14 天 run activity 滚动窗口长度（与 Node `DASHBOARD_RUN_ACTIVITY_DAYS = 14` 对齐）。
 pub const DASHBOARD_RUN_ACTIVITY_DAYS: i64 = 14;
@@ -125,7 +126,9 @@ pub struct DashboardSummary {
 pub fn get_utc_month_start(date: DateTime<Utc>) -> DateTime<Utc> {
     let y = date.year();
     let m = date.month();
-    Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().expect("valid month start")
+    Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0)
+        .single()
+        .expect("valid month start")
 }
 
 /// `YYYY-MM-DD` 字符串（UTC）。
@@ -245,7 +248,9 @@ pub async fn build_run_activity(
         .group_runs_by_date_status_error(company_id, pc_core::Timestamp::from_dt(first_day))
         .await?;
     for (date, status, error_code, count) in rows {
-        let Some(bucket) = activity.get_mut(&date) else { continue };
+        let Some(bucket) = activity.get_mut(&date) else {
+            continue;
+        };
         bucket.total += count;
         let bucket_status = status.as_str();
         if bucket_status == "succeeded" {
@@ -306,9 +311,7 @@ impl<'a> DashboardService<'a> {
         let tasks = bucket_tasks_v2(task_rows);
 
         // 4. approvals pending
-        let pending_approvals = ApprovalRepo::new(self.db)
-            .count_pending(company_id)
-            .await?;
+        let pending_approvals = ApprovalRepo::new(self.db).count_pending(company_id).await?;
 
         // 5. costs (本月)
         let now = Utc::now();
@@ -365,15 +368,24 @@ mod tests {
 
     #[test]
     fn r890_format_utc_date_key() {
-        let d = Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).single().unwrap();
+        let d = Utc
+            .with_ymd_and_hms(2024, 1, 15, 12, 0, 0)
+            .single()
+            .unwrap();
         assert_eq!(format_utc_date_key(d), "2024-01-15");
     }
 
     #[test]
     fn r890_get_utc_month_start() {
-        let d = Utc.with_ymd_and_hms(2024, 3, 15, 12, 0, 0).single().unwrap();
+        let d = Utc
+            .with_ymd_and_hms(2024, 3, 15, 12, 0, 0)
+            .single()
+            .unwrap();
         let s = get_utc_month_start(d);
-        assert_eq!(s, Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).single().unwrap());
+        assert_eq!(
+            s,
+            Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).single().unwrap()
+        );
     }
 
     #[test]
@@ -420,5 +432,146 @@ mod tests {
     #[test]
     fn r890_dashboard_constants() {
         assert_eq!(DASHBOARD_RUN_ACTIVITY_DAYS, 14);
+    }
+
+    // ============ R491: bucket_agents 边界 ============
+
+    #[test]
+    fn r491_bucket_agents_empty_input_zero_all() {
+        let b = bucket_agents(vec![]);
+        assert_eq!(b, AgentCounts::default());
+    }
+
+    #[test]
+    fn r491_bucket_agents_all_unknown_ignored() {
+        let rows = vec![
+            ("unknown_status_1".to_string(), 5),
+            ("unknown_status_2".to_string(), 3),
+        ];
+        let b = bucket_agents(rows);
+        assert_eq!(b.active, 0);
+        assert_eq!(b.running, 0);
+        assert_eq!(b.paused, 0);
+        assert_eq!(b.error, 0);
+    }
+
+    #[test]
+    fn r491_bucket_agents_all_paused() {
+        let rows = vec![("paused".to_string(), 7)];
+        let b = bucket_agents(rows);
+        assert_eq!(b.paused, 7);
+        assert_eq!(b.active, 0);
+    }
+
+    // ============ R491: bucket_tasks_v2 边界 ============
+
+    #[test]
+    fn r491_bucket_tasks_v2_empty_input_zero_all() {
+        let t = bucket_tasks_v2(vec![]);
+        assert_eq!(t, TaskCounts::default());
+    }
+
+    #[test]
+    fn r491_bucket_tasks_v2_only_cancelled_excluded() {
+        // cancelled 单独不计入任何桶
+        let rows = vec![("cancelled".to_string(), 100)];
+        let t = bucket_tasks_v2(rows);
+        assert_eq!(t.open, 0);
+        assert_eq!(t.in_progress, 0);
+        assert_eq!(t.blocked, 0);
+        assert_eq!(t.done, 0);
+    }
+
+    #[test]
+    fn r491_bucket_tasks_v2_in_progress_counts_both() {
+        // in_progress 计入 in_progress 桶 + open 桶
+        let rows = vec![("in_progress".to_string(), 5)];
+        let t = bucket_tasks_v2(rows);
+        assert_eq!(t.in_progress, 5);
+        assert_eq!(t.open, 5);
+    }
+
+    #[test]
+    fn r491_bucket_tasks_v2_blocked_counts_both() {
+        let rows = vec![("blocked".to_string(), 3)];
+        let t = bucket_tasks_v2(rows);
+        assert_eq!(t.blocked, 3);
+        assert_eq!(t.open, 3);
+    }
+
+    // ============ R491: get_utc_month_start 边界 ============
+
+    #[test]
+    fn r491_get_utc_month_start_january_1() {
+        let d = Utc
+            .with_ymd_and_hms(2024, 1, 1, 23, 59, 59)
+            .single()
+            .unwrap();
+        let s = get_utc_month_start(d);
+        assert_eq!(
+            s,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().unwrap()
+        );
+    }
+
+    #[test]
+    fn r491_get_utc_month_start_december_31() {
+        // 12 月 31 日 → 12 月 1 日（不是次年 1 月）
+        let d = Utc
+            .with_ymd_and_hms(2024, 12, 31, 23, 59, 59)
+            .single()
+            .unwrap();
+        let s = get_utc_month_start(d);
+        assert_eq!(
+            s,
+            Utc.with_ymd_and_hms(2024, 12, 1, 0, 0, 0).single().unwrap()
+        );
+    }
+
+    // ============ R491: get_recent_utc_date_keys 边界 ============
+
+    #[test]
+    fn r491_get_recent_utc_date_keys_one_day_is_today() {
+        let now = Utc
+            .with_ymd_and_hms(2024, 1, 15, 12, 0, 0)
+            .single()
+            .unwrap();
+        let keys = get_recent_utc_date_keys(now, 1);
+        assert_eq!(keys, vec!["2024-01-15"]);
+    }
+
+    #[test]
+    fn r491_get_recent_utc_date_keys_crosses_month_boundary() {
+        // 跨月：1 月 2 日 + 5 天 → 12-29, 12-30, 12-31, 1-1, 1-2
+        let now = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).single().unwrap();
+        let keys = get_recent_utc_date_keys(now, 5);
+        assert_eq!(
+            keys,
+            vec![
+                "2023-12-29",
+                "2023-12-30",
+                "2023-12-31",
+                "2024-01-01",
+                "2024-01-02"
+            ]
+        );
+    }
+
+    // ============ R491: format_utc_date_key 边界 ============
+
+    #[test]
+    fn r491_format_utc_date_key_pads_single_digits() {
+        // 月份和日期必须 zero-pad
+        let d = Utc.with_ymd_and_hms(2024, 3, 5, 0, 0, 0).single().unwrap();
+        assert_eq!(format_utc_date_key(d), "2024-03-05");
+    }
+
+    #[test]
+    fn r491_format_utc_date_key_year_2026() {
+        let d = Utc
+            .with_ymd_and_hms(2026, 12, 31, 23, 59, 59)
+            .single()
+            .unwrap();
+        assert_eq!(format_utc_date_key(d), "2026-12-31");
     }
 }

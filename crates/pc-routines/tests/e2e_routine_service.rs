@@ -110,9 +110,8 @@ async fn r605_service_constructors_and_recorder() {
     let (db, _pool) = setup_db().await;
 
     // new + add_hook builds without panic
-    let _svc = RoutineService::new(db.clone()).add_hook(Arc::new(
-        pc_routines::RecordingRoutineHook::default(),
-    ));
+    let _svc = RoutineService::new(db.clone())
+        .add_hook(Arc::new(pc_routines::RecordingRoutineHook::default()));
 
     // with_hooks accepts an empty vec
     let _svc2 = RoutineService::with_hooks(db, vec![]);
@@ -146,12 +145,17 @@ async fn r605_create_persists_routine_and_dispatches_created() {
     assert_eq!(row.status, "active");
     assert_eq!(row.priority, "medium");
     assert_eq!(row.responsible_user_id.as_deref(), Some("user-1"));
-    assert!(row.latest_revision_id.is_some(), "should have initial revision");
+    assert!(
+        row.latest_revision_id.is_some(),
+        "should have initial revision"
+    );
 
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        RoutineHookEvent::Created { id, title, status, .. } => {
+        RoutineHookEvent::Created {
+            id, title, status, ..
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(title, "Daily standup");
             assert_eq!(status, "active");
@@ -337,7 +341,10 @@ async fn r605_get_detail_aggregates() {
 
     let detail = svc.get_detail(row.id).await.expect("detail").expect("some");
     assert_eq!(detail.routine.id, row.id);
-    assert!(detail.description_document.is_some(), "should have description document");
+    assert!(
+        detail.description_document.is_some(),
+        "should have description document"
+    );
     assert_eq!(detail.triggers.len(), 0, "fresh routine has no triggers");
     assert_eq!(detail.recent_runs.len(), 0, "fresh routine has no runs");
 
@@ -376,7 +383,10 @@ async fn r605_update_title_only_dispatches_updated() {
         .expect("update");
     let updated = updated.expect("some");
     assert_eq!(updated.title, "after");
-    assert_eq!(updated.latest_revision_number, 2, "should create revision 2");
+    assert_eq!(
+        updated.latest_revision_number, 2,
+        "should create revision 2"
+    );
 
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
@@ -512,7 +522,10 @@ async fn r605_delete_dispatches_archived_and_returns_true() {
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        RoutineHookEvent::Archived { id, company_id: cid } => {
+        RoutineHookEvent::Archived {
+            id,
+            company_id: cid,
+        } => {
             assert_eq!(*id, row.id);
             assert_eq!(*cid, company_id);
         }
@@ -581,7 +594,11 @@ async fn r605_trigger_lifecycle_create_list_update_delete() {
     assert_eq!(triggers[0].id, trigger_id);
 
     // get
-    let fetched = svc.get_trigger(trigger_id).await.expect("get").expect("some");
+    let fetched = svc
+        .get_trigger(trigger_id)
+        .await
+        .expect("get")
+        .expect("some");
     assert_eq!(fetched.label.as_deref(), Some("Daily"));
 
     // update

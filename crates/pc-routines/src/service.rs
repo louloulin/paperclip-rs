@@ -11,9 +11,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pc_errors::{conflict, internal, unprocessable, validation, Error, Result};
 use pc_repos::routine::{
-    CreateRoutineRecord, CreateRoutineTriggerRecord,
-    RoutineRepo, RoutineRevisionRow, RoutineRow, RoutineRunRow, RoutineTriggerMutationResult,
-    RoutineTriggerRow, UpdateRoutineRecord, UpdateRoutineTriggerRecord,
+    CreateRoutineRecord, CreateRoutineTriggerRecord, RoutineRepo, RoutineRevisionRow, RoutineRow,
+    RoutineRunRow, RoutineTriggerMutationResult, RoutineTriggerRow, UpdateRoutineRecord,
+    UpdateRoutineTriggerRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,12 +35,37 @@ const TRIGGER_KIND_WEBHOOK: &str = "webhook";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum RoutineHookEvent {
-    Created { id: Uuid, company_id: Uuid, title: String, status: String },
-    Updated { id: Uuid, company_id: Uuid, title: String, status: String },
-    Archived { id: Uuid, company_id: Uuid },
-    TriggerCreated { id: Uuid, routine_id: Uuid, kind: String },
-    TriggerUpdated { id: Uuid, routine_id: Uuid, kind: String },
-    TriggerDeleted { id: Uuid, routine_id: Uuid, kind: String },
+    Created {
+        id: Uuid,
+        company_id: Uuid,
+        title: String,
+        status: String,
+    },
+    Updated {
+        id: Uuid,
+        company_id: Uuid,
+        title: String,
+        status: String,
+    },
+    Archived {
+        id: Uuid,
+        company_id: Uuid,
+    },
+    TriggerCreated {
+        id: Uuid,
+        routine_id: Uuid,
+        kind: String,
+    },
+    TriggerUpdated {
+        id: Uuid,
+        routine_id: Uuid,
+        kind: String,
+    },
+    TriggerDeleted {
+        id: Uuid,
+        routine_id: Uuid,
+        kind: String,
+    },
 }
 
 // =============================================================================
@@ -137,40 +162,54 @@ impl CreateRoutine {
         if self.company_id.is_nil() {
             return Err(validation("companyId is required"));
         }
-        let priority = self.priority.clone().unwrap_or_else(|| "medium".to_string());
+        let priority = self
+            .priority
+            .clone()
+            .unwrap_or_else(|| "medium".to_string());
         if !ALLOWED_PRIORITIES.contains(&priority.as_str()) {
             return Err(validation("priority must be one of low/medium/high/urgent"));
         }
         let status = self.status.clone().unwrap_or_else(|| "active".to_string());
         if !ALLOWED_STATUSES.contains(&status.as_str()) {
-            return Err(validation("status must be one of draft/active/paused/archived"));
+            return Err(validation(
+                "status must be one of draft/active/paused/archived",
+            ));
         }
         let concurrency_policy = self
             .concurrency_policy
             .clone()
             .unwrap_or_else(|| "allow".to_string());
         if !ALLOWED_CONCURRENCY.contains(&concurrency_policy.as_str()) {
-            return Err(validation("concurrencyPolicy must be one of allow/skip/queue"));
+            return Err(validation(
+                "concurrencyPolicy must be one of allow/skip/queue",
+            ));
         }
         let catch_up_policy = self
             .catch_up_policy
             .clone()
             .unwrap_or_else(|| "skip_missed".to_string());
         if !ALLOWED_CATCHUP.contains(&catch_up_policy.as_str()) {
-            return Err(validation("catchUpPolicy must be one of skip_missed/enqueue_missed_with_cap"));
+            return Err(validation(
+                "catchUpPolicy must be one of skip_missed/enqueue_missed_with_cap",
+            ));
         }
         let activity_gate_policy = self
             .activity_gate_policy
             .clone()
             .unwrap_or_else(|| "always".to_string());
         if !ALLOWED_ACTIVITY_GATE.contains(&activity_gate_policy.as_str()) {
-            return Err(validation("activityGatePolicy must be one of always/require_external_activity"));
+            return Err(validation(
+                "activityGatePolicy must be one of always/require_external_activity",
+            ));
         }
         let activity_gate_scope = self
             .activity_gate_scope
             .clone()
             .unwrap_or_else(|| "company".to_string());
-        let variables = self.variables.clone().unwrap_or_else(|| Value::Array(vec![]));
+        let variables = self
+            .variables
+            .clone()
+            .unwrap_or_else(|| Value::Array(vec![]));
         let responsible_user_id = self
             .responsible_user_id
             .clone()
@@ -235,22 +274,30 @@ impl RoutinePatch {
         }
         if let Some(s) = &self.status {
             if !ALLOWED_STATUSES.contains(&s.as_str()) {
-                return Err(validation("status must be one of draft/active/paused/archived"));
+                return Err(validation(
+                    "status must be one of draft/active/paused/archived",
+                ));
             }
         }
         if let Some(c) = &self.concurrency_policy {
             if !ALLOWED_CONCURRENCY.contains(&c.as_str()) {
-                return Err(validation("concurrencyPolicy must be one of allow/skip/queue"));
+                return Err(validation(
+                    "concurrencyPolicy must be one of allow/skip/queue",
+                ));
             }
         }
         if let Some(c) = &self.catch_up_policy {
             if !ALLOWED_CATCHUP.contains(&c.as_str()) {
-                return Err(validation("catchUpPolicy must be one of skip_missed/enqueue_missed_with_cap"));
+                return Err(validation(
+                    "catchUpPolicy must be one of skip_missed/enqueue_missed_with_cap",
+                ));
             }
         }
         if let Some(a) = &self.activity_gate_policy {
             if !ALLOWED_ACTIVITY_GATE.contains(&a.as_str()) {
-                return Err(validation("activityGatePolicy must be one of always/require_external_activity"));
+                return Err(validation(
+                    "activityGatePolicy must be one of always/require_external_activity",
+                ));
             }
         }
         if let Some(t) = &self.title {
@@ -317,7 +364,9 @@ impl CreateRoutineTrigger {
             TRIGGER_KIND_WEBHOOK => {
                 // webhook triggers must NOT have cronExpression
                 if self.cron_expression.is_some() {
-                    return Err(unprocessable("webhook triggers must not include cronExpression"));
+                    return Err(unprocessable(
+                        "webhook triggers must not include cronExpression",
+                    ));
                 }
             }
             other => {
@@ -415,7 +464,10 @@ pub struct RoutineService {
 impl RoutineService {
     #[must_use]
     pub fn new(db: pc_repos::Db) -> Self {
-        Self { db, hooks: Vec::new() }
+        Self {
+            db,
+            hooks: Vec::new(),
+        }
     }
 
     #[must_use]
@@ -472,18 +524,12 @@ impl RoutineService {
         let Some(row) = repo.get(id).await.map_err(map_sql_error)? else {
             return Ok(None);
         };
-        let triggers = repo
-            .list_triggers(id)
-            .await
-            .map_err(map_sql_error)?;
+        let triggers = repo.list_triggers(id).await.map_err(map_sql_error)?;
         let recent_runs = repo
             .list_run_summaries(id, 25)
             .await
             .map_err(map_sql_error)?;
-        let active_issue = repo
-            .get_active_issue(id)
-            .await
-            .map_err(map_sql_error)?;
+        let active_issue = repo.get_active_issue(id).await.map_err(map_sql_error)?;
         let description_document = repo
             .get_description_document(id)
             .await
@@ -541,11 +587,7 @@ impl RoutineService {
     /// routine was not found. Returns [`pc_errors::Error::Conflict`] if
     /// `base_revision_id` was supplied and does not match the current
     /// `latest_revision_id` (optimistic concurrency).
-    pub async fn update(
-        &self,
-        id: Uuid,
-        patch: RoutinePatch,
-    ) -> Result<Option<RoutineRow>> {
+    pub async fn update(&self, id: Uuid, patch: RoutinePatch) -> Result<Option<RoutineRow>> {
         patch.validate()?;
         if let Some(want) = patch.base_revision_id {
             let repo = RoutineRepo::new(&self.db);
@@ -564,7 +606,10 @@ impl RoutineService {
             .await?;
         if let Some(ref row) = updated {
             let event = if row.status == "archived" {
-                RoutineHookEvent::Archived { id: row.id, company_id: row.company_id }
+                RoutineHookEvent::Archived {
+                    id: row.id,
+                    company_id: row.company_id,
+                }
             } else {
                 RoutineHookEvent::Updated {
                     id: row.id,
@@ -586,7 +631,8 @@ impl RoutineService {
         };
         let removed = repo.delete(id).await.map_err(map_sql_error)?;
         if removed {
-            self.dispatch(RoutineHookEvent::Archived { id, company_id }).await?;
+            self.dispatch(RoutineHookEvent::Archived { id, company_id })
+                .await?;
         }
         Ok(removed)
     }
@@ -651,10 +697,7 @@ impl RoutineService {
         Ok(result)
     }
 
-    pub async fn delete_trigger(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<RoutineRevisionRow>> {
+    pub async fn delete_trigger(&self, id: Uuid) -> Result<Option<RoutineRevisionRow>> {
         let repo = RoutineRepo::new(&self.db);
         let existing = repo.get_trigger(id).await.map_err(map_sql_error)?;
         let Some(existing) = existing else {
@@ -679,21 +722,14 @@ impl RoutineService {
 
     // ---- runs / revisions ---------------------------------------------------
 
-    pub async fn list_runs(
-        &self,
-        routine_id: Uuid,
-        limit: i64,
-    ) -> Result<Vec<RoutineRunRow>> {
+    pub async fn list_runs(&self, routine_id: Uuid, limit: i64) -> Result<Vec<RoutineRunRow>> {
         RoutineRepo::new(&self.db)
             .list_runs(routine_id, limit)
             .await
             .map_err(map_sql_error)
     }
 
-    pub async fn list_revisions(
-        &self,
-        routine_id: Uuid,
-    ) -> Result<Vec<RoutineRevisionRow>> {
+    pub async fn list_revisions(&self, routine_id: Uuid) -> Result<Vec<RoutineRevisionRow>> {
         RoutineRepo::new(&self.db)
             .list_revisions(routine_id)
             .await

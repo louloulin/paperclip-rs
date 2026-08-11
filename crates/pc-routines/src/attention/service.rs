@@ -6,7 +6,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// R632: Attention item severity 等级。
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum AttentionSeverity {
     Critical,
@@ -138,9 +140,7 @@ impl AttentionService {
         limit: i64,
     ) -> AttentionResult<Vec<AttentionItem>> {
         if company_id.is_nil() {
-            return Err(AttentionError::Validation(
-                "companyId is required".into(),
-            ));
+            return Err(AttentionError::Validation("companyId is required".into()));
         }
         let limit = limit.clamp(1, 500);
         let mut all = Vec::new();
@@ -234,7 +234,10 @@ impl AttentionService {
                 });
             }
         }
-        if let Ok(rows) = issue_repo.list_productivity_review_attention(company_id).await {
+        if let Ok(rows) = issue_repo
+            .list_productivity_review_attention(company_id)
+            .await
+        {
             for row in rows {
                 all.push(AttentionItem {
                     kind: AttentionItemKind::IssueProductivityReview,
@@ -260,9 +263,15 @@ impl AttentionService {
                 });
             }
         }
-        if let Ok(rows) = issue_repo.list_pending_interactions_attention(company_id).await {
+        if let Ok(rows) = issue_repo
+            .list_pending_interactions_attention(company_id)
+            .await
+        {
             for row in rows {
-                let title = row.title.clone().unwrap_or_else(|| format!("Interaction {}", row.id));
+                let title = row
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| format!("Interaction {}", row.id));
                 all.push(AttentionItem {
                     kind: AttentionItemKind::IssuePendingInteraction,
                     subject_id: row.id,
@@ -294,14 +303,20 @@ impl AttentionService {
 
         // 11. PipelineAttention
         let pipeline_repo = pc_repos::pipeline::PipelineRepo::new(&self.db);
-        if let Ok(rows) = pipeline_repo.list_attention_pipelines(company_id, 100).await {
+        if let Ok(rows) = pipeline_repo
+            .list_attention_pipelines(company_id, 100)
+            .await
+        {
             for (id, name, _desc, review_count, total_count, updated_at) in rows {
                 all.push(AttentionItem {
                     kind: AttentionItemKind::PipelineAttention,
                     subject_id: id,
                     company_id,
                     severity: AttentionSeverity::Medium,
-                    title: format!("Pipeline {} ({} reviews / {} total)", name, review_count, total_count),
+                    title: format!(
+                        "Pipeline {} ({} reviews / {} total)",
+                        name, review_count, total_count
+                    ),
                     description: None,
                     created_at: updated_at,
                 });
@@ -350,10 +365,7 @@ impl AttentionService {
     }
 
     /// R632: 按 kind 统计 attention 数量。
-    pub async fn counts_for_company(
-        &self,
-        company_id: Uuid,
-    ) -> AttentionResult<AttentionCounts> {
+    pub async fn counts_for_company(&self, company_id: Uuid) -> AttentionResult<AttentionCounts> {
         let all = self.list_for_company(company_id, 500).await?;
         let mut counts = AttentionCounts::default();
         for item in all {
@@ -364,13 +376,9 @@ impl AttentionService {
                 AttentionItemKind::DecisionOpen => counts.decision_open += 1,
                 AttentionItemKind::HeartbeatFailed => counts.heartbeat_failed += 1,
                 AttentionItemKind::IssueBlocked => counts.issue_blocked += 1,
-                AttentionItemKind::IssueProductivityReview => {
-                    counts.issue_productivity_review += 1
-                }
+                AttentionItemKind::IssueProductivityReview => counts.issue_productivity_review += 1,
                 AttentionItemKind::IssueReview => counts.issue_review += 1,
-                AttentionItemKind::IssuePendingInteraction => {
-                    counts.issue_pending_interaction += 1
-                }
+                AttentionItemKind::IssuePendingInteraction => counts.issue_pending_interaction += 1,
                 AttentionItemKind::JoinRequestPending => counts.join_request_pending += 1,
                 AttentionItemKind::PipelineAttention => counts.pipeline_attention += 1,
                 AttentionItemKind::ToolError => counts.tool_error += 1,

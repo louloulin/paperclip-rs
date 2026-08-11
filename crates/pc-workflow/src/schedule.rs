@@ -279,6 +279,38 @@ pub fn next_cron_tick_in_timezone(
     Ok(None)
 }
 
+/// 判断一个 cron 表达式是否"亚小时级"——即 24 小时内触发次数 ≥ 25。
+///
+/// 与 Node `isSubHourlyCronExpression(expression, timeZone, after)` 1:1 对齐：
+/// - 取首个触发 tick（无则 false）
+/// - 在 firstTick + 24h 窗口内尝试拿 24 个后续 tick
+/// - 任一 tick 超出窗口 → false
+/// - 否则（拿到 ≥ 24 个 tick）→ true（意味着至少 25 次/24h = 亚小时级）
+///
+/// 用途：routine catch-up 策略 `enqueue_missed_with_cap` 需要这个判断来决定
+/// 是单次补跑还是窗口扫描补跑。
+///
+/// 高内聚：纯计算；仅依赖同模块 `next_cron_tick_in_timezone`。
+/// 低耦合：只暴露布尔结果。
+pub fn is_sub_hourly_cron_expression(
+    expression: &str,
+    time_zone: &str,
+    after: DateTime<Utc>,
+) -> bool {
+    let Ok(Some(first_tick)) = next_cron_tick_in_timezone(expression, time_zone, after) else {
+        return false;
+    };
+    let window_end = first_tick + Duration::hours(24);
+    let mut cursor = first_tick;
+    for _ in 0..24 {
+        match next_cron_tick_in_timezone(expression, time_zone, cursor) {
+            Ok(Some(next)) if next < window_end => cursor = next,
+            _ => return false,
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +482,52 @@ mod tests {
         assert_eq!(next.hour(), 12);
         assert_eq!(next.minute(), 1);
         assert_eq!(next.second(), 0);
+    }
+
+    // ============ R488: is_sub_hourly_cron_expression ============
+
+    #[test]
+    fn is_sub_hourly_cron_expression_every_minute_is_true() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // 每分钟触发；24 小时内应至少 1440 次 → true
+        assert!(is_sub_hourly_cron_expression("* * * * *", "UTC", after));
+    }
+
+    #[test]
+    fn is_sub_hourly_cron_expression_every_5_min_is_true() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // 每 5 分钟；24h 内 288 次 → true
+        assert!(is_sub_hourly_cron_expression("*/5 * * * *", "UTC", after));
+    }
+
+    #[test]
+    fn is_sub_hourly_cron_expression_every_hour_is_false() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // 每小时；24h 内 24 次，刚好达到 24 个后续 tick → 第 25 个会越过窗口 → false
+        assert!(!is_sub_hourly_cron_expression("0 * * * *", "UTC", after));
+    }
+
+    #[test]
+    fn is_sub_hourly_cron_expression_daily_is_false() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        assert!(!is_sub_hourly_cron_expression("0 9 * * *", "UTC", after));
+    }
+
+    #[test]
+    fn is_sub_hourly_cron_expression_invalid_returns_false() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // 无 tick → false
+        assert!(!is_sub_hourly_cron_expression("not a cron", "UTC", after));
+        // 非法 timezone → false
+        assert!(!is_sub_hourly_cron_expression(
+            "0 9 * * *",
+            "Mars/Olympus",
+            after
+        ));
     }
 }

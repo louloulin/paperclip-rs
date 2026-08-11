@@ -10,7 +10,9 @@
 
 use std::sync::Arc;
 
-use pc_repos::asset_service::{AssetHookEvent, AssetService, CreateAssetRecord, RecordingAssetHook};
+use pc_repos::asset_service::{
+    AssetHookEvent, AssetService, CreateAssetRecord, RecordingAssetHook,
+};
 use pc_repos::Db;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -31,7 +33,15 @@ async fn setup_db() -> (Db, PgPool) {
 
 async fn insert_company(pool: &PgPool) -> Uuid {
     let id = Uuid::new_v4();
-    let prefix = format!("R{}", Uuid::new_v4().simple().to_string().chars().take(5).collect::<String>());
+    let prefix = format!(
+        "R{}",
+        Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(5)
+            .collect::<String>()
+    );
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at)          VALUES ($1, $2, 'active', $3, now(), now())",
     )
@@ -45,9 +55,18 @@ async fn insert_company(pool: &PgPool) -> Uuid {
 }
 
 async fn cleanup(pool: &PgPool, company_id: Uuid) {
-    let _ = sqlx::query("DELETE FROM assets WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1").bind(company_id).execute(pool).await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id = $1").bind(company_id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM assets WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM company_memberships WHERE company_id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(pool)
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -120,7 +139,8 @@ async fn list_by_company_returns_recent_first() {
     let svc = AssetService::new(db);
 
     for i in 0..3 {
-        let rec = CreateAssetRecord::new("local", format!("k{i}"), "image/png", 10, format!("h{i}"));
+        let rec =
+            CreateAssetRecord::new("local", format!("k{i}"), "image/png", 10, format!("h{i}"));
         svc.create(company_id, rec).await.expect("create");
     }
 
@@ -205,7 +225,10 @@ async fn delete_emits_deleted_hook_and_returns_true() {
 
     // second delete should return false and NOT emit hook
     recorder.clear();
-    let again = svc.delete_by_id(company_id, row.id).await.expect("delete again");
+    let again = svc
+        .delete_by_id(company_id, row.id)
+        .await
+        .expect("delete again");
     assert!(!again);
     assert!(recorder.is_empty());
 
@@ -227,7 +250,10 @@ async fn find_logo_meta_by_company_returns_none_for_fresh_company() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
     let svc = AssetService::new(db);
-    let logo = svc.find_logo_meta_by_company(company_id).await.expect("logo");
+    let logo = svc
+        .find_logo_meta_by_company(company_id)
+        .await
+        .expect("logo");
     assert!(logo.is_none());
     cleanup(&pool, company_id).await;
 }

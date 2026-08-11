@@ -2230,7 +2230,10 @@ mod tests {
             SkillTestRunStatus::Cancelled,
             SkillTestRunStatus::Superseded,
         ] {
-            assert!(!s.can_transition_to(s), "self-transition should be rejected for {s:?}");
+            assert!(
+                !s.can_transition_to(s),
+                "self-transition should be rejected for {s:?}"
+            );
         }
     }
 

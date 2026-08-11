@@ -8,15 +8,64 @@ use pc_core::Timestamp;
 
 use crate::Db;
 
-fn issue_prefix_candidate(name: &str, attempt: usize) -> String {
-    let base: String = name
+/// Default fallback when a company name has no ASCII alphabetic characters.
+///
+/// 与 Node `ISSUE_PREFIX_FALLBACK` 常量 1:1 对齐。
+const ISSUE_PREFIX_FALLBACK: &str = "PC";
+
+/// 派生 company issue prefix 的基础部分（大写 ASCII 字母，最多 3 个字符）。
+///
+/// 与 Node `deriveIssuePrefixBase(name)` 1:1 对齐：
+/// - 转大写
+/// - 过滤掉非 A-Z 字符（数字、空格、Unicode 等全部丢弃）
+/// - 取前 3 字符
+/// - 空字符串 → fallback `"PC"`
+///
+/// 高内聚：纯字符串处理；无 IO、无状态。
+/// 低耦合：仅依赖 `&str` 入参。
+#[must_use]
+pub fn derive_issue_prefix_base(name: &str) -> String {
+    let normalized: String = name
         .chars()
         .filter(char::is_ascii_alphabetic)
-        .map(|character| character.to_ascii_uppercase())
+        .map(|c| c.to_ascii_uppercase())
         .take(3)
         .collect();
-    let base = if base.is_empty() { "PC" } else { &base };
-    format!("{base}{}", "A".repeat(attempt.saturating_sub(1)))
+    if normalized.is_empty() {
+        ISSUE_PREFIX_FALLBACK.to_string()
+    } else {
+        normalized
+    }
+}
+
+/// 计算 issue prefix 冲突时的 suffix：`attempt <= 1` 返回空，否则返回 `A` × (attempt-1)。
+///
+/// 与 Node `suffixForAttempt(attempt)` 1:1 对齐：
+/// - attempt=1 → `""`（首次不冲突就用 base）
+/// - attempt=2 → `"A"`
+/// - attempt=3 → `"AA"`
+/// - attempt=4 → `"AAA"`
+/// - ...
+///
+/// `attempt` 上限 10000（实现在 `create_with_unique_prefix` 处限制）。
+#[must_use]
+pub fn suffix_for_attempt(attempt: usize) -> String {
+    if attempt <= 1 {
+        String::new()
+    } else {
+        "A".repeat(attempt - 1)
+    }
+}
+
+/// 组合 base + suffix 一次性生成 issue prefix 候选。
+///
+/// 与 Node `base + suffixForAttempt(attempt)` 拼接语义 1:1 对齐。
+/// 公开 `derive_issue_prefix_base` 和 `suffix_for_attempt` 是为了：
+/// 1. 单测可独立验证
+/// 2. 调用方可灵活组合（如调试输出）
+fn issue_prefix_candidate(name: &str, attempt: usize) -> String {
+    let base = derive_issue_prefix_base(name);
+    format!("{base}{}", suffix_for_attempt(attempt))
 }
 
 fn is_issue_prefix_conflict(error: &sqlx::Error) -> bool {
@@ -477,5 +526,82 @@ mod tests {
         assert_eq!(issue_prefix_candidate("Paper Clip", 1), "PAP");
         assert_eq!(issue_prefix_candidate("Paper Clip", 2), "PAPA");
         assert_eq!(issue_prefix_candidate("123", 1), "PC");
+    }
+
+    // ============ R489: derive_issue_prefix_base ============
+
+    #[test]
+    fn derive_issue_prefix_base_basic_ascii() {
+        assert_eq!(derive_issue_prefix_base("Paper"), "PAP");
+        assert_eq!(derive_issue_prefix_base("Clip"), "CLI");
+    }
+
+    #[test]
+    fn derive_issue_prefix_base_uppercases_lowercase() {
+        assert_eq!(derive_issue_prefix_base("paperclip"), "PAP");
+        assert_eq!(derive_issue_prefix_base("aBc"), "ABC");
+    }
+
+    #[test]
+    fn derive_issue_prefix_base_takes_first_three_only() {
+        assert_eq!(derive_issue_prefix_base("TOOLONGPREFIX"), "TOO");
+    }
+
+    #[test]
+    fn derive_issue_prefix_base_filters_non_alpha() {
+        // 数字、空格、标点全部过滤
+        assert_eq!(derive_issue_prefix_base("Paper Clip"), "PAP");
+        assert_eq!(derive_issue_prefix_base("12 ABC 34"), "ABC");
+        assert_eq!(derive_issue_prefix_base("a-b-c"), "ABC");
+    }
+
+    #[test]
+    fn derive_issue_prefix_base_unicode_filtered_but_ascii_kept() {
+        // "纸clip" → "纸" 是 CJK（not ASCII alphabetic）被过滤；"clip" 保留 → "CLI"
+        assert_eq!(derive_issue_prefix_base("纸clip"), "CLI");
+        // 纯 CJK（无任何 ASCII 字母）→ fallback
+        assert_eq!(derive_issue_prefix_base("日本"), "PC");
+        // emoji 也被过滤（不是 ASCII alphabetic）
+        assert_eq!(derive_issue_prefix_base("🚀rocket"), "ROC");
+    }
+
+    #[test]
+    fn derive_issue_prefix_base_empty_falls_back() {
+        assert_eq!(derive_issue_prefix_base(""), "PC");
+        assert_eq!(derive_issue_prefix_base("123!@#"), "PC");
+    }
+
+    // ============ R489: suffix_for_attempt ============
+
+    #[test]
+    fn suffix_for_attempt_first_attempt_empty() {
+        assert_eq!(suffix_for_attempt(0), "");
+        assert_eq!(suffix_for_attempt(1), "");
+    }
+
+    #[test]
+    fn suffix_for_attempt_grows_as_repeat() {
+        assert_eq!(suffix_for_attempt(2), "A");
+        assert_eq!(suffix_for_attempt(3), "AA");
+        assert_eq!(suffix_for_attempt(4), "AAA");
+        assert_eq!(suffix_for_attempt(10), "AAAAAAAAA");
+    }
+
+    // ============ R489: is_issue_prefix_conflict ============
+
+    #[test]
+    fn is_issue_prefix_conflict_unrelated_db_error_returns_false() {
+        // 构造一个非 23505 的 sqlx::Error
+        let err = sqlx::Error::ColumnNotFound("nonexistent_column".into());
+        assert!(!is_issue_prefix_conflict(&err));
+    }
+
+    #[test]
+    fn is_issue_prefix_conflict_column_decode_returns_false() {
+        // 不同错误类型的 sqlx Error
+        let err = sqlx::Error::TypeNotFound {
+            type_name: "json".into(),
+        };
+        assert!(!is_issue_prefix_conflict(&err));
     }
 }

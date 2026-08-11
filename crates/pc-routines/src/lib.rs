@@ -14,10 +14,10 @@
 //! Routines are reusable "playbooks" the agent runtime can fire manually,
 //! on a cron schedule, or via a public webhook.
 
-pub mod dashboard;
 pub mod attention;
-pub mod session_cwd;
+pub mod dashboard;
 mod service;
+pub mod session_cwd;
 
 pub use dashboard::{
     bucket_agents, bucket_tasks_v2, build_run_activity, format_utc_date_key,
@@ -29,6 +29,4 @@ pub use service::{
     CreateRoutine, CreateRoutineTrigger, NoopRoutineHook, RecordingRoutineHook, RoutineHook,
     RoutineHookEvent, RoutinePatch, RoutineService, UpdateRoutineTrigger,
 };
-pub use session_cwd::{
-    is_unsafe_session_workspace_cwd, normalize_cwd, SESSION_CWD_SYSTEM_ROOTS,
-};
+pub use session_cwd::{is_unsafe_session_workspace_cwd, normalize_cwd, SESSION_CWD_SYSTEM_ROOTS};
