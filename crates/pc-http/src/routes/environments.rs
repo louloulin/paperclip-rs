@@ -89,6 +89,11 @@ pub fn router() -> Router<AppState> {
             "/api/environment-custom-image-setup-sessions/:id/terminal-session-token",
             post(terminal_session_token),
         )
+        // R629: terminal-ws WebSocket upgrade
+        .route(
+            "/api/environment-custom-image-setup-sessions/:id/terminal/ws",
+            get(terminal_ws),
+        )
         .route(
             "/api/environment-leases/:lease_id",
             get(get_environment_lease),
@@ -737,3 +742,65 @@ async fn terminal_session_token(
         "ttlSeconds": body.ttl_seconds,
     })))
 }
+
+// ============================================================================
+// R629: terminal-ws WebSocket upgrade handler
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TerminalWsQuery {
+    #[serde(default)]
+    terminal_session_id: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// `GET /api/environment-custom-image-setup-sessions/:id/terminal/ws` —
+/// upgrade to WebSocket for SSH terminal session.
+async fn terminal_ws(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<TerminalWsQuery>,
+    headers: axum::http::HeaderMap,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    let Some(store) = state.terminal_session_store.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({"error": "terminal runtime not configured"})),
+        )
+            .into_response();
+    };
+    let Some(connector) = state.terminal_ssh_connector.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({"error": "terminal ssh connector not configured"})),
+        )
+            .into_response();
+    };
+
+    let terminal_session_id = q.terminal_session_id.unwrap_or_default();
+    let token = q.token.unwrap_or_default();
+    if terminal_session_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error": "terminal_session_id required"})),
+        )
+            .into_response();
+    }
+
+    ws.on_upgrade(move |socket| {
+        pc_realtime::terminal::handle_socket(
+            socket,
+            id.to_string(),
+            terminal_session_id,
+            token,
+            store,
+            connector,
+        )
+    })
+}
+

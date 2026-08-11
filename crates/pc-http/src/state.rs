@@ -67,6 +67,10 @@ pub struct AppState {
     pub backup: Arc<BackupManager>,
     /// Decision spec signer. Production resolves env/file on every operation; tests may inject a fixed key.
     pub decision_signing: Arc<DecisionSigningService>,
+    /// R629: Terminal WS session store. None by default; populate via `with_terminal_runtime`.
+    pub terminal_session_store: Option<Arc<dyn pc_realtime::terminal::TerminalSessionStore>>,
+    /// R629: Terminal WS SSH connector. None by default; populate via `with_terminal_runtime`.
+    pub terminal_ssh_connector: Option<Arc<dyn pc_realtime::terminal::TerminalSshConnector>>,
 }
 
 #[derive(Clone)]
@@ -123,6 +127,8 @@ impl AppState {
             ))),
             backup: Arc::new(BackupManager::with_defaults()),
             decision_signing: Arc::new(DecisionSigningService::from_environment()),
+            terminal_session_store: None,
+            terminal_ssh_connector: None,
         }
     }
 
@@ -149,6 +155,19 @@ impl AppState {
     #[must_use]
     pub fn with_decision_signing(mut self, service: Arc<DecisionSigningService>) -> Self {
         self.decision_signing = service;
+        self
+    }
+
+    /// R629: inject terminal WS runtime (session store + SSH connector).
+    /// Without this, GET /.../terminal/ws returns 503.
+    #[must_use]
+    pub fn with_terminal_runtime(
+        mut self,
+        store: Arc<dyn pc_realtime::terminal::TerminalSessionStore>,
+        connector: Arc<dyn pc_realtime::terminal::TerminalSshConnector>,
+    ) -> Self {
+        self.terminal_session_store = Some(store);
+        self.terminal_ssh_connector = Some(connector);
         self
     }
 

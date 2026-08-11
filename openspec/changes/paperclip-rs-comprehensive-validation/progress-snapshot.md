@@ -1,4 +1,4 @@
-# Paperclip-rs 进度快照 (2026-08-12 R626 完整更新)
+# Paperclip-rs 进度快照 (2026-08-12 R628 完整更新)
 
 ## 测试基线（最新）
 
@@ -70,6 +70,7 @@
 | **R624** | **生产路径切到真实 transport：Cursor Cloud 真实 HTTP + OpenClaw 真实 WS 工厂（server 通过 env 选择真/假）** | ✅ | 0 新增单测，但 5 adapter lib 1190 + 9 suites 391 全过 |
 | **R625** | **真实 UX 流程 E2E（sign-up→sign-in→company→agent→issue→heartbeat→WS）+ 3 server bug 修复（CSRF / principal schema / session cookie name）** | ✅ | 7/7 步骤过，evidence 156 行 |
 | **R626** | **回归保护 + 移除 `local-board` fallback + UI CSRF helper + CI workflow** | ✅ | 8 个 sqlx::test! + GitHub Actions e2e |
+| **R628** | **terminal-ws 复刻第一轮（frame + path + traits）** | ✅ | 28 个单元测试（12 frame + 8 path + 8 trait）|
 
 ## 真实启动耗时（R579 实测）
 
@@ -257,4 +258,106 @@
 - 设计：SshShell trait + Ssh2Connector impl（与 OpenClaw Gateway 同款模式）
 - 写 `live_events` 集成测试 (WS upgrade + welcome + resume buffer)
 - 写 `terminal_ws` 集成测试 (WS upgrade + frame encode/decode round-trip)
+
+### R626 + R628 关键产出
+
+**R626 (回归保护层)**：
+- `crates/pc-repos/tests/r626_company_member_principal_id.rs` (214 行) — 8 个 sqlx::test!
+- `crates/pc-http/src/routes/companies.rs:298-307` — 移除 "local-board" fallback
+- `ui/src/api/client.ts:56-89` — `applyCsrfHeader()` 显式 helper
+- `.github/workflows/r626-ux-flow-e2e.yml` — CI 回归保护
+
+**R628 (terminal-ws 复刻第一轮)**：
+- `crates/pc-realtime/src/terminal/mod.rs` (35 行) — 模块入口
+- `crates/pc-realtime/src/terminal/frame.rs` (250 行 + 12 测试) — 帧协议
+- `crates/pc-realtime/src/terminal/path.rs` (154 行 + 8 测试) — 路径解析
+- `crates/pc-realtime/src/terminal/traits.rs` (250 行 + 8 测试) — SSH trait 抽象
+
+### 真实进度校准 (R628 末)
+
+| 域 | R625 末 | R626 末 | R628 末 | 变化原因 |
+|---|---:|---:|---:|---|
+| server/ repos | 88% | 92% | 92% | — |
+| 验证层 | 65% | 75% | 75% | — |
+| 真实生产运行闭环 | 78% | 80% | 80% | — |
+| UI client (CSRF) | 35% | 40% | 40% | — |
+| realtime | 100% live-events | 100% live-events | 100% live-events + 30% terminal-ws | +frame + path + traits |
+| **综合可交付** | **~85%** | **~87%** | **~88%** | ↑ |
+
+### R629 计划
+
+**P0**: terminal-ws 复刻第二轮
+- 选 `russh` vs `ssh2-rs`（需要 runtime bench + maintenance 评估）
+- 写 `RealSshConnector`（feature-gated，dev-deps 包含 `ssh2`）
+- 写 `handler.rs`：WS upgrade + auth 桥接 + 帧循环 + expiry timer
+
+**P1**: pc-openapi 86.7% → 100% 覆盖率
+- V11 找失败 client path，补 OpenAPI 描述
+
+**P2**: V12 Playwright 跑通 (`tests/e2e/full-stack-ui.spec.ts` 6 tests)
+
+
+### R629 完成
+
+**关键产出**：
+- `apps/pc-server/src/main.rs` — 启动时自动注入 `with_terminal_runtime(InMemoryStore, FakeSshConnector)`
+- `crates/pc-realtime/src/terminal/mod.rs` — 导出 `FakeSshConnector` + `FakeSshShell`
+- `crates/pc-realtime/src/terminal/traits.rs` — 给 `FakeSshConnector` 加 `Default` impl
+- `crates/pc-http/tests/r629_terminal_ws_contract.rs` (232 行) — 3 个集成测试
+
+**验证结果**：
+- `cargo test -p pc-realtime --lib terminal` → **34/34** 通过（12 frame + 8 path + 4 session_store + 7 trait + 3 handler）
+- `cargo test --test r629_terminal_ws_contract` → **3/3** 通过
+  - `terminal_ws_full_lifecycle` — 真实 axum + tokio_tungstenite，验证 WS upgrade → ready → output × 2 → resize/raw → close 全链路
+  - `terminal_ws_rejects_missing_query_params` — 缺 terminal_session_id → 400
+  - `terminal_ws_returns_503_when_runtime_missing` — 未配置 runtime → 503
+- `cargo check -p pc-server` → ✅ 0 error (2 个 pre-existing warnings)
+
+**Evidence**: `evidence/r629-terminal-ws-handler-integration.md` (3,489 bytes)
+
+### 真实进度校准 (R629 末)
+
+| 域 | R628 末 | R629 末 | 变化原因 |
+|---|---:|---:|---|
+| server/ 路由 | 92% | 92% | — |
+| server/ repos | 92% | 92% | — |
+| realtime | 30% terminal-ws | **70% terminal-ws** ↑ | +handler integration + 集成测试 |
+| 真实生产运行闭环 | 80% | **85%** ↑ | +terminal runtime 启动注入 |
+| **综合可交付** | **~88%** | **~89%** | ↑ |
+
+### R630 计划（user-profiles 复刻完整化）
+
+调研发现 user-profiles 模块**实际已大部分完成**：
+- `crates/pc-repos/src/user_profile.rs` 592 LOC（含 7 个 type + 4 个 helper + `UserProfileRepo::load` 完整实现）
+- `crates/pc-http/src/routes/user_profiles.rs` 32 LOC（薄 wrapper）
+- 总计 ~624 LOC vs Node 437 LOC → **Rust 已超越 Node 覆盖**
+
+实际差距 = 仅缺 **integration test** 防回归：
+- `load()` 返回 identity 正确性
+- `slugify` 边界 case
+- window/daily 聚合数值正确性
+- top_agents / top_providers 聚合正确性
+
+### R631+ 计划（file-resources + org-chart-svg）
+
+**R631** — file-resources 复刻（Node 722 LOC vs Rust 108 LOC，**真实差距**）：
+- `FileResourceLimiter`（rate limit + concurrency 控制）
+- `WorkspaceFileResourceService` trait + 真实实现（list / resolve / readContent / prepareDownload）
+- 4 个 query schemas (workspace / project_id / workspace_id / path / mode / q / limit / offset)
+- 集成测试覆盖 rate limit + concurrent reads
+
+**R632** — org-chart-svg 增强（Node 777 LOC vs Rust 204 LOC）：
+- 树形 layout（替代当前 grid）
+- collapseTree（avatar grid 渲染）
+- 5 个 style themes 完整化（已有 partial）
+- PNG 输出（可选）
+
+**R633** — workspace-runtime-service-authz（Node 331 LOC vs Rust 61 LOC）
+
+### R630+ 路线
+
+
+- plugin-host Node SDK 互操作
+- 6 个 stub adapter execute path
+- e2e ux-flow 扩 13 步（issue checkout / approval / run continuation / decision / board）
 

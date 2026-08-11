@@ -18,9 +18,16 @@
 //! - **路径 1:1 对齐 Node 上游**：URL 形状、frame schema 完全一致，方便互操作
 
 pub mod frame;
+pub mod handler;
 pub mod path;
+pub mod session_store;
 pub mod traits;
 
 pub use frame::{ClientFrame, ClientFrameError, ServerFrame};
+pub use handler::{handle_socket, parse_upgrade_path};
 pub use path::{parse_terminal_path, TerminalPathError};
-pub use traits::{TerminalSshConnector, TerminalSshShell};
+pub use session_store::{HostKeyVerifier, InMemoryStore, TerminalSessionRecord, TerminalSessionStore};
+pub use traits::{
+    FakeSshConnector, FakeSshShell, SshConnectionParams, TerminalDimensions, TerminalSshConnector,
+    TerminalSshShell,
+};

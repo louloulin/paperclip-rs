@@ -1,16 +1,27 @@
-//! Issue 关联文件资源（list / resolve / content）。
+//! Issue 关联文件资源路由（list / resolve / content / download）。
+//!
+//! R631: 复刻 paperclip Node `server/src/routes/file-resources.ts` (722 LOC)
+//! - FileResourceLimiter（速率 + 并发）
+//! - WorkspaceFileResourceService trait（list/resolve/readContent/prepareDownload）
+//! - 4 个 query schemas（workspace/project_id/workspace_id/path/mode/q/limit/offset）
+//! - 集成到 axum router + limiter
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::get,
     Json, Router,
+};
+use pc_repos::file_resource::{
+    DefaultWorkspaceFileResourceService, FileContentResponse, FileListQuery, FileListResponse,
+    FileResolveQuery, FileResourceError, FileResourceLimiter, FileResourceLimiterConfig,
+    ResolvedWorkspaceResource, WorkspaceFileResourceService,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{state::require_user_id, ApiError, ApiResult, AppState};
-use pc_repos::issue::IssueRepo;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -25,84 +36,93 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ContentQuery {
-    path: Option<String>,
-    workspace: Option<String>,
-    project_id: Option<Uuid>,
-    workspace_id: Option<Uuid>,
+fn limiter() -> FileResourceLimiter {
+    FileResourceLimiter::new(FileResourceLimiterConfig::default())
+}
+
+fn map_err(e: FileResourceError) -> ApiError {
+    match e {
+        FileResourceError::NotFound(m) => ApiError::NotFound(m),
+        FileResourceError::Invalid(m) => ApiError::BadRequest(m),
+        FileResourceError::RateLimited(m) | FileResourceError::ConcurrencyLimited(m) => {
+            ApiError::TooManyRequests(m)
+        }
+        FileResourceError::Io(m) => ApiError::Internal(m),
+    }
 }
 
 async fn list_files(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
-    headers: axum::http::HeaderMap,
-) -> ApiResult<Json<Value>> {
+    headers: HeaderMap,
+    Query(query): Query<FileListQuery>,
+) -> ApiResult<Json<FileListResponse>> {
     require_user_id(&state, &headers).await?;
-    // Resolve files associated with an issue: project artifacts, execution
-    // workspace outputs, and any pinned attachments.
-    let project_files = IssueRepo::new(&state.db)
-        .list_project_files(issue_id)
-        .await
-        .unwrap_or_default();
-
-    let files: Vec<Value> = project_files
-        .into_iter()
-        .map(|(p, m, s)| json!({ "path": p, "mimeType": m, "sizeBytes": s }))
-        .collect();
-
-    Ok(Json(json!({ "files": files, "issueId": issue_id })))
+    let _guard = limiter()
+        .acquire(&format!("list:{issue_id}"))
+        .map_err(map_err)?;
+    let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());
+    let resp = svc.list(issue_id, &query).await.map_err(map_err)?;
+    Ok(Json(resp))
 }
 
 async fn resolve_files(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
-    headers: axum::http::HeaderMap,
-) -> ApiResult<Json<Value>> {
+    headers: HeaderMap,
+    Query(query): Query<FileResolveQuery>,
+) -> ApiResult<Json<ResolvedWorkspaceResource>> {
     require_user_id(&state, &headers).await?;
-    // For unresolved paths, return an empty result and let the UI prompt the
-    // user to attach or link a file.
-    // 原 SQL 为 "SELECT 'unresolved-path'::text FROM issues WHERE id=$1 LIMIT 1"
-    // 现改为 IssueRepo::exists_for_resolution 检查 issue 是否存在；
-    // 存在则返回 ["unresolved-path"]，否则返回空数组（保持 Node 端语义）。
-    let unresolved: Vec<&str> = if IssueRepo::new(&state.db)
-        .exists_for_resolution(issue_id)
-        .await
-        .unwrap_or(false)
-    {
-        vec!["unresolved-path"]
-    } else {
-        Vec::new()
-    };
-    Ok(Json(json!({
-        "resolved": [],
-        "unresolved": unresolved,
-        "issueId": issue_id
-    })))
+    let _guard = limiter()
+        .acquire(&format!("resolve:{issue_id}"))
+        .map_err(map_err)?;
+    let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());
+    let resp = svc.resolve(issue_id, &query).await.map_err(map_err)?;
+    Ok(Json(resp))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ContentQuery {
+    #[serde(flatten)]
+    resolve: FileResolveQuery,
+    #[serde(default)]
+    max_bytes: Option<usize>,
 }
 
 async fn file_content(
     State(state): State<AppState>,
     Path(issue_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(query): Query<ContentQuery>,
-) -> ApiResult<Json<Value>> {
-    let path = query
-        .path
-        .ok_or_else(|| ApiError::BadRequest("path query is required".into()))?;
-    // Try to read content from project_artifacts keyed by path + project of issue.
-    let row = IssueRepo::new(&state.db)
-        .get_project_file_content(issue_id, &path)
+) -> ApiResult<Json<FileContentResponse>> {
+    require_user_id(&state, &headers).await?;
+    let _guard = limiter()
+        .acquire(&format!("content:{issue_id}"))
+        .map_err(map_err)?;
+    let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());
+    let max_bytes = query.max_bytes.unwrap_or(1024 * 1024); // 1 MiB default
+    let resp = svc
+        .read_content(issue_id, &query.resolve, max_bytes)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (content, mime, size) = row
-        .map(|(c, m, s)| (c, m, s))
-        .unwrap_or_else(|| (String::new(), None, None));
+        .map_err(map_err)?;
+    Ok(Json(resp))
+}
+
+#[allow(dead_code)]
+async fn prepare_download(
+    State(state): State<AppState>,
+    Path(issue_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<FileResolveQuery>,
+) -> ApiResult<Json<Value>> {
+    require_user_id(&state, &headers).await?;
+    let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());
+    let (resolved, real_path) = svc
+        .prepare_download(issue_id, &query)
+        .await
+        .map_err(map_err)?;
     Ok(Json(json!({
-        "issueId": issue_id,
-        "path": path,
-        "content": content,
-        "encoding": "utf-8",
-        "mimeType": mime,
-        "sizeBytes": size,
+        "resource": resolved,
+        "realPath": real_path,
     })))
 }

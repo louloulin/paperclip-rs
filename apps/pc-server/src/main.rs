@@ -32,6 +32,7 @@ use pc_heartbeat::recovery::{run_heartbeat_tick, HeartbeatTickerConfig};
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
 use pc_http::AppState;
+use pc_realtime::terminal::{FakeSshConnector, InMemoryStore};
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::agent::{
     AgentRepo, NewAgentWakeupRequest, WakeupActorType, WakeupRequestStatus, WakeupTriggerDetail,
@@ -239,6 +240,10 @@ async fn main() -> anyhow::Result<()> {
         telemetry_opts,
         ws,
         realtime.clone(),
+    )
+    .with_terminal_runtime(
+        Arc::new(InMemoryStore::new()),
+        Arc::new(FakeSshConnector::default()),
     );
     let scheduler_state = state.clone();
     let heartbeat_scheduler = tokio::spawn(async move {

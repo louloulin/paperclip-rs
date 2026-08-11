@@ -24,6 +24,8 @@ pub enum ApiError {
     Forbidden(String),
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+    #[error("too many requests: {0}")]
+    TooManyRequests(String),
     #[error("internal: {0}")]
     Internal(String),
     #[error(transparent)]
@@ -47,6 +49,7 @@ impl IntoResponse for ApiError {
             }
             ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             ApiError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            ApiError::TooManyRequests(_) => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests"),
             ApiError::NotFound(_) | ApiError::Sqlx(sqlx::Error::RowNotFound) => {
                 (StatusCode::NOT_FOUND, "not_found")
             }

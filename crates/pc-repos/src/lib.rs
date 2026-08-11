@@ -48,6 +48,7 @@ pub mod feedback_redaction;
 pub mod feedback_trace;
 pub mod feedback_vote;
 pub mod folder;
+pub mod file_resource;
 pub mod goal;
 pub mod heartbeat;
 pub mod inbox;
