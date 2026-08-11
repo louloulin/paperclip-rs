@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! `pc-tool-profile-binding-precedence` —— tool profile binding scope 优先级 + 排序。
+//! Tool profile binding scope 优先级 + 排序（原 `pc-tool-profile-binding-precedence` 已下沉）。
 //!
 //! 对应 Node `server/src/services/tool-profile-binding-precedence.ts`（50 行）。
 //!

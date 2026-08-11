@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use pc_label::{LabelError, LabelService};
+use pc_issues::label::{LabelError, LabelService};
 use pc_repos::label::{LabelPatch, NewLabel};
 
 use crate::{ApiError, ApiResult, AppState};

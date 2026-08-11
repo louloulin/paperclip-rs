@@ -18,6 +18,8 @@
 //! once revoked it is marked `revoked_at`; expired tokens can no longer be
 //! accepted (computed from `expires_at`).
 
+pub mod grants;
+pub mod rate_limit;
 mod service;
 
 pub use service::{

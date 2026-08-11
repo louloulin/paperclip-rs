@@ -1,5 +1,4 @@
-#![forbid(unsafe_code)]
-//! Company-scoped label CRUD service.
+//! Company-scoped label CRUD service（原 `pc-label` 已下沉）。
 mod service;
 pub use pc_repos::label::{LabelPatch, LabelRow, NewLabel};
 pub use service::{

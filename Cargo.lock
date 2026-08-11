@@ -2182,24 +2182,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-agent-action-audit"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-core",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-agent-invokability"
 version = "0.1.0"
 dependencies = [
@@ -3032,6 +3014,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "pc-company-member-roles",
  "pc-core",
  "pc-errors",
  "pc-repos",
@@ -3043,19 +3026,6 @@ dependencies = [
  "tracing",
  "uuid",
 ]
-
-[[package]]
-name = "pc-invite-grants"
-version = "0.1.0"
-dependencies = [
- "pc-company-member-roles",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pc-invite-rate-limit"
-version = "0.1.0"
 
 [[package]]
 name = "pc-issue-assignment-wakeup"
@@ -3243,6 +3213,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
+ "pc-errors",
  "pc-repos",
  "serde",
  "serde_json",

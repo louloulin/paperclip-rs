@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
-//! `pc-invite-rate-limit` —— 通用 per-IP sliding-window rate limiter，
+//! 通用 per-IP sliding-window rate limiter（原 `pc-invite-rate-limit` 已下沉），
+//! 用于 `/invites/:token*` 这些公开 unauthenticated 端点。
 //! 用于 `/invites/:token*` 这些公开 unauthenticated 端点。
 //!
 //! 对应 Node `server/src/services/invite-rate-limit.ts`（79 行）。设计目标：

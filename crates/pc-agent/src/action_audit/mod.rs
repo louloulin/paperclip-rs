@@ -1,5 +1,4 @@
-#![forbid(unsafe_code)]
-//! `pc-agent-action-audit` —— Agent action audit 业务服务。
+//! Agent action audit 业务服务（原 `pc-agent-action-audit` 已下沉）。
 //!
 //! 对应 Node `server/src/services/agent-action-audit.ts`（193 行）。
 //!

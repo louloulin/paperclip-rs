@@ -12,6 +12,7 @@ workspace = true
 async-trait = { workspace = true }
 chrono = { workspace = true }
 pc-core = { path = "../pc-core" }
+pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
 serde = { workspace = true }
 serde_json = { workspace = true }

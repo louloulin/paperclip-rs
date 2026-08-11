@@ -24,6 +24,8 @@
 //! - children（sub-issue）服务
 //! - 路由层从 `IssueRepo::new(&state.db)` 迁移到 `IssueService`
 
+pub mod label;
+
 use async_trait::async_trait;
 use pc_repos::issue::{
     CreateIssueInput, IssueCommentRow, IssueRepo, IssueRow,

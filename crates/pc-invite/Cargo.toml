@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+pc-company-member-roles = { path = "../pc-company-member-roles" }
 pc-core = { path = "../pc-core" }
 pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }

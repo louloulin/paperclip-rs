@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use pc_repos::agent_action_audit::AgentActionAuditFilters;
 
-use crate::AgentActionAuditPage;
+use super::AgentActionAuditPage;
 
 /// Agent action audit hook 事件。
 #[derive(Debug, Clone)]

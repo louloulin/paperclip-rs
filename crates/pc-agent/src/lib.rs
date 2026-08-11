@@ -2,6 +2,7 @@
 
 //! Agent 领域服务与基于 kameo 的串行化命令入口。
 
+pub mod action_audit;
 mod actor;
 mod agent_assignability;
 mod built_in_agent_metadata;

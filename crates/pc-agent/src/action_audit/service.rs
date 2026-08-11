@@ -17,7 +17,7 @@ use pc_repos::agent_action_audit::{
     AgentActionAuditFilters, AgentActionAuditPage, AgentActionAuditRepo,
 };
 
-use crate::hook::{AgentActionAuditHook, NoopAgentActionAuditHook};
+use super::hook::{AgentActionAuditHook, NoopAgentActionAuditHook};
 
 // ============================================================================
 // Errors
