@@ -1,0 +1,120 @@
+# R626: UX flow 端到端真实验证 (回归保护)
+#
+# 跑 scripts/r625-ux-flow.sh：
+# - 起 PG 16
+# - pc-migrate up (205 migrations)
+# - pc-server 启动 (< 100ms cold start)
+# - Python 7 步 UX 流 (sign-up → WS upgrade)
+#
+# 任一阶段失败 = fail PR。捕获 R625 发现的 3 类 server bug：
+#   1. CSRF 拒绝 mutation
+#   2. company_memberships 列名 (user_id → principal_type + principal_id)
+#   3. session_cookie_name 默认拼错 (paperclip.session → paperclip_session)
+
+name: R626-UX-Flow-E2E
+
+on:
+  pull_request:
+    paths:
+      - "crates/pc-repos/src/company_member.rs"
+      - "crates/pc-config/src/lib.rs"
+      - "crates/pc-http/src/middleware/csrf.rs"
+      - "crates/pc-http/src/routes/companies.rs"
+      - "crates/pc-http/src/routes/live_events.rs"
+      - "scripts/r625-ux-flow.*"
+      - ".github/workflows/r626-ux-flow-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/pc-repos/src/company_member.rs"
+      - "crates/pc-config/src/lib.rs"
+      - "crates/pc-http/src/middleware/csrf.rs"
+      - "crates/pc-http/src/routes/companies.rs"
+      - "crates/pc-http/src/routes/live_events.rs"
+      - "scripts/r625-ux-flow.*"
+
+jobs:
+  ux-flow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PAPERCLIP_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
+      PAPERCLIP_PORT: 54300
+      RUST_LOG: warn
+      CARGO_TERM_COLOR: never
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-r626-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Python + websockets
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet "requests>=2.32" "websockets>=12.0"
+
+      - name: R625 单元测试 (防回归)
+        run: cargo test -p pc-repos --test r626_company_member_principal_id --no-fail-fast
+
+      - name: pc-migrate up (建 schema)
+        run: cargo run --quiet -p pc-migrate -- up
+
+      - name: pc-server 编译
+        run: cargo build --quiet -p pc-server --bin paperclip-server
+
+      - name: 启动 pc-server (后台)
+        run: |
+          ./target/debug/paperclip-server > /tmp/pc-server.log 2>&1 &
+          echo $! > /tmp/pc-server.pid
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:54300/health >/dev/null 2>&1; then
+              echo "pc-server /health 200 after $((i/2))s"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "FAIL: pc-server /health not 200"
+          tail -30 /tmp/pc-server.log
+          exit 1
+
+      - name: 跑 7 步 UX 流
+        run: PAPERCLIP_BASE_URL=http://127.0.0.1:54300 python3 scripts/r625-ux-flow.py
+
+      - name: 失败时收集 server log
+        if: failure()
+        run: |
+          echo "=== pc-server log (last 80) ==="
+          tail -80 /tmp/pc-server.log || true
+        continue-on-error: true
+
+      - name: 关 pc-server
+        if: always()
+        run: |
+          if [[ -f /tmp/pc-server.pid ]]; then
+            kill -TERM "$(cat /tmp/pc-server.pid)" || true
+          fi

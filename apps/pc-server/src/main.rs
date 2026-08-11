@@ -183,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
             .register(Arc::new(HermesAdapter::new()))
             .context("register hermes adapter")?;
         adapters
-            .register(Arc::new(HermesGatewayAdapter::new()))
+            .register(Arc::new(build_hermes_gateway_adapter()))
             .context("register hermes gateway adapter")?;
         adapters
             .register(Arc::new(build_openclaw_gateway_adapter()))
@@ -666,6 +666,31 @@ fn build_cursor_cloud_adapter() -> CursorCloudAdapter {
     } else {
         CursorCloudAdapter::default()
     }
+}
+
+/// 构造 Hermes Gateway 适配器 —— 读取环境变量决定真实/假 transport。
+fn build_hermes_gateway_adapter() -> HermesGatewayAdapter {
+    let base_url = std::env::var("HERMES_GATEWAY_BASE_URL").ok();
+    let api_key = std::env::var("HERMES_GATEWAY_KEY")
+        .or_else(|_| std::env::var("HERMES_API_KEY"))
+        .ok();
+    let adapter = HermesGatewayAdapter::for_runtime(base_url.clone(), api_key.clone(), None);
+    match (&base_url, &api_key) {
+        (Some(url), Some(key)) if !url.is_empty() && !key.is_empty() => {
+            info!(
+                adapter = "hermes_gateway",
+                base_url = %url,
+                "hermes gateway transport: real (reqwest dashboard + SSE)"
+            );
+        }
+        _ => {
+            info!(
+                adapter = "hermes_gateway",
+                "hermes gateway transport: stub (env HERMES_GATEWAY_BASE_URL / HERMES_API_KEY missing)"
+            );
+        }
+    }
+    adapter
 }
 
 /// 构造 OpenClaw Gateway 适配器 —— 优先使用真实 tungstenite 客户端，回退到 fake。

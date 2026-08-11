@@ -46,6 +46,48 @@ function applyObservabilityHeaders(headers: Headers) {
   }
 }
 
+// R626: Explicit CSRF header injection for state-changing requests.
+// Mirrors Rust CSRF middleware behavior (crates/pc-http/src/middleware/csrf.rs):
+//   - only enforce on POST / PUT / PATCH / DELETE
+//   - skip on /api/auth/* (login entry) and other whitelisted paths
+//   - reads paperclip_csrf cookie (set by sign-in/email response)
+//   - sends X-CSRF-Token header with the same value (double-submit cookie pattern)
+// Without this, third-party clients (CLI / tests / non-browser fetch) calling
+// mutation endpoints will get 403 CSRF_VALIDATION_FAILED — observed in r625-ux-flow.
+const CSRF_COOKIE_NAME = "paperclip_csrf";
+const CSRF_HEADER_NAME = "x-csrf-token";
+const CSRF_REQUIRED_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function readCsrfCookie(): string | null {
+  if (typeof document === "undefined" || !document.cookie) return null;
+  for (const part of document.cookie.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === CSRF_COOKIE_NAME) return rest.join("=");
+  }
+  return null;
+}
+
+function csrfPathWhitelisted(path: string): boolean {
+  return (
+    path.startsWith("/api/auth/") ||
+    path.startsWith("/api/dev-server/") ||
+    path === "/live-events" ||
+    path === "/openapi.json" ||
+    path === "/api/openapi" ||
+    path === "/api/openapi.json" ||
+    path.startsWith("/_plugins/") ||
+    path === "/health"
+  );
+}
+
+function applyCsrfHeader(headers: Headers, method: string, path: string): void {
+  if (headers.has(CSRF_HEADER_NAME)) return; // caller override wins
+  if (!CSRF_REQUIRED_METHODS.has(method.toUpperCase())) return;
+  if (csrfPathWhitelisted(path)) return;
+  const token = readCsrfCookie();
+  if (token) headers.set(CSRF_HEADER_NAME, token);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   const body = init?.body;
@@ -53,6 +95,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
   applyObservabilityHeaders(headers);
+  // R626: attach CSRF header for state-changing requests
+  const _method = (init?.method ?? "GET").toUpperCase();
+  applyCsrfHeader(headers, _method, path);
 
   const res = await fetch(`${BASE}${path}`, {
     headers,

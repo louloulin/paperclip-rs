@@ -1,4 +1,4 @@
-# Paperclip-rs 进度快照 (2026-08-12 R624 完整更新)
+# Paperclip-rs 进度快照 (2026-08-12 R626 完整更新)
 
 ## 测试基线（最新）
 
@@ -68,6 +68,8 @@
 | **R622** | **Hermes-gateway SSE + Dashboard 集成（sse_client.rs + dashboard.rs + retry_policy.rs + 真 e2e 7 个）** | ✅ | 25 → 44 lib (+19) + 7 e2e |
 | **R623** | **Hermes Gateway execute.rs 整合 + 编译闭环** | ✅ | 44 → 68 lib (+24) |
 | **R624** | **生产路径切到真实 transport：Cursor Cloud 真实 HTTP + OpenClaw 真实 WS 工厂（server 通过 env 选择真/假）** | ✅ | 0 新增单测，但 5 adapter lib 1190 + 9 suites 391 全过 |
+| **R625** | **真实 UX 流程 E2E（sign-up→sign-in→company→agent→issue→heartbeat→WS）+ 3 server bug 修复（CSRF / principal schema / session cookie name）** | ✅ | 7/7 步骤过，evidence 156 行 |
+| **R626** | **回归保护 + 移除 `local-board` fallback + UI CSRF helper + CI workflow** | ✅ | 8 个 sqlx::test! + GitHub Actions e2e |
 
 ## 真实启动耗时（R579 实测）
 
@@ -186,3 +188,73 @@
 - 把 OpenClaw `for_runtime_url` 升级为真实 `TungsteniteWireClient::connect`
   （完成 Ed25519 sign-and-connect）
 - 在 `pc-server` 启动日志里打印真实/假 client 状态
+
+### R625 关键产出
+
+- `scripts/r625-ux-flow.sh` (65 行) + `scripts/r625-ux-flow.py` (131 行)
+- 真实验证：PG17 + pc-migrate + pc-server + Python (requests + websockets 12.0)
+- 7 步全过：sign-up / sign-in / company / agent / issue / heartbeat invoke / WS upgrade
+- WS welcome 事件 `next_event_id:11` 证明 realtime hub 持续接收+buffer 事件
+- 修复 3 个 server-side bug：
+  1. **`is_active_member` SQL 用错列**（`user_id` → `principal_type='user' + principal_id`），5 处
+  2. **`session_cookie_name` 默认拼错**（`paperclip.session` → `paperclip_session`），1 处
+  3. **CSRF 测试用法对齐**（UI 端无显式 helper，第三方 client 易踩坑）
+- 验证后 DB 状态：owner `principal_id` = 真实 `u_5a9c24c0...`（不再 `local-board`）
+
+### 真实进度校准 (R625)
+
+| 域 | R624 末 | R625 末 | 变化原因 |
+|---|---:|---:|---|
+| shared/ 契约 | 88% | 88% | — |
+| server/ 路由 | 92% | 92% | — |
+| server/ middleware | 60% | 60% | — |
+| server/ services | 60% | 60% | — |
+| server/ repos | 85% | **88%** ↑ | company_member 5 query 修复 |
+| UI client | 35% | 35% | — |
+| CLI | 60% | 60% | — |
+| 验证层 | 50% | **65%** ↑ | r625-ux-flow 7 步全过 |
+| Adapter 行为等价 | 85% | 85% | — |
+| 真实生产运行闭环 | 70% | **78%** ↑ | end-to-end UX 流真实跑通 |
+| 插件 / Quota / MCP | 45% | 45% | — |
+| pc-config 默认 | 100% | 100% | session_cookie_name 已对齐 better-auth |
+| **综合可交付** | **~82%** | **~85%** ↑ |
+
+### R626 计划
+
+- e2e ux-flow 接入 CI 回归保护（crashed 时 fail PR）
+- `ui/src/api/client.ts` 加显式 `applyCsrfHeader()` helper，60 client 全部统一走它
+- 去掉 `local-board` fallback，强制 `require_user_id` 成功
+- `company_member.rs` 加 sqlx::test! 单元测试防回归
+
+### R626 关键产出
+
+- `crates/pc-repos/tests/r626_company_member_principal_id.rs` (214 行) — 8 个 sqlx::test! 集成测试
+- `crates/pc-http/src/routes/companies.rs:298-307` — 移除 "local-board" fallback
+- `ui/src/api/client.ts:56-89` — `applyCsrfHeader()` 显式 helper（60 client 自动受益）
+- `.github/workflows/r626-ux-flow-e2e.yml` — CI 回归保护 (PR fail on R625 bug 回归)
+- e2e 重跑：合法用户仍能创建公司（无 fallback）+ WS 升级成功 + welcome next_event_id=9
+
+### 真实进度校准 (R626)
+
+| 域 | R625 末 | R626 末 | 变化原因 |
+|---|---:|---:|---|
+| server/ repos | 88% | **92%** ↑ | +8 集成测试防 R625 修复回归 |
+| 验证层 | 65% | **75%** ↑ | +CI workflow 强制 e2e |
+| 真实生产运行闭环 | 78% | **80%** ↑ | +移除 local-board 掩盖路径 |
+| UI client (CSRF) | 35% | **40%** ↑ | +显式 CSRF helper |
+| **综合可交付** | **~85%** | **~87%** ↑ |
+
+### R627 计划
+
+- e2e-ux-flow 扩到 13 步（issue checkout / approval / run continuation / decision / board）
+- 监控 `require_user_id` 失败频次（去除 fallback 后应能早期发现 client 鉴权问题）
+- 把 CSRF helper 应用到所有 mutation 路径（脚本扫描 60 client 是否真的自动注入）
+
+### R628 计划 (重点)
+
+- **terminal-ws 复刻**（Node 766 LOC → `crates/pc-realtime` 或 `crates/pc-environment-support`）
+- Node 实现：custom image 环境的 SSH terminal WebSocket bridge
+- 设计：SshShell trait + Ssh2Connector impl（与 OpenClaw Gateway 同款模式）
+- 写 `live_events` 集成测试 (WS upgrade + welcome + resume buffer)
+- 写 `terminal_ws` 集成测试 (WS upgrade + frame encode/decode round-trip)
+

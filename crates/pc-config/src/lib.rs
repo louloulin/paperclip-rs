@@ -145,7 +145,7 @@ impl Config {
 
         let auth = AuthConfig {
             session_cookie_name: lookup("PAPERCLIP_SESSION_COOKIE")
-                .unwrap_or_else(|| "paperclip.session".into()),
+                .unwrap_or_else(|| "paperclip_session".into()),
             session_ttl_secs: parse_or(lookup, "PAPERCLIP_SESSION_TTL_SECS", 60 * 60 * 24 * 30)?,
             api_key_header: lookup("PAPERCLIP_API_KEY_HEADER")
                 .unwrap_or_else(|| "x-paperclip-agent-key".into()),

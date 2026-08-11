@@ -301,3 +301,10 @@ impl WsState {
         }
     }
 }
+
+/// Terminal WebSocket — R628 复刻 paperclip Node
+/// `server/src/realtime/environment-custom-image-terminal-ws.ts` (766 LOC)。
+///
+/// 本轮范围：frame / path / traits（带单测）。
+/// 后续轮次：handler（WS upgrade + auth + 桥接）+ ssh2 真实 connector。
+pub mod terminal;

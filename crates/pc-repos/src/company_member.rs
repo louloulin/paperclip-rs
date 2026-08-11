@@ -308,7 +308,8 @@ impl<'a> CompanyMemberRepo<'a> {
     pub async fn is_active_member(&self, user_id: &str, company_id: Uuid) -> RepoResult<bool> {
         let row: Option<(Uuid,)> = sqlx::query_as(
             "SELECT company_id FROM company_memberships \
-             WHERE user_id = $1 AND company_id = $2 AND status = 'active'",
+         WHERE principal_type = 'user' AND principal_id = $1 \
+         AND company_id = $2 AND status = 'active'",
         )
         .bind(user_id)
         .bind(company_id)
@@ -320,7 +321,8 @@ impl<'a> CompanyMemberRepo<'a> {
     /// Round 140: 列出某用户所有所属公司 id（含 archived/active）。供 profile 端点用。
     pub async fn list_company_ids_for_user(&self, user_id: &str) -> RepoResult<Vec<Uuid>> {
         let rows: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT company_id FROM company_memberships              WHERE user_id = $1",
+            "SELECT company_id FROM company_memberships \
+         WHERE principal_type = 'user' AND principal_id = $1",
         )
         .bind(user_id)
         .fetch_all(self.db.pool())
@@ -336,11 +338,11 @@ impl<'a> CompanyMemberRepo<'a> {
         user_id: &str,
     ) -> RepoResult<Vec<(Uuid, String, Option<String>, Option<String>)>> {
         let rows: Vec<(Uuid, String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT c.id, c.name, cm.role, cm.status \
-             FROM company_memberships cm \
-             INNER JOIN companies c ON c.id = cm.company_id \
-             WHERE cm.user_id = $1 \
-             ORDER BY c.name",
+            "SELECT c.id, c.name, cm.membership_role, cm.status \
+         FROM company_memberships cm \
+         INNER JOIN companies c ON c.id = cm.company_id \
+         WHERE cm.principal_type = 'user' AND cm.principal_id = $1 \
+         ORDER BY c.name",
         )
         .bind(user_id)
         .fetch_all(self.db.pool())
@@ -357,14 +359,14 @@ impl<'a> CompanyMemberRepo<'a> {
         company_ids: &[Uuid],
     ) -> RepoResult<()> {
         let mut tx = self.db.pool().begin().await?;
-        sqlx::query("DELETE FROM company_memberships WHERE user_id = $1")
+        sqlx::query("DELETE FROM company_memberships WHERE principal_type = 'user' AND principal_id = $1")
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
         for cid in company_ids {
             sqlx::query(
-                "INSERT INTO company_memberships (user_id, company_id, role, status) \
-                 VALUES ($1, $2, 'member', 'active') ON CONFLICT DO NOTHING",
+                "INSERT INTO company_memberships (principal_type, principal_id, company_id, membership_role, status) \
+             VALUES ('user', $1, $2, 'member', 'active') ON CONFLICT DO NOTHING",
             )
             .bind(user_id)
             .bind(cid)

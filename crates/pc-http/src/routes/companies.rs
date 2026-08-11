@@ -296,9 +296,11 @@ async fn create(
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     // R590: 业务下沉到 CompanyService
+    // R626: 取消 "local-board" fallback — 鉴权失败必须 surface（之前会掩盖 client
+    //       鉴权 bug，导致创建出来的 company owner 是 "local-board" 占位 principal，
+    //       后续 is_active_member / WS auth / resource ACL 全部误判）。
     let owner_id = match require_user_id(&state, &headers).await {
         Ok(user_id) => user_id,
-        Err(ApiError::Unauthorized(_)) => "local-board".to_owned(),
         Err(error) => return Err(error),
     };
     let row = company_service_with_activity(&state)

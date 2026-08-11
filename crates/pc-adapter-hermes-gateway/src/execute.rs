@@ -722,6 +722,36 @@ mod tests {
     }
 
     #[test]
+    fn parse_config_falls_back_to_hermes_gateway_key_env() {
+        let cfg = json!({"apiBaseUrl": "http://127.0.0.1:8080"});
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("HERMES_GATEWAY_KEY".to_owned(), "gw-key".to_owned());
+        let parsed = parse_execute_config(&cfg, &env).unwrap();
+        assert_eq!(parsed.api_key, "gw-key");
+    }
+
+    #[test]
+    fn parse_config_falls_back_to_base_url_env_when_missing_in_config() {
+        let cfg = json!({"apiKey": "k"});
+        let mut env = std::collections::BTreeMap::new();
+        env.insert(
+            "HERMES_GATEWAY_BASE_URL".to_owned(),
+            "https://hermes.example.com".to_owned(),
+        );
+        let parsed = parse_execute_config(&cfg, &env).unwrap();
+        assert_eq!(parsed.api_base_url, "https://hermes.example.com");
+    }
+
+    #[test]
+    fn parse_config_requires_base_url_when_neither_config_nor_env() {
+        let cfg = json!({"apiKey": "k"});
+        let env = std::collections::BTreeMap::new();
+        let err = parse_execute_config(&cfg, &env).unwrap_err();
+        assert!(matches!(err, ExecuteError::InvalidConfig(_)));
+        assert!(err.to_string().contains("apiBaseUrl"));
+    }
+
+    #[test]
     fn parse_config_overrides_strategy_and_timeouts() {
         let cfg = json!({
             "apiBaseUrl": "http://x",
