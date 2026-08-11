@@ -17,6 +17,8 @@
 
 pub mod catalog_provenance;
 pub mod export_readme;
+pub mod fidelity_collector;
+pub mod github_fetch;
 pub mod portable_path;
 pub use portable_path::*;
 

@@ -21,6 +21,8 @@ thiserror = { workspace = true }
 tracing = "0.1"
 uuid = { workspace = true }
 sqlx = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+url = "2"
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }

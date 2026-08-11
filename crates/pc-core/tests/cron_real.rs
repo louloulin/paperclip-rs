@@ -1,7 +1,7 @@
 //! M15 真实验证：pc-cron 解析 + 下次触发时间。
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
-use pc_cron::{next_tick_from_expression, parse_cron, validate_cron};
+use pc_core::cron::{next_tick_from_expression, parse_cron, validate_cron};
 
 #[test]
 fn parse_valid_expressions() {
@@ -70,7 +70,7 @@ fn next_tick_at_specific_minute() {
 fn next_tick_returns_none_for_unreachable() {
     let parsed = parse_cron("0 0 31 2 *").unwrap();
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    let n = pc_cron::next_tick(&parsed, now);
+    let n = pc_core::cron::next_tick(&parsed, now);
     if let Some(t) = n {
         let days = (t - now).num_days();
         assert!(days >= 365 || days <= 365);
@@ -82,7 +82,7 @@ fn parsed_cron_serializes() {
     let p = parse_cron("*/5 * * * *").unwrap();
     let j = serde_json::to_string(&p).unwrap();
     assert!(j.contains("[0,5,10,15,20,25,30,35,40,45,50,55]") || j.contains("0"));
-    let back: pc_cron::ParsedCron = serde_json::from_str(&j).unwrap();
+    let back: pc_core::cron::ParsedCron = serde_json::from_str(&j).unwrap();
     assert_eq!(
         back.minutes,
         vec![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]

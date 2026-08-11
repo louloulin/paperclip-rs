@@ -1,4 +1,6 @@
-//! `pc-dev-server-status` —— dev-server 持久化状态文件 + 重启请求文件 IO。
+//! `dev_server_status` —— dev-server 持久化状态文件 + 重启请求文件 IO。
+//!
+//! 下沉自 `pc-dev-server-status` crate（原 crate 已删除）。
 //!
 //! 与 Node `server/src/dev-server-status.ts` 1:1 对齐：
 //! - `PAPERCLIP_DEV_SERVER_STATUS_FILE` env 指向 status JSON 文件

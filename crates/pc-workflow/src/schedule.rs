@@ -14,6 +14,8 @@ pub enum CronError {
     Field(String, String),
     #[error("cron: range `start-end` must have start <= end (got {0}..{1})")]
     Range(u32, u32),
+    #[error("cron: invalid timezone `{0}`")]
+    InvalidTimeZone(String),
 }
 
 /// 调度方式。
@@ -227,6 +229,56 @@ impl ScheduleSpec {
     }
 }
 
+/// 计算 cron 表达式在指定时区内的下一次触发时间（返回 UTC）。
+///
+/// 与 Node `nextCronTickInTimeZone(expression, timeZone, after)` 1:1 对齐：
+/// - 校验时区合法（`chrono-tz` 解析）
+/// - 解析 cron 表达式为 `ParsedCron`
+/// - 从 `after + 1 minute` 起逐步扫描（最多 ~5 年）
+/// - 在目标时区下逐字段匹配；首个匹配时间返回 UTC
+///
+/// 高内聚：纯函数；无 IO、无外部状态。
+/// 低耦合：仅依赖 `chrono` / `chrono-tz` / 现有 `ParsedCron`。
+///
+/// # Errors
+/// - `CronError::InvalidTimeZone`：时区字符串不被 `chrono-tz` 识别
+/// - `CronError::Empty` / `FieldCount` / `Field` / `Range`：cron 解析失败
+pub fn next_cron_tick_in_timezone(
+    expression: &str,
+    time_zone: &str,
+    after: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, CronError> {
+    let trimmed = expression.trim();
+    if trimmed.is_empty() {
+        return Err(CronError::Empty);
+    }
+    let tz: chrono_tz::Tz = time_zone
+        .parse()
+        .map_err(|_| CronError::InvalidTimeZone(time_zone.to_string()))?;
+    let cron = ParsedCron::parse(trimmed)?;
+    // 与 Node 一致：从 `after` 的下一整分钟开始搜索
+    let mut cursor = after
+        .with_second(0)
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(after)
+        + Duration::minutes(1);
+    let end = after + Duration::days(366 * 5);
+    while cursor < end {
+        let parts = cursor.with_timezone(&tz);
+        let weekday_from_sunday = parts.weekday().num_days_from_sunday();
+        let matches = cron.minute.matches(parts.minute())
+            && cron.hour.matches(parts.hour())
+            && cron.dom.matches(parts.day())
+            && cron.month.matches(parts.month())
+            && cron.dow.matches(weekday_from_sunday);
+        if matches {
+            return Ok(Some(cursor));
+        }
+        cursor += Duration::minutes(1);
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +349,106 @@ mod tests {
         let next = s.next_after(now).unwrap();
         let diff = (next - now).num_seconds();
         assert_eq!(diff, 45);
+    }
+
+    // ============ next_cron_tick_in_timezone 测试 ============
+
+    #[test]
+    fn next_cron_tick_in_timezone_utc_basic() {
+        // 每天 UTC 09:00；after = 2026-01-01T08:30:00Z → 应返回 09:00
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 8, 30, 0).unwrap();
+        let next = next_cron_tick_in_timezone("0 9 * * *", "UTC", after).unwrap();
+        let next = next.expect("should find a match");
+        assert_eq!(next.hour(), 9);
+        assert_eq!(next.minute(), 0);
+        assert_eq!(next.day(), 1);
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_shanghai() {
+        // 上海 +08:00；UTC 01:00 = 上海 09:00
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 30, 0).unwrap();
+        let next = next_cron_tick_in_timezone("0 9 * * *", "Asia/Shanghai", after)
+            .unwrap()
+            .expect("should find a match");
+        // 上海 09:00 = UTC 01:00
+        assert_eq!(next.hour(), 1);
+        assert_eq!(next.minute(), 0);
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_new_york_dst() {
+        // 美东 -05:00 (EST) / -04:00 (EDT)；cron "0 9 * * *" 09:00 local
+        use chrono::TimeZone;
+        // 2026-03-10（EDT 阶段，DST 于 2026-03-08 生效）
+        let after = Utc.with_ymd_and_hms(2026, 3, 10, 12, 0, 0).unwrap();
+        let next = next_cron_tick_in_timezone("0 9 * * *", "America/New_York", after)
+            .unwrap()
+            .expect("should find a match");
+        // 09:00 EDT = 13:00 UTC（after = 12:00，next 应是同日 13:00）
+        assert_eq!(next.hour(), 13);
+        assert_eq!(next.minute(), 0);
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_new_york_est() {
+        // 美东 EST 阶段（1 月，无 DST）；09:00 EST = 14:00 UTC
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 15, 13, 0, 0).unwrap();
+        let next = next_cron_tick_in_timezone("0 9 * * *", "America/New_York", after)
+            .unwrap()
+            .expect("should find a match");
+        // 09:00 EST = 14:00 UTC
+        assert_eq!(next.hour(), 14);
+        assert_eq!(next.minute(), 0);
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_weekday_match() {
+        // 周一至周五 09:00 (Asia/Shanghai)
+        use chrono::TimeZone;
+        // 2026-01-03 是周六；after 周六 22:00 UTC = 周日 06:00 SH，下个匹配应是周一
+        let after = Utc.with_ymd_and_hms(2026, 1, 3, 22, 0, 0).unwrap();
+        let next = next_cron_tick_in_timezone("0 9 * * 1-5", "Asia/Shanghai", after)
+            .unwrap()
+            .expect("should find a match");
+        // 应到 2026-01-05 周一 09:00 SH = 2026-01-05 01:00 UTC
+        assert_eq!(next.day(), 5);
+        assert_eq!(next.hour(), 1);
+        assert_eq!(next.minute(), 0);
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_invalid_timezone() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let err = next_cron_tick_in_timezone("0 9 * * *", "Mars/Olympus", after).unwrap_err();
+        assert!(matches!(err, CronError::InvalidTimeZone(_)));
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_invalid_cron() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let err = next_cron_tick_in_timezone("not a cron", "UTC", after).unwrap_err();
+        assert!(matches!(
+            err,
+            CronError::FieldCount(_) | CronError::Field(_, _)
+        ));
+    }
+
+    #[test]
+    fn next_cron_tick_in_timezone_skips_current_minute() {
+        // cron 每分钟；after = 12:00:30；next 必须是 12:01:00（跳过 after 本身所在的分钟）
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 30).unwrap();
+        let next = next_cron_tick_in_timezone("* * * * *", "UTC", after)
+            .unwrap()
+            .expect("should find a match");
+        assert_eq!(next.hour(), 12);
+        assert_eq!(next.minute(), 1);
+        assert_eq!(next.second(), 0);
     }
 }

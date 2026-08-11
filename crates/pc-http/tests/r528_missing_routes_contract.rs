@@ -6,7 +6,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use pc_dev_server_status::{
+use pc_core::dev_server_status::{
     read_persisted_status, restart_required as dev_restart_required, write_restart_request,
     DevServerRestartRequest,
 };
@@ -151,14 +151,14 @@ fn r528_dev_server_restart_returns_false_when_env_unset() {
 
 #[test]
 fn r528_dev_server_restart_required_logic() {
-    let s1 = pc_dev_server_status::PersistedDevServerStatus {
+    let s1 = pc_core::dev_server_status::PersistedDevServerStatus {
         dirty: false,
         changed_path_count: 0,
         pending_migrations: vec![],
         ..Default::default()
     };
     assert!(!dev_restart_required(&s1));
-    let s2 = pc_dev_server_status::PersistedDevServerStatus {
+    let s2 = pc_core::dev_server_status::PersistedDevServerStatus {
         dirty: true,
         ..Default::default()
     };

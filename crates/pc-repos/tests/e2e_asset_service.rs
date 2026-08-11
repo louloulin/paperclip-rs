@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use pc_assets::{AssetHookEvent, AssetService, CreateAssetRecord, RecordingAssetHook};
+use pc_repos::asset_service::{AssetHookEvent, AssetService, CreateAssetRecord, RecordingAssetHook};
 use pc_repos::Db;
 use sqlx::PgPool;
 use uuid::Uuid;

@@ -424,3 +424,26 @@ mod tests {
         assert_eq!(parsed, counts);
     }
 }
+
+/// 组装最终 `ExportFidelityReport`：合并 counts + warnings + 时间戳。
+///
+/// 与 Node `buildExportFidelityReport(companyId, counts)` 1:1 对齐（保留
+/// 3-arg 重载 `audit_meta` 形参供调用方传入可选审计上下文，当前实现忽略）。
+#[must_use]
+pub fn build_export_fidelity_report(
+    company_id: &str,
+    counts: ExportFidelityCounts,
+    audit_meta: Option<&str>,
+) -> ExportFidelityReport {
+    // 当前 audit_meta 仅作为扩展点保留，UI / DB 暂未消费。
+    let _ = audit_meta;
+    let warnings = build_export_fidelity_warnings(&counts);
+    ExportFidelityReport {
+        schema: EXPORT_FIDELITY_REPORT_SCHEMA.to_string(),
+        company_id: company_id.to_string(),
+        counts,
+        warnings,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+

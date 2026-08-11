@@ -1,6 +1,6 @@
 //! R736: e2e for `pc-work-products` against real Postgres.
 
-use pc_import_write_types::ImportIssueWorkProductRow;
+use pc_work_products::import_write_types::ImportIssueWorkProductRow;
 use pc_repos::Db;
 use pc_work_products::{
     import_row_to_create_input, CreateWorkProductInput, UpdateWorkProductPatch, WorkProductService,

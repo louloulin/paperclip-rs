@@ -1,15 +1,16 @@
-#![forbid(unsafe_code)]
 //! `pc-github-fetch` —— GitHub URL helpers + fetch wrapper。
 //!
-//! 对应 Node `server/src/services/github-fetch.ts`（25 行）。
+//! 1:1 port of Node `server/src/services/github-fetch.ts`（25 行）。
+//! 下沉自 `pc-github-fetch` crate（原 crate 已删除）。
+//!
 //!
 //! 设计目标：1:1 复刻 GitHub.com vs GitHub Enterprise 的 base URL 选择，
 //! 并把 `fetch` 失败包装成本地错误（"无法连接到 hostname"）。
 //!
-//! 公共 API：
+//! ## 公共 API
 //!
-//! - [`is_github_dot_com`] / [`git_hub_api_base`] / [`resolve_raw_github_url`]
-//! - [`GhFetchError`] / [`GhFetcher`] / [`gh_fetch`] —— fetch 包装（注入式）
+//! - [`is_github_dot_com`] / [`git_hub_api_base`] / [`resolve_raw_github_url`] — URL helpers
+//! - [`GhFetchError`] / [`GhFetcher`] / [`gh_fetch`] — fetch 包装（注入式）
 
 /// GitHub.com 域名集合（含 www）。
 const GITHUB_DOT_COM_HOSTS: &[&str] = &["github.com", "www.github.com"];

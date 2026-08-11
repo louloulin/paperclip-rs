@@ -6,7 +6,7 @@
 //! - `restart_required=false` → 409 `restart_not_required`
 //! - 成功 → 202 `{ "status": "restart_requested" }` + 写 restart request JSON 文件
 //!
-//! 由 `pc-dev-server-status` 提供纯 IO 工具，本文件只做 HTTP 适配。
+//! 由 `pc_core::dev_server_status` 提供纯 IO 工具，本文件只做 HTTP 适配。
 
 use crate::AppState;
 use axum::{
@@ -16,7 +16,7 @@ use axum::{
     routing::post,
     Router,
 };
-use pc_dev_server_status::{
+use pc_core::dev_server_status::{
     read_persisted_status, restart_required as dev_restart_required, write_restart_request,
     DevServerRestartRequest,
 };

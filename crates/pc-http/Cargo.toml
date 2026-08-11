@@ -36,7 +36,6 @@ pc-plugin-host = { path = "../pc-plugin-host" }
 pc-plugin-protocol = { path = "../pc-plugin-protocol" }
 pc-workflow = { path = "../pc-workflow" }
 pc-storage = { path = "../pc-storage" }
-pc-dev-server-status = { path = "../pc-dev-server-status" }
 pc-plugin-ui-static = { path = "../pc-plugin-ui-static" }
 dirs = "5"
 pc-activity = { path = "../pc-activity" }

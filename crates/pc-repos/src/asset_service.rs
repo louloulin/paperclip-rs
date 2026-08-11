@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 //! Asset domain service layer.
 //!
 //! See `lib.rs` for module-level docs.
@@ -9,9 +8,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use pc_repos::asset::{AssetRow, CreateAssetRecord};
-use pc_repos::asset::AssetRepo;
-use pc_repos::Db;
+pub use crate::asset::{AssetRow, CreateAssetRecord};
+use crate::asset::AssetRepo;
+use crate::Db;
 
 use pc_errors::{internal, validation, Error as PcError, Result};
 
@@ -98,8 +97,8 @@ pub enum AssetError {
     Pc(#[from] PcError),
 }
 
-impl From<pc_repos::RepoError> for AssetError {
-    fn from(e: pc_repos::RepoError) -> Self {
+impl From<crate::RepoError> for AssetError {
+    fn from(e: crate::RepoError) -> Self {
         Self::Pc(internal(e.to_string()))
     }
 }

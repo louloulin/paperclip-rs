@@ -20,6 +20,7 @@ pub mod agent_secret_bindings;
 pub mod agent_start_lock;
 pub mod approval;
 pub mod asset;
+pub mod asset_service;
 pub mod auth;
 pub mod batch_insert;
 pub mod board_chat;

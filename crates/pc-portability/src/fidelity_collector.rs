@@ -1,15 +1,13 @@
-//! Collector —— Export fidelity counts 聚合查询。
+//! Collector — Export fidelity counts DB 聚合查询。
 //!
 //! 与 Node `collectExportFidelityCounts(db, companyId)` 1:1 对齐。
+//! 复用 [`pc_core::portability_fidelity`] 的 typed [`ExportFidelityCounts`]
+//! 与警告构造函数；DB IO 仅在本文件内。
 
-use std::collections::BTreeMap;
-
+use pc_core::portability_fidelity::ExportFidelityCounts;
+use pc_repos::Db;
 use sqlx::Row;
 use uuid::Uuid;
-
-use pc_repos::Db;
-
-use crate::types::{ExportFidelityCounts, EXPORT_FIDELITY_COUNT_KEYS};
 
 /// 收集 company 维度的各表行数。
 ///
@@ -23,62 +21,60 @@ pub async fn collect_export_fidelity_counts(
 ) -> sqlx::Result<ExportFidelityCounts> {
     let pool = db.pool();
 
-    // 简单 sub-helper
     async fn count(pool: &sqlx::PgPool, sql: &str, cid: Uuid) -> sqlx::Result<i64> {
         let row = sqlx::query(sql).bind(cid).fetch_one(pool).await?;
         row.try_get::<i64, _>("c")
     }
 
     // 并发执行 10 个 COUNT
-    let f1 = count(
+    let label_definitions = count(
         pool,
         "SELECT COUNT(*) AS c FROM labels WHERE company_id = $1",
         company_id,
     );
-    let f2 = count(
+    let issue_label_references = count(
         pool,
         "SELECT COUNT(*) AS c FROM issue_labels WHERE company_id = $1",
         company_id,
     );
-    let f3 = count(
+    let issue_blocker_relations = count(
         pool,
         "SELECT COUNT(*) AS c FROM issue_relations WHERE company_id = $1 AND type = 'blocks'",
         company_id,
     );
-    let f4 = count(
+    let issue_documents = count(
         pool,
         "SELECT COUNT(*) AS c FROM issue_documents WHERE company_id = $1",
         company_id,
     );
-    let f5 = count(
+    let issue_work_products = count(
         pool,
         "SELECT COUNT(*) AS c FROM issue_work_products WHERE company_id = $1",
         company_id,
     );
-    let f6 = count(
+    let issue_attachments = count(
         pool,
         "SELECT COUNT(*) AS c FROM issue_attachments WHERE company_id = $1",
         company_id,
     );
-    let f7 = count(
+    let approvals = count(
         pool,
         "SELECT COUNT(*) AS c FROM approvals WHERE company_id = $1",
         company_id,
     );
-    let f8 = count(
+    let cost_events = count(
         pool,
         "SELECT COUNT(*) AS c FROM cost_events WHERE company_id = $1",
         company_id,
     );
-    let f9 = count(
+    let activity_log_entries = count(
         pool,
         "SELECT COUNT(*) AS c FROM activity_log WHERE company_id = $1",
         company_id,
     );
-    let f10 = count(
+    let issue_monitors = count(
         pool,
-        "SELECT COUNT(*) AS c FROM issues WHERE company_id = $1 \
-         AND (monitor_next_check_at IS NOT NULL OR monitor_scheduled_by IS NOT NULL)",
+        "SELECT COUNT(*) AS c FROM issues WHERE company_id = $1          AND (monitor_next_check_at IS NOT NULL OR monitor_scheduled_by IS NOT NULL)",
         company_id,
     );
 
@@ -93,23 +89,29 @@ pub async fn collect_export_fidelity_counts(
         cost_events,
         activity_log_entries,
         issue_monitors,
-    ) = tokio::try_join!(f1, f2, f3, f4, f5, f6, f7, f8, f9, f10)?;
+    ) = tokio::try_join!(
+        label_definitions,
+        issue_label_references,
+        issue_blocker_relations,
+        issue_documents,
+        issue_work_products,
+        issue_attachments,
+        approvals,
+        cost_events,
+        activity_log_entries,
+        issue_monitors,
+    )?;
 
-    let mut counts: ExportFidelityCounts = BTreeMap::new();
-    let values: [(&str, i64); 10] = [
-        (EXPORT_FIDELITY_COUNT_KEYS[0], label_definitions),
-        (EXPORT_FIDELITY_COUNT_KEYS[1], issue_label_references),
-        (EXPORT_FIDELITY_COUNT_KEYS[2], issue_blocker_relations),
-        (EXPORT_FIDELITY_COUNT_KEYS[3], issue_documents),
-        (EXPORT_FIDELITY_COUNT_KEYS[4], issue_work_products),
-        (EXPORT_FIDELITY_COUNT_KEYS[5], issue_attachments),
-        (EXPORT_FIDELITY_COUNT_KEYS[6], approvals),
-        (EXPORT_FIDELITY_COUNT_KEYS[7], cost_events),
-        (EXPORT_FIDELITY_COUNT_KEYS[8], activity_log_entries),
-        (EXPORT_FIDELITY_COUNT_KEYS[9], issue_monitors),
-    ];
-    for (k, v) in values {
-        counts.insert(k.to_string(), v);
-    }
-    Ok(counts)
+    Ok(ExportFidelityCounts {
+        label_definitions,
+        issue_label_references,
+        issue_blocker_relations,
+        issue_documents,
+        issue_work_products,
+        issue_attachments,
+        approvals,
+        cost_events,
+        activity_log_entries,
+        issue_monitors,
+    })
 }
