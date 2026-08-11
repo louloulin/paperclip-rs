@@ -24,7 +24,7 @@
 #![forbid(unsafe_code)]
 
 use async_trait::async_trait;
-use pc_company_member::roles::{
+use super::roles::{
     grants_for_human_role, normalize_human_role, Grant, HumanCompanyMembershipRole,
 };
 use serde::{Deserialize, Serialize};

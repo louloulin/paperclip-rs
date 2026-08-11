@@ -1,17 +1,7 @@
-#![forbid(unsafe_code)]
-//! `pc-task-watchdog-scope` —— task watchdog 变更作用域解析。
+//! Task watchdog 变更作用域解析（原 `pc-task-watchdog-scope` 已下沉到 `pc-heartbeat`）
 //!
-//! 对应 Node `server/src/services/task-watchdog-scope.ts`（174 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - [`TaskWatchdogMutationScope`] —— 3 种 kind：none / invalid / watchdog
-//! - [`resolve_task_watchdog_mutation_scope`] —— 解析 actor run 的 watchdog 上下文
-//! - [`issue_is_in_task_watchdog_subtree`] —— 检查 issue 是否在 watched issue 的子树内
-//! - [`task_watchdog_scope_allows_issue_mutation`] —— 检查 issue mutation 是否被允许
-//! - [`read_task_watchdog_context`] —— 从 run.contextSnapshot 解析 taskWatchdog 子对象
-//!
-//! 与 Node 的差异：
-//! - DB 通过 [`TaskWatchdogDataSource`] trait 注入（测试用 fake）
+//! 对应 Node `server/src/services/task-watchdog-scope.ts`。
+
 
 use std::collections::HashSet;
 

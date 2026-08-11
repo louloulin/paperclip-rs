@@ -1,19 +1,7 @@
-#![forbid(unsafe_code)]
-//! `pc-issue-change-receipt` —— 从 issue 的 before/after 构造 `IssueChanges` receipt。
+//! Issue 业务子模块（原 `pc-issue-change-receipt` 已下沉到 `pc-issues::change_receipt`）。
 //!
-//! 对应 Node `server/src/services/issue-change-receipt.ts`（50 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - `truncateIssueChangeText(value)` —— 长字符串截断到 200 字符（按 codepoint，
-//!   不是按字节，与 JS `Array.from(str)` 一致）
-//! - `canonicalIdArray(value)` —— 全为 string 的数组去重 + 排序
-//! - `buildIssueChanges(existing, updated, relationChanges)` —— diff 两个对象
-//!   - 跳过 `updatedAt` 字段
-//!   - 跳过值相等的字段（深比较）
-//!   - 长文本（`description` / `title`，任一边长度 > 200）标 `updated: true`
-//!   - 其余字段直接 `{from, to}`
-//!   - 关系变更（`blockedByIssueIds` / `labelIds`）单独 diff，并规范化为
-//!     `canonicalIdArray`
+//! 对应 Node `server/src/services/issue-change-receipt.ts`。
+
 
 use std::collections::{BTreeMap, BTreeSet};
 

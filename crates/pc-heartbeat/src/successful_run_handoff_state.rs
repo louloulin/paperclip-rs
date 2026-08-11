@@ -1,3 +1,7 @@
+//! Successful run handoff 状态 hydration（原 `pc-successful-run-handoff-state` 已下沉到 `pc-heartbeat`）
+//!
+//! 对应 Node `server/src/services/successful-run-handoff-state.ts`。
+
 #![forbid(unsafe_code)]
 //! `pc-successful-run-handoff-state` —— successful run handoff 状态 hydration。
 //!

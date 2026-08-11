@@ -1,16 +1,8 @@
-#![forbid(unsafe_code)]
-//! `pc-adapter-registry-bootstrap` —— 声明式 adapter registry bootstrap。
+//! 声明式 adapter registry bootstrap。
 //!
-//! 对应 Node `server/src/services/adapter-registry-bootstrap.ts`（97 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - [`AdapterRegistryEntry`] —— 与 zod `adapterRegistryEntrySchema` 1:1 对齐
-//! - [`parse_adapter_registry_env`] —— 从 env 读取 inline JSON / file → 解析 + 校验
-//! - [`reconcile_adapter_availability`] —— 把已知 server adapters 与声明 registry 对齐
-//!
-//! 与 Node 的差异：
-//! - 用 `serde` + 手写 validation 替代 zod（轻量依赖）
-//! - `listServerAdapters` 抽象成 trait `AdapterRegistry` —— 测试可注入
+//! 对应 Node `server/src/services/adapter-registry-bootstrap.ts`（97 行）1:1 复刻。
+//! （原 `pc-adapter-registry-bootstrap` crate 已下沉到 `pc-adapter-api`）。
+
 
 use std::collections::{HashMap, HashSet};
 

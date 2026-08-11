@@ -1,3 +1,7 @@
+//! Recovery observability report service（原 `pc-recovery-observability` 已下沉到 `pc-heartbeat`）
+//!
+//! 对应 Node `server/src/services/recovery-observability.ts`。
+
 #![forbid(unsafe_code)]
 //! `pc-recovery-observability` —— recovery observability report service。
 //!

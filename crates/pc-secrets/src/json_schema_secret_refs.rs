@@ -1,15 +1,10 @@
-#![forbid(unsafe_code)]
-//! `pc-json-schema-secret-refs` —— JSON schema secret-ref 提取 + dot-path 读写。
+//! JSON schema secret-ref 提取 + dot-path 读写。
 //!
-//! 对应 Node `server/src/services/json-schema-secret-refs.ts`（104 行）。
+//! 对应 Node `server/src/services/json-schema-secret-refs.ts`（104 行）1:1 复刻。
+//! （原 `pc-json-schema-secret-refs` crate 已下沉到 `pc-secrets`）。
 //!
-//! 设计目标：1:1 复刻
-//! - [`is_uuid_secret_ref`] —— 校验 UUID 格式
-//! - [`parse_secret_ref_binding_object`] —— 解析 `{ type: "secret_ref", secretId, version }` binding
-//! - [`collect_secret_ref_paths`] —— 递归遍历 JSON schema，收集所有 `format: "secret-ref"` 字段的 dot-path
-//! - [`read_config_value_at_path`] / [`write_config_value_at_path`] —— dot-path 读写
-//!
-//! Pure logic，无 IO 依赖；可被 `pc-secrets` / `pc-tool-profile-binding-precedence` / `pc-plugin-manifest-validator` 等复用。
+//! Pure logic，无 IO 依赖。
+
 
 use std::collections::HashSet;
 

@@ -21,5 +21,5 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-pc-decision-bundle = { path = "../pc-decision-bundle" }
+pc-decisions = { path = "../pc-decisions" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

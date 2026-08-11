@@ -1,13 +1,8 @@
-#![forbid(unsafe_code)]
-//! `pc-tool-runtime-metrics` —— tool runtime metric 计数器 + hook bus。
+//! Tool runtime metric 计数器 + hook bus。
 //!
-//! 对应 Node `server/src/services/tool-runtime-metrics.ts`（57 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - `AUDIT_WRITE_FAILURE_METRIC = "audit_write_failed"` 常量
-//! - `minute_bucket(at)` —— 把 DateTime 截断到分钟起点
-//! - `increment()` / `record_audit_write_failure()` —— DB 操作委托 pc-repos
-//! - `MetricHook` trait + 默认实现 + 录制实现 —— 事件总线模式（Rust 版 fan-out）
+//! 对应 Node `server/src/services/tool-runtime-metrics.ts`（57 行）1:1 复刻。
+//! （原 `pc-tool-runtime-metrics` crate 已下沉到 `pc-tool`）。
+
 
 use std::sync::Arc;
 

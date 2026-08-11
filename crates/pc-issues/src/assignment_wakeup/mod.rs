@@ -1,14 +1,7 @@
-#![forbid(unsafe_code)]
-//! `pc-issue-assignment-wakeup` —— 当 issue 被分配时给 assignee 发 wakeup。
+//! Issue 业务子模块（原 `pc-issue-assignment-wakeup` 已下沉到 `pc-issues::assignment_wakeup`）。
 //!
-//! 对应 Node `server/src/services/issue-assignment-wakeup.ts`（57 行）。
-//!
-//! 设计目标：1:1 复刻
-//! - `queueIssueAssignmentWakeup` —— 当 issue 有 assignee 且 status != "backlog"
-//!   时调用 `heartbeat.wakeup(assigneeAgentId, ...)`
-//! - 失败时 `logger.warn` + 可选 rethrow
-//! - 把 `taskKey`、`requestedByActorType`、`requestedByActorId` 等拼到 payload /
-//!   contextSnapshot
+//! 对应 Node `server/src/services/issue-assignment-wakeup.ts`。
+
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

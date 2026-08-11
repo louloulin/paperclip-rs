@@ -12,7 +12,17 @@
 //! - 低耦合：通过 service 抽象，调用方无需直接操作 repo + signing
 //! - 可测：service 单元测试不依赖 HTTP 层
 
+pub mod bundle_service;
 pub mod wakeup;
+
+pub use bundle_service::{
+    DecisionBundleError, DecisionBundleHook, DecisionBundleHookEvent, DecisionBundleService,
+    DecisionBundleResult, NoopDecisionBundleHook, RecordingDecisionBundleHook,
+};
+pub use pc_repos::decision_bundle::{
+    DecisionBundleDetail, DecisionBundleFilter, DecisionBundleRow, DecisionSummaryRow,
+    NewDecisionBundle,
+};
 pub use wakeup::*;
 
 use async_trait::async_trait;

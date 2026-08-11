@@ -37,6 +37,14 @@ pub use decision_signing::{
     DecisionSigningError, DecisionSigningKeyStore, DecisionSigningService,
     DECISION_SIGNING_VERSION, MIN_DECISION_SIGNING_SECRET_LENGTH,
 };
+pub mod json_schema_secret_refs;
+
+pub use json_schema_secret_refs::{
+    collect_secret_ref_paths, is_uuid_secret_ref, parse_secret_ref_binding_object,
+    read_config_value_at_path, write_config_value_at_path, SecretRefBindingObject,
+    SecretRefVersion
+};
+
 pub use gcp::GcpSecretManagerProvider;
 pub use local_encrypted::LocalEncryptedProvider;
 pub use provider::SecretProvider;

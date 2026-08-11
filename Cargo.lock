@@ -2495,23 +2495,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-decision-bundle"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-core",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-decisions"
 version = "0.1.0"
 dependencies = [
@@ -2519,6 +2502,7 @@ dependencies = [
  "chrono",
  "futures",
  "pc-core",
+ "pc-errors",
  "pc-repos",
  "pc-secrets",
  "serde",
@@ -2740,6 +2724,7 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2846,6 +2831,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "pc-company-member",
  "pc-core",
  "pc-errors",
  "pc-repos",
@@ -2859,30 +2845,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-issue-assignment-wakeup"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "pc-issue-change-receipt"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "pc-issue-continuation-summary"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-documents",
  "pc-errors",
  "pc-repos",
@@ -2903,7 +2872,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-errors",
  "pc-repos",
  "serde",
@@ -2922,7 +2891,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-errors",
  "pc-repos",
  "serde",
@@ -2939,28 +2908,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-errors",
  "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-issue-references"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-core",
- "pc-errors",
- "pc-repos",
- "regex",
  "serde",
  "serde_json",
  "sqlx",
@@ -2977,7 +2927,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-errors",
  "pc-repos",
  "serde",
@@ -2996,7 +2946,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-errors",
  "pc-repos",
  "serde",
@@ -3021,22 +2971,13 @@ dependencies = [
  "pc-core",
  "pc-errors",
  "pc-repos",
+ "regex",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-json-schema-secret-refs"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
  "uuid",
 ]
 
@@ -3243,19 +3184,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-recovery-observability"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "pc-remote-http-endpoint-guard"
 version = "0.1.0"
 dependencies = [
@@ -3337,7 +3265,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-decision-bundle",
+ "pc-decisions",
  "pc-errors",
  "regex",
  "serde",
@@ -3478,33 +3406,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-successful-run-handoff-state"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-task-watchdog-scope"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "pc-telemetry"
 version = "0.1.0"
 dependencies = [
@@ -3538,22 +3439,6 @@ dependencies = [
  "chrono",
  "pc-core",
  "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-tool-runtime-metrics"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
  "pc-repos",
  "serde",
  "serde_json",

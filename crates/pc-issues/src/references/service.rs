@@ -12,8 +12,8 @@ use pc_repos::{
     Db,
 };
 
-use crate::extractor::extract_identifiers;
-use crate::types::{
+use super::extractor::extract_identifiers;
+use super::types::{
     IssueReferenceMentionView, IssueReferenceSource, ReferenceRelatedIssueSummary,
     RelatedWorkItem,
 };

@@ -2,6 +2,7 @@
 
 pub mod models_env;
 pub mod plugin_store;
+pub mod registry_bootstrap;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;

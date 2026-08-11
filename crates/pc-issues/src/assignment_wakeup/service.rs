@@ -14,7 +14,7 @@ use pc_repos::issue_assignment_wakeup::{
     WakeupRequestedByActorType,
 };
 
-use crate::hook::{IssueAssignmentWakeupHook, NoopIssueAssignmentWakeupHook};
+use super::hook::{IssueAssignmentWakeupHook, NoopIssueAssignmentWakeupHook};
 
 /// 业务层的 queue request（独立于 pc-repos 的 input）。
 ///

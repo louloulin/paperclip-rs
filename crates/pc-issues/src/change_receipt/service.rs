@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use pc_repos::issue::IssueRow;
 
-use crate::hook::{IssueChangeReceiptHook, NoopIssueChangeReceiptHook};
+use super::hook::{IssueChangeReceiptHook, NoopIssueChangeReceiptHook};
 use crate::{build_issue_changes, IssueChanges, RelationChangeInput};
 
 /// Issue change receipt service 错误。

@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1"
 uuid = { workspace = true }
+regex = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]
