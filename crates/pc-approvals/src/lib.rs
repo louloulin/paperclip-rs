@@ -13,6 +13,7 @@
 //! - 可测：trait-based hook 便于测试时替换
 
 pub mod db_ops;
+pub mod hire_approved;
 pub mod hire_hook;
 pub mod issue_links;
 pub mod service;

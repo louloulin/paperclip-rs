@@ -24,7 +24,11 @@
 //! - children（sub-issue）服务
 //! - 路由层从 `IssueRepo::new(&state.db)` 迁移到 `IssueService`
 
+pub mod dependency_wakeups;
+pub mod goal_fallback;
 pub mod label;
+pub mod rewake_throttle;
+pub mod routable_blocked;
 
 use async_trait::async_trait;
 use pc_repos::issue::{

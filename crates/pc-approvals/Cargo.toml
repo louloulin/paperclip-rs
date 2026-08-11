@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+pc-adapter-api = { path = "../pc-adapter-api" }
 chrono = { workspace = true }
 pc-core = { path = "../pc-core" }
 pc-errors = { path = "../pc-errors" }
@@ -22,6 +23,7 @@ tracing = "0.1"
 uuid = { workspace = true }
 
 [dev-dependencies]
+futures = { workspace = true }
 futures-executor = "0.3"
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

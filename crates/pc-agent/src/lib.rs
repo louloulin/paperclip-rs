@@ -4,6 +4,9 @@
 
 pub mod action_audit;
 mod actor;
+pub mod invokability;
+pub mod secret_bindings;
+pub mod start_lock;
 mod agent_assignability;
 mod built_in_agent_metadata;
 mod default_agent_instructions;

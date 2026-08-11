@@ -14,6 +14,9 @@
 //!
 //! Round R590：迁移 `crates/pc-http/src/routes/companies.rs` 中的 list/get/create/update/archive/remove 端点到 service 层。
 
+pub mod search_rate_limit;
+pub use search_rate_limit::*;
+
 use async_trait::async_trait;
 use pc_core::Timestamp;
 use pc_repos::company::{CompanyListRow, CompanyRepo, CompanyRow};

@@ -21,6 +21,7 @@ pub mod agent_start_lock;
 pub mod approval;
 pub mod asset;
 pub mod auth;
+pub mod batch_insert;
 pub mod board_chat;
 pub mod board_key;
 pub mod budget;

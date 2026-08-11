@@ -14,6 +14,7 @@
 //! Routines are reusable "playbooks" the agent runtime can fire manually,
 //! on a cron schedule, or via a public webhook.
 
+pub mod attention;
 pub mod session_cwd;
 mod service;
 

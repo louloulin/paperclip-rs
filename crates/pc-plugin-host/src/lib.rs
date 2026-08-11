@@ -10,6 +10,8 @@
 
 pub mod capability_validator;
 pub mod bundled_plugins;
+pub mod log_retention;
+pub mod service_cleanup;
 pub mod handle;
 pub mod jsonrpc;
 pub mod notifications;

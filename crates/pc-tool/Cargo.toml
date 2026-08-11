@@ -8,6 +8,7 @@ description = "Tool application business service"
 workspace = true
 [dependencies]
 async-trait = { workspace = true }
+chrono = { workspace = true }
 pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
 serde = { workspace = true }

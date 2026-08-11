@@ -17,6 +17,7 @@
 //! per company. Two [`pc_repos::folder::FolderKind`]s are supported
 //! (`Routine`, `Skill`) and the deepest allowed nesting is 4 levels.
 
+pub mod operation_log_store;
 mod service;
 
 pub use service::{

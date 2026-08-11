@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod error;
 pub mod hooks;
+pub mod mcp;
 pub mod middleware;
 pub mod routes;
 pub mod state;

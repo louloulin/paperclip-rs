@@ -15,6 +15,8 @@
 //! and a `company`, carrying `membership_role` (e.g. owner/admin/member/
 //! guest) and `status` (active/archived).
 
+pub mod backfill;
+pub mod skill;
 mod service;
 
 pub use service::{

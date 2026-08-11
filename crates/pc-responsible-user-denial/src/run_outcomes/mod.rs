@@ -3,7 +3,7 @@
 //! 与原 `crates/pc-responsible-user-denial-run-outcomes/src/lib.rs` 等价。
 
 use chrono::{DateTime, Utc};
-use pc_live_events::{publish_live_event, LiveEventPayload, LiveEventType};
+use pc_realtime::hub::{publish_live_event, LiveEventPayload, LiveEventType};
 use pc_repos::Db;
 use serde::Serialize;
 use serde_json::Value;

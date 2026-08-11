@@ -17,7 +17,7 @@ use pc_repos::agent_action_audit::{
     AgentActionAuditFilters, AgentActionAuditPage, AgentActionAuditRepo,
 };
 
-use super::hook::{AgentActionAuditHook, NoopAgentActionAuditHook};
+use super::hook::{AgentActionAuditHook, NoopAgentActionAuditHook, RecordingAgentActionAuditHook};
 
 // ============================================================================
 // Errors
@@ -131,7 +131,7 @@ mod tests {
     fn r684_noop_hook_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<NoopAgentActionAuditHook>();
-        assert_send_sync::<crate::RecordingAgentActionAuditHook>();
+        assert_send_sync::<RecordingAgentActionAuditHook>();
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn r684_recording_hook_starts_empty() {
-        let h = crate::RecordingAgentActionAuditHook::new();
+        let h = RecordingAgentActionAuditHook::new();
         assert!(h.is_empty());
         assert_eq!(h.before_count(), 0);
         assert_eq!(h.after_count(), 0);

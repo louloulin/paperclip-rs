@@ -2167,6 +2167,7 @@ dependencies = [
  "chrono",
  "dirs 6.0.0",
  "kameo",
+ "once_cell",
  "pc-core",
  "pc-errors",
  "pc-repos",
@@ -2182,41 +2183,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-agent-invokability"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pc-agent-secret-bindings"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pc-agent-start-lock"
-version = "0.1.0"
-dependencies = [
- "once_cell",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "pc-approvals"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures",
  "futures-executor",
+ "pc-adapter-api",
  "pc-core",
  "pc-errors",
  "pc-repos",
@@ -2231,24 +2205,6 @@ dependencies = [
 
 [[package]]
 name = "pc-assets"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-core",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-attention"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -2324,18 +2280,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-batch-insert"
-version = "0.1.0"
-dependencies = [
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "pc-board-auth"
 version = "0.1.0"
 dependencies = [
@@ -2373,14 +2317,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-catalog-provenance"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2452,20 +2388,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-company-export-readme"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "pc-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "pc-company-member"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "pc-company-member-roles",
  "pc-core",
  "pc-errors",
  "pc-repos",
@@ -2484,32 +2412,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "pc-company-search-rate-limit"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pc-company-skill"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2790,11 +2692,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "hex",
  "pc-core",
  "pc-errors",
  "pc-repos",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -2849,68 +2753,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-heartbeat-run-runtime-status"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "once_cell",
- "parking_lot",
- "pc-core",
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pc-heartbeat-run-scratch"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-heartbeat-run-summary"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pc-heartbeat-stop-metadata"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pc-hire-hook"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "futures",
- "pc-adapter-api",
- "pc-db",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-http"
 version = "0.1.0"
 dependencies = [
@@ -2945,7 +2787,6 @@ dependencies = [
  "pc-feature-flags",
  "pc-heartbeat",
  "pc-issues",
- "pc-label",
  "pc-pipelines",
  "pc-plugin-host",
  "pc-plugin-protocol",
@@ -3066,10 +2907,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-issue-dependency-wakeups"
-version = "0.1.0"
-
-[[package]]
 name = "pc-issue-execution-policy"
 version = "0.1.0"
 dependencies = [
@@ -3087,10 +2924,6 @@ dependencies = [
  "tracing",
  "uuid",
 ]
-
-[[package]]
-name = "pc-issue-goal-fallback"
-version = "0.1.0"
 
 [[package]]
 name = "pc-issue-liveness"
@@ -3141,23 +2974,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-issue-rewake-throttle"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-core",
- "pc-decision-bundle",
- "pc-errors",
- "serde",
- "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -3232,45 +3048,6 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "uuid",
-]
-
-[[package]]
-name = "pc-label"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-live-events"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pc-mcp-http"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]
@@ -3376,30 +3153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-plugin-host-service-cleanup"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pc-plugin-log-retention"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-plugin-protocol"
 version = "0.1.0"
 dependencies = [
@@ -3461,24 +3214,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-principal-access-compatibility"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pc-company-member-roles",
- "pc-core",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-project"
 version = "0.1.0"
 dependencies = [
@@ -3494,14 +3229,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-project-workspace-runtime-config"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3584,7 +3311,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
- "pc-live-events",
+ "pc-realtime",
  "pc-repos",
  "serde",
  "serde_json",
@@ -3593,18 +3320,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-routable-blocked"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3846,6 +3561,7 @@ name = "pc-tool"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "pc-core",
  "pc-errors",
  "pc-repos",
@@ -3856,31 +3572,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-tool-connection"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-tool-profile-binding-precedence"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3918,7 +3609,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
- "pc-batch-insert",
  "pc-core",
  "pc-repos",
  "serde",
@@ -3945,22 +3635,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "pc-workspace-operation-log-store"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "hex",
- "pc-core",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
 ]
 
 [[package]]

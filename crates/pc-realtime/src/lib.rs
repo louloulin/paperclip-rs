@@ -261,6 +261,9 @@ pub use rate_limit::{
 /// R743: WebSocket 桥接层（原 `pc-ws` crate 已下沉）。
 pub mod ws_bridge;
 
+/// R743: Live-events 进程内 pub/sub hub（原 `pc-live-events` 已下沉）。
+pub mod hub;
+
 /// WebSocket state（server 名 + realtime handle）。
 #[derive(Clone)]
 pub struct WsState {

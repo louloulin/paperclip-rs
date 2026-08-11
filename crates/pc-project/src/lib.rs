@@ -16,6 +16,7 @@
 //! zero-or-more workspaces (code repos), goal bindings, and user
 //! memberships.
 
+pub mod workspace_runtime_config;
 mod service;
 
 pub use service::{
