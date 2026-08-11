@@ -8,7 +8,7 @@
 //! - `agentJoinGrantsFromDefaults`：保证 agent grant 包含 `tasks:assign`
 //! - `humanJoinGrantsFromDefaults`：human grant 为空时回退到 `grantsForHumanRole(role)`
 
-use pc_company_member_roles::{
+use pc_company_member::roles::{
     grants_for_human_role, permission_keys, Grant, HumanCompanyMembershipRole,
 };
 

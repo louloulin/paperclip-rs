@@ -16,7 +16,7 @@
 //!    'terminated')`).
 //! 2. Inserts default `principal_permission_grants` rows for every
 //!    active human membership, where the grants are derived from the
-//!    role via `pc_company_member_roles::grants_for_human_role`.
+//!    role via `pc_company_member::roles::grants_for_human_role`.
 //!
 //! Both inserts are idempotent (use the existing unique indexes for
 //! `ON CONFLICT DO NOTHING`), so the backfill can safely be re-run.
@@ -24,7 +24,7 @@
 #![forbid(unsafe_code)]
 
 use async_trait::async_trait;
-use pc_company_member_roles::{
+use pc_company_member::roles::{
     grants_for_human_role, normalize_human_role, Grant, HumanCompanyMembershipRole,
 };
 use serde::{Deserialize, Serialize};

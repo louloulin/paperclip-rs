@@ -16,9 +16,14 @@
 //! guest) and `status` (active/archived).
 
 pub mod backfill;
+pub mod roles;
 pub mod skill;
 mod service;
 
+pub use roles::{
+    grants_for_human_role, normalize_human_role, resolve_human_invite_role, Grant,
+    HumanCompanyMembershipRole, HUMAN_COMPANY_MEMBERSHIP_ROLES,
+};
 pub use service::{
     CompanyMemberHook, CompanyMemberHookEvent, CompanyMemberRow, CompanyMemberService,
     MemberFilter, MemberPatch, MemberStatus, NoopCompanyMemberHook,

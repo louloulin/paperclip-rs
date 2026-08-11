@@ -1,12 +1,11 @@
-#![forbid(unsafe_code)]
-//! `pc-company-member-roles` —— human company membership role 规范化 + 权限映射。
+//! Human company membership role 规范化 + 权限映射。
 //!
-//! 对应 Node `server/src/services/company-member-roles.ts`（65 行）。
+//! 对应 Node `server/src/services/company-member-roles.ts`（65 行）1:1 复刻。
+//! （原 `pc-company-member-roles` crate 已下沉到 `pc-company-member`）。
 //!
-//! 设计目标：1:1 复刻
-//! - `normalizeHumanRole`：把 `"member"` 兼容为 `"operator"`，未知值 fallback
-//! - `grantsForHumanRole`：每个 role 对应的 permission grants
-//! - `resolveHumanInviteRole`：从 invite defaults payload 解析 default role
+//! - `normalize_human_role`：把 `"member"` 兼容为 `"operator"`，未知值 fallback
+//! - `grants_for_human_role`：每个 role 对应的 permission grants
+//! - `resolve_human_invite_role`：从 invite defaults payload 解析 default role
 
 /// Human company membership role 枚举 —— 与 Node `HumanCompanyMembershipRole` 1:1。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
