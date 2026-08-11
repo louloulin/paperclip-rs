@@ -1,5 +1,4 @@
-#![forbid(unsafe_code)]
-//! `pc-quota-windows` —— 跨所有已注册 adapter 拉取 provider quota windows。
+//! 跨所有已注册 adapter 拉取 provider quota windows（原 `pc-quota-windows` 已下沉）。
 //!
 //! 对应 Node `server/src/services/quota-windows.ts`（64 行）。
 //!

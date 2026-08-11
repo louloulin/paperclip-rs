@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 tracing = "0.1"
 uuid = { workspace = true }
 sqlx = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }

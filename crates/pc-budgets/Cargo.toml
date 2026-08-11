@@ -15,6 +15,7 @@ pc-core = { path = "../pc-core" }
 pc-repos = { path = "../pc-repos" }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 serde = { workspace = true }
+tokio = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1"

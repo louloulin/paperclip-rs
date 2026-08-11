@@ -864,6 +864,8 @@ pub struct BoundaryIssue {
 }
 
 #[cfg(test)]
+pub mod runtime_containment;
+
 mod tests {
     use super::*;
     use serde_json::json;

@@ -14,9 +14,13 @@
 //! Routines are reusable "playbooks" the agent runtime can fire manually,
 //! on a cron schedule, or via a public webhook.
 
+pub mod session_cwd;
 mod service;
 
 pub use service::{
     CreateRoutine, CreateRoutineTrigger, NoopRoutineHook, RecordingRoutineHook, RoutineHook,
     RoutineHookEvent, RoutinePatch, RoutineService, UpdateRoutineTrigger,
+};
+pub use session_cwd::{
+    is_unsafe_session_workspace_cwd, normalize_cwd, SESSION_CWD_SYSTEM_ROOTS,
 };

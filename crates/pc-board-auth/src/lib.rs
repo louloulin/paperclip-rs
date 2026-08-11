@@ -20,6 +20,7 @@
 //! - 状态推导 [`challenge_status_for_row`]
 //! - 服务 [`BoardAuthService`] + 工厂 [`board_auth_service`]
 
+pub mod chat;
 pub mod service;
 pub mod types;
 

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! `pc-session-workspace-cwd` —— session workspace CWD 安全检查。
+//! Session workspace CWD 安全检查（原 `pc-session-workspace-cwd` 已下沉）。
 //!
 //! 对应 Node `server/src/services/session-workspace-cwd.ts`（24 行，纯函数）。
 //!

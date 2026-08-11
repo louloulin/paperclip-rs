@@ -11,5 +11,10 @@ serde_json = "1"
 thiserror = "1"
 uuid = { workspace = true }
 
+[dev-dependencies]
+pc-repos = { path = "../pc-repos" }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+
 [lib]
 path = "src/lib.rs"

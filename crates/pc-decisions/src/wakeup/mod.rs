@@ -1,5 +1,4 @@
-#![forbid(unsafe_code)]
-//! `pc-decision-wakeup` —— 把 decision continuations 连接到 heartbeat runtime。
+//! Decision continuations → heartbeat runtime wakeup（原 `pc-decision-wakeup` 已下沉）。
 //!
 //! 对应 Node `server/src/services/decision-wakeup.ts`（32 行）。
 //!

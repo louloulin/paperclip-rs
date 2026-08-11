@@ -13,8 +13,13 @@
 //! - 业务层负责：窗口计算 + 状态推导 + 副作用 hook
 //! - 调用方注入 enforcement hook（cancelWorkForScope / notify / pause agent）
 
+pub mod quota_windows;
 pub mod service;
 
+pub use quota_windows::{
+    fetch_all_quota_windows, provider_slug_for_adapter_type, with_quota_timeout, AdapterRegistry,
+    ProviderQuotaResult, QuotaAdapter, QUOTA_PROVIDER_TIMEOUT_MS,
+};
 pub use service::{
     compute_window, infer_status, normalize_scope_name, BudgetEnforcementHook, BudgetEnforcementScope,
     BudgetError, BudgetPolicyStatus, BudgetService, BudgetThresholdType, BudgetWindow, BudgetWindowKind,

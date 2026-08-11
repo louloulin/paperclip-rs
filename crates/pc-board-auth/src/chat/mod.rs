@@ -1,5 +1,4 @@
-#![forbid(unsafe_code)]
-//! Board chat business service.
+//! Board chat business service（原 `pc-board-chat` 已下沉）。
 mod service;
 pub use pc_repos::board_chat::{
     BoardMessageRow, BoardThreadRow, ChatMessageStatus, ChatRole, NewMessage, NewThread,

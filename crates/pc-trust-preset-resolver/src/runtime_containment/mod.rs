@@ -1,4 +1,5 @@
-//! Low-trust runtime containment：low-trust review preset 启用时的工作区隔离、
+//! Low-trust runtime containment（原 `pc-low-trust-runtime-containment` 已下沉）。
+//! low-trust review preset 启用时的工作区隔离、
 //! runtime service 许可、ancestor 链深度校验。
 //!
 //! 对齐 Node `services/low-trust-runtime-containment.ts`：
@@ -13,7 +14,7 @@
 //! - `issueIdIsDescendantOf`: 沿 parent_id 链向上至多 12 层
 
 use pc_repos::Db;
-use pc_trust_preset_resolver::{
+use crate::{
     is_issue_within_low_trust_boundary, BoundaryIssue, LowTrustBoundaryWithCompany,
     TrustPresetResolution, LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH,
 };

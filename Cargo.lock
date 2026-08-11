@@ -2362,27 +2362,12 @@ dependencies = [
  "futures",
  "pc-core",
  "pc-db",
+ "pc-errors",
  "pc-repos",
  "rand 0.8.7",
  "serde",
  "serde_json",
  "sha2",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pc-board-chat"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-errors",
- "pc-repos",
- "serde",
- "serde_json",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -2652,19 +2637,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-decision-wakeup"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "pc-decisions"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures",
  "pc-core",
  "pc-repos",
  "pc-secrets",
@@ -3315,23 +3293,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-low-trust-runtime-containment"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "pc-core",
- "pc-repos",
- "pc-trust-preset-resolver",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pc-mcp-http"
 version = "0.1.0"
 dependencies = [
@@ -3573,15 +3534,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-quota-windows"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "pc-realtime"
 version = "0.1.0"
 dependencies = [
@@ -3806,10 +3758,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pc-session-workspace-cwd"
-version = "0.1.0"
-
-[[package]]
 name = "pc-sidebar"
 version = "0.1.0"
 dependencies = [
@@ -3984,9 +3932,12 @@ dependencies = [
 name = "pc-trust-preset-resolver"
 version = "0.1.0"
 dependencies = [
+ "pc-repos",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
 ]
 

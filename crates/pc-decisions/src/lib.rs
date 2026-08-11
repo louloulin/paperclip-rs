@@ -12,6 +12,9 @@
 //! - 低耦合：通过 service 抽象，调用方无需直接操作 repo + signing
 //! - 可测：service 单元测试不依赖 HTTP 层
 
+pub mod wakeup;
+pub use wakeup::*;
+
 use async_trait::async_trait;
 use pc_repos::decision::{DecisionRow, DecisionRepo, SignedDecisionRow};
 use pc_secrets::DecisionSigningService;
