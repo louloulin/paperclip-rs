@@ -185,8 +185,10 @@ async fn admin_auth_layer(
 
 fn app_with_state(state: AppState) -> axum::Router {
     use axum::middleware::from_fn_with_state;
+    let layer = from_fn_with_state(state.clone(), admin_auth_layer);
     routes::pipelines::router()
-        .route_layer(from_fn_with_state(state.clone(), admin_auth_layer))
+        .merge(routes::cases::router())
+        .route_layer(layer)
         .with_state(state)
 }
 

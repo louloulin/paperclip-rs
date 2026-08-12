@@ -109,10 +109,6 @@ pub fn router() -> Router<AppState> {
         // ---- Round 36: case sub-resources (children / tree / issue-links / rollup / review) ----
         .route("/api/cases/:case_id/children", get(list_case_children))
         .route(
-            "/api/cases/:case_id/children/tree",
-            get(list_case_children_tree),
-        )
-        .route(
             "/api/cases/:case_id/issue-links",
             get(list_case_issue_links_route),
         )
@@ -120,7 +116,6 @@ pub fn router() -> Router<AppState> {
             "/api/cases/:case_id/issue-links/:link_id",
             delete(delete_case_issue_link),
         )
-        .route("/api/cases/:case_id/rollup", get(get_case_rollup))
         .route("/api/cases/:case_id/review", post(review_case_route))
         // ---- Round 40: case automation lifecycle (breakdown / suggest-transition / resolve-suggestion / acknowledge-drift / blockers / open-conversation / context-pack / outputs) ----
         .route("/api/cases/:case_id/breakdown", post(breakdown_case_route))

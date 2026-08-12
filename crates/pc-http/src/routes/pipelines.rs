@@ -21,6 +21,8 @@ use uuid::Uuid;
 use pc_pipelines::{
     CreateCaseMinimalInput, CreatePipelineInput, CreateStageMinimalInput, CreateTransitionInput,
     PipelineHook, PipelineService, StageKind, UpdatePipelinePatch, UpdateStagePatch,
+    case_events_db::{get_case_children_tree, get_direct_children_summary, list_company_case_events_page},
+    case_events_enrichment::{enrich_cases_with_aggregation, enrich_pipelines_with_aggregation},
 };
 use pc_realtime::LiveEvent;
 use pc_repos::case::CaseRepo;
@@ -147,6 +149,19 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/review-cases/bulk",
             post(bulk_review_cases_route),
         )
+        // ---- R639.2.3: company-wide case events + direct children rollup ----
+        .route(
+            "/api/companies/:company_id/case-events",
+            get(list_company_case_events_route),
+        )
+        .route(
+            "/api/cases/:case_id/rollup",
+            get(case_direct_children_rollup_route),
+        )
+        .route(
+            "/api/cases/:case_id/children/tree",
+            get(case_children_tree_route),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,17 +177,27 @@ async fn list(
 ) -> ApiResult<Json<Value>> {
     // R603 v5: 业务下沉到 PipelineService
     let svc = pipeline_service_with_activity(&state);
-    let rows = match q.company_id {
-        Some(cid) => svc
-            .list_by_company(cid)
-            .await
-            .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?,
-        None => svc
-            .list_all(200)
-            .await
-            .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?,
-    };
-    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+    match q.company_id {
+        // R639.2.7: 当指定 company_id 时,注入 R639.2.6 enrichment
+        // (descendantActiveWorkCount + connections.upstreamPipelineIds/downstreamPipelineIds)
+        // 与 Node 上游 /companies/:companyId/pipelines 端点 1:1 对齐
+        Some(cid) => {
+            let rows = svc
+                .list_by_company(cid)
+                .await
+                .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?;
+            let enriched =
+                enrich_pipelines_with_aggregation(state.db.pool(), cid, rows).await?;
+            Ok(Json(serde_json::to_value(enriched).unwrap_or_default()))
+        }
+        None => {
+            let rows = svc
+                .list_all(200)
+                .await
+                .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?;
+            Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+        }
+    }
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
@@ -573,7 +598,10 @@ async fn list_cases(
         .list_cases(company_id, id, q.stage_id)
         .await
         .map_err(|e| map_pipeline_service_error(e, id))?;
-    Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
+    // R639.2.8: 注入 case-level aggregation (activeWork + descendantActiveWorkCount)
+    // 与 Node 上游 /companies/:companyId/cases 端点 1:1 对齐
+    let enriched = enrich_cases_with_aggregation(state.db.pool(), company_id, rows).await?;
+    Ok(Json(serde_json::to_value(enriched).unwrap_or_default()))
 }
 
 async fn get_case(
@@ -594,7 +622,14 @@ async fn get_case(
         .await
         .map_err(|e| map_pipeline_service_error(e, Uuid::nil()))?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+    // R639.2.9: 注入 case enrichment (activeWork + descendantActiveWorkCount)
+    // 与 Node 上游 getCaseDetail 端点 1:1 对齐 (核心字段)
+    let mut enriched = enrich_cases_with_aggregation(state.db.pool(), company_id, vec![row])
+        .await?;
+    let first = enriched
+        .pop()
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+    Ok(Json(serde_json::to_value(first).unwrap_or_default()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1244,6 +1279,75 @@ struct BulkReviewItem {
     expected_version: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct CaseEventsQuery {
+    #[serde(default)]
+    types: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+/// `GET /api/companies/:company_id/case-events` - 1:1 with Node listCompanyCaseEvents.
+async fn list_company_case_events_route(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<CaseEventsQuery>,
+) -> ApiResult<Json<Value>> {
+    let types: Vec<String> = q
+        .types
+        .as_deref()
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+        .unwrap_or_default();
+    let page = list_company_case_events_page(
+        state.db.pool(),
+        company_id,
+        &types,
+        q.limit,
+        q.offset,
+    )
+    .await
+    .map_err(|e| ApiError::Internal(format!("list_company_case_events_page: {e}")))?;
+    Ok(Json(serde_json::to_value(page).unwrap_or_default()))
+}
+
+/// `GET /api/cases/:case_id/rollup` - 1:1 with Node getDirectChildrenSummary.
+async fn case_direct_children_rollup_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let company_id = CaseRepo::new(&state.db)
+        .get_case_company_id(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("lookup case company: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("pipeline case {case_id}")))?;
+    let rollup = get_direct_children_summary(state.db.pool(), company_id, case_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("get_direct_children_summary: {e}")))?;
+    Ok(Json(serde_json::to_value(rollup).unwrap_or_default()))
+}
+
+/// `GET /api/cases/:case_id/children/tree` - 1:1 with Node getCaseChildrenTree.
+async fn case_children_tree_route(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let company_id = CaseRepo::new(&state.db)
+        .get_case_company_id(case_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("lookup case company: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("pipeline case {case_id}")))?;
+    let tree = get_case_children_tree(state.db.pool(), company_id, case_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("get_case_children_tree: {e}")))?;
+    match tree {
+        Some(t) => Ok(Json(serde_json::to_value(t).unwrap_or_default())),
+        None => Err(ApiError::NotFound(format!("pipeline case {case_id}"))),
+    }
+}
 /// `POST /api/companies/:company_id/review-cases/bulk` — bulk review.
 /// Mirrors Node `/companies/:companyId/review-cases/bulk`.  For each item,
 /// translates `decision` to status and updates the case.
