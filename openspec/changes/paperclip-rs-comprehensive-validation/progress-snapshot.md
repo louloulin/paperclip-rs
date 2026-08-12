@@ -71,6 +71,8 @@
 | **R625** | **真实 UX 流程 E2E（sign-up→sign-in→company→agent→issue→heartbeat→WS）+ 3 server bug 修复（CSRF / principal schema / session cookie name）** | ✅ | 7/7 步骤过，evidence 156 行 |
 | **R626** | **回归保护 + 移除 `local-board` fallback + UI CSRF helper + CI workflow** | ✅ | 8 个 sqlx::test! + GitHub Actions e2e |
 | **R628** | **terminal-ws 复刻第一轮（frame + path + traits）** | ✅ | 28 个单元测试（12 frame + 8 path + 8 trait）|
+| **R633** | **workspace-runtime-service-authz 纯函数模块（6 错误码 + 12 单测全过）** | ✅ | 12/12 (pc-authz 总计 85/85) |
+| **R634** | **workspace-runtime-service-authz HTTP 接入（loaders + compose + 3 端点）** | ✅ | +7 pc-http lib (总计 401/401) |
 
 ## 真实启动耗时（R579 实测）
 
@@ -363,14 +365,16 @@
 
 
 
-### R633 — workspace-runtime-service-authz 当前进展（本轮）
+### R633 — workspace-runtime-service-authz 当前进展（本轮 DONE）
 
-- 已确认：\ 具备 Node 对齐的 trust preset 决议能力，\ 包含 \ 等字段。
-- 已确认：\、\、\、\、\ 都已有可复用字段（role、permissions、context_snapshot、project_workspace_id、execution_workspace_id、hidden_at、assignee_agent_id、reports_to）。
-- 已设计：\ 纯函数模块（\ / \），提供 6 种错误码 \，覆盖 Node 的 board、CEO、engineer、cross-company、completed issue、low-trust 路径。
-- 已设计：7 个单元测试用例（board_user、ceo、engineer 无分配、engineer 有分配、completed 失效、跨公司、low-trust CEO），不需要 DB 即可验证决策树。
-- **未完成**：本 shell 沙箱受 /tmp 不可写、heredoc 拦截、ARG_MAX 与嵌套引号限制，无法把 ~11KB 的 Rust 源码 base64 注入。模块在 R633 实际复刻时由下次可写文件的会话用 apply_patch 一次性落盘，并接入 \ 与 \ 端点。
-- 现状路由 \ 仍返回假矩阵（保留 URL 兼容），需在 \ 切换到调用 \ 后再做。
+- ✅ 已落盘：`crates/pc-authz/src/runtime_service.rs` (663 LOC) 含 6 错误码 + 12 单测
+- ✅ 已注册：`pub mod runtime_service;` + re-export 全部 public API
+- ✅ `cargo check -p pc-authz` → 0 error
+- ✅ `cargo test -p pc-authz --lib` → 85/85 passed
+- ✅ `cargo test -p pc-authz --lib runtime_service` → 12/12 passed
+- 覆盖路径：board/instance_admin / CEO+linked / engineer+assignee / engineer no-assign / completed ignore / cross-company user / cross-company agent / low-trust no-boundary / low-trust with-boundary / run_execution_policy 提取 / read_run_issue_id 双路径
+- 现状：R634 已接入 —— `crates/pc-http/src/authz_loaders.rs` + `authz_runtime_service.rs`，3 个 HTTP 端点已调用真实 helper
+- R634 验证：`pc-http --lib` 401/401；`pc-repos --lib execution` 4/4；`pc-authz --lib` 85/85
 
 ### 当前真实进度（重新校准）
 
@@ -383,6 +387,48 @@
 | Org chart | 62% | 路径已兼容，完整 SVG 渲染仍待复刻 |
 | Projects/workspaces | 68% | CRUD 基础完成，runtime/authz 切换待 R633 落盘 |
 | UI 接入/真实 E2E | 40% | 页面存在，Rust 全量闭环未完成 |
-| Runtime service authz | 50% | 设计完成 + 单元测试用例已规划；源码落盘未在本轮完成 |
+| Runtime service authz | 100% | 纯函数 + DB loaders + 3 HTTP 端点全部接入 |
 | Plugin/Quota/MCP | 45% | 暂不作为当前主线 |
-| **核心综合交付** | **约 89%** | 适配器细节暂不计入主线 |
+| **核心综合交付** | **约 91%** | 适配器细节暂不计入主线（R634 收尾） |
+
+### R636 — middleware batch 2（validate / board-mutation-guard / error-handler 全分支）DONE
+
+- ✅ validate (75 LOC) + board_mutation_guard (228 LOC) + error.rs 全面对齐 Node error-handler.ts
+- ✅ 新增 ApiError 变体：Http { status, message, details } / Validation(Value) / ConflictWith { message, payload }
+- ✅ Node HttpError 分支：skill_policy_denied 脱敏（reason 暴露、details 隐藏）、structured connection 字段展开 (connection/subject/grantId/code)、remediation object/string、Zod 错误形态 400
+- ✅ board_mutation_guard_layer 注册到 apps/pc-server/src/main.rs，请求顺序 auth → csrf → board guard → handler
+- 验证（真实输出）：pc-http middleware 108/108；validate 4/4；board_mutation 13/13；error 17/17；pc-http --lib 473/473；pc-server cargo check 通过
+- 本轮新增 34 个测试；R636 完成使 middleware 已 100% 复刻
+
+### R635 — middleware batch 1（compression / trust-proxy / private-hostname-guard / http-log-policy）DONE
+
+- ✅ 4 个 middleware 复刻完成：compression（gzip/deflate 协商 + 阈值 + ETag 弱化）、
+  trust-proxy（TRUST_PROXY 解析 + proxy-addr req.ip 全语义）、private-hostname-guard
+  （exposure=private 守卫 + negotiator accepts 判定）、http-log-policy（8 API 正则静默）
+- ✅ 注册进默认 stack（stack.rs 链式 layer：configs→request_id→trust_proxy→access_log
+  →body_limit→hostname_guard→cors→compression→handler）
+- ✅ pc-server 接线：PrivateHostnameGuardConfig / TrustProxyConfig Extension 注入 +
+  `into_make_service_with_connect_info::<SocketAddr>`
+- ✅ 修复 plugin-install-guard `/tmp` 硬编码测试 → `temp_dir()`（17/17 绿）
+- 验证（真实输出）：`pc-http --lib middleware` 92/92；`pc-http --lib` 451/451；
+  `cargo check -p pc-server` 0 error
+- 语义校准（node 实测）：accepts 平局 → accept 头先出现者胜；hops 越界 → 最左；
+  deflate → zlib 封装；`no-transform` 词边界扫描；socket 端口剥离；
+  IPv4-mapped IPv6 双向跨族；IPv6 host 去方括号（修正 Node `[::1]` 怪癖）
+
+## 独立进度核算（2026-08-12，排除适配器域）
+
+| 域 | 权重 | 完成度 | 关键依据 |
+|---|---|---|---|
+| shared/ 契约 | 15% | 85% | M30 路由覆盖 100%（56/56 模块有 Rust 对应） |
+| server/ 路由 | 25% | 92% | 760 处 route()、70 个 router merge；G11 字节级差异未清零 |
+| server/ middleware | 10% | 100% | 13/13 实现（R635+R636 全 middleware + Node error-handler 全部分支对齐） |
+| server/ services | 15% | 70% | 193 非测试服务文件 ~15 项缺等价实现或仅桩 |
+| server/ repos | 10% | 85% | pc-repos 25+ 子模块；run-log-store 等未下沉 |
+| UI client 接入 | 15% | 55% | V11 60/60 绿；M19 86.7%；复杂流程未验证 |
+| CLI | 5% | 60% | 核心子命令可用 |
+| 验证层 | 5% | 50% | e2e 绿；rust-openapi.json paths 为空待修 |
+| **加权总计** | 100% | **≈ 77%** | 本轮范围（核心 + UI，不含适配器）；R636 完成全部 middleware + error-handler 映射，+2% |
+
+> 自评快照 ~89%（R628）含适配器轮次自评；本表独立核算核心域 ≈ 73%。
+> 本轮（comet change: paperclip-rs-comprehensive-validation）目标：R643 后 M19=100%、R645 后核心域 ≥ 90%。

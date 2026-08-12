@@ -3,23 +3,17 @@
 //! Pure-function helpers mirroring Node server/src/routes/workspace-runtime-service-authz.ts.
 //! Callers inject a RuntimeServiceContext with pre-fetched DB rows.
 
-use pc_auth::{Actor, AuthContext};
 use crate::trust::{
-    resolve_core_trust_preset, DenyReason,
-    LowTrustBoundary, ResolveInput as TrustResolveInput, TrustError, TrustPreset,
-    TrustPresetResolution, TrustPresetSource,
+    resolve_core_trust_preset, DenyReason, LowTrustBoundary, ResolveInput as TrustResolveInput,
+    TrustError, TrustPreset, TrustPresetResolution, TrustPresetSource,
 };
+use pc_auth::{Actor, AuthContext};
 use serde::Serialize;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const WORKSPACE_RUNTIME_ELIGIBLE_ISSUE_STATUSES: &[&str] = &[
-    "backlog",
-    "todo",
-    "in_progress",
-    "in_review",
-    "blocked",
-];
+pub const WORKSPACE_RUNTIME_ELIGIBLE_ISSUE_STATUSES: &[&str] =
+    &["backlog", "todo", "in_progress", "in_review", "blocked"];
 
 #[derive(Debug, Error, Serialize)]
 pub enum RuntimeServiceAuthzError {
@@ -110,7 +104,13 @@ impl RuntimeServiceActor {
     }
 
     pub fn is_instance_admin(&self) -> bool {
-        matches!(self, Self::BoardUser { is_instance_admin: true, .. })
+        matches!(
+            self,
+            Self::BoardUser {
+                is_instance_admin: true,
+                ..
+            }
+        )
     }
 }
 
@@ -213,7 +213,9 @@ fn assert_company_access(
     company_id: Uuid,
 ) -> Result<(), RuntimeServiceAuthzError> {
     match actor {
-        RuntimeServiceActor::BoardUser { is_instance_admin, .. } if *is_instance_admin => Ok(()),
+        RuntimeServiceActor::BoardUser {
+            is_instance_admin, ..
+        } if *is_instance_admin => Ok(()),
         RuntimeServiceActor::BoardUser { company_ids, .. } => {
             if company_ids.contains(&company_id) || company_ids.is_empty() {
                 Ok(())
@@ -228,7 +230,10 @@ fn assert_company_access(
                 Err(RuntimeServiceAuthzError::CompanyAccessDenied)
             }
         }
-        RuntimeServiceActor::Agent { company_id: agent_cid, .. } => {
+        RuntimeServiceActor::Agent {
+            company_id: agent_cid,
+            ..
+        } => {
             if *agent_cid == company_id {
                 Ok(())
             } else {
@@ -367,7 +372,6 @@ fn assert_agent_can_manage_runtime(
     Err(RuntimeServiceAuthzError::MissingPermission)
 }
 
-
 pub fn assert_can_manage_project_workspace_runtime_services(
     ctx: &RuntimeServiceContext,
 ) -> Result<(), RuntimeServiceAuthzError> {
@@ -412,9 +416,6 @@ fn _boundary_re_exports_used(_: &LowTrustBoundary) {}
 fn _resolution_re_exports_used(_: &TrustPresetResolution) {}
 #[allow(dead_code)]
 fn _source_re_exports_used(_: TrustPresetSource) {}
-
-
-
 
 impl Default for RuntimeServiceContext {
     fn default() -> Self {

@@ -222,6 +222,16 @@ impl<'a> ExecutionRepo<'a> {
             .await?)
     }
 
+    /// R634: 查 execution workspace 的 company_id（用于在 HTTP 层做 authz 检查）。
+    pub async fn company_id_for_workspace(&self, workspace_id: Uuid) -> RepoResult<Option<Uuid>> {
+        let row: Option<(Uuid,)> =
+            sqlx::query_as("SELECT company_id FROM execution_workspaces WHERE id = $1")
+                .bind(workspace_id)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(row.map(|(c,)| c))
+    }
+
     /// Round 108: 查单个 operation 元数据（company_id + heartbeat_run_id + 截断的 stdout/stderr + log_ref）
     /// 用于 `read_workspace_operation_log` 端点的开头查询。
     pub async fn find_operation_log_meta(

@@ -42,14 +42,13 @@ pub use mentions::{
     ParsedAgentMention, ParsedUserMention, AGENT_MENTION_SCHEME, PIPELINE_MENTION_SCHEME,
     PROJECT_MENTION_SCHEME, ROUTINE_MENTION_SCHEME, SKILL_MENTION_SCHEME, USER_MENTION_SCHEME,
 };
+pub use policy::{evaluate, principal_type_of, AuthzError, Context};
 pub use runtime_service::{
     assert_can_manage_execution_workspace_runtime_services,
-    assert_can_manage_project_workspace_runtime_services,
-    read_run_issue_id, run_execution_policy, AgentContextRow, IssueContextRow,
-    ProjectContextRow, RunContextRow, RuntimeServiceActor, RuntimeServiceAuthzError,
-    RuntimeServiceContext, WORKSPACE_RUNTIME_ELIGIBLE_ISSUE_STATUSES,
+    assert_can_manage_project_workspace_runtime_services, read_run_issue_id, run_execution_policy,
+    AgentContextRow, IssueContextRow, ProjectContextRow, RunContextRow, RuntimeServiceActor,
+    RuntimeServiceAuthzError, RuntimeServiceContext, WORKSPACE_RUNTIME_ELIGIBLE_ISSUE_STATUSES,
 };
-pub use policy::{evaluate, principal_type_of, AuthzError, Context};
 pub use trust::{
     is_agent_within_boundary, is_issue_within_boundary, is_tool_class_within_boundary,
     resolve_core_trust_preset, DenyReason as TrustDenyReason, LowTrustBoundary,

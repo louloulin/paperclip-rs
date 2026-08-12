@@ -20,7 +20,7 @@ use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
 use sqlx;
 
-use crate::{ApiError, ApiResult, AppState};
+use crate::{authz_runtime_service, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -402,6 +402,7 @@ async fn delete_project_workspace(
 async fn workspace_runtime_action(
     State(state): State<AppState>,
     Path((project_id, workspace_id, action)): Path<(Uuid, Uuid, String)>,
+    auth: AuthContext,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let allowed = ["start", "stop", "restart", "pause", "resume", "status"];
@@ -415,6 +416,15 @@ async fn workspace_runtime_action(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("project workspace {workspace_id}")))?;
+    // R634: workspace runtime service authz gate.
+    authz_runtime_service::assert_project_workspace_runtime_manage(
+        &state.db,
+        &auth,
+        company_id,
+        workspace_id,
+    )
+    .await
+    .map_err(authz_runtime_service::map_authz_error_to_api)?;
     // Append a runtime action to the workspace's metadata for audit
     let _ = ProjectRepo::new(&state.db)
         .append_runtime_action(workspace_id, &action)

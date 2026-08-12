@@ -1,7 +1,8 @@
 //! 结构化访问日志。
 //!
-//! 与原 `paperclip/server/src/middleware/access-log.ts` 等价。
-//! 字段：request_id / method / path / status / duration_ms / bytes_out。
+//! 与原 `paperclip/server/src/middleware/logger.ts` + `http-log-policy.ts` 等价。
+//! 字段：request_id / client_ip / method / path / status / duration_ms。
+//! 高频轮询端点与静态资源按 http-log-policy 静默。
 
 use axum::{
     extract::{MatchedPath, Request},
@@ -11,7 +12,9 @@ use axum::{
 use std::time::Instant;
 use tracing::info;
 
+use super::http_log_policy::should_silence_http_success_log;
 use super::request_id::RequestId;
+use super::trust_proxy::ClientIp;
 
 pub async fn access_log_layer(req: Request, next: Next) -> Response {
     let start = Instant::now();
@@ -26,17 +29,25 @@ pub async fn access_log_layer(req: Request, next: Next) -> Response {
         .get::<RequestId>()
         .map(|r| r.0.clone())
         .unwrap_or_default();
+    let client_ip = req
+        .extensions()
+        .get::<ClientIp>()
+        .map(|c| c.0.clone())
+        .unwrap_or_default();
     let response = next.run(req).await;
     let status = response.status().as_u16();
     let duration_ms = start.elapsed().as_millis() as i64;
-    info!(
-        request_id = %request_id,
-        method = %method,
-        path = %path,
-        status = status,
-        duration_ms = duration_ms,
-        "http access"
-    );
+    if !should_silence_http_success_log(Some(method.as_str()), Some(path.as_str()), status) {
+        info!(
+            request_id = %request_id,
+            client_ip = %client_ip,
+            method = %method,
+            path = %path,
+            status = status,
+            duration_ms = duration_ms,
+            "http access"
+        );
+    }
     response
 }
 

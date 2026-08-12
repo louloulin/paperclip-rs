@@ -1,8 +1,7 @@
 //! Workspace runtime service authz summary.
 //!
-//! Returns the workspace-scoped runtime-service authorization matrix for the
-//! actor — i.e. which runtime services (heartbeat supervisor, webhook dispatcher,
-//! tool gateway, etc.) the actor is allowed to invoke from this workspace.
+//! R634: Calls the real authz helpers and returns the runtime-service
+//! authorization matrix for the actor.
 
 use axum::{
     extract::{Path, State},
@@ -12,7 +11,10 @@ use axum::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{state::require_user_id, AppState};
+use pc_auth::AuthContext;
+use pc_repos::execution::ExecutionRepo;
+
+use crate::{authz_runtime_service, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new().route(
@@ -24,38 +26,44 @@ pub fn router() -> Router<AppState> {
 async fn workspace_runtime_service_authz(
     State(state): State<AppState>,
     Path(workspace_id): Path<Uuid>,
-    headers: axum::http::HeaderMap,
+    auth: AuthContext,
 ) -> Result<Json<Value>, crate::ApiError> {
-    let _ = require_user_id(&state, &headers).await?;
+    let company_id = ExecutionRepo::new(&state.db)
+        .company_id_for_workspace(workspace_id)
+        .await
+        .map_err(|e| crate::ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| crate::ApiError::NotFound(format!("execution workspace {workspace_id}")))?;
 
-    // Round 97 修复：原 SQL 引用不存在的 `workspace_runtime_service_overrides` 表；
-    // 真实表 `workspace_runtime_services` 的列结构不同（service_name vs service_key, 无 scopes）。
-    // 端点保留：返回空 overrides + 默认 allow 矩阵，URL 兼容。
-    let overrides: Vec<(String, serde_json::Value)> = Vec::new();
-    let _ = workspace_id; // suppress unused
+    // Build the context and decide which runtime services the actor can manage.
+    let ctx = authz_runtime_service::load_and_assert_runtime_service_manage(
+        &state.db,
+        &auth,
+        company_id,
+        authz_runtime_service::WorkspaceKind::Execution {
+            workspace_id,
+            source_issue_id: None,
+        },
+    )
+    .await;
 
-    let services: Vec<Value> = overrides
-        .into_iter()
-        .map(|(key, scopes)| {
-            json!({
-                "service": key,
-                "scopes": scopes,
-                "allow": true,
-            })
-        })
-        .collect();
+    let services: Vec<Value> = match ctx {
+        Ok(_) => vec![
+            json!({ "service": "heartbeat.supervisor", "allow": true }),
+            json!({ "service": "webhook.dispatcher", "allow": true }),
+            json!({ "service": "tool.gateway", "allow": true }),
+        ],
+        Err(e) => vec![
+            json!({ "service": "heartbeat.supervisor", "allow": false, "reason": e.code() }),
+            json!({ "service": "webhook.dispatcher", "allow": false, "reason": e.code() }),
+            json!({ "service": "tool.gateway", "allow": false, "reason": e.code() }),
+        ],
+    };
 
-    Json(json!({
+    Ok(Json(json!({
         "workspaceId": workspace_id,
+        "companyId": company_id,
+        "actor": format!("{:?}", auth.actor),
         "services": services,
-        "updatedAt": chrono::Utc::now()
-    }))
-    .pipe(Ok)
+        "updatedAt": chrono::Utc::now(),
+    })))
 }
-
-trait Pipe: Sized {
-    fn pipe<R>(self, f: impl FnOnce(Self) -> R) -> R {
-        f(self)
-    }
-}
-impl<T> Pipe for T {}

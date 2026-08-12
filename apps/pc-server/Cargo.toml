@@ -25,6 +25,7 @@ pc-config = { path = "../../crates/pc-config" }
 pc-core = { path = "../../crates/pc-core" }
 pc-db = { path = "../../crates/pc-db" }
 pc-http = { path = "../../crates/pc-http" }
+pc-network-bind = { path = "../../crates/pc-network-bind" }
 pc-realtime = { path = "../../crates/pc-realtime" }
 pc-heartbeat = { path = "../../crates/pc-heartbeat" }
 pc-repos = { path = "../../crates/pc-repos" }

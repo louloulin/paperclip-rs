@@ -72,18 +72,18 @@
 
 | 当前 TS | Rust 任务 |
 |---|---|
-| `middleware/api-compression.ts` | 3.1.2 compression middleware |
+| `middleware/api-compression.ts` | 3.1.2 compression middleware — ✅ R635 `pc-http::middleware::compression` |
 | `middleware/auth.ts` | 3.1.2 actor middleware |
-| `middleware/board-mutation-guard.ts` | 2.3.3 board-mutation guard |
-| `middleware/error-handler.ts` | 3.1.3 错误映射 |
-| `middleware/http-log-policy.ts` | 3.1.2c `pc-http::middleware::http_log_policy` |
+| `middleware/board-mutation-guard.ts` | 2.3.3 board-mutation guard — ✅ R636 `pc-http::middleware::board_mutation_guard` |
+| `middleware/error-handler.ts` | 3.1.3 错误映射 — ✅ R636 (HttpError 形状 + skill_policy 脱敏 + structured connection + Zod) |
+| `middleware/http-log-policy.ts` | 3.1.2c `pc-http::middleware::http_log_policy` — ✅ R635 |
 | `middleware/http-log-redaction.ts` | 6.3.4 log 重写 |
 | `middleware/index.ts` | 3.1.1 middleware barrel |
 | `middleware/logger.ts` | 1.2.2 `pc-telemetry` |
-| `middleware/private-hostname-guard.ts` | 3.1.2 private-hostname guard |
+| `middleware/private-hostname-guard.ts` | 3.1.2 private-hostname guard — ✅ R635 `pc-http::middleware::private_hostname_guard` |
 | `middleware/redact-sensitive.ts` | 3.1.2d `pc-http::middleware::redact_sensitive` |
-| `middleware/trust-proxy.ts` | 3.1.2b `pc-http::middleware::trust_proxy` |
-| `middleware/validate.ts` | 3.1.4 请求体验证 |
+| `middleware/trust-proxy.ts` | 3.1.2b `pc-http::middleware::trust_proxy` — ✅ R635（含 proxy-addr req.ip 语义） |
+| `middleware/validate.ts` | 3.1.4 请求体验证 — ✅ R636 `pc-http::middleware::validate` |
 | `middleware/cloud-tenant-actor.test.ts` | 测试随 actor middleware |
 
 ---

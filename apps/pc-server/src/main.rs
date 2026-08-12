@@ -31,6 +31,10 @@ use pc_db::{Db, Migrator};
 use pc_heartbeat::recovery::{run_heartbeat_tick, HeartbeatTickerConfig};
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
+use pc_http::middleware::{
+    parse_trust_proxy_env, should_enable_private_hostname_guard, PrivateHostnameGuardConfig,
+    TrustProxyConfig,
+};
 use pc_http::AppState;
 use pc_realtime::terminal::{FakeSshConnector, InMemoryStore};
 use pc_realtime::{RealtimeHandle, WsState};
@@ -494,7 +498,32 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // TRUST_PROXY + private-hostname-guard 配置注入（Node app.ts 启动时解析）。
+    let hostname_guard_cfg = {
+        let mut cfg = PrivateHostnameGuardConfig::from_environment();
+        let exposure_raw =
+            std::env::var("PAPERCLIP_DEPLOYMENT_EXPOSURE").unwrap_or_else(|_| "private".into());
+        let exposure = if exposure_raw == "public" {
+            pc_network_bind::DeploymentExposure::Public
+        } else {
+            pc_network_bind::DeploymentExposure::Private
+        };
+        cfg.enabled = should_enable_private_hostname_guard(exposure);
+        cfg.bind_host = config.server.host.clone();
+        cfg
+    };
+    let trust_proxy_cfg = TrustProxyConfig {
+        value: parse_trust_proxy_env(std::env::var("TRUST_PROXY").ok().as_deref())
+            .ok()
+            .flatten(),
+    };
+
     let api_router = pc_http::middleware::apply_default_middleware(pc_http::routes::router())
+        .layer(axum::Extension(hostname_guard_cfg))
+        .layer(axum::Extension(trust_proxy_cfg))
+        .route_layer(axum::middleware::from_fn(
+            pc_http::middleware::board_mutation_guard_layer,
+        ))
         // auth_layer: 必须用 route_layer 而不是 layer，因为 router 尚未带 state
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -553,10 +582,13 @@ async fn main() -> anyhow::Result<()> {
         "http listening"
     );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("axum serve")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("axum serve")?;
 
     heartbeat_scheduler.abort();
 

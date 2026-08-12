@@ -26,7 +26,9 @@ use pc_repos::execution::{
     WorkspaceRow, WorkspaceStatus,
 };
 
-use crate::{ApiError, ApiResult, AppState};
+use pc_auth::AuthContext;
+
+use crate::{authz_runtime_service, ApiError, ApiResult, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -284,8 +286,19 @@ async fn workspace_operations(
 async fn runtime_service_action(
     State(state): State<AppState>,
     Path((id, action)): Path<(uuid::Uuid, String)>,
+    auth: AuthContext,
     Json(body): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
+    let company_id = ExecutionRepo::new(&state.db)
+        .company_id_for_workspace(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("execution workspace {id}")))?;
+    authz_runtime_service::assert_execution_workspace_runtime_manage(
+        &state.db, &auth, company_id, id, None,
+    )
+    .await
+    .map_err(authz_runtime_service::map_authz_error_to_api)?;
     let repo = ExecutionRepo::new(&state.db);
     let queued = repo
         .enqueue_action(&pc_repos::execution::NewActionLog {

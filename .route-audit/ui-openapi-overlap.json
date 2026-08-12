@@ -1,9 +1,9 @@
 {
-  "ui_paths": 15,
-  "rust_openapi_paths": 10,
+  "ui_paths": 11,
+  "rust_openapi_paths": 0,
   "covered": 0,
-  "missing_in_openapi": 15,
-  "extra_in_openapi": 10,
+  "missing_in_openapi": 11,
+  "extra_in_openapi": 0,
   "coverage_ui_paths": 0.0,
   "missing_top30": [
     {
@@ -33,51 +33,6 @@
     },
     {
       "verb": "GET",
-      "path": "/api/auth${path}",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth${path}",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth${path}",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth${path}",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth${path}",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth/get-session",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth/get-session",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth/profile",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/auth/profile",
-      "file": "api/auth.ts"
-    },
-    {
-      "verb": "GET",
       "path": "/api/companies/${companyId}/audit/agent-actions.csv${qs ? ",
       "file": "api/audit.ts"
     },
@@ -89,27 +44,7 @@
     {
       "verb": "GET",
       "path": "/api/health",
-      "file": "api/health.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/health",
-      "file": "api/health.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/health",
       "file": "lib/agent-onboarding-prompt.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/health/dev-server/restart",
-      "file": "api/health.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/health/dev-server/restart",
-      "file": "api/health.ts"
     },
     {
       "verb": "GET",
