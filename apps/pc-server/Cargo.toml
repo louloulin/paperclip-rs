@@ -28,6 +28,7 @@ pc-http = { path = "../../crates/pc-http" }
 pc-network-bind = { path = "../../crates/pc-network-bind" }
 pc-realtime = { path = "../../crates/pc-realtime" }
 pc-heartbeat = { path = "../../crates/pc-heartbeat" }
+pc-hot-restart = { path = "../../crates/pc-hot-restart" }
 pc-repos = { path = "../../crates/pc-repos" }
 pc-storage = { path = "../../crates/pc-storage" }
 pc-secrets = { path = "../../crates/pc-secrets" }

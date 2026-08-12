@@ -217,16 +217,7 @@ impl HeartbeatEventLevel {
     }
 }
 
-const RUN_COLUMNS: &str = "id, company_id, agent_id, invocation_source, trigger_detail, status, \
-responsible_user_id, started_at, finished_at, error, wakeup_request_id, exit_code, signal, \
-usage_json, result_json, session_id_before, session_id_after, log_store, log_ref, log_bytes, \
-log_sha256, log_compressed, stdout_excerpt, stderr_excerpt, error_code, external_run_id, \
-process_pid, process_group_id, process_started_at, last_output_at, last_output_seq, \
-last_output_stream, last_output_bytes, retry_of_run_id, process_loss_retry_count, \
-scheduled_retry_at, scheduled_retry_attempt, scheduled_retry_reason, issue_comment_status, \
-issue_comment_satisfied_by_comment_id, issue_comment_retry_queued_at, liveness_state, \
-liveness_reason, continuation_attempt, last_useful_action_at, next_action, context_snapshot, \
-created_at, updated_at";
+const RUN_COLUMNS: &str = "heartbeat_runs.id, heartbeat_runs.company_id, heartbeat_runs.agent_id, heartbeat_runs.invocation_source, heartbeat_runs.trigger_detail, heartbeat_runs.status, heartbeat_runs.responsible_user_id, heartbeat_runs.started_at, heartbeat_runs.finished_at, heartbeat_runs.error, heartbeat_runs.wakeup_request_id, heartbeat_runs.exit_code, heartbeat_runs.signal, heartbeat_runs.usage_json, heartbeat_runs.result_json, heartbeat_runs.session_id_before, heartbeat_runs.session_id_after, heartbeat_runs.log_store, heartbeat_runs.log_ref, heartbeat_runs.log_bytes, heartbeat_runs.log_sha256, heartbeat_runs.log_compressed, heartbeat_runs.stdout_excerpt, heartbeat_runs.stderr_excerpt, heartbeat_runs.error_code, heartbeat_runs.external_run_id, heartbeat_runs.process_pid, heartbeat_runs.process_group_id, heartbeat_runs.process_started_at, heartbeat_runs.last_output_at, heartbeat_runs.last_output_seq, heartbeat_runs.last_output_stream, heartbeat_runs.last_output_bytes, heartbeat_runs.retry_of_run_id, heartbeat_runs.process_loss_retry_count, heartbeat_runs.scheduled_retry_at, heartbeat_runs.scheduled_retry_attempt, heartbeat_runs.scheduled_retry_reason, heartbeat_runs.issue_comment_status, heartbeat_runs.issue_comment_satisfied_by_comment_id, heartbeat_runs.issue_comment_retry_queued_at, heartbeat_runs.liveness_state, heartbeat_runs.liveness_reason, heartbeat_runs.continuation_attempt, heartbeat_runs.last_useful_action_at, heartbeat_runs.next_action, heartbeat_runs.context_snapshot, heartbeat_runs.created_at, heartbeat_runs.updated_at";
 
 const EVENT_COLUMNS: &str = "id, company_id, run_id, agent_id, seq, event_type, stream, level, \
 color, message, payload, created_at";
@@ -550,6 +541,23 @@ impl<'a> HeartbeatRepo<'a> {
         );
         sqlx::query_as::<_, HeartbeatRow>(&query)
             .bind(limit.clamp(1, 10_000))
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// 列出 status='running' 的 heartbeat run + 对应 agent 的 adapter_type。
+    ///
+    /// 与 Node `prepareHotRestartShutdown` 投影 1:1。
+    pub async fn list_running_with_adapter(
+        &self,
+    ) -> sqlx::Result<Vec<RunningHeartbeatWithAdapterRow>> {
+        let query = format!(
+            "SELECT {RUN_COLUMNS}, agents.adapter_type AS adapter_type \
+             FROM heartbeat_runs INNER JOIN agents ON agents.id = heartbeat_runs.agent_id \
+             WHERE heartbeat_runs.status = 'running' \
+             ORDER BY heartbeat_runs.started_at ASC NULLS FIRST, heartbeat_runs.created_at ASC"
+        );
+        sqlx::query_as::<_, RunningHeartbeatWithAdapterRow>(&query)
             .fetch_all(self.db.pool())
             .await
     }
@@ -1089,6 +1097,52 @@ impl<'a> HeartbeatRepo<'a> {
             .await
     }
 
+    /// Round 638 (hot-restart): merge adoption metadata into result_json.
+    pub async fn merge_adoption_result_json(
+        &self,
+        company_id: Uuid,
+        run_id: Uuid,
+        previous_server_pid: i32,
+        new_server_pid: i32,
+        previous_server_version: Option<&str>,
+        new_server_version: &str,
+        process_pid: Option<i32>,
+        process_group_id: Option<i32>,
+        adopted_at: pc_core::Timestamp,
+    ) -> sqlx::Result<Option<HeartbeatRow>> {
+        let query = format!(
+            "UPDATE heartbeat_runs SET \
+               result_json = jsonb_set(COALESCE(result_json, '{{}}'::jsonb), \
+                                       '{{hotRestart}}', \
+                                       jsonb_build_object(\
+                                         'adopted', true, \
+                                         'adoptedAt', $3::text, \
+                                         'previousServerPid', $4, \
+                                         'newServerPid', $5, \
+                                         'previousServerVersion', $6, \
+                                         'newServerVersion', $7, \
+                                         'processPid', $8, \
+                                         'processGroupId', $9)), \
+               error = CASE WHEN error_code = 'process_detached' THEN NULL ELSE error END, \
+               error_code = CASE WHEN error_code = 'process_detached' THEN NULL ELSE error_code END, \
+               updated_at = now() \
+             WHERE company_id=$1 AND id=$2 AND status='running' \
+             RETURNING {RUN_COLUMNS}"
+        );
+        sqlx::query_as::<_, HeartbeatRow>(&query)
+            .bind(company_id)
+            .bind(run_id)
+            .bind(adopted_at.as_datetime().to_rfc3339())
+            .bind(previous_server_pid)
+            .bind(new_server_pid)
+            .bind(previous_server_version)
+            .bind(new_server_version)
+            .bind(process_pid)
+            .bind(process_group_id)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     pub async fn list_events(
         &self,
         run_id: Uuid,
@@ -1466,6 +1520,14 @@ impl<'a> HeartbeatRepo<'a> {
         .await?;
         Ok(count)
     }
+}
+
+/// Round 638 (hot-restart): `list_running_with_adapter` 专用行结构。
+#[derive(Debug, Clone, FromRow)]
+pub struct RunningHeartbeatWithAdapterRow {
+    #[sqlx(flatten)]
+    pub run: HeartbeatRow,
+    pub adapter_type: String,
 }
 
 #[cfg(test)]

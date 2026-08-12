@@ -1,0 +1,21 @@
+[package]
+name = "pc-pipeline-case-outputs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pipeline case outputs context-summary helpers + DB glue (Node pipeline-case-outputs.ts 1:1)"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+pc-repos = { path = "../pc-repos" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

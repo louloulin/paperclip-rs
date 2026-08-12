@@ -101,6 +101,8 @@ pub mod collect_stale_run_evidence;
 pub mod resolve_active_recovery_action_after_source_resolved;
 
 pub mod cleanup_source_resolved_run_process;
+pub mod hot_restart;
+pub mod hot_restart_db;
 
 pub mod redact_watchdog_evidence_text;
 
@@ -440,3 +442,14 @@ pub use collect_stale_run_evidence::{
 pub use get_company_issue_prefix::{get_company_issue_prefix, DEFAULT_COMPANY_ISSUE_PREFIX};
 
 pub use load_latest_heartbeat_run_for_issue::load_latest_heartbeat_run_for_issue;
+
+pub use hot_restart::{
+    build_report, classify_adoption_candidate, decide_prepare_shutdown,
+    is_tracked_local_child_process_adapter, resolve_missing_run_ids, run_to_intent_run,
+    payload_to_object, AdoptionCandidate, AdoptionFacts, PrepareShutdownDecision,
+    RunClassification, SESSIONED_LOCAL_ADAPTERS, ShutdownSignal,
+};
+pub use hot_restart_db::{
+    prepare_shutdown_and_snapshot, reconcile_adoption, write_test_intent,
+    PrepareShutdownOutcome, ReconcileOutcome,
+};

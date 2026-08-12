@@ -1,0 +1,20 @@
+[package]
+name = "pc-hot-restart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hot-restart intent, shutdown snapshot, and handoff report storage"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+pc-config = { path = "../pc-config" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

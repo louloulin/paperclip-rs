@@ -28,7 +28,12 @@ use pc_adapter_pi_local::PiLocalAdapter;
 use pc_config::Config;
 use pc_core::{spawn_system_actor, ActorKey, ActorRegistry};
 use pc_db::{Db, Migrator};
-use pc_heartbeat::recovery::{run_heartbeat_tick, HeartbeatTickerConfig};
+use pc_core::Timestamp;
+use pc_heartbeat::recovery::{
+    prepare_shutdown_and_snapshot, reconcile_adoption, run_heartbeat_tick,
+    HeartbeatTickerConfig, PrepareShutdownDecision, ShutdownSignal as HrShutdownSignal,
+};
+use pc_hot_restart::HotRestartPaths;
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_heartbeat::{StartHeartbeat, StartHeartbeatResult};
 use pc_http::middleware::{
@@ -217,6 +222,39 @@ async fn main() -> anyhow::Result<()> {
             agent_supervisor.clone(),
         )
         .context("register agent supervisor")?;
+    // R638: hot-restart adoption reconcile（在 recover_heartbeat_runs 之前消费上一轮的 intent）
+    if let Ok(paths) = HotRestartPaths::from_env() {
+        match reconcile_adoption(
+            &db,
+            &paths,
+            Timestamp::now(),
+            std::process::id() as i32,
+            env!("CARGO_PKG_VERSION"),
+            None,
+        )
+        .await
+        {
+            Ok(Some(outcome)) => {
+                tracing::info!(
+                    adopted = outcome.adopted.len(),
+                    lost = outcome.lost.len(),
+                    finalized_while_down = outcome.finalized_while_down.len(),
+                    skipped = outcome.skipped.len(),
+                    finalized_while_down_missing = outcome.finalized_while_down_missing.len(),
+                    "hot-restart adoption reconciled"
+                );
+            }
+            Ok(None) => {
+                tracing::debug!("no hot-restart intent present on startup");
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "hot-restart adoption reconcile failed");
+            }
+        }
+    } else {
+        tracing::debug!("hot-restart paths unavailable; skipping reconcile_adoption");
+    }
+
     let heartbeat_recovery_start = std::time::Instant::now();
     recover_heartbeat_runs(&db, &heartbeat).await?;
     tracing::info!(
@@ -227,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
     let realtime = RealtimeHandle::start(1024);
     let ws = std::sync::Arc::new(WsState::new(realtime.clone(), "paperclip-rs"));
     let state = AppState::new(
-        db,
+        db.clone(),
         pc_http::state::RuntimeHandles {
             actors: actors.clone(),
             heartbeat,
@@ -586,7 +624,7 @@ async fn main() -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async { let _ = shutdown_signal().await; })
     .await
     .context("axum serve")?;
 
@@ -596,6 +634,39 @@ async fn main() -> anyhow::Result<()> {
     product_telemetry_actor.stop().await;
     if let Err(error) = product_telemetry.final_flush().await {
         tracing::warn!(error = %error, "final product telemetry flush failed");
+    }
+
+    // R638: hot-restart shutdown snapshot（在 actors.shutdown 之前消费信号）
+    if let (Ok(paths), true) = (HotRestartPaths::from_env(), true) {
+        let now_iso = Timestamp::now().as_datetime().to_rfc3339();
+        // 注意：这里的 signal 是从 shutdown_signal 拿到的，
+        // 当前 impl 在 graceful_shutdown 之后才执行，所以复用 SIGTERM 默认值。
+        // 更精确的信号探测在 axum::serve 内部做。
+        let signal = HrShutdownSignal::SigTerm;
+        match prepare_shutdown_and_snapshot(
+            &db,
+            &paths,
+            std::process::id() as i32,
+            signal,
+            Some(now_iso),
+            Some(env!("CARGO_PKG_VERSION").to_string()),
+        )
+        .await
+        {
+            Ok(outcome) => {
+                if matches!(outcome.decision, PrepareShutdownDecision::HotRestart { .. }) {
+                    tracing::info!(
+                        active_run_ids = ?outcome.active_run_ids,
+                        "hot-restart shutdown snapshot captured; child processes kept alive"
+                    );
+                } else {
+                    tracing::debug!(?outcome.decision, "hot-restart shutdown: no-op or skipped");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "hot-restart shutdown snapshot failed");
+            }
+        }
     }
 
     actors.shutdown().await.context("shutdown actors")?;
@@ -672,7 +743,9 @@ async fn recover_heartbeat_runs(
     Ok(())
 }
 
-async fn shutdown_signal() {
+/// 等待关闭信号，并同时返回触发的信号种类。
+/// 返回 (HrShutdownSignal, () ) 供调用方用于 hot-restart 决策。
+async fn shutdown_signal() -> HrShutdownSignal {
     let ctrl_c = async {
         signal::ctrl_c().await.expect("install Ctrl+C handler");
     };
@@ -689,8 +762,14 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        () = ctrl_c => info!("ctrl-c received, shutting down"),
-        () = terminate => info!("SIGTERM received, shutting down"),
+        () = ctrl_c => {
+            info!("ctrl-c received, shutting down");
+            HrShutdownSignal::SigInt
+        }
+        () = terminate => {
+            info!("SIGTERM received, shutting down");
+            HrShutdownSignal::SigTerm
+        }
     }
 }
 

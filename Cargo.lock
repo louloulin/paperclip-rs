@@ -2750,12 +2750,14 @@ dependencies = [
  "once_cell",
  "pc-adapter-api",
  "pc-core",
+ "pc-hot-restart",
  "pc-repos",
  "regex",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2768,6 +2770,19 @@ version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "pc-hot-restart"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pc-config",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -2961,6 +2976,19 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "toml",
+ "uuid",
+]
+
+[[package]]
+name = "pc-pipeline-case-outputs"
+version = "0.1.0"
+dependencies = [
+ "pc-core",
+ "pc-repos",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
  "uuid",
 ]
 
@@ -3357,6 +3385,7 @@ dependencies = [
  "pc-db",
  "pc-errors",
  "pc-heartbeat",
+ "pc-hot-restart",
  "pc-http",
  "pc-network-bind",
  "pc-plugin-host",

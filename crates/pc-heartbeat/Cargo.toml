@@ -12,6 +12,7 @@ workspace = true
 pc-core = { path = "../pc-core" }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-repos = { path = "../pc-repos" }
+pc-hot-restart = { path = "../pc-hot-restart" }
 kameo = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
@@ -28,3 +29,4 @@ uuid = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]
+tempfile = "3"

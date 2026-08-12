@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod aggregation;
+pub mod aggregation_db;
 pub mod case_type;
 
 /// Pipeline 业务错误。

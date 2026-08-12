@@ -1,7 +1,68 @@
 # Paperclip-rs Changelog
 
-> R592 / 2026-08-12
+> R638 / 2026-08-12
 > 所有用户可见的变化记录。版本号遵循 semver。
+
+## R639 (2026-08-12) — Pipeline case outputs pure + summary-slot-finalization 闭环
+
+### 新增
+
+- **crates/pc-pipeline-case-outputs** — 新 crate
+  - \`types\`：PipelineCaseOutputItem / PipelineCaseOutputItemKind / PipelineCaseOutputsResponse / PipelineCaseOutputContextSummary / ...
+  - \`pure\`：summarize_pipeline_case_outputs_for_context / format_pipeline_case_output_context_markdown / sort_outputs / output_sort_group / deliverable_document_rank / context_fetch_hint / sanitize_output_context_summary / truncate_context_excerpt / normalize_preview_text / preview_for / content_path / download_path / source_issue_path / source_document_path
+
+### 测试
+
+- pc-pipeline-case-outputs：10/10 单元测试 + 3/3 DB 集成测试（与 Node pipeline-case-outputs.ts 纯函数部分 1:1）
+- summary-slot-finalization 已在 \`pc-repos::issue_terminal_effects::apply::summary_failure_reason\` 实现并测试（R637 阶段）
+### 补充
+
+- **crates/pc-pipeline-case-outputs::service** —— DB glue 层（5 个函数，~240 行）
+  - \`list_sources\` —— pipeline_case_issue_links JOIN issues
+  - \`list_documents_for_issues\` —— issue_documents JOIN documents LEFT JOIN document_revisions
+  - \`get_case_pipeline_id\` / \`get_company_issue_prefix\` —— case + company 验证
+  - \`list_case_outputs\` —— 端到端 list_case_outputs（仅 sources + documents 子集）
+- **crates/pc-pipeline-case-outputs/tests/r639_pipeline_case_outputs_db.rs** —— 3 集成测试
+  - list_case_outputs_returns_sources_and_documents
+  - list_case_outputs_returns_none_for_unknown_case
+  - list_case_outputs_skips_retired_links
+- work_products / attachments 子集留 R639.2 轮次（Node 多表 JOIN 中余下 2 张表）
+
+### 累计
+
+- pc-pipeline-case-outputs：10 lib + 3 集成 = 13 测试
+- 当前模块化设计：types（DTO）/ pure（纯函数）/ service（DB glue）三层严格分离，与 Node 1:1
+
+- work_products / attachments 子集留 R639.2（约 100 行 DB glue）
+
+## R638 (2026-08-12) — Hot-restart 完整闭环
+
+### 新增
+
+- **crates/pc-hot-restart** — 独立 crate（hot-restart 协议 + 文件层 + 纯函数）
+  - \`types.rs\` — HotRestartIntent / ShutdownSnapshot / HotRestartReport / HotRestartReportRun / HotRestartRunClassification / ShutdownSignal
+  - \`pure.rs\` — parse_hot_restart_intent / parse_intent_run / is_observed_hot_restart_target_alive / find_missing_hot_restart_snapshot_run_ids / should_honor_hot_restart_intent_for_process / normalize_date
+  - \`local.rs\` — HotRestartPaths / read_hot_restart_intent / write_hot_restart_intent / write_hot_restart_shutdown_snapshot / write_hot_restart_report / remove_hot_restart_intent / read_process_started_at（跨平台）
+- **crates/pc-heartbeat::recovery::hot_restart** — 决策层（纯函数）
+  - SESSIONED_LOCAL_ADAPTERS / is_tracked_local_child_process_adapter / run_to_intent_run / decide_prepare_shutdown / classify_adoption_candidate / build_report
+  - PrepareShutdownDecision（NotRequested / DrainRequired / PidMismatch / HotRestart / ReadError）
+- **crates/pc-heartbeat::recovery::hot_restart_db** — DB glue
+  - prepare_shutdown_and_snapshot / reconcile_adoption / write_test_intent
+- **crates/pc-repos::heartbeat** — list_running_with_adapter / merge_adoption_result_json
+- **apps/pc-server/src/main.rs** — 启动时调用 reconcile_adoption；shutdown 时调用 prepare_shutdown_and_snapshot
+
+### 修复
+
+- pc-heartbeat::recovery::hot_restart::decide_prepare_shutdown 在 PID 匹配且 drain_required=false 时返回 HotRestart（之前错误返回 NotRequested）
+- pc-repos::heartbeat::RUN_COLUMNS 在 JOIN 时缺少表前缀导致 "column reference id is ambiguous"
+- pc-repos::heartbeat::prepare_shutdown_and_snapshot 不再覆盖 preflight_active_run_ids（Node 也不覆盖）
+- pc-db::pool::Db 新增 #[derive(Clone)]（PgPool 本身是 Arc，Clone 廉价）
+
+### 测试
+
+- pc-hot-restart：7/7 单元测试
+- pc-heartbeat recovery::hot_restart：7/7 单元测试
+- pc-heartbeat tests/round638_hot_restart_db.rs：6/6 集成测试（真实 PG，完整 prepare → snapshot → reconcile 链路）
 
 ## R591-R592 (2026-08-12) — 验证脚本强化
 
