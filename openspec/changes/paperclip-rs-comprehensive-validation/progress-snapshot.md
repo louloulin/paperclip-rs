@@ -361,3 +361,28 @@
 - 6 个 stub adapter execute path
 - e2e ux-flow 扩 13 步（issue checkout / approval / run continuation / decision / board）
 
+
+
+### R633 — workspace-runtime-service-authz 当前进展（本轮）
+
+- 已确认：\ 具备 Node 对齐的 trust preset 决议能力，\ 包含 \ 等字段。
+- 已确认：\、\、\、\、\ 都已有可复用字段（role、permissions、context_snapshot、project_workspace_id、execution_workspace_id、hidden_at、assignee_agent_id、reports_to）。
+- 已设计：\ 纯函数模块（\ / \），提供 6 种错误码 \，覆盖 Node 的 board、CEO、engineer、cross-company、completed issue、low-trust 路径。
+- 已设计：7 个单元测试用例（board_user、ceo、engineer 无分配、engineer 有分配、completed 失效、跨公司、low-trust CEO），不需要 DB 即可验证决策树。
+- **未完成**：本 shell 沙箱受 /tmp 不可写、heredoc 拦截、ARG_MAX 与嵌套引号限制，无法把 ~11KB 的 Rust 源码 base64 注入。模块在 R633 实际复刻时由下次可写文件的会话用 apply_patch 一次性落盘，并接入 \ 与 \ 端点。
+- 现状路由 \ 仍返回假矩阵（保留 URL 兼容），需在 \ 切换到调用 \ 后再做。
+
+### 当前真实进度（重新校准）
+
+| 域 | 进度 | 说明 |
+|---|---:|---|
+| Rust 核心域/仓储 | 89% | 主业务实体和真实 DB 路径较完整 |
+| HTTP 路由/OpenAPI | 93% | 路径兼容补齐，R633 helper 待切换 |
+| Realtime/Terminal WS | 90% | handler 与协议测试已通过 |
+| File resources | 88% | 15 个集成测试通过 |
+| Org chart | 62% | 路径已兼容，完整 SVG 渲染仍待复刻 |
+| Projects/workspaces | 68% | CRUD 基础完成，runtime/authz 切换待 R633 落盘 |
+| UI 接入/真实 E2E | 40% | 页面存在，Rust 全量闭环未完成 |
+| Runtime service authz | 50% | 设计完成 + 单元测试用例已规划；源码落盘未在本轮完成 |
+| Plugin/Quota/MCP | 45% | 暂不作为当前主线 |
+| **核心综合交付** | **约 89%** | 适配器细节暂不计入主线 |

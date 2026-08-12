@@ -197,7 +197,6 @@ fn resolve_command(config: &Value) -> String {
         .unwrap_or_else(|| constants::HERMES_CLI.to_string())
 }
 
-
 /// 如果 `adapterConfig.promptTemplate` 配置存在，使用 `prompt_template` 模块
 /// 渲染；否则原样返回 `context.prompt`。
 ///
@@ -238,7 +237,10 @@ pub fn render_full_prompt(
     let rendered = match template {
         Some(template_str) => {
             // 模板 → 条件段 → 变量替换
-            let conditional = prompt_template::render_conditional_sections(template_str, &Value::Object(Default::default()));
+            let conditional = prompt_template::render_conditional_sections(
+                template_str,
+                &Value::Object(Default::default()),
+            );
             let data = build_template_data(config, context_prompt);
             prompt_template::render_template(&conditional, &data)
         }
@@ -348,7 +350,6 @@ mod tests {
         assert_eq!(cfg_bool(Some(&serde_json::json!(true))), Some(true));
     }
 
-
     #[test]
     fn render_full_prompt_no_template_returns_context_prompt() {
         let context_prompt = "Hello, Hermes";
@@ -365,13 +366,7 @@ mod tests {
             "agentName": "Hermes",
             "model": "auto"
         });
-        let rendered = render_full_prompt(
-            context_prompt,
-            &config,
-            None,
-            None,
-            None,
-        );
+        let rendered = render_full_prompt(context_prompt, &config, None, None, None);
         assert_eq!(rendered, "Agent=Hermes Model=auto");
     }
 

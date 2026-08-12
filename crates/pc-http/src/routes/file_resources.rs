@@ -58,7 +58,8 @@ async fn list_files(
     Query(query): Query<FileListQuery>,
 ) -> ApiResult<Json<FileListResponse>> {
     require_user_id(&state, &headers).await?;
-    let _guard = limiter()
+    let request_limiter = limiter();
+    let _guard = request_limiter
         .acquire(&format!("list:{issue_id}"))
         .map_err(map_err)?;
     let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());
@@ -73,7 +74,8 @@ async fn resolve_files(
     Query(query): Query<FileResolveQuery>,
 ) -> ApiResult<Json<ResolvedWorkspaceResource>> {
     require_user_id(&state, &headers).await?;
-    let _guard = limiter()
+    let request_limiter = limiter();
+    let _guard = request_limiter
         .acquire(&format!("resolve:{issue_id}"))
         .map_err(map_err)?;
     let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());
@@ -96,7 +98,8 @@ async fn file_content(
     Query(query): Query<ContentQuery>,
 ) -> ApiResult<Json<FileContentResponse>> {
     require_user_id(&state, &headers).await?;
-    let _guard = limiter()
+    let request_limiter = limiter();
+    let _guard = request_limiter
         .acquire(&format!("content:{issue_id}"))
         .map_err(map_err)?;
     let svc = DefaultWorkspaceFileResourceService::new(state.db.clone());

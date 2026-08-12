@@ -69,8 +69,13 @@ impl ClientFrame {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum RawClientJson {
-    Auth { token: String },
-    Resize { cols: u16, rows: u16 },
+    Auth {
+        token: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -104,11 +109,17 @@ impl RawClientJson {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ServerFrame {
     Ready {
-        #[serde(rename = "setupSessionId")] setup_session_id: String,
-        #[serde(rename = "terminalSessionId")] terminal_session_id: String,
+        #[serde(rename = "setupSessionId")]
+        setup_session_id: String,
+        #[serde(rename = "terminalSessionId")]
+        terminal_session_id: String,
     },
-    Output { data: String },
-    Error { message: String },
+    Output {
+        data: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl ServerFrame {
@@ -126,13 +137,23 @@ mod tests {
     #[test]
     fn decode_auth_token() {
         let f = ClientFrame::decode(br#"{"type":"auth","token":"abc123"}"#);
-        assert_eq!(f, ClientFrame::Auth { token: "abc123".into() });
+        assert_eq!(
+            f,
+            ClientFrame::Auth {
+                token: "abc123".into()
+            }
+        );
     }
 
     #[test]
     fn decode_auth_token_with_whitespace_trimmed() {
         let f = ClientFrame::decode(br#"{"type":"auth","token":"  tok  "}"#);
-        assert_eq!(f, ClientFrame::Auth { token: "tok".into() });
+        assert_eq!(
+            f,
+            ClientFrame::Auth {
+                token: "tok".into()
+            }
+        );
     }
 
     #[test]
@@ -183,7 +204,9 @@ mod tests {
 
     #[test]
     fn server_frame_output_round_trip() {
-        let s = ServerFrame::Output { data: "hello\r\n$ ".into() };
+        let s = ServerFrame::Output {
+            data: "hello\r\n$ ".into(),
+        };
         let json = s.to_json();
         assert!(json.contains(r#""type":"output""#));
         assert!(json.contains(r#""data":"hello\r\n$ ""#));
@@ -191,7 +214,9 @@ mod tests {
 
     #[test]
     fn server_frame_error_round_trip() {
-        let s = ServerFrame::Error { message: "auth failed".into() };
+        let s = ServerFrame::Error {
+            message: "auth failed".into(),
+        };
         let json = s.to_json();
         assert!(json.contains(r#""type":"error""#));
         assert!(json.contains(r#""message":"auth failed""#));
@@ -222,7 +247,13 @@ mod tests {
     fn e2e_resize_then_output_flow() {
         // 客户端发 resize
         let c1 = ClientFrame::decode(br#"{"type":"resize","cols":120,"rows":40}"#);
-        assert_eq!(c1, ClientFrame::Resize { cols: 120, rows: 40 });
+        assert_eq!(
+            c1,
+            ClientFrame::Resize {
+                cols: 120,
+                rows: 40
+            }
+        );
         // 服务端回 output
         let s = ServerFrame::Output { data: "$ ".into() };
         let parsed: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
@@ -236,7 +267,9 @@ mod tests {
         let c = ClientFrame::decode(b"ls -la\n");
         assert_eq!(c, ClientFrame::RawText("ls -la\n".into()));
         // 服务端回 output 模拟
-        let s = ServerFrame::Output { data: "total 0\n".into() };
+        let s = ServerFrame::Output {
+            data: "total 0\n".into(),
+        };
         assert!(s.to_json().contains("total 0"));
     }
 }

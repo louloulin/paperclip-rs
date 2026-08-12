@@ -17,7 +17,9 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect paperclip_repos")
+    Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect paperclip_repos")
 }
 
 /// 插入 unique 公司（不依赖 company_service 业务逻辑，纯 schema 测试）
@@ -40,12 +42,16 @@ async fn insert_fake_user(db: &Db, tag: &str) -> String {
         "INSERT INTO \"user\" (id, name, email, email_verified, created_at, updated_at) \
          VALUES ($1, $2, $3, false, now(), now())",
     )
-        .bind(&id)
-        .bind(format!("r626-user-{tag}"))
-        .bind(format!("r626-{}-{}@test.local", tag, Uuid::new_v4().simple()))
-        .execute(db.pool())
-        .await
-        .expect("insert user");
+    .bind(&id)
+    .bind(format!("r626-user-{tag}"))
+    .bind(format!(
+        "r626-{}-{}@test.local",
+        tag,
+        Uuid::new_v4().simple()
+    ))
+    .execute(db.pool())
+    .await
+    .expect("insert user");
     id
 }
 
@@ -73,7 +79,10 @@ async fn r626_is_active_member_owner_returns_true() {
     add_owner_member(&db, cid, &uid).await;
 
     let repo = CompanyMemberRepo::new(&db);
-    let ok = repo.is_active_member(&uid, cid).await.expect("is_active_member");
+    let ok = repo
+        .is_active_member(&uid, cid)
+        .await
+        .expect("is_active_member");
     assert!(ok, "owner should be active member");
 }
 
@@ -84,12 +93,20 @@ async fn r626_is_active_member_archived_returns_false() {
     let cid = insert_company(&db, "iam-archived").await;
     let uid = insert_fake_user(&db, "iam-archived").await;
     add_owner_member(&db, cid, &uid).await;
-    sqlx::query("UPDATE company_memberships SET status='archived' WHERE company_id=$1 AND principal_id=$2")
-        .bind(cid).bind(&uid)
-        .execute(db.pool()).await.expect("archive");
+    sqlx::query(
+        "UPDATE company_memberships SET status='archived' WHERE company_id=$1 AND principal_id=$2",
+    )
+    .bind(cid)
+    .bind(&uid)
+    .execute(db.pool())
+    .await
+    .expect("archive");
 
     let repo = CompanyMemberRepo::new(&db);
-    let ok = repo.is_active_member(&uid, cid).await.expect("is_active_member");
+    let ok = repo
+        .is_active_member(&uid, cid)
+        .await
+        .expect("is_active_member");
     assert!(!ok, "archived member should NOT be active");
 }
 
@@ -107,7 +124,10 @@ async fn r626_is_active_member_agent_principal_excluded() {
     .execute(db.pool()).await.expect("insert agent member");
 
     let repo = CompanyMemberRepo::new(&db);
-    let ok = repo.is_active_member(&agent_id, cid).await.expect("is_active_member");
+    let ok = repo
+        .is_active_member(&agent_id, cid)
+        .await
+        .expect("is_active_member");
     assert!(!ok, "agent principal should NOT count as user member");
 }
 
@@ -142,7 +162,10 @@ async fn r626_list_for_user_with_company_returns_membership_role() {
     add_owner_member(&db, cid, &uid).await;
 
     let repo = CompanyMemberRepo::new(&db);
-    let rows = repo.list_for_user_with_company(&uid).await.expect("list_for_user_with_company");
+    let rows = repo
+        .list_for_user_with_company(&uid)
+        .await
+        .expect("list_for_user_with_company");
     let hit = rows.iter().find(|(id, _, _, _)| *id == cid).expect("found");
     assert_eq!(hit.2.as_deref(), Some("owner"), "membership_role = owner");
     assert_eq!(hit.3.as_deref(), Some("active"), "status = active");
@@ -162,7 +185,9 @@ async fn r626_replace_user_companies_clears_all_memberships() {
 
     // 保留 0 个 company（应删除 c1 + c2 的 owner 关系）
     let repo = CompanyMemberRepo::new(&db);
-    repo.replace_user_companies(&uid, &[]).await.expect("replace");
+    repo.replace_user_companies(&uid, &[])
+        .await
+        .expect("replace");
 
     let remaining: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM company_memberships WHERE principal_type='user' AND principal_id=$1",
@@ -182,7 +207,9 @@ async fn r626_replace_user_companies_inserts_with_principal_columns() {
     let c1 = insert_company(&db, "ruci").await;
 
     let repo = CompanyMemberRepo::new(&db);
-    repo.replace_user_companies(&uid, &[c1]).await.expect("replace");
+    repo.replace_user_companies(&uid, &[c1])
+        .await
+        .expect("replace");
 
     let row: Option<(String, String, String, String)> = sqlx::query_as(
         "SELECT principal_type, principal_id, membership_role, status \
@@ -211,5 +238,8 @@ async fn r626_company_memberships_has_no_user_id_column() {
     .fetch_optional(db.pool())
     .await
     .expect("check schema");
-    assert!(row.is_none(), "company_memberships should NOT have user_id column");
+    assert!(
+        row.is_none(),
+        "company_memberships should NOT have user_id column"
+    );
 }

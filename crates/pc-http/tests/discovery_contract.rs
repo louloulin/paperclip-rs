@@ -157,4 +157,13 @@ async fn org_chart_svg_falls_back_to_placeholder_for_empty_company() {
     assert_eq!(status, 200, "org chart placeholder");
     assert!(text.contains("<svg"), "should be SVG: {text}");
     assert!(text.contains("</svg>"));
+
+    let (alias_status, _alias_body, alias_text) = call(
+        &app,
+        "GET",
+        &format!("/api/companies/{company_id}/org.svg?style=schematic"),
+    )
+    .await;
+    assert_eq!(alias_status, 200, "org.svg alias");
+    assert!(alias_text.contains("style: schematic"));
 }

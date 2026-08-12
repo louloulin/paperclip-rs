@@ -114,7 +114,6 @@ impl TerminalSshShell for FakeSshShell {
         self.closed = true;
         Ok(())
     }
-
 }
 
 // ============================================================================

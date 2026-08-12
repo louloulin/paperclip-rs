@@ -39,8 +39,8 @@ pub fn parse_terminal_path(pathname: &str) -> Result<String, TerminalPathError> 
     if rest != "terminal/ws" {
         return Err(TerminalPathError::NoMatch(pathname.into()));
     }
-    let id = percent_decode(raw_id)
-        .map_err(|e| TerminalPathError::UrlDecodeError(e.to_string()))?;
+    let id =
+        percent_decode(raw_id).map_err(|e| TerminalPathError::UrlDecodeError(e.to_string()))?;
     if id.is_empty() {
         return Err(TerminalPathError::EmptySetupSessionId);
     }
@@ -120,10 +120,9 @@ mod tests {
 
     #[test]
     fn rejects_wrong_suffix() {
-        let err = parse_terminal_path(
-            "/api/environment-custom-image-setup-sessions/abc/terminal/ssh",
-        )
-        .unwrap_err();
+        let err =
+            parse_terminal_path("/api/environment-custom-image-setup-sessions/abc/terminal/ssh")
+                .unwrap_err();
         assert!(matches!(err, TerminalPathError::NoMatch(_)));
     }
 
@@ -137,18 +136,19 @@ mod tests {
     #[test]
     fn rejects_empty_id() {
         // `//terminal/ws` → empty id after split_once
-        let err =
-            parse_terminal_path("/api/environment-custom-image-setup-sessions//terminal/ws")
-                .unwrap_err();
-        assert!(matches!(err, TerminalPathError::NoMatch(_) | TerminalPathError::EmptySetupSessionId));
+        let err = parse_terminal_path("/api/environment-custom-image-setup-sessions//terminal/ws")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TerminalPathError::NoMatch(_) | TerminalPathError::EmptySetupSessionId
+        ));
     }
 
     #[test]
     fn rejects_invalid_percent_encoding() {
-        let err = parse_terminal_path(
-            "/api/environment-custom-image-setup-sessions/abc%ZZ/terminal/ws",
-        )
-        .unwrap_err();
+        let err =
+            parse_terminal_path("/api/environment-custom-image-setup-sessions/abc%ZZ/terminal/ws")
+                .unwrap_err();
         assert!(matches!(err, TerminalPathError::UrlDecodeError(_)));
     }
 }

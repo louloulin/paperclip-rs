@@ -99,9 +99,11 @@ pub fn parse_execute_config(
     let api_base_url = read_string(config, "apiBaseUrl")
         .or_else(|| env.get("HERMES_GATEWAY_BASE_URL").cloned())
         .or_else(|| env.get("HERMES_BASE_URL").cloned())
-        .ok_or_else(|| ExecuteError::InvalidConfig(
-            "missing apiBaseUrl (config or HERMES_GATEWAY_BASE_URL env)".to_owned(),
-        ))?;
+        .ok_or_else(|| {
+            ExecuteError::InvalidConfig(
+                "missing apiBaseUrl (config or HERMES_GATEWAY_BASE_URL env)".to_owned(),
+            )
+        })?;
     let api_key = read_string(config, "apiKey")
         .or_else(|| env.get("HERMES_API_KEY").cloned())
         .or_else(|| env.get("HERMES_GATEWAY_KEY").cloned())

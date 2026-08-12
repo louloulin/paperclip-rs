@@ -34,8 +34,7 @@ pub struct TerminalSessionRecord {
 }
 
 /// Host key verify 决策（与 Node `verifyOrPinHostKey` 一致：返回 true 即接受）。
-pub type HostKeyVerifier =
-    std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>;
+pub type HostKeyVerifier = std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// Terminal session store 接口（mockable）。
 ///
@@ -98,10 +97,8 @@ impl InMemoryStore {
 
     pub fn insert(&self, record: TerminalSessionRecord) {
         let mut g = self.inner.lock().expect("poisoned");
-        g.sessions.insert(
-            (record.setup_session_id.clone(), record.id.clone()),
-            record,
-        );
+        g.sessions
+            .insert((record.setup_session_id.clone(), record.id.clone()), record);
     }
 
     /// 设置 verify_or_pin_host_key 的 test hook：返回 cb(terminal_session_id, host_key_sha256) → bool
@@ -184,22 +181,13 @@ mod tests {
     async fn in_memory_store_pin_then_verify_same() {
         let store = InMemoryStore::new();
         // 首次：pin
-        let ok = store
-            .verify_or_pin_host_key("t-1", "hk-abc")
-            .await
-            .unwrap();
+        let ok = store.verify_or_pin_host_key("t-1", "hk-abc").await.unwrap();
         assert!(ok);
         // 二次：相同 hk → 接受
-        let ok = store
-            .verify_or_pin_host_key("t-1", "hk-abc")
-            .await
-            .unwrap();
+        let ok = store.verify_or_pin_host_key("t-1", "hk-abc").await.unwrap();
         assert!(ok);
         // 二次：不同 hk → 拒绝
-        let ok = store
-            .verify_or_pin_host_key("t-1", "hk-XYZ")
-            .await
-            .unwrap();
+        let ok = store.verify_or_pin_host_key("t-1", "hk-XYZ").await.unwrap();
         assert!(!ok);
     }
 
@@ -207,10 +195,7 @@ mod tests {
     async fn in_memory_store_pin_hook_overrides_default() {
         let store = InMemoryStore::new();
         store.set_pin_hook(|_id, _hk| false);
-        let ok = store
-            .verify_or_pin_host_key("t-1", "hk-abc")
-            .await
-            .unwrap();
+        let ok = store.verify_or_pin_host_key("t-1", "hk-abc").await.unwrap();
         assert!(!ok);
     }
 }

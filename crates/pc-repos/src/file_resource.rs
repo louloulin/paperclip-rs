@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
@@ -86,18 +86,18 @@ impl FileResourceLimiter {
         let now = Instant::now();
         {
             let mut windows = self.windows_by_key.lock().expect("windows poisoned");
-            windows.retain(|_, w| now.duration_since(w.started_at).as_millis() < self.config.window_ms as u128);
+            windows.retain(|_, w| {
+                now.duration_since(w.started_at).as_millis() < self.config.window_ms as u128
+            });
         }
 
         // Check + increment window counter
         {
             let mut windows = self.windows_by_key.lock().expect("windows poisoned");
-            let entry = windows
-                .entry(key.to_string())
-                .or_insert(WindowState {
-                    started_at: now,
-                    count: 0,
-                });
+            let entry = windows.entry(key.to_string()).or_insert(WindowState {
+                started_at: now,
+                count: 0,
+            });
             // If the window expired, reset
             if now.duration_since(entry.started_at).as_millis() >= self.config.window_ms as u128 {
                 entry.started_at = now;
@@ -134,6 +134,15 @@ impl FileResourceLimiter {
 pub struct ReleaseGuard<'a> {
     limiter: &'a FileResourceLimiter,
     key: String,
+}
+
+impl std::fmt::Debug for ReleaseGuard<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReleaseGuard")
+            .field("key", &self.key)
+            .finish()
+    }
 }
 
 impl Drop for ReleaseGuard<'_> {
@@ -250,10 +259,8 @@ pub trait WorkspaceFileResourceService: Send + Sync {
 #[async_trait::async_trait]
 pub trait DbLike: Send + Sync {
     /// 返回 issue 的 company_id；不存在 → None
-    async fn get_issue_company_id(
-        &self,
-        issue_id: Uuid,
-    ) -> Result<Option<Uuid>, FileResourceError>;
+    async fn get_issue_company_id(&self, issue_id: Uuid)
+        -> Result<Option<Uuid>, FileResourceError>;
 
     async fn list_project_files(
         &self,
@@ -265,6 +272,32 @@ pub trait DbLike: Send + Sync {
         issue_id: Uuid,
         path: &str,
     ) -> Result<Option<(String, Option<String>, Option<i64>)>, FileResourceError>;
+}
+
+#[async_trait::async_trait]
+impl<T> DbLike for Arc<T>
+where
+    T: DbLike + ?Sized,
+{
+    async fn get_issue_company_id(
+        &self,
+        issue_id: Uuid,
+    ) -> Result<Option<Uuid>, FileResourceError> {
+        (**self).get_issue_company_id(issue_id).await
+    }
+    async fn list_project_files(
+        &self,
+        issue_id: Uuid,
+    ) -> Result<Vec<(String, Option<String>, Option<i64>)>, FileResourceError> {
+        (**self).list_project_files(issue_id).await
+    }
+    async fn get_project_file_content(
+        &self,
+        issue_id: Uuid,
+        path: &str,
+    ) -> Result<Option<(String, Option<String>, Option<i64>)>, FileResourceError> {
+        (**self).get_project_file_content(issue_id, path).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -287,6 +320,11 @@ impl DbLike for crate::Db {
         crate::issue::IssueRepo::new(self)
             .list_project_files(issue_id)
             .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|(path, mime, size)| (path, Some(mime), size))
+                    .collect()
+            })
             .map_err(|e| FileResourceError::Io(e.to_string()))
     }
 
@@ -528,7 +566,10 @@ mod tests {
         struct FakeDb;
         #[async_trait::async_trait]
         impl DbLike for FakeDb {
-            async fn get_issue_company_id(&self, _: Uuid) -> Result<Option<Uuid>, FileResourceError> {
+            async fn get_issue_company_id(
+                &self,
+                _: Uuid,
+            ) -> Result<Option<Uuid>, FileResourceError> {
                 Ok(Some(Uuid::nil()))
             }
             async fn list_project_files(
@@ -544,8 +585,13 @@ mod tests {
                 &self,
                 _: Uuid,
                 _: &str,
-            ) -> Result<Option<(String, Option<String>, Option<i64>)>, FileResourceError> {
-                Ok(Some(("hello world".into(), Some("text/plain".into()), Some(11))))
+            ) -> Result<Option<(String, Option<String>, Option<i64>)>, FileResourceError>
+            {
+                Ok(Some((
+                    "hello world".into(),
+                    Some("text/plain".into()),
+                    Some(11),
+                )))
             }
         }
 
@@ -576,7 +622,10 @@ mod tests {
         struct FakeDbLong;
         #[async_trait::async_trait]
         impl DbLike for FakeDbLong {
-            async fn get_issue_company_id(&self, _: Uuid) -> Result<Option<Uuid>, FileResourceError> {
+            async fn get_issue_company_id(
+                &self,
+                _: Uuid,
+            ) -> Result<Option<Uuid>, FileResourceError> {
                 Ok(Some(Uuid::nil()))
             }
             async fn list_project_files(
@@ -589,7 +638,8 @@ mod tests {
                 &self,
                 _: Uuid,
                 _: &str,
-            ) -> Result<Option<(String, Option<String>, Option<i64>)>, FileResourceError> {
+            ) -> Result<Option<(String, Option<String>, Option<i64>)>, FileResourceError>
+            {
                 Ok(Some(("x".repeat(100), None, Some(100))))
             }
         }

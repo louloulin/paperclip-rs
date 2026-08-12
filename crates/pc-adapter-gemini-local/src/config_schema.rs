@@ -162,7 +162,10 @@ mod tests {
         let options = engine.options.as_ref().expect("options");
         let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
         for required in ["auto", "cli", "acp"] {
-            assert!(values.contains(&required), "missing engine option: {required}");
+            assert!(
+                values.contains(&required),
+                "missing engine option: {required}"
+            );
         }
         assert_eq!(engine.meta, None);
     }
@@ -186,14 +189,19 @@ mod tests {
     fn defaults_align_with_constants() {
         let schema = get_config_schema();
         let mode = schema.iter().find(|f| f.key == "mode").unwrap();
-        assert_eq!(mode.default, Some(serde_json::json!(DEFAULT_ACP_ENGINE_MODE)));
+        assert_eq!(
+            mode.default,
+            Some(serde_json::json!(DEFAULT_ACP_ENGINE_MODE))
+        );
         let perms = schema
             .iter()
             .find(|f| f.key == "nonInteractivePermissions")
             .unwrap();
         assert_eq!(
             perms.default,
-            Some(serde_json::json!(DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS))
+            Some(serde_json::json!(
+                DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS
+            ))
         );
         let idle = schema.iter().find(|f| f.key == "warmHandleIdleMs").unwrap();
         assert_eq!(

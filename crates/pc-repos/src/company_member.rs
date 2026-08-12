@@ -359,10 +359,12 @@ impl<'a> CompanyMemberRepo<'a> {
         company_ids: &[Uuid],
     ) -> RepoResult<()> {
         let mut tx = self.db.pool().begin().await?;
-        sqlx::query("DELETE FROM company_memberships WHERE principal_type = 'user' AND principal_id = $1")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "DELETE FROM company_memberships WHERE principal_type = 'user' AND principal_id = $1",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
         for cid in company_ids {
             sqlx::query(
                 "INSERT INTO company_memberships (principal_type, principal_id, company_id, membership_role, status) \

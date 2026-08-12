@@ -26,7 +26,9 @@ pub mod traits;
 pub use frame::{ClientFrame, ClientFrameError, ServerFrame};
 pub use handler::{handle_socket, parse_upgrade_path};
 pub use path::{parse_terminal_path, TerminalPathError};
-pub use session_store::{HostKeyVerifier, InMemoryStore, TerminalSessionRecord, TerminalSessionStore};
+pub use session_store::{
+    HostKeyVerifier, InMemoryStore, TerminalSessionRecord, TerminalSessionStore,
+};
 pub use traits::{
     FakeSshConnector, FakeSshShell, SshConnectionParams, TerminalDimensions, TerminalSshConnector,
     TerminalSshShell,

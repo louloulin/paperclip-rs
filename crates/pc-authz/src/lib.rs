@@ -26,6 +26,7 @@ pub mod builder;
 pub mod http;
 pub mod mentions;
 pub mod policy;
+pub mod runtime_service;
 pub mod trust;
 pub mod types;
 
@@ -40,6 +41,13 @@ pub use mentions::{
     extract_user_mention_ids, parse_agent_mention_href, parse_user_mention_href,
     ParsedAgentMention, ParsedUserMention, AGENT_MENTION_SCHEME, PIPELINE_MENTION_SCHEME,
     PROJECT_MENTION_SCHEME, ROUTINE_MENTION_SCHEME, SKILL_MENTION_SCHEME, USER_MENTION_SCHEME,
+};
+pub use runtime_service::{
+    assert_can_manage_execution_workspace_runtime_services,
+    assert_can_manage_project_workspace_runtime_services,
+    read_run_issue_id, run_execution_policy, AgentContextRow, IssueContextRow,
+    ProjectContextRow, RunContextRow, RuntimeServiceActor, RuntimeServiceAuthzError,
+    RuntimeServiceContext, WORKSPACE_RUNTIME_ELIGIBLE_ISSUE_STATUSES,
 };
 pub use policy::{evaluate, principal_type_of, AuthzError, Context};
 pub use trust::{

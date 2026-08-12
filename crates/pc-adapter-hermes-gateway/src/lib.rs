@@ -59,7 +59,9 @@ impl HermesGatewayAdapter {
         let base = base_url
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty());
-        let key = api_key.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        let key = api_key
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
         let sk = extra_session_key
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty());
@@ -77,7 +79,11 @@ impl HermesGatewayAdapter {
     /// 暴露给 server / 测试的内部 hook：把 runtime ctx 缓存到 lib crate。
     fn set_runtime_context(base_url: String, api_key: String, session_key: Option<String>) {
         RUNTIME_CONTEXT.with(|slot| {
-            *slot.borrow_mut() = Some(RuntimeContext { base_url, api_key, session_key });
+            *slot.borrow_mut() = Some(RuntimeContext {
+                base_url,
+                api_key,
+                session_key,
+            });
         });
     }
 

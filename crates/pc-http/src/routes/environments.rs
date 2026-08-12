@@ -803,4 +803,3 @@ async fn terminal_ws(
         )
     })
 }
-

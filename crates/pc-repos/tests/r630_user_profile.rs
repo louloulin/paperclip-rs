@@ -8,7 +8,6 @@
 //!
 //! 测试环境：复用 paperclip_repos DB，每测试 unique IDs。
 
-
 use pc_db::Db;
 use pc_repos::user_profile::UserProfileRepo;
 use uuid::Uuid;
@@ -16,7 +15,9 @@ use uuid::Uuid;
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
 
 async fn db() -> Db {
-    Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect paperclip_repos")
+    Db::connect(TEST_DATABASE_URL, 4, 0)
+        .await
+        .expect("connect paperclip_repos")
 }
 
 async fn insert_company(db: &Db, tag: &str) -> Uuid {
@@ -39,7 +40,11 @@ async fn insert_fake_user(db: &Db, tag: &str) -> String {
     )
     .bind(&id)
     .bind(format!("r630-user-{tag}-{}", Uuid::new_v4().simple()))
-    .bind(format!("r630-{}-{}@test.local", tag, Uuid::new_v4().simple()))
+    .bind(format!(
+        "r630-{}-{}@test.local",
+        tag,
+        Uuid::new_v4().simple()
+    ))
     .execute(db.pool())
     .await
     .expect("insert user");
@@ -192,6 +197,9 @@ async fn load_returns_none_for_missing_company() {
 async fn empty_slug_returns_none() {
     let db = db().await;
     let company_id = insert_company(&db, "empty").await;
-    let result = UserProfileRepo::new(&db).load(company_id, "").await.expect("load");
+    let result = UserProfileRepo::new(&db)
+        .load(company_id, "")
+        .await
+        .expect("load");
     assert!(result.is_none());
 }

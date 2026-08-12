@@ -58,7 +58,9 @@ fn is_valid_model_id(model_id: &str) -> bool {
 pub fn require_opencode_model_id(input: Option<&str>) -> Result<String, String> {
     let model = input.unwrap_or("").trim();
     if !is_valid_opencode_model_id(model) {
-        return Err("OpenCode requires `adapterConfig.model` in provider/model format.".to_string());
+        return Err(
+            "OpenCode requires `adapterConfig.model` in provider/model format.".to_string(),
+        );
     }
     Ok(model.to_string())
 }
@@ -118,8 +120,7 @@ pub fn dedupe_models(models: Vec<AdapterModel>) -> Vec<AdapterModel> {
 pub fn sort_models(models: Vec<AdapterModel>) -> Vec<AdapterModel> {
     let mut sorted = models;
     sorted.sort_by(|a, b| {
-        a.id
-            .to_lowercase()
+        a.id.to_lowercase()
             .chars()
             .zip(b.id.to_lowercase().chars())
             .map(|(x, y)| x.cmp(&y))
@@ -136,7 +137,9 @@ mod tests {
     fn is_valid_opencode_model_id_accepts_typical_ids() {
         assert!(is_valid_opencode_model_id("anthropic/claude-3.5-sonnet"));
         assert!(is_valid_opencode_model_id("openai/gpt-4o"));
-        assert!(is_valid_opencode_model_id("openrouter/anthropic/claude-3-haiku"));
+        assert!(is_valid_opencode_model_id(
+            "openrouter/anthropic/claude-3-haiku"
+        ));
         assert!(is_valid_opencode_model_id("zai/glm-4.5"));
     }
 
@@ -194,9 +197,18 @@ also-no-slash
     #[test]
     fn dedupe_preserves_first_occurrence() {
         let models = vec![
-            AdapterModel { id: "a/1".into(), label: "first".into() },
-            AdapterModel { id: "b/2".into(), label: "second".into() },
-            AdapterModel { id: "a/1".into(), label: "duplicate".into() },
+            AdapterModel {
+                id: "a/1".into(),
+                label: "first".into(),
+            },
+            AdapterModel {
+                id: "b/2".into(),
+                label: "second".into(),
+            },
+            AdapterModel {
+                id: "a/1".into(),
+                label: "duplicate".into(),
+            },
         ];
         let deduped = dedupe_models(models);
         assert_eq!(deduped.len(), 2);
@@ -205,7 +217,10 @@ also-no-slash
 
     #[test]
     fn dedupe_falls_back_label_to_id() {
-        let models = vec![AdapterModel { id: "p/m".into(), label: "   ".into() }];
+        let models = vec![AdapterModel {
+            id: "p/m".into(),
+            label: "   ".into(),
+        }];
         let deduped = dedupe_models(models);
         assert_eq!(deduped[0].label, "p/m");
     }
@@ -213,9 +228,18 @@ also-no-slash
     #[test]
     fn sort_orders_alphabetically() {
         let models = vec![
-            AdapterModel { id: "z/1".into(), label: "z".into() },
-            AdapterModel { id: "a/1".into(), label: "a".into() },
-            AdapterModel { id: "m/1".into(), label: "m".into() },
+            AdapterModel {
+                id: "z/1".into(),
+                label: "z".into(),
+            },
+            AdapterModel {
+                id: "a/1".into(),
+                label: "a".into(),
+            },
+            AdapterModel {
+                id: "m/1".into(),
+                label: "m".into(),
+            },
         ];
         let sorted = sort_models(models);
         assert_eq!(sorted[0].id, "a/1");

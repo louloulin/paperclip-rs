@@ -14,10 +14,12 @@ use crate::{state::require_user_id, AppState};
 use pc_repos::agent::AgentRepo;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/api/companies/:company_id/org-chart.svg",
-        get(org_chart_svg),
-    )
+    Router::new()
+        .route(
+            "/api/companies/:company_id/org-chart.svg",
+            get(org_chart_svg),
+        )
+        .route("/api/companies/:company_id/org.svg", get(org_chart_svg))
 }
 
 #[derive(Debug, Deserialize, Default)]

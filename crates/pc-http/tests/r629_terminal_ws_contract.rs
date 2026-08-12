@@ -147,7 +147,9 @@ async fn terminal_ws_full_lifecycle() {
 
     // 4. resize + raw
     ws.send(tokio_tungstenite::tungstenite::Message::Text(
-        json!({"type":"resize","cols":120,"rows":40}).to_string().into(),
+        json!({"type":"resize","cols":120,"rows":40})
+            .to_string()
+            .into(),
     ))
     .await
     .expect("send resize");

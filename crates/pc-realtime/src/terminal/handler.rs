@@ -60,13 +60,23 @@ pub async fn handle_socket(
     {
         Ok(Some(s)) => s,
         Ok(None) => {
-            send_error_and_close(socket, "Terminal session not found.", SSH_ERROR_CLOSE_CODE, "not_found")
-                .await;
+            send_error_and_close(
+                socket,
+                "Terminal session not found.",
+                SSH_ERROR_CLOSE_CODE,
+                "not_found",
+            )
+            .await;
             return;
         }
         Err(e) => {
-            send_error_and_close(socket, &format!("session lookup failed: {e}"), SSH_ERROR_CLOSE_CODE, "lookup_error")
-                .await;
+            send_error_and_close(
+                socket,
+                &format!("session lookup failed: {e}"),
+                SSH_ERROR_CLOSE_CODE,
+                "lookup_error",
+            )
+            .await;
             return;
         }
     };
@@ -74,16 +84,26 @@ pub async fn handle_socket(
     // Step 2: validate auth token (placeholder — Node 用 validateTerminalUpgrade 校验签名)
     // R629: 简化为常字符串比对；真实实现（PC-XXX）需要 Ed25519 verify
     if auth_token.trim().is_empty() {
-        send_error_and_close(socket, "Terminal authentication required.", AUTH_REQUIRED_CLOSE_CODE, "auth_required")
-            .await;
+        send_error_and_close(
+            socket,
+            "Terminal authentication required.",
+            AUTH_REQUIRED_CLOSE_CODE,
+            "auth_required",
+        )
+        .await;
         return;
     }
 
     // Step 3: expiry check
     let now = chrono::Utc::now();
     if session.expires_at <= now {
-        send_error_and_close(socket, "Terminal session expired.", EXPIRED_CLOSE_CODE, "expired")
-            .await;
+        send_error_and_close(
+            socket,
+            "Terminal session expired.",
+            EXPIRED_CLOSE_CODE,
+            "expired",
+        )
+        .await;
         return;
     }
     let expires_in_ms = (session.expires_at - now).num_milliseconds().max(0) as u64;
@@ -238,7 +258,9 @@ async fn send_error_and_close(
     close_code: u16,
     log_reason: &'static str,
 ) {
-    let frame = ServerFrame::Error { message: message.into() };
+    let frame = ServerFrame::Error {
+        message: message.into(),
+    };
     let _ = socket.send(Message::Text(frame.to_json())).await;
     let _ = socket.close().await;
     info!(reason = log_reason, "terminal-ws auth closed");
@@ -258,9 +280,9 @@ pub fn parse_upgrade_path(path: &str) -> Result<String, serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-use crate::terminal::session_store::{InMemoryStore, TerminalSessionRecord};
-use crate::terminal::traits::FakeSshConnector;
-use std::sync::Arc;
+    use crate::terminal::session_store::{InMemoryStore, TerminalSessionRecord};
+    use crate::terminal::traits::FakeSshConnector;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn handler_connector_propagates_error() {
@@ -301,10 +323,9 @@ use std::sync::Arc;
 
     #[tokio::test]
     async fn parse_upgrade_path_returns_setup_id() {
-        let id = parse_upgrade_path(
-            "/api/environment-custom-image-setup-sessions/setup-42/terminal/ws",
-        )
-        .unwrap();
+        let id =
+            parse_upgrade_path("/api/environment-custom-image-setup-sessions/setup-42/terminal/ws")
+                .unwrap();
         assert_eq!(id, "setup-42");
     }
 
