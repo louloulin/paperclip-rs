@@ -5,6 +5,10 @@
 //!
 //! R547: Direct port of `paperclip/packages/shared/src/portability-fidelity.ts`.
 //! Pure functions over counts of supported / unsupported data categories.
+//
+//! Wire format: all JSON keys are camelCase to match Node upstream 1:1.
+
+use serde::{Deserialize, Serialize};
 
 /// Fidelity report schema version. Bump if `ExportFidelityReport` shape changes.
 pub const EXPORT_FIDELITY_REPORT_SCHEMA: &str = "paperclip-export-fidelity-v1";
@@ -26,7 +30,8 @@ pub const EXPORT_FIDELITY_COUNT_KEYS: [&str; 10] = [
     "issueMonitors",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PortabilityFidelitySeverity {
     Info,
     Warning,
@@ -43,14 +48,16 @@ impl PortabilityFidelitySeverity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PortabilityFidelityWarning {
     pub code: String,
     pub severity: PortabilityFidelitySeverity,
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportFidelityCounts {
     // i64 to match sqlx COUNT(*) return type (and the original
     // pc-core::portability_fidelity::ExportFidelityCounts definition before
@@ -74,6 +81,20 @@ impl ExportFidelityCounts {
         Self::default()
     }
 
+    /// Zero-value constant, mirrors Node buildExportFidelityReport empty counts.
+    pub const ZERO: Self = Self {
+        label_definitions: 0,
+        issue_label_references: 0,
+        issue_blocker_relations: 0,
+        issue_documents: 0,
+        issue_work_products: 0,
+        issue_attachments: 0,
+        approvals: 0,
+        cost_events: 0,
+        activity_log_entries: 0,
+        issue_monitors: 0,
+    };
+
     fn get_by_key(&self, key: &str) -> i64 {
         match key {
             "labelDefinitions" => self.label_definitions,
@@ -91,7 +112,8 @@ impl ExportFidelityCounts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportFidelityReport {
     pub schema: String,
     pub company_id: String,
@@ -156,6 +178,32 @@ pub fn build_export_fidelity_warnings(
             })
         })
         .collect()
+}
+
+
+/// Build complete export fidelity report: schema + company_id + counts + warnings + ISO timestamp.
+///
+/// 1:1 alignment with Node paperclip/packages/shared/src/portability-fidelity.ts `buildExportFidelityReport`.
+///
+/// - `company_id`: stored as-is (string)
+/// - `counts`: pre-filled by `collect_export_fidelity_counts`
+/// - `warnings`: if None, derive via `build_export_fidelity_warnings(&counts)`;
+///   if Some(vec), use directly (e.g. tests passing empty Vec)
+/// - timestamp: ISO-8601 (RFC 3339), equivalent to Node `new Date().toISOString()`
+pub fn build_export_fidelity_report(
+    company_id: &str,
+    counts: ExportFidelityCounts,
+    warnings: Option<Vec<PortabilityFidelityWarning>>,
+) -> ExportFidelityReport {
+    let warnings = warnings.unwrap_or_else(|| build_export_fidelity_warnings(&counts));
+    let generated_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    ExportFidelityReport {
+        schema: EXPORT_FIDELITY_REPORT_SCHEMA.to_string(),
+        company_id: company_id.to_string(),
+        counts,
+        warnings,
+        generated_at,
+    }
 }
 
 /// Normalize an arbitrary `serde_json::Value`-like map into an `ExportFidelityCounts`.

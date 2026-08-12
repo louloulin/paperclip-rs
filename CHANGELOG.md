@@ -1,7 +1,330 @@
+## R640 (2026-08-12) - P0-1 修复: export-fidelity 编译 + e2e 7/7 绿
+
+### 修复
+
+- pc-portability-fidelity crate:
+  - 新增 `ExportFidelityCounts::ZERO` 常量 (mirror Node `buildExportFidelityReport` empty counts)
+  - 新增 `build_export_fidelity_report(company_id, counts, warnings?) -> ExportFidelityReport` (1:1 对齐 Node)
+  - 所有公开 DTO 加 `Serialize + Deserialize` + `rename_all = "camelCase"` (wire format 1:1 对齐 Node)
+  - 加 `serde` + `chrono` 依赖
+
+- pc-portability e2e_export_fidelity 测试修正 (修复原本就跑不通的预存 bug):
+  - `make_company` 改用 `Uuid::new_v4()` (去除 `format!("ef-{}-{}", ...)` 拼出来无法 parse 的字符串)
+  - `cleanup` 改用 `WHERE name LIKE $1` (因为 id::text LIKE 无法匹配合法 UUID 字串)
+  - `make_company` 动态生成唯一 `issue_prefix` (避开 `companies_issue_prefix_idx` 唯一约束)
+  - 新增 `make_agent` helper, 满足 `cost_events.agent_id` FK 约束
+  - `INSERT INTO approvals` 改用 `(company_id, type, status, payload)` (匹配当前 schema; 旧版 `kind` 字段已不存在)
+  - `INSERT INTO cost_events` 改用 `(company_id, agent_id, provider, model, cost_cents, occurred_at)` (匹配当前 schema)
+  - 所有 `agent_id` bind 改为 `Uuid` 而非 `String` (uuid 列不能接受 text)
+
+### 测试
+
+- pc-portability-fidelity 编译: 从 5 errors → 0 errors
+- e2e_export_fidelity: 7 passed; 0 failed (全部真实 PG 集成测试)
+
 # Paperclip-rs Changelog
 
 > R638 / 2026-08-12
 > 所有用户可见的变化记录。版本号遵循 semver。
+
+# Paperclip-rs Changelog
+
+> R639.2 / 2026-08-12
+> 所有用户可见的变化记录。版本号遵循 semver。
+
+## R639.2 (2026-08-12) — pipelines-aggregation suggestions + reviews 子集闭环
+
+### 新增
+
+- crates/pc-pipelines::aggregation (176 行): types + constants + bounded_limit
+  - AttentionCaller (user / agent) + is_user/is_agent/agent_id helper
+  - AttentionCaseDisplay / AttentionPipelineRef / AttentionStageRef DTO 嵌套结构
+  - SuggestionItem / SuggestionPayload / SuggestionActor
+  - ReviewItem / ReviewConfig
+  - PipelineAttention / PipelineAttentionCounts
+  - 常量 PIPELINE_ATTENTION_DEFAULT_LIMIT=50 / PIPELINE_ATTENTION_MAX_LIMIT=100
+  - 纯函数 bounded_limit(limit, fallback, max): clamp 1..max
+- crates/pc-pipelines::aggregation_db (305 行): DB glue
+  - review_stage_awaits_caller_sql 与 Node reviewStageAwaitsCallerSql 1:1 对齐
+  - list_suggestions: pending_suggestion IS NOT NULL cases
+  - list_reviews: stage.kind='review' + caller-aware SQL 过滤
+  - list_pipeline_attention 组合入口
+  - suggestion_row_to_item / review_row_to_item row→DTO 转换器
+
+### 修复
+
+- review_stage_awaits_caller_sql 使用 ps.config 与 SQL alias 保持一致
+- 测试断言改为 set-equal 避免同秒插入导致 ORDER BY 不稳定
+
+### 测试
+
+- pc-pipelines lib: 2 单元测试 (bounded_limit + AttentionCaller)
+- pc-pipelines tests/r6392_pipeline_attention_db.rs: 4 集成测试 (真实 PG)
+- 全量回归: pc-pipelines 23 lib + 51 e2e + 4 新集成 = 78 测试绿
+
+### 累计
+
+- 工作空间 lib 测试总数: 7585 通过
+
+---
+## R639.2.2 (2026-08-12) — pipelines-aggregation heads_up 子集闭环
+
+### 新增
+
+- crates/pc-pipelines::aggregation 新增类型
+  - HeadsUpItem / DriftEvent / DriftUpstreamRef
+  - ActiveWork / OpenWorkIssue
+- crates/pc-pipelines::aggregation_db 新增 DB glue 函数
+  - list_drift_events
+  - load_active_work_for_cases
+  - load_open_work_issues_for_cases
+  - load_upstream_cases
+  - build_heads_up_items
+- list_pipeline_attention 主入口扩展为 suggestions + reviews + heads_up 三源合一
+
+### 测试
+
+- pc-pipelines lib: 1 新单元测试
+- pc-pipelines tests/r6392_pipeline_attention_db.rs: 3 新集成测试
+- 全量回归: pc-pipelines 24 lib + 51 e2e + 7 集成 = 82 测试绿
+
+### 累计
+
+- pc-pipelines::aggregation 完整覆盖 Node pipelines-aggregation.ts 中 listPipelineAttention 3 个数据源
+- 剩余 Node 函数: listCompanyCaseEvents / getCaseChildrenTree / getDirectChildrenSummary 留 R639.2.3
+
+---
+## R639.2.3 (2026-08-12) - pipelines-aggregation listCompanyCaseEvents + getDirectChildrenSummary 闭环
+
+### 新增
+
+- crates/pc-pipelines::aggregation 新增类型
+  - CompanyCaseEventsPage / CompanyCaseEventItem / CompanyCaseEventCase / CompanyCaseEventPipeline / CompanyCaseEventStage / CompanyCaseEventAgent
+  - AutomationContext / AutomationRoutine / AutomationIssue
+  - CaseChildrenRollup
+  - StageAutomation
+  - 常量 COMPANY_CASE_EVENTS_DEFAULT_LIMIT=50 / COMPANY_CASE_EVENTS_MAX_LIMIT=200
+- crates/pc-pipelines::aggregation 新增纯函数
+  - stage_automation_from_config(stage_id, config)
+  - payload_string(payload, key)
+- crates/pc-pipelines::case_events_db 新模块 (DB glue, 13489 字节)
+  - list_company_case_events - JOIN pipeline_case_events + cases + pipelines + stages + agents; 支持 types 过滤 + 分页(limit+1 OFFSET)
+  - lookup_routines_by_ids / lookup_issues_by_ids / lookup_stages_by_pipeline_ids - 批量 lookup
+  - build_company_case_event_item - DB row 转 DTO + automation 富化
+  - list_company_case_events_page - 主入口(分页 has_more + tokio::join 三路并发)
+  - get_direct_children_summary - count(*) FILTER WHERE parent_case_id
+- crates/pc-pipelines::Cargo.toml 添加 tokio 用于 tokio::join!
+
+### 测试
+
+- pc-pipelines lib: 4 新单元测试(stage_automation_from_config / payload_string / page serde / rollup default)
+- pc-pipelines tests/r6392_3_case_events_db.rs: 7 新集成测试(bounded / config parse / list basic / pagination / rollup counts / automation enrichment / empty lookup)
+- 全量回归: pc-pipelines 28 lib + 51 e2e + 7 R639.2 + 7 R639.2.3 = 93 测试绿
+
+### 累计
+
+- pc-pipelines::aggregation 覆盖 Node pipelines-aggregation.ts 的:
+  - listPipelineAttention (R639.2 + R639.2.2)
+  - listCompanyCaseEvents (R639.2.3)
+  - getDirectChildrenSummary (R639.2.3)
+  - boundedLimit (R639.2)
+  - stageAutomationFromConfig + payloadString (R639.2.3)
+- 剩余: getCaseChildrenTree / loadDescendantActiveWorkCountsForCases / loadPipelineDescendantActiveWorkCounts / loadPipelineConnections 留 R639.2.4
+
+---
+## R639.2.4 (2026-08-12) - pipelines-aggregation getCaseChildrenTree 闭环 + 3 HTTP 路由
+
+### 新增
+
+- crates/pc-pipelines::aggregation 新增类型
+  - CaseChildStage / CaseChildPipeline / CaseChildNode / CaseChildGroup / CaseChildrenTree
+  - 常量 CASE_CHILDREN_TREE_MAX_NODES=1000 / CASE_CHILDREN_TREE_MAX_DEPTH=10
+- crates/pc-pipelines::case_events_db 新增 DB glue 函数
+  - fetch_case_subtree - 递归 CTE WITH RECURSIVE subtree + depth 上限 + LIMIT MAX_NODES+1
+  - lookup_pipelines_by_ids / lookup_stages_by_ids - 批量 lookup 子树涉及的 pipelines/stages
+  - build_case_children_tree - 纯函数:从子树叶 row 递归构建嵌套 CaseChildNode + rollup + childGroups(按 pipeline.id 分组 + 当前 pipeline 优先排序)
+  - get_case_children_tree - 主入口(tokio::join 二路并发 + BTreeSet 去重 + truncated 检测)
+- crates/pc-http::routes::pipelines 新增 HTTP 路由 (3 个)
+  - GET /api/companies/:company_id/case-events - listCompanyCaseEvents (types 过滤 + 分页)
+  - GET /api/cases/:case_id/rollup - getDirectChildrenSummary
+  - GET /api/cases/:case_id/children/tree - getCaseChildrenTree (递归 CTE)
+
+### 设计要点
+
+- 递归 CTE 在 SQL 层完成深度+广度截断(MAX_DEPTH + MAX_NODES+1)
+- 应用层 build 纯函数(无 DB 依赖,易测试)
+- 子节点按 created_at 升序,childGroups 按 pipeline.name 字典序+当前 pipeline 优先
+- rollup 递归聚合:total/done/dropped/in_motion 在 build 时递归累加
+- Rust 三元运算符不存在:用 if-else 替代 (R639.2.4 修复点)
+- Timestamp 无 Ord:用 rfc3339() 字符串排序 (R639.2.4 修复点)
+- BTreeMap<String, _> 替代 Uuid key(避免 String/Uuid 类型不匹配)
+
+### 测试
+
+- pc-pipelines tests/r6392_3_case_events_db.rs: 2 新集成测试(getCaseChildrenTree)
+  - r63923_get_case_children_tree_returns_none_for_missing_case - 边界
+  - r63923_get_case_children_tree_builds_nested_tree - 3 层嵌套 + rollup 验证
+- 全量回归: pc-pipelines 28 lib + 51 e2e + 9 R639.2.3(含 R639.2.4) + 7 R639.2 = 95 测试绿
+- pc-http lib: 473 测试绿 (新增 3 路由)
+
+### 累计
+
+- pc-pipelines::aggregation 覆盖 Node pipelines-aggregation.ts:
+  - listPipelineAttention (R639.2 + R639.2.2)
+  - listCompanyCaseEvents (R639.2.3 + 路由)
+  - getDirectChildrenSummary (R639.2.3 + 路由)
+  - getCaseChildrenTree (R639.2.4 + 路由) [NEW]
+  - boundedLimit / stageAutomationFromConfig / payloadString / caseDisplay
+- 剩余: loadActiveWorkForCases / loadDescendantActiveWorkCountsForCases / loadPipelineDescendantActiveWorkCounts / loadOpenWorkIssuesForCases / loadPipelineConnections (loadActiveWorkForCases + loadOpenWorkIssuesForCases 已在 R639.2.2 复刻)
+- 注意: getCaseChildrenTree Node 函数在 routes/pipelines.ts 调用端为 /api/cases/:caseId/children/tree
+
+---
+## R639.2.5 (2026-08-12) - pipelines-aggregation active-work + pipeline-connections 子集闭环
+
+### 新增
+
+- crates/pc-pipelines::case_events_db 新增 DB glue 函数
+  - load_descendant_active_work_counts_for_cases - 递归 CTE 统计每个 case 子树中 in_progress work/automation issue 涉及的 descendant case 数 (BTreeSet 去重 + UNNEST 绑定)
+  - load_pipeline_descendant_active_work_counts - 按 pipeline 分组统计 active work (双层递归 CTE:target_pipelines + roots + subtree)
+  - load_pipeline_connections - cross-pipeline 父子连接 (DISTINCT 排除同 pipeline)
+  - 配套 row struct: DescendantActiveWorkCountRow / PipelineDescendantActiveWorkCountRow / PipelineConnectionRow
+
+### 设计要点
+
+- SQL 与 Node pipelines-aggregation.ts line 596-650 / 651-703 / 742-777 1:1 对齐 (递归 CTE + UNNEST 绑定 + 业务过滤:role IN ('work','automation') + status='in_progress' + hidden_at IS NULL + JOIN agents 强制 assignee 存在)
+- PostgreSQL 14+ 原生 UNNEST($2::uuid[]) 替代 Node sql.join VALUES 子句
+- BTreeSet 去重避免 case_ids/pipeline_ids 重复
+- 空输入短路返回 Ok(Vec::new()) 不打 DB
+- depth > 0 过滤掉 root case 自身 (只统计 descendant)
+
+### 测试
+
+- pc-pipelines tests/r6392_3_case_events_db.rs: 7 新集成测试覆盖三个新函数
+  - r63925_load_descendant_active_work_counts_for_cases_empty_input - 空输入边界
+  - r63925_load_descendant_active_work_counts_for_cases_counts_active_work - 主流程 + 去重
+  - r63925_load_descendant_active_work_counts_for_cases_unassigned_issues_excluded - JOIN agents 强制 assignee
+  - r63925_load_pipeline_descendant_active_work_counts_empty_input - 空输入边界
+  - r63925_load_pipeline_descendant_active_work_counts_groups_by_pipeline - 多 pipeline 分组 + 去重
+  - r63925_load_pipeline_connections_returns_cross_pipeline_parent_child - 排除同 pipeline + 无 parent case
+  - r63925_load_pipeline_connections_isolated_by_company - 多租户隔离
+- 全量回归: pc-pipelines 28 lib + 51 e2e + 16 R639.2.3(含 R639.2.5) + 7 R639.2 = 102 测试绿 (新增 7 测试)
+
+### 累计
+
+- pc-pipelines::aggregation + case_events_db 覆盖 Node pipelines-aggregation.ts:
+  - listPipelineAttention (R639.2 + R639.2.2)
+  - listCompanyCaseEvents (R639.2.3 + 路由)
+  - getDirectChildrenSummary (R639.2.3 + 路由)
+  - getCaseChildrenTree (R639.2.4 + 路由)
+  - loadActiveWorkForCases / loadOpenWorkIssuesForCases (R639.2.2 已复刻)
+  - loadDescendantActiveWorkCountsForCases (R639.2.5) [NEW]
+  - loadPipelineDescendantActiveWorkCounts (R639.2.5) [NEW]
+  - loadPipelineConnections (R639.2.5) [NEW]
+- pipelines-aggregation.ts 13 个函数全部复刻 (10/13 → 13/13 = 100%)
+
+## R639.2.6 (2026-08-12) - pipelines aggregation HTTP enrichment 闭环
+
+### 新增
+
+- crates/pc-pipelines::case_events_enrichment (新增模块, ~250 行)
+  - PipelineConnections (upstream_pipeline_ids + downstream_pipeline_ids, 自动 sort + dedup)
+  - PipelineAggregation (descendant_active_work_count + connections)
+  - EnrichedPipelineRow (PipelineRow + aggregation, serde flatten + Deref<PipelineRow>)
+  - enrich_pipelines_with_aggregation(pool, company_id, rows) -> Vec<EnrichedPipelineRow>
+    - 内部 tokio::try_join! 并发拉取 connections + work_counts
+    - 空输入短路返回 Ok(Vec::new())
+  - build_pipeline_connections_map 纯函数 (无 DB 依赖,易测试)
+
+### 设计要点
+
+- 对应 Node 上游 `/companies/:companyId/pipelines` 端点的 enrichment 行为
+- Rust 用 `#[serde(flatten)]` + `Deref<Target=PipelineRow>` 实现 Node spread 行为 + 直接字段访问
+- 与 Node 上游 1:1 兼容字段: `descendantActiveWorkCount` (camelCase) + `connections.{upstreamPipelineIds,downstreamPipelineIds}`
+- tokio::try_join! 保持 Node Promise.all 的并发语义
+
+### 测试
+
+- pc-pipelines lib: 6 新单元测试 (case_events_enrichment::tests):
+  - build_connections_map empty / single edge / multiple edges sort+dedup
+  - PipelineConnections / PipelineAggregation default invariants
+  - EnrichedPipelineRow serialize flatten + camelCase
+- pc-pipelines tests/r6392_3_case_events_db.rs: 4 新集成测试:
+  - r63926_enrich_pipelines_empty_input_returns_empty - 短路
+  - r63926_enrich_pipelines_assigns_default_zero_and_empty_when_no_data - 默认值
+  - r63926_enrich_pipelines_populates_descendant_active_work_and_connections - 主流程 + sort+dedup 不变量
+  - r63926_enrich_pipelines_isolated_by_company - 多租户隔离
+- 全量回归: pc-pipelines 34 lib (含 6 新) + 51 e2e + 20 R639.2.3/4/5/6 + 7 R639.2 = 112 测试绿 (新增 10)
+
+### 累计
+
+- pc-pipelines::case_events_db + case_events_enrichment 完成 pipelines-aggregation.ts 13/13 函数 + HTTP enrichment API
+- 路由 `/api/pipelines?company_id=X` 可通过 `enrich_pipelines_with_aggregation` 一次性拿到完整视图 (descendantActiveWorkCount + connections)
+
+## R639.2.7 (2026-08-12) - list_pipelines 路由接入 enrichment 闭环
+
+### 新增
+
+- crates/pc-http::routes::pipelines list_pipelines 改造
+  - GET /api/pipelines?company_id=X 当指定 company_id 时, 注入 R639.2.6 enrichment
+  - 返回的每个 pipeline 对象包含 `descendantActiveWorkCount` (i64, 默认 0)
+  - 返回的每个 pipeline 对象包含 `connections.upstreamPipelineIds` + `connections.downstreamPipelineIds`
+  - 当未提供 company_id 时保持原行为 (list_all 跨公司列表, 不 enrichment)
+  - 与 Node 上游 `/companies/:companyId/pipelines` 端点 1:1 对齐
+
+### 测试
+
+- pc-http tests/pipelines_service_route_contract.rs: 2 新 HTTP 契约测试
+  - r63927_list_pipelines_returns_enrichment_fields_when_company_id_provided
+    - 验证 2 pipelines + cross-pipeline edge + in_progress work
+    - 验证 descendantActiveWorkCount=1 (parent) / 0 (isolated)
+    - 验证 parent.downstreamPipelineIds 包含 isolated
+    - 验证 isolated.upstreamPipelineIds 包含 parent
+    - 验证 sort+dedup 不变量
+  - r63927_list_pipelines_default_zero_when_no_cases_at_all
+    - 验证空 case 情况下也返回完整 enrichment 字段 (Node spread 语义)
+
+### 累计
+
+- pc-pipelines::case_events_db (R639.2.5) + case_events_enrichment (R639.2.6) + routes/pipelines list (R639.2.7)
+- 完整闭环: Node 上游 `/companies/:companyId/pipelines` 端点行为 (13/13 service 函数 + enrichment + HTTP 暴露) 100% 复刻
+
+## R639.2.8 (2026-08-12) - list_cases 路由接入 case enrichment 闭环
+
+### 新增
+
+- crates/pc-pipelines::case_events_enrichment 扩展
+  - `EnrichedCaseRow` (PipelineCaseRow flatten + activeWork + descendantActiveWorkCount, Deref<PipelineCaseRow>)
+  - `ActiveWorkRef` (issueId + issueIdentifier + issueTitle + status)
+  - `enrich_cases_with_aggregation(pool, company_id, rows) -> Vec<EnrichedCaseRow>`
+    - 内部 `tokio::try_join!` 并发拉取 active_work + descendant_active_work_counts
+    - 空输入短路返回 `Ok(Vec::new())`
+    - 同一 case 多条 active work 时保留首条 (Node upstream `activeWorkByCase.get().shift()` 行为)
+  - `build_active_work_map` 纯函数 (无 DB 依赖)
+- crates/pc-http::routes::pipelines list_cases 改造
+  - GET /api/pipelines/:id/cases 注入 enrichment (activeWork + descendantActiveWorkCount)
+  - 与 Node 上游 `/companies/:companyId/cases` 端点 1:1 对齐
+
+### 设计要点
+
+- 与 `enrich_pipelines_with_aggregation` (R639.2.6) 同构: flatten + Deref + tokio::try_join!
+- ActiveWorkRef 只取 Node 上游需要的字段 (issueId / identifier / title / status), 省略 agent 信息
+- 一个 case 多 active work 时取首条 (SQL 已按 issue.updated_at DESC 排序, 第一条 = latest)
+
+### 测试
+
+- pc-pipelines lib: 3 新单元测试 (case_events_enrichment::tests)
+  - build_active_work_map_empty_input_returns_empty
+  - build_active_work_map_keeps_first_row_per_case_id
+  - active_work_ref_serializes_with_camel_case_keys
+- pc-pipelines tests/r6392_3_case_events_db.rs: 4 新集成测试
+  - r63928_enrich_cases_empty_input_returns_empty - 短路
+  - r63928_enrich_cases_assigns_default_none_and_zero_when_no_data - 默认值 (activeWork=null, count=0)
+  - r63928_enrich_cases_populates_active_work_and_descendant_count - 主流程 (3 cases: own work / subtree / done only)
+  - r63928_enrich_cases_isolated_by_company - 多租户隔离
+- pc-http tests/pipelines_service_route_contract.rs: 2 新 HTTP 契约测试
+  - r63928_list_cases_returns_enrichment_fields - activeWork 对象结构 + camelCase + 默认值不变量
+  - r63928_list_cases_descendant_count_via_subtree - 父子关系下 root.count=1 + child.count=0
+- 全量回归: pc-pipelines 37 lib + 51 e2e + 24 R639.2.x + 7 R639.2 = 119 测试绿 (新增 7)
 
 ## R639 (2026-08-12) — Pipeline case outputs pure + summary-slot-finalization 闭环
 

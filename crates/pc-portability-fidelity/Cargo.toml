@@ -9,7 +9,9 @@ description = "Portability export fidelity reporting (port of paperclip packages
 workspace = true
 
 [dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 
 [[test]]
 name = "r547_fidelity"

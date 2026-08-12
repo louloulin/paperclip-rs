@@ -19,25 +19,32 @@ async fn connect() -> Db {
 }
 
 async fn cleanup(db: &Db, suffix: &str) {
-    let pid = format!("ef-%{suffix}%");
+    let name_pattern = format!("Export Fidelity Test {}%", suffix);
     let _ = sqlx::query(
-        "DELETE FROM labels WHERE company_id IN (SELECT id FROM companies WHERE id::text LIKE $1)",
+        "DELETE FROM labels WHERE company_id IN (SELECT id FROM companies WHERE name LIKE $1)",
     )
-    .bind(pid.clone())
+    .bind(name_pattern.clone())
     .execute(db.pool())
     .await;
-    let _ = sqlx::query("DELETE FROM companies WHERE id::text LIKE $1")
-        .bind(pid)
+    let _ = sqlx::query("DELETE FROM companies WHERE name LIKE $1")
+        .bind(name_pattern)
         .execute(db.pool())
         .await;
 }
 
 async fn make_company(db: &Db, suffix: &str) -> Uuid {
-    let id_str = format!("ef-{}-{}", suffix, Uuid::new_v4().simple());
-    let id = Uuid::parse_str(&id_str).expect("uuid");
-    sqlx::query("INSERT INTO companies (id, name) VALUES ($1, $2)")
+    let id = Uuid::new_v4();
+    // issue_prefix is unique-indexed; derive per-test prefix from suffix
+    // and a uuid tail to avoid collisions across runs sharing the DB.
+    let prefix = format!(
+        "E{}{}",
+        suffix,
+        Uuid::new_v4().simple().to_string().chars().take(4).collect::<String>()
+    );
+    sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
         .bind(id)
         .bind(format!("Export Fidelity Test {suffix}"))
+        .bind(prefix)
         .execute(db.pool())
         .await
         .expect("insert company");
@@ -45,12 +52,32 @@ async fn make_company(db: &Db, suffix: &str) -> Uuid {
 }
 
 async fn make_label(db: &Db, cid: Uuid, name: &str) {
-    sqlx::query("INSERT INTO labels (company_id, name, color) VALUES ($1, $2, '#fff')")
+    sqlx::query("INSERT INTO labels (company_id, name, color) VALUES ($1, $2, $3)")
         .bind(cid)
         .bind(name)
+        .bind("#fff")
         .execute(db.pool())
         .await
         .expect("insert label");
+}
+
+async fn make_agent(db: &Db, cid: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, company_id, name, role, adapter_type, status, adapter_config, permissions, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())",
+    )
+    .bind(id)
+    .bind(cid)
+    .bind(format!("Agent-{id}"))
+    .bind("worker")
+    .bind("test")
+    .bind("idle")
+    .bind(serde_json::json!({}))
+    .bind(serde_json::json!({}))
+    .execute(db.pool())
+    .await
+    .expect("insert agent");
+    id
 }
 
 #[tokio::test]
@@ -85,7 +112,8 @@ async fn e2e_warnings_triggered_for_unsupported_data() {
     let db = connect().await;
     cleanup(&db, "warn").await;
     let cid = make_company(&db, "warn").await;
-    sqlx::query("INSERT INTO approvals (company_id, kind, status) VALUES ($1, $2, 'pending')")
+    let aid = make_agent(&db, cid).await;
+    sqlx::query("INSERT INTO approvals (company_id, type, status, payload) VALUES ($1, $2, 'pending', '{}'::jsonb)")
         .bind(cid)
         .bind(Uuid::new_v4().to_string())
         .execute(db.pool())
@@ -93,10 +121,10 @@ async fn e2e_warnings_triggered_for_unsupported_data() {
         .expect("insert approval");
     for _ in 0..3 {
         sqlx::query(
-            "INSERT INTO cost_events (company_id, kind, amount_cents) VALUES ($1, $2, 100)",
+            "INSERT INTO cost_events (company_id, agent_id, provider, model, cost_cents, occurred_at) VALUES ($1, $2, 'test', 'test', 100, now())",
         )
         .bind(cid)
-        .bind(Uuid::new_v4().to_string())
+        .bind(aid)
         .execute(db.pool())
         .await
         .expect("insert cost");
