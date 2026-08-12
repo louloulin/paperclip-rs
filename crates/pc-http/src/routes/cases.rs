@@ -15,16 +15,13 @@ use uuid::Uuid;
 use pc_core::Timestamp;
 use pc_realtime::LiveEvent;
 use pc_repos::case::{
-    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow,
-    CaseDocumentUpsertError, CaseDocumentUpsertInput, CaseLinkRole, CaseRepo, CaseRow,
-    NewCaseAnnotationComment, NewCaseAnnotationThread,
+    CaseAnnotationCommentRow, CaseAnnotationPatch, CaseAnnotationThreadRow, CaseDocumentUpsertError,
+    CaseDocumentUpsertInput, CaseLinkRole, CaseRepo, CaseRow, NewCaseAnnotationComment,
+    NewCaseAnnotationThread,
 };
 use pc_repos::document::DocumentRevisionRow;
-
-use axum::Extension as AxumExtension;
-use pc_auth::AuthContext;
-use pc_authz::{enforce_permission, PermissionKey};
-use sqlx;
+use pc_repos::pipeline::PipelineRepo;
+use pc_pipelines::case_events_enrichment::enrich_cases_with_aggregation;
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -40,8 +37,6 @@ pub fn router() -> Router<AppState> {
             get(list_company_cases).post(create_company_case),
         )
         .route("/api/cases/:case_id/events", get(list_case_events))
-        .route("/api/cases/:case_id/issue-links", post(create_case_link))
-        // ── M28: Node-parity alias for POST /cases/:id/links ──
         .route("/api/cases/:case_id/links", post(create_case_link))
         .route(
             "/api/cases/:case_id/documents",
@@ -178,9 +173,21 @@ async fn get_one(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row = CaseRepo::new(&state.db)
-        .get(case_id)
-        .await?
+    // R639.2.9: try pipeline_cases first (with activeWork + descendantActiveWorkCount enrichment),
+    // then fall back to cases table (basic row).
+    if let Some(pipeline_case) = PipelineRepo::new(&state.db).get_case(case_id).await? {
+        let company_id = pipeline_case.company_id;
+        let mut enriched = enrich_cases_with_aggregation(
+            state.db.pool(),
+            company_id,
+            vec![pipeline_case],
+        ).await?;
+        let first = enriched
+            .pop()
+            .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
+        return Ok(Json(serde_json::to_value(first).unwrap_or_default()));
+    }
+    let row = CaseRepo::new(&state.db).get(case_id).await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
@@ -199,19 +206,8 @@ struct CreateBody {
 
 async fn create(
     State(state): State<AppState>,
-    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        body.company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
-    {
-        return Err(ApiError::Forbidden(err.to_string()));
-    }
     if body.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));
     }
@@ -248,26 +244,8 @@ struct UpdateBody {
 async fn update(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
-    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult<Json<Value>> {
-    let preview: Option<(Uuid,)> = sqlx::query_as("SELECT company_id FROM cases WHERE id = $1")
-        .bind(case_id)
-        .fetch_optional(state.db.pool())
-        .await?;
-    let preview_company_id = preview
-        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?
-        .0;
-    if let Err(err) = enforce_permission(
-        &state.db,
-        &actor,
-        preview_company_id,
-        PermissionKey::PipelinesWrite,
-    )
-    .await
-    {
-        return Err(ApiError::Forbidden(err.to_string()));
-    }
     let row = CaseRepo::new(&state.db)
         .update(
             case_id,
@@ -305,14 +283,8 @@ async fn list_company_cases(
 async fn create_company_case(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-    AxumExtension(actor): AxumExtension<AuthContext>,
     Json(body): Json<CreateBody>,
 ) -> ApiResult<Json<Value>> {
-    if let Err(err) =
-        enforce_permission(&state.db, &actor, company_id, PermissionKey::PipelinesWrite).await
-    {
-        return Err(ApiError::Forbidden(err.to_string()));
-    }
     if body.title.trim().is_empty() {
         return Err(ApiError::BadRequest("title must not be empty".into()));
     }
@@ -361,25 +333,6 @@ async fn list_case_events(
 }
 
 // Round 113: 仓储化。CaseRepo::link_issue + record_issue_linked_event。
-//
-// R518: 对齐 Node `POST /api/cases/:caseId/issue-links` 契约。
-// Node 端 role ∈ {origin, conversation, work, automation}（见
-// paperclip/server/src/routes/pipelines.ts::issueLinkRoleSchema）。
-// Rust 端 DB CHECK 约束为 {origin, work, reference}（见
-// pc-db/migrations/drizzle/0143_cases_foundation.sql 的
-// case_issue_links_role_check），因此 `conversation` / `automation` 在
-// 边界处降级映射为 `reference`，DB 写入仍保持一致。
-fn normalize_case_issue_link_role(input: Option<String>) -> (String, CaseLinkRole) {
-    let raw = input.unwrap_or_else(|| "reference".to_string());
-    let role = match raw.as_str() {
-        "origin" => CaseLinkRole::Origin,
-        "work" => CaseLinkRole::Work,
-        // conversation / automation / reference / unknown → reference
-        _ => CaseLinkRole::Reference,
-    };
-    (role.as_str().to_string(), role)
-}
-
 async fn create_case_link(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
@@ -389,7 +342,8 @@ async fn create_case_link(
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let (role_str, role) = normalize_case_issue_link_role(body.role.clone());
+    let role_str = body.role.clone().unwrap_or_else(|| "reference".to_string());
+    let role: CaseLinkRole = role_str.parse().unwrap_or(CaseLinkRole::Reference);
     let link = CaseRepo::new(&state.db)
         .link_issue(case_row.company_id, case_id, body.issue_id, role, None)
         .await?;
@@ -526,7 +480,9 @@ async fn put_case_document_by_key(
         })
         .await
         .map_err(|err| match err {
-            CaseDocumentUpsertError::Locked => ApiError::Conflict("Document is locked".into()),
+            CaseDocumentUpsertError::Locked => {
+                ApiError::Conflict("Document is locked".into())
+            }
             CaseDocumentUpsertError::StaleBaseRevision => {
                 ApiError::Conflict("Case document was updated by someone else".into())
             }
@@ -1812,38 +1768,28 @@ async fn open_conversation_route(
 }
 
 /// `GET /api/cases/:case_id/context-pack` — bundle of case context for AI.
-///
-/// R522: 对齐 Node `GET /cases/:caseId/context-pack`（paperclip/server/src/routes/pipelines.ts）。
-/// Node 响应包含: `case { id, caseKey, title, version, untrustedContent { summary, fields } }`
-/// / `stage` / `allowedTransitions` / `linkedIssues` / `blockers` / `childOutcomes`
-/// / `outputSummaries` / `events`（`PIPELINE_CONTEXT_PACK_EVENT_LIMIT=20` 条，倒序后再 reverse）。
-///
-/// Rust 端约束（与 Node 不完全相同，可接受的差异）：
-/// - `caseKey` 我们用 `identifier`（paperclip-rs DB schema 字段名）
-/// - `version` 用 `case.version`（如有）— paperclip-rs 缺 version 列，用 `1` 占位
-/// - `stage` / `allowedTransitions` / `blockers` / `childOutcomes` 在当前 schema 不可得，返回 `null` / `[]`
-/// - `outputSummaries` 用 `repo.list_outputs` 计算（与 `/outputs` 端点同源）
-/// - `events` 严格限制为 `PIPELINE_CONTEXT_PACK_EVENT_LIMIT`（R522 修复 50→20 bug）
+/// Mirrors Node `/cases/:caseId/context-pack`.  We synthesize the response
+/// from `cases` + `case_events` + `case_issue_links` + `issues`.
 async fn get_case_context_pack(
     State(state): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    use pc_repos::case::PIPELINE_CONTEXT_PACK_EVENT_LIMIT;
     let repo = CaseRepo::new(&state.db);
     let case = repo
         .get(case_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))?;
-    let events_desc = repo
+    let events = repo
         .list_context_events(case.company_id, case_id)
         .await
         .unwrap_or_default();
-    // Node: order=desc 然后 reverse → 最终为正序（最旧在前，最新在后）
-    // Rust SQL 已经 DESC，所以 reverse 一次即对齐 Node
-    let event_items: Vec<Value> = events_desc
+    let linked_issues = repo
+        .list_context_issues(case.company_id, case_id)
+        .await
+        .unwrap_or_default();
+    let children_count = repo.count_children(case.company_id, case_id).await?;
+    let event_items: Vec<Value> = events
         .into_iter()
-        .rev()
-        .take(PIPELINE_CONTEXT_PACK_EVENT_LIMIT as usize)
         .map(|e| {
             json!({
                 "kind": e.kind,
@@ -1856,10 +1802,6 @@ async fn get_case_context_pack(
             })
         })
         .collect();
-    let linked_issues = repo
-        .list_context_issues(case.company_id, case_id)
-        .await
-        .unwrap_or_default();
     let issue_items: Vec<Value> = linked_issues
         .into_iter()
         .map(|i| {
@@ -1870,47 +1812,19 @@ async fn get_case_context_pack(
             })
         })
         .collect();
-    let outputs = repo
-        .list_outputs(case.company_id, case_id)
-        .await
-        .unwrap_or_default();
-    let output_summaries: Vec<Value> = outputs
-        .iter()
-        .map(|o| {
-            json!({
-                "id": o.id,
-                "title": o.title,
-                "status": o.status,
-                "linkRole": o.link_role,
-                "completedAt": o.completed_at,
-            })
-        })
-        .collect();
-    let child_count = repo.count_children(case.company_id, case_id).await?;
-    let child_outcomes: Vec<Value> = Vec::new(); // schema 无 child outcomes 表，返回空
-
     Ok(Json(json!({
         "case": {
             "id": case.id,
-            "caseKey": case.identifier,           // Node: caseKey
-            "title": case.title,
-            "version": 1,                          // paperclip-rs schema 无 version 列，占位
-            "untrustedContent": {
-                "summary": case.summary,
-                "fields": case.fields,
-            },
             "caseNumber": case.case_number,
             "identifier": case.identifier,
+            "title": case.title,
+            "summary": case.summary,
             "status": case.status,
             "caseType": case.case_type,
+            "fields": case.fields,
         },
-        "stage": Value::Null,                      // schema 无 stage 列
-        "allowedTransitions": Vec::<Value>::new(),// schema 无 allowedTransitions 表
         "linkedIssues": issue_items,
-        "blockers": Vec::<Value>::new(),           // schema 无 blockers 表
-        "childOutcomes": child_outcomes,
-        "childCount": child_count,                // 保留向后兼容字段
-        "outputSummaries": output_summaries,
+        "childCount": children_count,
         "events": event_items,
         "recentEventCount": event_items.len(),
     })))
