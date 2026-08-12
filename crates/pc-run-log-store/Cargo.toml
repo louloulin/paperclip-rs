@@ -1,0 +1,28 @@
+[package]
+name = "pc-run-log-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Durable per-run ndjson log store: local file + optional S3 mirror + inflight tail throttling"
+
+[lints]
+workspace = true
+
+[dependencies]
+pc-errors = { path = "../pc-errors" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }
+bytes = "1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["full", "test-util"] }

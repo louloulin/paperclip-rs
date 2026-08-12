@@ -4,10 +4,14 @@
 
 mod classifier;
 mod incident_key;
+mod loader;
 mod service;
 mod types;
 
 pub use classifier::classify_issue_graph_liveness;
+pub use loader::{
+    load_issue_graph_liveness_input, IssueGraphLivenessLoadError,
+};
 pub use incident_key::{
     build_issue_graph_liveness_incident_key, parse_issue_graph_liveness_incident_key,
     IncidentKeyInput, ParsedIncidentKey, ISSUE_GRAPH_LIVENESS_INCIDENT_PREFIX,

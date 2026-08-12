@@ -4,8 +4,8 @@
 
 | 指标 | 值 |
 |---|---|
-| **workspace crates** | **101** |
-| **workspace lib tests passing** | **~3,410** (实测 sum；含 R622 新增 19 hermes-gateway + R617 新增 11 cursor-cloud HTTP + R616 新增 11 openclaw WS 等) |
+| **workspace crates** | **102** (R637 +pc-run-log-store) |
+| **workspace lib tests passing** | **~3,432** (实测 sum；含 R622 新增 19 hermes-gateway + R617 新增 11 cursor-cloud HTTP + R616 新增 11 openclaw WS 等) |
 | **lib test suites** | **101 (0 failed)** |
 | **e2e baseline** | **✅ PASS in 8s** (R580) |
 | **V11 UI 60 client happy path** | **✅ PASS 60/60** (R582) |
@@ -92,7 +92,7 @@
 | shared/ 契约 | 15% | 85% | 85% |
 | server/ 路由 | 25% | 90% | **92%** ↑ |
 | server/ middleware | 10% | 60% | 60% |
-| server/ services | 15% | 55% | **58%** ↑ |
+| server/ services | 15% | 55% | **62%** ↑ |
 | server/ repos | 10% | 85% | 85% |
 | UI client | 15% | 30% | **35%** ↑ |
 | CLI | 5% | 60% | 60% |
@@ -399,6 +399,16 @@
 - ✅ board_mutation_guard_layer 注册到 apps/pc-server/src/main.rs，请求顺序 auth → csrf → board guard → handler
 - 验证（真实输出）：pc-http middleware 108/108；validate 4/4；board_mutation 13/13；error 17/17；pc-http --lib 473/473；pc-server cargo check 通过
 - 本轮新增 34 个测试；R636 完成使 middleware 已 100% 复刻
+
+
+### R637 — runtime services batch 1 (run-continuations / run-log-store / issue-liveness DB glue) DONE
+
+✓ new crate pc-run-log-store (LocalFileRunLogStore + InMemoryRunLogStore + MirrorTarget trait + factory): 8 lib + 9 e2e = 17 tests
+✓ pc-issues::liveness::loader::load_issue_graph_liveness_input (8 SQL projections to IssueGraphLivenessInput): 1 test, DB function compiles
+✓ pc-heartbeat::recovery::run_liveness_continuations_db::apply_continuation_decision (decide -> Skip/Exhausted/Enqueue idempotency-safe insert): 4 new tests on top of 24 existing
+✓ pc-server / pc-cli build clean
+- evidence: r637-runtime-run-log-store-issue-liveness-db.md
+- progress bump: server/ services 58% -> 62%, weighted 89% -> 91%
 
 ### R635 — middleware batch 1（compression / trust-proxy / private-hostname-guard / http-log-policy）DONE
 

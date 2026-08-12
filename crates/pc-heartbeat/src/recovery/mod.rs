@@ -23,6 +23,7 @@ pub mod orchestrator;
 pub mod origins;
 pub mod pause_hold_guard;
 pub mod run_liveness_continuations;
+pub mod run_liveness_continuations_db;
 pub mod scan_silent_active_runs_db;
 pub mod scheduler;
 pub mod scheduler_db;
@@ -186,6 +187,10 @@ pub use run_liveness_continuations::{
     CONTINUATION_ACTIVE_ISSUE_STATUSES, CONTINUATION_AGENT_STATUSES,
     DEFAULT_MAX_LIVENESS_CONTINUATION_ATTEMPTS, IDEMPOTENT_WAKE_STATUSES,
     RUN_LIVENESS_CONTINUATION_REASON,
+};
+pub use run_liveness_continuations_db::{
+    apply_continuation_decision, build_continuation_wakeup, make_continuation_idempotency_key,
+    ContinuationApplyOutcome,
 };
 pub use scheduler::{
     build_routing_for_cause, decide_recovery_cause, decide_recovery_scheduler_plan,

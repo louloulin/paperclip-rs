@@ -308,6 +308,15 @@ UI 仅在切换部署时通过环境变量切到 Rust server；任何时候保�
 
 ---
 
+## R637 增量：recovery 服务 1:1 复刻（run-log-store / run-continuations / issue-liveness DB glue）
+
+| Node | Rust 任务 | 状态 |
+|---|---|---|
+| server/src/services/run-log-store.ts | 新 crate pc-run-log-store (LocalFileRunLogStore + InMemoryRunLogStore + MirrorTarget trait + factory) | R637 DONE |
+| services/recovery/run-liveness-continuations.ts | pc-heartbeat::recovery::run_liveness_continuations 纯函数 + run_liveness_continuations_db::apply_continuation_decision DB glue | R637 DONE |
+| services/recovery/issue-graph-liveness.ts | pc-issues::liveness::classifier + liveness::loader::load_issue_graph_liveness_input | R637 DONE |
+| services/recovery/service.ts | pc-heartbeat::recovery::orchestrator + scheduler_db (前序轮次已覆盖 80%+) | 进行中 |
+
 ## O. 其他 packages
 
 | 当前 | Rust 任务 |

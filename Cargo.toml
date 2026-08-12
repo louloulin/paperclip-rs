@@ -87,6 +87,7 @@ members = [
     "crates/pc-portability",
     "crates/pc-issues",
     "crates/pc-run-liveness",
+    "crates/pc-run-log-store",
     "crates/pc-invite",
     "crates/pc-pipelines",
     "crates/pc-project",

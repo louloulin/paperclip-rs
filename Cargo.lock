@@ -3277,6 +3277,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-run-log-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "hex",
+ "parking_lot",
+ "pc-errors",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pc-secret-redaction"
 version = "0.1.0"
 dependencies = [

@@ -4,7 +4,7 @@
 
 - [x] **R635 middleware 补齐 batch 1**：compression / trust-proxy / private-hostname-guard / http-log-policy 四个 middleware（纯函数单测 + 集成测试 + 注册进 stack）— evidence/r635-middleware-compression-trust-proxy-hostname-guard.md；92 middleware + 451 lib 测试绿
 - [x] **R636 middleware 补齐 batch 2**：validate / board-mutation-guard + error-handler 全分支（Node 形状 HttpError + skill_policy_denied 脱敏 + structured connection 字段展开 + Zod 形态）；evidence/r636-middleware-validate-board-mutation-error-handler.md；pc-http 473 lib 测试绿；pc-server 编译通过
-- [ ] **R637 运行时服务 batch 1**：run-continuations / run-log-store / issue-liveness（pc-heartbeat + pc-run-liveness + pc-repos 扩展）
+- [x] **R637 运行时服务 batch 1**：run-continuations / run-log-store / issue-liveness（pc-heartbeat + pc-run-liveness + pc-repos 扩展）— evidence/r637-runtime-run-log-store-issue-liveness-db.md；17 + 1 + 4 新增测试全绿
 - [ ] **R638 协作与策略**：invite-grants / hot-restart 完整语义 / tool-access-policy（pc-invite + pc-http + pc-repos 扩展）
 - [ ] **R639 收尾与管道**：summary-slot-finalization / pipeline-case-outputs / pipelines-aggregation（pc-http::routes::summary_slots + pc-pipelines 扩展）
 - [ ] **R640 插件内部 batch 1**：plugin-loader / plugin-job-coordinator / plugin-job-scheduler（pc-plugin-host 扩展，JSON-RPC 契约测试）
