@@ -15,6 +15,7 @@ use uuid::Uuid;
 use pc_auth::AuthContext;
 use pc_authz::{enforce_permission, PermissionKey};
 use pc_decisions::{DecisionService, NoopDecisionHook};
+use pc_issues;
 use pc_realtime::LiveEvent;
 use pc_repos::decision::{verify_decision_signature, DecisionRepo, SignedDecisionRow};
 use pc_repos::decision_bundle::{
@@ -31,6 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/decisions/:id/decide", post(decide_decision))
         .route("/api/decisions/:id/dismiss", post(dismiss_decision))
         .route("/api/decisions/:id/cancel", post(cancel_decision))
+        .route("/api/decisions/:id/run-effects", post(run_decision_effects))
         .route(
             "/api/companies/:company_id/decisions",
             get(list_company_decisions),
@@ -340,6 +342,55 @@ async fn cancel_decision(
         LiveEvent::new("decision.cancelled", "decision", decision_id).with_company(row.company_id),
     );
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunEffectsBody {
+    decided_by_user_id: Option<String>,
+}
+
+async fn run_decision_effects(
+    State(state): State<AppState>,
+    AxumExtension(actor): AxumExtension<AuthContext>,
+    Path(decision_id): Path<Uuid>,
+    Json(body): Json<RunEffectsBody>,
+) -> ApiResult<Json<Value>> {
+    let decided_by = body
+        .decided_by_user_id
+        .clone()
+        .or_else(|| actor.actor.user_id().map(|s| s.to_string()))
+        .ok_or_else(|| ApiError::BadRequest("decidedByUserId required".into()))?;
+    let company_id = DecisionRepo::new(&state.db)
+        .get_company_id(decision_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("decision {decision_id}")))?;
+    if let Err(err) =
+        enforce_permission(&state.db, &actor, company_id, PermissionKey::JoinsApprove).await
+    {
+        return Err(ApiError::Forbidden(err.to_string()));
+    }
+    let svc = DecisionService::with_hooks(
+        &state.db,
+        &state.decision_signing,
+        vec![std::sync::Arc::new(NoopDecisionHook)],
+    );
+    // IssueService + runner 是 issue 侧 side-effect 桥接
+    let issue_svc = pc_issues::IssueService::new(&state.db);
+    let runner = pc_decisions::IssueServiceRunner::new(&issue_svc);
+    let report = svc
+        .run_effects(decision_id, &decided_by, &runner)
+        .await
+        .map_err(map_decision_service_error)?;
+    state.realtime.publish(
+        LiveEvent::new("decision.effects_run", "decision", decision_id)
+            .with_company(company_id)
+            .with_data(json!({
+                "executionStatus": report.execution_status,
+                "outcomeCount": report.outcomes.len(),
+            })),
+    );
+    Ok(Json(serde_json::to_value(&report).unwrap_or_default()))
 }
 
 /// /api/companies/:company_id/decisions/stats

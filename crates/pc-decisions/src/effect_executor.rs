@@ -8,6 +8,13 @@
 //! 5. 写回 executed / failed / skipped 终态
 
 use serde_json::{json, Value};
+
+/// Get current UTC timestamp as pc_core::Timestamp (re-exported for now_timestamp helper).
+fn now_timestamp() -> pc_core::Timestamp {
+    pc_core::Timestamp::now()
+}
+
+
 use uuid::Uuid;
 
 use pc_repos::decision::{DecisionEffectExecutionRow, DecisionRepo};
@@ -109,6 +116,50 @@ impl<'a> EffectExecutor<'a> {
             execution_id: row.id,
         }
     }
+
+    /// 单 effect 调度入口：claim + dispatch + finish。
+    /// 
+    /// 设计：issue 侧实际变更由 `runner` 负责；本函数只做记账和状态机。
+    /// 当 `was_claimed_now` 为 false（已经被别人处理过），本函数立即返回原行。
+    pub async fn run_one<F, Fut>(
+        &self,
+        decision_id: Uuid,
+        effect_index: i32,
+        effect_type: &str,
+        target_issue_id: Uuid,
+        runner: F,
+    ) -> sqlx::Result<EffectExecutionOutcome>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Value, String>>,
+    {
+        let (row, was_new) = self
+            .claim(decision_id, effect_index, effect_type, target_issue_id)
+            .await?;
+        if !was_new {
+            return Ok(Self::outcome_from(&row, effect_index));
+        }
+        match runner().await {
+            Ok(result) => {
+                self.mark_executed(row.id, &result).await?;
+                let mut updated = row;
+                updated.status = "executed".into();
+                updated.result = Some(result);
+                updated.executed_at = Some(crate::effect_executor::now_timestamp());
+                Ok(Self::outcome_from(&updated, effect_index))
+            }
+            Err(reason) => {
+                let result_json = serde_json::json!({"reason": reason});
+                self.mark_failed(row.id, &reason, Some(&result_json)).await?;
+                let mut updated = row;
+                updated.status = "failed".into();
+                updated.error = Some(reason.clone());
+                updated.result = Some(result_json);
+                updated.executed_at = Some(crate::effect_executor::now_timestamp());
+                Ok(Self::outcome_from(&updated, effect_index))
+            }
+        }
+    }
 }
 
 /// 给定一组 executions，按 effect_index 升序聚合 `(successful, total)`。
@@ -130,6 +181,41 @@ pub fn aggregate_execution_outcomes(rows: &[DecisionEffectExecutionRow]) -> (usi
 /// 把 effect type 字符串分类成 Action（与上游 `classifyEffectType` 等价）。
 /// 已在 pure.rs 中实现，这里保留 facade 用于 effect_executor 内部调用一致性。
 pub use crate::pure::classify_effect_type;
+
+
+/// Effect side-effect 调度接口（解耦 effect_executor 与 pc-issues）。
+///
+/// 实现方负责把 effect 真正落到 issue 上（comment / status / assign）。
+/// effect_executor 只做记账 + 状态机；side-effect 由 runner 负责。
+#[async_trait::async_trait]
+pub trait DecisionEffectRunner: Send + Sync {
+    /// comment_on_issue → 在目标 issue 上加评论。
+    /// 返回 comment_id（用于 result）。
+    async fn add_comment(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        body_md: &str,
+        decided_by_user_id: &str,
+    ) -> Result<String, String>;
+
+    /// update_issue_status → 把目标 issue status 切到 new_status。
+    async fn update_issue_status(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        new_status: &str,
+    ) -> Result<Value, String>;
+
+    /// assign_issue → 把目标 issue 分配给 agent_id 或 user_name。
+    async fn assign_issue(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        assignee_agent_id: Option<Uuid>,
+        assignee_user_id: Option<&str>,
+    ) -> Result<Value, String>;
+}
 
 #[cfg(test)]
 mod tests {

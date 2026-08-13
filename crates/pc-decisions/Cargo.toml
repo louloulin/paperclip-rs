@@ -13,6 +13,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 pc-core = { path = "../pc-core" }
 pc-errors = { path = "../pc-errors" }
+pc-issues = { path = "../pc-issues" }
 pc-repos = { path = "../pc-repos" }
 pc-secrets = { path = "../pc-secrets" }
 serde = { workspace = true }

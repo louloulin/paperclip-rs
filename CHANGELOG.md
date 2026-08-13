@@ -1,4 +1,62 @@
 
+## R645 (2026-08-13) — M2 完整闭环: effect dispatch 端到端
+
+### 新增
+
+- crates/pc-decisions::effect_executor:
+  - `DecisionEffectRunner` async-trait (add_comment / update_issue_status / assign_issue)
+  - `EffectExecutor::run_one(decision_id, effect_index, effect_type, target_issue_id, runner)`
+    — claim + dispatch + finish 三阶段原子执行
+
+- crates/pc-decisions::issue_runner (新模块, 95 LOC):
+  - `IssueServiceRunner` — pc-issues `IssueService` 的 `DecisionEffectRunner` 实现
+  - 把 effect_executor 与 pc-issues 解耦：executor 通过 trait 调用，
+    不直接依赖 IssueService
+
+- crates/pc-decisions::lib (DecisionService):
+  - `run_effects(decision_id, decided_by_user_id, runner) -> DecisionRunEffectsReport`
+    — 与上游 `decisionService.runEffects` 等价
+  - effect type dispatch:
+    - `comment_on_issue` → add_comment + bodyMarkdown 插值
+    - `update_issue_status` → update_status + optional post-comment
+    - `assign_issue` → assign(agent / user / unassign)
+    - 其他 (cancel_issue_tree / create_issue / resolve_blocker) → skipped with reason
+  - execution_status 汇总: succeeded / partial / failed
+  - 写回 metadata.continuationPending (continuationPolicy=wake_origin_agent)
+
+- crates/pc-decisions (新增 struct +156 LOC):
+  - `DecisionRunEffectsReport` (outcomes + executionStatus)
+
+- crates/pc-decisions/Cargo.toml: 加 `pc-issues` 依赖
+
+- crates/pc-http::routes::decisions:
+  - 新增 `POST /api/decisions/:id/run-effects` 路由 (run_decision_effects handler)
+  - 通过 `IssueServiceRunner` 把 pc-decisions 与 pc-issues 接缝
+
+- crates/pc-decisions/tests/r645_run_effects.rs (新集成测试, 269 LOC):
+  - 真实 PG: 创建 decision + decide + run_effects (IssueServiceRunner.add_comment)
+  - 验证 issue_comments 写入；二次 run_effects 幂等
+  - aggregate_execution_outcomes 返回 succeeded
+  - FakeRunner 验证 trait object 安全性
+
+### 设计
+
+- `DecisionEffectRunner` async-trait 抽象 effect side-effect 调度，
+  EffectExecutor 完全不知道 pc-issues 存在 — 单元测试与 issue 服务零耦合
+- IssueServiceRunner 是唯一的 pc-issues 接缝点，未来切换到别的 issue 实现
+  （比如不同注释 author 策略）只需替换这一个文件
+- `run_effects` 是幂等的：已 executed 的 effect 不会重跑
+- 与 `decide` 解耦：HTTP 路由可以选择性触发 effect 执行
+  （未来可加 async / outbox 模式）
+
+### 测试
+
+- pc-decisions lib: **55 passed** (无回归)
+- pc-decisions tests/r645_run_effects: **2 passed** (真实 PG + trait object)
+- pc-http 编译: 0 errors (新增 POST /run-effects 路由)
+- pc-decisions 编译: 0 errors / 0 warnings
+
+
 ## R644 (2026-08-13) — M2.5: pc-decisions effect execution 跟踪
 
 ### 新增

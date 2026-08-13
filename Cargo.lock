@@ -2538,6 +2538,7 @@ dependencies = [
  "futures",
  "pc-core",
  "pc-errors",
+ "pc-issues",
  "pc-repos",
  "pc-secrets",
  "serde",

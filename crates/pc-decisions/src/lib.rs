@@ -14,12 +14,15 @@
 
 pub mod bundle_service;
 pub mod effect_executor;
+pub mod issue_runner;
 pub mod pure;
 pub mod wakeup;
 
 pub use effect_executor::{
-    aggregate_execution_outcomes, EffectExecutionOutcome, EffectExecutor,
+    aggregate_execution_outcomes, classify_effect_type, DecisionEffectRunner,
+    EffectExecutionOutcome, EffectExecutor,
 };
+pub use issue_runner::IssueServiceRunner;
 
 pub use bundle_service::{
     DecisionBundleError, DecisionBundleHook, DecisionBundleHookEvent, DecisionBundleResult,
@@ -343,6 +346,228 @@ impl<'a> DecisionService<'a> {
         Ok(self.repo.delete(id).await?)
     }
 
+    /// 执行一个 decided 决策的所有 effects（与上游 `decisionService.runEffects` 等价）。
+    pub async fn run_effects(
+        &self,
+        decision_id: Uuid,
+        decided_by_user_id: &str,
+        runner: &dyn DecisionEffectRunner,
+    ) -> DecisionServiceResult<DecisionRunEffectsReport> {
+        let decision = self
+            .repo
+            .get(decision_id)
+            .await?
+            .ok_or_else(|| DecisionServiceError::NotFound(format!("decision {decision_id}")))?;
+        if decision.status != "decided" {
+            return Err(DecisionServiceError::InvalidInput(format!(
+                "decision must be decided (current status: {})",
+                decision.status
+            )));
+        }
+        let chosen_option_id = decision.chosen_option_id.clone().ok_or_else(|| {
+            DecisionServiceError::InvalidInput("decision has no chosen_option_id".into())
+        })?;
+        let options_array = decision.options.as_array().ok_or_else(|| {
+            DecisionServiceError::InvalidInput("decision.options is not an array".into())
+        })?;
+        let option_value = options_array
+            .iter()
+            .find(|o| o.get("id").and_then(|v| v.as_str()) == Some(chosen_option_id.as_str()))
+            .ok_or_else(|| {
+                DecisionServiceError::InvalidInput(format!(
+                    "chosen option {chosen_option_id} not found in decision.options"
+                ))
+            })?;
+        let effects = option_value
+            .get("effects")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let input_values_map: std::collections::HashMap<String, String> = decision
+            .input_values
+            .clone()
+            .and_then(|v| {
+                if let serde_json::Value::Object(map) = v {
+                    Some(
+                        map.into_iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                            .collect(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let executor = EffectExecutor::new(&self.repo);
+        let company_id = decision.company_id;
+        let mut outcomes: Vec<EffectExecutionOutcome> = Vec::with_capacity(effects.len());
+        for (idx, effect_value) in effects.iter().enumerate() {
+            let effect_index = idx as i32;
+            let effect_type = effect_value
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let target_issue_id = effect_value
+                .get("targetIssueId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .unwrap_or_else(Uuid::nil);
+            let outcome = match effect_type.as_str() {
+                "comment_on_issue" => {
+                    let raw_body = effect_value
+                        .get("bodyMarkdown")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let interpolated = crate::pure::interpolate(&raw_body, &input_values_map);
+                    let runner_clone = decided_by_user_id.to_string();
+                    let outcome = executor
+                        .run_one(
+                            decision_id,
+                            effect_index,
+                            &effect_type,
+                            target_issue_id,
+                            || async {
+                                runner
+                                    .add_comment(
+                                        company_id,
+                                        target_issue_id,
+                                        &interpolated,
+                                        &runner_clone,
+                                    )
+                                    .await
+                                    .map(|comment_id| serde_json::json!({"commentId": comment_id}))
+                            },
+                        )
+                        .await
+                        .map_err(|e| DecisionServiceError::Repo(format!("sqlx: {e}")))?;
+                    outcome
+                }
+                "update_issue_status" => {
+                    let new_status = effect_value
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("todo")
+                        .to_string();
+                    let optional_comment = effect_value
+                        .get("comment")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let runner_clone = decided_by_user_id.to_string();
+                    let outcome = executor
+                        .run_one(
+                            decision_id,
+                            effect_index,
+                            &effect_type,
+                            target_issue_id,
+                            || async {
+                                let primary = runner
+                                    .update_issue_status(
+                                        company_id,
+                                        target_issue_id,
+                                        &new_status,
+                                    )
+                                    .await;
+                                match primary {
+                                    Ok(val) => {
+                                        if let Some(body_md) = optional_comment.as_deref() {
+                                            let interpolated = crate::pure::interpolate(
+                                                body_md,
+                                                &input_values_map,
+                                            );
+                                            runner
+                                                .add_comment(
+                                                    company_id,
+                                                    target_issue_id,
+                                                    &interpolated,
+                                                    &runner_clone,
+                                                )
+                                                .await
+                                                .map_err(|e| {
+                                                    format!("post-status comment failed: {e}")
+                                                })?;
+                                        }
+                                        Ok(val)
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            },
+                        )
+                        .await
+                        .map_err(|e| DecisionServiceError::Repo(format!("sqlx: {e}")))?;
+                    outcome
+                }
+                "assign_issue" => {
+                    let agent = effect_value
+                        .get("assigneeAgentId")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| Uuid::parse_str(s).ok());
+                    let user = effect_value
+                        .get("assigneeUserId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let user_clone = user.clone();
+                    let outcome = executor
+                        .run_one(
+                            decision_id,
+                            effect_index,
+                            &effect_type,
+                            target_issue_id,
+                            || async {
+                                runner
+                                    .assign_issue(
+                                        company_id,
+                                        target_issue_id,
+                                        agent,
+                                        user_clone.as_deref(),
+                                    )
+                                    .await
+                            },
+                        )
+                        .await
+                        .map_err(|e| DecisionServiceError::Repo(format!("sqlx: {e}")))?;
+                    outcome
+                }
+                // cancel_issue_tree / create_issue / resolve_blocker — 未实现的 effect 类型
+                _ => {
+                    let reason = format!(
+                        "effect_type_not_implemented: {effect_type}"
+                    );
+                    let claimed = executor
+                        .claim(decision_id, effect_index, &effect_type, target_issue_id)
+                        .await
+                        .map_err(|e| DecisionServiceError::Repo(format!("sqlx: {e}")))?;
+                    executor
+                        .mark_skipped(claimed.0.id, &reason, None)
+                        .await
+                        .map_err(|e| DecisionServiceError::Repo(format!("sqlx: {e}")))?;
+                    let mut r = claimed.0;
+                    r.status = "skipped".into();
+                    r.error = Some(reason.clone());
+                    EffectExecutor::outcome_from(&r, effect_index)
+                }
+            };
+            outcomes.push(outcome);
+        }
+
+        let executions = self.repo.executions_for_one(decision_id).await?;
+        let (_succ, _total, execution_status) = aggregate_execution_outcomes(&executions);
+        let metadata_patch = if decision.continuation_policy == "wake_origin_agent" {
+            Some(serde_json::json!({ "continuationPending": true }))
+        } else {
+            None
+        };
+        self.repo
+            .set_execution_status(decision_id, &execution_status, metadata_patch.as_ref())
+            .await?;
+        Ok(DecisionRunEffectsReport {
+            outcomes,
+            execution_status,
+        })
+    }
+
     // ---------- 内部 ----------
 
     async fn load_verified(&self, id: Uuid) -> DecisionServiceResult<SignedDecisionRow> {
@@ -502,6 +727,14 @@ pub struct DecisionStatsFilters {
     pub since: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+
+/// `run_effects` 的返回值。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionRunEffectsReport {
+    pub outcomes: Vec<EffectExecutionOutcome>,
+    pub execution_status: String,
+}
 
 #[cfg(test)]
 mod tests {
