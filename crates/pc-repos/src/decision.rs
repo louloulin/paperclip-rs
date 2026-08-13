@@ -347,6 +347,93 @@ impl<'a> DecisionRepo<'a> {
         .await
     }
 
+    /// 原子声明一个 effect execution 行；如果已存在则返回原行。
+    /// 与上游  中的  等价。
+    pub async fn claim_effect_execution(
+        &self,
+        decision_id: Uuid,
+        effect_index: i32,
+        effect_type: &str,
+        target_issue_id: Uuid,
+    ) -> sqlx::Result<Option<DecisionEffectExecutionRow>> {
+        let row: Option<DecisionEffectExecutionRow> = sqlx::query_as(
+            "INSERT INTO decision_effect_executions                 (decision_id, effect_index, effect_type, target_issue_id)              VALUES ($1, $2, $3, $4)              ON CONFLICT (decision_id, effect_index) DO NOTHING              RETURNING id, decision_id, effect_index, effect_type, target_issue_id,                        status, result, error, activity_log_id, executed_at"
+        )
+        .bind(decision_id)
+        .bind(effect_index)
+        .bind(effect_type)
+        .bind(target_issue_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        if row.is_some() { return Ok(row); }
+        // 已经存在 → 读取
+        sqlx::query_as::<_, DecisionEffectExecutionRow>(
+            "SELECT id, decision_id, effect_index, effect_type, target_issue_id,                     status, result, error, activity_log_id, executed_at              FROM decision_effect_executions              WHERE decision_id = $1 AND effect_index = $2"
+        )
+        .bind(decision_id)
+        .bind(effect_index)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
+    /// 标记一个 execution 的最终状态（executed / failed / skipped）。
+    pub async fn finish_effect_execution(
+        &self,
+        execution_id: Uuid,
+        status: &str,
+        error: Option<&str>,
+        result: Option<&serde_json::Value>,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "UPDATE decision_effect_executions              SET status = $1, error = $2, result = $3, executed_at = now()              WHERE id = $4"
+        )
+        .bind(status)
+        .bind(error)
+        .bind(result)
+        .bind(execution_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// 标记一个 effect execution 失败（包装 finish_effect_execution）。
+    pub async fn fail_effect_execution(
+        &self,
+        execution_id: Uuid,
+        error: &str,
+        result: Option<&serde_json::Value>,
+    ) -> sqlx::Result<()> {
+        self.finish_effect_execution(execution_id, "failed", Some(error), result).await
+    }
+
+    /// 更新决策的 execution_status + metadata。
+    pub async fn set_execution_status(
+        &self,
+        decision_id: Uuid,
+        execution_status: &str,
+        metadata_patch: Option<&serde_json::Value>,
+    ) -> sqlx::Result<bool> {
+        let r = if let Some(patch) = metadata_patch {
+            sqlx::query(
+                "UPDATE decisions SET execution_status = $1,                     metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,                     updated_at = now() WHERE id = $3"
+            )
+            .bind(execution_status)
+            .bind(patch)
+            .bind(decision_id)
+            .execute(self.db.pool())
+            .await?
+        } else {
+            sqlx::query(
+                "UPDATE decisions SET execution_status = $1, updated_at = now()                  WHERE id = $2"
+            )
+            .bind(execution_status)
+            .bind(decision_id)
+            .execute(self.db.pool())
+            .await?
+        };
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn list_filtered(
         &self,
         company_id: Uuid,

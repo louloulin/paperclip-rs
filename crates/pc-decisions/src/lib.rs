@@ -13,8 +13,13 @@
 //! - 可测：service 单元测试不依赖 HTTP 层
 
 pub mod bundle_service;
+pub mod effect_executor;
 pub mod pure;
 pub mod wakeup;
+
+pub use effect_executor::{
+    aggregate_execution_outcomes, EffectExecutionOutcome, EffectExecutor,
+};
 
 pub use bundle_service::{
     DecisionBundleError, DecisionBundleHook, DecisionBundleHookEvent, DecisionBundleResult,

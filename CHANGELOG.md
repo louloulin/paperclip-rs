@@ -1,4 +1,40 @@
 
+## R644 (2026-08-13) — M2.5: pc-decisions effect execution 跟踪
+
+### 新增
+
+- crates/pc-repos::decision (新增 4 method, +60 LOC):
+  - `claim_effect_execution(decision_id, effect_index, effect_type, target_issue_id)`
+    (INSERT ... ON CONFLICT DO NOTHING + 回读，与 Node `executeEffect` 等价)
+  - `finish_effect_execution(execution_id, status, error, result)`
+  - `fail_effect_execution(execution_id, error, result)` (语义化包装)
+  - `set_execution_status(decision_id, status, metadata_patch)` (更新决策级 execution_status)
+
+- crates/pc-decisions::effect_executor (新模块, 200 LOC):
+  - `EffectExecutor::new(repo)`
+  - `claim(decision_id, effect_index, effect_type, target_issue_id) -> (row, was_claimed_now)`
+  - `mark_executed(execution_id, result)`
+  - `mark_failed(execution_id, error, result)`
+  - `mark_skipped(execution_id, reason, result)`
+  - `aggregate_execution_outcomes(rows) -> (succ, total, status)` (succeeded / partial / failed)
+  - 状态机：`claimed → executed | failed | skipped`，与上游 `decisionEffectExecutions.status` 1:1 对齐
+
+### 设计
+
+- 解耦：effect_executor 只负责 effect execution 记账与状态机；
+  实际 issue 变更（comment / status / assign）由调用方路由到 IssueService。
+  这样 effect executor 是无副作用的、可独立测试的单元。
+- 幂等：claim 用 ON CONFLICT DO NOTHING；同一 (decision_id, effect_index)
+  多次调用结果一致。
+- 3 个新单测覆盖 aggregate + classify_effect_type。
+
+### 测试
+
+- pc-decisions lib: **55 passed** (R643 52 + R644 +3)
+- pc-repos 编译: 0 errors (30 warnings — pre-existing)
+- pc-decisions 编译: 0 errors (1 warning — unused import)
+
+
 ## R643 (2026-08-13) — M2 闭环: pc-decisions list/outcome/stats 端口 + R639.2.x 残留整理
 
 ### 新增
