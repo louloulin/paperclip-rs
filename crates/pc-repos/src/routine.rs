@@ -2488,6 +2488,36 @@ impl<'a> RoutineRepo<'a> {
         Ok(row.map(|(c,)| c))
     }
 
+    /// R647: 把一个 routine run 标记为终态（succeeded / failed / cancelled）。
+    /// 返回最新 row；若 run 不存在返回 Ok(None)。
+    /// 设置 completed_at = now() (若 status != running)。
+    pub async fn finalize_run(
+        &self,
+        run_id: Uuid,
+        status: &str,
+        failure_reason: Option<&str>,
+    ) -> sqlx::Result<Option<RoutineRunRow>> {
+        let row: Option<RoutineRunRow> = sqlx::query_as(
+            "UPDATE routine_runs              SET status = $1,                  failure_reason = COALESCE($2, failure_reason),                  completed_at = CASE WHEN $1::text = 'running' THEN NULL ELSE now() END,                  updated_at = now()              WHERE id = $3              RETURNING id, company_id, routine_id, trigger_id, source, status, triggered_at,                        routine_revision_id, responsible_user_id, idempotency_key, trigger_payload,                        dispatch_fingerprint, linked_issue_id, coalesced_into_run_id, failure_reason,                        completed_at, created_at, updated_at"
+        )
+        .bind(status)
+        .bind(failure_reason)
+        .bind(run_id)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row)
+    }
+
+    /// R647: 取一个 routine run (按 id)。
+    pub async fn get_run(&self, run_id: Uuid) -> sqlx::Result<Option<RoutineRunRow>> {
+        sqlx::query_as::<_, RoutineRunRow>(
+            "SELECT id, company_id, routine_id, trigger_id, source, status, triggered_at,                     routine_revision_id, responsible_user_id, idempotency_key, trigger_payload,                     dispatch_fingerprint, linked_issue_id, coalesced_into_run_id, failure_reason,                     completed_at, created_at, updated_at              FROM routine_runs WHERE id = $1"
+        )
+        .bind(run_id)
+        .fetch_optional(self.db.pool())
+        .await
+    }
+
     /// Round 111: 列出 routine 描述批注 threads。
     /// `status_filter` ∈ {Some("open"), Some("resolved"), None = 全部}。
     pub async fn list_annotation_threads(

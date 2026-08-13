@@ -11,8 +11,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pc_errors::{conflict, internal, unprocessable, validation, Error, Result};
 use pc_repos::routine::{
-    CreateRoutineRecord, CreateRoutineTriggerRecord, RoutineRepo, RoutineRevisionRow, RoutineRow,
-    RoutineRunRow, RoutineTriggerMutationResult, RoutineTriggerRow, UpdateRoutineRecord,
+    CreateRoutineRecord, CreateRoutineTriggerRecord, DispatchedRoutineRun, RoutineRepo,
+    RoutineRevisionRow,  RoutineRestoreResult, RoutineRow, RoutineRunRow,
+    RoutineTriggerMutationResult, RoutineTriggerRow, RunRoutineRecord, UpdateRoutineRecord,
     UpdateRoutineTriggerRecord,
 };
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,22 @@ pub enum RoutineHookEvent {
         id: Uuid,
         routine_id: Uuid,
         kind: String,
+    },
+    /// R647: 一个 routine run 被 dispatch（dispatch_run 成功后触发）。
+    RunDispatched {
+        run_id: Uuid,
+        routine_id: Uuid,
+        company_id: Uuid,
+        source: String,
+        status: String,
+    },
+    /// R647: 一个 routine run 被 finalize 到终态（succeeded / failed / cancelled）。
+    RunFinalized {
+        run_id: Uuid,
+        routine_id: Uuid,
+        company_id: Uuid,
+        status: String,
+        failure_reason: Option<String>,
     },
 }
 
@@ -765,6 +782,67 @@ impl RoutineService {
             restored_from_revision_id: result.restored_from_revision_id,
             restored_from_revision_number: result.restored_from_revision_number,
         }))
+    }
+
+    // ---- R647: run lifecycle (dispatch + finalize) ------------------------
+
+    /// R647: 触发一次 routine 执行（dispatch）。
+    ///
+    /// 委托给 `RoutineRepo::dispatch_run`（已实现事务 + idempotency + assignee 校验）。
+    /// 成功后触发 `RoutineHookEvent::RunDispatched` hook。
+    pub async fn dispatch_run(
+        &self,
+        routine_id: Uuid,
+        input: &RunRoutineRecord,
+    ) -> Result<DispatchedRoutineRun> {
+        let result = RoutineRepo::new(&self.db)
+            .dispatch_run(routine_id, input)
+            .await?;
+        self.dispatch(RoutineHookEvent::RunDispatched {
+            run_id: result.run.id,
+            routine_id: result.run.routine_id,
+            company_id: result.run.company_id,
+            source: result.run.source.clone(),
+            status: result.run.status.clone(),
+        })
+        .await?;
+        Ok(result)
+    }
+
+    /// R647: 关闭一个 routine run（写入终态 + completed_at）。
+    ///
+    /// status 应为 "succeeded" / "failed" / "cancelled"（"running" 会清空 completed_at）。
+    /// 成功后触发 `RoutineHookEvent::RunFinalized` hook。
+    /// run 不存在 → Ok(None)。
+    pub async fn finalize_run(
+        &self,
+        run_id: Uuid,
+        status: &str,
+        failure_reason: Option<&str>,
+    ) -> Result<Option<RoutineRunRow>> {
+        let row = RoutineRepo::new(&self.db)
+            .finalize_run(run_id, status, failure_reason)
+            .await
+            .map_err(map_sql_error)?;
+        if let Some(ref run) = row {
+            self.dispatch(RoutineHookEvent::RunFinalized {
+                run_id: run.id,
+                routine_id: run.routine_id,
+                company_id: run.company_id,
+                status: run.status.clone(),
+                failure_reason: run.failure_reason.clone(),
+            })
+            .await?;
+        }
+        Ok(row)
+    }
+
+    /// R647: 取一个 routine run。
+    pub async fn get_run(&self, run_id: Uuid) -> Result<Option<RoutineRunRow>> {
+        RoutineRepo::new(&self.db)
+            .get_run(run_id)
+            .await
+            .map_err(map_sql_error)
     }
 }
 

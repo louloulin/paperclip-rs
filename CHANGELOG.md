@@ -1,4 +1,41 @@
 
+## R647 (2026-08-13) — M4 pc-routines run lifecycle 补完
+
+### 新增
+
+- crates/pc-repos::routine (新增 2 method, +55 LOC):
+  - `finalize_run(run_id, status, failure_reason)` — 标记 run 终态 (succeeded / failed / cancelled)
+    并设置 completed_at (running 时清空)
+  - `get_run(run_id)` — 按 id 查询 run
+
+- crates/pc-routines::service (新增 3 method, +72 LOC):
+  - `RoutineService::dispatch_run(routine_id, input)` — 委托 repo (含事务 + idempotency + assignee 校验) + 触发 `RunDispatched` hook
+  - `RoutineService::finalize_run(run_id, status, failure_reason)` — 写回 run + 触发 `RunFinalized` hook
+  - `RoutineService::get_run(run_id)` — 包装 repo get_run
+
+- RoutineHookEvent 新增 2 个变体:
+  - `RunDispatched { run_id, routine_id, company_id, source, status }`
+  - `RunFinalized { run_id, routine_id, company_id, status, failure_reason }`
+
+### 测试
+
+- crates/pc-routines/tests/r647_run_lifecycle.rs (4 个真实 PG 集成测试, 164 LOC):
+  - `r647_dispatch_run_creates_run_and_triggers_hook` — dispatch + hook 触发 + get_run + finalize
+  - `r647_finalize_run_with_failure_reason_persists` — failure_reason 写入 + completed_at 设置
+  - `r647_finalize_run_nonexistent_returns_none` — 不存在返回 None
+  - `r647_dispatch_run_idempotent_with_same_key` — 同 idempotency_key 二次调用返回同 run
+
+- pc-routines lib: **30 passed** (无回归)
+- pc-routines R647 集成: **4 passed** (真实 PG)
+
+### 设计
+
+- dispatch_run 走 repo 已有的事务 + idempotency + assignee 校验逻辑
+- finalize_run 幂等: 二次调用覆盖状态；不存在的 run 返回 Ok(None)
+- Hook 链路完整：dispatch → RunDispatched → finalize → RunFinalized
+- 与 Node `dispatchRoutineRun` / `finalizeRun` 行为对齐
+
+
 ## R646 (2026-08-13) — M3 pc-issues 核心 service 方法补完
 
 ### 新增
