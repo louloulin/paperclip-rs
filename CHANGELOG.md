@@ -1,3 +1,53 @@
+
+## R643 (2026-08-13) — M2 闭环: pc-decisions list/outcome/stats 端口 + R639.2.x 残留整理
+
+### 新增
+
+- crates/pc-repos::decision (新增 5 struct + 5 method, +142 LOC):
+  - `DecisionEffectExecutionRow` (row 类型，对应 `decision_effect_executions` 表)
+  - `DecisionListFilter` / `DecisionStatsFilter` (上游 service.filter 形状)
+  - `DecisionStatsCounts` + `DecisionRuleKeyGroup` + `DecisionChosenOptionCount` (stats 输出 DTO)
+  - `DecisionRepo::list_filtered(company_id, filter)` (对齐 `decisionService.list` SQL)
+  - `DecisionRepo::current_target_timestamps(company_id, ids)` (用于计算 target_changed)
+  - `DecisionRepo::executions_for_one(id)` / `executions_for_many(ids)`
+  - `DecisionRepo::stats_by_rule_key(company_id, filter)` (对齐 `decisionService.stats` SQL 聚合)
+
+- crates/pc-decisions (新增 3 struct + 3 method, +141 LOC):
+  - `DecisionWithChanges` ({row, target_changed, executions}) — list 返回值
+  - `DecisionWithExecutions` ({row, executions}) — outcome 返回值
+  - `DecisionStatsReport` + `DecisionStatsFilters` — stats 返回值
+  - `DecisionService::list_with_changes(company_id, filter)`
+  - `DecisionService::outcome(id)`
+  - `DecisionService::stats_by_rule_key(company_id, filter)`
+
+- crates/pc-http::routes::decisions (新增路由 + 重写现有):
+  - 新增 `/api/companies/:company_id/decisions` GET (list_company_decisions)
+  - `/api/decisions/:id` GET 改用 `outcome()` 返回 row + executions
+  - `/api/companies/:company_id/decisions/stats` GET 升级为 `byRuleKey` 视图 + 保留 `byStatus` 向后兼容
+
+### 整合 (R639.2.x 残留入 commit)
+
+- crates/pc-pipelines:
+  - `case_events_db.rs` (494 行) + `case_events_enrichment.rs` (457 行) 新增模块
+  - `aggregation.rs` / `aggregation_db.rs` 扩展
+  - `Cargo.toml` 加 `tokio` 依赖
+  - 新增 `tests/r6392_3_case_events_db.rs` 集成测试
+  - 修改 `tests/r6392_pipeline_attention_db.rs`
+
+### 测试
+
+- pc-decisions lib: **52 passed** (含 4 个 R643 新测试)
+- pc-pipelines lib: **37 passed** (无回归)
+- pc-http 编译: 0 errors (183 warnings — pre-existing)
+- pc-repos 编译: 0 errors (30 warnings — pre-existing)
+
+### 设计
+
+- 严格遵循上游 `decisionService.{list,outcome,stats}` 1:1 wire format
+- target_changed: open decisions 在 snapshot 与 current issue 对比，差异标记为 true
+- executions: terminal decisions 通过 `decision_effect_executions` 表按 effect_index 升序返回
+- stats: 按 rule_key 分组 (proposed/accepted/rejected/expired + chosenOptions)
+
 ## R640 (2026-08-12) - P0-1 修复: export-fidelity 编译 + e2e 7/7 绿
 
 ### 修复

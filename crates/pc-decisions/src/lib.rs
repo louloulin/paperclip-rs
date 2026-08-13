@@ -29,6 +29,11 @@ pub use wakeup::*;
 
 use async_trait::async_trait;
 use pc_repos::decision::{DecisionRepo, DecisionRow, SignedDecisionRow};
+use pc_repos::decision::{
+    DecisionEffectExecutionRow, DecisionListFilter, DecisionRuleKeyGroup,
+    DecisionStatsFilter, DecisionStatsCounts,
+};
+
 use pc_secrets::DecisionSigningService;
 use serde_json::Value;
 use thiserror::Error;
@@ -356,7 +361,142 @@ impl<'a> DecisionService<'a> {
         }
         Ok(row)
     }
+
+    // ---------- R643: list with target_changed + outcome + stats ----------
+
+    /// 列出某公司下决策，并附带 target_changed (open) 与 executions (terminal)。
+    /// 与上游  等价。
+    pub async fn list_with_changes(
+        &self,
+        company_id: Uuid,
+        filter: DecisionListFilter,
+    ) -> DecisionServiceResult<Vec<DecisionWithChanges>> {
+        let rows = self.repo.list_filtered(company_id, &filter).await?;
+        let open_ids: Vec<Uuid> = rows.iter()
+            .filter(|r| r.status == "open")
+            .map(|r| r.id)
+            .collect();
+        let terminal_ids: Vec<Uuid> = rows.iter()
+            .filter(|r| r.status != "open")
+            .map(|r| r.id)
+            .collect();
+        let current_timestamps = self.repo.current_target_timestamps(company_id, &open_ids).await?;
+        let terminal_executions = self.repo.executions_for_many(&terminal_ids).await?;
+        use std::collections::HashMap;
+        let mut exec_by_decision: HashMap<Uuid, Vec<DecisionEffectExecutionRow>> = HashMap::new();
+        for ex in terminal_executions {
+            exec_by_decision.entry(ex.decision_id).or_default().push(ex);
+        }
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let target_changed = if row.status == "open" {
+                let mut changed = serde_json::Map::new();
+                if let Some(snapshots) = row.target_snapshots.as_object() {
+                    for (id, snap) in snapshots {
+                        let snap_updated_at = snap.get("updatedAt")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let current_updated_at = current_timestamps
+                            .get(&Uuid::parse_str(id).unwrap_or_default())
+                            .map(|t| t.as_datetime().to_rfc3339())
+                            .unwrap_or_default();
+                        let is_changed = current_updated_at.is_empty()
+                            || current_updated_at != snap_updated_at;
+                        changed.insert(id.clone(), serde_json::Value::Bool(is_changed));
+                    }
+                }
+                Some(serde_json::Value::Object(changed))
+            } else {
+                None
+            };
+            let executions = if row.status == "open" {
+                None
+            } else {
+                exec_by_decision.remove(&row.id)
+            };
+            out.push(DecisionWithChanges {
+                row,
+                target_changed,
+                executions,
+            });
+        }
+        Ok(out)
+    }
+
+    /// 取一个决策及其所有 effect executions（与上游  等价）。
+    pub async fn outcome(&self, id: Uuid) -> DecisionServiceResult<Option<DecisionWithExecutions>> {
+        let row = match self.repo.get(id).await? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let executions = self.repo.executions_for_one(id).await?;
+        Ok(Some(DecisionWithExecutions { row, executions }))
+    }
+
+    /// 按 rule_key 分组统计决策数（与上游  等价）。
+    pub async fn stats_by_rule_key(
+        &self,
+        company_id: Uuid,
+        filter: DecisionStatsFilter,
+    ) -> DecisionServiceResult<DecisionStatsReport> {
+        let groups = self.repo.stats_by_rule_key(company_id, &filter).await?;
+        let mut totals = DecisionStatsCounts::ZERO;
+        for g in &groups {
+            totals.add(&g.counts);
+        }
+        Ok(DecisionStatsReport {
+            group_by: "ruleKey".into(),
+            filters: DecisionStatsFilters {
+                origin_agent_id: filter.origin_agent_id,
+                since: filter.since,
+            },
+            totals,
+            groups,
+        })
+    }
 }
+
+/// 一个决策及其 open 状态下的 target_changed 标记 / 终态下的 executions。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionWithChanges {
+    #[serde(flatten)]
+    pub row: DecisionRow,
+    ///  当 status == "open"，key = issue id, value = 是否已变更。
+    pub target_changed: Option<serde_json::Value>,
+    ///  当 status != "open"，按 effect_index 升序。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executions: Option<Vec<DecisionEffectExecutionRow>>,
+}
+
+/// 一个决策及其所有 effect executions（detail view 用）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionWithExecutions {
+    #[serde(flatten)]
+    pub row: DecisionRow,
+    pub executions: Vec<DecisionEffectExecutionRow>,
+}
+
+///  返回值（与 Node DecisionStatsResponse 等价）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionStatsReport {
+    pub group_by: String,
+    pub filters: DecisionStatsFilters,
+    pub totals: DecisionStatsCounts,
+    pub groups: Vec<DecisionRuleKeyGroup>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionStatsFilters {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_agent_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -419,5 +559,84 @@ mod tests {
         assert_eq!(hook.decided.lock().unwrap().len(), 1);
         assert_eq!(hook.dismissed.lock().unwrap().len(), 1);
         assert_eq!(hook.cancelled.lock().unwrap().len(), 1);
+    }
+
+    // -------- R643: DecisionStatsCounts + pure struct shape --------
+
+    #[test]
+    fn r643_stats_counts_zero_is_zero() {
+        use pc_repos::decision::DecisionStatsCounts;
+        let z = DecisionStatsCounts::ZERO;
+        assert_eq!(z.proposed, 0);
+        assert_eq!(z.accepted, 0);
+        assert_eq!(z.rejected, 0);
+        assert_eq!(z.expired, 0);
+    }
+
+    #[test]
+    fn r643_stats_counts_add_accumulates() {
+        use pc_repos::decision::DecisionStatsCounts;
+        let mut a = DecisionStatsCounts { proposed: 1, accepted: 2, rejected: 0, expired: 3 };
+        let b = DecisionStatsCounts { proposed: 4, accepted: 5, rejected: 6, expired: 0 };
+        a.add(&b);
+        assert_eq!(a.proposed, 5);
+        assert_eq!(a.accepted, 7);
+        assert_eq!(a.rejected, 6);
+        assert_eq!(a.expired, 3);
+    }
+
+    #[test]
+    fn r643_filter_default_is_empty() {
+        let f = pc_repos::decision::DecisionListFilter::default();
+        assert!(f.status.is_none());
+        assert!(f.bundle_id.is_none());
+        assert!(f.origin_agent_id.is_none());
+        assert!(f.target_issue_id.is_none());
+        assert!(f.limit.is_none());
+
+        let s = pc_repos::decision::DecisionStatsFilter::default();
+        assert!(s.origin_agent_id.is_none());
+        assert!(s.since.is_none());
+    }
+
+    #[test]
+    fn r643_with_changes_serializes_target_changed_for_open() {
+        let row = DecisionRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            bundle_id: None,
+            origin_agent_id: None,
+            origin_issue_id: None,
+            origin_run_id: None,
+            rule_key: None,
+            title: "t".into(),
+            body: "b".into(),
+            options: serde_json::json!([]),
+            inputs: None,
+            status: "open".into(),
+            execution_status: None,
+            chosen_option_id: None,
+            input_values: None,
+            decided_by_user_id: None,
+            decided_at: None,
+            expires_at: pc_core::Timestamp::now(),
+            idempotency_key: None,
+            signed_spec: "{}".into(),
+            target_snapshots: serde_json::json!({"i-1": {"updatedAt": "2026-08-01T00:00:00+00:00"}}),
+            continuation_policy: "none".into(),
+            metadata: serde_json::json!({}),
+            created_at: pc_core::Timestamp::now(),
+            updated_at: pc_core::Timestamp::now(),
+        };
+        let wc = crate::DecisionWithChanges {
+            row,
+            target_changed: Some(serde_json::json!({"i-1": true})),
+            executions: None,
+        };
+        let v = serde_json::to_value(&wc).unwrap();
+        assert_eq!(v["status"], "open");
+        assert!(v.get("targetChanged").is_some());
+        // executions skipped because None
+        assert!(v.get("executions").is_none());
     }
 }

@@ -10,7 +10,9 @@ use pc_pipelines::aggregation::{
     bounded_limit, AttentionCaller, PIPELINE_ATTENTION_DEFAULT_LIMIT,
 };
 use pc_pipelines::aggregation_db::{
-    list_pipeline_attention, list_reviews, list_suggestions,
+    build_heads_up_items, list_drift_events, list_pipeline_attention, list_reviews,
+    list_suggestions, load_active_work_for_cases, load_open_work_issues_for_cases,
+    load_upstream_cases,
 };
 use pc_repos::Db;
 use uuid::Uuid;
@@ -22,6 +24,11 @@ async fn connect() -> Db {
 }
 
 async fn cleanup(db: &Db) {
+    let _ = sqlx::query(
+        "DELETE FROM pipeline_case_events WHERE company_id IN (SELECT id FROM companies WHERE name LIKE 'r6392pa-%')",
+    )
+    .execute(db.pool())
+    .await;
     let _ = sqlx::query(
         "DELETE FROM pipeline_case_issue_links WHERE company_id IN (SELECT id FROM companies WHERE name LIKE 'r6392pa-%')",
     )
@@ -252,4 +259,147 @@ async fn r6392_bounded_limit_clamps_inputs() {
     assert_eq!(bounded_limit(None, 50, 100), 50);
     assert_eq!(bounded_limit(Some(0), 50, 100), 1);
     assert_eq!(bounded_limit(Some(1000), 50, 100), 100);
+}
+
+async fn insert_drift_event(db: &Db, company_id: Uuid, case_id: Uuid, payload: serde_json::Value) -> Uuid {
+    let event_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pipeline_case_events (id, company_id, case_id, type, actor_type, payload, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'upstream_drift', 'system', $4, now(), now())",
+    )
+    .bind(event_id)
+    .bind(company_id)
+    .bind(case_id)
+    .bind(payload)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    event_id
+}
+
+async fn insert_drift_ack(db: &Db, company_id: Uuid, case_id: Uuid) -> Uuid {
+    let ack_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pipeline_case_events (id, company_id, case_id, type, actor_type, payload, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'drift_acknowledged', 'system', '{}'::jsonb, now() + interval '1 second', now())",
+    )
+    .bind(ack_id)
+    .bind(company_id)
+    .bind(case_id)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    ack_id
+}
+
+#[tokio::test]
+async fn r6392_list_drift_events_filters_acked() {
+    let db = connect().await;
+    cleanup(&db).await;
+    let (company_id, pipeline_id) = fixture(&db, "drift").await;
+    let stage_id = insert_stage(&db, pipeline_id, "working", "working", serde_json::json!({})).await;
+    let upstream_case_id = insert_case_with_suggestion(
+        &db, company_id, pipeline_id, stage_id, "upstream-sug", "review", None,
+    ).await;
+    let pending_case = insert_review_case(&db, company_id, pipeline_id, stage_id, serde_json::json!({})).await;
+    let acked_case = insert_review_case(&db, company_id, pipeline_id, stage_id, serde_json::json!({})).await;
+
+    insert_drift_event(
+        &db, company_id, pending_case,
+        serde_json::json!({"upstreamCaseId": upstream_case_id.to_string(), "previousVersion": 1, "version": 2}),
+    ).await;
+    insert_drift_event(
+        &db, company_id, acked_case,
+        serde_json::json!({"upstreamCaseId": upstream_case_id.to_string(), "previousVersion": 1, "version": 2}),
+    ).await;
+    insert_drift_ack(&db, company_id, acked_case).await;
+
+    let rows = list_drift_events(db.pool(), company_id, PIPELINE_ATTENTION_DEFAULT_LIMIT)
+        .await
+        .expect("list_drift_events");
+    assert_eq!(rows.len(), 1, "only pending (un-acked) drift event");
+    assert_eq!(rows[0].case_id, pending_case);
+    let payload = rows[0].event_payload.as_object().unwrap();
+    assert_eq!(payload["previousVersion"], serde_json::json!(1));
+    assert_eq!(payload["version"], serde_json::json!(2));
+
+    cleanup(&db).await;
+}
+
+#[tokio::test]
+async fn r6392_build_heads_up_items_resolves_upstream() {
+    let db = connect().await;
+    cleanup(&db).await;
+    let (company_id, pipeline_id) = fixture(&db, "hup").await;
+    let stage_id = insert_stage(&db, pipeline_id, "working", "working", serde_json::json!({})).await;
+    let upstream_case_id = insert_case_with_suggestion(
+        &db, company_id, pipeline_id, stage_id, "upstream-sug", "review", None,
+    ).await;
+    let drift_case = insert_review_case(&db, company_id, pipeline_id, stage_id, serde_json::json!({})).await;
+
+    insert_drift_event(
+        &db, company_id, drift_case,
+        serde_json::json!({"upstreamCaseId": upstream_case_id.to_string(), "previousVersion": 1, "version": 2}),
+    ).await;
+
+    let drift_rows = list_drift_events(db.pool(), company_id, PIPELINE_ATTENTION_DEFAULT_LIMIT)
+        .await
+        .expect("list_drift_events");
+    let drift_case_ids: Vec<Uuid> = drift_rows.iter().map(|r| r.case_id).collect();
+    let active_work_rows = load_active_work_for_cases(db.pool(), company_id, &drift_case_ids)
+        .await
+        .expect("load_active_work");
+    let work_issue_rows = load_open_work_issues_for_cases(db.pool(), company_id, &drift_case_ids)
+        .await
+        .expect("load_open_work_issues");
+    let upstream_case_ids: Vec<Uuid> = drift_rows
+        .iter()
+        .filter_map(|r| {
+            r.event_payload.get("upstreamCaseId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+        })
+        .collect();
+    let upstream_rows = load_upstream_cases(db.pool(), company_id, &upstream_case_ids)
+        .await
+        .expect("load_upstream_cases");
+
+    let items = build_heads_up_items(drift_rows, active_work_rows, work_issue_rows, upstream_rows);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].drift.previous_version, Some(1));
+    assert_eq!(items[0].drift.version, Some(2));
+    assert_eq!(items[0].drift.upstream.case_id.as_deref(), Some(upstream_case_id.to_string().as_str()));
+    assert!(items[0].drift.upstream.title.is_some(), "upstream title resolved from JOIN");
+    assert!(items[0].active_work.is_none(), "no active work without issue link");
+    assert!(items[0].work_issue.is_none(), "no open work issue without link");
+
+    cleanup(&db).await;
+}
+
+#[tokio::test]
+async fn r6392_list_pipeline_attention_includes_heads_up() {
+    let db = connect().await;
+    cleanup(&db).await;
+    let (company_id, pipeline_id) = fixture(&db, "hup-combined").await;
+    let cfg_any = serde_json::json!({"reviewerKind": "any"});
+    let stage_working = insert_stage(&db, pipeline_id, "working", "working", serde_json::json!({})).await;
+    let stage_review = insert_stage(&db, pipeline_id, "review", "review", cfg_any).await;
+    let upstream_id = insert_case_with_suggestion(
+        &db, company_id, pipeline_id, stage_working, "upstream-sug", "review", None,
+    ).await;
+    let drift_case = insert_review_case(&db, company_id, pipeline_id, stage_review, serde_json::json!({})).await;
+    insert_drift_event(
+        &db, company_id, drift_case,
+        serde_json::json!({"upstreamCaseId": upstream_id.to_string(), "previousVersion": 1, "version": 2}),
+    ).await;
+
+    let caller = AttentionCaller::User { user_id: "u-x".into() };
+    let result = list_pipeline_attention(db.pool(), company_id, &caller, None)
+        .await
+        .expect("list_pipeline_attention");
+    assert_eq!(result.heads_up.len(), 1);
+    assert_eq!(result.counts.heads_up, 1);
+    assert_eq!(result.heads_up[0].drift.upstream.case_id.as_deref(), Some(upstream_id.to_string().as_str()));
+
+    cleanup(&db).await;
 }

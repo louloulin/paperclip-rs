@@ -51,6 +51,70 @@ pub struct SignedDecisionRow {
     pub signed_spec: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct DecisionEffectExecutionRow {
+    pub id: Uuid,
+    pub decision_id: Uuid,
+    pub effect_index: i32,
+    pub effect_type: String,
+    pub target_issue_id: Uuid,
+    pub status: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub activity_log_id: Option<Uuid>,
+    pub executed_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DecisionListFilter {
+    pub status: Option<String>,
+    pub bundle_id: Option<Uuid>,
+    pub origin_agent_id: Option<Uuid>,
+    pub target_issue_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DecisionStatsFilter {
+    pub origin_agent_id: Option<Uuid>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionStatsCounts {
+    pub proposed: i64,
+    pub accepted: i64,
+    pub rejected: i64,
+    pub expired: i64,
+}
+
+impl DecisionStatsCounts {
+    pub const ZERO: Self = Self { proposed: 0, accepted: 0, rejected: 0, expired: 0 };
+    pub fn add(&mut self, other: &Self) {
+        self.proposed += other.proposed;
+        self.accepted += other.accepted;
+        self.rejected += other.rejected;
+        self.expired += other.expired;
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionRuleKeyGroup {
+    pub rule_key: Option<String>,
+    #[serde(flatten)]
+    pub counts: DecisionStatsCounts,
+    pub chosen_options: Vec<DecisionChosenOptionCount>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionChosenOptionCount {
+    pub option_id: String,
+    pub count: i64,
+}
+
 pub struct DecisionRepo<'a> {
     pub db: &'a Db,
 }
@@ -281,6 +345,148 @@ impl<'a> DecisionRepo<'a> {
         .bind(company_id)
         .fetch_all(self.db.pool())
         .await
+    }
+
+    pub async fn list_filtered(
+        &self,
+        company_id: Uuid,
+        filter: &DecisionListFilter,
+    ) -> sqlx::Result<Vec<DecisionRow>> {
+        let limit = filter.limit.unwrap_or(50).clamp(1, 100);
+        if filter.target_issue_id.is_some() {
+            let issue_id = filter.target_issue_id.expect("present");
+            return sqlx::query_as::<_, DecisionRow>(&format!(
+                "SELECT {COLS} FROM decisions                 WHERE company_id = $1                   AND id IN (SELECT decision_id FROM decision_target_issues                              WHERE company_id = $1 AND issue_id = $2)                 ORDER BY created_at DESC LIMIT $3"
+            ))
+            .bind(company_id)
+            .bind(issue_id)
+            .bind(limit)
+            .fetch_all(self.db.pool())
+            .await;
+        }
+        let mut sql = format!("SELECT {COLS} FROM decisions WHERE company_id = $1");
+        let mut idx = 2;
+        if filter.status.is_some() {
+            sql.push_str(&format!(" AND status = ${idx}"));
+            idx += 1;
+        }
+        if filter.bundle_id.is_some() {
+            sql.push_str(&format!(" AND bundle_id = ${idx}"));
+            idx += 1;
+        }
+        if filter.origin_agent_id.is_some() {
+            sql.push_str(&format!(" AND origin_agent_id = ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY created_at DESC");
+        sql.push_str(&format!(" LIMIT ${idx}"));
+        let mut q = sqlx::query_as::<_, DecisionRow>(&sql).bind(company_id);
+        if let Some(s) = &filter.status { q = q.bind(s); }
+        if let Some(b) = filter.bundle_id { q = q.bind(b); }
+        if let Some(a) = filter.origin_agent_id { q = q.bind(a); }
+        q = q.bind(limit);
+        q.fetch_all(self.db.pool()).await
+    }
+
+    pub async fn current_target_timestamps(
+        &self,
+        company_id: Uuid,
+        decision_ids: &[Uuid],
+    ) -> sqlx::Result<std::collections::HashMap<Uuid, Timestamp>> {
+        if decision_ids.is_empty() { return Ok(Default::default()); }
+        let rows: Vec<(Uuid, Timestamp)> = sqlx::query_as(
+            "SELECT i.id, i.updated_at             FROM decision_target_issues dti             INNER JOIN issues i                ON i.company_id = dti.company_id AND i.id = dti.issue_id             WHERE dti.company_id = $1 AND dti.decision_id = ANY($2)"
+        )
+        .bind(company_id)
+        .bind(decision_ids)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
+    pub async fn executions_for_one(
+        &self,
+        decision_id: Uuid,
+    ) -> sqlx::Result<Vec<DecisionEffectExecutionRow>> {
+        sqlx::query_as::<_, DecisionEffectExecutionRow>(
+            "SELECT id, decision_id, effect_index, effect_type, target_issue_id,                    status, result, error, activity_log_id, executed_at             FROM decision_effect_executions             WHERE decision_id = $1 ORDER BY effect_index ASC"
+        )
+        .bind(decision_id)
+        .fetch_all(self.db.pool())
+        .await
+    }
+
+    pub async fn executions_for_many(
+        &self,
+        decision_ids: &[Uuid],
+    ) -> sqlx::Result<Vec<DecisionEffectExecutionRow>> {
+        if decision_ids.is_empty() { return Ok(Vec::new()); }
+        sqlx::query_as::<_, DecisionEffectExecutionRow>(
+            "SELECT id, decision_id, effect_index, effect_type, target_issue_id,                    status, result, error, activity_log_id, executed_at             FROM decision_effect_executions             WHERE decision_id = ANY($1)             ORDER BY decision_id, effect_index ASC"
+        )
+        .bind(decision_ids)
+        .fetch_all(self.db.pool())
+        .await
+    }
+    pub async fn stats_by_rule_key(
+        &self,
+        company_id: Uuid,
+        filter: &DecisionStatsFilter,
+    ) -> sqlx::Result<Vec<DecisionRuleKeyGroup>> {
+        use std::collections::BTreeMap;
+        let mut sql = String::from(
+            "SELECT rule_key, status, chosen_option_id,                     COALESCE(metadata->'dismissed' = 'true'::jsonb, false) AS dismissed,                     COUNT(*) AS value             FROM decisions WHERE company_id = $1"
+        );
+        let mut idx = 2;
+        if filter.origin_agent_id.is_some() {
+            sql.push_str(&format!(" AND origin_agent_id = ${idx}"));
+            idx += 1;
+        }
+        if filter.since.is_some() {
+            sql.push_str(&format!(" AND created_at >= ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" GROUP BY rule_key, status, chosen_option_id, dismissed");
+        let mut q = sqlx::query_as::<_, (Option<String>, String, Option<String>, bool, i64)>(&sql)
+            .bind(company_id);
+        if let Some(a) = filter.origin_agent_id { q = q.bind(a); }
+        if let Some(s) = filter.since { q = q.bind(s); }
+        let rows = q.fetch_all(self.db.pool()).await?;
+        let mut grouped: BTreeMap<Option<String>, (DecisionStatsCounts, BTreeMap<String, i64>)> =
+            BTreeMap::new();
+        for (rule_key, status, chosen_option_id, dismissed, value) in rows {
+            let entry = grouped.entry(rule_key).or_insert_with(|| (
+                DecisionStatsCounts::ZERO,
+                BTreeMap::new(),
+            ));
+            let counts = &mut entry.0;
+            let chosen = &mut entry.1;
+            let v = value;
+            match status.as_str() {
+                "open" => counts.proposed += v,
+                "expired" => counts.expired += v,
+                "decided" => {
+                    let rejected = chosen_option_id.as_deref() == Some("dismissed") || dismissed;
+                    if rejected {
+                        counts.rejected += v;
+                    } else {
+                        counts.accepted += v;
+                        if let Some(oid) = chosen_option_id.as_ref() {
+                            *chosen.entry(oid.clone()).or_insert(0) += v;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(grouped.into_iter().map(|(rule_key, (counts, chosen))| DecisionRuleKeyGroup {
+            rule_key,
+            counts,
+            chosen_options: chosen.into_iter().map(|(option_id, count)| DecisionChosenOptionCount {
+                option_id,
+                count,
+            }).collect(),
+        }).collect())
     }
 }
 

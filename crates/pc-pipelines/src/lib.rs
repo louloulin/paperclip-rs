@@ -35,6 +35,8 @@ use uuid::Uuid;
 
 pub mod aggregation;
 pub mod aggregation_db;
+pub mod case_events_db;
+pub mod case_events_enrichment;
 pub mod case_type;
 
 /// Pipeline 业务错误。

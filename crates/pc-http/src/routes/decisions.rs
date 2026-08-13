@@ -32,6 +32,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/decisions/:id/dismiss", post(dismiss_decision))
         .route("/api/decisions/:id/cancel", post(cancel_decision))
         .route(
+            "/api/companies/:company_id/decisions",
+            get(list_company_decisions),
+        )
+        .route(
             "/api/companies/:company_id/decisions/stats",
             get(decision_stats_route),
         )
@@ -48,31 +52,89 @@ struct ListQuery {
     company_id: Option<Uuid>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompanyDecisionsQuery {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    bundle_id: Option<Uuid>,
+    #[serde(default)]
+    origin_agent_id: Option<Uuid>,
+    #[serde(default)]
+    target_issue_id: Option<Uuid>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 async fn list(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    // R587: 通过 DecisionService 取列表
+    // R643: 通过 DecisionService.list_with_changes 走完整 filter + target_changed
     let svc = DecisionService::new(&state.db, &state.decision_signing);
     let rows = match q.company_id {
-        Some(cid) => svc
-            .list_by_company(cid)
-            .await
-            .map_err(map_decision_service_error)?,
-        None => svc
-            .list_all(200)
-            .await
-            .map_err(map_decision_service_error)?,
+        Some(cid) => {
+            let filter = pc_repos::decision::DecisionListFilter {
+                limit: Some(50),
+                ..Default::default()
+            };
+            svc.list_with_changes(cid, filter)
+                .await
+                .map_err(map_decision_service_error)?
+        }
+        None => {
+            // 跨公司视图保留旧 list_all 行为
+            let all = svc
+                .list_all(200)
+                .await
+                .map_err(map_decision_service_error)?;
+            all.into_iter()
+                .map(|d| pc_decisions::DecisionWithChanges {
+                    row: d,
+                    target_changed: None,
+                    executions: None,
+                })
+                .collect()
+        }
     };
     Ok(Json(serde_json::to_value(rows).unwrap_or_default()))
 }
 
+/// /api/companies/:company_id/decisions — 完整过滤 + target_changed
+async fn list_company_decisions(
+    State(state): State<AppState>,
+    Path(company_id): Path<Uuid>,
+    Query(q): Query<CompanyDecisionsQuery>,
+) -> ApiResult<Json<Value>> {
+    let svc = DecisionService::new(&state.db, &state.decision_signing);
+    let filter = pc_repos::decision::DecisionListFilter {
+        status: q.status,
+        bundle_id: q.bundle_id,
+        origin_agent_id: q.origin_agent_id,
+        target_issue_id: q.target_issue_id,
+        limit: q.limit,
+    };
+    let rows = svc
+        .list_with_changes(company_id, filter)
+        .await
+        .map_err(map_decision_service_error)?;
+    Ok(Json(json!({
+        "items": serde_json::to_value(&rows).unwrap_or_default(),
+        "companyId": company_id,
+        "count": rows.len(),
+    })))
+}
+
 async fn get_one(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    let row = DecisionRepo::new(&state.db)
-        .get(id)
-        .await?
+    // R643: 通过 DecisionService.outcome 返回 row + executions
+    let svc = DecisionService::new(&state.db, &state.decision_signing);
+    let outcome = svc
+        .outcome(id)
+        .await
+        .map_err(map_decision_service_error)?
         .ok_or_else(|| ApiError::NotFound(format!("decision {id}")))?;
-    Ok(Json(serde_json::to_value(row).unwrap_or_default()))
+    Ok(Json(serde_json::to_value(outcome).unwrap_or_default()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,10 +342,14 @@ async fn cancel_decision(
     Ok(Json(serde_json::to_value(row).unwrap_or_default()))
 }
 
+/// /api/companies/:company_id/decisions/stats
+/// R643: 升级为按 rule_key 分组的 stats（与上游 decisionService.stats 等价），
+/// 同时保留旧字段以保证向后兼容。
 async fn decision_stats_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    // 旧版 by-status 视图
     let rows = DecisionRepo::new(&state.db)
         .status_counts(company_id)
         .await
@@ -298,6 +364,14 @@ async fn decision_stats_route(
     let decided = by_status.get("decided").copied().unwrap_or(0);
     let dismissed = by_status.get("dismissed").copied().unwrap_or(0);
     let cancelled = by_status.get("cancelled").copied().unwrap_or(0);
+
+    // R643: 新版 by-rule-key 视图
+    let svc = DecisionService::new(&state.db, &state.decision_signing);
+    let report = svc
+        .stats_by_rule_key(company_id, pc_repos::decision::DecisionStatsFilter::default())
+        .await
+        .map_err(map_decision_service_error)?;
+
     Ok(Json(json!({
         "companyId": company_id,
         "total": total,
@@ -306,6 +380,7 @@ async fn decision_stats_route(
         "dismissed": dismissed,
         "cancelled": cancelled,
         "byStatus": by_status,
+        "byRuleKey": serde_json::to_value(&report).unwrap_or_default(),
     })))
 }
 
