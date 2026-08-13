@@ -97,6 +97,19 @@ pub struct CreateIssueMinimalInput {
     pub created_by_user_id: Option<String>,
 }
 
+/// R646: 通用字段更新 patch（service.update 入参）。
+///
+/// 所有字段都是 `Option<Option<T>>`：外层 None = 不更新；
+/// 内层 None 表示置空（如 `assignee_agent_id: Some(None)` → 取消指派）。
+#[derive(Debug, Default, Clone)]
+pub struct IssueUpdatePatch {
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub assignee_agent_id: Option<Option<Uuid>>,
+}
+
 /// Issue lifecycle event — hook 可以订阅以触发副作用。
 #[derive(Debug, Clone)]
 pub enum IssueLifecycleEvent {
@@ -198,6 +211,30 @@ pub trait IssueHook: Send + Sync {
     ) -> IssueServiceResult<()> {
         Ok(())
     }
+    async fn on_updated(
+        &self,
+        _previous: &IssueRow,
+        _updated: &IssueRow,
+    ) -> IssueServiceResult<()> {
+        Ok(())
+    }
+    async fn on_deleted(&self, _row: &IssueRow) -> IssueServiceResult<()> {
+        Ok(())
+    }
+    async fn on_comment_updated(
+        &self,
+        _parent_issue: &IssueRow,
+        _comment: &IssueCommentRow,
+    ) -> IssueServiceResult<()> {
+        Ok(())
+    }
+    async fn on_comment_removed(
+        &self,
+        _parent_issue: &IssueRow,
+        _comment_id: Uuid,
+    ) -> IssueServiceResult<()> {
+        Ok(())
+    }
 }
 
 /// Noop hook。
@@ -209,9 +246,13 @@ impl IssueHook for NoopIssueHook {}
 #[derive(Default)]
 pub struct RecordingIssueHook {
     pub created: std::sync::Mutex<Vec<Uuid>>,
+    pub updated: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
+    pub deleted: std::sync::Mutex<Vec<Uuid>>,
     pub status_changed: std::sync::Mutex<Vec<(Uuid, String, String)>>,
     pub assigned: std::sync::Mutex<Vec<(Uuid, AssignKind)>>,
-    pub commented: std::sync::Mutex<Vec<(Uuid, Uuid)>>, // (issue_id, comment_id)
+    pub commented: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
+    pub comment_updated: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
+    pub comment_removed: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
 }
 
 #[async_trait]
@@ -246,6 +287,40 @@ impl IssueHook for RecordingIssueHook {
             .lock()
             .expect("lock")
             .push((parent_issue.id, comment.id));
+        Ok(())
+    }
+    async fn on_updated(
+        &self,
+        previous: &IssueRow,
+        updated: &IssueRow,
+    ) -> IssueServiceResult<()> {
+        self.updated.lock().expect("lock").push((previous.id, updated.id));
+        Ok(())
+    }
+    async fn on_deleted(&self, row: &IssueRow) -> IssueServiceResult<()> {
+        self.deleted.lock().expect("lock").push(row.id);
+        Ok(())
+    }
+    async fn on_comment_updated(
+        &self,
+        parent_issue: &IssueRow,
+        comment: &IssueCommentRow,
+    ) -> IssueServiceResult<()> {
+        self.comment_updated
+            .lock()
+            .expect("lock")
+            .push((parent_issue.id, comment.id));
+        Ok(())
+    }
+    async fn on_comment_removed(
+        &self,
+        parent_issue: &IssueRow,
+        comment_id: Uuid,
+    ) -> IssueServiceResult<()> {
+        self.comment_removed
+            .lock()
+            .expect("lock")
+            .push((parent_issue.id, comment_id));
         Ok(())
     }
 }
@@ -482,7 +557,7 @@ impl<'a> IssueService<'a> {
 
     /// 单 issue 状态写库 — status + 可选 3 个时间戳。
     ///
-    /// 直接走 SQL 而非 `update_full`，避免填充 24 字段 UpdateIssuePatch 的样板代码。
+    /// 直接走 SQL 而非 `update_full`，避免填充 24 字段 IssueUpdatePatch 的样板代码。
     /// 返回的最新 row 会作为 hook payload 一并传递给 `on_status_changed`。
     async fn write_status_with_side_effects(
         &self,
@@ -646,6 +721,112 @@ impl<'a> IssueService<'a> {
             hook.on_commented(&parent_issue, &row).await?;
         }
         Ok(row)
+    }
+
+    /// R646: 通用字段更新（title / description / status / priority / assignee）。
+    ///
+    /// 设计：包装 `IssueRepo::update`，返回新 row + 触发 `on_updated` hook。
+    /// status 字段更新同时跑状态机时间戳副作用（与 `update_status` 行为一致）。
+    pub async fn update(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        patch: IssueUpdatePatch,
+    ) -> IssueServiceResult<Option<IssueRow>> {
+        let previous = self.ensure_issue_in_company(company_id, issue_id).await?;
+
+        // status 字段走 update_status 路径以触发 started_at / completed_at 等副作用
+        if let Some(new_status) = patch.status.as_deref() {
+            if new_status != previous.status.as_str() {
+                self.update_status(company_id, issue_id, new_status).await?;
+            }
+        }
+
+        // 其他字段：title / description / priority / assignee_agent_id
+        // 转为 pc_repos::issue::UpdateIssuePatch 的 partial 字段语义。
+        let repo_patch = pc_repos::issue::UpdateIssuePatch {
+            title: patch.title.as_deref(),
+            description: patch.description.as_ref().map(|d| d.as_deref()),
+            status: None, // 已走 update_status
+            priority: patch.priority.as_deref(),
+            assignee_agent_id: patch.assignee_agent_id,
+            ..Default::default()
+        };
+        let updated = self
+            .repo
+            .update_full(issue_id, &repo_patch)
+            .await?;
+
+        if let Some(ref updated_row) = updated {
+            for hook in &self.hooks {
+                hook.on_updated(&previous, updated_row).await?;
+            }
+        }
+        Ok(updated)
+    }
+
+    /// R646: 删除 issue（带公司作用域校验 + hook）。
+    pub async fn delete(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+    ) -> IssueServiceResult<bool> {
+        // Idempotent: 不存在 → false；跨公司 → false。
+        let previous = match self.ensure_issue_in_company(company_id, issue_id).await {
+            Ok(row) => row,
+            Err(IssueServiceError::NotFound(_)) => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        let ok = self.repo.delete(issue_id).await?;
+        if ok {
+            for hook in &self.hooks {
+                hook.on_deleted(&previous).await?;
+            }
+        }
+        Ok(ok)
+    }
+
+    /// R646: 更新评论 body（带作用域校验 + hook）。
+    pub async fn update_comment(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        comment_id: Uuid,
+        body: &str,
+    ) -> IssueServiceResult<Option<IssueCommentRow>> {
+        if body.trim().is_empty() {
+            return Err(IssueServiceError::InvalidInput(
+                "comment body must not be empty".into(),
+            ));
+        }
+        let parent_issue = self.ensure_issue_in_company(company_id, issue_id).await?;
+        let row = self
+            .repo
+            .update_comment(issue_id, comment_id, body)
+            .await?;
+        if let Some(ref updated) = row {
+            for hook in &self.hooks {
+                hook.on_comment_updated(&parent_issue, updated).await?;
+            }
+        }
+        Ok(row)
+    }
+
+    /// R646: 删除评论（带作用域校验 + hook）。
+    pub async fn remove_comment(
+        &self,
+        company_id: Uuid,
+        issue_id: Uuid,
+        comment_id: Uuid,
+    ) -> IssueServiceResult<bool> {
+        let parent_issue = self.ensure_issue_in_company(company_id, issue_id).await?;
+        let ok = self.repo.delete_comment(issue_id, comment_id).await?;
+        if ok {
+            for hook in &self.hooks {
+                hook.on_comment_removed(&parent_issue, comment_id).await?;
+            }
+        }
+        Ok(ok)
     }
 
     /// 内部：校验 issue 存在 + 同公司；返回最新 row。

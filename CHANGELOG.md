@@ -1,4 +1,46 @@
 
+## R646 (2026-08-13) — M3 pc-issues 核心 service 方法补完
+
+### 新增
+
+- crates/pc-issues::lib (IssueService + IssueHook):
+  - `IssueUpdatePatch` struct — `Option<Option<T>>` 语义 (None=不更新；Some(None)=清空)
+  - `IssueService::update(company_id, issue_id, patch)` — 通用字段更新
+    - status 字段走 update_status 触发状态机时间戳副作用 (started_at / completed_at)
+    - 其他字段走 pc_repos::IssueRepo::update_full
+  - `IssueService::delete(company_id, issue_id)` — 删除 (幂等：不存在返回 false)
+  - `IssueService::update_comment(company_id, issue_id, comment_id, body)`
+  - `IssueService::remove_comment(company_id, issue_id, comment_id)` (幂等)
+
+- IssueHook trait 新增 4 个方法 (默认 noop):
+  - `on_updated(previous, updated)` — 字段更新触发
+  - `on_deleted(row)` — 删除触发
+  - `on_comment_updated(parent_issue, comment)` — 评论更新触发
+  - `on_comment_removed(parent_issue, comment_id)` — 评论删除触发
+
+- RecordingIssueHook: 新增 `updated` / `deleted` / `comment_updated` / `comment_removed` 4 个 Mutex<Vec>
+
+### 测试
+
+- crates/pc-issues/tests/r646_issue_service_update_delete.rs (5 个集成测试):
+  - `r646_update_changes_fields_and_triggers_on_updated_hook` — 字段更新 + hook
+  - `r646_update_with_status_runs_status_machine_and_triggers_on_status_changed`
+    — status 字段同时触发 on_status_changed + on_updated
+  - `r646_delete_removes_issue_and_triggers_on_deleted` — 删除 + 幂等
+  - `r646_update_comment_changes_body_and_triggers_on_comment_updated` — 评论更新
+  - `r646_remove_comment_deletes_and_triggers_on_comment_removed` — 评论删除 + 幂等
+
+- pc-issues lib: 97 passed (无回归)
+- pc-issues R646 集成: 5 passed (真实 PG)
+
+### 设计
+
+- 严格对齐上游 issueService API surface：所有操作走 service 层（hook 触发）
+- delete / remove_comment 幂等 — 二次调用返回 Ok(false) 而非 NotFound
+- update 内部如果 patch.status 变化，委托给 update_status 触发状态机副作用
+- IssueHook 默认 noop，调用方可选择性实现
+
+
 ## R645 (2026-08-13) — M2 完整闭环: effect dispatch 端到端
 
 ### 新增
