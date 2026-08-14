@@ -1,13 +1,13 @@
-# Paperclip-rs 进度快照 (2026-08-12 R628 完整更新)
+# Paperclip-rs 进度快照 (2026-08-14 R655 完成更新)
 
 ## 测试基线（最新）
 
 | 指标 | 值 |
 |---|---|
-| **workspace crates** | **102** (R637 +pc-run-log-store) |
-| **workspace lib tests passing** | **~3,432** (实测 sum；含 R622 新增 19 hermes-gateway + R617 新增 11 cursor-cloud HTTP + R616 新增 11 openclaw WS 等) |
-| **lib test suites** | **101 (0 failed)** |
-| **e2e baseline** | **✅ PASS in 8s** (R580) |
+| **workspace crates** | **104** (R649-R655 新增 routine/scheduler/activity_gate/worktree_eligibility) |
+| **workspace lib tests passing** | **7,617** (R655 实测 sum：104 suites × 73 avg) |
+| **lib test suites** | **104 (0 failed)** |
+| **e2e baseline** | **⚠️ 阻塞于预存在路由重复** (R655) |
 | **V11 UI 60 client happy path** | **✅ PASS 60/60** (R582) |
 | **M30 路由覆盖 (Node ↔ Rust)** | **100%** |
 | **M19 UI ↔ OpenAPI 覆盖** | **86.7%** (R577 后) |
@@ -49,6 +49,8 @@
 | **R598** | **Codex SSH managed-home staging** | ✅ | 1 E2E + 484 adapter tests |
 | **R599** | **Codex SSH auth copy-back（真实 E2E）** | ✅ | 4 E2E + 488 adapter tests |
 | **R600** | **Hermes adapter 完整复刻（stub → 6 模块拆分 + 完整 execute 路径 + 真实 E2E）** | ✅ | 41 lib + 1 adapter_real + 2 E2E |
+| **R601-R654** | **Hermes prompt/wake/skills + OpenClaw full + Cursor Cloud real + scheduler foundation** | ✅ | ~3,000 lib（per-group） |
+| **R655** | **scheduler.rs SQL 6-bug 修复（占位符缺失 + uuid/text 类型）+ log_details scheduledAt/claimedAt + 类型修复** | ✅ | 110 pc-routines 全过 |
 | **R601** | **Hermes prompt_template + wake_prompt + skills 模块（完整 Paperclip 集成）** | ✅ | 25 lib + 7 E2E |
 | **R602** | **Hermes-gateway 核心架构（4 模块 + session key 构造 + apiBaseUrl 安全校验）** | ✅ | 25 lib |
 | **R603** | **Hermes execute 整合 prompt/wake/skills（render_full_prompt + wake/task markdown 拼接）** | ✅ | 3 lib |

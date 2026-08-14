@@ -83,6 +83,18 @@ pub enum RoutineHookEvent {
         status: String,
         failure_reason: Option<String>,
     },
+    /// R649: 一个 routine run 被 scheduler/webhook 路径抑制（未真实执行）。
+    /// 3 条原因：paused / worktree_execution_cutoff / no_external_activity。
+    /// 见 `pc_routines::scheduler::SUPPRESS_REASON_*`。
+    RunSkipped {
+        run_id: Uuid,
+        routine_id: Uuid,
+        company_id: Uuid,
+        source: String,
+        trigger_id: Uuid,
+        reason: String,
+        details: Option<serde_json::Value>,
+    },
 }
 
 // =============================================================================
@@ -476,6 +488,7 @@ impl UpdateRoutineTrigger {
 pub struct RoutineService {
     db: pc_repos::Db,
     hooks: Vec<Arc<dyn RoutineHook>>,
+    scheduler_context: crate::scheduler::RoutineSchedulerContext,
 }
 
 impl RoutineService {
@@ -484,18 +497,80 @@ impl RoutineService {
         Self {
             db,
             hooks: Vec::new(),
+            scheduler_context: crate::scheduler::RoutineSchedulerContext::default(),
         }
     }
 
     #[must_use]
     pub fn with_hooks(db: pc_repos::Db, hooks: Vec<Arc<dyn RoutineHook>>) -> Self {
-        Self { db, hooks }
+        Self {
+            db,
+            hooks,
+            scheduler_context: crate::scheduler::RoutineSchedulerContext::default(),
+        }
     }
 
     #[must_use]
     pub fn add_hook(mut self, hook: Arc<dyn RoutineHook>) -> Self {
         self.hooks.push(hook);
         self
+    }
+
+    /// R649: 注入 scheduler 上下文（env + current_instance_id）。
+    /// 该上下文在 `tick_scheduled_triggers` 中被使用以决定
+    /// worktree eligibility 与 catch-up 行为。
+    #[must_use]
+    pub fn with_scheduler_context(
+        mut self,
+        ctx: crate::scheduler::RoutineSchedulerContext,
+    ) -> Self {
+        self.scheduler_context = ctx;
+        self
+    }
+
+    /// R649: Tick 一次 scheduler 主循环（"schedule" trigger）。
+    ///
+    /// 1:1 对齐 Node `tickScheduledTriggers`：
+    /// - worktree eligibility (DB flag + cutoff + instance id)
+    /// - project paused
+    /// - catch-up 累计（最多 25 次）
+    /// - claim trigger (compare-and-set on next_run_at)
+    /// - activity gate suppression
+    /// - dispatch via `RoutineRepo::dispatch_run`
+    /// - 抑制路径走 `record_skipped_run` + emit `RunSkipped` hook
+    pub async fn tick_scheduled_triggers(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        limit: i64,
+    ) -> Result<Vec<pc_repos::routine::DispatchedRoutineRun>> {
+        crate::scheduler::tick_scheduled_triggers(
+            &self.db,
+            &self.hooks,
+            &self.scheduler_context,
+            now,
+            limit,
+        )
+        .await
+    }
+
+    /// R655: 校验 webhook signature (Stripe-style t=,v1=) + replay window。
+    pub async fn verify_webhook_signature(
+        &self,
+        trigger_id: Uuid,
+        signature_header: &str,
+        raw_body: &[u8],
+        now_unix_ms: i64,
+        replay_window_sec: i32,
+    ) -> Result<()> {
+        crate::scheduler::verify_webhook_signature(
+            &self.db,
+            trigger_id,
+            signature_header,
+            raw_body,
+            now_unix_ms,
+            replay_window_sec,
+        )
+        .await
     }
 
     async fn dispatch(&self, event: RoutineHookEvent) -> Result<()> {

@@ -1,3 +1,55 @@
+## R655 (2026-08-14) — scheduler.rs SQL bug 修复（重叠轮）
+
+### 修复的 bug
+
+R654 末声称 scheduler.rs 完整工作、可直接跑测试，但实际 R649-R654 集成测试因 SQL 占位符缺失和类型不匹配而全部失败。本轮定位并修复 6 个真实 bug：
+
+**Bug #1**：`tick_scheduled_triggers::claim trigger` SQL 3 个占位符缺失（$1/$2/$3）
+
+**Bug #2**：`record_skipped_run::insert skipped run` INSERT SQL 8 个占位符缺失
+
+**Bug #3**：`record_skipped_run` 两个 UPDATE（routines + routine_triggers）共 6 个占位符缺失
+
+**Bug #4**：activity_log INSERT 4 个占位符缺失 + $4::jsonb 类型注解缺失
+
+**Bug #5**：activity_gate.rs::find_external_activity Project scope `operator does not exist: uuid = text`——issues.project_id 是 uuid 列，但 $6 被绑为 text。增加 $7（UUID bind），7 处 project_id 列比较从 $6 改为 $7
+
+**Bug #6**：scheduler.rs:168 + activity_gate.rs:168/196 等 10 处 \$ 转义 bug——上一轮在 python heredoc 转义时产生了字面 \$ 字符在 Rust raw string 中不处理转义。sed 替换 \$ → $
+
+### 额外修复
+
+**log_details 字段合并**：R652 测试要求 activity_log.details 包含 `scheduledAt` + `claimedAt`，重构 log_details 构造以 spread caller 的 details 而不是嵌套
+
+**last_dispatched_triggered_at 类型修复**：原本 `let row = ... .ok(); row.map(...)` 在 `.ok().flatten().map()` 链后返回 `()`——改为函数表达式直接返回 `Option<DateTime<Utc>>`
+
+### 验证
+
+- **pc-routines lib**: 41 passed / 0 failed
+- **pc-routines 集成 (R647-R654 + hook + contract)**: 69 passed / 0 failed
+  - R647 4/4, R649 6/6, R650 6/6, R652 4/4, R653 3/3, R654 8/8, hook 7/7, contract 7/7, e2e 24/24
+- **pc-routines 总计**: 110 passed / 0 failed
+- **workspace lib 全回归**: 104 suites / 7617 tests / 0 failed
+
+### Node 1:1 对齐
+
+`tick_scheduled_triggers` 4 个 SQL 步骤与 Node `services/routines.ts::tickScheduledTriggers` 1:1 对齐：
+
+- claimScheduledTrigger → UPDATE CAS
+- recordSuppressedAutomaticRun → record_skipped_run
+- hookEvent.emit RunSkipped → RoutineHookEvent::RunSkipped
+- evaluateActivityGate (project scope + 6 EXISTS) → find_external_activity
+- getAutomaticRoutineDispatchEligibility → evaluate_automatic_dispatch_eligibility
+- computeCatchUp → compute_catch_up
+- nextCronTickInTimezone → next_cron_tick (delegate to pc_workflow)
+
+### 阻塞（不在本轮范围）
+
+- e2e baseline 在 `pc-server` 启动时 panic: `Overlapping method route. Handler for GET /api/companies/:company_id/decisions already exists`
+- 根因: `crates/pc-http/src/routes/companies.rs:235` + `decisions.rs:37` 重复注册
+- 引入时间: R643 (重写 `decisions.rs`)
+- 建议下游起 R656-PATCH-ROUTE (按用户指示不在 R655 修)
+
+
 
 ## R647 (2026-08-13) — M4 pc-routines run lifecycle 补完
 

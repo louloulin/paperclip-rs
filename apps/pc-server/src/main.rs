@@ -42,6 +42,8 @@ use pc_http::middleware::{
 };
 use pc_http::AppState;
 use pc_realtime::terminal::{FakeSshConnector, InMemoryStore};
+use pc_routines::scheduler::RoutineSchedulerContext;
+use pc_routines::RoutineService;
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::agent::{
     AgentRepo, NewAgentWakeupRequest, WakeupActorType, WakeupRequestStatus, WakeupTriggerDetail,
@@ -431,6 +433,44 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+    // ---- R656: routine scheduler tick loop ----
+    // Mirrors the heartbeat_scheduler pattern. Runs every second, calls
+    // \ which 1:1 follows Node
+    // \: worktree eligibility → project paused →
+    // claim trigger (CAS) → activity gate suppression → dispatch OR skipped.
+    let routine_tick_state = state.clone();
+    let db_for_routine = routine_tick_state.db.clone();
+    let scheduler_ctx = RoutineSchedulerContext::from_process_env(None);
+    let routine_scheduler = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let svc = RoutineService::new(db_for_routine)
+            .with_scheduler_context(scheduler_ctx);
+        let mut empty_ticks = 0u32;
+        loop {
+            ticker.tick().await;
+            match svc.tick_scheduled_triggers(chrono::Utc::now(), 25).await {
+                Ok(dispatched) if dispatched.is_empty() => {
+                    empty_ticks = empty_ticks.saturating_add(1);
+                    if empty_ticks == 12 {
+                        tracing::debug!("routine scheduler: 60s no candidates");
+                        empty_ticks = 0;
+                    }
+                }
+                Ok(dispatched) => {
+                    empty_ticks = 0;
+                    if !dispatched.is_empty() {
+                        tracing::debug!(count = dispatched.len(), "routine scheduler dispatched");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "routine scheduler tick failed");
+                    empty_ticks = 0;
+                }
+            }
+        }
+    });
+
     // ---- Bootstrap runtime services into AppState ----
     {
         use pc_storage::LocalDiskStorage;
@@ -629,6 +669,7 @@ async fn main() -> anyhow::Result<()> {
     .context("axum serve")?;
 
     heartbeat_scheduler.abort();
+    routine_scheduler.abort();
 
     product_telemetry_periodic.stop().await;
     product_telemetry_actor.stop().await;

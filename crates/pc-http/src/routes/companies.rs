@@ -200,7 +200,10 @@ pub fn router() -> Router<AppState> {
             get(export_agent_actions_csv),
         )
         .route("/api/companies/:company_id/org", get(get_org))
-        .route("/api/companies/:company_id/org.svg", get(get_org_svg))
+        // NOTE: `/api/companies/:company_id/org.svg` is registered by org_chart_svg.rs
+        // (the canonical SVG renderer). Removed duplicate here to avoid axum
+        // "Overlapping method route" panic during pc-server startup. The local
+        // `get_org_svg` handler remains as dead code.
         .route("/api/companies/:company_id/org.png", get(get_org_png))
         .route(
             // ── R510: GET aliased to POST for Node parity
@@ -244,10 +247,10 @@ pub fn router() -> Router<AppState> {
             "/api/companies/:company_id/pipelines",
             get(list_company_pipelines_route).post(create_company_pipeline_route),
         )
-        .route(
-            "/api/companies/:company_id/case-events",
-            get(list_company_case_events_route),
-        )
+        // NOTE: `/api/companies/:company_id/case-events` is registered by pipelines.rs
+        // (the canonical pipelines router). Removed duplicate here to avoid axum
+        // "Overlapping method route" panic during pc-server startup. The local
+        // `list_company_case_events_route` handler remains as dead code.
         .route(
             "/api/companies/:company_id/user-directory",
             get(list_company_user_directory_route),

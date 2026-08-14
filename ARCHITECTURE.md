@@ -1,7 +1,8 @@
-# paperclip-rs — 当前架构状态（R588 末 / 2026-08-12）
+# paperclip-rs — 当前架构状态（R655 末 / 2026-08-14）
 
 > 与 `ARCHITECTURE-DIAGRAMS.md`（底层图）/ `MODULE-MAPPING.md`（Node→Rust 映射）/ `PROJECT-PLAN.md`（v1.0 执行计划）配套。
-> 本文档定位为**当前状态快照**——反映 R541-R588 这一轮"全面 Node→Rust 模块复刻 + 文档体系补齐"之后的真实情况。
+> 本文档定位为**当前状态快照**——反映 R541-R655 这一轮"全面 Node→Rust 模块复刻 + 真实 PG/HTTP/WS 验证"之后的真实情况。
+> **R649-R655**: pc-routines scheduler 核心补齐（worktree cutoff + activity gate + run lifecycle + record_skipped_run + project scope SQL），并修复 6 个真实 SQL bug（占位符缺失 + uuid/text 类型不匹配 + 转义错误）
 > 最近新增 crate：pc-config-schema (R557) / pc-responsible-user-denial-copy (R558) / pc-constants (R560)
 > **R559 修复**: round308 liveness_dependency_cleanup 5 个 P0 失败（加 `company_filter` 参数）
 > **R560 新增**: pc-constants crate（6 模块 / 60 个常量 / 49 tests）
@@ -26,6 +27,8 @@
 > **R586**: MIGRATION_FROM_NODE.md (380 行中文) — 迁移指南
 > **R587**: AGENTS.md (453 行中文) — 开发指南
 > **R588**: scripts/long-run-5min.sh (172 行) — V13 长跑 + 性能基线
+**R589-R654**: V12 Playwright + e2e JSON + OpenClaw real client + Hermes full + Cursor Cloud real client (0 errors)
+**R655**: scheduler.rs SQL 6-bug 修复（占位符缺失 + uuid/text 类型）+ log_details scheduledAt/claimedAt + last_dispatched_triggered_at 类型修复 → pc-routines 110/110 tests pass + workspace lib 7617/7617
 
 ---
 

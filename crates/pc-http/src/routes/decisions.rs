@@ -33,10 +33,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/decisions/:id/dismiss", post(dismiss_decision))
         .route("/api/decisions/:id/cancel", post(cancel_decision))
         .route("/api/decisions/:id/run-effects", post(run_decision_effects))
-        .route(
-            "/api/companies/:company_id/decisions",
-            get(list_company_decisions),
-        )
+        // NOTE: `/api/companies/:company_id/decisions` is registered by companies.rs
+        // (the canonical companies sub-resource router). The duplicate registration
+        // here was removed because it produced axum "Overlapping method route"
+        // panics during pc-server startup. The local `list_company_decisions`
+        // handler remains as dead code (kept for reference).
         .route(
             "/api/companies/:company_id/decisions/stats",
             get(decision_stats_route),

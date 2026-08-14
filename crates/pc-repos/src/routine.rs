@@ -227,6 +227,28 @@ pub struct RunRoutineRecord {
     pub actor_user_id: Option<String>,
 }
 
+impl RunRoutineRecord {
+    /// Convenience constructor for scheduler-triggered runs:
+    /// source="schedule", trigger_id=trigger.id, assignee pulled from routine.
+    pub fn for_scheduler(routine: &RoutineRow, trigger_id: Uuid) -> Self {
+        Self {
+            trigger_id: Some(trigger_id),
+            source: "schedule".to_string(),
+            payload: None,
+            variables: None,
+            project_id: routine.project_id,
+            project_workspace_id: None,
+            assignee_agent_id: routine.assignee_agent_id,
+            idempotency_key: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            actor_agent_id: None,
+            actor_user_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DispatchedRoutineRun {
     pub run: RoutineRunRow,

@@ -32,6 +32,8 @@ pc-hot-restart = { path = "../../crates/pc-hot-restart" }
 pc-repos = { path = "../../crates/pc-repos" }
 pc-storage = { path = "../../crates/pc-storage" }
 pc-secrets = { path = "../../crates/pc-secrets" }
+pc-routines = { path = "../../crates/pc-routines" }
+chrono = { workspace = true }
 
 pc-plugin-host = { path = "../../crates/pc-plugin-host" }
 pc-plugin-protocol = { path = "../../crates/pc-plugin-protocol" }
