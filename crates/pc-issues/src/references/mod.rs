@@ -2,6 +2,7 @@
 //!
 //! 对应 Node `server/src/services/issue-references.ts`。
 
+pub mod pure;
 mod extractor;
 mod service;
 mod types;

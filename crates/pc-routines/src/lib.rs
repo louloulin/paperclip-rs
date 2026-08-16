@@ -19,6 +19,7 @@ pub mod scheduler;
 pub mod worktree_eligibility;
 pub mod attention;
 pub mod dashboard;
+pub mod pure;
 mod service;
 pub mod session_cwd;
 

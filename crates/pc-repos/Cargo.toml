@@ -14,6 +14,7 @@ pc-adapter-api = { path = "../pc-adapter-api" }
 pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-secrets = { path = "../pc-secrets" }
+pc-workspace-commands = { path = "../pc-workspace-commands" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }

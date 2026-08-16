@@ -1360,6 +1360,9 @@ pub mod systemd_notify;
 pub mod task_watchdog_scope;
 pub mod wake_dedup;
 pub mod wake_dispatch;
+pub mod run_log_pure;
+pub mod env_path_pure;
+pub mod misc_pure;
 
 // ============================================================================
 // Public API: wakeup dedup & coalesce

@@ -16,6 +16,7 @@ pub mod email_sender;
 pub mod email_verification;
 pub mod error;
 pub mod oauth_state;
+pub mod password_validation_pure;
 pub mod session_refresh;
 
 pub use auth_service::{

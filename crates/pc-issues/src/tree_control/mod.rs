@@ -3,6 +3,7 @@
 //! 对应 Node `server/src/services/issue-tree_control.ts`。
 
 mod hook;
+pub mod pure;
 mod policy;
 mod service;
 mod types;

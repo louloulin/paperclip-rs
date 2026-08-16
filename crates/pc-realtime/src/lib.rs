@@ -249,6 +249,7 @@ pub use subscriber::{
 
 /// Round 252: Realtime channel namespace + 客户端订阅过滤。
 pub mod channels;
+pub mod event_payload_pure;
 pub use channels::{default_channels, matches_any, parse_channels, ChannelFilter};
 
 /// Round 255: Rate limit + connection count limit（防滥用）。

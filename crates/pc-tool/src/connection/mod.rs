@@ -1,4 +1,5 @@
 //! Tool connection business service（原 `pc-tool-connection` 已下沉）。
+mod pure;
 mod service;
 pub use pc_repos::tool_connection::ToolConnectionRow;
 pub use service::{

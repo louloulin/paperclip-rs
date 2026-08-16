@@ -22,6 +22,7 @@ use pc_repos::case::{
 use pc_repos::document::DocumentRevisionRow;
 use pc_repos::pipeline::PipelineRepo;
 use pc_pipelines::case_events_enrichment::enrich_cases_with_aggregation;
+use pc_pipeline_conversation_context::{format_pipeline_conversation_body_document_context_markdown, load_pipeline_conversation_body_document_context, LoadPipelineContextInput};
 
 use crate::{ApiError, ApiResult, AppState};
 
@@ -144,6 +145,14 @@ pub fn router() -> Router<AppState> {
             get(get_case_context_pack),
         )
         .route("/api/cases/:case_id/outputs", get(get_case_outputs))
+        .route(
+            "/api/cases/:case_id/body-context",
+            get(get_case_body_context),
+        )
+        .route(
+            "/api/cases/:case_id/body-context.md",
+            get(get_case_body_context_markdown),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -1857,4 +1866,125 @@ async fn get_case_outputs(
         "items": items,
         "count": items.len(),
     })))
+}
+
+
+// ============================================================================
+// R672: pipeline-conversation-context integration
+// ============================================================================
+
+/// GET /api/cases/:case_id/body-context
+async fn get_case_body_context(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let company_id = lookup_pipeline_case_company_id(&state, case_id).await?;
+    let ctx = load_pipeline_conversation_body_document_context(
+        &state.db,
+        LoadPipelineContextInput {
+            company_id: company_id.to_string(),
+            case_id: case_id.to_string(),
+            conversation_issue_id: None,
+        },
+    )
+    .await
+    .map_err(|e| ApiError::Internal(format!("body context: {e}")))?;
+    Ok(Json(serde_json::to_value(&ctx).unwrap_or_default()))
+}
+
+/// GET /api/cases/:case_id/body-context.md
+async fn get_case_body_context_markdown(
+    State(state): State<AppState>,
+    Path(case_id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let company_id = lookup_pipeline_case_company_id(&state, case_id).await?;
+    let ctx = load_pipeline_conversation_body_document_context(
+        &state.db,
+        LoadPipelineContextInput {
+            company_id: company_id.to_string(),
+            case_id: case_id.to_string(),
+            conversation_issue_id: None,
+        },
+    )
+    .await
+    .map_err(|e| ApiError::Internal(format!("body context: {e}")))?;
+    let markdown = format_pipeline_conversation_body_document_context_markdown(Some(&ctx));
+    Ok(Json(json!({
+        "caseId": case_id,
+        "markdown": markdown,
+    })))
+}
+
+/// R672 helper
+async fn lookup_pipeline_case_company_id(state: &AppState, case_id: Uuid) -> ApiResult<Uuid> {
+    sqlx::query_scalar::<_, Uuid>("SELECT company_id FROM pipeline_cases WHERE id = $1")
+        .bind(case_id)
+        .fetch_optional(state.db.pool())
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("case {case_id}")))
+}
+
+#[cfg(test)]
+mod r672_tests {
+    use super::*;
+    use pc_pipeline_conversation_context::{
+        fence_markdown, truncate_with_flag, format_pipeline_conversation_body_document_context_markdown,
+        PipelineConversationBodyDocumentContext,
+    };
+
+    #[test]
+    fn r672_format_null_yields_some_or_none() {
+        let md = format_pipeline_conversation_body_document_context_markdown(None);
+        if let Some(s) = &md {
+            assert!(
+                s.contains("missing") || s.contains("No body") || s.is_empty(),
+                "unexpected null-context markdown: {}",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn r672_truncate_short_unchanged() {
+        let t = truncate_with_flag("hello", 1024);
+        assert_eq!(t.value, "hello");
+        assert!(!t.truncated);
+    }
+
+    #[test]
+    fn r672_truncate_long_clipped() {
+        let long = "x".repeat(2000);
+        let t = truncate_with_flag(&long, 50);
+        assert_eq!(t.value.len(), 50);
+        assert!(t.truncated);
+    }
+
+    #[test]
+    fn r672_fence_markdown_wraps_with_fence() {
+        let f = fence_markdown("hello world", "md");
+        assert!(f.contains("hello world"));
+        assert!(f.starts_with("```"));
+        assert!(f.ends_with("```"));
+    }
+
+    #[test]
+    fn r672_fence_handles_backtick_runs() {
+        let s = "text with ``` triple backticks inside";
+        let f = fence_markdown(s, "txt");
+        assert!(f.starts_with("````"));
+        assert!(f.ends_with("````"));
+    }
+
+    #[test]
+    fn r672_format_with_header_only() {
+        let ctx = PipelineConversationBodyDocumentContext {
+            case_id: "case-1".into(),
+            body_document: None,
+            open_annotation_threads: vec![],
+        };
+        let md = format_pipeline_conversation_body_document_context_markdown(Some(&ctx));
+        assert!(md.is_some(), "expected Some markdown");
+        let s = md.unwrap();
+        assert!(s.contains("case-1"), "missing case-1 in {}", s);
+    }
 }

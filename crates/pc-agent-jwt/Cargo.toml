@@ -1,0 +1,20 @@
+[package]
+name = "pc-agent-jwt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local agent JWT (HS256) for paperclip: per-company/per-instance signing key derivation, fork-token isolation (PAP-12896)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.22"
+thiserror = { workspace = true }
+chrono = { workspace = true }
+tracing = "0.1"

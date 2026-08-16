@@ -23,3 +23,4 @@ pub use types::{
     ListIssueThreadInteractionsFilter, ResolveInteractionInput, SubmitVerdictsInput,
     INTERACTION_KINDS, INTERACTION_STATUSES, INTERACTION_TERMINAL_STATUSES,
 };
+pub mod pure;

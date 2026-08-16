@@ -1,21 +1,11 @@
 {
   "ui_paths": 11,
-  "rust_openapi_paths": 0,
-  "covered": 0,
-  "missing_in_openapi": 11,
-  "extra_in_openapi": 0,
-  "coverage_ui_paths": 0.0,
+  "rust_openapi_paths": 899,
+  "covered": 5,
+  "missing_in_openapi": 6,
+  "extra_in_openapi": 894,
+  "coverage_ui_paths": 45.45,
   "missing_top30": [
-    {
-      "verb": "GET",
-      "path": "/api/adapters/${encodeURIComponent(adapterType)}/ui-parser.js",
-      "file": "adapters/dynamic-loader.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/adapters/${encodeURIComponent(adapterType)}/ui-parser.js",
-      "file": "adapters/dynamic-loader.ts"
-    },
     {
       "verb": "GET",
       "path": "/api/adapters/:type/ui-parser.js",
@@ -23,28 +13,8 @@
     },
     {
       "verb": "GET",
-      "path": "/api/assets/${assetId}/content",
-      "file": "lib/attention.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/assets/${attachment.asset.id}/content",
-      "file": "api/cases.ts"
-    },
-    {
-      "verb": "GET",
       "path": "/api/companies/${companyId}/audit/agent-actions.csv${qs ? ",
       "file": "api/audit.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/companies/${encodeURIComponent(companyId)}/events/ws",
-      "file": "components/transcript/useLiveRunTranscripts.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/health",
-      "file": "lib/agent-onboarding-prompt.ts"
     },
     {
       "verb": "GET",
@@ -65,11 +35,6 @@
       "verb": "GET",
       "path": "/api/plugins/:pluginId/data/:key",
       "file": "plugins/bridge.ts"
-    },
-    {
-      "verb": "GET",
-      "path": "/api/v1/runs",
-      "file": "lib/agent-onboarding-prompt.ts"
     }
   ]
 }

@@ -18,6 +18,8 @@ pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
 pc-telemetry = { path = "../pc-telemetry" }
 serde = { workspace = true }
+regex = { workspace = true }
+sha2 = "0.10"
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }

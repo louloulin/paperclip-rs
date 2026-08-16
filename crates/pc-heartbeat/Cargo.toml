@@ -9,6 +9,7 @@ description = "Paperclip heartbeat Actor 状态机与执行编排"
 workspace = true
 
 [dependencies]
+pc-secret-redaction = { path = "../pc-secret-redaction" }
 pc-core = { path = "../pc-core" }
 pc-adapter-api = { path = "../pc-adapter-api" }
 pc-repos = { path = "../pc-repos" }

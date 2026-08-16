@@ -15,3 +15,4 @@ pub use service::{
     NoopRedactionHook, RecordingRedactionHook, RedactionError, RedactionHook, RedactionHookEvent,
     RedactionService, DEFAULT_MAX_CHARS,
 };
+pub mod pure;

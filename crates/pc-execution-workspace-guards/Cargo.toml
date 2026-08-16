@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Closed isolated execution workspace guards (port of paperclip packages/shared/src/execution-workspace-guards.ts)"
 
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
 [lints]
 workspace = true
 

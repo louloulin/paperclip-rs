@@ -27,7 +27,7 @@ impl<'a> TeamInstallRepo<'a> {
     /// Round 179: 列出某公司所有 team 安装（按 installed_at 倒序）。
     pub async fn list_for_company(&self, company_id: Uuid) -> sqlx::Result<Vec<TeamInstallRow>> {
         sqlx::query_as::<_, TeamInstallRow>(
-            "SELECT catalog_id, status, snapshot, installed_at FROM team_installs \\
+            "SELECT catalog_id, status, snapshot, installed_at FROM team_installs 
              WHERE company_id = $1 ORDER BY installed_at DESC",
         )
         .bind(company_id)
@@ -43,9 +43,9 @@ impl<'a> TeamInstallRepo<'a> {
         snapshot: &serde_json::Value,
     ) -> sqlx::Result<bool> {
         let n = sqlx::query(
-            "INSERT INTO team_installs (company_id, catalog_id, status, snapshot, installed_at) \\
-             VALUES ($1, $2, 'queued', $3, now()) \\
-             ON CONFLICT (company_id, catalog_id) DO UPDATE \\
+            "INSERT INTO team_installs (company_id, catalog_id, status, snapshot, installed_at) 
+             VALUES ($1, $2, 'queued', $3, now()) 
+             ON CONFLICT (company_id, catalog_id) DO UPDATE 
                SET status='queued', snapshot=EXCLUDED.snapshot, updated_at=now()",
         )
         .bind(company_id)

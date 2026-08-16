@@ -76,10 +76,10 @@ impl<'a> StatusCardRepo<'a> {
     /// Round 162: 列出某 company 的 active status_cards (archived_at IS NULL)。
     pub async fn list_active(&self, company_id: Uuid) -> sqlx::Result<Vec<StatusCardRow>> {
         sqlx::query_as::<_, StatusCardRow>(
-            "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
-                    last_generated_at, next_eval_at, archived_at, document_id, \\
-                    created_at, updated_at \\
-             FROM status_cards WHERE company_id = $1 AND archived_at IS NULL \\
+            "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, 
+                    last_generated_at, next_eval_at, archived_at, document_id, 
+                    created_at, updated_at 
+             FROM status_cards WHERE company_id = $1 AND archived_at IS NULL 
              ORDER BY created_at DESC",
         )
         .bind(company_id)
@@ -90,9 +90,9 @@ impl<'a> StatusCardRepo<'a> {
     /// Round 162: 按 id 查 status_card。
     pub async fn get_by_id(&self, id: Uuid) -> sqlx::Result<Option<StatusCardRow>> {
         sqlx::query_as::<_, StatusCardRow>(
-            "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
-                    last_generated_at, next_eval_at, archived_at, document_id, \\
-                    created_at, updated_at \\
+            "SELECT id, company_id, title, interest_prompt, state, queries, refresh_policy, 
+                    last_generated_at, next_eval_at, archived_at, document_id, 
+                    created_at, updated_at 
              FROM status_cards WHERE id = $1",
         )
         .bind(id)
@@ -110,11 +110,11 @@ impl<'a> StatusCardRepo<'a> {
         refresh_policy: &Value,
     ) -> sqlx::Result<StatusCardRow> {
         sqlx::query_as::<_, StatusCardRow>(
-            "INSERT INTO status_cards \\
-             (company_id, title, interest_prompt, queries, refresh_policy, state, query_version) \\
-             VALUES ($1, $2, $3, $4, $5, 'compiling', 1) \\
-             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
-                       last_generated_at, next_eval_at, archived_at, document_id, \\
+            "INSERT INTO status_cards 
+             (company_id, title, interest_prompt, queries, refresh_policy, state, query_version) 
+             VALUES ($1, $2, $3, $4, $5, 'compiling', 1) 
+             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, 
+                       last_generated_at, next_eval_at, archived_at, document_id, 
                        created_at, updated_at",
         )
         .bind(company_id)
@@ -136,15 +136,15 @@ impl<'a> StatusCardRepo<'a> {
         archived: Option<bool>,
     ) -> sqlx::Result<Option<StatusCardRow>> {
         sqlx::query_as::<_, StatusCardRow>(
-            "UPDATE status_cards SET \\
-                title = COALESCE($2, title), \\
-                interest_prompt = COALESCE($3, interest_prompt), \\
-                refresh_policy = COALESCE($4, refresh_policy), \\
-                archived_at = CASE WHEN $5 THEN now() ELSE archived_at END, \\
-                updated_at = now() \\
-             WHERE id = $1 \\
-             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
-                       last_generated_at, next_eval_at, archived_at, document_id, \\
+            "UPDATE status_cards SET 
+                title = COALESCE($2, title), 
+                interest_prompt = COALESCE($3, interest_prompt), 
+                refresh_policy = COALESCE($4, refresh_policy), 
+                archived_at = CASE WHEN $5 THEN now() ELSE archived_at END, 
+                updated_at = now() 
+             WHERE id = $1 
+             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, 
+                       last_generated_at, next_eval_at, archived_at, document_id, 
                        created_at, updated_at",
         )
         .bind(id)
@@ -169,9 +169,9 @@ impl<'a> StatusCardRepo<'a> {
     /// Round 162: 列出某 card 的 updates (按 started_at DESC)。
     pub async fn list_updates(&self, card_id: Uuid) -> sqlx::Result<Vec<StatusCardUpdateRow>> {
         sqlx::query_as::<_, StatusCardUpdateRow>(
-            "SELECT id, card_id, kind, trigger, generation_issue_id, run_id, changes, \\
-                    input_tokens, output_tokens, cost_cents, model, query_version, change_summary, \\
-                    started_at, finished_at, status, error \\
+            "SELECT id, card_id, kind, trigger, generation_issue_id, run_id, changes, 
+                    input_tokens, output_tokens, cost_cents, model, query_version, change_summary, 
+                    started_at, finished_at, status, error 
              FROM status_card_updates WHERE card_id = $1 ORDER BY started_at DESC",
         )
         .bind(card_id)
@@ -192,11 +192,11 @@ impl<'a> StatusCardRepo<'a> {
     /// Round 162: card_recompile — UPDATE state=compiling + query_version++ + RETURNING。
     pub async fn recompile(&self, id: Uuid) -> sqlx::Result<Option<StatusCardRow>> {
         sqlx::query_as::<_, StatusCardRow>(
-            "UPDATE status_cards SET state = 'compiling', query_compiled_at = NULL, \\
-             query_version = query_version + 1, updated_at = now() \\
-             WHERE id = $1 \\
-             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
-                       last_generated_at, next_eval_at, archived_at, document_id, \\
+            "UPDATE status_cards SET state = 'compiling', query_compiled_at = NULL, 
+             query_version = query_version + 1, updated_at = now() 
+             WHERE id = $1 
+             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, 
+                       last_generated_at, next_eval_at, archived_at, document_id, 
                        created_at, updated_at",
         )
         .bind(id)
@@ -207,7 +207,7 @@ impl<'a> StatusCardRepo<'a> {
     /// Round 162: card_refresh — UPDATE state=pending_refresh + next_eval_at=now。
     pub async fn refresh(&self, id: Uuid) -> sqlx::Result<bool> {
         let n = sqlx::query(
-            "UPDATE status_cards SET next_eval_at = now(), state = 'pending_refresh', updated_at = now() \\
+            "UPDATE status_cards SET next_eval_at = now(), state = 'pending_refresh', updated_at = now() 
              WHERE id = $1",
         )
         .bind(id)
@@ -258,11 +258,11 @@ WHERE id IN (
         queries: &Value,
     ) -> sqlx::Result<Option<StatusCardRow>> {
         sqlx::query_as::<_, StatusCardRow>(
-            "UPDATE status_cards SET queries = $2, query_version = query_version + 1, \\
-             query_compiled_at = now(), updated_at = now() \\
-             WHERE id = $1 \\
-             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, \\
-                       last_generated_at, next_eval_at, archived_at, document_id, \\
+            "UPDATE status_cards SET queries = $2, query_version = query_version + 1, 
+             query_compiled_at = now(), updated_at = now() 
+             WHERE id = $1 
+             RETURNING id, company_id, title, interest_prompt, state, queries, refresh_policy, 
+                       last_generated_at, next_eval_at, archived_at, document_id, 
                        created_at, updated_at",
         )
         .bind(id)
@@ -280,9 +280,9 @@ WHERE id IN (
         change_summary: &str,
     ) -> sqlx::Result<Uuid> {
         let id: Uuid = sqlx::query_scalar(
-            "INSERT INTO status_card_updates \\
-             (card_id, kind, trigger, changes, model, status, finished_at, change_summary) \\
-             VALUES ($1, 'summary', 'manual', $2::jsonb, $3, 'completed', now(), $4) \\
+            "INSERT INTO status_card_updates 
+             (card_id, kind, trigger, changes, model, status, finished_at, change_summary) 
+             VALUES ($1, 'summary', 'manual', $2::jsonb, $3, 'completed', now(), $4) 
              RETURNING id",
         )
         .bind(card_id)

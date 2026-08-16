@@ -38,6 +38,7 @@ pub mod inbox_dismissals;
 pub mod instance_database_backups;
 pub mod instance_settings;
 pub mod invite_globals;
+pub mod issue_subservices;
 pub mod issue_tree_control;
 pub mod issues;
 pub mod issues_checkout_wakeup;
@@ -66,6 +67,7 @@ pub mod user_profiles;
 pub mod v1;
 pub mod workflows;
 pub mod workspace_command_authz;
+pub mod workspace_runtime;
 pub mod workspace_runtime_service_authz;
 
 pub mod labels;
@@ -118,6 +120,7 @@ pub fn router() -> Router<AppState> {
         .merge(resource_memberships::router())
         .merge(workspace_command_authz::router())
         .merge(workspace_runtime_service_authz::router())
+        .merge(workspace_runtime::router())
         .merge(assets::router())
         .merge(attention::router())
         .merge(auth::router())
@@ -135,6 +138,7 @@ pub fn router() -> Router<AppState> {
         .merge(decision_training::router())
         .merge(environment_selection::router())
         .merge(file_resources::router())
+        .merge(issue_subservices::router())
         .merge(issue_tree_control::router())
         .merge(issues_checkout_wakeup::router())
         .merge(llms::router())

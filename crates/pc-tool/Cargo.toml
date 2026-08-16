@@ -11,8 +11,10 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1"
  uuid = { workspace = true }

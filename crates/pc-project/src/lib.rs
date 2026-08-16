@@ -17,6 +17,7 @@
 //! memberships.
 
 mod service;
+pub mod pure;
 pub mod workspace_runtime_config;
 
 pub use service::{

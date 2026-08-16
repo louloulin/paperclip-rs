@@ -2227,6 +2227,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-agent-jwt"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "hex",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "pc-api-routes"
 version = "0.1.0"
 
@@ -2536,6 +2551,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "hex",
+ "hmac",
  "pc-core",
  "pc-errors",
  "pc-issues",
@@ -2543,6 +2560,7 @@ dependencies = [
  "pc-secrets",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -2581,12 +2599,16 @@ name = "pc-environment"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "pc-core",
  "pc-errors",
  "pc-repos",
+ "pc-secrets",
+ "rand 0.8.7",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -2624,6 +2646,11 @@ dependencies = [
 [[package]]
 name = "pc-execution-workspace-guards"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "pc-external-objects"
@@ -2661,8 +2688,10 @@ dependencies = [
  "pc-errors",
  "pc-repos",
  "pc-telemetry",
+ "regex",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -2753,6 +2782,7 @@ dependencies = [
  "pc-core",
  "pc-hot-restart",
  "pc-repos",
+ "pc-secret-redaction",
  "regex",
  "serde",
  "serde_json",
@@ -2824,6 +2854,7 @@ dependencies = [
  "pc-issues",
  "pc-network-bind",
  "pc-openapi",
+ "pc-pipeline-conversation-context",
  "pc-pipelines",
  "pc-plugin-host",
  "pc-plugin-protocol",
@@ -3058,6 +3089,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-plugin-database"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "pc-plugin-host"
 version = "0.1.0"
 dependencies = [
@@ -3228,6 +3271,7 @@ dependencies = [
  "pc-errors",
  "pc-heartbeat",
  "pc-secrets",
+ "pc-workspace-commands",
  "rand 0.8.7",
  "regex",
  "serde",
@@ -3285,6 +3329,7 @@ dependencies = [
  "pc-realtime",
  "pc-repos",
  "pc-workflow",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
@@ -3497,8 +3542,10 @@ dependencies = [
  "pc-core",
  "pc-errors",
  "pc-repos",
+ "regex",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",

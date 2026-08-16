@@ -359,6 +359,74 @@ impl CreateDecisionSpec {
     }
 }
 
+
+
+// =============================================================================
+// Decision signing (Node signDecisionSpec / verifyDecisionSpec parity)
+// =============================================================================
+
+pub const DECISION_SIGNATURE_VERSION: &str = "decision-spec-v1";
+
+pub fn canonical_decision_signature_value(value: &Value) -> String {
+    match value {
+        Value::Array(arr) => {
+            let parts: Vec<String> = arr.iter().map(canonical_decision_signature_value).collect();
+            format!("[{}]", parts.join(","))
+        }
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+            let parts: Vec<String> = keys
+                .iter()
+                .map(|k| {
+                    let item = canonical_decision_signature_value(&map[*k]);
+                    format!("{}:{}", serde_json::to_string(k).unwrap_or_default(), item)
+                })
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        }
+        _ => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+pub fn sign_decision_spec(value: &Value, secret: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+    let canonical = canonical_decision_signature_value(value);
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
+    mac.update(format!("{}:{}", DECISION_SIGNATURE_VERSION, canonical).as_bytes());
+    let digest = hex::encode(mac.finalize().into_bytes());
+    format!("{}.{}", DECISION_SIGNATURE_VERSION, digest)
+}
+
+pub fn verify_decision_spec(value: &Value, signature: &str, secret: &[u8]) -> bool {
+    let expected = sign_decision_spec(value, secret);
+    if expected.len() != signature.len() { return false; }
+    let diff: u8 = expected.as_bytes().iter().zip(signature.as_bytes().iter())
+        .fold(0, |acc, (a, b)| acc | (a ^ b));
+    diff == 0
+}
+
+// =============================================================================
+// Authorization: board can act directly
+// =============================================================================
+
+pub fn board_can_act_directly(actor: &Value, company_id: &str) -> bool {
+    if actor.get("type").and_then(Value::as_str) != Some("board") { return false; }
+    if actor.get("source").and_then(Value::as_str) == Some("local_implicit") { return true; }
+    if actor.get("isInstanceAdmin").and_then(Value::as_bool) == Some(true) { return true; }
+    if let Some(arr) = actor.get("companyIds").and_then(Value::as_array) {
+        if arr.iter().any(|v| v.as_str() == Some(company_id)) { return true; }
+    }
+    if let Some(arr) = actor.get("memberships").and_then(Value::as_array) {
+        if arr.iter().any(|m| {
+            m.get("companyId").and_then(Value::as_str) == Some(company_id)
+                && m.get("status").and_then(Value::as_str) == Some("active")
+        }) { return true; }
+    }
+    false
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,5 +895,67 @@ mod tests {
         let mut spec = CreateDecisionSpec::new();
         spec.expires_at = Some(explicit);
         assert_eq!(spec.effective_expires_at(chrono::Utc::now()), explicit);
+    }
+
+
+    // ===== R718 signing + auth =====
+    #[test]
+    fn r718_canonical_array_form() {
+        assert_eq!(canonical_decision_signature_value(&serde_json::json!([1, 2])), "[1,2]");
+    }
+
+    #[test]
+    fn r718_canonical_object_sorts_keys() {
+        let v = serde_json::json!({"b": 1, "a": 2});
+        assert_eq!(canonical_decision_signature_value(&v), "{\"a\":2,\"b\":1}");
+    }
+
+    #[test]
+    fn r718_sign_then_verify_roundtrip() {
+        let v = serde_json::json!({"decisionId": "d-1", "options": []});
+        let secret = b"0123456789abcdef0123456789abcdef";
+        let sig = sign_decision_spec(&v, secret);
+        assert!(sig.starts_with("decision-spec-v1."));
+        assert_eq!(sig.len(), "decision-spec-v1.".len() + 64);
+        assert!(verify_decision_spec(&v, &sig, secret));
+    }
+
+    #[test]
+    fn r718_verify_rejects_tampered() {
+        let v = serde_json::json!({"decisionId": "d-1"});
+        let secret = b"0123456789abcdef0123456789abcdef";
+        let sig = sign_decision_spec(&v, secret);
+        let tampered = serde_json::json!({"decisionId": "d-2"});
+        assert!(!verify_decision_spec(&tampered, &sig, secret));
+    }
+
+    #[test]
+    fn r718_verify_rejects_wrong_secret() {
+        let v = serde_json::json!({"x": 1});
+        let sig = sign_decision_spec(&v, b"secret-one");
+        assert!(!verify_decision_spec(&v, &sig, b"secret-two"));
+    }
+
+    #[test]
+    fn r718_board_can_act_local_implicit() {
+        let actor = serde_json::json!({"type": "board", "source": "local_implicit"});
+        assert!(board_can_act_directly(&actor, "any-co"));
+    }
+
+    #[test]
+    fn r718_board_can_act_via_company_ids_and_membership() {
+        let via_ids = serde_json::json!({"type": "board", "companyIds": ["c1", "c2"]});
+        assert!(board_can_act_directly(&via_ids, "c2"));
+        assert!(!board_can_act_directly(&via_ids, "c3"));
+        let via_member = serde_json::json!({"type": "board", "memberships": [{"companyId": "c1", "status": "active"}]});
+        assert!(board_can_act_directly(&via_member, "c1"));
+        let via_inactive = serde_json::json!({"type": "board", "memberships": [{"companyId": "c1", "status": "left"}]});
+        assert!(!board_can_act_directly(&via_inactive, "c1"));
+    }
+
+    #[test]
+    fn r718_board_can_act_requires_board_type() {
+        let agent = serde_json::json!({"type": "agent", "companyIds": ["c1"]});
+        assert!(!board_can_act_directly(&agent, "c1"));
     }
 }

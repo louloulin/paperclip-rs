@@ -10,6 +10,7 @@ pub use pc_telemetry::feedback_share::{
     FEEDBACK_SHARE_ENCODING,
 };
 
+mod pure;
 mod service;
 pub use service::{
     FeedbackShareError, FeedbackShareHook, FeedbackShareHookEvent, FeedbackShareService,

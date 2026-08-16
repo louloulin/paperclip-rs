@@ -5227,8 +5227,8 @@ impl<'a> IssueRepo<'a> {
         idempotency_key: &str,
     ) -> sqlx::Result<Option<Uuid>> {
         let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT issue_id FROM issue_create_idempotency_keys \\
-             WHERE company_id = $1 AND idempotency_key = $2 \\
+            "SELECT issue_id FROM issue_create_idempotency_keys 
+             WHERE company_id = $1 AND idempotency_key = $2 
              LIMIT 1",
         )
         .bind(company_id)
@@ -5249,8 +5249,8 @@ impl<'a> IssueRepo<'a> {
         issue_id: Uuid,
     ) -> sqlx::Result<bool> {
         let n = sqlx::query(
-            "INSERT INTO issue_create_idempotency_keys (company_id, idempotency_key, issue_id) \\
-             VALUES ($1, $2, $3) \\
+            "INSERT INTO issue_create_idempotency_keys (company_id, idempotency_key, issue_id) 
+             VALUES ($1, $2, $3) 
              ON CONFLICT (company_id, idempotency_key) DO NOTHING",
         )
         .bind(company_id)
@@ -5272,12 +5272,12 @@ impl<'a> IssueRepo<'a> {
         batch_size: i64,
     ) -> sqlx::Result<u64> {
         let n = sqlx::query(
-            "DELETE FROM issue_create_idempotency_keys \\
-             WHERE id IN ( \\
-                SELECT id FROM issue_create_idempotency_keys \\
-                WHERE company_id = $1 AND created_at < $2 \\
-                ORDER BY created_at ASC, id ASC \\
-                LIMIT $3 \\
+            "DELETE FROM issue_create_idempotency_keys 
+             WHERE id IN ( 
+                SELECT id FROM issue_create_idempotency_keys 
+                WHERE company_id = $1 AND created_at < $2 
+                ORDER BY created_at ASC, id ASC 
+                LIMIT $3 
              )",
         )
         .bind(company_id)
@@ -5300,8 +5300,8 @@ impl<'a> IssueRepo<'a> {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> sqlx::Result<bool> {
         let n = sqlx::query(
-            "INSERT INTO issue_create_idempotency_keys (company_id, idempotency_key, issue_id) \\
-             VALUES ($1, $2, $3) \\
+            "INSERT INTO issue_create_idempotency_keys (company_id, idempotency_key, issue_id) 
+             VALUES ($1, $2, $3) 
              ON CONFLICT (company_id, idempotency_key) DO NOTHING",
         )
         .bind(company_id)

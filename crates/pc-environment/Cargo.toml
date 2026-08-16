@@ -10,11 +10,16 @@ workspace = true
 async-trait = { workspace = true }
 pc-errors = { path = "../pc-errors" }
 pc-repos = { path = "../pc-repos" }
+pc-secrets = { path = "../pc-secrets" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1"
  uuid = { workspace = true }
+rand = { workspace = true }
+base64 = "0.22"
 sqlx = { workspace = true }
 [dev-dependencies]
 pc-core = { path = "../pc-core" }

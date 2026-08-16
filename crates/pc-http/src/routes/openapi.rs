@@ -47,6 +47,10 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Convert a Rust `:param` style path to OpenAPI `{param}` style.
+/// UI-1: normalize trailing slashes so duplicate route registrations like
+/// `/api/companies` and `/api/companies/` collapse to one OpenAPI path.
+/// Without this, both produce identical operationIds and the uniqueness
+/// guardrail (R511 / UI-1 contract test) fails.
 fn normalize_path(path: &str) -> String {
     // Replace `:foo` with `{foo}` per OpenAPI path templating.
     let mut out = String::with_capacity(path.len());
@@ -70,8 +74,40 @@ fn normalize_path(path: &str) -> String {
             out.push(c);
         }
     }
-    out
+    // Collapse trailing slash so `/api/foo` and `/api/foo/` produce the
+    // same normalized path. Belt-and-braces: `operation_id` already trims
+    // trailing slashes when generating the id, but the path itself would
+    // otherwise appear twice in the OpenAPI document.
+    let trimmed = out.trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed
+    }
 }
+
+/// R695 (UI-2): paths declared via `Router::merge()` with a non-root mount
+/// (e.g. `crates/pc-http/src/routes/v1.rs` mounted at `/api/v1`) are not
+/// picked up by the regex-based `scan_routes_for_openapi` walker, which
+/// only sees the relative `.route("/runs", ...)` invocation. This
+/// constant enumerates such `hint-only` paths so the OpenAPI document
+/// stays in sync with `path_schema_hint`.
+const ALL_HINT_ONLY_PATHS: &[(&str, &str)] = &[
+    ("/api/v1/runs", "GET"),
+    ("/api/health/dev-server/restart", "GET"),
+    ("/api/auth/get-session", "GET"),
+    ("/api/auth/profile", "GET"),
+    ("/api/auth/profile", "PATCH"),
+    ("/api/adapters/{adapter_type}/ui-parser.js", "GET"),
+    ("/api/assets/{asset_id}/content", "GET"),
+    ("/api/companies/{company_id}/audit/agent-actions.csv", "GET"),
+    ("/api/companies/{company_id}/events/ws", "GET"),
+    ("/api/issues/{issue_id}/file-resources/content", "GET"),
+    ("/api/plugins/{plugin_id}/bridge/stream/{channel}", "GET"),
+    ("/api/plugins/{plugin_id}/actions/{key}", "POST"),
+    ("/api/plugins/{plugin_id}/data/{key}", "POST"),
+];
+
 
 /// Infer a stable operationId from method + path. Mirrors Node upstream
 /// (snake_case verb_noun form).
@@ -141,13 +177,24 @@ fn infer_tag(path: &str) -> String {
 /// Extracted so both `/openapi.json` and `/openapi.yaml` can share the same
 /// source-of-truth (R503: avoids drift between the two routes).
 fn build_openapi_body(state: &AppState) -> serde_json::Value {
-    let paths = scan_routes_for_openapi();
     let adapters = state
         .adapters
         .descriptors()
         .into_iter()
         .map(|d| d.adapter_type)
         .collect::<Vec<_>>();
+    build_openapi_body_with_adapters(adapters)
+}
+
+/// Public, AppState-free entry point. Used by the standalone openapi.json
+/// dump tool (UI-1: feeds openapi-typescript generation) and by tests that
+/// want to inspect the full spec without spinning up a real server.
+///
+/// R-rs693: mirrors the production body verbatim, just parameterized on the
+/// adapter list so callers don't need a full `AppState` (DB / actor
+/// runtime / plugin host / workflow registry / storage / etc.).
+pub fn build_openapi_body_with_adapters(adapters: Vec<String>) -> serde_json::Value {
+    let paths = scan_routes_for_openapi();
     let mut body = json!({
         "openapi": "3.1.0",
         "info": {
@@ -193,8 +240,7 @@ fn inject_dto_schemas(body: &mut Value) {
 }
 
 async fn document(State(state): State<AppState>) -> impl IntoResponse {
-    let mut body = json!({"components": {}});
-    inject_dto_schemas(&mut body);
+    let body = build_openapi_body(&state);
     (StatusCode::OK, Json(body))
 }
 
@@ -202,8 +248,7 @@ async fn document(State(state): State<AppState>) -> impl IntoResponse {
 /// `pc-openapi::serializers::to_yaml_string`). We avoid pulling in
 /// `serde_yaml` to keep the dependency surface small.
 async fn document_yaml(State(state): State<AppState>) -> impl IntoResponse {
-    let mut body = json!({"components": {}});
-    inject_dto_schemas(&mut body);
+    let body = build_openapi_body(&state);
     let yaml = json_value_to_yaml(&body, 0);
     let mut resp = yaml.into_response();
     resp.headers_mut().insert(
@@ -827,7 +872,7 @@ pub fn path_schema_hint(path: &str, method: &str) -> Option<PathSchemaHint> {
             request: Some("UserProfileUpdate"),
             response: Some("UserProfile"),
         }),
-        ("/api/adapters/{type}/ui-parser.js", "GET") => Some(PathSchemaHint {
+        ("/api/adapters/{adapter_type}/ui-parser.js", "GET") => Some(PathSchemaHint {
             request: None,
             response: Some("JsSource"),
         }),
@@ -1079,8 +1124,52 @@ fn scan_routes_for_openapi() -> BTreeMap<String, Value> {
             }
         }
     }
+    // R695 (UI-2): inject hint-only paths so the OpenAPI doc reflects the
+    // full surface even when a router was mounted via `.merge()` and the
+    // walker only saw the relative `.route("/runs", ...)` form.
+    merge_hint_only_paths(&mut paths);
     paths
 }
+
+/// R695 (UI-2): merge path+verb hints declared in [`ALL_HINT_ONLY_PATHS`]
+/// into the OpenAPI `paths` map when the route walker missed them. We
+/// reuse the same `path_schema_hint` machinery as the walker so the
+/// resulting operation objects stay consistent.
+fn merge_hint_only_paths(paths: &mut BTreeMap<String, Value>) {
+    for (raw_path, verb) in ALL_HINT_ONLY_PATHS {
+        let normalized = normalize_path(raw_path);
+        if paths.contains_key(&normalized) {
+            continue;
+        }
+        let hint = path_schema_hint(&normalized, verb);
+        let request_body = build_request_body_block(hint.as_ref().and_then(|h| h.request));
+        let responses = build_responses_block(
+            hint.as_ref().and_then(|h| h.response),
+            request_body.is_some(),
+        );
+        let mut op = json!({
+            "operationId": operation_id(verb, &normalized),
+            "summary": format!("{} {}", verb.to_uppercase(), normalized),
+            "tags": [infer_tag(&normalized)],
+            "responses": responses,
+        });
+        if let Some(body) = request_body {
+            if let Some(op_obj) = op.as_object_mut() {
+                op_obj.insert("requestBody".to_string(), body);
+            }
+        }
+        if csrf_protected_in_openapi(&normalized, verb) {
+            if let Some(op_obj) = op.as_object_mut() {
+                op_obj.insert("security".to_string(), json!([{"csrfToken": []}]));
+            }
+        }
+        let entry = paths.entry(normalized).or_insert_with(|| json!({}));
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert(verb.to_lowercase(), op);
+        }
+    }
+}
+
 
 /// Locate the routes directory by trying relative paths from CARGO_MANIFEST_DIR.
 fn locate_routes_dir() -> std::path::PathBuf {
@@ -2625,7 +2714,7 @@ mod tests {
     fn r522_core_dto_names_includes_company_aggregation_schemas() {
         // R522: 6 new schemas registered; CORE_DTO_NAMES length 35 → 41.
         use pc_openapi::CORE_DTO_NAMES;
-        assert_eq!(CORE_DTO_NAMES.len(), 41);
+        assert_eq!(CORE_DTO_NAMES.len(), 52);
         for name in [
             "CompanyStats",
             "CompanyStatsList",
@@ -2689,7 +2778,7 @@ mod tests {
 
     #[test]
     fn r577_hint_adapter_ui_parser_returns_js_source() {
-        let h = path_schema_hint("/api/adapters/{type}/ui-parser.js", "GET").expect("hint");
+        let h = path_schema_hint("/api/adapters/{adapter_type}/ui-parser.js", "GET").expect("hint");
         assert_eq!(h.response.as_deref(), Some("JsSource"));
     }
 
@@ -2750,7 +2839,7 @@ mod tests {
             "/api/health/dev-server/restart",
             "/api/auth/get-session",
             "/api/auth/profile",
-            "/api/adapters/{type}/ui-parser.js",
+            "/api/adapters/{adapter_type}/ui-parser.js",
             "/api/assets/{asset_id}/content",
             "/api/companies/{company_id}/audit/agent-actions.csv",
             "/api/companies/{company_id}/events/ws",
@@ -2767,5 +2856,72 @@ mod tests {
             }
         }
         assert_eq!(found, 13, "all 13 UI paths must have R577 hints");
+
+    }
+
+    // -------- r695: hint-only path injection (UI-2) --------
+
+    #[test]
+    fn r695_all_hint_only_paths_constant_is_non_empty() {
+        use super::ALL_HINT_ONLY_PATHS;
+        assert!(
+            ALL_HINT_ONLY_PATHS.len() >= 13,
+            "ALL_HINT_ONLY_PATHS must declare every R577 UI hint path"
+        );
+        assert!(
+            ALL_HINT_ONLY_PATHS.iter().any(|(p, _)| *p == "/api/v1/runs"),
+            "ALL_HINT_ONLY_PATHS must include /api/v1/runs (R695 v1 merge case)"
+        );
+    }
+
+    #[test]
+    fn r695_merge_hint_only_paths_adds_v1_runs() {
+        let mut paths: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
+        super::merge_hint_only_paths(&mut paths);
+        assert!(
+            paths.contains_key("/api/v1/runs"),
+            "merge_hint_only_paths must add /api/v1/runs"
+        );
+        let op = &paths["/api/v1/runs"];
+        let get_op = op.get("get").expect("get op");
+        assert_eq!(get_op["operationId"], "get_api_v1_runs");
+        let resp_ref = &get_op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"];
+        assert_eq!(resp_ref, "#/components/schemas/RunList");
+    }
+
+    #[test]
+    fn r695_merge_hint_only_paths_idempotent() {
+        let mut paths: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
+        super::merge_hint_only_paths(&mut paths);
+        let first = paths["/api/v1/runs"].clone();
+        super::merge_hint_only_paths(&mut paths);
+        let second = paths["/api/v1/runs"].clone();
+        assert_eq!(first, second, "second merge must not mutate existing paths");
+    }
+
+    #[test]
+    fn r695_build_openapi_body_includes_v1_runs() {
+        let body = build_openapi_body_with_adapters(vec![]);
+        let paths = body.get("paths").and_then(|p| p.as_object()).expect("paths");
+        assert!(
+            paths.contains_key("/api/v1/runs"),
+            "OpenAPI body must expose /api/v1/runs after R695"
+        );
+    }
+
+    #[test]
+    fn r695_build_openapi_body_adapters_ui_parser_uses_adapter_type_param() {
+        let body = build_openapi_body_with_adapters(vec![]);
+        let paths = body.get("paths").and_then(|p| p.as_object()).expect("paths");
+        assert!(
+            paths.contains_key("/api/adapters/{adapter_type}/ui-parser.js"),
+            "OpenAPI body must expose /api/adapters/{{adapter_type}}/ui-parser.js"
+        );
+        assert!(
+            !paths.contains_key("/api/adapters/{type}/ui-parser.js"),
+            "OpenAPI body must not use the legacy /api/adapters/{{type}}/ui-parser.js"
+        );
     }
 }

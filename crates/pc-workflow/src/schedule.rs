@@ -311,6 +311,55 @@ pub fn is_sub_hourly_cron_expression(
     true
 }
 
+// ----------------------------------------------------------------------------
+// R669: Node `cron.ts` 1:1 API parity wrappers
+// ----------------------------------------------------------------------------
+//
+// Node 上游 `server/src/services/cron.ts` 导出 4 个函数：
+// - parseCron(expression) -> ParsedCron
+// - validateCron(expression) -> string | null
+// - nextCronTick(cron, after) -> Date | null
+// - nextCronTickFromExpression(expression, after) -> Date | null
+//
+// Rust 端核心实现是 `ParsedCron` + `next_cron_tick_in_timezone`，
+// 但 Node 调用方期望直接传字符串表达式，且希望 timezone 默认为 UTC。
+// 这里提供 1:1 包装便于跨 crate 调用。
+
+/// 解析 cron 表达式（与 Node `parseCron` 1:1）。
+///
+/// # Errors
+/// - `CronError::Empty` / `FieldCount` / `Field` / `Range`：解析失败
+pub fn parse_cron(expression: &str) -> Result<ParsedCron, CronError> {
+    ParsedCron::parse(expression)
+}
+
+/// 校验 cron 表达式（与 Node `validateCron` 1:1）。
+///
+/// - `Ok(())` — 表达式合法
+/// - `Err(String)` — 表达式非法，返回人类可读错误
+pub fn validate_cron(expression: &str) -> Result<(), String> {
+    ParsedCron::parse(expression)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// 计算 cron 表达式在 UTC 下的下一次触发时间（与 Node `nextCronTick` 1:1）。
+pub fn next_cron_tick(cron: &ParsedCron, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    cron.next_after(after)
+}
+
+/// 从表达式直接计算下一次触发时间（与 Node `nextCronTickFromExpression` 1:1）。
+///
+/// 解析失败或无后续 tick 时返回 `None`。
+pub fn next_cron_tick_from_expression(
+    expression: &str,
+    after: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    ParsedCron::parse(expression)
+        .ok()
+        .and_then(|p| p.next_after(after))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,5 +578,55 @@ mod tests {
             "Mars/Olympus",
             after
         ));
+    }
+
+    // ============ R669: Node cron.ts 1:1 parity tests ============
+
+    #[test]
+    fn r669_parse_cron_accepts_standard() {
+        assert!(parse_cron("0 9 * * *").is_ok());
+        assert!(parse_cron("*/15 * * * *").is_ok());
+        assert!(parse_cron("0 0 1 1 *").is_ok());
+    }
+
+    #[test]
+    fn r669_parse_cron_rejects_empty() {
+        assert!(parse_cron("").is_err());
+        assert!(parse_cron("   ").is_err());
+    }
+
+    #[test]
+    fn r669_validate_cron_returns_err_string() {
+        assert!(validate_cron("0 9 * * *").is_ok());
+        let err = validate_cron("not a cron").unwrap_err();
+        assert!(!err.is_empty(), "error string must be non-empty");
+    }
+
+    #[test]
+    fn r669_next_cron_tick_returns_some() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let cron = parse_cron("0 9 * * *").unwrap();
+        let next = next_cron_tick(&cron, after);
+        assert!(next.is_some());
+        let n = next.unwrap();
+        assert_eq!(n.hour(), 9);
+        assert_eq!(n.minute(), 0);
+    }
+
+    #[test]
+    fn r669_next_cron_tick_from_expression_direct() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let n = next_cron_tick_from_expression("0 9 * * *", after);
+        assert!(n.is_some());
+        assert_eq!(n.unwrap().hour(), 9);
+    }
+
+    #[test]
+    fn r669_next_cron_tick_from_expression_invalid_returns_none() {
+        use chrono::TimeZone;
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        assert!(next_cron_tick_from_expression("not a cron", after).is_none());
     }
 }

@@ -79,6 +79,21 @@ pub fn register_core_dtos(reg: &mut OpenApiRegistry) {
     reg.register_schema_value("CompanyArtifact", company_artifact_schema());
     reg.register_schema_value("CompanyArtifactList", company_artifact_list_schema());
     reg.register_schema_value("CompanyOrgChart", company_org_chart_schema());
+    // R694: fill in 9 missing component schemas referenced by /api/health,
+    // /api/auth/*, /api/assets/{id}/content, /api/issues/{id}/file-resources/content,
+    // /api/plugins/{id}/bridge/stream/{channel}, /api/companies/{id}/events/ws,
+    // /api/companies/{id}/audit/agent-actions.csv, /api/adapters/{type}/ui-parser.js.
+    reg.register_schema_value("Health", health_schema());
+    reg.register_schema_value("DevServerRestart", dev_server_restart_schema());
+    reg.register_schema_value("Session", session_schema());
+    reg.register_schema_value("UserProfile", user_profile_schema());
+    reg.register_schema_value("UserProfileUpdate", user_profile_update_schema());
+    reg.register_schema_value("JsSource", js_source_schema());
+    reg.register_schema_value("AssetContent", asset_content_schema());
+    reg.register_schema_value("FileResourceContent", file_resource_content_schema());
+    reg.register_schema_value("BridgeStream", bridge_stream_schema());
+    reg.register_schema_value("CsvExport", csv_export_schema());
+    reg.register_schema_value("LiveEventStream", live_event_stream_schema());
 }
 
 /// OpenAPI schema for the upstream `Decision` shape (mirrors
@@ -979,6 +994,204 @@ pub fn admin_user_list_schema() -> Value {
     })
 }
 
+/// R694: Health check response (GET /api/health).
+pub fn health_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Service health snapshot returned by GET /api/health.",
+        "properties": {
+            "status": { "type": "string", "enum": ["ok", "degraded", "down"] },
+            "version": { "type": "string", "description": "Deployed build version." },
+            "uptime": { "type": "number", "format": "double", "description": "Seconds since process start." },
+            "now": { "type": "string", "format": "date-time" },
+            "checks": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "ok": { "type": "boolean" },
+                        "latencyMs": { "type": ["number", "null"] },
+                        "message": { "type": ["string", "null"] }
+                    },
+                    "required": ["ok"]
+                }
+            }
+        },
+        "required": ["status"]
+    })
+}
+
+/// R694: dev-server restart acknowledgement (GET /api/health/dev-server/restart).
+pub fn dev_server_restart_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Confirmation payload returned after triggering a dev-server restart.",
+        "properties": {
+            "status": { "type": "string", "enum": ["ok", "queued", "skipped"] },
+            "restartedAt": { "type": ["string", "null"], "format": "date-time" },
+            "reason": { "type": ["string", "null"] }
+        },
+        "required": ["status"]
+    })
+}
+
+/// R694: Authenticated session payload (GET /api/auth/get-session).
+pub fn session_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Current authenticated session, including user identity and effective permissions.",
+        "properties": {
+            "userId": { "type": "string" },
+            "email": { "type": "string", "format": "email" },
+            "displayName": { "type": ["string", "null"] },
+            "isInstanceAdmin": { "type": "boolean" },
+            "expiresAt": { "type": "string", "format": "date-time" },
+            "companies": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "companyId": { "type": "string", "format": "uuid" },
+                        "role": { "type": "string" }
+                    },
+                    "required": ["companyId", "role"]
+                }
+            }
+        },
+        "required": ["userId", "email", "isInstanceAdmin", "expiresAt"]
+    })
+}
+
+/// R694: User profile (GET /api/auth/profile).
+pub fn user_profile_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Profile fields visible to the profile owner.",
+        "properties": {
+            "id": { "type": "string" },
+            "email": { "type": "string", "format": "email" },
+            "displayName": { "type": ["string", "null"] },
+            "avatarUrl": { "type": ["string", "null"], "format": "uri" },
+            "bio": { "type": ["string", "null"] },
+            "timezone": { "type": ["string", "null"] },
+            "emailVerifiedAt": { "type": ["string", "null"], "format": "date-time" },
+            "isInstanceAdmin": { "type": "boolean" },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "email", "isInstanceAdmin"]
+    })
+}
+
+/// R694: User profile PATCH body (PATCH /api/auth/profile).
+pub fn user_profile_update_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Subset of profile fields that the owner can mutate via PATCH /api/auth/profile.",
+        "properties": {
+            "displayName": { "type": ["string", "null"] },
+            "avatarUrl": { "type": ["string", "null"], "format": "uri" },
+            "bio": { "type": ["string", "null"] },
+            "timezone": { "type": ["string", "null"] }
+        }
+    })
+}
+
+/// R694: JavaScript source payload (GET /api/adapters/{type}/ui-parser.js).
+pub fn js_source_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "JavaScript module body returned by GET /api/adapters/{type}/ui-parser.js.",
+        "properties": {
+            "source": { "type": "string", "description": "JavaScript source text." },
+            "contentType": { "type": "string", "enum": ["text/javascript", "application/javascript"] },
+            "etag": { "type": ["string", "null"] }
+        },
+        "required": ["source", "contentType"]
+    })
+}
+
+/// R694: Asset binary content envelope (GET /api/assets/{asset_id}/content).
+pub fn asset_content_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Asset content envelope. Backed by pc-repos asset storage; binary payload is base64-encoded in `content`.",
+        "properties": {
+            "assetId": { "type": "string", "format": "uuid" },
+            "mimeType": { "type": "string" },
+            "size": { "type": "integer", "format": "int64" },
+            "encoding": { "type": "string", "enum": ["identity", "base64"] },
+            "content": { "type": "string", "description": "UTF-8 string for text assets, base64 for binary assets." },
+            "checksumSha256": { "type": ["string", "null"] }
+        },
+        "required": ["assetId", "mimeType", "size", "encoding", "content"]
+    })
+}
+
+/// R694: File-resource content envelope (GET /api/issues/{issue_id}/file-resources/content).
+pub fn file_resource_content_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "File resource content envelope, scoped under an issue. Mirrors the upstream Paperclip shape.",
+        "properties": {
+            "fileResourceId": { "type": "string", "format": "uuid" },
+            "issueId": { "type": "string", "format": "uuid" },
+            "path": { "type": "string" },
+            "mimeType": { "type": "string" },
+            "size": { "type": "integer", "format": "int64" },
+            "encoding": { "type": "string", "enum": ["identity", "base64"] },
+            "content": { "type": "string" },
+            "checksumSha256": { "type": ["string", "null"] }
+        },
+        "required": ["fileResourceId", "issueId", "path", "mimeType", "size", "encoding", "content"]
+    })
+}
+
+/// R694: Plugin bridge stream envelope (WebSocket /api/plugins/{plugin_id}/bridge/stream/{channel}).
+pub fn bridge_stream_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Single frame exchanged over a plugin bridge stream. Frames may be client->server or server->client.",
+        "properties": {
+            "type": { "type": "string", "description": "Frame type: hello, ping, data, ack, close." },
+            "channel": { "type": "string" },
+            "seq": { "type": ["integer", "null"], "format": "int64" },
+            "payload": { "type": ["object", "null"], "additionalProperties": true }
+        },
+        "required": ["type", "channel"]
+    })
+}
+
+/// R694: CSV export envelope (GET /api/companies/{company_id}/audit/agent-actions.csv).
+pub fn csv_export_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "CSV export payload. `headers` are the column names in order; `csv` is the raw string content.",
+        "properties": {
+            "filename": { "type": "string" },
+            "headers": { "type": "array", "items": { "type": "string" } },
+            "csv": { "type": "string", "description": "Raw CSV text (RFC 4180)." }
+        },
+        "required": ["filename", "headers", "csv"]
+    })
+}
+
+/// R694: Live company event stream frame (WebSocket /api/companies/{company_id}/events/ws).
+pub fn live_event_stream_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Single event frame pushed over the company event stream.",
+        "properties": {
+            "eventId": { "type": "string" },
+            "type": { "type": "string", "description": "Event type, e.g. agent.run.completed, issue.updated." },
+            "companyId": { "type": "string", "format": "uuid" },
+            "occurredAt": { "type": "string", "format": "date-time" },
+            "payload": { "type": ["object", "null"], "additionalProperties": true }
+        },
+        "required": ["eventId", "type", "companyId", "occurredAt"]
+    })
+}
+
 /// Wrap a JSON schema definition as a [`SchemaRef`] ready for registration.
 #[must_use]
 pub fn into_schema_ref(schema: &Value) -> SchemaRef {
@@ -1036,6 +1249,18 @@ pub const CORE_DTO_NAMES: &[&str] = &[
     "CompanyArtifact",
     "CompanyArtifactList",
     "CompanyOrgChart",
+    // R694: additional schemas referenced by R577 UI hint paths.
+    "Health",
+    "DevServerRestart",
+    "Session",
+    "UserProfile",
+    "UserProfileUpdate",
+    "JsSource",
+    "AssetContent",
+    "FileResourceContent",
+    "BridgeStream",
+    "CsvExport",
+    "LiveEventStream",
 ];
 
 #[cfg(test)]
@@ -1381,7 +1606,7 @@ mod tests {
         let spec = reg.build();
         // R511: 8 new schemas added (Case/Goal/Inbox/Folder + 4 List arrays).
         // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
-        assert_eq!(spec.schema_count(), 41);
+        assert_eq!(spec.schema_count(), 52);
     }
 
     #[test]
@@ -1390,7 +1615,7 @@ mod tests {
         register_core_dtos(&mut reg);
         let spec = reg.build();
         // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
-        assert_eq!(spec.schema_count(), 41);
+        assert_eq!(spec.schema_count(), 52);
     }
 
     #[test]
@@ -1399,7 +1624,7 @@ mod tests {
         register_core_dtos(&mut reg);
         let spec = reg.build();
         // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
-        assert_eq!(spec.schema_count(), 41);
+        assert_eq!(spec.schema_count(), 52);
     }
 
     #[test]
@@ -1425,12 +1650,12 @@ mod tests {
         register_core_dtos(&mut reg);
         let spec = reg.build();
         // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
-        assert_eq!(spec.schema_count(), 41);
+        assert_eq!(spec.schema_count(), 52);
     }
 
     #[test]
     fn r507_core_dto_names_constant_has_nine_entries() {
-        assert_eq!(CORE_DTO_NAMES.len(), 41);
+        assert_eq!(CORE_DTO_NAMES.len(), 52);
         for name in ["CompanyList", "AgentList", "IssueList", "DecisionList"] {
             assert!(CORE_DTO_NAMES.contains(&name), "missing `{name}`");
         }
@@ -1607,12 +1832,12 @@ mod tests {
         register_core_dtos(&mut reg);
         let spec = reg.build();
         // R513: 6 new schemas (CompanyMember + Invite + AdminUser + 3 List).
-        assert_eq!(spec.schema_count(), 41);
+        assert_eq!(spec.schema_count(), 52);
     }
 
     #[test]
     fn r511_core_dto_names_constant_has_twenty_seven_entries() {
-        assert_eq!(CORE_DTO_NAMES.len(), 41);
+        assert_eq!(CORE_DTO_NAMES.len(), 52);
         for name in [
             "Case",
             "Goal",
@@ -1729,12 +1954,12 @@ mod tests {
         let mut reg = OpenApiRegistry::builder();
         register_core_dtos(&mut reg);
         let spec = reg.build();
-        assert_eq!(spec.schema_count(), 41);
+        assert_eq!(spec.schema_count(), 52);
     }
 
     #[test]
     fn r513_core_dto_names_constant_has_thirty_three_entries() {
-        assert_eq!(CORE_DTO_NAMES.len(), 41);
+        assert_eq!(CORE_DTO_NAMES.len(), 52);
         for name in [
             "CompanyMember",
             "Invite",
@@ -1757,6 +1982,153 @@ mod tests {
         let spec = reg.build();
         let y = spec.to_yaml_string().expect("yaml");
         for name in ["CompanyMember:", "Invite:", "AdminUser:"] {
+            assert!(y.contains(name), "YAML missing top-level {name} key");
+        }
+    }
+    // -------- r694: missing component schemas for UI hint paths --------
+
+    #[test]
+    fn r694_health_schema_required_status_field() {
+        let v = health_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        assert!(names.contains(&"status"), "Health.required must include `status`, got {names:?}");
+        let en = v["properties"]["status"]["enum"].as_array().expect("enum");
+        let values: Vec<&str> = en.iter().filter_map(|e| e.as_str()).collect();
+        assert_eq!(values, vec!["ok", "degraded", "down"]);
+    }
+
+    #[test]
+    fn r694_dev_server_restart_schema_status_enum() {
+        let v = dev_server_restart_schema();
+        let en = v["properties"]["status"]["enum"].as_array().expect("enum");
+        let values: Vec<&str> = en.iter().filter_map(|e| e.as_str()).collect();
+        assert_eq!(values, vec!["ok", "queued", "skipped"]);
+    }
+
+    #[test]
+    fn r694_session_schema_required_user_email_admin_expires() {
+        let v = session_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["userId", "email", "isInstanceAdmin", "expiresAt"] {
+            assert!(names.contains(&f), "Session.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_user_profile_schema_required_id_email_admin() {
+        let v = user_profile_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["id", "email", "isInstanceAdmin"] {
+            assert!(names.contains(&f), "UserProfile.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_user_profile_update_schema_all_optional() {
+        let v = user_profile_update_schema();
+        assert!(v.get("required").is_none(), "UserProfileUpdate must have no required fields");
+    }
+
+    #[test]
+    fn r694_js_source_schema_content_type_enum() {
+        let v = js_source_schema();
+        let en = v["properties"]["contentType"]["enum"].as_array().expect("enum");
+        let values: Vec<&str> = en.iter().filter_map(|e| e.as_str()).collect();
+        assert_eq!(values, vec!["text/javascript", "application/javascript"]);
+    }
+
+    #[test]
+    fn r694_asset_content_schema_required_core_fields() {
+        let v = asset_content_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["assetId", "mimeType", "size", "encoding", "content"] {
+            assert!(names.contains(&f), "AssetContent.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_file_resource_content_schema_required_core_fields() {
+        let v = file_resource_content_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["fileResourceId", "issueId", "path", "mimeType", "size", "encoding", "content"] {
+            assert!(names.contains(&f), "FileResourceContent.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_bridge_stream_schema_required_type_channel() {
+        let v = bridge_stream_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["type", "channel"] {
+            assert!(names.contains(&f), "BridgeStream.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_csv_export_schema_required_filename_headers_csv() {
+        let v = csv_export_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["filename", "headers", "csv"] {
+            assert!(names.contains(&f), "CsvExport.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_live_event_stream_schema_required_event_id_type_company_occurred() {
+        let v = live_event_stream_schema();
+        let req = v["required"].as_array().expect("required");
+        let names: Vec<&str> = req.iter().filter_map(|r| r.as_str()).collect();
+        for f in ["eventId", "type", "companyId", "occurredAt"] {
+            assert!(names.contains(&f), "LiveEventStream.required must include `{f}`, got {names:?}");
+        }
+    }
+
+    #[test]
+    fn r694_register_core_dtos_includes_eleven_new_schemas() {
+        let mut reg = OpenApiRegistry::builder();
+        register_core_dtos(&mut reg);
+        let spec = reg.build();
+        for name in [
+            "Health",
+            "DevServerRestart",
+            "Session",
+            "UserProfile",
+            "UserProfileUpdate",
+            "JsSource",
+            "AssetContent",
+            "FileResourceContent",
+            "BridgeStream",
+            "CsvExport",
+            "LiveEventStream",
+        ] {
+            assert!(
+                spec.components.schemas.contains_key(name),
+                "core dto spec missing `{name}` schema"
+            );
+        }
+    }
+
+    #[test]
+    fn r694_new_schemas_round_trip_through_yaml() {
+        let mut reg = OpenApiRegistry::builder();
+        register_core_dtos(&mut reg);
+        let spec = reg.build();
+        let y = spec.to_yaml_string().expect("yaml");
+        for name in [
+            "Health:",
+            "Session:",
+            "UserProfile:",
+            "AssetContent:",
+            "BridgeStream:",
+            "LiveEventStream:",
+        ] {
             assert!(y.contains(name), "YAML missing top-level {name} key");
         }
     }

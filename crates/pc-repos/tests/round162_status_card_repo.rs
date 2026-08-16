@@ -31,8 +31,8 @@ async fn insert_card(db: &Db, company_id: Uuid, title: Option<&str>, archived: b
         None
     };
     sqlx::query(
-        "INSERT INTO status_cards \\
-         (id, company_id, title, interest_prompt, queries, refresh_policy, state, query_version, archived_at) \\
+        "INSERT INTO status_cards 
+         (id, company_id, title, interest_prompt, queries, refresh_policy, state, query_version, archived_at) 
          VALUES ($1, $2, $3, 'r162-prompt', '[]'::jsonb, '{}'::jsonb, 'idle', 1, $4)",
     )
     .bind(id)

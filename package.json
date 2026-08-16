@@ -1,0 +1,12 @@
+{
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0"
+  },
+  "scripts": {
+    "generate:ui-types": "node scripts/generate-ui-types.mjs",
+    "dump:openapi": "PAPERCLIP_DUMP_OPENAPI=1 cargo test -p pc-http --test ui1_openapi_dump_contract ui1_openapi_dump_writes_to_well_known_path -- --nocapture",
+    "ui:types": "npm run dump:openapi && npm run generate:ui-types"
+  },
+  "description": "paperclip-rs development tooling",
+  "packageManager": "pnpm@10.33.1+sha512.05ba3c1d5d1c18f68df06470d74055e62d41fc110a0c660db1b2dfb2785327f04cf0f68345d4609bc52089e7fa0343c31593b2f9594e2c5d5da426230acc9820"
+}

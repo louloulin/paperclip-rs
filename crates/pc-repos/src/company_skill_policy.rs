@@ -31,7 +31,7 @@ impl<'a> CompanySkillPolicyRepo<'a> {
     /// Round 181: 取公司 skill 策略（不存在返回 None）。
     pub async fn fetch(&self, company_id: Uuid) -> sqlx::Result<Option<PolicyRow>> {
         sqlx::query_as::<_, PolicyRow>(
-            "SELECT company_id, schema_version, revision, default_effect, rules, updated_at \\
+            "SELECT company_id, schema_version, revision, default_effect, rules, updated_at 
              FROM company_skill_policies WHERE company_id = $1",
         )
         .bind(company_id)
@@ -48,13 +48,13 @@ impl<'a> CompanySkillPolicyRepo<'a> {
         rules: &serde_json::Value,
     ) -> sqlx::Result<()> {
         sqlx::query(
-            "INSERT INTO company_skill_policies \\
-                (company_id, schema_version, revision, default_effect, rules, updated_at) \\
-             VALUES ($1, 1, $2, $3, $4, now()) \\
-             ON CONFLICT (company_id) DO UPDATE SET \\
-                revision = company_skill_policies.revision + 1, \\
-                default_effect = EXCLUDED.default_effect, \\
-                rules = EXCLUDED.rules, \\
+            "INSERT INTO company_skill_policies 
+                (company_id, schema_version, revision, default_effect, rules, updated_at) 
+             VALUES ($1, 1, $2, $3, $4, now()) 
+             ON CONFLICT (company_id) DO UPDATE SET 
+                revision = company_skill_policies.revision + 1, 
+                default_effect = EXCLUDED.default_effect, 
+                rules = EXCLUDED.rules, 
                 updated_at = now()",
         )
         .bind(company_id)

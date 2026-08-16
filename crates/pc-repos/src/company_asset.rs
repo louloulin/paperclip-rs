@@ -24,8 +24,8 @@ impl<'a> CompanyAssetRepo<'a> {
         sha256: &str,
     ) -> sqlx::Result<()> {
         sqlx::query(
-            "INSERT INTO company_assets \\
-             (id, company_id, kind, key, content_type, size_bytes, sha256, created_at) \\
+            "INSERT INTO company_assets 
+             (id, company_id, kind, key, content_type, size_bytes, sha256, created_at) 
              VALUES ($1, $2, 'image', $3, $4, $5, $6, now())",
         )
         .bind(asset_id)

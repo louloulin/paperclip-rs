@@ -13,6 +13,8 @@ pub mod registry;
 pub mod routine;
 pub mod schedule;
 pub mod types;
+pub mod types_pure;
+pub mod state_machine_pure;
 
 pub use engine::{WorkflowEngine, WorkflowHandle};
 pub use registry::{RoutineRegistry, WorkflowRegistry};

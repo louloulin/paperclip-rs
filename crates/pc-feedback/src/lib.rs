@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod pure;
 pub mod redaction;
 pub mod share;
 pub mod trace;

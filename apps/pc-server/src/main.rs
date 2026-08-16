@@ -605,6 +605,13 @@ async fn main() -> anyhow::Result<()> {
         .route_layer(axum::middleware::from_fn(
             pc_http::middleware::board_mutation_guard_layer,
         ))
+        // R664: require_board_layer 必须放在 auth_layer 之"内"（即在源码中先 add），
+        // 这样执行顺序是 auth_layer → require_board_layer → csrf_layer → handler，
+        // require_board_layer 才能读到 auth_layer 注入的 AuthContext。
+        // 与 Node `routes/authz.ts::assertBoard` 等价：拒绝 anonymous（除 health 等公开路径）。
+        .route_layer(axum::middleware::from_fn(
+            pc_http::middleware::auth::require_board_layer,
+        ))
         // auth_layer: 必须用 route_layer 而不是 layer，因为 router 尚未带 state
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),

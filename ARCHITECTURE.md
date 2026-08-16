@@ -1,4 +1,12 @@
-# paperclip-rs — 当前架构状态（R655 末 / 2026-08-14）
+# paperclip-rs — 当前架构状态（R668 末 / 2026-08-16）
+
+> R655 → R668 增量：Auth boundary 修复 + workspace runtime + issue subservices + e2e 集成 + OpenAPI 真实生成
+> **R663**: pc-server 二进制 build + 真实启动 + curl 验证
+> **R664**: Auth Boundary 修复（require_board_layer + local_trusted 注入）
+> **R665**: workspace-runtime route 暴露（5 个 endpoint）
+> **R666**: issue 子服务 route（visibility / references / SQL helper）
+> **R667**: 综合 e2e 脚本（29 → 52 测试全 PASS）
+> **R668**: 终验 — OpenAPI stub bug 修复（0 → 688 paths），auth boundary 回归测试
 
 > 与 `ARCHITECTURE-DIAGRAMS.md`（底层图）/ `MODULE-MAPPING.md`（Node→Rust 映射）/ `PROJECT-PLAN.md`（v1.0 执行计划）配套。
 > 本文档定位为**当前状态快照**——反映 R541-R655 这一轮"全面 Node→Rust 模块复刻 + 真实 PG/HTTP/WS 验证"之后的真实情况。

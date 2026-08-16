@@ -24,6 +24,9 @@ uuid = { workspace = true }
 sqlx = { workspace = true }
 futures = { workspace = true }
 
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 [dev-dependencies]
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

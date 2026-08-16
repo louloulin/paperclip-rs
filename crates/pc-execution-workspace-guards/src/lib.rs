@@ -6,6 +6,9 @@
 //! R552: Direct port of `paperclip/packages/shared/src/execution-workspace-guards.ts`
 //! (19 LOC). Two small pure helpers over a subset of the execution workspace shape.
 
+pub mod readiness;
+pub mod runtime_service_id;
+
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
