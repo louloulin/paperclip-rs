@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 pc-core = { path = "../pc-core" }
+pc-routines = { path = "../pc-routines" }
+pc-errors = { path = "../pc-errors" }
 kameo = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

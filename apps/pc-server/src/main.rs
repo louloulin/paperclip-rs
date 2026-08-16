@@ -42,6 +42,7 @@ use pc_http::middleware::{
 };
 use pc_http::AppState;
 use pc_realtime::terminal::{FakeSshConnector, InMemoryStore};
+use pc_realtime::hooks::RealtimeRoutineHook;
 use pc_routines::scheduler::RoutineSchedulerContext;
 use pc_routines::RoutineService;
 use pc_realtime::{RealtimeHandle, WsState};
@@ -444,8 +445,10 @@ async fn main() -> anyhow::Result<()> {
     let routine_scheduler = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let realtime_for_routine_hook = realtime.clone();
         let svc = RoutineService::new(db_for_routine)
-            .with_scheduler_context(scheduler_ctx);
+            .with_scheduler_context(scheduler_ctx)
+            .add_hook(RealtimeRoutineHook::new(realtime_for_routine_hook).into_arc());
         let mut empty_ticks = 0u32;
         loop {
             ticker.tick().await;

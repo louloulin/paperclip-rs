@@ -262,6 +262,7 @@ pub use rate_limit::{
 pub mod ws_bridge;
 
 /// R743: Live-events 进程内 pub/sub hub（原 `pc-live-events` 已下沉）。
+pub mod hooks;
 pub mod hub;
 
 /// WebSocket state（server 名 + realtime handle）。

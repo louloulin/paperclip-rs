@@ -13,6 +13,7 @@ use pc_http::{
     state::{ConfigSnapshot, RuntimeHandles},
     AppState,
 };
+use pc_auth as _;
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
 use serde_json::{json, Value};
@@ -20,6 +21,15 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+
+fn build_app(db: Db) -> axum::Router {
+    // 测试 setup only: 安装 axum::Extension(AuthContext::anonymous())
+    // 让 handler 中的 AxumExtension(actor): AxumExtension<AuthContext> 提取能命中。
+    // 真实启动时由 middleware::auth::auth_layer 注入（参见 pc-server）。
+    routes::routines::router()
+        .with_state(test_state(db.clone()))
+        .layer(axum::Extension(pc_auth::AuthContext::system()))
+}
 
 fn test_state(db: Db) -> AppState {
     let actors = ActorRegistry::new();
@@ -112,7 +122,7 @@ async fn company_routine_create_uses_ui_contract_and_creates_initial_revision() 
         .await
         .expect("connect test db");
     let company_id = insert_company(&db).await;
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
 
     let (status, routine) = call(
         &app,
@@ -184,7 +194,7 @@ async fn company_routine_list_filters_by_project_and_returns_ui_aggregates() {
             .await
             .expect("insert project");
     }
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     for (project_id, title) in [
         (first_project_id, "First routine"),
         (second_project_id, "Second routine"),
@@ -224,7 +234,7 @@ async fn routine_detail_includes_description_document_and_relationship_aggregate
         .await
         .expect("connect test db");
     let company_id = insert_company(&db).await;
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     let (create_status, created) = call(
         &app,
         "POST",
@@ -280,7 +290,7 @@ async fn routine_revision_restore_uses_revision_id_and_preserves_history() {
         .await
         .expect("connect test db");
     let company_id = insert_company(&db).await;
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     let (_, created) = call(
         &app,
         "POST",
@@ -370,7 +380,7 @@ async fn schedule_trigger_creation_appends_revision_and_returns_ui_wrapper() {
         .await
         .expect("connect test db");
     let company_id = insert_company(&db).await;
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     let (_, routine) = call(
         &app,
         "POST",
@@ -437,7 +447,7 @@ async fn trigger_update_and_delete_append_revisions_with_exact_snapshots() {
         .await
         .expect("connect test db");
     let company_id = insert_company(&db).await;
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     let (_, routine) = call(
         &app,
         "POST",
@@ -537,7 +547,7 @@ async fn manual_run_creates_execution_issue_heartbeat_and_enriched_run_views() {
         })
         .await
         .expect("create agent");
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     let (_, routine) = call(
         &app,
         "POST",
@@ -659,7 +669,7 @@ async fn bearer_webhook_trigger_encrypts_secret_and_fires_idempotently() {
         })
         .await
         .expect("create agent");
-    let app = routes::routines::router().with_state(test_state(db.clone()));
+    let app = build_app(db.clone());
     let (_, routine) = call(
         &app,
         "POST",
