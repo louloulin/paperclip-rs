@@ -188,3 +188,68 @@ mod tests {
         ));
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r772 {
+    use super::*;
+
+    // ---- Round 772: pc-heartbeat::recovery::build_recovery_comment_display 边缘测试 ----
+
+    /// recovery_cause_title: 8 种已知 + 1 个 fallback.
+    #[test]
+    fn r772_recovery_cause_title_all_variants() {
+        assert_eq!(recovery_cause_title("process_lost"), "retries exhausted");
+        assert_eq!(recovery_cause_title("codex_output_inactivity_monitor"), "output-inactivity retry exhausted");
+        assert_eq!(recovery_cause_title("workspace_validation_failed"), "workspace validation failed");
+        assert_eq!(recovery_cause_title("configuration_incomplete"), "configuration incomplete");
+        assert_eq!(recovery_cause_title("execution_review_participant_recovery"), "reviewer recovery failed");
+        assert_eq!(recovery_cause_title("provider_quota"), "provider quota unavailable");
+        assert_eq!(recovery_cause_title("successful_run_missing_state"), "missing disposition recovery failed");
+        assert_eq!(recovery_cause_title("unknown_cause"), "execution path recovery failed", "fallback");
+    }
+
+    /// build_compact_recovery_presentation: 字段.
+    #[test]
+    fn r772_build_compact_recovery_presentation_basic() {
+        let v = build_compact_recovery_presentation("Title");
+        assert_eq!(v["kind"], "system_notice");
+        assert_eq!(v["tone"], "warning");
+        assert_eq!(v["title"], "Title");
+        assert_eq!(v["detailsDefaultOpen"], false);
+        assert_eq!(v["density"], "compact");
+    }
+
+    /// build_compact_recovery_presentation: 超长截断 (160 chars + ellipsis).
+    #[test]
+    fn r772_build_compact_recovery_presentation_truncates() {
+        let long = "x".repeat(200);
+        let v = build_compact_recovery_presentation(&long);
+        let title = v["title"].as_str().unwrap();
+        assert!(title.chars().count() <= 160, "title length <= 160 chars");
+        assert!(title.ends_with("…"), "ends with ellipsis");
+    }
+
+    /// build_recovery_notice_metadata: 基本字段.
+    #[test]
+    fn r772_build_recovery_notice_metadata_basic() {
+        let input = RecoveryCommentDisplayInput {
+            cause: "process_lost",
+            latest_run_id: Some(Uuid::nil()),
+            latest_run_status: Some("failed"),
+            recovery_action_id: Some(Uuid::nil()),
+            previous_status: "running",
+            recovery_owner_id: None,
+            recovery_owner_name: None,
+        };
+        let v = build_recovery_notice_metadata(&input);
+        assert_eq!(v["version"], 1, "version field exists");
+        assert_eq!(v["sourceRunId"], "00000000-0000-0000-0000-000000000000", "uuid nil to_string");
+        // Verify sections[0].rows contains cause
+        let sections = v["sections"].as_array().unwrap();
+        assert!(!sections.is_empty());
+        let rows = sections[0]["rows"].as_array().unwrap();
+        let has_cause = rows.iter().any(|r| r.get("label").and_then(Value::as_str) == Some("Cause") && r.get("value").and_then(Value::as_str) == Some("process_lost"));
+        assert!(has_cause, "has cause row");
+    }
+}

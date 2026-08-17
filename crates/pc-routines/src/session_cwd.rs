@@ -155,4 +155,21 @@ mod tests {
         assert!(is_unsafe_session_workspace_cwd(Some("/sys")));
         assert!(is_unsafe_session_workspace_cwd(Some("/dev")));
     }
+
+    // ---- Round 764: pc-routines session_cwd normalize_cwd 边缘测试 ----
+
+    /// normalize_cwd: 去掉尾部 / 但保留根。
+    #[test]
+    fn r764_normalize_cwd_trailing_slash() {
+        assert_eq!(normalize_cwd("/tmp/"), "/tmp");
+        assert_eq!(normalize_cwd("/"), "/");
+        assert_eq!(normalize_cwd(""), "/");
+    }
+
+    /// normalize_cwd: .. 折叠。
+    #[test]
+    fn r764_normalize_cwd_dotdot_folding() {
+        assert_eq!(normalize_cwd("/tmp/../etc"), "/etc");
+        assert_eq!(normalize_cwd("/tmp/./x"), "/tmp/x");
+    }
 }

@@ -270,3 +270,153 @@ pub fn classify_api_key_binding(value: Option<&Value>) -> ApiKeyBinding {
     }
     ApiKeyBinding::None
 }
+
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn r786_parse_adapter_env_valid_json() {
+        let env = parse_adapter_env(r#"{"env": {"OPENAI_API_KEY": "abc", "CODEX_HOME": "/home/x"}}"#).unwrap();
+        assert_eq!(env.get("OPENAI_API_KEY").and_then(|v| v.as_str()), Some("abc"));
+        assert_eq!(env.get("CODEX_HOME").and_then(|v| v.as_str()), Some("/home/x"));
+    }
+
+    #[test]
+    fn r786_parse_adapter_env_no_env_returns_none() {
+        let env = parse_adapter_env(r#"{"name": "foo"}"#);
+        assert!(env.is_none());
+    }
+
+    #[test]
+    fn r786_parse_adapter_env_invalid_json_returns_none() {
+        assert!(parse_adapter_env("not json").is_none());
+        assert!(parse_adapter_env("").is_none());
+    }
+
+    #[test]
+    fn r786_parse_adapter_env_env_not_object_returns_none() {
+        let env = parse_adapter_env(r#"{"env": "not an object"}"#);
+        assert!(env.is_none());
+    }
+
+    #[test]
+    fn r786_parse_adapter_env_supports_plain_object() {
+        let env = parse_adapter_env(r#"{"env": {"K": "v"}}"#).unwrap();
+        assert_eq!(env.len(), 1);
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_string() {
+        let v = json!("hello");
+        assert_eq!(read_plain_env_value(Some(&v)), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_trims_whitespace() {
+        let v = json!("  hello  ");
+        assert_eq!(read_plain_env_value(Some(&v)), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_empty_string_returns_none() {
+        let v = json!("");
+        assert_eq!(read_plain_env_value(Some(&v)), None);
+        let v = json!("   ");
+        assert_eq!(read_plain_env_value(Some(&v)), None);
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_plain_type() {
+        let v = json!({"type": "plain", "value": "plain-val"});
+        assert_eq!(read_plain_env_value(Some(&v)), Some("plain-val".to_string()));
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_secret_type_returns_none() {
+        let v = json!({"type": "secret", "secret_ref": "abc"});
+        assert_eq!(read_plain_env_value(Some(&v)), None);
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_non_string_returns_none() {
+        let v = json!(42);
+        assert_eq!(read_plain_env_value(Some(&v)), None);
+        let v = json!(true);
+        assert_eq!(read_plain_env_value(Some(&v)), None);
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_none_input() {
+        assert_eq!(read_plain_env_value(None), None);
+    }
+
+    #[test]
+    fn r786_read_plain_env_value_nested_plain() {
+        let v = json!({"type": "plain", "value": {"type": "plain", "value": "deep"}});
+        assert_eq!(read_plain_env_value(Some(&v)), Some("deep".to_string()));
+    }
+
+    #[test]
+    fn r786_classify_api_key_plain_string() {
+        let v = json!("sk-abc");
+        assert_eq!(
+            classify_api_key_binding(Some(&v)),
+            ApiKeyBinding::Plain { value: "sk-abc".to_string() }
+        );
+    }
+
+    #[test]
+    fn r786_classify_api_key_plain_object() {
+        let v = json!({"type": "plain", "value": "sk-abc"});
+        assert_eq!(
+            classify_api_key_binding(Some(&v)),
+            ApiKeyBinding::Plain { value: "sk-abc".to_string() }
+        );
+    }
+
+    #[test]
+    fn r786_classify_api_key_secret() {
+        let v = json!({"type": "secret", "secret_ref": "key-1"});
+        assert_eq!(classify_api_key_binding(Some(&v)), ApiKeyBinding::Secret);
+    }
+
+    #[test]
+    fn r786_classify_api_key_none() {
+        assert_eq!(classify_api_key_binding(None), ApiKeyBinding::None);
+        let v = json!("");
+        assert_eq!(classify_api_key_binding(Some(&v)), ApiKeyBinding::None);
+    }
+
+    #[test]
+    fn r786_classify_api_key_unknown_type_returns_secret() {
+        // type != "plain" -> classified as Secret (anything not plain is treated as secret)
+        let v = json!({"type": "weird", "value": "x"});
+        assert_eq!(classify_api_key_binding(Some(&v)), ApiKeyBinding::Secret);
+    }
+
+    #[test]
+    fn r786_summary_default_is_zero() {
+        let s = CodexAuthReconciliationSummary::default();
+        assert_eq!(s.scanned, 0);
+        assert_eq!(s.seeded, 0);
+        assert_eq!(s.already_seeded, 0);
+        assert_eq!(s.external_override, 0);
+        assert_eq!(s.no_managed_home, 0);
+        assert_eq!(s.source_auth_missing, 0);
+        assert_eq!(s.failed, 0);
+    }
+
+    #[test]
+    fn r786_summary_serialization_camel_case() {
+        let mut s = CodexAuthReconciliationSummary::default();
+        s.scanned = 5;
+        s.seeded = 3;
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v.get("scanned").and_then(|x| x.as_u64()), Some(5));
+        assert_eq!(v.get("seeded").and_then(|x| x.as_u64()), Some(3));
+        assert!(v.get("alreadySeeded").is_some());
+    }
+}

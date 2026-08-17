@@ -265,4 +265,66 @@ mod internal_tests {
         assert_eq!(WebhookSignatureError::MissingField.as_str(), "missing_field");
         assert_eq!(WebhookSignatureError::SignatureMismatch.as_str(), "signature_mismatch");
     }
+
+    // ---- Round 764: pc-routines webhook_signature_pure 集成测试 ----
+
+    /// parse_webhook_signature_header: 合法 "t=<ts>,v1=<sig_hex>" → Some。
+    #[test]
+    fn r764_parse_webhook_signature_header_valid() {
+        let r = parse_webhook_signature_header("t=1700000000,v1=abcdef1234567890");
+        assert!(r.is_some());
+        let (ts, sig) = r.unwrap();
+        assert_eq!(ts, 1700000000);
+        assert_eq!(sig, "abcdef1234567890");
+    }
+
+    /// parse_webhook_signature_header: 缺 v1= → None。
+    #[test]
+    fn r764_parse_webhook_signature_header_invalid_prefix() {
+        assert!(parse_webhook_signature_header("t=1700000000").is_none());  // 缺 v1=
+        assert!(parse_webhook_signature_header("").is_none());
+        assert!(parse_webhook_signature_header("t=abc,v1=deadbeef").is_none());  // 非数字 ts
+    }
+
+    /// verify_webhook_signature_pure: 正确签名 → Ok。
+    #[test]
+    fn r764_verify_webhook_signature_pure_valid() {
+        let secret = b"super-secret";
+        let body = b"{\"action\":\"ping\"}";
+        let ts = 1700000000_i64;
+        let mut full = ts.to_string().as_bytes().to_vec();
+        full.push(b'.');
+        full.extend_from_slice(body);
+        let sig = hmac_sha256_hex(secret, &full);
+        let header = format!("t={},v1={}", ts, sig);
+        let res = verify_webhook_signature_pure(&header, body, secret, ts, 300);
+        assert!(res.is_ok(), "expected ok, got {:?}", res);
+    }
+
+    /// verify_webhook_signature_pure: replay window 超时 → Err。
+    #[test]
+    fn r764_verify_webhook_signature_pure_replay_window() {
+        let secret = b"super-secret";
+        let body = b"{}";
+        let ts = 1700000000_i64;
+        let mut full = ts.to_string().as_bytes().to_vec();
+        full.push(b'.');
+        full.extend_from_slice(body);
+        let sig = hmac_sha256_hex(secret, &full);
+        let header = format!("t={},v1={}", ts, sig);
+        let now_ms = ts + 600_000;
+        let res = verify_webhook_signature_pure(&header, body, secret, now_ms, 300);
+        assert!(res.is_err());
+    }
+
+    /// verify_webhook_signature_pure: 签名错误 → SignatureMismatch。
+    #[test]
+    fn r764_verify_webhook_signature_pure_mismatch() {
+        let body = b"{}";
+        let ts = 1700000000_i64;
+        let wrong_sig = "00".repeat(32);
+        let header = format!("t={},v1={}", ts, wrong_sig);
+        let res = verify_webhook_signature_pure(&header, body, b"any-secret", ts, 300);
+        assert!(matches!(res, Err(WebhookSignatureError::SignatureMismatch)));
+    }
 }

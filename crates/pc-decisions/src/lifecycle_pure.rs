@@ -863,4 +863,55 @@ mod tests {
         let values = serde_json::json!({});
         assert!(validate_decision_inputs(&fields, &values).is_ok());
     }
+
+    // ---- Round 762: pc-decisions lifecycle_pure 集成测试 ----
+
+    /// should_resume_decision: 只有 execution_status="running" 才 resume；其他（含 None）都 false。
+    #[test]
+    fn r762_should_resume_decision() {
+        assert!(should_resume_decision(Some("running")));
+        assert!(!should_resume_decision(Some("completed")));
+        assert!(!should_resume_decision(Some("failed")));
+        assert!(!should_resume_decision(None));
+        assert!(!should_resume_decision(Some("in_progress")));
+    }
+
+    /// is_decision_expired: 只有 status="open" 且 expires_at<=now 才过期。
+    #[test]
+    fn r762_is_decision_expired_basic() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        let past = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let future = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap();
+        assert!(is_decision_expired("open", past, now));
+        assert!(is_decision_expired("open", now, now), "expires_at == now counts as expired");
+        assert!(!is_decision_expired("open", future, now));
+        assert!(!is_decision_expired("pending", past, now), "only open status counts");
+        assert!(!is_decision_expired("decided", past, now));
+    }
+
+    /// parse_sweep_batch_size: 合法数字 + 边界 + 非法。
+    #[test]
+    fn r762_parse_sweep_batch_size() {
+        assert_eq!(parse_sweep_batch_size(Some("50"), 10), 50);
+        assert_eq!(parse_sweep_batch_size(None, 10), 10);
+        assert_eq!(parse_sweep_batch_size(Some("not_a_number"), 10), 10);
+    }
+
+    /// parse_recovery_grace_ms: 合法数字 + 边界。
+    #[test]
+    fn r762_parse_recovery_grace_ms() {
+        assert_eq!(parse_recovery_grace_ms(Some("5000"), 1000), 5000);
+        assert_eq!(parse_recovery_grace_ms(None, 1000), 1000);
+        assert_eq!(parse_recovery_grace_ms(Some("invalid"), 1000), 1000);
+    }
+
+    /// merge_unique_ids: 去重 + 保序。
+    #[test]
+    fn r762_merge_unique_ids_dedup_preserves_order() {
+        let ttl = vec!["a".to_string(), "b".to_string()];
+        let target = vec!["b".to_string(), "c".to_string()];
+        let merged = merge_unique_ids(&ttl, &target);
+        assert_eq!(merged, vec!["a", "b", "c"]);
+    }
 }

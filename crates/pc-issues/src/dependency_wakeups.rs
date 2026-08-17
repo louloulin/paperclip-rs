@@ -148,4 +148,39 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<BuildIdempotencyKeyInput>();
     }
+
+    // ---- Round 766: pc-issues dependency_wakeups 集成测试 ----
+
+    /// build_issue_blockers_resolved_wake_idempotency_key: 格式正确。
+    #[test]
+    fn r766_build_wake_idempotency_key_format() {
+        let input = BuildIdempotencyKeyInput {
+            dependent_issue_id: "i-1".into(),
+            resolved_blocker_issue_id: "i-2".into(),
+        };
+        let key = build_issue_blockers_resolved_wake_idempotency_key(&input);
+        assert!(key.contains("i-1"));
+        assert!(key.contains("i-2"));
+        assert_eq!(key.split(':').count(), 3, "key should have 3 segments");
+    }
+
+    /// is_idempotent_dependency_wake_status: 4 个 idempotent statuses (queued/deferred_issue_execution/claimed/completed).
+    #[test]
+    fn r766_is_idempotent_wake_status_set() {
+        assert!(is_idempotent_dependency_wake_status("queued"));
+        assert!(is_idempotent_dependency_wake_status("deferred_issue_execution"));
+        assert!(is_idempotent_dependency_wake_status("claimed"));
+        assert!(is_idempotent_dependency_wake_status("completed"));
+        assert!(!is_idempotent_dependency_wake_status("failed"));
+        assert!(!is_idempotent_dependency_wake_status("running"));
+        assert!(!is_idempotent_dependency_wake_status(""));
+    }
+
+    /// normalize_idempotency_keys: 去重 + 跳过空字符串 + 保序。
+    #[test]
+    fn r766_normalize_idempotency_keys() {
+        let keys = vec!["a".into(), "b".into(), "a".into(), "".into(), "c".into(), "b".into()];
+        let norm = normalize_idempotency_keys(&keys);
+        assert_eq!(norm, vec!["a", "b", "c"]);
+    }
 }

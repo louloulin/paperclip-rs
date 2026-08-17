@@ -10,7 +10,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pc_errors::{forbidden, internal, unprocessable, validation, Error, Result};
+use pc_errors::{forbidden, internal, validation, Error, Result};
+use crate::pure;
 use pc_repos::document::{
     AnnotationCommentRow, AnnotationThreadRow, DocumentRepo, DocumentRevisionRow, DocumentRow,
 };
@@ -18,8 +19,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-const ALLOWED_FORMATS: &[&str] = &["markdown", "plain", "html"];
-const DEFAULT_FORMAT: &str = "markdown";
 
 // =============================================================================
 // R608: document lifecycle events surfaced to hooks
@@ -146,33 +145,16 @@ pub struct CreateDocument {
 }
 
 impl CreateDocument {
-    fn normalize(&self) -> Result<NormalizedCreate> {
-        if self.company_id.is_nil() {
-            return Err(validation("companyId is required"));
-        }
-        if self.body.is_empty() {
-            return Err(validation("document body must not be empty"));
-        }
-        let format = self
-            .format
-            .clone()
-            .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
-        if !ALLOWED_FORMATS.contains(&format.as_str()) {
-            return Err(validation(format!(
-                "format must be one of markdown/plain/html, got {format}"
-            )));
-        }
-        Ok(NormalizedCreate {
-            title: self.title.clone(),
-            format,
-        })
+    fn normalize(&self) -> Result<pure::NormalizedCreate> {
+        pure::normalize_create_document(
+            self.company_id,
+            &self.body,
+            self.format.as_deref(),
+            self.title.clone(),
+        )
     }
 }
 
-struct NormalizedCreate {
-    title: Option<String>,
-    format: String,
-}
 
 /// Partial update for a document. Empty `body` is treated as "no change" so
 /// callers can update `title` without rewriting the body. To clear the
@@ -188,19 +170,7 @@ pub struct DocumentPatch {
 
 impl DocumentPatch {
     fn validate(&self) -> Result<()> {
-        if let Some(f) = &self.format {
-            if !ALLOWED_FORMATS.contains(&f.as_str()) {
-                return Err(validation(format!(
-                    "format must be one of markdown/plain/html, got {f}"
-                )));
-            }
-        }
-        if let Some(b) = &self.body {
-            if b.is_empty() {
-                return Err(validation("document body must not be empty"));
-            }
-        }
-        Ok(())
+        pure::validate_document_patch(self.format.as_deref(), self.body.as_deref())
     }
 }
 
@@ -226,28 +196,17 @@ pub struct CreateAnnotationThreadInput {
 
 impl CreateAnnotationThreadInput {
     fn validate(&self) -> Result<()> {
-        if self.company_id.is_nil() {
-            return Err(validation("companyId is required"));
-        }
-        if self.issue_id.is_nil() {
-            return Err(validation("issueId is required"));
-        }
-        if self.document_id.is_nil() {
-            return Err(validation("documentId is required"));
-        }
-        if self.document_key.trim().is_empty() {
-            return Err(validation("documentKey must not be empty"));
-        }
-        if self.selected_text.is_empty() {
-            return Err(validation("selectedText must not be empty"));
-        }
-        if self.normalized_end < self.normalized_start {
-            return Err(unprocessable("normalizedEnd must be >= normalizedStart"));
-        }
-        if self.markdown_end < self.markdown_start {
-            return Err(unprocessable("markdownEnd must be >= markdownStart"));
-        }
-        Ok(())
+        pure::validate_annotation_thread(
+            self.company_id,
+            self.issue_id,
+            self.document_id,
+            &self.document_key,
+            &self.selected_text,
+            self.normalized_start,
+            self.normalized_end,
+            self.markdown_start,
+            self.markdown_end,
+        )
     }
 }
 
@@ -266,30 +225,14 @@ pub struct CreateAnnotationComment {
 
 impl CreateAnnotationComment {
     fn validate(&self) -> Result<()> {
-        if self.company_id.is_nil() {
-            return Err(validation("companyId is required"));
-        }
-        if self.thread_id.is_nil() {
-            return Err(validation("threadId is required"));
-        }
-        if self.issue_id.is_nil() {
-            return Err(validation("issueId is required"));
-        }
-        if self.document_id.is_nil() {
-            return Err(validation("documentId is required"));
-        }
-        if self.body.trim().is_empty() {
-            return Err(validation("comment body must not be empty"));
-        }
-        match self.author_type.as_str() {
-            "user" | "agent" | "system" => {}
-            other => {
-                return Err(validation(format!(
-                    "authorType must be user/agent/system, got {other}"
-                )))
-            }
-        }
-        Ok(())
+        pure::validate_annotation_comment(
+            self.company_id,
+            self.thread_id,
+            self.issue_id,
+            self.document_id,
+            &self.body,
+            &self.author_type,
+        )
     }
 }
 
@@ -784,7 +727,7 @@ impl DocumentService {
         if input.body.is_empty() {
             return Err(validation("issue document body must not be empty"));
         }
-        let format = input.format.unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        let format = input.format.unwrap_or_else(|| pure::DEFAULT_FORMAT.to_string());
         let row = DocumentRepo::new(&self.db)
             .upsert_issue_document(
                 input.company_id,

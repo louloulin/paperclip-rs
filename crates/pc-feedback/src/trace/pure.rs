@@ -131,4 +131,24 @@ mod internal_tests {
         assert!(s.contains(&t.to_string()));
         assert!(s.contains(&i.to_string()));
     }
+
+    #[test]
+    fn r755_trace_pure_resolve_trace_limit_at_max_boundary() {
+        assert_eq!(resolve_trace_limit(MAX_TRACE_LIMIT), MAX_TRACE_LIMIT);
+        assert_eq!(resolve_trace_limit(MAX_TRACE_LIMIT + 1), MAX_TRACE_LIMIT);
+    }
+
+    #[test]
+    fn r755_trace_pure_validate_company_id_accepts_real() {
+        let id = Uuid::new_v4();
+        assert!(validate_company_id(id).is_ok());
+    }
+
+    #[test]
+    fn r755_trace_pure_format_trace_hook_label_uses_prefixed_keys() {
+        let t = Uuid::nil();
+        let i = Uuid::nil();
+        let s = format_trace_hook_label(t, i);
+        assert_eq!(s, format!("trace={t} issue={i}"));
+    }
 }

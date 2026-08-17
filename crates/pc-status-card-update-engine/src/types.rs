@@ -227,6 +227,57 @@ pub enum EngineError {
     InvalidTimeFormat(String),
     #[error("invalid timezone: {0}")]
     InvalidTimezone(String),
+
+
+
 }
 
 pub type EngineResult<T> = Result<T, EngineError>;
+
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+
+    // ---- Round 768: pc-status-card-update-engine::types 派生方法 ----
+
+    /// ChangeKind::as_str 6 个变体字符串稳定。
+    #[test]
+    fn r768_change_kind_as_str_all_variants() {
+        assert_eq!(ChangeKind::New.as_str(), "new");
+        assert_eq!(ChangeKind::Removed.as_str(), "removed");
+        assert_eq!(ChangeKind::Status.as_str(), "status");
+        assert_eq!(ChangeKind::Assignee.as_str(), "assignee");
+        assert_eq!(ChangeKind::HumanComment.as_str(), "human_comment");
+        assert_eq!(ChangeKind::Updated.as_str(), "updated");
+    }
+
+    /// UpdateKind::as_str 2 个变体。
+    #[test]
+    fn r768_update_kind_as_str() {
+        assert_eq!(UpdateKind::Full.as_str(), "full");
+        assert_eq!(UpdateKind::Incremental.as_str(), "incremental");
+    }
+
+    /// PolicyAction::as_str 4 个变体。
+    #[test]
+    fn r768_policy_action_as_str() {
+        assert_eq!(PolicyAction::Run.as_str(), "run");
+        assert_eq!(PolicyAction::Wait.as_str(), "wait");
+        assert_eq!(PolicyAction::PauseBudget.as_str(), "pause_budget");
+        assert_eq!(PolicyAction::PauseHours.as_str(), "pause_hours");
+    }
+
+    /// UpdateKind/PolicyAction serde snake_case。
+    #[test]
+    fn r768_update_kind_serde_snake_case() {
+        assert_eq!(serde_json::to_string(&UpdateKind::Full).unwrap(), "\"full\"");
+        assert_eq!(serde_json::to_string(&PolicyAction::PauseBudget).unwrap(), "\"pause_budget\"");
+    }
+
+    /// ChangeKind serde 默认派生（snake_case）。
+    #[test]
+    fn r768_change_kind_serde() {
+        assert_eq!(serde_json::to_string(&ChangeKind::HumanComment).unwrap(), "\"human_comment\"");
+    }
+}

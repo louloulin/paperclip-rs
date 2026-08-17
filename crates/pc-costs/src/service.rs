@@ -712,4 +712,60 @@ mod tests {
         input.direction = None;
         assert!(normalize_new_finance_event(&input).is_ok());
     }
+
+    // ---- Round 768: pc-costs::service 边缘测试 ----
+
+    /// current_utc_month_window: 1 月 = [Jan 1, Feb 1)。
+    #[test]
+    fn r768_current_utc_month_window_january() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+        let (s, e) = current_utc_month_window(now);
+        assert_eq!(s, Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+        assert_eq!(e, Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap());
+    }
+
+    /// current_utc_month_window: 12 月跨年。
+    #[test]
+    fn r768_current_utc_month_window_december_rolls() {
+        let now = Utc.with_ymd_and_hms(2026, 12, 31, 23, 59, 59).unwrap();
+        let (s, e) = current_utc_month_window(now);
+        assert_eq!(s, Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap());
+        assert_eq!(e, Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap());
+    }
+
+    /// current_utc_month_window: 月初 00:00:00 边界。
+    #[test]
+    fn r768_current_utc_month_window_first_second_of_month() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
+        let (s, e) = current_utc_month_window(now);
+        assert_eq!(s, now);
+        assert_eq!(e, Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap());
+    }
+
+    /// RecordingCostHook 同步 helper: events_snapshot / clear / len / is_empty。
+    #[test]
+    fn r768_recording_cost_hook_lifecycle() {
+        let hook = RecordingCostHook::default();
+        assert!(hook.is_empty());
+        assert_eq!(hook.len(), 0);
+        let company_id = Uuid::new_v4();
+        let event = CostHookEvent::CostEventCreated {
+            company_id,
+            event_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            cost_cents: 100,
+            provider: "openai".into(),
+            billing_type: "api".into(),
+            model: "gpt-4".into(),
+        };
+        // 直接 push 进去（hook 是 async fn，但 sync helper 公开）
+        hook.events.lock().unwrap().push(event.clone());
+        assert_eq!(hook.len(), 1);
+        assert!(!hook.is_empty());
+        let snap = hook.events_snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0], event);
+        hook.clear();
+        assert!(hook.is_empty());
+    }
 }

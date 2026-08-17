@@ -1136,6 +1136,7 @@ async fn list_tool_applications(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+
     let repo = ToolRepo::new(&state.db);
     let rows = repo.list_by_company(company_id).await?;
     let items: Vec<Value> = rows.iter().map(tool_application_json).collect();
@@ -1148,6 +1149,7 @@ async fn create_tool_application(
     Path(company_id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
+
     let name = body
         .get("name")
         .and_then(Value::as_str)
@@ -1196,6 +1198,7 @@ async fn get_tool_application(
     State(state): State<AppState>,
     Path(application_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+
     let row = ToolRepo::new(&state.db)
         .get_by_id(application_id)
         .await?

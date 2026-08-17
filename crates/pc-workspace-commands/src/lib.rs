@@ -383,3 +383,209 @@ pub fn match_workspace_runtime_service_to_command(
         None
     }
 }
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn def(name: &str, kind: WorkspaceCommandKind, service_index: Option<usize>, command: Option<&str>, cwd: Option<&str>) -> WorkspaceCommandDefinition {
+        let (source_kind, source_index) = match kind {
+            WorkspaceCommandKind::Service => (WorkspaceCommandSourceKey::Services, service_index.unwrap_or(0)),
+            WorkspaceCommandKind::Job => (WorkspaceCommandSourceKey::Jobs, 0),
+        };
+        WorkspaceCommandDefinition {
+            id: name.to_string(),
+            name: name.to_string(),
+            kind,
+            command: command.map(str::to_string),
+            cwd: cwd.map(str::to_string),
+            lifecycle: None,
+            service_index,
+            disabled_reason: None,
+            raw_config: Value::Null,
+            source: WorkspaceCommandSource { kind: source_kind, index: source_index },
+        }
+    }
+
+    fn svc_input(id: &str, name: Option<&str>, command: Option<&str>, cwd: Option<&str>, config_index: Option<usize>) -> WorkspaceRuntimeServiceMatchInput {
+        WorkspaceRuntimeServiceMatchInput {
+            config_index,
+            service_name: name.map(str::to_string),
+            command: command.map(str::to_string),
+            cwd: cwd.map(str::to_string),
+            id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn r784_kind_as_str() {
+        assert_eq!(WorkspaceCommandKind::Service.as_str(), "service");
+        assert_eq!(WorkspaceCommandKind::Job.as_str(), "job");
+    }
+
+    #[test]
+    fn r784_lifecycle_as_str() {
+        assert_eq!(WorkspaceCommandLifecycle::Shared.as_str(), "shared");
+        assert_eq!(WorkspaceCommandLifecycle::Ephemeral.as_str(), "ephemeral");
+    }
+
+    #[test]
+    fn r784_source_key_as_str() {
+        assert_eq!(WorkspaceCommandSourceKey::Commands.as_str(), "commands");
+        assert_eq!(WorkspaceCommandSourceKey::Services.as_str(), "services");
+        assert_eq!(WorkspaceCommandSourceKey::Jobs.as_str(), "jobs");
+    }
+
+    #[test]
+    fn r784_list_definitions_empty_when_workspace_runtime_none() {
+        assert_eq!(list_workspace_command_definitions(None).len(), 0);
+    }
+
+    #[test]
+    fn r784_list_definitions_empty_when_workspace_runtime_empty() {
+        let v = json!({});
+        assert_eq!(list_workspace_command_definitions(Some(&v)).len(), 0);
+    }
+
+    #[test]
+    fn r784_list_definitions_extracts_commands() {
+        let v = json!({
+            "commands": [
+                {"name": "build", "command": "npm run build", "cwd": "/app"},
+                {"name": "test", "command": "npm test"},
+            ]
+        });
+        let defs = list_workspace_command_definitions(Some(&v));
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0].name, "build");
+        assert_eq!(defs[0].command.as_deref(), Some("npm run build"));
+        assert_eq!(defs[0].cwd.as_deref(), Some("/app"));
+    }
+
+    #[test]
+    fn r784_list_definitions_assigns_service_indices() {
+        let v = json!({
+            "services": [
+                {"name": "db", "command": "postgres", "lifecycle": "shared"},
+                {"name": "cache", "command": "redis", "lifecycle": "ephemeral"},
+            ]
+        });
+        let defs = list_workspace_command_definitions(Some(&v));
+        assert_eq!(defs.len(), 2);
+        for (i, d) in defs.iter().enumerate() {
+            assert_eq!(d.kind, WorkspaceCommandKind::Service);
+            assert_eq!(d.service_index, Some(i));
+        }
+        assert_eq!(defs[0].lifecycle, Some(WorkspaceCommandLifecycle::Shared));
+        assert_eq!(defs[1].lifecycle, Some(WorkspaceCommandLifecycle::Ephemeral));
+    }
+
+    #[test]
+    fn r784_list_definitions_jobs_no_lifecycle() {
+        let v = json!({
+            "jobs": [
+                {"name": "migrate", "command": "db-migrate"},
+            ]
+        });
+        let defs = list_workspace_command_definitions(Some(&v));
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].kind, WorkspaceCommandKind::Job);
+        assert_eq!(defs[0].lifecycle, None);
+        assert_eq!(defs[0].service_index, None);
+    }
+
+    #[test]
+    fn r784_list_service_filter_excludes_jobs() {
+        let v = json!({
+            "services": [{"name": "db"}],
+            "jobs": [{"name": "migrate"}],
+        });
+        let service_defs = list_workspace_service_command_definitions(Some(&v));
+        assert_eq!(service_defs.len(), 1);
+        assert_eq!(service_defs[0].name, "db");
+    }
+
+    #[test]
+    fn r784_find_definition_by_name() {
+        let v = json!({
+            "commands": [
+                {"name": "build"},
+                {"name": "test"},
+            ]
+        });
+        // IDs are generated as "{kind}:{slug}" - for "commands" entries kind is Service by default
+        let found = find_workspace_command_definition(Some(&v), Some("service:test"));
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name, "test");
+        let not_found = find_workspace_command_definition(Some(&v), Some("service:missing"));
+        assert!(not_found.is_none());
+        let none_input = find_workspace_command_definition(Some(&v), None);
+        assert!(none_input.is_none());
+    }
+
+    #[test]
+    fn r784_score_exact_service_index_returns_100() {
+        let cmd = def("db", WorkspaceCommandKind::Service, Some(0), None, None);
+        let svc = svc_input("svc1", None, None, None, Some(0));
+        assert_eq!(score_workspace_runtime_service_match(&cmd, &svc), 100);
+    }
+
+    #[test]
+    fn r784_score_mismatched_service_index_returns_minus_one() {
+        let cmd = def("db", WorkspaceCommandKind::Service, Some(0), None, None);
+        let svc = svc_input("svc1", None, None, None, Some(1));
+        assert_eq!(score_workspace_runtime_service_match(&cmd, &svc), -1);
+    }
+
+    #[test]
+    fn r784_score_both_name_and_command_match() {
+        let cmd = def("db", WorkspaceCommandKind::Job, None, Some("postgres"), None);
+        let svc = svc_input("svc1", Some("db"), Some("postgres"), None, None);
+        // name +4, command +4 = 8
+        assert_eq!(score_workspace_runtime_service_match(&cmd, &svc), 8);
+    }
+
+    #[test]
+    fn r784_score_cwd_match_path_completion() {
+        let cmd = def("db", WorkspaceCommandKind::Job, None, Some("postgres"), Some("app"));
+        let svc = svc_input("svc1", None, Some("postgres"), Some("/home/user/app"), None);
+        // command == command (+4) + cwd matches with /app suffix (+2) = 6
+        assert_eq!(score_workspace_runtime_service_match(&cmd, &svc), 6);
+    }
+
+    #[test]
+    fn r784_score_command_mismatch_returns_minus_one() {
+        let cmd = def("db", WorkspaceCommandKind::Job, None, Some("postgres"), None);
+        let svc = svc_input("svc1", None, Some("redis"), None, None);
+        assert_eq!(score_workspace_runtime_service_match(&cmd, &svc), -1);
+    }
+
+    #[test]
+    fn r784_match_runtime_service_picks_best() {
+        let cmd = def("db", WorkspaceCommandKind::Job, None, Some("postgres"), None);
+        let services = vec![
+            svc_input("svc1", Some("redis"), Some("redis-server"), None, None),
+            svc_input("svc2", Some("db"), Some("postgres"), None, None),
+        ];
+        let idx = match_workspace_runtime_service_to_command(&cmd, Some(&services));
+        assert_eq!(idx, Some(1));
+    }
+
+    #[test]
+    fn r784_match_runtime_service_returns_none_when_no_match() {
+        let cmd = def("db", WorkspaceCommandKind::Job, None, Some("postgres"), None);
+        let services = vec![
+            svc_input("svc1", None, None, None, None),
+        ];
+        let idx = match_workspace_runtime_service_to_command(&cmd, Some(&services));
+        assert_eq!(idx, None);
+    }
+
+    #[test]
+    fn r784_match_runtime_service_no_services() {
+        let cmd = def("db", WorkspaceCommandKind::Job, None, Some("postgres"), None);
+        let idx = match_workspace_runtime_service_to_command(&cmd, None);
+        assert_eq!(idx, None);
+    }
+}

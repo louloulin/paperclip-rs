@@ -194,3 +194,42 @@ pub fn and_visible(alias: &str) -> String {
 pub fn or_visible(alias: &str) -> String {
     format!(" OR {}", issue_visibility_sql(alias))
 }
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// issue_visibility_sql: 带 alias 替换占位符（quoted）。
+    #[test]
+    fn r766_issue_visibility_sql_with_alias() {
+        let sql = issue_visibility_sql("i");
+        assert!(sql.contains("\"i\"."), "expected quoted alias, got {:?}", sql);
+        assert!(sql.contains("hidden_at"));
+    }
+
+    /// and_visible: 拼接 AND 前缀。
+    #[test]
+    fn r766_and_visible_prefix() {
+        let s = and_visible("t");
+        assert!(s.starts_with(" AND "), "expected ' AND ' prefix, got {:?}", s);
+        assert!(s.contains("\"t\"."), "expected quoted alias in body, got {:?}", s);
+    }
+
+    /// or_visible: 拼接 OR 前缀。
+    #[test]
+    fn r766_or_visible_prefix() {
+        let s = or_visible("u");
+        assert!(s.starts_with(" OR "), "expected ' OR ' prefix, got {:?}", s);
+        assert!(s.contains("\"u\"."), "expected quoted alias in body, got {:?}", s);
+    }
+
+    /// ISSUE_VISIBILITY_CONDITION_SQL: 常量非空。
+    #[test]
+    fn r766_issue_visibility_condition_sql_nonempty() {
+        assert!(!ISSUE_VISIBILITY_CONDITION_SQL.is_empty());
+        assert!(ISSUE_VISIBILITY_CONDITION_SQL.contains("hidden_at"));
+    }
+}

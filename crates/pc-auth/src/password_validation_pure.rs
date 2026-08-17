@@ -177,3 +177,54 @@ mod internal_tests {
         assert_eq!(PasswordStrength::Weak.as_str(), "weak");
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r771 {
+    use super::*;
+
+    // ---- Round 771: pc-auth::password_validation_pure 边缘测试 ----
+
+    /// PasswordStrength 5 个变体字符串。
+    #[test]
+    fn r771_password_strength_as_str() {
+        assert_eq!(PasswordStrength::TooShort.as_str(), "too_short");
+        assert_eq!(PasswordStrength::Weak.as_str(), "weak");
+        assert_eq!(PasswordStrength::Medium.as_str(), "medium");
+        assert_eq!(PasswordStrength::Strong.as_str(), "strong");
+        assert_eq!(PasswordStrength::Strong.as_str(), "strong");
+    }
+
+    /// is_acceptable: 仅 Strong + Strong 接受。
+    #[test]
+    fn r771_is_acceptable() {
+        assert!(!PasswordStrength::TooShort.is_acceptable());
+        assert!(!PasswordStrength::Weak.is_acceptable());
+        assert!(PasswordStrength::Medium.is_acceptable());
+        assert!(PasswordStrength::Strong.is_acceptable());
+        assert!(PasswordStrength::Strong.is_acceptable());
+    }
+
+    /// evaluate_password_strength: 5 种典型密码。
+    #[test]
+    fn r771_evaluate_typical_passwords() {
+        assert_eq!(evaluate_password_strength(""), PasswordStrength::TooShort);
+        assert_eq!(evaluate_password_strength("xyz1"), PasswordStrength::TooShort);
+        assert_eq!(evaluate_password_strength("password1"), PasswordStrength::Weak);
+        assert_eq!(evaluate_password_strength("Password1"), PasswordStrength::Weak);
+        assert_eq!(evaluate_password_strength("Str0ng!Pass!Word!"), PasswordStrength::Strong);
+    }
+
+    /// character_class_count: 4 个类。
+    #[test]
+    fn r771_character_class_count() {
+        assert_eq!(character_class_count(""), 0);
+        assert_eq!(character_class_count("abc"), 1, "lowercase only");
+        assert_eq!(character_class_count("ABC"), 1, "uppercase only");
+        assert_eq!(character_class_count("123"), 1, "digit only");
+        assert_eq!(character_class_count("!@#"), 1, "symbol only");
+        assert_eq!(character_class_count("abcABC"), 2);
+        assert_eq!(character_class_count("abc123"), 2);
+        assert_eq!(character_class_count("abcABC123!@#"), 4, "all 4 classes");
+    }
+}

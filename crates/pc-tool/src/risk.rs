@@ -166,4 +166,65 @@ mod internal_tests {
         assert!(verb_matches("DELETE_user", "delete"));
         assert!(verb_matches("Create_Issue", "create"));
     }
+
+    // ---- Round 763: pc-tool risk 集成测试 ----
+
+    /// verb_matches: 大小写不敏感 + 多 verb 任一匹配。
+    #[test]
+    fn r763_verb_matches_case_insensitive_multi_verb() {
+        assert!(verb_matches("create_issue", "create|update"));
+        assert!(verb_matches("Update_Status", "create|update"));
+        assert!(verb_matches("DELETE_FILE", "delete|remove"));
+        assert!(!verb_matches("list_items", "create|update"));
+        // 空 pattern 不匹配
+        assert!(!verb_matches("anything", ""));
+        // 空 verb 跳过
+        assert!(verb_matches("create", "||create||"));
+    }
+
+    /// classify_risk: read_only_hint=true → Read。
+    #[test]
+    fn r763_classify_risk_read_only_hint() {
+        let tool = McpToolDescriptor {
+            name: "list_things".into(),
+            title: None,
+            description: None,
+            input_schema: None,
+            annotations: Some(McpToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                write_hint: Some(false),
+                destructive: Some(false),
+            }),
+        };
+        assert_eq!(classify_risk(&tool), ToolRiskLevel::Read);
+    }
+
+    /// classify_risk: write_hint=true → Write (即使 name 不含 write verbs)。
+    #[test]
+    fn r763_classify_risk_write_hint() {
+        let tool = McpToolDescriptor {
+            name: "weird_thing".into(),
+            title: None,
+            description: None,
+            input_schema: None,
+            annotations: Some(McpToolAnnotations {
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                write_hint: Some(true),
+                destructive: Some(false),
+            }),
+        };
+        assert_eq!(classify_risk(&tool), ToolRiskLevel::Write);
+    }
+
+    /// classify_risk: destructive verb in name → Destructive。
+    #[test]
+    fn r763_classify_risk_destructive_verb() {
+        let tool = McpToolDescriptor {
+            name: "delete_database".into(),
+            ..Default::default()
+        };
+        assert_eq!(classify_risk(&tool), ToolRiskLevel::Destructive);
+    }
 }

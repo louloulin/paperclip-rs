@@ -265,4 +265,75 @@ mod internal_tests {
         let b = actor_binding(Some("user"), Some(""), Some("s"));
         assert_eq!(b.actor_id, None);
     }
+
+
+    // ---- Round 767: pc-tool::tool_invocation_pure 集成测试 ----
+
+    /// number_value: 解析失败、NaN、Infinity、负数、零、空字符串。
+    #[test]
+    fn r767_number_value_edges() {
+        use super::number_value;
+        assert_eq!(number_value("0"), Some(0.0));
+        assert_eq!(number_value("-3.14"), Some(-3.14));
+        assert_eq!(number_value("  42  "), None, "leading/trailing space not allowed");
+        assert_eq!(number_value(""), None);
+        assert_eq!(number_value("abc"), None);
+        assert_eq!(number_value("nan").map(|f| f.is_nan()), None, "NaN must be filtered out");
+        assert_eq!(number_value("inf").map(|f| f.is_finite()), None, "Infinity must be filtered out");
+    }
+
+    /// percent: 零分母、负分母、刚好 100、超过 100、精度 1 位小数。
+    #[test]
+    fn r767_percent_edges() {
+        use super::percent;
+        assert_eq!(percent(0.0, 100.0), 0.0);
+        assert_eq!(percent(100.0, 100.0), 100.0);
+        assert_eq!(percent(150.0, 100.0), 150.0);
+        assert_eq!(percent(1.0, 3.0), 33.3, "1/3 rounded to 1 decimal");
+        assert_eq!(percent(2.0, 3.0), 66.7);
+        assert_eq!(percent(5.0, 0.0), 0.0, "zero denominator → 0.0");
+        assert_eq!(percent(5.0, -1.0), 0.0, "negative denominator → 0.0");
+    }
+
+    /// percentile: 单元素、重复值、p 取极值。
+    #[test]
+    fn r767_percentile_edges() {
+        use super::percentile;
+        assert_eq!(percentile(&[42.0], 50.0), Some(42.0));
+        assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0, 5.0], 0.0), Some(1.0));
+        assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0, 5.0], 100.0), Some(5.0));
+        assert_eq!(percentile(&[7.0, 7.0, 7.0], 50.0), Some(7.0));
+    }
+
+    /// normalize_key: 全部字符都需要替换 → fallback "_"。
+    #[test]
+    fn r767_normalize_key_all_invalid() {
+        use super::normalize_key;
+        assert_eq!(normalize_key("---"), "tool", "empty fallback → tool");
+        assert_eq!(normalize_key("!!!@@@"), "tool", "all-invalid fallback → tool");
+        assert_eq!(normalize_key("MyTool 1"), "mytool-1");
+    }
+
+    /// connection_uid: connection_id 短 / 长，截断到前 8 位。
+    #[test]
+    fn r767_connection_uid_edges() {
+        use super::connection_uid;
+        let long = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let r = connection_uid("ns", "name", long);
+        assert!(r.starts_with("ns/name-"));
+        assert!(r.ends_with("aaaaaaaa"), "truncate to first 8 chars");
+        let short = "abc";
+        let r2 = connection_uid("ns", "name", short);
+        assert!(r2.ends_with("-abc"));
+    }
+
+    /// ActorType::as_str: 全部 4 个变体的稳定字符串。
+    #[test]
+    fn r767_actor_type_all_variants() {
+        use super::ActorType;
+        assert_eq!(ActorType::User.as_str(), "user");
+        assert_eq!(ActorType::Agent.as_str(), "agent");
+        assert_eq!(ActorType::Plugin.as_str(), "plugin");
+        assert_eq!(ActorType::System.as_str(), "system");
+    }
 }

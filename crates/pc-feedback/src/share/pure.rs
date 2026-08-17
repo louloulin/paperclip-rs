@@ -130,4 +130,24 @@ mod internal_tests {
     fn clamp_payload_byte_size_normal() {
         assert_eq!(clamp_payload_byte_size(1024), 1024);
     }
+
+    #[test]
+    fn r755_share_pure_clamp_payload_byte_size_caps_huge_value() {
+        // 任意极大值都必须被钳制到 usize::MAX/2
+        assert_eq!(clamp_payload_byte_size(usize::MAX), usize::MAX / 2);
+        assert_eq!(clamp_payload_byte_size(usize::MAX - 1), usize::MAX / 2);
+    }
+
+    #[test]
+    fn r755_share_pure_describe_upload_failure_with_zero_status() {
+        let s = describe_upload_failure(Some(0), "unreachable");
+        assert!(s.contains("HTTP 0"));
+        assert!(s.contains("unreachable"));
+    }
+
+    #[test]
+    fn r755_share_pure_validate_backend_url_trims_whitespace() {
+        assert!(validate_backend_url("   ").is_err());
+        assert!(validate_backend_url("\thttps://api.example.com\n").is_ok());
+    }
 }

@@ -215,4 +215,74 @@ mod tests {
         assert_eq!(DecisionAction::Cancel.as_str(), "cancel");
         assert_eq!(DecisionAction::RequestRevision.as_str(), "request_revision");
     }
+
+    // ---- Round 768: pc-approvals::state_machine 边缘测试 ----
+
+    /// validate_transition: Pending → Pending 总是非法。
+    #[test]
+    fn r768_validate_transition_pending_to_pending() {
+        let r = validate_transition(ApprovalStatus::Pending, ApprovalStatus::Pending);
+        assert!(matches!(r, Err(TransitionError::CannotReturnToPending(_))));
+    }
+
+    /// validate_transition: 终态 → 任意状态 全部非法。
+    #[test]
+    fn r768_validate_transition_from_terminal_always_fails() {
+        for terminal in [
+            ApprovalStatus::Approved,
+            ApprovalStatus::Rejected,
+            ApprovalStatus::Cancelled,
+            ApprovalStatus::Expired,
+        ] {
+            assert!(validate_transition(terminal, ApprovalStatus::Pending).is_err());
+            assert!(validate_transition(terminal, ApprovalStatus::Approved).is_err());
+            assert!(validate_transition(terminal, ApprovalStatus::Cancelled).is_err());
+        }
+    }
+
+    /// validate_transition: Pending → RevisionRequest 不允许（要先新建）。
+    #[test]
+    fn r768_validate_transition_pending_to_revision_is_rejected() {
+        let r = validate_transition(ApprovalStatus::Pending, ApprovalStatus::Pending);
+        assert!(r.is_err());
+    }
+
+    /// can_request_revision: 仅 pending 为 true。
+    #[test]
+    fn r768_can_request_revision_only_pending() {
+        assert!(can_request_revision(ApprovalStatus::Pending));
+        assert!(!can_request_revision(ApprovalStatus::Approved));
+        assert!(!can_request_revision(ApprovalStatus::Rejected));
+        assert!(!can_request_revision(ApprovalStatus::Cancelled));
+    }
+
+    /// can_decide / can_cancel: 均仅 pending 为 true。
+    #[test]
+    fn r768_can_decide_and_cancel_only_pending() {
+        for s in [
+            ApprovalStatus::Approved,
+            ApprovalStatus::Rejected,
+            ApprovalStatus::Cancelled,
+            ApprovalStatus::Expired,
+        ] {
+            assert!(!can_decide(s));
+            assert!(!can_cancel(s));
+        }
+        assert!(can_decide(ApprovalStatus::Pending));
+        assert!(can_cancel(ApprovalStatus::Pending));
+    }
+
+    /// can_resubmit 永远 false（业务通过新 approval 流程）。
+    #[test]
+    fn r768_can_resubmit_always_false() {
+        for s in [
+            ApprovalStatus::Pending,
+            ApprovalStatus::Approved,
+            ApprovalStatus::Rejected,
+            ApprovalStatus::Cancelled,
+            ApprovalStatus::Expired,
+        ] {
+            assert!(!can_resubmit(s));
+        }
+    }
 }

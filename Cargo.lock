@@ -3587,6 +3587,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pc-core",
+ "pc-issues",
  "pc-repos",
  "serde",
  "serde_json",

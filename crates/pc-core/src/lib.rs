@@ -207,3 +207,66 @@ pub use workspace_realization::{
     read_string_array, read_workspace_realization_request, BuildRecordInput, BuildRequestInput,
     DriverInput, RealizationRequestError, WorkspaceDriverWorkspace,
 };
+
+// ---- R780 curated root re-exports (4.4 improvement) ----
+
+pub use attention::{
+    DETAIL_EXCERPT_LENGTH, DETAIL_IMAGE_LIMIT,
+    OPEN_DECISION_DEFAULT_LIMIT, OPEN_DECISION_MAX_LIMIT,
+    OPEN_RECOVERY_STATUSES, PENDING_INTERACTION_STATUSES,
+    HUMAN_RECOVERY_OWNER_TYPES, PRODUCTIVITY_REVIEW_TERMINAL_STATUSES,
+};
+pub use dev_server_status::{
+    read_persisted_status, resolve_status_paths,
+    DevServerRestartRequest, DevServerStatusError, PersistedDevServerStatus,
+};
+pub use execution_workspace_config::{
+    DESIRED_STATE_MANUAL, DESIRED_STATE_RUNNING, DESIRED_STATE_STOPPED,
+    DesiredState, ServiceStateMap,
+};
+pub use execution_workspace_overview::{max_date, max_date_dt, AsDateLike, DateLike, ServiceStatus};
+pub use git_status_paths::{parse_git_status_paths, GitStatusPaths};
+pub use hash::{constant_time_eq, sha256_hex};
+pub use issue_execution_validation::{
+    normalize_issue_execution_policy, parse_issue_execution_state,
+    IssueExecutionPolicyValidationError, ValidationIssue,
+};
+pub use stable_string::{
+    stable_string_sha256_hex, stable_stringify, stable_stringify_object,
+    versioned_sha256_fingerprint,
+};
+pub use tool_content_guards::{
+    is_plain_object, stable_serialize,
+    ToolActionSigningSecretMissingError, ToolContentValidationError,
+    REDACTED_VALUE,
+};
+pub use workspace_branch_incoherence::{
+    fingerprint_from_inspection_json, fingerprint_workspace_branch_incoherence,
+    resolve_absolute_path,
+    BranchIncoherenceInput, Cleanliness,
+    WORKSPACE_BRANCH_INCOHERENCE_REASON,
+};
+pub use workspace_branch_incoherence_explain::{
+    explain_git_worktree_branch_reconcile_inspection,
+    AncestryVerdict, ExecutionWorkspaceBranchRefResolution,
+    ExplainInspectionInput, FormatAuditCommentInput,
+    InspectionLite, ReconcileMode, RescueRef,
+};
+pub use workspace_dirty_quarantine_formatter::{
+    format_dirty_quarantine_contention_refusal, format_dirty_quarantine_failure,
+    ContentionActiveRun, FormatDirtyQuarantineAuditCommentInput,
+    GitWorktreeBranchContention, GitWorktreeBranchIncoherenceEvidence,
+    GitWorktreeInProgressOperation, SourceIssue,
+};
+pub use workspace_file_classify::{
+    MAX_LIST_DEPTH, MAX_RELATIVE_PATH_BYTES, TEXT_SNIFF_BYTES,
+    WORKSPACE_FILE_LIST_DEFAULT_LIMIT, WORKSPACE_FILE_LIST_MAX_LIMIT,
+    WORKSPACE_FILE_LIST_MAX_SCANNED_ENTRIES,
+    WORKSPACE_FILE_MEDIA_MAX_BYTES, WORKSPACE_FILE_TEXT_MAX_BYTES,
+};
+pub use workspace_runtime_readiness::{
+    is_paperclip_dev_runtime_service,
+    looks_like_workspace_dev_server_command,
+    resolve_runtime_service_health_url,
+    resolve_shell, resolve_workspace_runtime_readiness_timeout_sec,
+};

@@ -192,4 +192,138 @@ mod internal_tests {
         assert!(!EffectExecutionStatus::Skipped.is_successful());
         assert!(!EffectExecutionStatus::Pending.is_successful());
     }
+
+    // ---- Round 760: pc-decisions effect_outcome_pure 集成测试 ----
+
+    /// aggregate_outcomes: 空数组 -> (0, 0, "succeeded")，符合 Node parity。
+    #[test]
+    fn r760_aggregate_outcomes_empty() {
+        let (success, total, status) = aggregate_outcomes(&[]);
+        assert_eq!(success, 0);
+        assert_eq!(total, 0);
+        assert_eq!(status, "succeeded");
+    }
+
+    /// aggregate_outcomes: 全部 executed -> succeeded。
+    #[test]
+    fn r760_aggregate_outcomes_all_executed() {
+        let rows = vec![EffectExecutionStatus::Executed, EffectExecutionStatus::Executed, EffectExecutionStatus::Executed];
+        let (success, total, status) = aggregate_outcomes(&rows);
+        assert_eq!(success, 3);
+        assert_eq!(total, 3);
+        assert_eq!(status, "succeeded");
+        assert!(is_final_success(&status));
+        assert!(!is_partial_success(&status));
+    }
+
+    /// aggregate_outcomes: 全部 failed -> failed。
+    #[test]
+    fn r760_aggregate_outcomes_all_failed() {
+        let rows = vec![EffectExecutionStatus::Failed, EffectExecutionStatus::Failed];
+        let (success, total, status) = aggregate_outcomes(&rows);
+        assert_eq!(success, 0);
+        assert_eq!(total, 2);
+        assert_eq!(status, "failed");
+        assert!(!is_final_success(&status));
+        assert!(!is_partial_success(&status));
+    }
+
+    /// aggregate_outcomes: 部分成功 -> partial。
+    #[test]
+    fn r760_aggregate_outcomes_partial() {
+        let rows = vec![
+            EffectExecutionStatus::Executed,
+            EffectExecutionStatus::Failed,
+            EffectExecutionStatus::Skipped,
+        ];
+        let (success, total, status) = aggregate_outcomes(&rows);
+        assert_eq!(success, 1);
+        assert_eq!(total, 3);
+        assert_eq!(status, "partial");
+        assert!(!is_final_success(&status));
+        assert!(is_partial_success(&status));
+    }
+
+    /// aggregate_outcomes: Skipped 不算 success，触发 partial 判定。
+    #[test]
+    fn r760_aggregate_outcomes_with_skipped() {
+        let rows = vec![EffectExecutionStatus::Executed, EffectExecutionStatus::Skipped];
+        let (success, total, status) = aggregate_outcomes(&rows);
+        assert_eq!(success, 1);
+        assert_eq!(total, 2);
+        assert_eq!(status, "partial");
+    }
+}
+
+
+#[cfg(test)]
+mod internal_tests_r771 {
+    use super::*;
+
+    // ---- Round 771: pc-decisions::effect_outcome_pure 边缘测试 ----
+
+    /// EffectExecutionStatus 4 个变体字符串稳定。
+    #[test]
+    fn r771_effect_status_as_str() {
+        assert_eq!(EffectExecutionStatus::Executed.as_str(), "executed");
+        assert_eq!(EffectExecutionStatus::Failed.as_str(), "failed");
+        assert_eq!(EffectExecutionStatus::Skipped.as_str(), "skipped");
+        assert_eq!(EffectExecutionStatus::Pending.as_str(), "pending");
+    }
+
+    /// from_str: 4 个 + 大小写 + 未知。
+    #[test]
+    fn r771_effect_status_from_str() {
+        assert_eq!(EffectExecutionStatus::from_str("executed"), Some(EffectExecutionStatus::Executed));
+        assert_eq!(EffectExecutionStatus::from_str("FAILED"), Some(EffectExecutionStatus::Failed), "case insensitive");
+        assert_eq!(EffectExecutionStatus::from_str("  Skipped  "), Some(EffectExecutionStatus::Skipped), "trimmed");
+        assert_eq!(EffectExecutionStatus::from_str("pending"), Some(EffectExecutionStatus::Pending));
+        assert_eq!(EffectExecutionStatus::from_str("unknown"), None);
+    }
+
+    /// is_successful: 仅 Executed。
+    #[test]
+    fn r771_is_successful() {
+        assert!(EffectExecutionStatus::Executed.is_successful());
+        assert!(!EffectExecutionStatus::Failed.is_successful());
+        assert!(!EffectExecutionStatus::Skipped.is_successful());
+        assert!(!EffectExecutionStatus::Pending.is_successful());
+    }
+
+    /// is_final_success / is_partial_success: 4 种状态。
+    #[test]
+    fn r771_is_final_success_and_partial() {
+        assert!(is_final_success("succeeded"));
+        assert!(!is_final_success("failed"));
+        assert!(!is_final_success("partial"));
+        assert!(!is_final_success("unknown"));
+
+        assert!(!is_partial_success("succeeded"));
+        assert!(!is_partial_success("failed"));
+        assert!(is_partial_success("partial"));
+    }
+
+    /// aggregate_outcomes: 仅 Pending (不是 executed / failed / skipped)。
+    #[test]
+    fn r771_aggregate_only_pending() {
+        let rows = vec![EffectExecutionStatus::Pending, EffectExecutionStatus::Pending];
+        let (succ, total, label) = aggregate_outcomes(&rows);
+        assert_eq!(succ, 0);
+        assert_eq!(total, 2);
+        assert_eq!(label, "failed", "0 successful = failed");
+    }
+
+    /// aggregate_outcomes: 混合 executed + skipped (不算成功)。
+    #[test]
+    fn r771_aggregate_executed_with_skipped() {
+        let rows = vec![
+            EffectExecutionStatus::Executed,
+            EffectExecutionStatus::Skipped,
+            EffectExecutionStatus::Skipped,
+        ];
+        let (succ, total, label) = aggregate_outcomes(&rows);
+        assert_eq!(succ, 1);
+        assert_eq!(total, 3);
+        assert_eq!(label, "partial", "1 < 3 → partial");
+    }
 }

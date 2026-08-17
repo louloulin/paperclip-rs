@@ -134,6 +134,7 @@ pub struct ToolApplicationRow {
     pub name: String,
     /// 投影列名：DB 是 `type`（关键字），响应里保留 `kind` 以兼容现有 API。
     #[serde(rename = "type")]
+    #[sqlx(rename = "type")]
     pub kind: String,
     pub status: String,
     /// JSONB 列：内部含 description + config 等元数据。
@@ -3083,5 +3084,89 @@ mod tests {
         };
         assert_eq!(r.status, "pending");
         assert_eq!(r.canonical_arguments_hash, "abc123");
+    }
+
+    // ---- Round 757: ToolApplicationRow kind->type column mapping & DB row projection ----
+
+    /// 验证 ToolApplicationRow.kind 字段必须有 #[sqlx(rename = "type")]，
+    /// 否则 sqlx FromRow 在投影 type 列时会 ColumnNotFound("kind")。
+    #[test]
+    fn r757_tool_application_row_kind_uses_db_type_column() {
+        // Source review: struct field 'kind' 必须带 #[sqlx(rename = "type")],
+        // 因为 DB 列是 type（SQL 关键字），serde rename 不影响 sqlx FromRow。
+        let src = include_str!("tool.rs");
+        assert!(
+            src.contains("#[sqlx(rename = \"type\")]"),
+            "ToolApplicationRow.kind must carry #[sqlx(rename = \"type\")] so sqlx FromRow can project from DB column type"
+        );
+    }
+
+    /// 验证 ToolApplicationRow.description() 从 metadata.description 取值。
+    #[test]
+    fn r757_tool_application_row_description_from_metadata() {
+        let row = ToolApplicationRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            name: "R757 desc-test".into(),
+            kind: "mcp".into(),
+            status: "active".into(),
+            metadata: serde_json::json!({"description": "R757 description helper"}),
+            created_at: pc_core::Timestamp::now(),
+            updated_at: pc_core::Timestamp::now(),
+        };
+        assert_eq!(row.description(), Some("R757 description helper"));
+    }
+
+    /// 验证 ToolApplicationRow.config() 从 metadata.config 取值。
+    #[test]
+    fn r757_tool_application_row_config_from_metadata() {
+        let row = ToolApplicationRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            name: "R757 config-test".into(),
+            kind: "mcp".into(),
+            status: "active".into(),
+            metadata: serde_json::json!({"config": {"endpoint": "https://x", "timeout": 30}}),
+            created_at: pc_core::Timestamp::now(),
+            updated_at: pc_core::Timestamp::now(),
+        };
+        let cfg = row.config();
+        assert_eq!(cfg["endpoint"], "https://x");
+        assert_eq!(cfg["timeout"], 30);
+    }
+
+    /// 验证 metadata 缺失 description/config 时的默认行为。
+    #[test]
+    fn r757_tool_application_row_missing_metadata_keys() {
+        let row = ToolApplicationRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            name: "R757 empty-meta".into(),
+            kind: "mcp".into(),
+            status: "active".into(),
+            metadata: serde_json::json!({}),
+            created_at: pc_core::Timestamp::now(),
+            updated_at: pc_core::Timestamp::now(),
+        };
+        assert_eq!(row.description(), None);
+        assert_eq!(row.config(), serde_json::json!({}));
+    }
+
+    /// 验证 PatchToolApplication.metadata_patch() 合并顺序：description 覆盖 -> config 替换 -> metadata_merge 增量。
+    #[test]
+    fn r757_patch_tool_application_metadata_patch_order() {
+        let p = PatchToolApplication {
+            name: None,
+            description: Some("desc-first".into()),
+            config: Some(serde_json::json!({"k": "v"})),
+            status: None,
+            metadata_merge: serde_json::Map::from_iter([
+                ("extra".to_string(), serde_json::json!("merge-value")),
+            ]),
+        };
+        let m = p.metadata_patch();
+        assert_eq!(m["description"], "desc-first");
+        assert_eq!(m["config"]["k"], "v");
+        assert_eq!(m["extra"], "merge-value");
     }
 }

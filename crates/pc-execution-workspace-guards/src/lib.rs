@@ -206,3 +206,115 @@ mod internal_tests {
         assert!(msg.contains("feature-x"));
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r770 {
+    use super::*;
+
+    // ---- Round 770: pc-execution-workspace-guards::lib 派生方法 ----
+
+    /// ExecutionWorkspaceStatus::as_str 5 个变体。
+    #[test]
+    fn r770_workspace_status_as_str() {
+        assert_eq!(ExecutionWorkspaceStatus::Active.as_str(), "active");
+        assert_eq!(ExecutionWorkspaceStatus::Idle.as_str(), "idle");
+        assert_eq!(ExecutionWorkspaceStatus::InReview.as_str(), "in_review");
+        assert_eq!(ExecutionWorkspaceStatus::Archived.as_str(), "archived");
+        assert_eq!(ExecutionWorkspaceStatus::CleanupFailed.as_str(), "cleanup_failed");
+    }
+
+    /// ExecutionWorkspaceStatus::parse 全部 5 个 + 未知。
+    #[test]
+    fn r770_workspace_status_parse() {
+        assert_eq!(ExecutionWorkspaceStatus::parse("active"), Some(ExecutionWorkspaceStatus::Active));
+        assert_eq!(ExecutionWorkspaceStatus::parse("idle"), Some(ExecutionWorkspaceStatus::Idle));
+        assert_eq!(ExecutionWorkspaceStatus::parse("in_review"), Some(ExecutionWorkspaceStatus::InReview));
+        assert_eq!(ExecutionWorkspaceStatus::parse("archived"), Some(ExecutionWorkspaceStatus::Archived));
+        assert_eq!(ExecutionWorkspaceStatus::parse("cleanup_failed"), Some(ExecutionWorkspaceStatus::CleanupFailed));
+        assert_eq!(ExecutionWorkspaceStatus::parse("unknown"), None);
+    }
+
+    /// ExecutionWorkspaceMode::as_str 3 个变体。
+    #[test]
+    fn r770_workspace_mode_as_str() {
+        assert_eq!(ExecutionWorkspaceMode::SharedWorkspace.as_str(), "shared_workspace");
+        assert_eq!(ExecutionWorkspaceMode::IsolatedWorkspace.as_str(), "isolated_workspace");
+        assert_eq!(ExecutionWorkspaceMode::OperatorBranch.as_str(), "operator_branch");
+    }
+
+    /// ExecutionWorkspaceMode::parse round trip.
+    #[test]
+    fn r770_workspace_mode_parse() {
+        assert_eq!(ExecutionWorkspaceMode::parse("shared_workspace"), Some(ExecutionWorkspaceMode::SharedWorkspace));
+        assert_eq!(ExecutionWorkspaceMode::parse("isolated_workspace"), Some(ExecutionWorkspaceMode::IsolatedWorkspace));
+        assert_eq!(ExecutionWorkspaceMode::parse("operator_branch"), Some(ExecutionWorkspaceMode::OperatorBranch));
+        assert_eq!(ExecutionWorkspaceMode::parse("unknown"), None);
+    }
+
+    /// closed_execution_workspace_statuses: archived + cleanup_failed.
+    #[test]
+    fn r770_closed_statuses_count() {
+        let s = closed_execution_workspace_statuses();
+        assert_eq!(s.len(), 2);
+        assert!(s.contains("archived"));
+        assert!(s.contains("cleanup_failed"));
+    }
+
+    /// is_closed_isolated_execution_workspace: 4 种场景.
+    #[test]
+    fn r770_is_closed_isolated_workspace_combinations() {
+        // None -> false
+        assert!(!is_closed_isolated_execution_workspace(None));
+
+        // isolated + active -> false
+        let active = ExecutionWorkspaceGuardTarget {
+            closed_at: None,
+            mode: ExecutionWorkspaceMode::IsolatedWorkspace,
+            name: "ws1".into(),
+            status: ExecutionWorkspaceStatus::Active,
+        };
+        assert!(!is_closed_isolated_execution_workspace(Some(&active)));
+
+        // isolated + archived -> true
+        let archived = ExecutionWorkspaceGuardTarget {
+            closed_at: None,
+            mode: ExecutionWorkspaceMode::IsolatedWorkspace,
+            name: "ws1".into(),
+            status: ExecutionWorkspaceStatus::Archived,
+        };
+        assert!(is_closed_isolated_execution_workspace(Some(&archived)));
+
+        // isolated + closed_at -> true 即使 status = active
+        let closed_at = ExecutionWorkspaceGuardTarget {
+            closed_at: Some("2026-01-01T00:00:00Z".into()),
+            mode: ExecutionWorkspaceMode::IsolatedWorkspace,
+            name: "ws1".into(),
+            status: ExecutionWorkspaceStatus::Active,
+        };
+        assert!(is_closed_isolated_execution_workspace(Some(&closed_at)));
+
+        // shared + archived -> false (mode 必须 isolated)
+        let shared_archived = ExecutionWorkspaceGuardTarget {
+            closed_at: None,
+            mode: ExecutionWorkspaceMode::SharedWorkspace,
+            name: "ws1".into(),
+            status: ExecutionWorkspaceStatus::Archived,
+        };
+        assert!(!is_closed_isolated_execution_workspace(Some(&shared_archived)));
+    }
+
+    /// get_closed_isolated_execution_workspace_message 包含必要字段。
+    #[test]
+    fn r770_message_contains_required_fields() {
+        let ws = ExecutionWorkspaceGuardTarget {
+            closed_at: None,
+            mode: ExecutionWorkspaceMode::IsolatedWorkspace,
+            name: "ws-NAME".into(),
+            status: ExecutionWorkspaceStatus::Archived,
+        };
+        let msg = get_closed_isolated_execution_workspace_message(&ws);
+        assert!(msg.contains("ws-NAME"));
+        // mode not in message
+    }
+}

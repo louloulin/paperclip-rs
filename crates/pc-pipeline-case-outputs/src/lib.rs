@@ -36,7 +36,7 @@ pub use service::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{PipelineCaseOutputItem, PipelineCaseOutputsResponse};
+    use crate::types::{PipelineCaseOutputContextSourceIssue, PipelineCaseOutputContextSummary, PipelineCaseOutputContextSummaryItem, PipelineCaseOutputItem, PipelineCaseOutputItemKind, PipelineCaseOutputsResponse};
 
     fn document_item(title: &str, updated_at: &str) -> PipelineCaseOutputItem {
         PipelineCaseOutputItem {
@@ -213,5 +213,134 @@ mod tests {
         let hint_att = context_fetch_hint(&att);
         assert!(hint_att.contains("/api/attachments/a/content"));
         assert!(hint_att.contains("download=1"));
+    }
+
+    // ----- R773 edge cases for pure helpers -----
+
+    #[test]
+    fn r773_normalize_preview_text_handles_empty_string() {
+        assert_eq!(normalize_preview_text(Some("")), None);
+        assert_eq!(normalize_preview_text(None), None);
+        assert_eq!(normalize_preview_text(Some("   \n\t  ")), None);
+    }
+
+    #[test]
+    fn r773_normalize_preview_text_keeps_short_text_intact() {
+        let out = normalize_preview_text(Some("hello world")).unwrap();
+        assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn r773_truncate_context_excerpt_returns_truncated_flag() {
+        let r = truncate_context_excerpt(Some("hello world"), 5);
+        assert_eq!(r.excerpt.as_deref(), Some("hello"));
+        assert!(r.excerpt_truncated);
+    }
+
+    #[test]
+    fn r773_truncate_context_excerpt_returns_input_when_short() {
+        let r = truncate_context_excerpt(Some("hi"), 10);
+        assert_eq!(r.excerpt.as_deref(), Some("hi"));
+        assert!(!r.excerpt_truncated);
+    }
+
+    #[test]
+    fn r773_deliverable_rank_returns_99_for_non_document() {
+        let mut item = document_item("Brief", "2026-08-12T00:00:00Z");
+        item.kind = PipelineCaseOutputItemKind::WorkProduct;
+        assert_eq!(deliverable_document_rank(&item), 99);
+        item.kind = PipelineCaseOutputItemKind::Attachment;
+        assert_eq!(deliverable_document_rank(&item), 99);
+    }
+
+    #[test]
+    fn r773_output_sort_group_classifies_each_kind() {
+        let mut item = document_item("Brief", "2026-08-12T00:00:00Z");
+        assert_eq!(output_sort_group(&item), OutputSortGroup::Deliverable);
+        item.title = "Random Note".into();
+        assert_eq!(output_sort_group(&item), OutputSortGroup::Document);
+        item.kind = PipelineCaseOutputItemKind::WorkProduct;
+        assert_eq!(output_sort_group(&item), OutputSortGroup::WorkProduct);
+        item.kind = PipelineCaseOutputItemKind::Attachment;
+        assert_eq!(output_sort_group(&item), OutputSortGroup::Attachment);
+    }
+
+    #[test]
+    fn r773_source_issue_path_falls_back_to_id_when_identifier_empty() {
+        assert_eq!(source_issue_path("acme", Some("PC-1"), "issue-7"), "/acme/PC-1");
+        assert_eq!(source_issue_path("acme", None, "issue-7"), "/issues/issue-7");
+        assert_eq!(source_issue_path("acme", Some(""), "issue-7"), "/issues/issue-7");
+    }
+
+    #[test]
+    fn r773_source_document_path_concatenates_document_key() {
+        let p = source_document_path("acme", Some("PC-1"), "issue-7", "brief");
+        assert_eq!(p, "/acme/PC-1/documents/brief");
+    }
+
+    #[test]
+    fn r773_context_fetch_hint_attachment_includes_untrusted_warning() {
+        let mut att = document_item("Attachment", "2026-08-12T00:00:00Z");
+        att.kind = PipelineCaseOutputItemKind::Attachment;
+        att.content_path = Some("/api/attachments/a/content".into());
+        att.download_path = Some("/api/attachments/a/content?download=1".into());
+        let hint = context_fetch_hint(&att);
+        assert!(hint.contains("untrusted"));
+    }
+
+    #[test]
+    fn r773_sanitize_output_context_summary_caps_total_length() {
+        let item = |title: &str| PipelineCaseOutputContextSummaryItem {
+            id: format!("doc:{title}"),
+            kind: PipelineCaseOutputItemKind::Document,
+            title: title.into(),
+            key: Some(title.into()),
+            revision_id: None,
+            revision_number: None,
+            source_issue: PipelineCaseOutputContextSourceIssue {
+                id: "issue-1".into(),
+                identifier: Some("PC-1".into()),
+                title: "Source".into(),
+                status: "done".into(),
+                path: "/PC/PC-1".into(),
+                role: "work".into(),
+            },
+            source_run_id: None,
+            source_agent_id: None,
+            source_trust: None,
+            excerpt: Some("x".repeat(400)),
+            excerpt_truncated: false,
+            fetch_hint: Some("GET /x".into()),
+        };
+        let summary = PipelineCaseOutputContextSummary {
+            generated_at: "2026-08-12T00:00:00Z".into(),
+            item_count: 5,
+            total_item_count: 5,
+            omitted_item_count: 0,
+            excerpt_max_chars: 400,
+            redaction_note: String::new(),
+            items: vec![item("a"), item("b"), item("c"), item("d"), item("e")],
+        };
+        let s = sanitize_output_context_summary(summary);
+        let total_chars: usize = s.items.iter()
+            .filter_map(|i| i.excerpt.as_ref())
+            .map(|e| e.chars().count())
+            .sum();
+        assert!(total_chars <= CONTEXT_OUTPUT_EXCERPT_TOTAL_MAX_LENGTH);
+    }
+
+    #[test]
+    fn r773_summarize_pipeline_case_outputs_handles_empty_response() {
+        let response = PipelineCaseOutputsResponse {
+            company_id: None,
+            case_id: None,
+            generated_at: "2026-08-12T00:00:00Z".into(),
+            items: vec![],
+        };
+        let summary = summarize_pipeline_case_outputs_for_context(&response, Some(5));
+        assert_eq!(summary.item_count, 0);
+        assert_eq!(summary.total_item_count, 0);
+        assert_eq!(summary.omitted_item_count, 0);
+        assert!(summary.items.is_empty());
     }
 }

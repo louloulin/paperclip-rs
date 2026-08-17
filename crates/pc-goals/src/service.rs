@@ -465,3 +465,93 @@ fn map_repo_error(error: pc_repos::RepoError) -> Error {
         pc_repos::RepoError::Core(e) => internal(format!("goal core invariant: {e}")),
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn sample_event(company_id: Uuid) -> GoalHookEvent {
+        GoalHookEvent::Created {
+            id: Uuid::new_v4(),
+            company_id,
+            title: "test".into(),
+            level: "company".into(),
+            status: "active".into(),
+            parent_id: None,
+        }
+    }
+
+    /// RecordingGoalHook 永久缓存 event + 顺序保持。
+    #[test]
+    fn r768_recording_goal_hook_captures_events() {
+        let hook = RecordingGoalHook::default();
+        let cid = Uuid::new_v4();
+        let e1 = sample_event(cid);
+        let e2 = sample_event(cid);
+        // 直接 push，因为 on_goal_event 是 async trait
+        hook.events.lock().unwrap().push(e1.clone());
+        hook.events.lock().unwrap().push(e2.clone());
+        assert_eq!(hook.len(), 2);
+        assert!(!hook.is_empty());
+        let snap = hook.events_snapshot();
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[0], e1);
+        assert_eq!(snap[1], e2);
+    }
+
+    /// clear() 清空全部 events。
+    #[test]
+    fn r768_recording_goal_hook_clear() {
+        let hook = RecordingGoalHook::default();
+        hook.events.lock().unwrap().push(sample_event(Uuid::new_v4()));
+        assert_eq!(hook.len(), 1);
+        hook.clear();
+        assert!(hook.is_empty());
+        assert_eq!(hook.len(), 0);
+    }
+
+    /// validate_goal_patch: title 不能是空白。
+    #[test]
+    fn r768_validate_goal_patch_title_empty() {
+        let p = GoalPatch {
+            title: Some("   ".into()),
+            ..Default::default()
+        };
+        let r = validate_goal_patch(&p);
+        assert!(r.is_err(), "empty title must be rejected");
+    }
+
+    /// validate_goal_patch: 有 title 时通过。
+    #[test]
+    fn r768_validate_goal_patch_title_valid() {
+        let p = GoalPatch {
+            title: Some("ok".into()),
+            ..Default::default()
+        };
+        assert!(validate_goal_patch(&p).is_ok());
+    }
+
+    /// validate_goal_patch: title=None 时通过。
+    #[test]
+    fn r768_validate_goal_patch_none_title() {
+        let p = GoalPatch {
+            ..Default::default()
+        };
+        assert!(validate_goal_patch(&p).is_ok());
+    }
+
+    /// normalize_goal_patch: trim + 空白置 None。
+    #[test]
+    fn r768_normalize_goal_patch_trims() {
+        let p = GoalPatch {
+            title: Some("  hello  ".into()),
+            description: Some("   ".into()),
+            ..Default::default()
+        };
+        let n = normalize_goal_patch(p);
+        assert_eq!(n.title.as_deref(), Some("hello"));
+        assert_eq!(n.description, None, "blank description normalized to None");
+    }
+}

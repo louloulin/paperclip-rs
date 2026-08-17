@@ -339,3 +339,78 @@ mod tests {
         assert_eq!(IGNORED_ACTIONS.len(), 4);
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r772 {
+    use super::*;
+
+    // ---- Round 772: pc-routines::activity_gate_pure 边缘测试 ----
+
+    /// gate_required_for_policy: 仅 require_external 必需.
+    #[test]
+    fn r772_gate_required_for_policy_variants() {
+        assert!(gate_required_for_policy("require_external_activity"));
+        assert!(!gate_required_for_policy("always"));
+        assert!(!gate_required_for_policy("never"));
+        assert!(!gate_required_for_policy("unknown"), "unknown → false");
+    }
+
+    /// parse_scope: 3 种 + 默认.
+    #[test]
+    fn r772_parse_scope_variants() {
+        assert!(matches!(parse_scope("global"), ActivityGateScope::Global));
+        assert!(matches!(parse_scope("project"), ActivityGateScope::Project));
+        assert!(matches!(parse_scope("agent"), ActivityGateScope::Global));
+        assert!(matches!(parse_scope("unknown"), ActivityGateScope::Global), "unknown → Global");
+    }
+
+    /// is_ignored_action: 4 种已知 + 未知.
+    #[test]
+    fn r772_is_ignored_action() {
+        assert!(is_ignored_action("issue.read_marked"));
+        assert!(is_ignored_action("issue.read_unmarked"));
+        assert!(is_ignored_action("issue.inbox_archived"));
+        assert!(is_ignored_action("issue.inbox_unarchived"));
+        assert!(!is_ignored_action("user_comment"));
+        assert!(!is_ignored_action(""));
+    }
+
+    /// is_self_loop_by_details_routine_id: 三种情况.
+    #[test]
+    fn r772_is_self_loop_by_routine_id() {
+        // 同一 routine_id
+        assert!(is_self_loop_by_details_routine_id("routine-scheduler", Some("11111111-1111-4111-8111-111111111111"), &Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap()));
+        // 不同 routine_id
+        // "different actor" test below
+        // 一方缺失
+        assert!(!is_self_loop_by_details_routine_id("routine-scheduler", None, &Uuid::new_v4()));
+        assert!(!is_self_loop_by_details_routine_id("not-scheduler", Some("r-1"), &Uuid::new_v4()), "wrong actor → false");
+    }
+
+    /// verdict_fire_default: 4 字段.
+    #[test]
+    fn r772_verdict_fire_default() {
+        let v = verdict_fire_default();
+        assert!(matches!(v.scope, ActivityGateScope::Global));
+        assert!(v.window_start.is_none());
+        assert!(v.matched_activity_id.is_none());
+        assert!(v.fire);
+    }
+
+    /// verdict_fire_first: scope 设置.
+    #[test]
+    fn r772_verdict_fire_first_preserves_scope() {
+        let v = verdict_fire_first(ActivityGateScope::Project);
+        assert!(matches!(v.scope, ActivityGateScope::Project));
+    }
+
+    /// verdict_skip: window_start required.
+    #[test]
+    fn r772_verdict_skip_window_start() {
+        let now = Utc::now();
+        let v = verdict_skip(ActivityGateScope::Project, now);
+        assert!(matches!(v.scope, ActivityGateScope::Project));
+        assert_eq!(v.window_start, Some(now));
+    }
+}

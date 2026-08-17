@@ -135,7 +135,6 @@ pub fn selector_matches(selector: &ToolAccessSelector, ctx: &ToolAccessContext) 
 mod internal_tests {
     use super::*;
 
-    fn empty_ctx() -> ToolAccessContext { ToolAccessContext::default() }
 
     #[test]
     fn empty_selector_matches_anything() {
@@ -271,5 +270,50 @@ mod internal_tests {
         let j = serde_json::to_string(&s).unwrap();
         assert!(j.contains("actorType"));
         assert!(j.contains("agentIds"));
+    }
+
+    // ---- Round 767: pc-tool::selector_match 集成测试 ----
+
+    fn empty_ctx() -> ToolAccessContext { ToolAccessContext::default() }
+
+    /// tool_name *单值* 匹配 upstream_tool_name（任何一者命中即通过）。
+    #[test]
+    fn r767_tool_name_single_matches_upstream() {
+        let mut s = ToolAccessSelector::default();
+        s.tool_name = Some("foo".into());
+        let mut c = empty_ctx();
+        c.upstream_tool_name = Some("foo".into());
+        assert!(selector_matches(&s, &c), "single tool_name matches upstream_tool_name");
+    }
+
+    /// tool_names 数组 OR 匹配：任一命中即通过。
+    #[test]
+    fn r767_tool_names_many_or_match() {
+        let mut s = ToolAccessSelector::default();
+        s.tool_names = vec!["foo".into(), "bar".into()];
+        let mut c = empty_ctx();
+        c.tool_name = Some("foo".into());
+        assert!(selector_matches(&s, &c));
+        c.tool_name = Some("bar".into());
+        assert!(selector_matches(&s, &c));
+        c.tool_name = Some("baz".into());
+        assert!(!selector_matches(&s, &c));
+    }
+
+    /// many selector + actual=None → fail，不允许"未指定"通过。
+    #[test]
+    fn r767_many_selector_rejects_undefined_actual() {
+        let mut s = ToolAccessSelector::default();
+        s.agent_ids = vec!["a-1".into()];
+        let c = empty_ctx();
+        assert!(!selector_matches(&s, &c), "empty actual must reject when selector has many");
+    }
+
+    /// single=None + many=[] + actual=None → 通过（双方都未指定）。
+    #[test]
+    fn r767_empty_selector_matches_empty_ctx() {
+        let s = ToolAccessSelector::default();
+        let c = empty_ctx();
+        assert!(selector_matches(&s, &c));
     }
 }

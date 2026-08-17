@@ -145,4 +145,42 @@ mod internal_tests {
         let h = descriptor_hash(&desc("foo"));
         assert_eq!(h.len(), 64);
     }
+
+    // ---- Round 767: pc-tool::descriptor_hash 集成测试 ----
+
+    /// descriptor_hash 包含 description。
+    #[test]
+    fn r767_descriptor_hash_includes_description() {
+        let mut a = desc("foo");
+        a.description = Some("first".into());
+        let mut b = desc("foo");
+        b.description = Some("second".into());
+        assert_ne!(descriptor_hash(&a), descriptor_hash(&b));
+    }
+
+    /// descriptor_hash 包含 title。
+    #[test]
+    fn r767_descriptor_hash_includes_title() {
+        let mut a = desc("foo");
+        a.title = Some("A".into());
+        let mut b = desc("foo");
+        b.title = Some("B".into());
+        assert_ne!(descriptor_hash(&a), descriptor_hash(&b));
+    }
+
+    /// flatten_keys: 数组嵌套对象 + null 叶子。
+    #[test]
+    fn r767_flatten_keys_nested_objects() {
+        let v = json!({"a": [{"b": 1, "c": {"d": 2}}], "e": null});
+        let keys = flatten_keys(&v);
+        assert_eq!(keys, vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()]);
+    }
+
+    /// stable_hash: key 顺序无关（BTreeSet）。
+    #[test]
+    fn r767_stable_hash_key_order_invariant() {
+        let v1 = json!({"a": 1, "b": 2, "c": 3});
+        let v2 = json!({"c": 3, "b": 2, "a": 1});
+        assert_eq!(stable_hash(&v1), stable_hash(&v2), "stable_hash must be key-order independent");
+    }
 }

@@ -958,4 +958,60 @@ mod tests {
         let agent = serde_json::json!({"type": "agent", "companyIds": ["c1"]});
         assert!(!board_can_act_directly(&agent, "c1"));
     }
+
+    // ---- Round 762: pc-decisions pure 集成测试 ----
+
+    /// classify_effect_type: 只有 comment_on_issue → Comment，其他 → Mutate。
+    #[test]
+    fn r762_classify_effect_type_known() {
+        assert!(matches!(classify_effect_type("comment_on_issue"), EffectAction::Comment));
+        assert!(matches!(classify_effect_type("create_issue"), EffectAction::Mutate));
+        assert!(matches!(classify_effect_type("decision"), EffectAction::Mutate));
+    }
+
+    /// classify_effect_type: 未知类型 → Mutate（safe default，与 Node upstream 一致）。
+    #[test]
+    fn r762_classify_effect_type_unknown_returns_mutate() {
+        let a = classify_effect_type("totally_made_up");
+        assert!(matches!(a, EffectAction::Mutate), "unknown should map to Mutate (safe default), got {:?}", a);
+    }
+
+    /// same_ids: 用 BTreeSet 比较，顺序无关；只校验元素集合相等。
+    #[test]
+    fn r762_same_ids_set_equality() {
+        let a = vec!["x".to_string(), "y".to_string()];
+        let b = vec!["x".to_string(), "y".to_string()];
+        let c = vec!["y".to_string(), "x".to_string()];
+        let d = vec!["x".to_string(), "z".to_string()];
+        assert!(same_ids(&a, &b));
+        assert!(same_ids(&a, &c), "same_ids is set-based, order-independent");
+        assert!(!same_ids(&a, &d), "different element should fail");
+        assert!(same_ids(&[], &[]));
+    }
+
+    /// interpolate: {{input.<id>}} 占位符替换，missing key 渲染为空字符串。
+    #[test]
+    fn r762_interpolate_replaces_keys() {
+        let mut values = std::collections::HashMap::new();
+        values.insert("name".to_string(), "World".to_string());
+        values.insert("greeting".to_string(), "Hello".to_string());
+        assert_eq!(interpolate("Hello {{input.name}}!", &values), "Hello World!");
+        assert_eq!(interpolate("{{input.greeting}} {{input.name}}", &values), "Hello World");
+        // Missing key renders as empty string.
+        assert_eq!(interpolate("missing={{input.missing}}", &values), "missing=");
+    }
+
+    /// sign_decision_spec + verify_decision_spec: round-trip 正确签名验证。
+    #[test]
+    fn r762_sign_verify_decision_spec_round_trip() {
+        let secret = b"super-secret";
+        let value = serde_json::json!({"action": "create", "target_id": "i-1"});
+        let sig = sign_decision_spec(&value, secret);
+        assert!(verify_decision_spec(&value, &sig, secret));
+        // Wrong secret → false.
+        assert!(!verify_decision_spec(&value, &sig, b"wrong-secret"));
+        // Tampered value → false.
+        let tampered = serde_json::json!({"action": "create", "target_id": "i-2"});
+        assert!(!verify_decision_spec(&tampered, &sig, secret));
+    }
 }

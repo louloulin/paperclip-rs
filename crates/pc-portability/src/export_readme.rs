@@ -305,3 +305,94 @@ pub fn generate_readme(manifest: &CompanyPortabilityManifest, options: &ReadmeOp
 
     lines.join("\n")
 }
+
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+
+    // ---- Round 770: pc-portability::export_readme 边缘测试 ----
+
+    /// mermaid_id: 保留 [a-zA-Z0-9_], 其他替换为 _.
+    #[test]
+    fn r770_mermaid_id_basic() {
+        assert_eq!(mermaid_id("foo_bar"), "foo_bar");
+        assert_eq!(mermaid_id("foo-bar"), "foo_bar", "dash to underscore");
+        assert_eq!(mermaid_id("foo bar"), "foo_bar", "space to underscore");
+        assert_eq!(mermaid_id("foo.bar"), "foo_bar", "dot to underscore");
+        assert_eq!(mermaid_id("Foo123"), "Foo123");
+    }
+
+    /// mermaid_escape: 3 个特殊字符.
+    #[test]
+    fn r770_mermaid_escape() {
+        assert_eq!(mermaid_escape("hello"), "hello");
+        assert_eq!(mermaid_escape("a\"b"), "a&quot;b");
+        assert_eq!(mermaid_escape("<tag>"), "&lt;tag&gt;");
+        assert_eq!(mermaid_escape("a<b>c\"d"), "a&lt;b&gt;c&quot;d");
+    }
+
+    /// role_label: 8 个固定 + 1 个 fallback.
+    #[test]
+    fn r770_role_label() {
+        assert_eq!(role_label("ceo"), "CEO");
+        assert_eq!(role_label("cto"), "CTO");
+        assert_eq!(role_label("cmo"), "CMO");
+        assert_eq!(role_label("cfo"), "CFO");
+        assert_eq!(role_label("coo"), "COO");
+        assert_eq!(role_label("vp"), "VP");
+        assert_eq!(role_label("manager"), "Manager");
+        assert_eq!(role_label("engineer"), "Engineer");
+        assert_eq!(role_label("agent"), "Agent");
+        assert_eq!(role_label("custom"), "custom", "unknown fallback");
+    }
+
+    /// generate_org_chart_mermaid: 0 个 agent -> None.
+    #[test]
+    fn r770_generate_org_chart_empty_returns_none() {
+        assert!(generate_org_chart_mermaid(&[]).is_none());
+    }
+
+    /// generate_org_chart_mermaid: 1 个 agent.
+    #[test]
+    fn r770_generate_org_chart_single() {
+        let a = ManifestAgent {
+            slug: "alice".into(),
+            name: "Alice".into(),
+            role: "ceo".into(),
+            reports_to_slug: None,
+        };
+        let s = generate_org_chart_mermaid(&[a]).unwrap();
+        assert!(s.contains("mermaid"));
+        assert!(s.contains("alice"));
+    }
+
+    /// generate_org_chart_mermaid: hierarchy.
+    #[test]
+    fn r770_generate_org_chart_hierarchy() {
+        let a = ManifestAgent {
+            slug: "ceo".into(),
+            name: "CEO".into(),
+            role: "ceo".into(),
+            reports_to_slug: None,
+        };
+        let b = ManifestAgent {
+            slug: "cto".into(),
+            name: "CTO".into(),
+            role: "cto".into(),
+            reports_to_slug: Some("ceo".into()),
+        };
+        let s = generate_org_chart_mermaid(&[a, b]).unwrap();
+        assert!(s.contains("ceo"));
+        assert!(s.contains("cto"));
+        assert!(s.contains("-->"));
+    }
+
+    /// SkillSourceType::Unknown 兜底.
+    #[test]
+    fn r770_skill_source_type_unknown_fallback() {
+        let v: serde_json::Value = serde_json::from_str("{\"sourceType\":\"something_unknown\"}").unwrap();
+        let t: Option<SkillSourceType> = serde_json::from_value(v["sourceType"].clone()).ok();
+        assert_eq!(t, Some(SkillSourceType::Unknown));
+    }
+}

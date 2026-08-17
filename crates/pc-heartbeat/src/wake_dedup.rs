@@ -852,4 +852,105 @@ mod tests {
             .collect();
         assert_eq!(ids, vec!["c-1", "c-2"]);
     }
+
+    // ---- Round 759: pc-heartbeat wake_dedup 集成测试 ----
+
+    use super::*;
+
+    fn make_wake_snapshot(status: &str, company_id: &str, agent_id: &str) -> WakeSnapshot {
+        WakeSnapshot {
+            id: "wake-1".into(),
+            agent_id: agent_id.into(),
+            company_id: company_id.into(),
+            status: status.into(),
+            coalesced_count: 1,
+            payload: None,
+        }
+    }
+
+    fn make_wake_input(company_id: &str, agent_id: &str) -> WakeInput {
+        WakeInput {
+            agent_id: agent_id.into(),
+            company_id: company_id.into(),
+            source: "test".into(),
+            reason: None,
+            payload: None,
+            idempotency_key: None,
+        }
+    }
+
+    /// 无 existing snapshot -> Create。
+    #[test]
+    fn r759_decide_wake_no_existing_creates() {
+        let incoming = make_wake_input("c-1", "a-1");
+        let action = decide_wake_action(None, &incoming);
+        assert!(matches!(action, WakeAction::Create), "got {:?}", action);
+    }
+
+    /// existing.status = completed -> Create（completed 不是 active status）。
+    #[test]
+    fn r759_decide_wake_completed_status_creates() {
+        let existing = make_wake_snapshot("completed", "c-1", "a-1");
+        let incoming = make_wake_input("c-1", "a-1");
+        let action = decide_wake_action(Some(&existing), &incoming);
+        assert!(matches!(action, WakeAction::Create), "got {:?}", action);
+    }
+
+    /// existing.company_id != incoming.company_id -> Skip with company mismatch reason。
+    #[test]
+    fn r759_decide_wake_company_mismatch_skips() {
+        let existing = make_wake_snapshot("queued", "c-1", "a-1");
+        let incoming = make_wake_input("c-2", "a-1");
+        let action = decide_wake_action(Some(&existing), &incoming);
+        match action {
+            WakeAction::Skip { reason } => assert!(reason.contains("company mismatch"), "got {:?}", reason),
+            other => panic!("expected Skip, got {:?}", other),
+        }
+    }
+
+    /// existing.agent_id != incoming.agent_id -> Skip with agent mismatch reason。
+    #[test]
+    fn r759_decide_wake_agent_mismatch_skips() {
+        let existing = make_wake_snapshot("queued", "c-1", "a-1");
+        let incoming = make_wake_input("c-1", "a-2");
+        let action = decide_wake_action(Some(&existing), &incoming);
+        match action {
+            WakeAction::Skip { reason } => assert!(reason.contains("agent mismatch"), "got {:?}", reason),
+            other => panic!("expected Skip, got {:?}", other),
+        }
+    }
+
+    /// 相同 company/agent + active status -> Coalesce（increment=1）。
+    #[test]
+    fn r759_decide_wake_active_status_coalesces() {
+        let existing = make_wake_snapshot("queued", "c-1", "a-1");
+        let incoming = make_wake_input("c-1", "a-1");
+        let action = decide_wake_action(Some(&existing), &incoming);
+        match action {
+            WakeAction::Coalesce { into_id, increment } => {
+                assert_eq!(into_id, "wake-1");
+                assert_eq!(increment, 1);
+            }
+            other => panic!("expected Coalesce, got {:?}", other),
+        }
+    }
+
+    /// is_active_wakeup_status 覆盖 4 个 active statuses。
+    #[test]
+    fn r759_is_active_wakeup_status_covers_four_states() {
+        assert!(is_active_wakeup_status("queued"));
+        assert!(is_active_wakeup_status("requested"));
+        assert!(is_active_wakeup_status("claimed"));
+        assert!(is_active_wakeup_status("deferred_issue_execution"));
+        assert!(!is_active_wakeup_status("completed"));
+        assert!(!is_active_wakeup_status("failed"));
+        assert!(!is_active_wakeup_status(""));
+    }
+
+    /// merge_wake_payloads 合并：existing + incoming 双 None → null。
+    #[test]
+    fn r759_merge_wake_payloads_both_none() {
+        let merged = merge_wake_payloads(None, None);
+        assert_eq!(merged, serde_json::Value::Null);
+    }
 }

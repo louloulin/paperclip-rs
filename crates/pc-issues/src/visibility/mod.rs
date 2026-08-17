@@ -3,6 +3,8 @@
 //! 对应 Node `server/src/services/issue-visibility.ts` 1:1 复刻。
 //! （原 `pc-issue-visibility` crate 已下沉到 `pc-issues::visibility`）。
 
+pub mod types;
+
 /// 字段名常量 —— 与 Drizzle schema 1:1 对齐。
 pub const ISSUES_HIDDEN_AT: &str = "hidden_at";
 pub const ISSUES_HARNESS_KIND: &str = "harness_kind";

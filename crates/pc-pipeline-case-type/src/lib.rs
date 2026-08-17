@@ -79,4 +79,42 @@ mod internal_tests {
         let p = ref_with("pl-1", Some("   "));
         assert_eq!(derive_case_type(&p), "pl-1");
     }
+
+    // ----- R773 edge cases for case_type_matches_pipeline -----
+
+    #[test]
+    fn r773_case_type_matches_returns_true_when_declared_is_none() {
+        let p = ref_with("pl-1", Some("release-notes"));
+        assert!(case_type_matches_pipeline(None, &p));
+    }
+
+    #[test]
+    fn r773_case_type_matches_returns_true_when_declared_is_empty() {
+        let p = ref_with("pl-1", Some("release-notes"));
+        assert!(case_type_matches_pipeline(Some(""), &p));
+    }
+
+    #[test]
+    fn r773_case_type_matches_returns_true_when_declared_matches_derived_key() {
+        let p = ref_with("pl-1", Some("release-notes"));
+        assert!(case_type_matches_pipeline(Some("release-notes"), &p));
+    }
+
+    #[test]
+    fn r773_case_type_matches_returns_true_when_declared_matches_derived_id_fallback() {
+        let p = ref_with("pl-1", None);
+        assert!(case_type_matches_pipeline(Some("pl-1"), &p));
+    }
+
+    #[test]
+    fn r773_case_type_matches_returns_false_when_declared_mismatches() {
+        let p = ref_with("pl-1", Some("release-notes"));
+        assert!(!case_type_matches_pipeline(Some("hotfix"), &p));
+    }
+
+    #[test]
+    fn r773_case_type_matches_handles_whitespace_only_key_fallback() {
+        let p = ref_with("pl-1", Some("   "));
+        assert!(case_type_matches_pipeline(Some("pl-1"), &p));
+    }
 }

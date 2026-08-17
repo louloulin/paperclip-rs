@@ -1444,4 +1444,148 @@ mod tests {
             .any(|w| w.stage_id == "s3" && w.code == PipelineHealthWarningCode::StageNoAutomation));
         assert!(!report.ok);
     }
+
+    // ----- R773 edge cases for compute_pipeline_health -----
+
+    #[test]
+    fn r773_group_warnings_by_stage_returns_empty_map_for_empty_input() {
+        let grouped = group_warnings_by_stage(&[]);
+        assert!(grouped.is_empty());
+    }
+
+    #[test]
+    fn r773_group_warnings_by_stage_preserves_warning_order() {
+        let w = |id: &str, code: PipelineHealthWarningCode| PipelineHealthWarning {
+            code,
+            stage_id: id.to_owned(),
+            stage_key: format!("{id}-k"),
+            stage_name: format!("Stage {id}"),
+            message: format!("msg-{id}"),
+            href: None,
+            href_label: None,
+        };
+        let warnings = vec![
+            w("a", PipelineHealthWarningCode::PausedAgent),
+            w("b", PipelineHealthWarningCode::StageNoAutomation),
+            w("a", PipelineHealthWarningCode::AutomationNoInstructions),
+        ];
+        let grouped = group_warnings_by_stage(&warnings);
+        let a = grouped.get("a").unwrap();
+        assert_eq!(a.len(), 2);
+        assert_eq!(a[0].code, PipelineHealthWarningCode::PausedAgent);
+        assert_eq!(a[1].code, PipelineHealthWarningCode::AutomationNoInstructions);
+    }
+
+    #[test]
+    fn r773_is_pipeline_terminal_stage_kind_returns_false_for_unrecognized() {
+        assert!(!is_pipeline_terminal_stage_kind(Some("review")));
+        assert!(!is_pipeline_terminal_stage_kind(Some("active")));
+        assert!(!is_pipeline_terminal_stage_kind(Some("paused")));
+        assert!(!is_pipeline_terminal_stage_kind(Some("unknown_kind")));
+    }
+
+    #[test]
+    fn r773_compute_pipeline_health_ok_when_stages_fully_configured() {
+        let mut s = stage("s1", "sk1", "Active", "active");
+        s.config = Some(Map::from_iter([(
+            "assigneeAgentId".to_owned(),
+            Value::String("agent-1".to_owned()),
+        )]));
+        s.instructions_body = Some("Do the thing".to_owned());
+        let input = PipelineHealthInput {
+            pipeline_id: "p1".into(),
+            stages: vec![s],
+            agents_by_id: HashMap::from_iter([(
+                "agent-1".to_owned(),
+                PipelineHealthAgentRef {
+                    id: "agent-1".into(),
+                    name: Some("Alice".into()),
+                    status: "active".into(),
+                },
+            )]),
+            pipelines_by_id: HashMap::new(),
+            failed_automations: vec![],
+        };
+        let report = compute_pipeline_health(&input);
+        assert!(report.warnings.is_empty());
+        assert!(report.ok);
+    }
+
+    #[test]
+    fn r773_compute_pipeline_health_reports_failed_automation_dedup() {
+        let stage_id = "s1".to_owned();
+        let failure_a = PipelineHealthFailedAutomationInput {
+            stage_id: stage_id.clone(),
+            stage_key: "sk1".into(),
+            stage_name: "Step 1".into(),
+            case_id: "case-1".into(),
+            case_title: "First Item".into(),
+            error: Some("boom".into()),
+        };
+        let failure_b = PipelineHealthFailedAutomationInput {
+            stage_id: stage_id.clone(),
+            stage_key: "sk1".into(),
+            stage_name: "Step 1".into(),
+            case_id: "case-1".into(),
+            case_title: "First Item".into(),
+            error: Some("boom again".into()),
+        };
+        let input = PipelineHealthInput {
+            pipeline_id: "p1".into(),
+            stages: vec![],
+            agents_by_id: HashMap::new(),
+            pipelines_by_id: HashMap::new(),
+            failed_automations: vec![failure_a, failure_b],
+        };
+        let report = compute_pipeline_health(&input);
+        let count = report
+            .warnings
+            .iter()
+            .filter(|w| w.code == PipelineHealthWarningCode::AutomationFailed)
+            .count();
+        assert_eq!(count, 1, "duplicate failed automations on same case should dedup");
+        assert!(!report.ok);
+    }
+
+    #[test]
+    fn r773_compute_pipeline_health_reports_multiple_failed_automation_cases() {
+        let stage_id = "s1".to_owned();
+        let mk = |case_id: &str, title: &str| PipelineHealthFailedAutomationInput {
+            stage_id: stage_id.clone(),
+            stage_key: "sk1".into(),
+            stage_name: "Step 1".into(),
+            case_id: case_id.into(),
+            case_title: title.into(),
+            error: None,
+        };
+        let input = PipelineHealthInput {
+            pipeline_id: "p1".into(),
+            stages: vec![],
+            agents_by_id: HashMap::new(),
+            pipelines_by_id: HashMap::new(),
+            failed_automations: vec![mk("c1", "Item One"), mk("c2", "Item Two")],
+        };
+        let report = compute_pipeline_health(&input);
+        let failed: Vec<&PipelineHealthWarning> = report
+            .warnings
+            .iter()
+            .filter(|w| w.code == PipelineHealthWarningCode::AutomationFailed)
+            .collect();
+        assert_eq!(failed.len(), 2);
+        assert!(failed.iter().all(|w| w.href.as_deref().unwrap_or("").contains("/items/")));
+    }
+
+    #[test]
+    fn r773_compute_pipeline_health_pipeline_id_propagates_to_report() {
+        let input = PipelineHealthInput {
+            pipeline_id: "pipe-custom-id".into(),
+            stages: vec![],
+            agents_by_id: HashMap::new(),
+            pipelines_by_id: HashMap::new(),
+            failed_automations: vec![],
+        };
+        let report = compute_pipeline_health(&input);
+        assert_eq!(report.pipeline_id, "pipe-custom-id");
+        assert!(report.ok);
+    }
 }

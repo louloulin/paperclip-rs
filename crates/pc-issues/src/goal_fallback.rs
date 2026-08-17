@@ -262,3 +262,90 @@ mod tests {
         assert_eq!(r.as_deref(), Some("cg"));
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r772 {
+    use super::*;
+
+    // ---- Round 772: pc-issues::goal_fallback 边缘测试 ----
+
+    /// resolve_issue_goal_id: 4 优先级分支显式覆盖.
+    #[test]
+    fn r772_resolve_issue_goal_id_priority() {
+        // 1. goal_id 优先
+        let r = resolve_issue_goal_id(ResolveGoalInput {
+            project_id: Some("p1".into()),
+            goal_id: Some("g1".into()),
+            project_goal_id: Some("pg1".into()),
+            default_goal_id: Some("d1".into()),
+        });
+        assert_eq!(r, Some("g1".into()));
+
+        // 2. 无 goal_id + 有 project → project_goal_id
+        let r = resolve_issue_goal_id(ResolveGoalInput {
+            project_id: Some("p1".into()),
+            goal_id: None,
+            project_goal_id: Some("pg1".into()),
+            default_goal_id: Some("d1".into()),
+        });
+        assert_eq!(r, Some("pg1".into()));
+
+        // 3. 无 project → default_goal_id
+        let r = resolve_issue_goal_id(ResolveGoalInput {
+            project_id: None,
+            goal_id: None,
+            project_goal_id: Some("pg1".into()),
+            default_goal_id: Some("d1".into()),
+        });
+        assert_eq!(r, Some("d1".into()));
+
+        // 4. 全部 None → None
+        let r = resolve_issue_goal_id(ResolveGoalInput::default());
+        assert_eq!(r, None);
+    }
+
+    /// resolve_issue_goal_id: 有 project 但无 project_goal_id → None.
+    #[test]
+    fn r772_resolve_project_no_project_goal() {
+        let r = resolve_issue_goal_id(ResolveGoalInput {
+            project_id: Some("p1".into()),
+            goal_id: None,
+            project_goal_id: None,
+            default_goal_id: Some("d1".into()),
+        });
+        assert_eq!(r, None, "有 project 但无 project_goal_id → None (即使有 default)");
+    }
+
+    /// resolve_next_issue_goal_id: 4 种 next 优先级.
+    #[test]
+    fn r772_resolve_next_issue_goal_id_priority() {
+        // 1. 显式 goal_id 优先
+        let r = resolve_next_issue_goal_id(ResolveNextGoalInput {
+            current_project_id: Some("cp".into()),
+            current_goal_id: Some("cg".into()),
+            current_project_goal_id: Some("cpg".into()),
+            project_id: Some("p1".into()),
+            goal_id: Some("ng".into()),
+            project_goal_id: Some("npg".into()),
+            default_goal_id: Some("nd".into()),
+        });
+        assert_eq!(r, Some("ng".into()), "explicit goal_id wins");
+
+        // 2. 无 current → next_fallback
+        let r = resolve_next_issue_goal_id(ResolveNextGoalInput {
+            current_project_id: None,
+            current_goal_id: None,
+            current_project_goal_id: None,
+            project_id: Some("p1".into()),
+            goal_id: None,
+            project_goal_id: Some("npg".into()),
+            default_goal_id: Some("nd".into()),
+        });
+        assert_eq!(r, Some("npg".into()));
+
+        // 3. 全部 None → None
+        let r = resolve_next_issue_goal_id(ResolveNextGoalInput::default());
+        assert_eq!(r, None);
+    }
+}

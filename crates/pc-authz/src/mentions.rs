@@ -394,3 +394,89 @@ mod tests {
         let _ = (md, ids);
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r771 {
+    use super::*;
+
+    // ---- Round 771: pc-authz::mentions 边缘测试 ----
+
+    /// 6 个 mention scheme 常量字符串稳定。
+    #[test]
+    fn r771_mention_scheme_constants() {
+        assert_eq!(AGENT_MENTION_SCHEME, "agent://");
+        assert_eq!(USER_MENTION_SCHEME, "user://");
+        assert_eq!(SKILL_MENTION_SCHEME, "skill://");
+        assert_eq!(ROUTINE_MENTION_SCHEME, "routine://");
+        assert_eq!(PIPELINE_MENTION_SCHEME, "pipeline://");
+        assert_eq!(PROJECT_MENTION_SCHEME, "project://");
+    }
+
+    /// parse_agent_mention_href: 4 种 (valid / wrong-scheme / 空 id / icon).
+    #[test]
+    fn r771_parse_agent_mention_href() {
+        let uuid = "11111111-1111-4111-8111-111111111111";
+        let r = parse_agent_mention_href(&format!("agent://{}", uuid)).unwrap();
+        assert_eq!(r.agent_id.to_string(), uuid);
+        assert_eq!(r.icon, None);
+
+        let r2 = parse_agent_mention_href(&format!("agent://{}?i=rocket", uuid)).unwrap();
+        assert_eq!(r2.icon, Some("rocket".to_string()));
+
+        let r3 = parse_agent_mention_href(&format!("agent://{}?icon=star", uuid)).unwrap();
+        assert_eq!(r3.icon, Some("star".to_string()));
+
+        // wrong scheme
+        assert!(parse_agent_mention_href("user://xxx").is_none());
+        // invalid uuid
+        assert!(parse_agent_mention_href("agent://not-a-uuid").is_none());
+    }
+
+    /// parse_user_mention_href: 2 种 (valid / wrong-scheme).
+    #[test]
+    fn r771_parse_user_mention_href() {
+        let r = parse_user_mention_href("user://u-1").unwrap();
+        assert_eq!(r.user_id, "u-1");
+        assert!(parse_user_mention_href("agent://u-1").is_none());
+    }
+
+    /// extract_agent_mention_ids 从 markdown 去重保序.
+    #[test]
+    fn r771_extract_agent_mention_ids() {
+        let uuid1 = "11111111-1111-4111-8111-111111111111";
+        let uuid2 = "22222222-2222-4222-8222-222222222222";
+        let md = format!("see [a](agent://{}) and [b](agent://{}) and [c](agent://{}).", uuid1, uuid2, uuid1);
+        let ids = extract_agent_mention_ids(&md);
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0].to_string(), uuid1);
+        assert_eq!(ids[1].to_string(), uuid2);
+    }
+
+    /// extract_user_mention_ids 字符串非 UUID.
+    #[test]
+    fn r771_extract_user_mention_ids() {
+        let md = "see [a](user://u-1) and [b](user://u-2).";
+        let ids = extract_user_mention_ids(md);
+        assert_eq!(ids, vec!["u-1".to_string(), "u-2".to_string()]);
+    }
+
+    /// build_agent_mention_href round-trip.
+    #[test]
+    fn r771_build_agent_mention_href() {
+        let uuid = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let href = build_agent_mention_href(uuid, Some("rocket"));
+        let parsed = parse_agent_mention_href(&href).unwrap();
+        assert_eq!(parsed.agent_id, uuid);
+        assert_eq!(parsed.icon, Some("rocket".to_string()));
+    }
+
+    /// build_user_mention_href round-trip.
+    #[test]
+    fn r771_build_user_mention_href() {
+        let href = build_user_mention_href("u-1");
+        assert_eq!(href, "user://u-1");
+        let parsed = parse_user_mention_href(&href).unwrap();
+        assert_eq!(parsed.user_id, "u-1");
+    }
+}

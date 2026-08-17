@@ -556,4 +556,80 @@ mod internal_tests {
         assert_eq!(normalize_skill_slug(Some("Foo Bar")), None);
         assert_eq!(normalize_skill_slug(Some("-leading")), None);
     }
+
+    // ---- Round 768: pc-mentions 6 个 scheme round-trip / parse 边缘测试 ----
+
+    /// project:// 完整 round-trip。
+    #[test]
+    fn r768_project_mention_roundtrip() {
+        let href = build_project_mention_href("abc-123", Some("#ff00aa"));
+        assert_eq!(href, "project://abc-123?c=ff00aa");
+        let parsed = parse_project_mention_href(&href).unwrap();
+        assert_eq!(parsed.project_id, "abc-123");
+        assert_eq!(parsed.color.as_deref(), Some("#ff00aa"));
+    }
+
+    /// agent:// 完整 round-trip。
+    #[test]
+    fn r768_agent_mention_roundtrip() {
+        let href = build_agent_mention_href("a-1", Some("rocket"));
+        assert_eq!(href, "agent://a-1?i=rocket");
+        let parsed = parse_agent_mention_href(&href).unwrap();
+        assert_eq!(parsed.agent_id, "a-1");
+        assert_eq!(parsed.icon.as_deref(), Some("rocket"));
+    }
+
+    /// user:// 完整 round-trip。
+    #[test]
+    fn r768_user_mention_roundtrip() {
+        let href = build_user_mention_href("u-1");
+        assert_eq!(href, "user://u-1");
+        let parsed = parse_user_mention_href(&href).unwrap();
+        assert_eq!(parsed.user_id, "u-1");
+    }
+
+    /// skill:// 完整 round-trip (slug + skill_id)。
+    #[test]
+    fn r768_skill_mention_roundtrip() {
+        let href = build_skill_mention_href("s-1", Some("my-skill"));
+        assert_eq!(href, "skill://s-1?s=my-skill");
+        let parsed = parse_skill_mention_href(&href).unwrap();
+        assert_eq!(parsed.skill_id, "s-1");
+        assert_eq!(parsed.slug.as_deref(), Some("my-skill"));
+    }
+
+    /// routine:// 完整 round-trip。
+    #[test]
+    fn r768_routine_mention_roundtrip() {
+        let href = build_routine_mention_href("r-1");
+        assert_eq!(href, "routine://r-1");
+        let parsed = parse_routine_mention_href(&href).unwrap();
+        assert_eq!(parsed.routine_id, "r-1");
+    }
+
+    /// pipeline:// 完整 round-trip (stage_key)。
+    #[test]
+    fn r768_pipeline_mention_roundtrip() {
+        let href = build_pipeline_mention_href("p-1", Some("design"));
+        assert_eq!(href, "pipeline://p-1?stage=design");
+        let parsed = parse_pipeline_mention_href(&href).unwrap();
+        assert_eq!(parsed.pipeline_id, "p-1");
+        assert_eq!(parsed.stage_key.as_deref(), Some("design"));
+    }
+
+    /// markdown 提取多个 mention（包括去重）。
+    #[test]
+    fn r768_extract_mentions_dedup() {
+        let md = "see [a](project://p-1) and [b](project://p-1) and [c](project://p-2).";
+        let ids = extract_project_mention_ids(md);
+        assert_eq!(ids, vec!["p-1".to_string(), "p-2".to_string()]);
+    }
+
+    /// 非目标 scheme 的 href 不被解析。
+    #[test]
+    fn r768_wrong_scheme_rejected() {
+        assert!(parse_project_mention_href("agent://a-1").is_none());
+        assert!(parse_agent_mention_href("user://u-1").is_none());
+        assert!(parse_routine_mention_href("project://p-1").is_none());
+    }
 }

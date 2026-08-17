@@ -908,4 +908,50 @@ mod tests {
             BudgetPolicyStatus::Ok => None,
         }
     }
+    // ---- Round 768: pc-budgets::service 边缘测试 ----
+
+    /// infer_status: amount <= 0 → Ok（不论 observed 大小）。
+    #[test]
+    fn r768_infer_status_zero_amount_always_ok() {
+        assert_eq!(infer_status(0, 0, 50), BudgetPolicyStatus::Ok);
+        assert_eq!(infer_status(99, 0, 50), BudgetPolicyStatus::Ok);
+        assert_eq!(infer_status(-1, 0, 50), BudgetPolicyStatus::Ok);
+    }
+
+    /// infer_status: warn_percent <= 0 跳过 warning。
+    #[test]
+    fn r768_infer_status_no_warning() {
+        assert_eq!(infer_status(99, 100, 0), BudgetPolicyStatus::Ok);
+        assert_eq!(infer_status(50, 100, -1), BudgetPolicyStatus::Ok);
+    }
+
+    /// infer_status: observed == amount → HardStop。
+    #[test]
+    fn r768_infer_status_at_limit_is_hardstop() {
+        assert_eq!(infer_status(100, 100, 50), BudgetPolicyStatus::HardStop);
+    }
+
+    /// infer_status: ceil 阈值的精确边界（50% × 99% amount）。
+    #[test]
+    fn r768_infer_status_warn_threshold_ceil() {
+        // 50% of 99 = 49.5 → ceil = 50
+        assert_eq!(infer_status(50, 99, 50), BudgetPolicyStatus::Warning);
+        assert_eq!(infer_status(49, 99, 50), BudgetPolicyStatus::Ok);
+    }
+
+    /// normalize_scope_name: company 类型保留原名（不 trim）。
+    #[test]
+    fn r768_normalize_scope_name_company_keeps() {
+        assert_eq!(normalize_scope_name("company", "Acme Inc"), "Acme Inc");
+        assert_eq!(normalize_scope_name("company", "  spaced  "), "  spaced  ");
+    }
+
+    /// normalize_scope_name: 非 company → trim，空白 fallback scope_type。
+    #[test]
+    fn r768_normalize_scope_name_other_trims() {
+        assert_eq!(normalize_scope_name("agent", "  agent-1  "), "agent-1");
+        assert_eq!(normalize_scope_name("agent", "   "), "agent");
+        assert_eq!(normalize_scope_name("routine", ""), "routine");
+    }
+
 }

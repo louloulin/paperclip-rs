@@ -271,6 +271,7 @@ impl MonitorPatchOutcome {
 #[cfg(test)]
 mod apply_to_row_tests {
     use super::*;
+    use pc_core::Timestamp;
     use serde_json::json;
     use uuid::Uuid;
 

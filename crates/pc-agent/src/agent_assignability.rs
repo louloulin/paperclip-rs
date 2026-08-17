@@ -277,3 +277,197 @@ fn empty_detail(company_id: uuid::Uuid, agent_id: uuid::Uuid) -> AgentAssignment
         ancestor_chain: Vec::new(),
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests {
+    //! R778 - pure data tests for assignability public types.
+    //! Note: types derive only Serialize (not Deserialize).
+
+    use super::*;
+
+    #[test]
+    fn r778_assignment_kind_serializes_work() {
+        let work = serde_json::to_string(&AgentAssignmentKind::Work).unwrap();
+        assert!(work.contains("work"), "work not in {}", work);
+    }
+
+    #[test]
+    fn r778_assignment_kind_serializes_routine() {
+        let routine = serde_json::to_string(&AgentAssignmentKind::Routine).unwrap();
+        assert!(routine.contains("routine"), "routine not in {}", routine);
+    }
+
+    #[test]
+    fn r778_assignment_kind_is_copy_and_eq() {
+        let a = AgentAssignmentKind::Work;
+        let b = a;
+        assert_eq!(a, b);
+        assert_ne!(AgentAssignmentKind::Work, AgentAssignmentKind::Routine);
+    }
+
+    #[test]
+    fn r778_conflict_reason_serializes_all_variants() {
+        let pairs = [
+            (AgentAssignmentConflictReason::PendingApproval, "pending_approval"),
+            (AgentAssignmentConflictReason::AssigneeTerminated, "assignee_terminated"),
+            (AgentAssignmentConflictReason::AssigneeUnknownStatus, "assignee_unknown_status"),
+            (AgentAssignmentConflictReason::AncestorTerminated, "ancestor_terminated"),
+            (AgentAssignmentConflictReason::AncestorMissing, "ancestor_missing"),
+            (AgentAssignmentConflictReason::AncestorCycle, "ancestor_cycle"),
+            (AgentAssignmentConflictReason::AncestorDepthExceeded, "ancestor_depth_exceeded"),
+        ];
+        for (reason, expected_substr) in pairs {
+            let json = serde_json::to_string(&reason).unwrap();
+            assert!(json.contains(expected_substr), "expected {} in {}", expected_substr, json);
+        }
+    }
+
+    #[test]
+    fn r778_conflict_reason_distinct_pairs() {
+        assert_ne!(AgentAssignmentConflictReason::PendingApproval, AgentAssignmentConflictReason::AssigneeTerminated);
+        assert_ne!(AgentAssignmentConflictReason::AncestorCycle, AgentAssignmentConflictReason::AncestorMissing);
+        assert_ne!(AgentAssignmentConflictReason::AncestorDepthExceeded, AgentAssignmentConflictReason::AncestorTerminated);
+    }
+
+    #[test]
+    fn r778_ancestor_chain_entry_serializes_camel_case() {
+        let entry = AncestorChainEntry {
+            id: "agent-1".to_string(),
+            company_id: "co-1".to_string(),
+            name: "Alice".to_string(),
+            status: "active".to_string(),
+            reports_to: Some("agent-0".to_string()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("companyId"));
+        assert!(json.contains("co-1"));
+        assert!(json.contains("reportsTo"));
+        assert!(json.contains("agent-0"));
+    }
+
+    #[test]
+    fn r778_ancestor_chain_entry_serializes_reports_to_null() {
+        let entry = AncestorChainEntry {
+            id: "root-1".to_string(),
+            company_id: "co-1".to_string(),
+            name: "Root".to_string(),
+            status: "active".to_string(),
+            reports_to: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("null"), "got: {}", json);
+    }
+
+    #[test]
+    fn r778_conflict_detail_code_is_agent_not_assignable() {
+        let detail = AgentAssignmentConflictDetail {
+            code: "agent_not_assignable",
+            reason: AgentAssignmentConflictReason::AncestorMissing,
+            company_id: "co-1".to_string(),
+            assignee_agent_id: "agent-1".to_string(),
+            invalid_ancestor_agent_id: None,
+            missing_ancestor_agent_id: Some("agent-99".to_string()),
+            ancestor_chain: Vec::new(),
+        };
+        assert_eq!(detail.code, "agent_not_assignable");
+        assert_eq!(detail.reason, AgentAssignmentConflictReason::AncestorMissing);
+    }
+
+    #[test]
+    fn r778_conflict_detail_serializes_with_chain() {
+        let detail = AgentAssignmentConflictDetail {
+            code: "agent_not_assignable",
+            reason: AgentAssignmentConflictReason::AncestorTerminated,
+            company_id: "co-1".to_string(),
+            assignee_agent_id: "agent-1".to_string(),
+            invalid_ancestor_agent_id: Some("agent-2".to_string()),
+            missing_ancestor_agent_id: None,
+            ancestor_chain: vec![AncestorChainEntry {
+                id: "agent-2".to_string(),
+                company_id: "co-1".to_string(),
+                name: "Bob".to_string(),
+                status: "terminated".to_string(),
+                reports_to: None,
+            }],
+        };
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(json.contains("invalidAncestorAgentId"));
+        assert!(json.contains("agent-2"));
+        assert!(json.contains("ancestorChain"));
+        assert!(json.contains("Bob"));
+    }
+
+    #[test]
+    fn r778_error_not_found_display() {
+        let err = AgentAssignmentError::NotFound;
+        assert_eq!(err.to_string(), "Assignee agent not found");
+    }
+
+    #[test]
+    fn r778_error_cross_company_display() {
+        let err = AgentAssignmentError::CrossCompany;
+        assert_eq!(err.to_string(), "Assignee must belong to same company");
+    }
+
+    #[test]
+    fn r778_error_conflict_serializes_with_detail_flatten() {
+        let detail = AgentAssignmentConflictDetail {
+            code: "agent_not_assignable",
+            reason: AgentAssignmentConflictReason::PendingApproval,
+            company_id: "co-1".to_string(),
+            assignee_agent_id: "agent-1".to_string(),
+            invalid_ancestor_agent_id: None,
+            missing_ancestor_agent_id: None,
+            ancestor_chain: Vec::new(),
+        };
+        let err = AgentAssignmentError::Conflict {
+            message: "Cannot assign work to pending approval agents".to_string(),
+            detail,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("kind"));
+        assert!(json.contains("conflict"));
+        assert!(json.contains("companyId"));
+        assert!(json.contains("co-1"));
+        assert!(json.contains("assigneeAgentId"));
+        assert!(json.contains("reason"));
+        assert!(json.contains("pending_approval"));
+        assert!(json.contains("code"));
+        assert!(json.contains("agent_not_assignable"));
+    }
+
+    #[test]
+    fn r778_error_conflict_display_includes_message() {
+        let detail = AgentAssignmentConflictDetail {
+            code: "agent_not_assignable",
+            reason: AgentAssignmentConflictReason::AssigneeTerminated,
+            company_id: "co-1".to_string(),
+            assignee_agent_id: "agent-1".to_string(),
+            invalid_ancestor_agent_id: None,
+            missing_ancestor_agent_id: None,
+            ancestor_chain: Vec::new(),
+        };
+        let err = AgentAssignmentError::Conflict {
+            message: "Cannot assign routines to terminated agents".to_string(),
+            detail,
+        };
+        let s = err.to_string();
+        assert!(s.contains("Cannot assign routines to terminated agents"), "got: {}", s);
+    }
+
+    #[test]
+    fn r778_options_default_has_no_kind() {
+        let opts = AssertAssignableOptions::default();
+        assert!(opts.kind.is_none());
+    }
+
+    #[test]
+    fn r778_options_with_kind_clone() {
+        let opts = AssertAssignableOptions {
+            kind: Some(AgentAssignmentKind::Routine),
+        };
+        let cloned = opts.clone();
+        assert_eq!(cloned.kind, Some(AgentAssignmentKind::Routine));
+    }
+}

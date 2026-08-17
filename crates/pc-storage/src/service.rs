@@ -684,4 +684,65 @@ mod tests {
         assert_eq!(svc.provider_name(), "mock");
         assert_eq!(svc.bucket(), "my-bucket");
     }
+    // ---- Round 770: pc-storage::service 边缘测试 ----
+
+    #[test]
+    fn r770_sanitize_segment_empty_fallback() {
+        assert_eq!(sanitize_segment(""), "file");
+        assert_eq!(sanitize_segment("   "), "file");
+        assert_eq!(sanitize_segment("!!!@@@"), "file");
+    }
+
+    #[test]
+    fn r770_sanitize_segment_collapses_underscores() {
+        assert_eq!(sanitize_segment("a___b"), "a_b");
+        assert_eq!(sanitize_segment("a@@@b"), "a_b");
+        assert_eq!(sanitize_segment("a--b"), "a--b", "dashes are valid (kept)");
+    }
+
+    #[test]
+    fn r770_sanitize_segment_truncates() {
+        let long = "a".repeat(500);
+        let r = sanitize_segment(&long);
+        assert_eq!(r.len(), 120, "MAX_SEGMENT_LENGTH = 120");
+    }
+
+    #[test]
+    fn r770_normalize_namespace() {
+        assert_eq!(normalize_namespace(""), "misc");
+        assert_eq!(normalize_namespace("///"), "misc");
+        assert_eq!(normalize_namespace("foo"), "foo");
+        assert_eq!(normalize_namespace("foo/bar"), "foo/bar");
+        assert_eq!(normalize_namespace("foo//bar///baz"), "foo/bar/baz");
+    }
+
+    #[test]
+    fn r770_split_filename_variants() {
+        assert_eq!(split_filename(None), ("file".to_string(), String::new()));
+        assert_eq!(split_filename(Some("foo.txt")), ("foo".to_string(), "txt".to_string()));
+        assert_eq!(split_filename(Some("foo.tar.gz")), ("foo.tar".to_string(), "gz".to_string()));
+        assert_eq!(split_filename(Some("a/b/c.png")), ("c".to_string(), "png".to_string()));
+        assert_eq!(split_filename(Some("MY-FILE.TXT")), ("MY-FILE".to_string(), "txt".to_string()));
+    }
+
+    #[test]
+    fn r770_hash_buffer_deterministic() {
+        let h1 = hash_buffer(b"hello");
+        let h2 = hash_buffer(b"hello");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+        assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
+        let h3 = hash_buffer(b"world");
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn r770_ensure_company_prefix() {
+        let cid = "comp-1";
+        let ok = "comp-1/2026/01/file.txt";
+        assert!(ensure_company_prefix(cid, ok).is_ok());
+        assert!(ensure_company_prefix(cid, "comp-2/2026/foo.txt").is_err());
+        assert!(ensure_company_prefix(cid, "comp-1/../etc/passwd").is_err());
+        assert!(ensure_company_prefix(cid, "").is_err());
+    }
 }

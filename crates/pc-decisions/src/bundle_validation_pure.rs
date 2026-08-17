@@ -176,4 +176,55 @@ mod internal_tests {
             assert_eq!(BundleState::from_str(s.as_str()), Some(s));
         }
     }
+
+    // ---- Round 760: pc-decisions bundle_validation_pure 集成测试 ----
+
+    /// normalize_bundle_filter: limit 钳制到 [1, 500]。
+    #[test]
+    fn r760_normalize_bundle_filter_clamps_limit() {
+        let f = DecisionBundleFilter { state: None, origin_issue_id: None, limit: Some(0) };
+        assert_eq!(normalize_bundle_filter(f).limit, Some(1));
+        let f = DecisionBundleFilter { state: None, origin_issue_id: None, limit: Some(9999) };
+        assert_eq!(normalize_bundle_filter(f).limit, Some(500));
+        let f = DecisionBundleFilter { state: None, origin_issue_id: None, limit: Some(50) };
+        assert_eq!(normalize_bundle_filter(f).limit, Some(50));
+    }
+
+    /// normalize_bundle_filter: state trim + lowercase。
+    #[test]
+    fn r760_normalize_bundle_filter_lowercases_state() {
+        let f = DecisionBundleFilter { state: Some("  DONE  ".into()), origin_issue_id: None, limit: None };
+        let out = normalize_bundle_filter(f);
+        assert_eq!(out.state, Some("done".to_string()));
+    }
+
+    /// is_valid_bundle_state: 5 个合法状态 + case-insensitive。
+    #[test]
+    fn r760_is_valid_bundle_state_set() {
+        for s in ["done", "open", "cancelled", "pending", "expired"] {
+            assert!(is_valid_bundle_state(s), "{} should be valid", s);
+            assert!(is_valid_bundle_state(&s.to_uppercase()), "{} uppercase should be valid", s);
+            assert!(is_valid_bundle_state(&format!("  {}  ", s)), "{} with whitespace should be valid", s);
+        }
+        assert!(!is_valid_bundle_state("running"));
+        assert!(!is_valid_bundle_state("unknown"));
+        assert!(!is_valid_bundle_state(""));
+    }
+
+    /// require_non_nil: nil UUID 报错。
+    #[test]
+    fn r760_require_non_nil_catches_nil_uuid() {
+        let nil = Uuid::nil();
+        assert!(require_non_nil(nil, "issue_id").is_err());
+        let real = Uuid::new_v4();
+        assert!(require_non_nil(real, "issue_id").is_ok());
+    }
+
+    /// validate_bundle_title: empty 报错。
+    #[test]
+    fn r760_validate_bundle_title() {
+        assert!(validate_bundle_title("hello").is_ok());
+        assert!(validate_bundle_title("").is_err());
+        assert!(validate_bundle_title("   ").is_err());
+    }
 }

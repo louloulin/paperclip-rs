@@ -210,4 +210,58 @@ mod internal_tests {
         let j = serde_json::to_string(&ToolAccessDecision::DeferRuntime).unwrap();
         assert_eq!(j, "\"defer_runtime\"");
     }
+
+    // ---- Round 767: pc-tool side_effect_idempotency 集成测试 ----
+
+    /// risk_rank: 5 档 mapping (read=1, write=2, destructive=3, critical=4, unknown=0)。
+    #[test]
+    fn r767_risk_rank_mapping() {
+        assert_eq!(risk_rank("read"), 1);
+        assert_eq!(risk_rank("low"), 1);
+        assert_eq!(risk_rank("write"), 2);
+        assert_eq!(risk_rank("medium"), 2);
+        assert_eq!(risk_rank("destructive"), 3);
+        assert_eq!(risk_rank("high"), 3);
+        assert_eq!(risk_rank("critical"), 4);
+        assert_eq!(risk_rank("unknown"), 0);
+        assert_eq!(risk_rank(""), 0);
+    }
+
+    /// audit_outcome: 4 个决策 → 4 个 outcome。
+    #[test]
+    fn r767_audit_outcome_decision_mapping() {
+        use super::*;
+        assert!(matches!(audit_outcome(ToolAccessDecision::Allow), AuditOutcome::Success));
+        assert!(matches!(audit_outcome(ToolAccessDecision::RequireApproval), AuditOutcome::Pending));
+        assert!(matches!(audit_outcome(ToolAccessDecision::DeferRuntime), AuditOutcome::Timeout));
+        assert!(matches!(audit_outcome(ToolAccessDecision::Deny), AuditOutcome::Denied));
+    }
+
+    /// side_effect_idempotency_key: 同输入 → 同 hash (format: "side_effect:<sha256-hex>")。
+    #[test]
+    fn r767_idempotency_key_deterministic() {
+        let ctx = IdempotencyContext {
+            company_id: Some("c1".into()),
+            run_id: Some("r1".into()),
+            issue_id: Some("i1".into()),
+            application_id: Some("a1".into()),
+            connection_id: Some("conn1".into()),
+            catalog_entry_id: Some("cat1".into()),
+            tool_name: Some("t1".into()),
+        };
+        let k1 = side_effect_idempotency_key(&ctx, "args-hash-1");
+        let k2 = side_effect_idempotency_key(&ctx, "args-hash-1");
+        assert_eq!(k1, k2, "same inputs should produce same key");
+        assert!(k1.starts_with("side_effect:"));
+        assert_eq!(k1.len(), "side_effect:".len() + 64, "side_effect: prefix + SHA-256 hex");
+
+        // 不同 arguments_hash → 不同 key
+        let k3 = side_effect_idempotency_key(&ctx, "args-hash-2");
+        assert_ne!(k1, k3);
+
+        // 缺字段也能计算
+        let empty = IdempotencyContext::default();
+        let k4 = side_effect_idempotency_key(&empty, "");
+        assert!(k4.starts_with("side_effect:"));
+    }
 }

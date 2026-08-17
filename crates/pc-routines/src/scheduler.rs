@@ -21,11 +21,11 @@ use pc_repos::routine::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::activity_gate::{evaluate_activity_gate, ActivityGateVerdict};
+use crate::activity_gate::{ActivityGateVerdict, evaluate_activity_gate};
 use crate::service::{RoutineHook, RoutineHookEvent};
 use crate::worktree_eligibility::{
-    evaluate_automatic_dispatch_eligibility, is_truthy_runtime_env_value, runtime_instance_id,
     AutomaticRoutineDispatchEligibility, AutomaticRoutineSuppressionReason,
+    evaluate_automatic_dispatch_eligibility, is_truthy_runtime_env_value, runtime_instance_id,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -177,9 +177,15 @@ pub async fn tick_scheduled_triggers(
         } else {
             None
         };
-        let Some(next_run_at) = trigger.next_run_at else { continue };
-        let Some(cron_expr) = trigger.cron_expression.as_deref() else { continue };
-        let Some(timezone) = trigger.timezone.as_deref() else { continue };
+        let Some(next_run_at) = trigger.next_run_at else {
+            continue;
+        };
+        let Some(cron_expr) = trigger.cron_expression.as_deref() else {
+            continue;
+        };
+        let Some(timezone) = trigger.timezone.as_deref() else {
+            continue;
+        };
 
         let in_worktree = ctx.in_worktree();
         let eligibility = if in_worktree {
@@ -230,7 +236,6 @@ pub async fn tick_scheduled_triggers(
         if claimed.is_none() {
             continue;
         }
-    
 
         if project_paused || worktree_suppressed {
             let reason = if worktree_suppressed {
@@ -264,7 +269,7 @@ pub async fn tick_scheduled_triggers(
                     Some(details_for_activity_gate(&verdict)),
                 )
                 .await?;
-                    continue;
+                continue;
             }
         }
 
@@ -363,14 +368,12 @@ pub async fn record_skipped_run(
     .await
     .map_err(|e| pc_errors::internal(format!("insert skipped run: {e}")))?;
 
-    sqlx::query(
-        r#"UPDATE routines SET last_triggered_at = $2, updated_at = now() WHERE id = $1"#,
-    )
-    .bind(routine.id)
-    .bind(triggered_at)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| pc_errors::internal(format!("touch routine on skipped: {e}")))?;
+    sqlx::query(r#"UPDATE routines SET last_triggered_at = $2, updated_at = now() WHERE id = $1"#)
+        .bind(routine.id)
+        .bind(triggered_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| pc_errors::internal(format!("touch routine on skipped: {e}")))?;
 
     sqlx::query(
         r#"UPDATE routine_triggers SET
@@ -392,7 +395,11 @@ pub async fn record_skipped_run(
         .await
         .map_err(|e| pc_errors::internal(format!("commit skipped run: {e}")))?;
 
-    let actor_id = if trigger.kind == "webhook" { "routine-webhook" } else { "routine-scheduler" };
+    let actor_id = if trigger.kind == "webhook" {
+        "routine-webhook"
+    } else {
+        "routine-scheduler"
+    };
     let mut log_details = serde_json::json!({
         "routineId": routine.id,
         "triggerId": trigger.id,
@@ -472,9 +479,8 @@ pub async fn verify_webhook_signature(
     .ok_or_else(|| pc_errors::not_found("webhook trigger not found"))?;
 
     let (secret_id_opt, _signing_mode) = trigger_secret;
-    let secret_id = secret_id_opt.ok_or_else(|| {
-        pc_errors::conflict("webhook trigger has no secret configured")
-    })?;
+    let secret_id = secret_id_opt
+        .ok_or_else(|| pc_errors::conflict("webhook trigger has no secret configured"))?;
 
     let secret_value: String = sqlx::query_scalar(
         r#"SELECT value FROM secrets WHERE id = $1 AND company_id = (
@@ -499,11 +505,15 @@ pub async fn verify_webhook_signature(
         }
     }
     let (Some(ts), Some(sig_hex)) = (ts, sig_hex) else {
-        return Err(pc_errors::validation("webhook signature header missing t/v1 fields"));
+        return Err(pc_errors::validation(
+            "webhook signature header missing t/v1 fields",
+        ));
     };
     let delta = (now_unix_ms - ts).abs();
     if delta > i64::from(replay_window_sec) * 1000 {
-        return Err(pc_errors::validation("webhook signature outside replay window"));
+        return Err(pc_errors::validation(
+            "webhook signature outside replay window",
+        ));
     }
 
     let key = secret_value.as_bytes();
@@ -515,9 +525,8 @@ pub async fn verify_webhook_signature(
         p
     };
     let expected_hex = hmac_sha256_hex(key, &payload);
-    let provided = hex_decode(&sig_hex).ok_or_else(|| {
-        pc_errors::validation("webhook signature hex decode failed")
-    })?;
+    let provided = hex_decode(&sig_hex)
+        .ok_or_else(|| pc_errors::validation("webhook signature hex decode failed"))?;
     if constant_time_eq(expected_hex.as_bytes(), &provided) {
         Ok(())
     } else {
@@ -579,7 +588,13 @@ mod tests {
     fn compute_catch_up_sub_hourly_returns_one() {
         let now = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
         let trigger_next = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        let (count, _) = compute_catch_up("*/15 * * * *", "UTC", trigger_next, now, "enqueue_missed_with_cap");
+        let (count, _) = compute_catch_up(
+            "*/15 * * * *",
+            "UTC",
+            trigger_next,
+            now,
+            "enqueue_missed_with_cap",
+        );
         assert_eq!(count, 1);
     }
 
@@ -606,9 +621,157 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn r754_compute_catch_up_cap_counts_missed_ticks() {
+        // 每小时一次，过去 3 个小时触发窗口，需补跑 3 次
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 15, 30, 0).unwrap();
+        let trigger_next = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let (count, claimed_next) = compute_catch_up(
+            "0 * * * *",
+            "UTC",
+            trigger_next,
+            now,
+            "enqueue_missed_with_cap",
+        );
+        assert_eq!(count, 4, "应累计 12:00 / 13:00 / 14:00 / 15:00 四次补跑");
+        assert!(claimed_next >= now, "claimed_next 必须推进到 now 之后");
+    }
+
+    #[test]
+    fn r754_compute_catch_up_cap_respects_max_limit() {
+        // 25+ 小时未跑，MAX_CATCH_UP_RUNS=25 必须触发上限
+        let now = Utc.with_ymd_and_hms(2026, 1, 2, 13, 30, 0).unwrap();
+        let trigger_next = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let (count, _) = compute_catch_up(
+            "0 * * * *",
+            "UTC",
+            trigger_next,
+            now,
+            "enqueue_missed_with_cap",
+        );
+        assert_eq!(count, MAX_CATCH_UP_RUNS);
+    }
+
+    #[test]
+    fn r754_scheduler_context_in_worktree_and_instance_id_resolution() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("PAPERCLIP_IN_WORKTREE".to_string(), "1".to_string());
+        env.insert(
+            "PAPERCLIP_RUNTIME_INSTANCE_ID".to_string(),
+            "inst-r754".to_string(),
+        );
+        let ctx = RoutineSchedulerContext {
+            env,
+            current_instance_id: Some("explicit".to_string()),
+        };
+        assert!(ctx.in_worktree());
+        assert_eq!(
+            ctx.effective_instance_id().as_deref(),
+            Some("explicit"),
+            "显式传入的 instance_id 优先级高于 env"
+        );
+
+        let ctx_fallback = RoutineSchedulerContext {
+            env: ctx.env.clone(),
+            current_instance_id: None,
+        };
+        assert_eq!(
+            ctx_fallback.effective_instance_id().as_deref(),
+            Some("inst-r754"),
+            "当显式未提供时回退到 env"
+        );
+
+        let ctx_off = RoutineSchedulerContext {
+            env: std::collections::HashMap::new(),
+            current_instance_id: None,
+        };
+        assert!(!ctx_off.in_worktree());
+        assert!(ctx_off.effective_instance_id().is_none());
+    }
+
+    #[test]
+    fn r754_next_cron_tick_invalid_expression_returns_none() {
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        assert!(next_cron_tick("not a cron", "UTC", after).is_none());
+    }
+
     fn hmac_sha256_format() {
         let hex = hmac_sha256_hex(b"key", b"payload");
         assert_eq!(hex.len(), 64);
         assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ---- Round 758: pc-routines::scheduler compute_catch_up edge cases ----
+
+    /// catch_up_policy != enqueue_missed_with_cap 时，run_count=1, next=cron next。
+    #[test]
+    fn r758_compute_catch_up_skip_missed() {
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let (run_count, next_at) = compute_catch_up(
+            "0 * * * *",
+            "UTC",
+            after,
+            after + chrono::Duration::hours(5),
+            "skip_missed",
+        );
+        assert_eq!(run_count, 1);
+        assert!(next_at > after + chrono::Duration::hours(5));
+    }
+
+    /// sub-hourly cron 即使 enqueue_missed_with_cap 也只 run 1 次。
+    #[test]
+    fn r758_compute_catch_up_sub_hourly_caps_to_one() {
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let (run_count, _next_at) = compute_catch_up(
+            "*/5 * * * *",
+            "UTC",
+            after,
+            after + chrono::Duration::hours(5),
+            "enqueue_missed_with_cap",
+        );
+        assert_eq!(run_count, 1, "sub-hourly always runs 1 catch-up");
+    }
+
+    /// hourly cron + enqueue_missed_with_cap + 5h drift -> 5 catch-up runs + 1。
+    #[test]
+    fn r758_compute_catch_up_hourly_drift() {
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let (run_count, next_at) = compute_catch_up(
+            "0 * * * *",
+            "UTC",
+            after,
+            after + chrono::Duration::hours(5),
+            "enqueue_missed_with_cap",
+        );
+        // from hour 0 to hour 5: 0,1,2,3,4,5 = 6 ticks，但 trigger_next_run_at=0 在 cursor 上
+        // while cursor <= now (now = 5): cursor=0 (count=1, next=1), cursor=1 (count=2, next=2), ..., cursor=5 (count=6, next=6)
+        assert!(run_count >= 5, "expected at least 5 hourly catch-up runs, got {}", run_count);
+        assert!(next_at > after + chrono::Duration::hours(5));
+    }
+
+    /// MAX_CATCH_UP_RUNS 上限：长 drift 不超过 MAX。
+    #[test]
+    fn r758_compute_catch_up_respects_max_cap() {
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let (run_count, _next_at) = compute_catch_up(
+            "0 * * * *",
+            "UTC",
+            after,
+            after + chrono::Duration::hours(1000),  // 极大 drift
+            "enqueue_missed_with_cap",
+        );
+        // MAX_CATCH_UP_RUNS 在 source 顶部声明，必须 <= MAX。
+        assert!(run_count <= 1000, "should be capped by MAX_CATCH_UP_RUNS");
+    }
+
+    /// next_cron_tick 在跨日情况：23:59 + 1h cron = 次日 0:00。
+    #[test]
+    fn r758_next_cron_tick_across_midnight() {
+        let after = Utc.with_ymd_and_hms(2026, 1, 1, 23, 59, 0).unwrap();
+        let next = next_cron_tick("0 * * * *", "UTC", after);
+        assert!(next.is_some());
+        let next_dt = next.unwrap();
+        assert_eq!(next_dt.format("%H").to_string(), "00", "next tick should be hour 0");
+        assert_eq!(next_dt.format("%Y-%m-%d").to_string(), "2026-01-02", "next tick should be 2026-01-02");
     }
 }

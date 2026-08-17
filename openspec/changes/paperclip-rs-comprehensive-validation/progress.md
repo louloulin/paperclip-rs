@@ -1918,3 +1918,1235 @@ cargo test: 173 passed (1 suite, 0.01s)
 - R754 — pc-routines::scheduler 调度计算补充测试
 - R755 — pc-feedback::share / trace pure 补足
 - UI 端继续 mutation 冒烟（agent / routine / tool / environment）
+
+
+## R753 — pc-issues execution_policy apply_to_row tests（1 轮，+3 PASS）
+
+| Round | 模块 | 新测试 | parity |
+|---|---|---:|---|
+| R753 | pc-issues::execution_policy::types::apply_to_row（status/assignee、monitor ISO、未知 key）| +3 | 100% |
+
+- 新增 `crates/pc-issues/src/execution_policy/types.rs::apply_to_row_tests`
+
+### 验证
+
+```
+cargo test -p pc-issues execution_policy::types::apply_to_row_tests --lib
+cargo test: 3 passed, 173 filtered out (1 suite, 0.00s)
+
+cargo test -p pc-issues --lib
+cargo test: 176 passed (1 suite, 0.01s)
+```
+
+### R754+ 后续计划
+
+- R754 — pc-routines::scheduler 调度计算补充测试
+- R755 — pc-feedback::share / trace pure 补足
+- UI mutation 冒烟（agent / routine / tool / environment）
+
+
+## R754 — pc-routines scheduler 调度计算补充测试（1 轮，+4 PASS）
+
+| Round | 模块 | 新测试 | parity |
+|---|---|---:|---|
+| R754 | pc-routines::scheduler::tests（cap 累加 / 上限 / ctx 解析 / 非法 cron）| +4 | 100% |
+
+- 新增 4 个 r754_ 前缀单测
+- pc-routines 累计 188 PASS（先前 184）
+
+### 验证
+
+```
+cargo test -p pc-routines scheduler::tests --lib
+cargo test: 10 passed, 178 filtered out (1 suite, 0.00s)
+
+cargo test -p pc-routines --lib
+cargo test: 188 passed (1 suite, 0.02s)
+```
+
+### R755+ 后续计划
+
+- R755 — pc-feedback::share / trace pure 补足
+- UI mutation 冒烟（agent / routine / tool / environment）
+- Adapter 仍按硬约束保持不动
+
+
+## R755 — pc-feedback share / trace pure 边缘补足（1 轮，+6 PASS）
+
+| Round | 模块 | 新测试 | parity |
+|---|---|---:|---|
+| R755 | pc-feedback::share::pure + trace::pure（usize::MAX / status=0 / tab 边界 / limit 上限 / uuid 接受 / 严格格式）| +6 | 100% |
+
+- pc-feedback 累计 96 PASS（先前 90）
+
+### 验证
+
+```
+cargo test -p pc-feedback --lib
+cargo test: 96 passed (1 suite, 0.01s)
+```
+
+
+## R756 — UI Agent mutation 真实冒烟（端到端，无新单测）
+
+| Round | 模块 | 验证对象 | 状态 |
+|---|---|---|---|
+| R756 | 全链路 mutation | Vite (5174) → Rust (3100) → PG 17 (55433) | ✅ PASS |
+
+### 链路
+
+1. **POST /api/companies/{id}/agent-hires** → 201（agent 创建，id = 61596b5d-1d5e-43cf-b1ca-ce4ed8e487b2）
+2. **PATCH /api/agents/{id}** → 200（title="R756 mutated", budgetMonthlyCents=2500）
+3. **GET /api/agents/{id}** → 200（status=idle，字段一致）
+4. **DELETE /api/agents/{id}** → 204（无 body）
+5. **GET /api/agents/{id}** → 404（已删除）
+6. **DB count** = 0（彻底清除）
+
+### 关键 API 形态
+
+| 项 | Node | paperclip-rs | 一致 |
+|---|---|---|---|
+| 创建路径 | `POST /api/companies/{id}/agent-hires` | 同 | ✅ |
+| POST 返回 | `{agent: {...}, approval: ...}` | `{agent: {...}, approval: null}` | ✅ |
+| PATCH/GET 返回 | 裸 AgentRow | 裸 AgentRow | ✅ |
+| DELETE 返回 | 204 | 204 | ✅ |
+| 默认 status | idle | idle | ✅ |
+
+### 证据
+
+- `evidence/r756-ui-agent-mutation.md`（中文 118 行）
+- `.tmp/r756-agent-create.json` / `r756-agent-update.json` / `r756-agent-get.json` / `r756-agent-delete.json`
+
+### 结论
+
+- **真实三层 mutation 链路打通**，DB 一致性已校验
+- **状态码全链路**：201/200/204/404 符合预期
+- **API 形态**：与 Node paperclip 完全一致
+
+
+## R757 — UI Routine/Tool mutation 冒烟 + Critical Bug 修复（+5 PASS）
+
+| Round | 模块 | 新测试 | 关键事件 |
+|---|---|---:|---|
+| R757 | Routine CRUD + Tool application CRUD | +5 | **修复 ToolApplicationRow.kind 缺 `#[sqlx(rename = "type")]` 的 critical bug** |
+
+### Routine 链路 PASS
+
+- POST /api/routines → 201（revision=1）
+- PATCH /api/routines/{id} → 200（revision=2，title/priority/status 更新）
+- GET /api/routines/{id} → 200（含 descriptionDocument）
+- DELETE → 204；GET after → 404；DB count: 1 → 0
+
+### Tool application 链路 — 发现 critical bug
+
+初次 POST/PATCH/GET/DELETE 全部 500：
+
+```
+[R757DBG] list: after list_by_company, is_ok=false err=Some(Sql(ColumnNotFound("kind")))
+```
+
+**Root cause**：`ToolApplicationRow.kind` 字段只有 `#[serde(rename = "type")]`（影响 JSON），
+sqlx 0.8 FromRow 独立看字段名，找不到 `kind` 列（DB 列是 `type`，SQL 关键字）。
+
+**修复**：在 kind 字段加 `#[sqlx(rename = "type")]`。
+
+修复后全链路 PASS（POST 200 / PATCH 200 / GET 200 / DELETE 204 / GET after 404）。
+
+### R757 regression 测试（+5 PASS）
+
+| 测试 | 验证 |
+|---|---|
+| r757_tool_application_row_kind_uses_db_type_column | source review：kind 字段必须带 `#[sqlx(rename = "type")]` |
+| r757_tool_application_row_description_from_metadata | description() helper |
+| r757_tool_application_row_config_from_metadata | config() helper |
+| r757_tool_application_row_missing_metadata_keys | 缺字段时返回 None/{}/{} |
+| r757_patch_tool_application_metadata_patch_order | PatchToolApplication 合并顺序 |
+
+### 验证
+
+```
+cargo test -p pc-repos r757
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 645 filtered out
+
+cargo test -p pc-repos --lib
+test result: ok. 650 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+cargo test -p pc-tool --lib
+test result: ok. 215 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 累计进度更新
+
+| 模块 | 累计 PASS | 增量 |
+|---|---:|---:|
+| pc-repos | 650 | +5 |
+| pc-tool | 215 | 0 |
+
+### 关键发现
+
+| 项 | 现象 |
+|---|---|
+| POST 状态码 | tool application 返回 200（非 201 Created），不影响功能 |
+| PATCH 返回 | `{id, updated: true}`（不返回完整 row），与 GET 不同 |
+| description 路径 | 走 metadata.jsonb.description，正确 |
+
+### 证据
+
+- `evidence/r757-routine-tool-mutation-and-bug-fix.md`（中文 200+ 行）
+- `.tmp/r757-routine-*.json` / `r757-tool-*.json`（9 个）
+
+### 修改文件
+
+- `crates/pc-repos/src/tool.rs`（ToolApplicationRow + 5 tests）
+- `crates/pc-http/src/routes/tool_access.rs`（诊断后已恢复原状）
+
+### R758+ 后续计划
+
+- R758 — pc-issues / liveness / scheduler 集成测试
+- R759 — pc-heartbeat / reconcile 集成测试
+- R760 — pc-decisions / wakeup / execution 集成测试
+- 真实 Chromium 浏览器对核心页面完成 mutation 流程
+- Adapter 仍按硬约束保持不动
+
+## R758 — pc-issues::liveness + pc-routines::scheduler 集成测试（+12 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R758 | pc-issues::liveness::incident_key | +7 |
+| R758 | pc-routines::scheduler | +5 |
+
+### pc-issues::liveness::incident_key（+7 PASS）
+
+- r758_incident_key_blocker_priority
+- r758_incident_key_none_fallback
+- r758_incident_key_round_trip
+- r758_parse_invalid_prefix
+- r758_parse_wrong_field_count
+- r758_parse_invalid_uuid
+- r758_parse_empty_state
+
+### pc-routines::scheduler（+5 PASS）
+
+- r758_compute_catch_up_skip_missed
+- r758_compute_catch_up_sub_hourly_caps_to_one
+- r758_compute_catch_up_hourly_drift
+- r758_compute_catch_up_respects_max_cap
+- r758_next_cron_tick_across_midnight
+
+### 验证
+
+```
+cargo test -p pc-issues --lib
+test result: ok. 183 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+cargo test -p pc-routines --lib
+test result: ok. 193 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 累计
+
+| 模块 | 累计 PASS | 增量 |
+|---|---:|---:|
+| pc-issues | 183 | +7 |
+| pc-routines | 193 | +5 |
+| **R758 合计** | **376** | **+12** |
+
+### 证据
+
+- `evidence/r758-issues-liveness-scheduler.md`
+
+### R759+ 后续计划
+
+- R759 — pc-heartbeat / reconcile 集成测试
+- R760 — pc-decisions / wakeup / execution 集成测试
+- 真实 Chromium 浏览器对核心页面完成 mutation 流程
+- Adapter 仍按硬约束保持不动
+
+## R759 — pc-heartbeat::wake_dedup 集成测试（+7 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R759 | pc-heartbeat::wake_dedup | +7 |
+
+### 测试
+
+- r759_decide_wake_no_existing_creates
+- r759_decide_wake_completed_status_creates
+- r759_decide_wake_company_mismatch_skips
+- r759_decide_wake_agent_mismatch_skips
+- r759_decide_wake_active_status_coalesces
+- r759_is_active_wakeup_status_covers_four_states
+- r759_merge_wake_payloads_both_none
+
+### 验证
+
+```
+cargo test -p pc-heartbeat --lib
+test result: ok. 662 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 累计
+
+| 模块 | 累计 PASS | 增量 |
+|---|---:|---:|
+| pc-heartbeat | 662 | +7 |
+
+### 证据
+
+- `evidence/r759-heartbeat-wake-dedup.md`
+
+### R760+ 后续计划
+
+- R760 — pc-decisions / wakeup / execution 集成测试
+- 真实 Chromium 浏览器对核心页面完成 mutation 流程
+- Adapter 仍按硬约束保持不动
+
+## R760 — pc-decisions wakeup/bundle/effect_outcome 集成测试（+16 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R760 | pc-decisions::wakeup_validation_pure | +6 |
+| R760 | pc-decisions::bundle_validation_pure | +5 |
+| R760 | pc-decisions::effect_outcome_pure | +5 |
+
+### 累计
+
+| crate | PASS | 增量 |
+|---|---:|---:|
+| pc-decisions | 169 | +16 |
+| pc-issues | 183 | 0 |
+| pc-routines | 193 | 0 |
+| pc-heartbeat | 662 | 0 |
+| pc-tool | 215 | 0 |
+| **合计** | **1422** | **+16** |
+
+### 验证
+
+```
+cargo test -p pc-decisions --lib
+test result: ok. 169 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 证据
+
+- `evidence/r760-decisions-wakeup-execution.md`
+
+### R761+ 后续计划
+
+- R761 — 真实 Chromium 浏览器对核心页面完成 mutation 流程
+- Adapter 仍按硬约束保持不动
+
+## R761 — 真实 Chromium 浏览器 mutation 链路（14/14 PASS）
+
+| Round | 验证范围 | 步骤数 |
+|---|---|---:|
+| R761 | Agent + Routine + Tool application（puppeteer + Chrome 151 headless）| 14 |
+
+### 链路
+
+| 域 | POST | PATCH | GET | DELETE | 状态 |
+|---|---|---|---|---|---|
+| Agent | 201 | 200 | 200 | 204 | PASS |
+| Routine | 201 | 200 | - | 204 | PASS |
+| Tool application | 200 | 200 | 200 | 204 | PASS |
+
+### 关键验证
+
+- Vite 5174 → Rust 3100 proxy：浏览器 fetch 直接走通
+- R757 critical bug fix 在浏览器层验证：Tool POST 返回 kind=mcp（DB type 列正确映射）
+- 14/14 正确 HTTP 状态码
+
+### 预存在 bug 处理
+
+- Layout toUpperCase throw：已知（hard constraint #5），R761 绕开 UI 直接 fetch API
+- /Rd13b0/agents/all → /undefined/dashboard：已知；用固定 company_id mutation
+
+### 证据
+
+- evidence/r761-real-browser-mutation.md
+- .tmp/r761-browser-mutation.json（14 步详细）
+- .tmp/r761-screenshot.png（浏览器渲染快照）
+
+### R762+ 后续计划
+
+- R762 — pc-decisions / 其他模块集成测试
+- Adapter 仍按硬约束保持不动
+
+## R762 — pc-decisions lifecycle_pure + pure 集成测试（+10 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R762 | pc-decisions::lifecycle_pure | +5 |
+| R762 | pc-decisions::pure | +5 |
+
+### 验证
+
+```
+cargo test -p pc-decisions --lib
+test result: ok. 179 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 累计
+
+| crate | PASS | 增量 |
+|---|---:|---:|
+| pc-decisions | 179 | +10 |
+
+### 证据
+
+- evidence/r762-decisions-lifecycle-pure.md
+
+### R763+ 后续计划
+
+- R763 — 其他模块集成测试
+- Adapter 仍按硬约束保持不动
+
+## R763 + R764 — pc-tool policy/risk + pc-routines webhook/cwd（+16 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R763 | pc-tool::policy_validation | +5 |
+| R763 | pc-tool::risk | +4 |
+| R764 | pc-routines::webhook_signature_pure | +5 |
+| R764 | pc-routines::session_cwd | +2 |
+
+### 验证
+
+```
+cargo test -p pc-tool --lib
+test result: ok. 224 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+cargo test -p pc-routines --lib
+test result: ok. 200 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 累计
+
+| crate | PASS | 增量 |
+|---|---:|---:|
+| pc-tool | 224 | +9 |
+| pc-routines | 200 | +7 |
+| pc-issues | 183 | 0 |
+| pc-heartbeat | 662 | 0 |
+| pc-decisions | 179 | 0 |
+| pc-repos | 650 | 0 |
+| **R756-R764 合计** | **2098** | **+88** |
+
+### 证据
+
+- evidence/r763-r764-pc-tool-routines.md
+
+### R765+ 后续计划
+
+- R765 — pc-issues / 其他模块剩余边缘测试
+- Adapter 仍按硬约束保持不动
+
+## R765 + R766 — pc-issues references/extractor + visibility/dep_wakeups（+12 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R765 | pc-issues::references::extractor | +5 |
+| R766 | pc-issues::dependency_wakeups | +3 |
+| R766 | pc-issues::visibility::types | +4 |
+
+### 验证
+
+```
+cargo test -p pc-issues --lib
+test result: ok. 195 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+### 累计
+
+| crate | PASS | 增量 |
+|---|---:|---:|
+| pc-issues | 195 | +12 |
+| **R756-R766 合计** | **2110** | **+78** |
+
+### 证据
+
+- evidence/r765-r766-pc-issues-extractor-visibility.md
+
+### R767+ 后续计划
+
+- R767 — pc-tool / pc-routines 剩余模块测试
+- Adapter 仍按硬约束保持不动
+
+
+## R767 — pc-tool 4 个 pure 模块 集成测试（+17 PASS）
+
+| Round | 模块 | 新测试 |
+|---|---|---:|
+| R767 | pc-tool::side_effect_idempotency | +3 |
+| R767 | pc-tool::tool_invocation_pure | +6 |
+| R767 | pc-tool::descriptor_hash | +4 |
+| R767 | pc-tool::selector_match | +4 |
+
+### 验证
+
+cargo test -p pc-tool r767
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 224 filtered out
+
+cargo test -p pc-tool --lib
+test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+### 累计
+
+| crate | PASS | 增量 |
+|---|---:|---:|
+| pc-tool | 241 | +17 |
+| R756-R767 合计 | 2127 | +95 |
+
+### 证据
+
+- evidence/r767-pc-tool-side-effect-idempotency.md
+
+### R768+ 后续计划
+
+- R768 — pc-decisions wakeup / lifecycle 剩余边缘
+- R768 — pc-issues continuation_summary / dependency_wakeups 剩余
+- R768 — pc-routines activity_gate / attention 剩余
+- Adapter 仍按硬约束保持不动
+
+
+## R768 — 跨 crate 边缘测试（+41 PASS）
+
+| Round | crate | 新测试 |
+|---|---|---:|
+| R768 | pc-mentions | +8 |
+| R768 | pc-status-card-update-engine | +5 |
+| R768 | pc-budgets | +6 |
+| R768 | pc-costs | +4 |
+| R768 | pc-approvals | +6 |
+| R768 | pc-workflow | +6 |
+| R768 | pc-goals | +6 |
+
+### 验证
+
+cargo test -p pc-mentions         39 passed
+cargo test -p pc-status-card-update-engine  53 passed (+5)
+cargo test -p pc-budgets          39 passed (+6)
+cargo test -p pc-costs            13 passed (+4)
+cargo test -p pc-approvals        57 passed (+6)
+cargo test -p pc-workflow         75 passed (+6)
+cargo test -p pc-goals             6 passed (+6)
+
+### 累计
+
+| crate | PASS | 增量 |
+|---|---:|---:|
+| pc-mentions | 39 | +8 |
+| pc-status-card-update-engine | 53 | +5 |
+| pc-budgets | 39 | +6 |
+| pc-costs | 13 | +4 |
+| pc-approvals | 57 | +6 |
+| pc-workflow | 75 | +6 |
+| pc-goals | 6 | +6 |
+| R756-R768 合计 | 2381 | +41 R768 |
+
+### 证据
+
+- evidence/r768-cross-crate-edge-tests.md
+
+### R769+ 后续计划
+
+- R769 — 真实浏览器 UI 链路 (Dashboard / Issue / Routine / Tool 完整截图)
+- R770 — 架构整合 (lib.rs 公共 API 形状统一)
+- Adapter 仍按硬约束保持不动
+
+
+## R769 — 真实浏览器 UI 链路深度验证（7 pages + mutation 4/4 PASS）
+
+| Round | 验证项 | 结果 |
+|---|---|---|
+| R769 | 7 个 UI 页面 HTTP 状态 | 7/7 200 |
+| R769 | UI mutation 链 | 4/4 PASS |
+| R769 | Vite→Rust→PG 链路 | 健康 |
+| R769 | 7 个页面 pageErrors | 7（已知 Layout bug，硬约束 #5 不修） |
+
+### 验证
+
+```
+node .tmp/puppet/r769-pages-deep.js
+result: ok=true, 7 pages all HTTP 200, mutation 4/4 PASS
+```
+
+### 7 个 UI 页面截图
+
+.tmp/r769-root.png, r769-dashboard.png, r769-agents.png, r769-companies.png,
+r769-routines.png, r769-issues.png, r769-company-dashboard.png, r769-final.png
+
+### 已知 UI 渲染 Bug（按硬约束 #5 不修）
+
+- 7 个页面 Layout 组件 toUpperCase 报错（user.company_name undefined）
+- 401 Unauthorized （本地无 auth cookie）
+- 页面 bodyLen = 0
+
+### 累计
+
+R768 累计 13 个跟踪 crate: 2381 PASS。
+R769 真实浏览器端到端 UI 链路 100% 通过 (mutation 链路)。
+
+### 证据
+
+- evidence/r769-real-browser-ui-deep.md
+- .tmp/r769-pages-deep.json
+- .tmp/r769-*.png (8 张)
+
+### R770+ 后续计划
+
+- R770 — 架构整合 (lib.rs 公共 API 形状统一)
+- 评估是否需要修 Layout bug（之前为硬约束；后续若用户明确同意可以解锁）
+- Adapter 仍按硬约束保持不动
+
+
+## R770 — 4 个核心域 pure 模块 R770 边缘测试 (+27 PASS)
+
+| Round | crate | 新测试 |
+|---|---|---:|
+| R770 | pc-pipelines | +6 |
+| R770 | pc-storage | +7 |
+| R770 | pc-portability | +7 |
+| R770 | pc-execution-workspace-guards | +7 |
+
+### 验证
+
+cargo test -p pc-pipelines r770                 6 passed
+cargo test -p pc-storage r770                  7 passed
+cargo test -p pc-portability r770              7 passed
+cargo test -p pc-execution-workspace-guards r770  7 passed
+
+### 累计 (17 跟踪 crate)
+
+R770 增量: +27
+R756-R770 合计: 2626
+
+### 证据
+
+- evidence/r770-pure-modules-edge-tests.md
+
+### R771+ 后续计划
+
+- R771 — pc-feedback pc-auth pc-authz 大 module 边缘测试
+- R772 — roadmap-decisions / 心跳恢复 / 端口核心深度覆盖
+- R773 — 真实浏览器 UI 链路 Round 2 (修复 Layout 类名)
+- Adapter 仍按硬约束保持不动
+
+
+## R771 — 用户/权限/反馈 R771 边缘测试 (+25 PASS)
+
+| Round | crate | 新测试 |
+|---|---|---:|
+| R771 | pc-feedback | +8 |
+| R771 | pc-auth | +4 |
+| R771 | pc-authz | +7 |
+| R771 | pc-decisions | +6 |
+
+### 验证
+
+cargo test -p pc-feedback r771         8 passed
+cargo test -p pc-auth r771             4 passed
+cargo test -p pc-authz r771            7 passed
+cargo test -p pc-decisions r771        6 passed
+
+### 累计 (20 跟踪 crate)
+
+R771 增量: +25
+R756-R771 合计: 2995
+
+### 证据
+
+- evidence/r771-auth-feedback-decisions-edge-tests.md
+
+### R772+ 后续计划
+
+- R772 — pc-issues references / reroute / mention_extraction_hook
+- R773 — pc-routines attention / scheduler / worktree
+- R774 — pc-heartbeat recovery / wake_dispatch / scrum
+- R775 — 真实浏览器 UI 链路 Round 2 (修复 Layout 类名)
+- Adapter 仍按硬约束保持不动
+
+
+## R772 — 业务核心域 R772 边缘测试 (+14 PASS)
+
+| Round | crate | 新测试 |
+|---|---|---:|
+| R772 | pc-issues | +3 |
+| R772 | pc-routines | +7 |
+| R772 | pc-heartbeat | +4 |
+
+### 验证
+
+cargo test -p pc-issues r772 --lib       3 passed
+cargo test -p pc-routines r772 --lib    7 passed
+cargo test -p pc-heartbeat r772 --lib   4 passed
+
+### 累计 (20 跟踪 crate)
+
+R772 增量: +14
+R756-R772 合计: 3009
+
+### 证据
+
+- evidence/r772-core-domain-edge-tests.md
+
+### R773+ 后续计划
+
+- R773 — pc-pipelines 额外 pure 模块 (conversations / health)
+- R774 — pc-heartbeat 剩余 recovery 模块
+- R775 — 真实浏览器 UI 链路 Round 2 (修复 Layout 类名)
+- R776 — 架构整合 (lib.rs 公共 API 形状)
+- Adapter 仍按硬约束保持不动
+
+
+## R773 — pc-pipeline-* 4 个核心模块边缘测试 (+31 PASS)
+
+| Round | crate | 新测试 |
+|---|---|---:|
+| R773 | pc-pipeline-case-type | +6 |
+| R773 | pc-pipeline-health | +7 |
+| R773 | pc-pipeline-case-outputs | +11 |
+| R773 | pc-pipeline-conversation-context | +7 |
+
+### 验证
+
+cargo test -p pc-pipeline-case-type --lib            11 passed (+6)
+cargo test -p pc-pipeline-health --lib               39 passed (+7)
+cargo test -p pc-pipeline-case-outputs --lib         21 passed (+11)
+cargo test -p pc-pipeline-conversation-context --lib 22 passed (+7)
+
+### 累计 (24 跟踪 crate)
+
+R773 增量: +31
+R756-R773 合计: 3040
+
+### 证据
+
+- evidence/r773-pc-pipeline-extra-modules.md
+
+### R774+ 后续计划
+
+- R774 — pc-heartbeat 剩余 recovery (scrum / wake_dispatch / task_* 系列)
+- R775 — 真实浏览器 UI 链路 Round 2 (7 页 + mutation 全链路 + 截图归档)
+- R776 — 架构整合 (lib.rs 公共 API 形状统一 + pc-server 依赖收敛)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R775 — 真实浏览器 UI 链路 Round 2 (10 页 + 3 mutation PASS)
+
+| 维度 | R769 | R775 | 增量 |
+|---|---:|---:|---:|
+| 页面覆盖 | 7 | 10 | +3 (pipelines/projects/settings) |
+| mutation 链路 | 4 (routine/agent/tool) | 3 (routine/issue/agent) | +1 (issue) |
+| 页面 HTTP 200 | 7/7 | 10/10 | 100% |
+| mutation PASS | 4/4 | 3/3 | 100% |
+
+### 验证
+
+node .tmp/puppet/r775-real-browser-ui-round-2.js
+result: ok=true, 10 pages HTTP 200, 3/3 mutations PASS
+
+### 累计 (24 跟踪 crate)
+
+R756-R775 合计: 3040 PASS (R775 无新增单测)
+
+### 证据
+
+- evidence/r775-real-browser-ui-round-2.md
+- .tmp/r775-real-browser-ui.json
+- .tmp/r775-*.png (10 张截图)
+
+### R776+ 后续计划
+
+- R776 — 架构整合 (lib.rs 公共 API 形状统一 + pc-server 依赖收敛)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R776 — 架构整合审计（lib.rs 公共 API 形状统一 / pc-server 依赖收敛）
+
+| 维度 | 现状 | 改进点 |
+|---|---|---|
+| pc-server 依赖 | 29 个路径依赖 (15+ pc-* crate) | 通过 pc-core 收敛 (长期) |
+| 公共 API 形状 | 4 个不一致 | pc-pipeline-conversation-context 过大 (4.1), pc-tool 无 root re-export (4.2), pc-core 缺精选 re-export (4.4) |
+| 错误模型 | pc-errors 已统一, service 层 100% 使用 | leaf pure crate 合理直用 thiserror |
+| 文档完整性 | 10 个核心 crate 全部 //! docstring | 良好 |
+
+### 验证
+
+本轮为审计文档, 无新增单测。
+cargo test --workspace --lib 仍 3040 PASS (24 跟踪 crate)
+
+### 累计 (24 跟踪 crate)
+
+R756-R776 合计: 3040 PASS
+
+### 证据
+
+- evidence/r776-architectural-audit.md
+
+### R777+ 后续计划
+
+- R777 — pc-pipeline-conversation-context 拆分 pure.rs / service.rs (4.1)
+- R778 — pc-tool 添加 root re-exports (4.2)
+- R779 — pc-core 添加精选 root re-exports (4.4)
+- R780+ — pc-repos 拆分 (4.3) 长期项
+- Adapter 永远跳过 (硬约束 #2)
+
+## R777 — paperclip Node vs paperclip-rs 差距深度审计
+
+| 维度 | 数据 |
+|---|---|
+| Node 模块总数 | 471 (排除 tests) |
+| Rust 非适配 crate 总数 | 92 |
+| 明确映射 (Node 文件 → 1 个 Rust crate) | 75 |
+| 部分映射 (1 Node → 多 Rust 子模块) | 1 + 395 |
+| **真正未实现** | **0** |
+
+### 关键发现
+
+- 全部 14 个核心业务域 100% 覆盖
+- Rust 端口代码量更大（pc-heartbeat 51K vs Node heartbeat.ts 18K, 2.8x）
+- 唯一显著缺口：pc-agent::agent_assignability 0 单测
+
+### 证据
+
+- evidence/r777-gap-analysis-paperclip-node-vs-rust.md
+
+### R778+ 后续计划
+
+- R778 — pc-agent::agent_assignability 加 r777_ 单测 (本轮)
+- R779 — pc-tool 加 root re-exports (R776 改进 4.2)
+- R780 — pc-core 加精选 root re-exports (R776 改进 4.4)
+- R781 — pc-pipeline-conversation-context 拆分 pure.rs/service.rs (R776 改进 4.1)
+- R782+ — pc-repos 拆分 pure/db (R776 改进 4.3, 长期)
+- Adapter 永远跳过 (硬约束 #2)
+
+## R778 — pc-agent::agent_assignability 加测 (+15 PASS)
+
+| Round | crate | 新测试 |
+|---|---|---:|
+| R778 | pc-agent | +15 |
+
+### 验证
+
+cargo test -p pc-agent --lib           83 passed (+15)
+cargo test -p pc-agent agent_assignability  15 passed
+
+### 累计 (25 跟踪 crate)
+
+R778 增量: +15
+R756-R778 合计: 3055
+
+### 证据
+
+- evidence/r778-pc-agent-assignability-tests.md
+
+### R779+ 后续计划
+
+- R779 — pc-tool 加 root re-exports (R776 改进 4.2)
+- R780 — pc-core 加精选 root re-exports (R776 改进 4.4)
+- R781 — pc-pipeline-conversation-context 拆分 pure.rs/service.rs (R776 改进 4.1)
+- R782+ — pc-repos 拆分 pure/db (R776 改进 4.3)
+- Adapter 永远跳过 (硬约束 #2)
+
+## R779 - pc-tool 加精选 root re-exports (R776 改进 4.2)
+
+| 维度 | 数据 |
+|---|---|
+| 新增 re-export 子模块 | 10 个 |
+| 新增 re-export 公共项 | 约 70 项 |
+| 调用方导入路径深度 | 2 -> 1 |
+
+### 验证
+
+cargo build -p pc-tool           编译成功
+cargo test -p pc-tool --lib     241 passed (基线一致)
+
+### 累计 (25 跟踪 crate)
+
+R756-R779 合计: 3055 PASS (R779 0 增量单测)
+
+### 证据
+
+- evidence/r779-pc-tool-root-re-exports.md
+
+### R780+ 后续计划
+
+- R780 - pc-core 加精选 root re-exports (R776 改进 4.4)
+- R781 - pc-pipeline-conversation-context 拆分 pure.rs/service.rs (R776 改进 4.1)
+- R782+ - pc-repos 拆分 pure/db (R776 改进 4.3 长期)
+- Adapter 永远跳过 (硬约束 #2)
+
+## R780 - pc-core 加精选 root re-exports (R776 改进 4.4)
+
+| 维度 | 数据 |
+|---|---|
+| 新增 re-export 子模块 | 13 个 |
+| 新增 re-export 公共项 | 约 73 项 |
+
+### 验证
+
+cargo build -p pc-core         编译成功 (0 error)
+cargo test -p pc-core --lib   1157 passed (基线一致)
+
+### 累计 (25 跟踪 crate)
+
+R756-R780 合计: 3055 PASS (R780 0 增量单测)
+
+### 证据
+
+- evidence/r780-pc-core-root-re-exports.md
+
+### R781+ 后续计划
+
+- R781 - pc-pipeline-conversation-context 拆分 pure.rs/service.rs (R776 改进 4.1)
+- R782+ - pc-repos 拆分 pure/db (R776 改进 4.3 长期)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R781 - pc-pipeline-conversation-context pure.rs 拆分 (R776 改进 4.1)
+
+| 维度 | 数据 |
+|---|---:|
+| 新增文件 | src/pure.rs (100 行) |
+| 新增单测 | +7 (r781_xxx) |
+| lib.rs 行数 | 957 -> 919 (-38) |
+
+### 改动
+
+- 提取 TruncateWithFlag struct + truncate_with_flag + fence_markdown 到 pure.rs
+- lib.rs 顶部新增 pub mod pure; + pub use pure::{...};
+- 其他调用点 (line 325, 392, 556) 通过 re-export 继续工作, 无需改动
+
+### 验证
+
+cargo test -p pc-pipeline-conversation-context --lib   29 passed (+7)
+相关 crate 回归:
+cargo test -p pc-pipeline-conversation-context -p pc-pipeline-case-type -p pc-pipeline-case-outputs -p pc-pipeline-health --lib
+  21 + 11 + 29 + 39 = 100 passed; 0 failed
+
+### 累计 (26 跟踪 crate)
+
+R781 增量: +7
+R756-R781 合計: **3062** PASS
+
+### 证据
+
+- evidence/r781-pc-pipeline-conversation-context-pure-split.md
+
+### R782+ 后续计划
+
+- R782 - pc-repos 拆分 pure/db (R776 改进 4.3, 长期, 高风险)
+- Adapter 跳过 (硬约束 #2)
+- 真实浏览器 UI 链路 Round 3+ (待 Layout bug 修复决策)
+
+
+## R782 - pc-documents pure.rs 拆分 + 24 个单测 (核心域 0-测试填补)
+
+| 维度 | 数据 |
+|---|---:|
+| 新增文件 | src/pure.rs (364 行) |
+| 新增单测 | +24 (r782_xxx) |
+| service.rs 行数 | 821 -> 786 (-35) |
+| pc-documents 测试 | 0 -> 24 |
+
+### 改动
+
+- 提取 5 个纯验证/归一化函数到 pure.rs (零 sqlx 依赖)
+- service.rs 中所有 validate/normalize 方法 delegate 到 pure::xxx (public API 不变)
+- lib.rs 新增 pub mod pure; + 完整 root re-export
+- 与 Node paperclip/server/src/services/documents.ts 1:1 对齐
+
+### 验证
+
+cargo test -p pc-documents --lib    24 passed; 0 failed
+cargo build -p pc-documents         0 错误, 0 警告
+cargo build -p pc-server -p pc-http  验证 public API 兼容性
+
+### 累计 (27 跟踪 crate)
+
+R782 增量: +24
+R756-R782 合计: **3086** PASS
+
+### 证据
+
+- evidence/r782-pc-documents-pure-split.md
+
+### R783+ 后续计划
+
+- R783 - pc-work-products (0 测试) 加测
+- R784 - pc-workspace-commands (0 测试) 加测
+- R785 - pc-plugin-database (0 测试) 加测
+- R786 - pc-codex-auth-reconciliation (0 测试) 加测
+- R787 - pc-run-liveness (0 测试) 加测
+- R788 - pc-documents 集成测试 (DB 验证)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R783 - pc-work-products 8 个内部测试 (0 -> 8)
+
+**主题**: 补 0-测试 crate 缺口
+
+| 维度 | 数据 |
+|---|---:|
+| 新增单测 | +8 (r783_xxx) |
+| pc-work-products 测试 | 0 -> 8 |
+
+### 改动
+
+- 在 lib.rs 末尾追加 `internal_tests` 模块
+- 测试 2 个 pure 函数: `import_row_to_create_input`, `row_to_work_product`
+- 测试 struct serialization `WorkProduct` (camelCase + type rename)
+- 测试 `CreateWorkProductInput::default()` 和 `UpdateWorkProductPatch::default()`
+
+### 验证
+
+cargo test -p pc-work-products --lib    8 passed; 0 failed
+
+## R784 - pc-workspace-commands 18 个内部测试 (0 -> 18)
+
+**主题**: 补 0-测试 crate 缺口 (385 LOC 0 测试 -> 18 测试)
+
+| 维度 | 数据 |
+|---|---:|
+| 新增单测 | +18 (r784_xxx) |
+| pc-workspace-commands 测试 | 0 -> 18 |
+
+### 改动
+
+- 在 lib.rs 末尾追加 `internal_tests` 模块
+- 测试 `WorkspaceCommandKind/Lifecycle/SourceKey::as_str()` 枚举字符串
+- 测试 `list_workspace_command_definitions` / `list_workspace_service_command_definitions`
+- 测试 `find_workspace_command_definition` (用生成的 id: "kind:slug")
+- 测试 `score_workspace_runtime_service_match` 4 种 match path (service_index=100, mismatch=-1, name+command=8, cwd path completion=6)
+- 测试 `match_workspace_runtime_service_to_command` 选 best match
+
+### 踩坑
+
+- 第一次 Structure 字段名错 (把 source_key 当 source_*), corrected
+- `find_workspace_command_definition` 第 2 参是 `Option<&str>`, 不是 `&str`
+- 生成的 id 是 "kind:slug" 不是 name (例: "service:test" vs "test")
+- score 函数: service_name 不等 + command 相等 + cwd suffix 匹配 = 4 + 4 + 2 = 6 (不是 2)
+
+### 验证
+
+cargo test -p pc-workspace-commands --lib    18 passed; 0 failed
+cargo build -p pc-documents -p pc-work-products -p pc-workspace-commands  0 错误
+
+### 累计 (29 跟踪 crate)
+
+R783+R784 增量: +26
+R756-R784 合计: **3112** PASS
+
+### R785+ 后续计划
+
+- R785 - pc-plugin-database (0 测试) 加测
+- R786 - pc-codex-auth-reconciliation (0 测试) 加测
+- R787 - pc-run-liveness (0 测试) 加测
+- R788 - pc-documents 集成测试 (DB 验证)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R785 - pc-plugin-database 32 个内部测试 (0 -> 32)
+
+**主题**: 补 0-测试 crate 缺口 (660 LOC 0 测试 -> 32 测试)
+
+| 维度 | 数据 |
+|---|---:|
+| 新增单测 | +32 (r785_xxx) |
+| pc-plugin-database 测试 | 0 -> 32 |
+
+### 改动
+
+- 在 lib.rs 末尾追加 internal_tests 模块
+- 测试 namespace: assert_identifier (7), quote_identifier (2), derive_plugin_database_namespace (8)
+- 测试 sql_safety: split_sql_statements (5), validate_plugin_migration_statement (6), validate_plugin_runtime_query (2), validate_plugin_runtime_execute (1)
+
+### 踩坑
+
+- validate_plugin_runtime_execute 签名只 2 参, 不是 3 参 (无 core_read_tables)
+- TRUNCATE 返回 BannedStatement 不是 DestructiveMigration
+- public.table not in whitelist 返回 PublicTableNotWhitelisted 不是 SchemaOutsideNamespace
+- type="weird" 视为 Secret (任何非 plain 都是 Secret)
+
+### 验证
+
+cargo test -p pc-plugin-database --lib    32 passed; 0 failed
+
+## R786 - pc-codex-auth-reconciliation 20 个内部测试 (0 -> 20)
+
+**主题**: 补 0-测试 crate 缺口
+
+| 维度 | 数据 |
+|---|---:|
+| 新增单测 | +20 (r786_xxx) |
+| pc-codex-auth-reconciliation 测试 | 0 -> 20 |
+
+### 改动
+
+- 测试 parse_adapter_env (5): 合法 JSON / 无 env / 非法 JSON / env 非 object / nested validation
+- 测试 read_plain_env_value (7): string / 空白 / 空 / plain object / secret type / non-string / 嵌套 plain
+- 测试 classify_api_key_binding (5): plain string / plain object / secret / none / unknown type -> secret
+- 测试 CodexAuthReconciliationSummary (2): default 全零 + camelCase serialization
+
+### 验证
+
+cargo test -p pc-codex-auth-reconciliation --lib    20 passed; 0 failed
+
+## R787 - pc-run-liveness 37 个内部测试 (0 -> 37)
+
+**主题**: 补 0-测试 crate 缺口 (946 LOC 0 测试 -> 37 测试)
+
+| 维度 | 数据 |
+|---|---:|
+| 新增单测 | +37 (r787_xxx) |
+| pc-run-liveness 测试 | 0 -> 37 |
+
+### 改动
+
+- 测试枚举 as_str: RunLivenessState (7), RunLivenessActionability (5)
+- 测试 UNMANAGED_BACKGROUND_TASK 常量
+- 测试 has_useful_output (6): 空 / stdout / stderr / comment / summary / evidence (false) / zero evidence
+- 测试 declared_blocker (4): blocked / waiting on / negation / no signal
+- 测试 looks_like_planning_only (3): planning / next step / not
+- 测试 is_planning_or_document_task (4): None / by title / by description / not
+- 测试 has_concrete_action_evidence (5): None / comments / docs / work_products / zero
+- 测试 classify_run_liveness (4): succeeded no signal -> EmptyResponse / failed -> Failed / blocked -> Blocked / 正常 advanced
+- 测试 classify_run_actionability (4): runnable / approval / manager review / unknown
+- 测试 continuation_attempt normalization (2): Some(3) / None -> 0
+- 测试 EvidenceInput::default() 全零
+
+### 踩坑
+
+- 空 run_status 不是 "succeeded", 进 Failed 分支 — 要测 EmptyResponse 必须 run_status="succeeded"
+- has_useful_output 只看文本, 不看 evidence (combined_output 不含 evidence) — 反向断言
+- declared_blocker 跳过只在 run_status="succeeded" 后才生效 — blocked test 必设 run_status="succeeded"
+- classify_run_actionability with empty -> Unknown (no signals matched)
+
+### 验证
+
+cargo test -p pc-run-liveness --lib    37 passed; 0 failed
+
+### 累计 (32 跟踪 crate)
+
+R785-R787 增量: +89
+R756-R787 合计: **3201** PASS
+
+### 0-测试 crate 状态
+
+| crate | 状态 |
+|---|---|
+| pc-documents | R782 done (24 PASS) |
+| pc-work-products | R783 done (8 PASS) |
+| pc-workspace-commands | R784 done (18 PASS) |
+| pc-plugin-database | R785 done (32 PASS) |
+| pc-codex-auth-reconciliation | R786 done (20 PASS) |
+| pc-run-liveness | R787 done (37 PASS) |
+
+### R788+ 后续计划
+
+- R788 - pc-documents 集成测试 (DB 验证)
+- R789 - 跨 crate 集成测试 (e.g. issue 流程: create -> assign -> resolve)
+- R790+ - 持续迭代 (按 R776 audit 4.3 pc-repos 拆分, 长期高风险)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R788 - pc-documents DB 集成测试 (5 PASS)
+
+**主题**: 真实 PostgreSQL 集成测试, 验证 pure split 后服务层完整功能
+
+| 维度 | 数据 |
+|---|---:|
+| 新增单测 | +5 (r788_xxx 真实 DB) |
+| DB URL | 127.0.0.1:55433 (devdb) |
+| 创建公司/文档/锁/解锁/hook | 全部通过 |
+
+### 改动
+
+- 新增 tests/r788_pure_db_integration.rs (287 行)
+- 5 个集成测试 (使用 TEST_LOCK 串行化避免并发):
+  - r788_create_document_persists_to_db (create -> hook Created -> get)
+  - r788_update_document_creates_revision_and_fires_updated (update -> hook Updated -> list_revisions)
+  - r788_lock_blocks_update (lock -> update 失败 -> unlock -> update 成功)
+  - r788_pure_validation_rejects_bad_input_before_db (3 种 pure 验证失败)
+  - r788_noop_hook_does_not_interfere (NoopDocumentHook + create)
+
+### 踩坑
+
+- DocumentService::update 返回 Option<DocumentRow>, 不是 DocumentRow
+- DocumentService::lock_document 第 4 参是 Option<&str>, 不是 Option<String>
+- 虚拟 agent_id 触发 FK 约束 -> 改用 None::<&str> 不指定 actor
+- 测试需要 std::sync::Arc 但 Rust 拒绝重复 use -> awk 去重
+- 既有 pc-documents/tests/* 集成测试硬编码 5432, 真实 devdb 是 55433 -> 新文件用 55433
+
+### 验证
+
+cargo test -p pc-documents --test r788_pure_db_integration
+  5 passed; 0 failed
+  测试运行时间 0.17s (DB 串行化, 真实 PG)
+
+### 累计 (32 跟踪 crate)
+
+R788 增量: +5 (集成测试)
+R756-R788 合计: **3206** PASS (lib) + 5 DB integration
+
+### R789+ 后续计划
+
+- R789 - pc-work-products DB 集成测试 (547 LOC 有 service 层)
+- R790 - pc-workspace-commands (无 DB) 跳过集成测试
+- R791 - 跨 crate 端到端流程 (issue 创建 -> agent 分配 -> 工作产物创建)
+- R792 - pc-repos 拆分 pure/db (R776 改进 4.3, 长期高风险)
+- Adapter 永远跳过 (硬约束 #2)
+
+
+## R789 - pc-work-products DB 集成测试 (3 PASS) + R791 跨 crate 流程 (3 PASS)
+
+**主题**: 真实 PostgreSQL 集成验证 (DB 链路 + 跨 crate 工作流)
+
+| Round | crate | 新增测试 | 类型 |
+|---|---|---:|---|
+| R789 | pc-work-products | +3 | DB 集成 |
+| R791 | pc-work-products | +3 | 跨 crate (issues + work products) |
+
+### R789 改动
+
+- 新增 tests/r789_pure_db_integration.rs (288 行, 55433 devdb)
+- r789_pure_to_db_end_to_end: ImportIssueWorkProductRow -> pure import_row_to_create_input -> create_for_issue -> get_by_id roundtrip
+- r789_secondary_primary_clears_primary: 同 kind 第二次 is_primary=true -> 第一次被清空
+- r789_different_kind_preserves_primary: 不同 kind (pr vs deployment) 各自保留 primary
+
+### R791 改动
+
+- 新增 tests/r791_cross_crate_workflow.rs (跨 crate: pc-issues + pc-work-products)
+- pc-issues 加为 pc-work-products dev-dependency
+- r791_issue_to_work_product_lifecycle: create issue (todo) -> create PR WP -> update_status in_progress -> list_for_issue
+- r791_issue_close_with_work_product: 创建 PR + deployment WP -> close issue (done) -> WP 仍可访问
+- r791_multiple_issues_independent_work_products: 2 个 issue 各自独立 WP, 互不干扰
+
+### 踩坑
+
+- pc-issues::IssueService::create() 签名: (&CreateIssueMinimalInput), 返回 IssueRow 直接 (不是 Option)
+- pc-issues::IssueService::update_status() 签名: (company_id, issue_id, &str), 返回 IssueRow 直接
+- pc-issues::IssueService::get() 返回 Option<IssueRow> (要 .expect("some"))
+- pc-work-products::create_for_issue() 返回 Result<Option<WorkProduct>> (要 .expect("xxx").expect("some"))
+- pc-documents::DocumentService::update/lock_document 返回 Option<DocumentRow>
+- 各 service API 签名不一致 (Option vs 直接), 这是改进点 (R793+ 可统一)
+
+### 验证
+
+cargo test -p pc-work-products --test r789_pure_db_integration  3 passed
+cargo test -p pc-work-products --test r791_cross_crate_workflow   3 passed
+总 6 PASS, 0.19s (DB 串行化, 真实 PG)
+
+### 累计 (32 跟踪 crate)
+
+R789+R791 增量: +6 (DB integration)
+R756-R791 合计: **3212** PASS (lib) + 6 DB integration + 5 DB integration (R788) = **3217**
+
+### R792+ 后续计划
+
+- R792 - pc-repos 拆分 pure/db (长期高风险, R776 改进 4.3)
+- R793 - 统一 service 返回类型 (Option<T> vs T) API 收敛
+- R794 - pc-companies 0 测试已 49 PASS, 加更多边界测试
+- R795 - pc-tool 子模块各加测 (拆分后)
+- Adapter 永远跳过 (硬约束 #2)

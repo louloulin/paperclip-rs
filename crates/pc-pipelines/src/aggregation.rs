@@ -551,4 +551,78 @@ mod types_tests {
         assert_eq!(r.dropped, 0);
         assert_eq!(r.in_motion, 0);
     }
+
+    // ---- Round 770: pc-pipelines::aggregation 派生方法 + pure 边缘 ----
+
+    /// AttentionCaller: is_user / is_agent / agent_id 派生方法。
+    #[test]
+    fn r770_attention_caller_predicates() {
+        let user = AttentionCaller::User { user_id: "u-1".into() };
+        assert!(user.is_user());
+        assert!(!user.is_agent());
+        assert_eq!(user.agent_id(), None);
+
+        let agent = AttentionCaller::Agent { agent_id: "a-1".into() };
+        assert!(!agent.is_user());
+        assert!(agent.is_agent());
+        assert_eq!(agent.agent_id(), Some("a-1"));
+    }
+
+    /// AttentionCaller serde: tag + 类型。
+    #[test]
+    fn r770_attention_caller_serde() {
+        let user = AttentionCaller::User { user_id: "u-1".into() };
+        let j = serde_json::to_string(&user).unwrap();
+        assert_eq!(j, "{\"type\":\"user\",\"user_id\":\"u-1\"}");
+
+        let agent = AttentionCaller::Agent { agent_id: "a-1".into() };
+        let j = serde_json::to_string(&agent).unwrap();
+        assert_eq!(j, "{\"type\":\"agent\",\"agent_id\":\"a-1\"}");
+    }
+
+    /// bounded_limit: 完整边界 (None / 负 / 0 / max / 超 max)。
+    #[test]
+    fn r770_bounded_limit_edges() {
+        assert_eq!(bounded_limit(None, 50, 100), 50, "None → fallback");
+        assert_eq!(bounded_limit(Some(0), 50, 100), 1, "0 → clamped to 1");
+        assert_eq!(bounded_limit(Some(-1), 50, 100), 1, "negative → clamped to 1");
+        assert_eq!(bounded_limit(Some(50), 50, 100), 50, "normal");
+        assert_eq!(bounded_limit(Some(100), 50, 100), 100, "at max");
+        assert_eq!(bounded_limit(Some(200), 50, 100), 100, "over max → clamped");
+    }
+
+    /// payload_string: 4 种类型 (String / Number / Object / null / missing)。
+    #[test]
+    fn r770_payload_string_type_variants() {
+        let v = serde_json::json!({
+            "ok": "value",
+            "num": 42,
+            "obj": { "nested": "x" },
+            "null": null,
+        });
+        assert_eq!(payload_string(&v, "ok"), Some("value".to_string()));
+        assert_eq!(payload_string(&v, "num"), None, "number → None");
+        assert_eq!(payload_string(&v, "obj"), None, "object → None");
+        assert_eq!(payload_string(&v, "null"), None, "null → None");
+        assert_eq!(payload_string(&v, "missing"), None);
+    }
+
+    /// pipeline_attention_counts: Default 全部 0。
+    #[test]
+    fn r770_pipeline_attention_counts_default() {
+        let c = PipelineAttentionCounts::default();
+        assert_eq!(c.suggestions, 0);
+        assert_eq!(c.reviews, 0);
+        assert_eq!(c.heads_up, 0);
+    }
+
+    /// StageAutomation / pipeline_attention 序列化 smoke。
+    #[test]
+    fn r770_attention_pipeline_ref_serde() {
+        let p = AttentionPipelineRef { id: "p1".into(), key: "k1".into(), name: "Main".into() };
+        let j = serde_json::to_string(&p).unwrap();
+        assert!(j.contains("\"id\":\"p1\""));
+        assert!(j.contains("\"key\":\"k1\""));
+        assert!(j.contains("\"name\":\"Main\""));
+    }
 }

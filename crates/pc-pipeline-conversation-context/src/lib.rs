@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
+pub mod pure;
+
+pub use pure::{fence_markdown, truncate_with_flag, TruncateWithFlag};
+
 // ---------------------------------------------------------------------
 // Public constants
 // ---------------------------------------------------------------------
@@ -114,48 +118,6 @@ pub struct LoadPipelineContextInput {
 }
 
 // ---------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TruncateWithFlag {
-    pub value: String,
-    pub truncated: bool,
-}
-
-pub fn truncate_with_flag(value: &str, max_chars: usize) -> TruncateWithFlag {
-    if value.chars().count() <= max_chars {
-        TruncateWithFlag {
-            value: value.to_string(),
-            truncated: false,
-        }
-    } else {
-        TruncateWithFlag {
-            value: value.chars().take(max_chars).collect(),
-            truncated: true,
-        }
-    }
-}
-
-/// Wrap `value` in a markdown fence whose length is greater than any
-/// run of backticks in `value` (so the fence cannot be closed by
-/// content).
-pub fn fence_markdown(value: &str, info: &str) -> String {
-    let mut longest_backtick_run = 2usize;
-    let mut current = 0usize;
-    for c in value.chars() {
-        if c == '`' {
-            current += 1;
-            if current > longest_backtick_run {
-                longest_backtick_run = current;
-            }
-        } else {
-            current = 0;
-        }
-    }
-    let fence = "`".repeat(longest_backtick_run + 1);
-    format!("{fence}{info}\n{value}\n{fence}")
-}
 
 // ---------------------------------------------------------------------
 // DB trait
@@ -895,5 +857,63 @@ mod tests {
         assert!(!md.contains("should be redacted"));
         // Comment has standard (high) trust, so the body survives.
         assert!(md.contains("comment body"));
+    }
+
+    #[test]
+    fn r773_truncate_with_flag_handles_empty_string() {
+        let r = truncate_with_flag("", 100);
+        assert_eq!(r.value, "");
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn r773_truncate_with_flag_handles_unicode_codepoints() {
+        let r = truncate_with_flag("你好世界hello", 3);
+        assert_eq!(r.value, "你好世");
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn r773_truncate_with_flag_at_exact_boundary_is_not_truncated() {
+        let r = truncate_with_flag("hello", 5);
+        assert_eq!(r.value, "hello");
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn r773_truncate_with_flag_max_zero_returns_empty() {
+        let r = truncate_with_flag("anything", 0);
+        assert_eq!(r.value, "");
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn r773_fence_markdown_always_at_least_three_backticks() {
+        let s = fence_markdown("plain text", "info");
+        assert!(s.starts_with("```info\n"));
+        assert!(s.ends_with("\n```"));
+    }
+
+    #[test]
+    fn r773_fence_markdown_breaks_with_consecutive_backticks() {
+        let v = "starts ``` here";
+        let s = fence_markdown(v, "md");
+        // Longest run in v is 3, so fence must be >= 4 backticks
+        let mut count = 0usize;
+        for ch in s.chars() {
+            if ch == '`' {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        assert!(count >= 4, "fence must be longer than the 3-backtick run inside value, got {}", count);
+    }
+
+    #[test]
+    fn r773_fence_markdown_preserves_value_verbatim() {
+        let v = "## heading\n\n`code`\n\ntext";
+        let s = fence_markdown(v, "markdown");
+        assert!(s.contains(v));
     }
 }

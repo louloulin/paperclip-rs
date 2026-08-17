@@ -255,4 +255,78 @@ mod internal_tests {
         assert!(!is_valid_uuid(""));
         assert!(!is_valid_uuid("  "));
     }
+
+    // ---- Round 760: pc-decisions wakeup_validation_pure 集成测试 ----
+
+    /// outcome_from_label: cancelled 和 canceled 是 alias。
+    #[test]
+    fn r760_outcome_from_label_cancelled_canceled_alias() {
+        assert_eq!(outcome_from_label("cancelled"), Some(DecisionOutcome::Cancelled));
+        assert_eq!(outcome_from_label("canceled"), Some(DecisionOutcome::Cancelled));
+        assert_eq!(outcome_from_label("CANCELLED"), Some(DecisionOutcome::Cancelled));
+    }
+
+    /// outcome_from_label: 非法 label 返回 None。
+    #[test]
+    fn r760_outcome_from_label_invalid_returns_none() {
+        assert_eq!(outcome_from_label("unknown"), None);
+        assert_eq!(outcome_from_label(""), None);
+        assert_eq!(outcome_from_label("done"), None); // DecisionOutcome 没有 Done variant
+    }
+
+    /// derive_wake_idempotency_key: 格式正确（4 段 - 分隔）。
+    #[test]
+    fn r760_derive_wake_idempotency_key_format() {
+        let input = WakeOriginInput {
+            agent_id: "a-1".into(),
+            issue_id: "i-1".into(),
+            decision_id: "d-1".into(),
+            outcome: "decided".into(),
+        };
+        let key = derive_wake_idempotency_key(&input);
+        assert_eq!(key, "a-1-i-1-d-1-decided");
+    }
+
+    /// same_wake_target: 决策 ID 不同 → false（outcome 不影响，因为同 agent+issue+decision 的不同 outcome 仍属同一 wake 资源）。
+    #[test]
+    fn r760_same_wake_target_partial_match_false() {
+        let base = WakeOriginInput {
+            agent_id: "a".into(),
+            issue_id: "i".into(),
+            decision_id: "d".into(),
+            outcome: "decided".into(),
+        };
+        // outcome 变化不算不同（同一 wake 资源可以多次出现）
+        let mut same_outcome = base.clone();
+        same_outcome.outcome = "expired".to_string();
+        assert!(same_wake_target(&base, &same_outcome), "outcome change does not break wake target identity");
+        // decision_id 变化算不同
+        let mut different = base.clone();
+        different.decision_id = "d2".to_string();
+        assert!(!same_wake_target(&base, &different), "decision_id difference should break identity");
+        // 完全相同 → true
+        assert!(same_wake_target(&base, &base));
+    }
+
+    /// validate_wakeup_source: 白名单 + 不区分大小写检查（实际是精确匹配）。
+    #[test]
+    fn r760_validate_wakeup_source_whitelist() {
+        assert!(validate_wakeup_source("timer").is_ok());
+        assert!(validate_wakeup_source("assignment").is_ok());
+        assert!(validate_wakeup_source("on_demand").is_ok());
+        assert!(validate_wakeup_source("automation").is_ok());
+        assert!(validate_wakeup_source("unknown_source").is_err());
+        assert!(validate_wakeup_source("TIMER").is_err(), "case-sensitive whitelist");
+        assert!(validate_wakeup_source("").is_err());
+    }
+
+    /// validate_trigger_detail: 白名单。
+    #[test]
+    fn r760_validate_trigger_detail_whitelist() {
+        assert!(validate_trigger_detail("manual").is_ok());
+        assert!(validate_trigger_detail("ping").is_ok());
+        assert!(validate_trigger_detail("callback").is_ok());
+        assert!(validate_trigger_detail("system").is_ok());
+        assert!(validate_trigger_detail("auto_ping").is_err());
+    }
 }

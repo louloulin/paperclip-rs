@@ -523,3 +523,97 @@ mod internal_tests {
         assert_eq!(out.len(), MAX_FAILURE_REASON_CHARS);
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests_r771 {
+    use super::*;
+
+    // ---- Round 771: pc-feedback::pure 边缘测试 ----
+
+    /// as_record: None / 非 object / object 三种。
+    #[test]
+    fn r771_as_record() {
+        assert_eq!(as_record(None), None);
+        assert_eq!(as_record(Some(&serde_json::json!("not object"))), None);
+        assert_eq!(as_record(Some(&serde_json::json!(1))), None);
+        let obj = serde_json::json!({"a": 1});
+        assert_eq!(as_record(Some(&obj)).unwrap(), obj);
+    }
+
+    /// as_string / as_number / as_boolean: 三种类型转换。
+    #[test]
+    fn r771_as_primitive_types() {
+        assert_eq!(as_string(None), None);
+        assert_eq!(as_string(Some(&serde_json::json!("x"))), Some("x".to_string()));
+        assert_eq!(as_string(Some(&serde_json::json!(1))), None, "non-string");
+
+        assert_eq!(as_number(None), None);
+        assert_eq!(as_number(Some(&serde_json::json!(42))), Some(42.0));
+        assert_eq!(as_number(Some(&serde_json::json!("42"))), None, "string");
+
+        assert_eq!(as_boolean(None), None);
+        assert_eq!(as_boolean(Some(&serde_json::json!(true))), Some(true));
+        assert_eq!(as_boolean(Some(&serde_json::json!(1))), None, "non-bool");
+    }
+
+    /// unique_non_empty: 去重 + 过滤 None/空。
+    #[test]
+    fn r771_unique_non_empty() {
+        let v: Vec<Option<&str>> = vec![
+            Some("a"),
+            Some("a"),
+            None,
+            Some("b"),
+            Some(""),
+            Some("b"),
+        ];
+        let out = unique_non_empty(&v);
+        assert_eq!(out, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    /// content_type_for_path: 5 种扩展名 + 未知。
+    #[test]
+    fn r771_content_type_for_path() {
+        assert_eq!(content_type_for_path("file.md"), "text/markdown; charset=utf-8");
+        assert_eq!(content_type_for_path("file.json"), "application/json");
+        assert_eq!(content_type_for_path("file.txt"), "text/plain; charset=utf-8");
+        assert_eq!(content_type_for_path("file.unknown"), "text/plain; charset=utf-8", "unknown → text/plain");
+    }
+
+    /// build_issue_path: identifier / None 两种。
+    #[test]
+    fn r771_build_issue_path() {
+        assert_eq!(build_issue_path(Some("PAP-1")), Some("/PAP/issues/PAP-1".to_string()));
+        assert_eq!(build_issue_path(None), None);
+    }
+
+    /// parse_feedback_vote: 4 种 + 未知。
+    #[test]
+    fn r771_parse_feedback_vote() {
+        assert_eq!(parse_feedback_vote("up"), Some(FeedbackVoteValue::Up));
+        assert_eq!(parse_feedback_vote("down"), Some(FeedbackVoteValue::Down));
+        assert!(parse_feedback_vote("unknown").is_none());
+        assert!(parse_feedback_vote("").is_none());
+    }
+
+    /// normalize_reason: 不同 vote 不同必填 / 选填逻辑。
+    #[test]
+    fn r771_normalize_reason() {
+        // up 不需要 reason
+        assert_eq!(normalize_reason(FeedbackVoteValue::Up, None), None);
+        assert_eq!(normalize_reason(FeedbackVoteValue::Up, Some("good")), None, "up vote → ignore reason");
+        // down 通常需要 reason
+        assert_eq!(normalize_reason(FeedbackVoteValue::Down, Some("bug")), Some("bug".to_string()));
+        assert_eq!(normalize_reason(FeedbackVoteValue::Down, None), None);
+    }
+
+    /// append_note: push 到 notes vec。
+    #[test]
+    fn r771_append_note() {
+        let mut notes = Vec::new();
+        append_note(&mut notes, "first");
+        append_note(&mut notes, "second");
+        assert_eq!(notes, vec!["first".to_string(), "second".to_string()]);
+    }
+}

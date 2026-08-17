@@ -475,3 +475,192 @@ pub fn import_row_to_create_input(row: &ImportIssueWorkProductRow) -> CreateWork
         created_by_run_id: row.created_by_run_id,
     }
 }
+
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+    use crate::import_write_types::ImportIssueWorkProductRow;
+    use chrono::TimeZone;
+    use serde_json::json;
+
+    fn sample_uuid(byte: u8) -> Uuid {
+        Uuid::from_bytes([byte; 16])
+    }
+
+    fn sample_import_row() -> ImportIssueWorkProductRow {
+        ImportIssueWorkProductRow {
+            company_id: sample_uuid(1),
+            issue_id: sample_uuid(2),
+            project_id: Some(sample_uuid(3)),
+            kind: "pr".to_string(),
+            provider: "github".to_string(),
+            external_id: Some("PR-42".to_string()),
+            title: "Add feature X".to_string(),
+            url: Some("https://github.com/foo/bar/pull/42".to_string()),
+            status: "open".to_string(),
+            review_state: "pending".to_string(),
+            is_primary: true,
+            health_status: "ok".to_string(),
+            summary: Some("Pending review".to_string()),
+            metadata: Some(json!({"sha": "abc123"})),
+            execution_workspace_id: Some(sample_uuid(4)),
+            runtime_service_id: Some(sample_uuid(5)),
+            created_by_run_id: Some(sample_uuid(6)),
+            source_trust: Some(json!({"tier": "verified"})),
+        }
+    }
+
+    #[test]
+    fn r783_import_row_to_create_input_copies_all_fields() {
+        let row = sample_import_row();
+        let input = import_row_to_create_input(&row);
+        assert_eq!(input.kind, "pr");
+        assert_eq!(input.provider, "github");
+        assert_eq!(input.external_id.as_deref(), Some("PR-42"));
+        assert_eq!(input.title, "Add feature X");
+        assert_eq!(input.url.as_deref(), Some("https://github.com/foo/bar/pull/42"));
+        assert_eq!(input.status, "open");
+        assert_eq!(input.review_state.as_deref(), Some("pending"));
+        assert_eq!(input.is_primary, true);
+        assert_eq!(input.health_status.as_deref(), Some("ok"));
+        assert_eq!(input.summary.as_deref(), Some("Pending review"));
+        assert_eq!(input.execution_workspace_id, Some(sample_uuid(4)));
+        assert_eq!(input.runtime_service_id, Some(sample_uuid(5)));
+        assert_eq!(input.created_by_run_id, Some(sample_uuid(6)));
+    }
+
+    #[test]
+    fn r783_import_row_to_create_input_preserves_metadata() {
+        let row = sample_import_row();
+        let input = import_row_to_create_input(&row);
+        assert_eq!(input.metadata.as_ref().unwrap(), &json!({"sha": "abc123"}));
+        assert_eq!(input.source_trust.as_ref().unwrap(), &json!({"tier": "verified"}));
+    }
+
+    #[test]
+    fn r783_import_row_to_create_input_handles_optional_none() {
+        let mut row = sample_import_row();
+        row.project_id = None;
+        row.execution_workspace_id = None;
+        row.runtime_service_id = None;
+        row.external_id = None;
+        row.url = None;
+        row.summary = None;
+        row.metadata = None;
+        row.source_trust = None;
+        row.created_by_run_id = None;
+        let input = import_row_to_create_input(&row);
+        assert_eq!(input.project_id, None);
+        assert_eq!(input.execution_workspace_id, None);
+        assert_eq!(input.runtime_service_id, None);
+        assert_eq!(input.external_id, None);
+        assert_eq!(input.url, None);
+        assert_eq!(input.summary, None);
+        assert_eq!(input.metadata, None);
+        assert_eq!(input.source_trust, None);
+        assert_eq!(input.created_by_run_id, None);
+        // required fields preserved
+        assert_eq!(input.kind, "pr");
+        assert_eq!(input.provider, "github");
+    }
+
+    #[test]
+    fn r783_row_to_work_product_copies_all_fields() {
+        let ts = Utc.with_ymd_and_hms(2026, 8, 17, 10, 0, 0).unwrap();
+        let row = WorkProductRow {
+            id: sample_uuid(1),
+            company_id: sample_uuid(2),
+            project_id: Some(sample_uuid(3)),
+            issue_id: sample_uuid(4),
+            execution_workspace_id: Some(sample_uuid(5)),
+            runtime_service_id: Some(sample_uuid(6)),
+            kind: "pr".to_string(),
+            provider: "github".to_string(),
+            external_id: Some("PR-1".to_string()),
+            title: "T".to_string(),
+            url: Some("u".to_string()),
+            status: "open".to_string(),
+            review_state: "pending".to_string(),
+            is_primary: true,
+            health_status: "ok".to_string(),
+            summary: Some("s".to_string()),
+            metadata: Some(serde_json::from_value(json!({"k": "v"})).unwrap()),
+            source_trust: Some(serde_json::from_value(json!({"t": "v"})).unwrap()),
+            created_by_run_id: Some(sample_uuid(7)),
+            created_at: ts,
+            updated_at: ts,
+        };
+        let wp = row_to_work_product(row);
+        assert_eq!(wp.id, sample_uuid(1));
+        assert_eq!(wp.kind, "pr");
+        assert_eq!(wp.metadata.as_ref().unwrap(), &json!({"k": "v"}));
+        assert_eq!(wp.source_trust.as_ref().unwrap(), &json!({"t": "v"}));
+    }
+
+    #[test]
+    fn r783_work_product_serialization_camel_case() {
+        let ts = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let wp = WorkProduct {
+            id: sample_uuid(1),
+            company_id: sample_uuid(2),
+            project_id: None,
+            issue_id: sample_uuid(3),
+            execution_workspace_id: None,
+            runtime_service_id: None,
+            kind: "deployment".to_string(),
+            provider: "vercel".to_string(),
+            external_id: None,
+            title: "Production".to_string(),
+            url: None,
+            status: "ready".to_string(),
+            review_state: "approved".to_string(),
+            is_primary: false,
+            health_status: "ok".to_string(),
+            summary: None,
+            metadata: None,
+            source_trust: None,
+            created_by_run_id: None,
+            created_at: ts,
+            updated_at: ts,
+        };
+        let json = serde_json::to_value(&wp).unwrap();
+        // camelCase rename
+        assert!(json.get("companyId").is_some());
+        assert!(json.get("createdAt").is_some());
+        // type is special (rename = "type")
+        assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("deployment"));
+        assert!(json.get("kind").is_none());
+    }
+
+    #[test]
+    fn r783_create_input_default_is_empty() {
+        let input = CreateWorkProductInput::default();
+        assert_eq!(input.kind, "");
+        assert_eq!(input.provider, "");
+        assert_eq!(input.title, "");
+        assert_eq!(input.status, "");
+        assert_eq!(input.is_primary, false);
+        assert_eq!(input.project_id, None);
+    }
+
+    #[test]
+    fn r783_update_patch_default_all_none() {
+        let patch = UpdateWorkProductPatch::default();
+        assert_eq!(patch.provider, None);
+        assert_eq!(patch.title, None);
+        assert_eq!(patch.is_primary, None);
+        assert_eq!(patch.metadata, None);
+    }
+
+    #[test]
+    fn r783_import_row_preserves_empty_strings() {
+        let mut row = sample_import_row();
+        row.kind = "".to_string();
+        row.title = "".to_string();
+        let input = import_row_to_create_input(&row);
+        // Empty strings are preserved (caller ensures validity)
+        assert_eq!(input.kind, "");
+        assert_eq!(input.title, "");
+    }
+}

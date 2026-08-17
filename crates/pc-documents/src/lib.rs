@@ -17,8 +17,15 @@
 //! Annotations attach to a specific range inside a document and accumulate
 //! threaded comments.
 
+pub mod pure;
+
 mod service;
 
+pub use pure::{
+    is_allowed_author_type, is_allowed_format, normalize_document_key, validate_annotation_comment,
+    validate_annotation_thread, validate_document_patch, validate_upsert_issue_document,
+    NormalizedCreate, ALLOWED_FORMATS, ANNOTATION_AUTHOR_TYPES, DEFAULT_FORMAT,
+};
 pub use service::{
     CreateAnnotationComment, CreateAnnotationThreadInput, CreateDocument, DocumentHook,
     DocumentHookEvent, DocumentPatch, DocumentService, NoopDocumentHook, RecordingDocumentHook,

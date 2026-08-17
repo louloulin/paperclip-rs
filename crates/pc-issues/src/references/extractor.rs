@@ -290,4 +290,63 @@ mod tests {
             vec!["PAP-3", "PAP-1", "PAP-2"]
         );
     }
+
+    // ---- Round 765: pc-issues references/extractor 集成测试 ----
+
+    /// normalize_identifier: 大写 + 合法模式。
+    #[test]
+    fn r765_normalize_identifier_uppercases_and_validates() {
+        assert_eq!(normalize_identifier("pap-3"), Some("PAP-3".to_string()));
+        assert_eq!(normalize_identifier("  PRJ-100  "), Some("PRJ-100".to_string()));
+        assert_eq!(normalize_identifier("invalid"), None);  // 不带数字
+        assert_eq!(normalize_identifier(""), None);
+    }
+
+    /// strip_markdown_code: 移除 fenced code block。
+    #[test]
+    fn r765_strip_markdown_code_removes_fenced() {
+        let md = "Before
+```
+PAP-1 in code
+```
+After PAP-2";
+        let stripped = strip_markdown_code(md);
+        assert!(!stripped.contains("PAP-1 in code"));
+        assert!(stripped.contains("PAP-2"), "after code block should remain");
+    }
+
+    /// parse_issue_href: 解析完整 URL + 相对路径 + 非法。
+    #[test]
+    fn r765_parse_issue_href_formats() {
+        assert_eq!(parse_issue_href("https://example.com/issues/PAP-3"), Some("PAP-3".to_string()));
+        assert_eq!(parse_issue_href("/issues/PAP-100"), Some("PAP-100".to_string()));
+        assert_eq!(parse_issue_href("/issues/pap-7"), Some("PAP-7".to_string()));  // normalize 上转
+        // 含 query / hash
+        assert_eq!(parse_issue_href("/issues/PAP-3?foo=bar"), Some("PAP-3".to_string()));
+        assert_eq!(parse_issue_href("/issues/PAP-3#section"), Some("PAP-3".to_string()));
+        // 非法
+        assert_eq!(parse_issue_href(""), None);
+        assert_eq!(parse_issue_href("/not-issues/PAP-3"), None);
+    }
+
+    /// extract_identifiers: 去重 + 保序 + 跨行 + 多格式。
+    #[test]
+    fn r765_extract_identifiers_dedup_and_order() {
+        let md = "PAP-3 PAP-1 PAP-3 https://example.com/issues/PAP-2 PAP-1";
+        let ids = extract_identifiers(md);
+        assert_eq!(ids, vec!["PAP-3", "PAP-1", "PAP-2"]);
+    }
+
+    /// extract_matches: 返回 index + length。
+    #[test]
+    fn r765_extract_matches_has_index_and_length() {
+        let md = "PAP-1 here";
+        let matches = extract_matches(md);
+        assert_eq!(matches.len(), 1);
+        let m = &matches[0];
+        assert_eq!(m.identifier, "PAP-1");
+        assert_eq!(m.matched_text, "PAP-1");
+        assert_eq!(m.length, 5);
+        assert_eq!(m.index, 0);
+    }
 }

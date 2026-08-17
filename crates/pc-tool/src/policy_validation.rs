@@ -211,4 +211,93 @@ mod internal_tests {
         let j = serde_json::to_string(&r).unwrap();
         assert!(j.contains("windowSeconds"));
     }
+
+    // ---- Round 763: pc-tool policy_validation 集成测试 ----
+
+    use super::*;
+    use chrono::TimeZone;
+
+    /// trust_rule_is_active: 未 revoked + 未过期 → true。
+    #[test]
+    fn r763_trust_rule_active_no_revoke_no_expire() {
+        let cfg = TrustRuleConfig {
+            revoked_at: None,
+            expires_at: None,
+            source_action_request_id: None,
+            source_invocation_id: None,
+            approval_threshold: None,
+            source_approval_count: None,
+        };
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        assert!(trust_rule_is_active(&cfg, now));
+    }
+
+    /// trust_rule_is_active: revoked → false (即使未过期)。
+    #[test]
+    fn r763_trust_rule_revoked_inactive() {
+        let cfg = TrustRuleConfig {
+            revoked_at: Some("2026-01-01T00:00:00Z".into()),
+            expires_at: None,
+            source_action_request_id: None,
+            source_invocation_id: None,
+            approval_threshold: None,
+            source_approval_count: None,
+        };
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        assert!(!trust_rule_is_active(&cfg, now));
+    }
+
+    /// trust_rule_is_active: 已过期 (expires_at <= now) → false。
+    #[test]
+    fn r763_trust_rule_expired_inactive() {
+        let cfg = TrustRuleConfig {
+            revoked_at: None,
+            expires_at: Some("2026-01-01T00:00:00Z".into()),
+            source_action_request_id: None,
+            source_invocation_id: None,
+            approval_threshold: None,
+            source_approval_count: None,
+        };
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        assert!(!trust_rule_is_active(&cfg, now));
+    }
+
+    /// trust_rule_is_active: 未到期 → true。
+    #[test]
+    fn r763_trust_rule_not_yet_expired_active() {
+        let cfg = TrustRuleConfig {
+            revoked_at: None,
+            expires_at: Some("2030-01-01T00:00:00Z".into()),
+            source_action_request_id: None,
+            source_invocation_id: None,
+            approval_threshold: None,
+            source_approval_count: None,
+        };
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        assert!(trust_rule_is_active(&cfg, now));
+    }
+
+    /// rate_limit_rule: 合法 limit + window 返回 Some; 缺字段返回 None。
+    #[test]
+    fn r763_rate_limit_rule_extract() {
+        let cfg = serde_json::json!({"rateLimit": {"limit": 100, "windowSeconds": 60}});
+        let rule = rate_limit_rule(&cfg);
+        assert!(rule.is_some());
+        let r = rule.unwrap();
+        assert_eq!(r.limit, 100);
+        assert_eq!(r.window_seconds, 60);
+
+        // 缺字段 → None
+        let bad = serde_json::json!({"rateLimit": {"limit": 100}});
+        assert!(rate_limit_rule(&bad).is_none());
+
+        // 顶层 fallback 到 policy_config
+        let top = serde_json::json!({"limit": 10, "windowSeconds": 5});
+        let r2 = rate_limit_rule(&top).unwrap();
+        assert_eq!(r2.limit, 10);
+
+        // limit=0 → None
+        let zero = serde_json::json!({"limit": 0, "windowSeconds": 5});
+        assert!(rate_limit_rule(&zero).is_none());
+    }
 }
