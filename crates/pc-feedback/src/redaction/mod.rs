@@ -16,3 +16,4 @@ pub use service::{
     RedactionService, DEFAULT_MAX_CHARS,
 };
 pub mod pure;
+pub mod redaction_state_pure;

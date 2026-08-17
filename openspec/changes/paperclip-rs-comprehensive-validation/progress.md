@@ -1489,3 +1489,432 @@ document.cookie = 'paperclip_session=sess_5ae8a1a2bf6a45cf87b24b31166e07ae; path
 - R737 — pc-log-redaction pure helpers
 - R738 — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
 - R739 — 整体集成测试 + end-to-end smoke
+
+## R735 — pc-realtime/event_payload_pure.rs（1 轮，14 个新单测 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R735 | pc-realtime/event_payload_pure.rs | +14 | 100% |
+
+### 累计加权进度 ≈ 92.5%
+
+### 当前会话整体总结
+
+**R725-R735 累计**：
+- 11 轮（期间 R726/R727 因已完整无新增）
+- ~+129 个新单测 PASS（实际新增 +129）
+- 新增 8 个 pure helpers 模块：misc_pure、share/pure、trace/pure、connection/pure、run_log_pure、env_path_pure、types_pure、state_machine_pure、password_validation_pure、event_payload_pure
+- 累计 ~7000 行新代码
+- 0 fail
+
+### R736+ 后续计划
+
+- R736 — pc-status-card-update-engine pure helpers
+- R737 — pc-decisions bundle_service tests
+- R738 — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+- R739 — 整体集成测试 + end-to-end smoke
+- R740+ — Adapter 解锁后接 13 个 adapter
+
+## R736-R737 业务逻辑层补足（2 轮，26 个新单测 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R736 | pc-decisions/bundle_validation_pure.rs | +12 | 100% |
+| R737 | pc-decisions/effect_outcome_pure.rs | +14 | 100% |
+| **累计** | **~7500 行新代码** | **+26 PASS（新增）** | **0 fail** |
+
+### 累计加权进度 ≈ 93.5%
+
+### 当前会话整体总结
+
+**R725-R737 累计**：
+- 13 轮（期间 R726/R727 因已完整无新增）
+- ~+155 个新单测 PASS
+- 新增 10 个 pure helpers 模块：misc_pure、share/pure、trace/pure、connection/pure、run_log_pure、env_path_pure、types_pure、state_machine_pure、password_validation_pure、event_payload_pure、bundle_validation_pure、effect_outcome_pure
+- 累计 ~7500 行新代码
+- 0 fail
+
+### R738+ 后续计划
+
+- R738 — pc-decisions spec_envelope 补足 + canonical helpers
+- R739 — pc-issues visibility classifier pure tests
+- R740 — pc-routines activity_gate pure helper 抽取
+- R741 — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+- R742 — 整体集成测试 + end-to-end smoke
+- R743+ — Adapter 解锁后接 13 个 adapter
+
+
+## R738-R740 业务逻辑层补足（3 轮，54 个新单测 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R738 | pc-decisions/wakeup_validation_pure.rs | +19 | 100% |
+| R739 | pc-issues/visibility_pure.rs | +16 | 100% |
+| R740 | pc-routines/webhook_signature_pure.rs | +19 | 100% |
+| **累计** | **~8500 行新代码** | **+54 PASS（新增）** | **0 fail** |
+
+### 累计加权进度 ≈ 94.5%
+
+### R741+ 后续计划
+
+- R741 — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+- R742 — 整体集成测试 + end-to-end smoke
+- R743+ — Adapter 解锁后接 13 个 adapter
+
+
+## R744 — pc-decisions/lifecycle_pure 纯函数模块（1 轮，+45 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R744 | pc-decisions/lifecycle_pure.rs (resumeDecision / deliverContinuation / sweepExpired / decide replay / inputs validation) | +45 | 100% |
+| **累计** | **~9500 行新代码** | **+45 PASS（新增）** | **0 fail** |
+
+### R744 模块组成
+
+- `should_resume_decision` —— execution_status == "running" 才重新跑 effects
+- `is_decision_expired` —— status == "open" && expires_at <= now
+- `extract_continuation_pending` / `is_pending_continuation` —— metadata.continuationPending 读取
+- `should_dispatch_continuation` —— 仅在终态触发
+- `continuation_outcome_for` —— status → "decided"/"expired"/"cancelled"
+- `parse_sweep_batch_size` / `parse_recovery_grace_ms` —— Number.isFinite + Math.max(1, trunc)
+- `ExpirationReason` + `expiration_reason_for` —— "target_gone" / "ttl" 二选一
+- `next_target_sweep_cursor` —— 满 batch 推进 / 否则 null
+- `is_after_cursor` —— decision_id > cursor
+- `merge_unique_ids` —— ttl 在前 + 去重
+- `merge_continuation_metadata` / `merge_expired_metadata` / `merge_decided_metadata` —— metadata 合并
+- `DecideReplay` + `detect_decide_replay` —— IdempotentReplay / OptionReplay / NotReplay
+- `InputValidationError` + `validate_decision_inputs` —— required + maxLength
+
+### pc-decisions 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| lib.rs（hook + service） | 14 |
+| pure.rs | 33 |
+| bundle_service.rs | 14 |
+| effect_executor.rs | 12 |
+| issue_runner.rs | 6 |
+| bundle_validation_pure.rs (R736) | 12 |
+| effect_outcome_pure.rs (R737) | 14 |
+| wakeup_validation_pure.rs | 12 |
+| wakeup/mod.rs (R705) | 6 |
+| lifecycle_pure.rs (R744) | **45** |
+| **合计** | **153 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 95%
+
+### R745+ 后续计划
+
+- R745 — pc-routines/attention 服务层补足
+- R746 — pc-routines/service.rs DB 服务层补足
+- R747 — pc-tool/service.rs DB 服务层补足
+- R748 — pc-feedback/redaction 服务层补足
+- R749 — pc-companies/search_rate_limit 补足
+- R750 — pc-routines/activity_gate pure helper 抽取
+- R751+ — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+
+
+## R745 — pc-routines/attention/attention_pure 纯函数模块（1 轮，+25 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R745 | pc-routines/attention/attention_pure.rs (排序 / clamp / kind 累加 / 时间格式化 / excerpt 截断) | +25 | 100% |
+| **累计** | **~10000 行新代码** | **+25 PASS（新增）** | **0 fail** |
+
+### R745 模块组成
+
+- 常量表：`DEFAULT_OPEN_DECISION_LIMIT` / `MAX_OPEN_DECISION_LIMIT` / `DEFAULT_LIST_LIMIT` / `MAX_LIST_LIMIT` / `DETAIL_EXCERPT_LENGTH` / `DETAIL_IMAGE_LIMIT`
+- `to_epoch_ms` / `to_iso_string` —— Node `timestamp()` / `toIso()` 等价
+- `SeverityRankInput` + `severity_rank` —— 与 Node `SEVERITY_RANK` 对齐（critical=0 → info=4）
+- `cmp_attention_items` + `sort_by_severity_then_created_at` —— severity asc + created_at desc
+- `KindKind` enum + `all()` —— 12 种 attention kind
+- `filter_by_kind` —— 按 kind 过滤保留顺序
+- `AttentionCountsLike` + `accumulate_count` / `empty_counts` / `total_counts` —— counts 聚合
+- `truncate_excerpt` —— char-boundary 安全截断
+
+### pc-routines 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| pure.rs | 17 |
+| dashboard.rs | 6 |
+| dashboard_pure.rs (R743) | 11 |
+| webhook_signature_pure.rs (R740) | 19 |
+| activity_gate.rs | 14 |
+| worktree_eligibility.rs | 11 |
+| scheduler.rs | 13 |
+| service.rs | 6 |
+| attention/mod.rs | 0 |
+| attention/service.rs | 1 |
+| attention/attention_pure.rs (R745) | **25** |
+| **合计** | **123 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 95%
+
+### R746+ 后续计划
+
+- R746 — pc-routines/service.rs DB 服务层补足
+- R747 — pc-tool/service.rs DB 服务层补足
+- R748 — pc-feedback/redaction 服务层补足
+- R749 — pc-companies/search_rate_limit 补足
+- R750 — pc-routines/activity_gate pure helper 抽取
+
+
+## R746 — pc-routines/routines_validation_pure 纯函数模块（1 轮，+41 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R746 | pc-routines/routines_validation_pure.rs (CreateRoutine / RoutinePatch / CreateRoutineTrigger 校验抽取) | +41 | 100% |
+| **累计** | **~10500 行新代码** | **+41 PASS（新增）** | **0 fail** |
+
+### R746 模块组成
+
+- 6 个枚举常量（`ALLOWED_*`）：priority / status / concurrency / catchup / activity_gate / trigger_kind
+- 7 个 `DEFAULT_*` 常量：默认值回退
+- 6 个 `is_*_allowed` 谓词
+- 7 个 `default_*` 默认值函数
+- 6 个 `validate_*` 字符串校验
+- 3 个特殊校验（`validate_title_non_empty` / `validate_company_id_not_nil` / `validate_trigger_schedule_inputs`）
+- 2 个 webhook 校验（`validate_trigger_webhook_inputs` / `validate_trigger_patch_*`）
+- `normalize_trigger_schedule` —— schedule 保留 + 默认 tz，webhook 清掉 cron/tz
+
+### pc-routines 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| pure.rs | 17 |
+| dashboard.rs | 6 |
+| dashboard_pure.rs (R743) | 11 |
+| webhook_signature_pure.rs (R740) | 19 |
+| activity_gate.rs | 14 |
+| worktree_eligibility.rs | 11 |
+| scheduler.rs | 13 |
+| service.rs | 6 |
+| attention/attention_pure.rs (R745) | 25 |
+| routines_validation_pure.rs (R746) | **41** |
+| **合计** | **164 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 95.5%
+
+### R747+ 后续计划
+
+- R747 — pc-tool/service.rs DB 服务层补足
+- R748 — pc-feedback/redaction 服务层补足
+- R749 — pc-companies/search_rate_limit 补足
+- R750 — pc-routines/activity_gate pure helper 抽取
+- R751+ — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+
+
+## R747 — pc-tool/tool_validation_pure 纯函数模块（1 轮，+32 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R747 | pc-tool/tool_validation_pure.rs (create / patch / set_status 校验抽取) | +32 | 100% |
+| **累计** | **~11000 行新代码** | **+32 PASS（新增）** | **0 fail** |
+
+### R747 模块组成
+
+- 2 个枚举常量：`ALLOWED_TOOL_KINDS` / `ALLOWED_TOOL_STATUSES`
+- 2 个谓词：`is_tool_kind_allowed` / `is_tool_status_allowed`
+- 4 个核心校验：`validate_tool_name_non_empty` / `_kind` / `_status` / `_metadata`
+- 4 个 patch 三态校验：`validate_tool_patch_name` / `_description` / `_status` / `_metadata_merge`
+- 2 个集合操作：`has_duplicate_name` / `normalize_tool_kinds`
+
+### pc-tool 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| connection/ | 17 |
+| connection_health.rs | 13 |
+| descriptor_hash.rs | 9 |
+| profile_binding.rs | 16 |
+| risk.rs | 9 |
+| policy_validation.rs (R710) | 12 |
+| summarize_redact.rs (R709) | 10 |
+| side_effect_idempotency.rs (R708) | 8 |
+| argument_condition.rs (R707) | 9 |
+| selector_match.rs (R706) | 11 |
+| runtime_metrics.rs | 8 |
+| misc_pure.rs (R719) | 16 |
+| tool_invocation_pure.rs (R741) | 21 |
+| profile_helpers.rs (R722) | 14 |
+| service.rs | 8 |
+| tool_validation_pure.rs (R747) | **32** |
+| **合计** | **215 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 96%
+
+### R748+ 后续计划
+
+- R748 — pc-feedback/redaction 服务层补足
+- R749 — pc-companies/search_rate_limit 补足
+- R750 — pc-routines/activity_gate pure helper 抽取
+- R751+ — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+
+
+## R748 — pc-feedback/redaction/redaction_state_pure 纯函数模块（1 轮，+24 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R748 | pc-feedback/redaction/redaction_state_pure.rs (stable_stringify / sha256 / state 聚合 / summary / field path) | +24 | 100% |
+| **累计** | **~11500 行新代码** | **+24 PASS（新增）** | **0 fail** |
+
+### R748 模块组成
+
+- `stable_stringify` —— 按 key 字典序排序的 JSON 序列化
+- `sha256_hex_digest` —— sha256(stable_stringify) -> hex
+- `RedactionStateLike` struct —— redacted/truncated/omitted/notes/counts
+- `record_redaction/truncation/omission` —— field path 标记
+- `increment` / `note` / `merge_from` —— 计数 / 注释 / 合并
+- `RedactionSummary` + `finalize_redaction_summary` —— camelCase JSON 序列化
+- `join_field_path` / `array_index_path` —— 嵌套字段路径 helper
+- `truncate_to_chars` + `DEFAULT_MAX_CHARS` —— 截断 + 默认上限
+
+### pc-feedback 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| pure.rs | 28 |
+| share/ | 12 |
+| trace/ | 13 |
+| redaction/service.rs | 5 |
+| redaction/pure.rs (R712) | 8 |
+| redaction/redaction_state_pure.rs (R748) | **24** |
+| **合计** | **90 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 96.5%
+
+### R749+ 后续计划
+
+- R749 — pc-companies/search_rate_limit 补足
+- R750 — pc-routines/activity_gate pure helper 抽取
+- R751+ — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+
+
+## R749 — pc-companies/search_rate_limit_pure 纯函数模块（1 轮，+24 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R749 | pc-companies/search_rate_limit_pure.rs (retry_after / cutoff / result builder / actor key / env parser / hit prune) | +24 | 100% |
+| **累计** | **~12000 行新代码** | **+24 PASS（新增）** | **0 fail** |
+
+### R749 模块组成
+
+- retry_after_seconds_for_blocked —— Math.ceil((oldest + window - now) / 1000) 1:1
+- retry_after_min_one —— Math.max(1, secs)
+- cutoff_for —— saturating_sub 计算窗口截止
+- is_hit_in_window —— hit > cutoff
+- result_allowed / result_blocked —— 构造 allowed/blocked ResultParts
+- actor_key —— 拼接 company_id:type:id
+- parse_window_ms / parse_max_requests —— 环境变量解析（无效 -> None）
+- prune_expired_hits / pop_expired_front —— hit 淘汰
+
+### pc-companies 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| pure.rs | 7 |
+| service.rs (lib.rs) | 5 |
+| search_rate_limit.rs (R685) | 13 |
+| search_rate_limit_pure.rs (R749) | **24** |
+| **合计** | **49 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 97%
+
+### R750+ 后续计划
+
+- R750 — pc-routines/activity_gate pure helper 抽取
+- R751+ — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+
+
+## R750 — pc-routines/activity_gate_pure 纯函数模块（1 轮，+20 PASS）
+
+| Round | 模块 | 测试 | parity |
+|---|---|---:|---|
+| R750 | pc-routines/activity_gate_pure.rs (policy 判断 / scope 解析 / self-loop 检测 / verdict 构造) | +20 | 100% |
+| **累计** | **~12500 行新代码** | **+20 PASS（新增）** | **0 fail** |
+
+### R750 模块组成
+
+- DEFAULT_POLICIES / REQUIRE_EXTERNAL_ACTIVITY_POLICY 常量
+- IGNORED_ACTIONS (4 项) / ROUTINE_SCHEDULER_ACTOR_ID 常量
+- gate_required_for_policy —— policy 决策
+- parse_scope —— "project" / Global 解析
+- is_ignored_action / is_self_loop_by_details_routine_id / is_self_loop —— 过滤判断
+- verdict_fire_default / verdict_fire_first / verdict_fire_matched / verdict_skip —— verdict 构造器
+
+### pc-routines 当前测试统计
+
+| 模块 | 测试数 |
+|---|---:|
+| pure.rs | 17 |
+| dashboard.rs | 6 |
+| dashboard_pure.rs (R743) | 11 |
+| webhook_signature_pure.rs (R740) | 19 |
+| activity_gate.rs | 14 |
+| activity_gate_pure.rs (R750) | **20** |
+| worktree_eligibility.rs | 11 |
+| scheduler.rs | 13 |
+| service.rs | 6 |
+| attention/attention_pure.rs (R745) | 25 |
+| routines_validation_pure.rs (R746) | 41 |
+| **合计** | **184 PASS / 0 fail** |
+
+### 累计加权进度 ≈ 97.5%
+
+### R751+ 后续计划
+
+- R751+ — UI 真实 mutation (POST/PATCH/DELETE) 流通验证
+- Adapter 解锁后接通 13 个 adapter（硬约束 #2）
+
+
+## R751 — Vite / Rust / PostgreSQL 前后端真实集成验证（1 轮）
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Rust server + PostgreSQL 17 启动 | ✅ | `/api/health` 返回 `status=ok`, `db.ok=true` |
+| Vite `/api` 代理 | ✅ | `/api/health` 经 `5174` 成功返回 Rust health payload |
+| Issue POST | ✅ | Vite → Rust → PostgreSQL 创建记录 |
+| Issue PATCH | ✅ | Vite → Rust → PostgreSQL 更新 `status` 与 `description` |
+| Issue DELETE | ✅ | Rust 返回 `204` |
+| 删除后 GET | ✅ | 返回 `404` |
+| PostgreSQL 最终状态 | ✅ | 目标 issue 记录数为 `0` |
+| 浏览器 UI 页面 | ✅ | onboarding 页面真实渲染、输入和截图 |
+
+### 关键结论
+
+- UI 本身按已完成模块处理，本轮只验证前端到后端的真实接入。
+- 首次 PostgreSQL 14.18 迁移因 `UNIQUE NULLS NOT DISTINCT` 不兼容；改用 PostgreSQL 17.7 后全链路通过。
+- Adapter 未修改，仍保持锁定。
+
+### 后续重点
+
+- 继续执行其他核心业务对象的 UI mutation 冒烟。
+- 对 UI 列表响应中的空结果、权限过滤等已知差异建立独立回归，不在本轮扩大范围。
+
+
+## R752 — pc-issues execution_policy service tests（1 轮，+3 PASS）
+
+| Round | 模块 | 新测试 | parity |
+|---|---|---:|---|
+| R752 | pc-issues::execution_policy::service（hook lifecycle / monitor-only / invalid clear reason）| +3 | 100% |
+
+- 新增 crates/pc-issues/src/execution_policy/service.rs::service_tests
+- 同步补 hook.rs::IssueExecutionPolicyHookEvent 的 PartialEq + Eq 以便 assert_eq!
+
+### 验证
+
+```
+cargo test -p pc-issues execution_policy::service::service_tests --lib
+cargo test: 3 passed, 170 filtered out (1 suite, 0.00s)
+
+cargo test -p pc-issues --lib
+cargo test: 173 passed (1 suite, 0.01s)
+```
+
+### R753+ 后续计划
+
+- R753 — pc-issues 状态机端到端服务层测试（PATCH 状态 / monitor patch）
+- R754 — pc-routines::scheduler 调度计算补充测试
+- R755 — pc-feedback::share / trace pure 补足
+- UI 端继续 mutation 冒烟（agent / routine / tool / environment）

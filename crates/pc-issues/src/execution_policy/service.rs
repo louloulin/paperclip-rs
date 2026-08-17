@@ -11,9 +11,10 @@
 use std::sync::Arc;
 
 use pc_core::{
+    IssueExecutionMonitorClearReason, RequestedAssigneePatch,
     apply_issue_execution_policy_transition, apply_issue_monitor_policy_transition,
     build_initial_issue_monitor_fields, build_issue_monitor_cleared_patch,
-    build_issue_monitor_triggered_patch, IssueExecutionMonitorClearReason, RequestedAssigneePatch,
+    build_issue_monitor_triggered_patch,
 };
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -267,5 +268,150 @@ fn build_issue_like(row: &pc_repos::issue::IssueRow) -> pc_core::IssueLike {
             ))
             .ok()
         }),
+    }
+}
+
+#[cfg(test)]
+mod service_tests {
+    use super::*;
+    use crate::execution_policy::{
+        ExecutionPolicyActor, IssueExecutionPolicyHookEvent, RecordingIssueExecutionPolicyHook,
+        RequestedAssigneePatchDto,
+    };
+    use pc_core::{IssueExecutionPolicy, Timestamp};
+    use pc_repos::issue::IssueRow;
+    use uuid::Uuid;
+
+    fn make_issue(status: &str) -> IssueRow {
+        IssueRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            project_id: None,
+            project_workspace_id: None,
+            goal_id: None,
+            parent_id: None,
+            title: "execution policy test".to_string(),
+            description: None,
+            status: status.to_string(),
+            work_mode: "standard".to_string(),
+            harness_kind: None,
+            priority: "normal".to_string(),
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            checkout_run_id: None,
+            execution_run_id: None,
+            execution_agent_name_key: None,
+            execution_locked_at: None,
+            created_by_agent_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            issue_number: None,
+            identifier: Some("T-1".to_string()),
+            origin_kind: "manual".to_string(),
+            origin_id: None,
+            origin_run_id: None,
+            origin_fingerprint: "r752".to_string(),
+            request_depth: 0,
+            billing_code: None,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_state: None,
+            monitor_next_check_at: None,
+            monitor_wake_requested_at: None,
+            monitor_last_triggered_at: None,
+            monitor_attempt_count: 0,
+            monitor_notes: None,
+            monitor_scheduled_by: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            source_trust: None,
+            unblock_descriptor: None,
+            blocked_transition_at: None,
+            blocked_owner_notified_at: None,
+            started_at: None,
+            completed_at: None,
+            cancelled_at: None,
+            hidden_at: None,
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        }
+    }
+
+    fn make_request(
+        issue: IssueRow,
+        policy: Option<IssueExecutionPolicy>,
+    ) -> ApplyTransitionRequest {
+        ApplyTransitionRequest {
+            issue,
+            policy,
+            previous_policy: None,
+            requested_status: Some("in_progress".to_string()),
+            requested_assignee_patch: RequestedAssigneePatchDto::empty(),
+            actor: ExecutionPolicyActor::user("r752-user"),
+            allow_board_override: false,
+            comment_body: None,
+            review_request: None,
+            monitor_explicitly_updated: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn r752_apply_transition_records_hook_lifecycle() {
+        let issue = make_issue("todo");
+        let issue_id = issue.id;
+        let hook = RecordingIssueExecutionPolicyHook::new();
+        let service = IssueExecutionPolicyService::with_hook(Arc::new(hook.clone()));
+        let outcome = service
+            .apply_transition(make_request(issue, None))
+            .await
+            .expect("transition should be accepted");
+        assert!(!outcome.monitor_only);
+        assert_eq!(
+            hook.events(),
+            vec![
+                IssueExecutionPolicyHookEvent::BeforeTransition { issue_id },
+                IssueExecutionPolicyHookEvent::AfterTransition {
+                    issue_id,
+                    has_decision: false,
+                    patch_size: outcome.patch.len(),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn r752_monitor_only_marks_outcome_as_monitor_only() {
+        let issue = make_issue("in_progress");
+        let hook = RecordingIssueExecutionPolicyHook::new();
+        let service = IssueExecutionPolicyService::with_hook(Arc::new(hook.clone()));
+        let outcome = service
+            .apply_monitor_only(make_request(issue, None))
+            .await
+            .expect("monitor-only transition should be accepted");
+        assert!(outcome.monitor_only);
+        assert!(hook.events().iter().any(|event| matches!(event,
+            IssueExecutionPolicyHookEvent::AfterTransition { has_decision, .. } if !has_decision
+        )));
+    }
+
+    #[tokio::test]
+    async fn r752_invalid_monitor_clear_reason_is_rejected() {
+        let issue = make_issue("in_progress");
+        let hook = RecordingIssueExecutionPolicyHook::new();
+        let service = IssueExecutionPolicyService::with_hook(Arc::new(hook.clone()));
+        let error = service
+            .clear_monitor(ClearMonitorRequest {
+                issue,
+                policy: None,
+                clear_reason: "not-a-clear-reason".to_string(),
+                cleared_at: Some(Timestamp::now().as_datetime()),
+            })
+            .await
+            .expect_err("invalid clear reason should be rejected");
+        assert!(error.to_string().contains("invalid clear reason"));
+        assert!(hook.events().iter().any(|event| matches!(event,
+            IssueExecutionPolicyHookEvent::BeforeMonitorChange { kind, .. } if *kind == "clear"
+        )));
     }
 }

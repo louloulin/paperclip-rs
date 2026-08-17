@@ -15,11 +15,15 @@
 //! on a cron schedule, or via a public webhook.
 
 pub mod activity_gate;
+pub mod activity_gate_pure;
 pub mod scheduler;
 pub mod worktree_eligibility;
 pub mod attention;
 pub mod dashboard;
 pub mod pure;
+pub mod webhook_signature_pure;
+pub mod dashboard_pure;
+pub mod routines_validation_pure;
 mod service;
 pub mod session_cwd;
 

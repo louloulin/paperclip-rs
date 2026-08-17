@@ -40,6 +40,7 @@ pub mod routable_blocked;
 pub mod thread_interactions;
 pub mod tree_control;
 pub mod visibility;
+pub mod visibility_pure;
 
 use async_trait::async_trait;
 use pc_repos::issue::{CreateIssueInput, IssueCommentRow, IssueRepo, IssueRow};

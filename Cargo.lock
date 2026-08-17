@@ -2684,6 +2684,7 @@ dependencies = [
  "base64",
  "chrono",
  "flate2",
+ "hex",
  "pc-core",
  "pc-errors",
  "pc-repos",

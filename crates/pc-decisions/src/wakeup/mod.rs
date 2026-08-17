@@ -12,6 +12,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+pub mod types;
+pub use types::DecisionOutcome;
+
 /// Wakeup 调用签名 —— 1:1 对应 Node `(agentId, options) => Promise<unknown>`。
 pub type WakeupFn = Arc<
     dyn for<'a> Fn(

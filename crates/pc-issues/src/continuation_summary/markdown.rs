@@ -361,3 +361,175 @@ pub fn build_continuation_summary_markdown(input: &BuildContinuationSummaryInput
     let body = sections.join("\n");
     truncate_str(&body, ISSUE_CONTINUATION_SUMMARY_MAX_BODY_CHARS)
 }
+
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+    use crate::continuation_summary::types::IssueSummaryInput;
+
+    fn make_issue(status: &str) -> IssueSummaryInput {
+        IssueSummaryInput {
+            id: "issue-1".into(),
+            identifier: Some("P-1".into()),
+            title: "Title".into(),
+            description: Some("Description".into()),
+            status: status.into(),
+            priority: "normal".into(),
+        }
+    }
+
+    fn make_run(run_status: &str) -> RunSummaryInput {
+        RunSummaryInput {
+            id: "run-1".into(),
+            status: run_status.into(),
+            error: None,
+            error_code: None,
+            result_json: None,
+            stdout_excerpt: None,
+            stderr_excerpt: None,
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn read_result_summary_extracts_summary() {
+        let v = serde_json::json!({"summary": "hello"});
+        assert_eq!(read_result_summary(Some(&v)), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn read_result_summary_falls_back_to_result() {
+        let v = serde_json::json!({"result": "hi"});
+        assert_eq!(read_result_summary(Some(&v)), Some("hi".to_string()));
+    }
+
+    #[test]
+    fn read_result_summary_falls_back_to_message() {
+        let v = serde_json::json!({"message": "msg"});
+        assert_eq!(read_result_summary(Some(&v)), Some("msg".to_string()));
+    }
+
+    #[test]
+    fn read_result_summary_falls_back_to_error() {
+        let v = serde_json::json!({"error": "oops"});
+        assert_eq!(read_result_summary(Some(&v)), Some("oops".to_string()));
+    }
+
+    #[test]
+    fn read_result_summary_none_for_non_object() {
+        assert_eq!(read_result_summary(None), None);
+        assert_eq!(read_result_summary(Some(&serde_json::json!("hi"))), None);
+    }
+
+    #[test]
+    fn read_result_summary_skips_empty() {
+        let v = serde_json::json!({"summary": "", "result": "ok"});
+        assert_eq!(read_result_summary(Some(&v)), Some("ok".to_string()));
+    }
+
+    #[test]
+    fn extract_markdown_section_basic() {
+        let md = "## Foo
+body of foo
+## Bar
+body of bar";
+        assert_eq!(
+            extract_markdown_section(Some(md), "Foo"),
+            Some("body of foo".to_string())
+        );
+        assert_eq!(
+            extract_markdown_section(Some(md), "Bar"),
+            Some("body of bar".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_markdown_section_missing_returns_none() {
+        let md = "## Foo
+body";
+        assert_eq!(extract_markdown_section(Some(md), "Bar"), None);
+    }
+
+    #[test]
+    fn extract_markdown_section_none_input() {
+        assert_eq!(extract_markdown_section(None, "Foo"), None);
+    }
+
+    #[test]
+    fn extract_path_candidates_dedup() {
+        let texts = vec!["server/src/foo.rs server/src/foo.rs server/src/bar.rs"];
+        let paths = extract_path_candidates(texts.iter().map(|s| *s));
+        assert_eq!(paths, vec!["server/src/foo.rs".to_string(), "server/src/bar.rs".to_string()]);
+    }
+
+    #[test]
+    fn extract_path_candidates_strips_trailing_punctuation() {
+        let texts = vec!["./src/foo.rs.", "./src/bar.rs,", "./src/baz.rs;"];
+        let paths = extract_path_candidates(texts.iter().map(|s| *s));
+        for p in &paths {
+            assert!(!p.ends_with('.') && !p.ends_with(',') && !p.ends_with(';'));
+        }
+    }
+
+    #[test]
+    fn extract_path_candidates_caps_at_12() {
+        let texts: Vec<String> = (0..20).map(|i| format!("server/src/file{i}.rs")).collect();
+        let paths = extract_path_candidates(texts.iter().map(|s| s.as_str()));
+        assert!(paths.len() <= 12);
+    }
+
+    #[test]
+    fn infer_mode_done_is_review() {
+        let mode = infer_mode(&make_issue("done"), &make_run("succeeded"));
+        assert_eq!(mode, ContinuationSummaryMode::Review);
+    }
+
+    #[test]
+    fn infer_mode_failed_run_is_implementation() {
+        let mode = infer_mode(&make_issue("in_progress"), &make_run("failed"));
+        assert_eq!(mode, ContinuationSummaryMode::Implementation);
+    }
+
+    #[test]
+    fn infer_mode_backlog_is_plan() {
+        let mode = infer_mode(&make_issue("backlog"), &make_run("succeeded"));
+        assert_eq!(mode, ContinuationSummaryMode::Plan);
+    }
+
+    #[test]
+    fn infer_next_action_done() {
+        let a = infer_next_action(&make_issue("done"), &make_run("succeeded"), None);
+        assert!(a.contains("Review"));
+    }
+
+    #[test]
+    fn infer_next_action_failed() {
+        let a = infer_next_action(&make_issue("in_progress"), &make_run("failed"), None);
+        assert!(a.contains("failed"));
+    }
+
+    #[test]
+    fn infer_next_action_previous_fallback() {
+        let a = infer_next_action(
+            &make_issue("in_progress"),
+            &make_run("succeeded"),
+            Some("custom next"),
+        );
+        assert_eq!(a, "custom next");
+    }
+
+    #[test]
+    fn test_extract_previous_next_action_some() {
+        let body = "## Next Action\n- do thing X";
+        assert_eq!(
+            extract_previous_next_action(Some(body)),
+            Some("do thing X".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_previous_next_action_none() {
+        assert_eq!(extract_previous_next_action(None), None);
+    }
+}

@@ -9,6 +9,7 @@
 //! - 可测：service 单元测试不依赖 HTTP 层
 
 mod service;
+mod attention_pure;
 
 pub use service::{
     AttentionCounts, AttentionError, AttentionItem, AttentionItemKind, AttentionResult,

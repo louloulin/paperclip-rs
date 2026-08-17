@@ -123,7 +123,8 @@ mod internal_tests {
 
     #[test]
     fn validate_channel_name_rejects_control_char() {
-        assert!(validate_channel_name("foo\\u{0000}bar").is_err());
+        let bad = format!("foo{}bar", '\u{0}');
+        assert!(validate_channel_name(&bad).is_err());
     }
 
     #[test]

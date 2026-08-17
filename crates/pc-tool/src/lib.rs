@@ -12,6 +12,8 @@ pub mod argument_condition;
 pub mod selector_match;
 pub mod runtime_metrics;
 pub mod misc_pure;
+pub mod tool_invocation_pure;
+pub mod tool_validation_pure;
 pub mod profile_helpers;
 mod service;
 pub use pc_repos::tool::{ToolApplicationRow, ToolApplicationStatus, ToolApplicationType};

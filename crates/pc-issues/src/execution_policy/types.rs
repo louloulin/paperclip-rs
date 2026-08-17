@@ -267,3 +267,125 @@ impl MonitorPatchOutcome {
         row
     }
 }
+
+#[cfg(test)]
+mod apply_to_row_tests {
+    use super::*;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn fixture_issue() -> IssueRow {
+        IssueRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            project_id: None,
+            project_workspace_id: None,
+            goal_id: None,
+            parent_id: None,
+            title: "apply-to-row fixture".to_string(),
+            description: None,
+            status: "todo".to_string(),
+            work_mode: "standard".to_string(),
+            harness_kind: None,
+            priority: "normal".to_string(),
+            assignee_agent_id: None,
+            assignee_user_id: None,
+            checkout_run_id: None,
+            execution_run_id: None,
+            execution_agent_name_key: None,
+            execution_locked_at: None,
+            created_by_agent_id: None,
+            created_by_user_id: None,
+            responsible_user_id: None,
+            issue_number: None,
+            identifier: Some("R-1".to_string()),
+            origin_kind: "manual".to_string(),
+            origin_id: None,
+            origin_run_id: None,
+            origin_fingerprint: "r753".to_string(),
+            request_depth: 0,
+            billing_code: None,
+            assignee_adapter_overrides: None,
+            execution_policy: None,
+            execution_state: None,
+            monitor_next_check_at: None,
+            monitor_wake_requested_at: None,
+            monitor_last_triggered_at: None,
+            monitor_attempt_count: 0,
+            monitor_notes: None,
+            monitor_scheduled_by: None,
+            execution_workspace_id: None,
+            execution_workspace_preference: None,
+            execution_workspace_settings: None,
+            source_trust: None,
+            unblock_descriptor: None,
+            blocked_transition_at: None,
+            blocked_owner_notified_at: None,
+            started_at: None,
+            completed_at: None,
+            cancelled_at: None,
+            hidden_at: None,
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        }
+    }
+
+    #[test]
+    fn r753_apply_to_row_status_and_assignee_round_trip() {
+        let issue = fixture_issue();
+        let agent_id = Uuid::new_v4();
+        let mut outcome = ApplyTransitionOutcome::default();
+        outcome.patch.insert("status".into(), json!("in_progress"));
+        outcome
+            .patch
+            .insert("assigneeAgentId".into(), json!(agent_id.to_string()));
+        outcome
+            .patch
+            .insert("assigneeUserId".into(), json!("user-42"));
+
+        let updated = outcome.apply_to_row(&issue);
+        assert_eq!(updated.status, "in_progress");
+        assert_eq!(updated.assignee_agent_id, Some(agent_id));
+        assert_eq!(updated.assignee_user_id.as_deref(), Some("user-42"));
+        // 未触达的字段保持原值
+        assert_eq!(updated.title, issue.title);
+        assert_eq!(updated.priority, issue.priority);
+    }
+
+    #[test]
+    fn r753_apply_to_row_monitor_next_check_parses_iso_string() {
+        let issue = fixture_issue();
+        let iso = "2026-08-17T09:30:00Z";
+        let mut outcome = ApplyTransitionOutcome::default();
+        outcome
+            .patch
+            .insert("monitorNextCheckAt".into(), json!(iso));
+        outcome.patch.insert("monitorNotes".into(), json!("probe"));
+        outcome
+            .patch
+            .insert("monitorAttemptCount".into(), json!(3_i64));
+
+        let updated = outcome.apply_to_row(&issue);
+        assert_eq!(
+            updated.monitor_next_check_at.map(|t| t.to_string()),
+            Some("2026-08-17T09:30:00+00:00".to_string())
+        );
+        assert_eq!(updated.monitor_notes.as_deref(), Some("probe"));
+        assert_eq!(updated.monitor_attempt_count, 3);
+    }
+
+    #[test]
+    fn r753_apply_to_row_unknown_keys_are_ignored() {
+        let issue = fixture_issue();
+        let mut outcome = ApplyTransitionOutcome::default();
+        outcome.patch.insert("status".into(), json!("blocked"));
+        outcome
+            .patch
+            .insert("nonsenseField".into(), json!("ignored"));
+
+        let updated = outcome.apply_to_row(&issue);
+        assert_eq!(updated.status, "blocked");
+        assert_eq!(updated.assignee_agent_id, issue.assignee_agent_id);
+        assert_eq!(updated.execution_policy, issue.execution_policy);
+    }
+}

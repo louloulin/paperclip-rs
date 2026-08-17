@@ -16,6 +16,7 @@
 
 pub mod pure;
 pub mod search_rate_limit;
+pub mod search_rate_limit_pure;
 pub use search_rate_limit::*;
 
 use async_trait::async_trait;

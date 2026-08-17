@@ -20,7 +20,7 @@ use super::types::{ApplyTransitionOutcome, ApplyTransitionRequest, MonitorPatchO
 // -----------------------------------------------------------------------------
 
 /// Hook 调用事件。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IssueExecutionPolicyHookEvent {
     BeforeTransition {
         issue_id: uuid::Uuid,

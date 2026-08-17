@@ -16,7 +16,11 @@ pub mod bundle_service;
 pub mod effect_executor;
 pub mod issue_runner;
 pub mod pure;
+pub mod bundle_validation_pure;
+pub mod effect_outcome_pure;
+pub mod wakeup_validation_pure;
 pub mod wakeup;
+pub mod lifecycle_pure;
 
 pub use effect_executor::{
     aggregate_execution_outcomes, classify_effect_type, DecisionEffectRunner,
