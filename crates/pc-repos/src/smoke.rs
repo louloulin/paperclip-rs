@@ -306,19 +306,7 @@ impl<'a> SmokeRepo<'a> {
         Ok(())
     }
 
-    pub async fn delete_run(&self, id: Uuid) -> RepoResult<bool> {
-        // 先删步骤
-        sqlx::query("DELETE FROM smoke_run_steps WHERE run_id=$1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        let n = sqlx::query("DELETE FROM smoke_runs WHERE id=$1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
-    }
+    // R815: 死代码 delete_run 已删除 (无 caller).
 
     // ---- step ----
 

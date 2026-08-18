@@ -375,21 +375,33 @@ impl CompanyMemberService {
     }
 
     /// Soft-archive a member (status = 'archived'). Mirrors Node archive.
-    pub async fn archive(&self, company_id: Uuid, member_id: Uuid) -> CompanyMemberResult<bool> {
+    /// R814: returns CompanyMemberRow; NotFound on missing member.
+    /// Idempotent: already-archived member returns the same row, no hook dispatched.
+    pub async fn archive(&self, company_id: Uuid, member_id: Uuid) -> CompanyMemberResult<CompanyMemberRow> {
         if company_id.is_nil() {
             return Err(CompanyMemberError::Validation(
                 "companyId is required".into(),
             ));
         }
-        let ok = self.repo().archive(company_id, member_id).await?;
-        if ok {
+        // Check pre-state to decide whether hook needs firing.
+        let prior = self.repo().find_by_id(company_id, member_id).await?;
+        let prior_status = match prior {
+            Some(r) => r.status,
+            None => {
+                return Err(CompanyMemberError::Validation(format!(
+                    "company_member not found: {member_id}"
+                )));
+            }
+        };
+        let row = self.repo().archive(company_id, member_id).await?;
+        if prior_status != "archived" {
             self.dispatch(CompanyMemberHookEvent::Archived {
                 company_id,
                 member_id,
             })
             .await;
         }
-        Ok(ok)
+        Ok(row)
     }
 }
 

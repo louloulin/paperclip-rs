@@ -103,11 +103,12 @@ async fn delete_comment_soft_deletes() {
     let cid = insert_company(&db, "del-comment").await;
     let sid = insert_skill(&db, cid, "k1").await;
     let cid_comment = insert_comment(&db, cid, sid, "to-delete").await;
+    // R810: delete_comment returns CompanySkillCommentRow; assert row id matches
     let deleted = SkillRepo::new(&db)
         .delete_comment(cid_comment)
         .await
         .expect("delete");
-    assert!(deleted);
+    assert_eq!(deleted.id, cid_comment);
     let comments = SkillRepo::new(&db).list_comments(sid).await.expect("list");
     assert_eq!(comments.len(), 0);
 }
@@ -116,11 +117,11 @@ async fn delete_comment_soft_deletes() {
 #[tokio::test(flavor = "current_thread")]
 async fn delete_comment_missing_returns_false() {
     let db = db().await;
+    // R810: missing returns NotFound error (was !deleted bool)
     let deleted = SkillRepo::new(&db)
         .delete_comment(Uuid::new_v4())
-        .await
-        .expect("delete");
-    assert!(!deleted);
+        .await;
+    assert!(deleted.is_err(), "missing comment should return Err(NotFound)");
 }
 
 /// 6. update_status — 正常返回 4 元组

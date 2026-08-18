@@ -307,22 +307,22 @@ impl<'a> DecisionRepo<'a> {
         Ok(r.rows_affected() > 0)
     }
 
-    /// 将决策置为 dismissed：把 reason + dismissedByUserId 写入 metadata。
+    /// R813: 将决策置为 dismissed；返回 DecisionRow, 0 rows = RowNotFound.
     pub async fn mark_dismissed(
         &self,
         decision_id: Uuid,
         reason: &str,
         decided_by_user_id: &str,
-    ) -> sqlx::Result<bool> {
-        let r = sqlx::query(
-            "UPDATE decisions SET status = 'dismissed',                 metadata = COALESCE(metadata, '{}'::jsonb)                     || jsonb_build_object(                         'dismissReason', to_jsonb($1::text),                         'dismissedByUserId', to_jsonb($2::text)                     ),                 updated_at = now()              WHERE id = $3",
+    ) -> sqlx::Result<DecisionRow> {
+        sqlx::query_as::<_, DecisionRow>(
+            "UPDATE decisions SET status = 'dismissed',                 metadata = COALESCE(metadata, '{}'::jsonb)                     || jsonb_build_object(                         'dismissReason', to_jsonb($1::text),                         'dismissedByUserId', to_jsonb($2::text)                     ),                 updated_at = now()              WHERE id = $3              RETURNING id, company_id, bundle_id, origin_agent_id, origin_issue_id, origin_run_id,                 rule_key, title, body, options, inputs, status, execution_status,                 chosen_option_id, input_values, decided_by_user_id, decided_at, expires_at,                 idempotency_key, signed_spec, target_snapshots, continuation_policy, metadata,                 created_at, updated_at",
         )
         .bind(reason)
         .bind(decided_by_user_id)
         .bind(decision_id)
-        .execute(self.db.pool())
-        .await?;
-        Ok(r.rows_affected() > 0)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 取决策的 company_id。
@@ -419,32 +419,21 @@ impl<'a> DecisionRepo<'a> {
         self.finish_effect_execution(execution_id, "failed", Some(error), result).await
     }
 
-    /// 更新决策的 execution_status + metadata。
+    /// R813: 更新决策的 execution_status + metadata；返回 DecisionRow, 0 rows = RowNotFound.
     pub async fn set_execution_status(
         &self,
         decision_id: Uuid,
         execution_status: &str,
         metadata_patch: Option<&serde_json::Value>,
-    ) -> sqlx::Result<bool> {
-        let r = if let Some(patch) = metadata_patch {
-            sqlx::query(
-                "UPDATE decisions SET execution_status = $1,                     metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,                     updated_at = now() WHERE id = $3"
-            )
+    ) -> sqlx::Result<DecisionRow> {
+        let sql = "UPDATE decisions SET execution_status = $1,                     metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,                     updated_at = now() WHERE id = $3                    RETURNING id, company_id, bundle_id, origin_agent_id, origin_issue_id, origin_run_id,                       rule_key, title, body, options, inputs, status, execution_status,                       chosen_option_id, input_values, decided_by_user_id, decided_at, expires_at,                       idempotency_key, signed_spec, target_snapshots, continuation_policy, metadata,                       created_at, updated_at";
+        sqlx::query_as::<_, DecisionRow>(sql)
             .bind(execution_status)
-            .bind(patch)
+            .bind(metadata_patch.unwrap_or(&serde_json::Value::Null))
             .bind(decision_id)
-            .execute(self.db.pool())
+            .fetch_optional(self.db.pool())
             .await?
-        } else {
-            sqlx::query(
-                "UPDATE decisions SET execution_status = $1, updated_at = now()                  WHERE id = $2"
-            )
-            .bind(execution_status)
-            .bind(decision_id)
-            .execute(self.db.pool())
-            .await?
-        };
-        Ok(r.rows_affected() > 0)
+            .ok_or(sqlx::Error::RowNotFound)
     }
 
     pub async fn list_filtered(

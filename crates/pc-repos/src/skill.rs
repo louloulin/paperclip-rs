@@ -1012,16 +1012,8 @@ impl<'a> SkillRepo<'a> {
             .await?)
     }
 
-    pub async fn delete_test_input(&self, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE company_skill_test_inputs SET deleted_at=now(), updated_at=now() WHERE id=$1",
-        )
-        .bind(id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
-        Ok(n > 0)
-    }
+    // R815: 死代码 delete_test_input 已删除 (无 caller).
+    // HTTP route 的 delete_test_input 实际调用的是 soft_delete_test_input.
 
     // ---- test run templates ----
 

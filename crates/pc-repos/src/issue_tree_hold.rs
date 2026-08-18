@@ -262,20 +262,9 @@ impl<'a> IssueTreeHoldRepo<'a> {
         Ok(id)
     }
 
-    /// 释放 hold（UPDATE released_at = now()）；返回 rows_affected > 0 表示实际释放。
-    /// 仅释放仍 active 的 hold（幂等）。
-    pub async fn release(&self, issue_id: Uuid, hold_id: Uuid) -> sqlx::Result<bool> {
-        let n = sqlx::query(
-            "UPDATE issue_tree_holds SET released_at=now() \
-             WHERE issue_id=$1 AND id=$2 AND released_at IS NULL",
-        )
-        .bind(issue_id)
-        .bind(hold_id)
-        .execute(self.db.pool())
-        .await?
-        .rows_affected();
-        Ok(n > 0)
-    }
+    /// R815: 死代码 release 已删除 (无 caller).
+    // 注: issues.rs:1844 的 .release(id, run_id) 实际调用的是 IssueRepo::release (issue 表),
+    // 不是本模块 IssueTreeHoldRepo 的 release.
 
     /// Round 228: 完整 release hold 操作（与 Node `releaseHold` 对齐）。
     ///
@@ -528,16 +517,21 @@ impl<'a> IssueTreeHoldRepo<'a> {
     }
 
     /// Round 165: 释放 hold（按 id 定位，仅释放未释放的）。
-    pub async fn release_by_id(&self, hold_id: Uuid) -> sqlx::Result<bool> {
-        let n = sqlx::query(
+    /// R815: 返回 IssueTreeHoldFullRow; 0 行 = RowNotFound.
+    pub async fn release_by_id(&self, hold_id: Uuid) -> sqlx::Result<IssueTreeHoldFullRow> {
+        sqlx::query_as::<_, IssueTreeHoldFullRow>(
             "UPDATE issue_tree_holds SET released_at = now() \
-             WHERE id = $1 AND released_at IS NULL",
+             WHERE id = $1 AND released_at IS NULL \
+             RETURNING id, company_id, root_issue_id, mode, status, reason, release_policy, \
+                       created_by_actor_type, created_by_agent_id, created_by_user_id, \
+                       created_by_run_id, released_at, released_by_actor_type, released_by_agent_id, \
+                       released_by_user_id, released_by_run_id, release_reason, release_metadata, \
+                       created_at, updated_at",
         )
         .bind(hold_id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Round 165: hold 计数（按 released_at IS NULL 过滤，与原路由 SQL 一致）。

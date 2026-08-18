@@ -1474,14 +1474,20 @@ async fn archive_member(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    let ok = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+    let row = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
         .archive(company_id, member_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if !ok {
-        return Err(ApiError::NotFound(format!("member {member_id}")));
-    }
-    Ok(Json(json!({"archived": true, "id": member_id})))
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => {
+                ApiError::NotFound(format!("member {member_id}"))
+            }
+            other => ApiError::Internal(other.to_string()),
+        })?;
+    Ok(Json(json!({
+        "archived": row.status == "archived",
+        "id": row.id,
+        "status": row.status,
+    })))
 }
 
 // ---------- Round 25: member permissions / role-and-grants / inbox-agent-policy ----------

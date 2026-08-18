@@ -1264,24 +1264,24 @@ async fn delete_tool_application(
     State(state): State<AppState>,
     Path((company_id, application_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let n = ToolRepo::new(&state.db)
+    let _row = ToolRepo::new(&state.db)
         .delete_application(company_id, application_id)
-        .await?;
-    if n {
-        state.realtime.publish(
-            LiveEvent::new(
-                "tool.application.deleted",
-                "tool_application",
-                application_id,
-            )
-            .with_company(company_id),
-        );
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!(
-            "tool application {application_id}"
-        )))
-    }
+        .await
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => {
+                ApiError::NotFound(format!("tool application {application_id}"))
+            }
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new(
+            "tool.application.deleted",
+            "tool_application",
+            application_id,
+        )
+        .with_company(company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // Round 100: 仓储化。先 get_by_id 拿 company_id。
@@ -1391,9 +1391,15 @@ async fn delete_tool_profile(
         .find_profile_company_id(profile_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool profile {profile_id}")))?;
-    if !repo.delete_profile(company_id, profile_id).await? {
-        return Err(ApiError::NotFound(format!("tool profile {profile_id}")));
-    }
+    let _row = repo
+        .delete_profile(company_id, profile_id)
+        .await
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => {
+                ApiError::NotFound(format!("tool profile {profile_id}"))
+            }
+            other => ApiError::from(other),
+        })?;
     state.realtime.publish(
         LiveEvent::new("tool_profile.deleted", "tool_profile", profile_id).with_company(company_id),
     );
@@ -1719,12 +1725,15 @@ async fn delete_tool_policy_route(
     State(state): State<AppState>,
     Path((company_id, policy_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<impl IntoResponse> {
-    let n = ToolRepo::new(&state.db)
+    let _row = ToolRepo::new(&state.db)
         .delete_policy(company_id, policy_id)
-        .await?;
-    if !n {
-        return Err(ApiError::NotFound(format!("tool policy {policy_id}")));
-    }
+        .await
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => {
+                ApiError::NotFound(format!("tool policy {policy_id}"))
+            }
+            other => ApiError::from(other),
+        })?;
     state.realtime.publish(
         LiveEvent::new("tool.policy.deleted", "tool_policy", policy_id).with_company(company_id),
     );
@@ -3008,10 +3017,15 @@ async fn delete_tool_profile_entry(
         .find_profile_entry_company_id(entry_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("tool profile entry {entry_id}")))?;
-    let deleted = repo.delete_profile_entry_by_id(entry_id).await?;
-    if !deleted {
-        return Err(ApiError::NotFound(format!("tool profile entry {entry_id}")));
-    }
+    let _row = repo
+        .delete_profile_entry_by_id(entry_id)
+        .await
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => {
+                ApiError::NotFound(format!("tool profile entry {entry_id}"))
+            }
+            other => ApiError::from(other),
+        })?;
     state.realtime.publish(
         LiveEvent::new("tool_profile_entry.deleted", "tool_profile_entry", entry_id)
             .with_company(company_id),

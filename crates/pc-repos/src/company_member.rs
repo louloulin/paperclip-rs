@@ -252,17 +252,19 @@ impl<'a> CompanyMemberRepo<'a> {
         self.find_by_id(company_id, member_id).await
     }
 
-    /// 软归档：将 status 切到 `'archived'`；幂等。
-    pub async fn archive(&self, company_id: Uuid, member_id: Uuid) -> RepoResult<bool> {
-        let r = sqlx::query(
-            "UPDATE company_memberships SET status = 'archived', updated_at = now() \
-             WHERE id = $1 AND company_id = $2 AND status != 'archived'",
-        )
-        .bind(member_id)
-        .bind(company_id)
-        .execute(self.db.pool())
-        .await?;
-        Ok(r.rows_affected() > 0)
+    /// R814: 软归档（幂等）。返回 CompanyMemberRow (含 user JOIN), NotFound on missing.
+    /// 始终 idempotent: 已经 archived 也返回 row + 不报错.
+    pub async fn archive(&self, company_id: Uuid, member_id: Uuid) -> RepoResult<CompanyMemberRow> {
+        const SQL: &str = "WITH upd AS (                 UPDATE company_memberships SET status = 'archived', updated_at = now()                 WHERE id = $1 AND company_id = $2 AND status != 'archived'                 RETURNING 1              )              SELECT cm.id, cm.company_id, cm.principal_id, cm.membership_role, cm.status,                     cm.created_at, cm.updated_at, u.name, u.email, u.image              FROM company_memberships cm              LEFT JOIN \"user\" u ON u.id = cm.principal_id              WHERE cm.id = $1 AND cm.company_id = $2";
+        sqlx::query_as::<_, CompanyMemberRow>(SQL)
+            .bind(member_id)
+            .bind(company_id)
+            .fetch_optional(self.db.pool())
+            .await?
+            .ok_or_else(|| RepoError::NotFound {
+                entity: "company_member",
+                id: member_id.to_string(),
+            })
     }
 
     /// 计数：用于 sidebar / company stats。

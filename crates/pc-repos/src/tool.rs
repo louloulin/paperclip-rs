@@ -452,15 +452,17 @@ impl<'a> ToolRepo<'a> {
         Ok(n > 0)
     }
 
-    /// Round 100: 已删除 archived_at 列。patch_application 才是真正的"删除"语义。
-    pub async fn delete_application(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM tool_applications WHERE company_id=$1 AND id=$2")
-            .bind(company_id)
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R811: 删除 tool_application (returns ToolApplicationRow; RepoError::NotFound on miss).
+    pub async fn delete_application(&self, company_id: Uuid, id: Uuid) -> RepoResult<ToolApplicationRow> {
+        sqlx::query_as::<_, ToolApplicationRow>(
+            "DELETE FROM tool_applications WHERE company_id=$1 AND id=$2 \
+             RETURNING id, company_id, name, type as type_, status, metadata, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "tool_application", id: id.to_string() })
     }
 
     /// Round 100: 真正的部分更新入口。
@@ -1015,14 +1017,17 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn delete_profile(&self, company_id: Uuid, profile_id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM tool_profiles WHERE company_id=$1 AND id=$2")
-            .bind(company_id)
-            .bind(profile_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R811: 删除 tool_profile (returns ToolProfileRow; RepoError::NotFound on miss).
+    pub async fn delete_profile(&self, company_id: Uuid, profile_id: Uuid) -> RepoResult<ToolProfileRow> {
+        sqlx::query_as::<_, ToolProfileRow>(
+            "DELETE FROM tool_profiles WHERE company_id=$1 AND id=$2 \
+             RETURNING id, company_id, profile_key, name, description, status, default_action, metadata, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(profile_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "tool_profile", id: profile_id.to_string() })
     }
 
     // ---- 3b) tool_profile_entries ----
@@ -1222,14 +1227,16 @@ impl<'a> ToolRepo<'a> {
         Ok(n > 0)
     }
 
-    /// Round 141: 按 id 删除 profile entry。
-    pub async fn delete_profile_entry_by_id(&self, entry_id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM tool_profile_entries WHERE id=$1")
-            .bind(entry_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R811: 删除 profile entry (returns ToolProfileEntryRow; RepoError::NotFound on miss).
+    pub async fn delete_profile_entry_by_id(&self, entry_id: Uuid) -> RepoResult<ToolProfileEntryRow> {
+        sqlx::query_as::<_, ToolProfileEntryRow>(
+            "DELETE FROM tool_profile_entries WHERE id=$1 \
+             RETURNING id, company_id, profile_id, selector_type, effect, application_id, connection_id, catalog_entry_id, tool_name, risk_level, conditions, created_at, updated_at",
+        )
+        .bind(entry_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "tool_profile_entry", id: entry_id.to_string() })
     }
 
     /// Round 143: 检查 profile_key 是否存在（用于 create dedup 检查）。
@@ -2010,14 +2017,17 @@ impl<'a> ToolRepo<'a> {
             .await?)
     }
 
-    pub async fn delete_policy(&self, company_id: Uuid, policy_id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM tool_policies WHERE company_id=$1 AND id=$2")
-            .bind(company_id)
-            .bind(policy_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R811: 删除 tool_policy (returns ToolPolicyRow; RepoError::NotFound on miss).
+    pub async fn delete_policy(&self, company_id: Uuid, policy_id: Uuid) -> RepoResult<ToolPolicyRow> {
+        sqlx::query_as::<_, ToolPolicyRow>(
+            "DELETE FROM tool_policies WHERE company_id=$1 AND id=$2 \
+             RETURNING id, company_id, name, description, policy_type, priority, enabled, selectors, conditions, config, created_by_agent_id, created_by_user_id, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(policy_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "tool_policy", id: policy_id.to_string() })
     }
 
     /// Round 104: 重排策略优先级，按 policy_ids 顺序分配 priority = i * step。

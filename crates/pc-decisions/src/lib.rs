@@ -304,24 +304,23 @@ impl<'a> DecisionService<'a> {
     }
 
     /// 关闭（dismiss）一个决策（pending → dismissed）。
+    /// R813: mark_dismissed 直接返回 DecisionRow, 无需二次查询.
     pub async fn dismiss(
         &self,
         id: Uuid,
         reason: &str,
         decided_by_user_id: &str,
     ) -> DecisionServiceResult<DecisionRow> {
-        let changed = self
-            .repo
-            .mark_dismissed(id, reason, decided_by_user_id)
-            .await?;
-        if !changed {
-            return Err(DecisionServiceError::NotFound(format!("decision {id}")));
-        }
         let row = self
             .repo
-            .get(id)
-            .await?
-            .ok_or_else(|| DecisionServiceError::NotFound(format!("decision {id}")))?;
+            .mark_dismissed(id, reason, decided_by_user_id)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    DecisionServiceError::NotFound(format!("decision {id}"))
+                }
+                other => DecisionServiceError::Repo(format!("{other}")),
+            })?;
         for hook in &self.hooks {
             hook.on_dismissed(&row).await?;
         }
@@ -562,7 +561,13 @@ impl<'a> DecisionService<'a> {
         };
         self.repo
             .set_execution_status(decision_id, &execution_status, metadata_patch.as_ref())
-            .await?;
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    DecisionServiceError::NotFound(format!("decision {decision_id}"))
+                }
+                other => DecisionServiceError::Repo(format!("{other}")),
+            })?;
         Ok(DecisionRunEffectsReport {
             outcomes,
             execution_status,

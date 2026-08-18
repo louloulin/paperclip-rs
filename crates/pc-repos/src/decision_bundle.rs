@@ -221,13 +221,18 @@ impl<'a> DecisionBundleRepo<'a> {
         Ok(exists.0)
     }
 
-    /// 删除一个决策束（关联 decisions 的 bundle_id 会被外键 SET NULL）。
-    pub async fn delete(&self, id: Uuid) -> RepoResult<bool> {
-        let r = sqlx::query("DELETE FROM decision_bundles WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R815: 删除决策束; 返回 Vec<DecisionBundleRow> (cascading SET NULL to decisions).
+    /// 空 Vec 表示未找到 (NotFound 语义).
+    pub async fn delete(&self, id: Uuid) -> RepoResult<Vec<DecisionBundleRow>> {
+        let rows = sqlx::query_as::<_, DecisionBundleRow>(
+            "DELETE FROM decision_bundles WHERE id = $1 \
+             RETURNING id, company_id, title, summary, origin_agent_id, origin_issue_id, \
+                       origin_run_id, created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
     }
 }
 

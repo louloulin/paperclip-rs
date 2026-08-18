@@ -166,13 +166,14 @@ impl DecisionBundleService {
         .await;
         Ok(row)
     }
-    pub async fn delete(&self, id: Uuid) -> DecisionBundleResult<bool> {
+    /// R815: delete returns Vec<DecisionBundleRow>; NotFound on miss (empty Vec).
+    pub async fn delete(&self, id: Uuid) -> DecisionBundleResult<Vec<DecisionBundleRow>> {
         require_non_nil(id, "bundleId")?;
-        let ok = self.repo().delete(id).await?;
-        if ok {
+        let rows = self.repo().delete(id).await?;
+        if !rows.is_empty() {
             self.dispatch(DecisionBundleHookEvent::Deleted { bundle_id: id })
                 .await;
         }
-        Ok(ok)
+        Ok(rows)
     }
 }

@@ -183,10 +183,14 @@ async fn release_tree_hold(
 ) -> ApiResult<impl IntoResponse> {
     let hold_uuid =
         Uuid::parse_str(&hold_id).map_err(|_| ApiError::BadRequest("invalid hold id".into()))?;
-    IssueTreeHoldRepo::new(&state.db)
+    // R815: release_by_id returns IssueTreeHoldFullRow; NotFound on miss.
+    let _row = IssueTreeHoldRepo::new(&state.db)
         .release_by_id(hold_uuid)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("hold {hold_id}")),
+            other => ApiError::Internal(other.to_string()),
+        })?;
     Ok((
         StatusCode::OK,
         Json(json!({ "id": hold_id, "status": "released" })),

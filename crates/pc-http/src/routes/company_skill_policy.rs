@@ -107,12 +107,17 @@ async fn delete_skill_policy(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    CompanySkillPolicyRepo::new(&state.db)
+    // R814: returns Vec<PolicyRow>; empty means no policy existed for this company.
+    let rows = CompanySkillPolicyRepo::new(&state.db)
         .delete(company_id)
         .await?;
     Ok((
         StatusCode::OK,
-        Json(json!({ "deleted": true, "companyId": company_id })),
+        Json(json!({
+            "deleted": rows.len(),
+            "companyId": company_id,
+            "revisions": rows.iter().map(|r| r.revision).collect::<Vec<_>>(),
+        })),
     ))
 }
 

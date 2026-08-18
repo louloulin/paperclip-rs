@@ -66,14 +66,16 @@ impl<'a> CompanySkillPolicyRepo<'a> {
         Ok(())
     }
 
-    /// Round 181: 删除公司 skill 策略。
-    pub async fn delete(&self, company_id: Uuid) -> sqlx::Result<bool> {
-        let n = sqlx::query("DELETE FROM company_skill_policies WHERE company_id = $1")
-            .bind(company_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R814: 删除公司 skill 策略；返回被删除的 Vec<PolicyRow>.
+    /// 空 Vec 表示该公司没有 policy (NotFound 语义).
+    pub async fn delete(&self, company_id: Uuid) -> RepoResult<Vec<PolicyRow>> {
+        let rows = sqlx::query_as::<_, PolicyRow>(
+            "DELETE FROM company_skill_policies WHERE company_id = $1              RETURNING company_id, schema_version, revision, default_effect, rules, updated_at",
+        )
+        .bind(company_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows)
     }
 }
 

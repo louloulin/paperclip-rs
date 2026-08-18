@@ -222,29 +222,29 @@ impl CompanySkillService {
         Ok(row)
     }
 
-    pub async fn soft_delete(&self, company_id: Uuid, id: Uuid) -> SkillResult<bool> {
+    /// R814: soft_delete returns CompanySkillRow; NotFound on miss / already deleted.
+    pub async fn soft_delete(&self, company_id: Uuid, id: Uuid) -> SkillResult<CompanySkillRow> {
         Self::require_non_nil(company_id, "companyId")?;
         Self::require_non_nil(id, "skillId")?;
-        let row = self
+        let pre = self
             .repo()
             .get(company_id, id)
             .await?
             .ok_or(CompanySkillError::NotFound(id))?;
-        if row.deleted_at.is_some() {
+        if pre.deleted_at.is_some() {
             return Err(CompanySkillError::AlreadyDeleted);
         }
-        let ok = self.repo().soft_delete(company_id, id).await?;
-        if ok {
-            self.dispatch(CompanySkillHookEvent::SoftDeleted {
-                company_id,
-                skill_id: id,
-            })
-            .await;
-        }
-        Ok(ok)
+        let row = self.repo().soft_delete(company_id, id).await?;
+        self.dispatch(CompanySkillHookEvent::SoftDeleted {
+            company_id,
+            skill_id: id,
+        })
+        .await;
+        Ok(row)
     }
 
-    pub async fn archive(&self, company_id: Uuid, id: Uuid) -> SkillResult<bool> {
+    /// R814: skill::archive returns CompanySkillRow; NotFound on miss.
+    pub async fn archive(&self, company_id: Uuid, id: Uuid) -> SkillResult<CompanySkillRow> {
         Self::require_non_nil(company_id, "companyId")?;
         Self::require_non_nil(id, "skillId")?;
         Ok(self.repo().archive(company_id, id).await?)

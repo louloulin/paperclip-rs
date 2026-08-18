@@ -120,8 +120,8 @@ impl ApprovalHook for ApprovalDecisionLinkHook {
             .mark_dismissed(decision_id, "approval_rejected", decided_by)
             .await
         {
-            Ok(true) => pc_approvals::ApprovalHookOutcome::Ok,
-            Ok(false) => pc_approvals::ApprovalHookOutcome::Skipped,
+            Ok(_row) => pc_approvals::ApprovalHookOutcome::Ok,
+            Err(sqlx::Error::RowNotFound) => pc_approvals::ApprovalHookOutcome::Skipped,
             Err(e) => {
                 tracing::warn!(
                     approval_id = %approval.id,

@@ -13,6 +13,8 @@ use crate::issue_terminal_effects::{
 };
 use crate::Db;
 
+pub mod pure;
+
 // ---- R516: extract search response shapes ----
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -35,81 +37,6 @@ pub struct ExtractIssueFieldMatchRow {
     pub source_id: String,
 }
 
-fn make_excerpt(text: &str, contains: &str, kind: &str) -> Option<String> {
-    if contains.is_empty() {
-        return None;
-    }
-    let lower = text.to_lowercase();
-    let lower_contains = contains.to_lowercase();
-    let bytes = text.as_bytes();
-    let lc_bytes = lower.as_bytes();
-    let needle = lower_contains.as_bytes();
-    if kind == "url" {
-        let mut i = 0;
-        while i + needle.len() <= lc_bytes.len() {
-            if &lc_bytes[i..i + needle.len()] == needle {
-                let mut start = i;
-                while start > 0 && is_url_char(bytes[start - 1]) {
-                    start -= 1;
-                }
-                let mut end = i + needle.len();
-                while end < bytes.len() && is_url_char(bytes[end]) {
-                    end += 1;
-                }
-                let lo = start.saturating_sub(80);
-                let hi = (end + 80).min(text.len());
-                let mut snippet = text[lo..hi].to_string();
-                if lo > 0 {
-                    snippet = format!("…{snippet}", snippet = snippet);
-                }
-                if hi < text.len() {
-                    snippet.push('…');
-                }
-                return Some(snippet);
-            }
-            i += 1;
-        }
-        None
-    } else {
-        match lower.find(&lower_contains) {
-            Some(idx) => {
-                let lo = idx.saturating_sub(80);
-                let hi = (idx + contains.len() + 80).min(text.len());
-                let mut snippet = text[lo..hi].to_string();
-                if lo > 0 {
-                    snippet = format!("…{snippet}", snippet = snippet);
-                }
-                if hi < text.len() {
-                    snippet.push('…');
-                }
-                Some(snippet)
-            }
-            None => None,
-        }
-    }
-}
-
-fn is_url_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric()
-        || matches!(
-            b,
-            b'.' | b'/'
-                | b'-'
-                | b'_'
-                | b':'
-                | b'%'
-                | b'?'
-                | b'#'
-                | b'='
-                | b'&'
-                | b'~'
-                | b'+'
-                | b'@'
-                | b'!'
-                | b','
-                | b';'
-        )
-}
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct IssueTitleRow {
@@ -671,19 +598,7 @@ const ISSUE_COLS: &str = "id, company_id, project_id, project_workspace_id, goal
     source_trust, unblock_descriptor, blocked_transition_at, blocked_owner_notified_at, \
     started_at, completed_at, cancelled_at, hidden_at, created_at, updated_at";
 
-const ISSUE_STATUSES: [&str; 7] = [
-    "backlog",
-    "todo",
-    "in_progress",
-    "in_review",
-    "done",
-    "blocked",
-    "cancelled",
-];
-
-fn valid_issue_status(status: &str) -> bool {
-    ISSUE_STATUSES.contains(&status)
-}
+// R820: ISSUE_STATUSES + valid_issue_status 拆分到 issue/pure.rs
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct BlockedAttentionRow {
@@ -882,7 +797,7 @@ impl<'a> IssueRepo<'a> {
             ("description", "description", description),
         ] {
             if let Some(t) = text {
-                if let Some(excerpt) = make_excerpt(&t, contains, kind) {
+                if let Some(excerpt) = pure::make_excerpt(&t, contains, kind) {
                     out.push(ExtractIssueFieldMatchRow {
                         field: field.to_string(),
                         label: label.to_string(),
@@ -919,7 +834,7 @@ impl<'a> IssueRepo<'a> {
         .await?;
         let mut out = Vec::new();
         for (cid, body) in rows {
-            if let Some(excerpt) = make_excerpt(&body, contains, kind) {
+            if let Some(excerpt) = pure::make_excerpt(&body, contains, kind) {
                 out.push(ExtractIssueFieldMatchRow {
                     field: "comment".to_string(),
                     label: "comment".to_string(),
@@ -960,7 +875,7 @@ impl<'a> IssueRepo<'a> {
                 ("document_body", "document body", Some(body)),
             ] {
                 if let Some(t) = text {
-                    if let Some(excerpt) = make_excerpt(&t, contains, kind) {
+                    if let Some(excerpt) = pure::make_excerpt(&t, contains, kind) {
                         out.push(ExtractIssueFieldMatchRow {
                             field: field.to_string(),
                             label: label.to_string(),
@@ -1403,7 +1318,7 @@ impl<'a> IssueRepo<'a> {
         };
 
         if let Some(status) = status {
-            if !valid_issue_status(status) {
+            if !pure::valid_issue_status(status) {
                 return Err(sqlx::Error::Protocol(format!(
                     "unknown issue status: {status}"
                 )));
@@ -4813,7 +4728,7 @@ pub struct IssueSubtreeNode {
 
 #[cfg(test)]
 mod issue_update_tests {
-    use super::valid_issue_status;
+    use super::pure::valid_issue_status;
 
     #[test]
     fn accepts_all_node_issue_statuses() {
