@@ -813,21 +813,19 @@ impl<'a> IssueService<'a> {
         Ok(row)
     }
 
-    /// R646: 删除评论（带作用域校验 + hook）。
+    /// R646/R798: 删除评论（带作用域校验 + hook）。返回删除的 row；0 行 = NotFound。
     pub async fn remove_comment(
         &self,
         company_id: Uuid,
         issue_id: Uuid,
         comment_id: Uuid,
-    ) -> IssueServiceResult<bool> {
+    ) -> IssueServiceResult<IssueCommentRow> {
         let parent_issue = self.ensure_issue_in_company(company_id, issue_id).await?;
-        let ok = self.repo.delete_comment(issue_id, comment_id).await?;
-        if ok {
-            for hook in &self.hooks {
-                hook.on_comment_removed(&parent_issue, comment_id).await?;
-            }
+        let row = self.repo.delete_comment(issue_id, comment_id).await?;
+        for hook in &self.hooks {
+            hook.on_comment_removed(&parent_issue, comment_id).await?;
         }
-        Ok(ok)
+        Ok(row)
     }
 
     /// 内部：校验 issue 存在 + 同公司；返回最新 row。

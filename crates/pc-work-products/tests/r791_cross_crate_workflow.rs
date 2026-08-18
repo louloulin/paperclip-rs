@@ -79,7 +79,7 @@ async fn r791_issue_to_work_product_lifecycle() {
         status: "open".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("create wp").expect("some");
+    }).await.expect("create wp");
     assert_eq!(wp.kind, "pr");
 
     // Step 3: issue 状态变更 todo -> in_progress
@@ -131,7 +131,7 @@ async fn r791_issue_close_with_work_product() {
         status: "merged".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("pr").expect("some_pr");
+    }).await.expect("pr");
 
     let deploy = wp_service.create_for_issue(issue.id, company_id, CreateWorkProductInput {
         kind: "deployment".to_string(),
@@ -142,7 +142,7 @@ async fn r791_issue_close_with_work_product() {
         status: "ready".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("deploy").expect("some_deploy");
+    }).await.expect("deploy");
 
     // Close the issue
     issue_service.update_status(company_id, issue.id, "done")
@@ -202,7 +202,7 @@ async fn r791_multiple_issues_independent_work_products() {
         status: "open".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("wp_a").expect("some_wp_a");
+    }).await.expect("wp_a");
 
     let _wp_b = wp_service.create_for_issue(issue_b.id, company_id, CreateWorkProductInput {
         kind: "pr".to_string(),
@@ -213,7 +213,7 @@ async fn r791_multiple_issues_independent_work_products() {
         status: "open".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("wp_b").expect("some_wp_b");
+    }).await.expect("wp_b");
 
     // Verify each issue only sees its own work products
     let wps_a = wp_service.list_for_issue(issue_a.id).await.expect("list_a");

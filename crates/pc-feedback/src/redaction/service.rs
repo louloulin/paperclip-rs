@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use pc_errors::{Error as PcError, Result as PcResult};
-use pc_repos::feedback_redaction as repo;
+use crate::redaction::free_text_pure as repo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;

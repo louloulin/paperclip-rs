@@ -57,7 +57,7 @@ pub fn sha256_hex_digest(value: &Value) -> String {
     hex::encode(result)
 }
 
-/// Redaction state（与 `pc_repos::feedback_redaction::RedactionState` 对齐的纯数据视图）。
+/// Redaction state（与 `crate::redaction::free_text_pure::RedactionState` 对齐的纯数据视图）。
 ///
 /// 使用 BTreeMap / BTreeSet 保持字典序，确保 `to_summary` 输出稳定。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

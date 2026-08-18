@@ -1,7 +1,19 @@
-//! `feedback-redaction` 域：自由文本中的敏感信息遮罩，对齐 Node `feedback-redaction.ts`。
+#![forbid(unsafe_code)]
+
+//! 自由文本敏感信息遮罩（free-text redaction），对齐 Node `feedback-redaction.ts` 的 redact_free_text 等 API。
 //!
-//! 与 `redact.rs` 的差异：
-//! - `redact.rs` 处理结构化 JSON 的「键值」层 redact
+//! 物理位置：`pc-feedback/src/redaction/free_text_pure.rs`。
+//! 历史位置：`pc-repos/src/feedback_redaction.rs`（R792A 抽离，纯函数 0 sqlx）。
+//!
+//! 与 `pc-feedback::redaction::pure` (`RedactionPattern` / `apply_pattern`)
+//! 的差异（本模块自带 `redact_free_text` / `sanitize_free_text_value` 等高级入口）：
+//! - `redact_free_text` —— 自由文本内的敏感模式 redact
+//! - `sanitize_free_text_value` —— JSON Value 的 truncate + redact 组合入口
+//! - `truncate_value` / `truncate_string_fields` —— 长字段截断
+//! - `RedactionState` —— 累加式的 redact 状态汇总
+//!
+//! 与 `pc-repos::redact` (结构化 JSON 键值层 redact) 的差异：
+//! - `pc-repos::redact` 处理结构化 JSON 的「键值」层 redact
 //! - 本模块处理任意自由文本（用户反馈、日志、注释等）的「文本内」敏感模式 redact
 //!
 //! 模式覆盖（按优先级排序，低 index = 高优先级）：

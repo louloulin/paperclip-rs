@@ -1590,14 +1590,19 @@ async fn delete_comment(
     State(state): State<AppState>,
     Path((id, comment_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let ok = IssueRepo::new(&state.db)
+    // R798: delete_comment returns T directly; sqlx::Error::RowNotFound -> 404
+    let row = IssueRepo::new(&state.db)
         .delete_comment(id, comment_id)
-        .await?;
-    if ok {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("comment {comment_id}")))
-    }
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("comment {comment_id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("issue.comment.removed", "issue_comment", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
@@ -1643,15 +1648,19 @@ async fn remove_label(
     State(state): State<AppState>,
     Path(label_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let ok = IssueRepo::new(&state.db)
+    // R798: IssueRepo::delete_label returns T directly; sqlx::Error::RowNotFound -> 404
+    let row = IssueRepo::new(&state.db)
         .delete_label(Uuid::nil(), label_id)
         .await
-        .ok();
-    // 也尝试按公司删除（label 跨公司不共享，由路由先解析 company_id）
-    if ok.unwrap_or(false) {
-        return Ok(StatusCode::NO_CONTENT);
-    }
-    Err(ApiError::NotFound(format!("label {label_id}")))
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("label {label_id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("issue.label.removed", "issue_label", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn assign_label(
@@ -2743,6 +2752,7 @@ async fn patch_work_product(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateWorkProductBody>,
 ) -> ApiResult<Json<Value>> {
+    // R797: update_work_product returns T directly; sqlx::Error::RowNotFound -> ApiError::NotFound
     let row = IssueRepo::new(&state.db)
         .update_work_product(
             id,
@@ -2754,8 +2764,11 @@ async fn patch_work_product(
             body.summary.as_deref(),
             body.metadata.as_ref(),
         )
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("work product {id}")))?;
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("work product {id}")),
+            other => ApiError::from(other),
+        })?;
     state.realtime.publish(
         LiveEvent::new("issue.work_product.updated", "issue_work_product", row.id)
             .with_company(row.company_id),
@@ -2767,12 +2780,19 @@ async fn remove_work_product(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let ok = IssueRepo::new(&state.db).delete_work_product(id).await?;
-    if ok {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("work product {id}")))
-    }
+    // R797: delete_work_product returns T directly; sqlx::Error::RowNotFound -> 404
+    let row = IssueRepo::new(&state.db)
+        .delete_work_product(id)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("work product {id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("issue.work_product.removed", "issue_work_product", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
@@ -3503,14 +3523,19 @@ async fn remove_attachment(
     State(state): State<AppState>,
     Path(attachment_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
-    let ok = IssueRepo::new(&state.db)
+    // R798: delete_attachment returns T directly; sqlx::Error::RowNotFound -> 404
+    let row = IssueRepo::new(&state.db)
         .delete_attachment(attachment_id)
-        .await?;
-    if ok {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("attachment {attachment_id}")))
-    }
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("attachment {attachment_id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("issue.attachment.removed", "issue_attachment", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
@@ -4223,14 +4248,19 @@ async fn delete_issue_interaction(
     State(state): State<AppState>,
     Path((_id, interaction_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let removed = IssueRepo::new(&state.db)
+    // R798: delete_interaction returns T directly; sqlx::Error::RowNotFound -> 404
+    let row = IssueRepo::new(&state.db)
         .delete_interaction(interaction_id)
-        .await?;
-    if removed {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("interaction {interaction_id}")))
-    }
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("interaction {interaction_id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("issue.interaction.removed", "issue_interaction", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Round 219: shared JSON converter for IssueThreadInteractionRow。

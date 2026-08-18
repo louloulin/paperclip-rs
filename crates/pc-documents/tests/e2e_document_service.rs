@@ -234,8 +234,7 @@ async fn r608_update_appends_revision() {
             },
         )
         .await
-        .expect("update")
-        .expect("some");
+        .expect("update");
     assert_eq!(updated.title.as_deref(), Some("v2"));
     assert_eq!(updated.latest_body, "second");
     assert_eq!(updated.latest_revision_number, 2, "should create rev 2");
@@ -427,24 +426,21 @@ async fn r608_lock_and_unlock_dispatch_events() {
     recorder.clear();
     svc.lock_document(company_id, row.id, None, Some("editor"))
         .await
-        .expect("lock")
-        .expect("some");
+        .expect("lock");
     let events = recorder.events_snapshot();
     assert!(matches!(events[0], DocumentHookEvent::Locked { .. }));
 
     recorder.clear();
     svc.unlock_document(company_id, row.id)
         .await
-        .expect("unlock")
-        .expect("some");
+        .expect("unlock");
     let events = recorder.events_snapshot();
     assert!(matches!(events[0], DocumentHookEvent::Unlocked { .. }));
 
     // double-unlock is idempotent (returns row)
     svc.unlock_document(company_id, row.id)
         .await
-        .expect("unlock idempotent")
-        .expect("some");
+        .expect("unlock idempotent");
 
     // double-lock is conflict
     svc.lock_document(company_id, row.id, None, Some("e1"))

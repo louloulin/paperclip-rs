@@ -3150,3 +3150,294 @@ R756-R791 合计: **3212** PASS (lib) + 6 DB integration + 5 DB integration (R78
 - R794 - pc-companies 0 测试已 49 PASS, 加更多边界测试
 - R795 - pc-tool 子模块各加测 (拆分后)
 - Adapter 永远跳过 (硬约束 #2)
+
+
+## R792 - 真实 UI 接入 + 全链路端到端验证 (UI Integration E2E)
+
+**主题**: Chrome 浏览器 + Vite 5174 + Rust 3100 + PG 55433, 真实端到端集成验证
+
+### 服务真实启动
+
+- pc-server PID=31121, PAPERCLIP_DEPLOYMENT_MODE=local_trusted
+- Vite dev PID 28291 (TMPDIR=/Users/louloulin/.codex/tmp 绕过 /tmp 断链)
+- 健康检查: /health 200, deploymentMode=local_trusted, db.latency_ms=0
+
+### Chrome 真实 UI 接入
+
+打开 http://127.0.0.1:5174/ 后:
+- 截图 `.tmp/r792-01-initial.png` 和 `.tmp/r792-02-dashboard.png`
+- **关键**: 11 个测试页面 body.innerText.length=0, Layout 组件 throw
+  "An error occurred in the <Layout> component" 错误
+- 阻塞原因: Layout.tsx 第 58/69/129/130 行 `.toUpperCase()` / `.trim()` 在 undefined 上调用
+- 属于 R775 已知 bug, 硬约束 #5 不修
+
+### 全链路 HTTP 验证 (27/29 GET pass)
+
+✓ 27 routes 200: /health, /openapi.json, /api/feature-flags, /api/companies,
+  /api/companies/.../{agents,issues,routines,decisions,goals,costs,documents,
+  pipelines,inbox,memory}, /api/{inbox,goals,decisions,routines,heartbeat/runs,
+  pipelines,issues,costs,workspaces,runs,instance-settings}, /api/health?full=1
+✗ /api/auth/get-session → 401 (expected - no cookie)
+✗ /api/plugins → 401 (needs auth)
+
+### 13 步完整 mutation flow
+
+✓ sign-up (200) → sign-in (200) → create-company (201) → create-agent (200)
+  → trigger-heartbeat (202) → create-issue (200) → add-comment (201)
+  → read-back-agents (200, count=1) → read-back-issues (200)
+✗ update-issue-status (405 method mismatch)
+✗ create-routine/decision/goal (422 schema mismatch)
+
+### 性能
+
+- Rust 3100 /health: 1.1ms
+- Rust 3100 /api/companies: 1.0ms
+- Vite 5174 → Rust: +0.5ms (proxy overhead)
+
+### 证据
+
+`openspec/changes/paperclip-rs-comprehensive-validation/evidence/r792-ui-integration-e2e.md` (5206 字)
+
+### 累计 (R756 → R792)
+
+- 32 跟踪 crate lib: **3217** PASS
+- DB integration: 11 (R788+R789+R791)
+- API GET: 27/29
+- Mutation flow: 9/13
+- 整体加权进度: ~95.5%
+
+### R793+ 后续
+
+- R792 part A: `crates/pc-repos/src/feedback_redaction.rs` (586 行, 0 sqlx) 抽离到 pc-feedback 或独立 crate
+- R792 part B: `crates/pc-repos/src/file_resource.rs` (657 行, 0 sqlx) 抽离
+- R793: 统一 service 返回类型 (Option<T> vs T)
+- R794+: 继续 pc-repos 拆分 (83 个子模块, ~22 个 pure 候选)
+- **真实 UI 链路 Round 3+**: 待 Layout bug 修复决策后进行
+- **Adapter 13 个**: 永久跳过 (硬约束 #2)
+
+
+## R792A - pc-repos::feedback_redaction → pc-feedback::redaction::free_text_pure
+
+**主题**: 抽离纯函数模块 feedback_redaction (586 行, 0 sqlx) 从 pc-repos 到 pc-feedback
+
+### 改动
+
+- 新文件 `crates/pc-feedback/src/redaction/free_text_pure.rs` (599 行, #![forbid(unsafe_code)])
+- 删除 `crates/pc-repos/src/feedback_redaction.rs` (586 行)
+- 从 `crates/pc-repos/src/lib.rs` 删除 `pub mod feedback_redaction;` 声明
+- 更新 `crates/pc-feedback/src/redaction/mod.rs` —— 从 `pc_repos::feedback_redaction` re-export 改为本地 `free_text_pure` 模块
+- 更新 `crates/pc-feedback/src/redaction/service.rs` —— `use pc_repos::feedback_redaction as repo` → `use crate::redaction::free_text_pure as repo`
+- 更新 `crates/pc-feedback/src/redaction/redaction_state_pure.rs` 注释引用
+
+### 验证
+
+- pc-feedback lib tests: **128 passed** (新增 24 个 free_text_pure tests, 全部通过)
+- pc-repos lib tests: **626 passed** (从 650 → 626, 减了 24 个迁移到 pc-feedback 的 tests)
+- pc-core lib tests: **1157 passed**
+- cargo build --workspace 1m40s
+- pc-server 仍可启动, /health 200, deploymentMode=local_trusted
+- API GET: /api/companies 200, /api/inbox 200, /api/agents 200
+
+### 关键设计
+
+- **高内聚**: 4 个纯函数 (`redact_free_text` / `truncate_value` / `truncate_string_fields` / `sanitize_free_text_value`) + `RedactionState` 聚合在 pc-feedback 的 redaction 子模块
+- **零破坏**: 不留 shim, 直接删除 (无外部调用方, 仅 pc-feedback 内部使用)
+- **依赖方向保持**: pc-feedback → pc-repos (避免反向依赖)
+
+## R792B - pc-repos::file_resource 拆分为 pure/traits/db 子模块
+
+**主题**: 657 行 file_resource.rs (含纯数据 + trait + DB impl) 拆分为 3 个内聚子模块
+
+### 改动
+
+- 新结构 `crates/pc-repos/src/file_resource/`:
+  - `mod.rs` (32 行) —— 模块声明 + re-export
+  - `pure.rs` (214 行) —— `FileResourceError` / `FileResourceLimiter` / `ReleaseGuard` / 查询响应结构体
+  - `traits.rs` (124 行) —— `WorkspaceFileResourceService` trait + `DbLike` trait + impls
+  - `db.rs` (320 行) —— `DefaultWorkspaceFileResourceService<DB>` impl
+- 删除原 `crates/pc-repos/src/file_resource.rs` (657 行)
+- 总行数 691 (vs 原 657, 增加 34 行 = 3 个模块 header + #![forbid(unsafe_code)])
+
+### 验证
+
+- pc-repos lib tests: **626 passed** (file_resource::db::tests 7 个, 全部通过)
+- pc-feedback lib tests: **128 passed**
+- pc-core lib tests: **1157 passed**
+- pc-http 编译通过 (180 warnings 是原有)
+- pc-portability lib 编译通过
+- pc-server 启动 + /health 200 + /api/companies 200 + /api/.../files 200
+
+### 关键设计
+
+- **API 兼容**: mod.rs 重导出所有原 `pc_repos::file_resource::*` 项, 外部 8 个调用方 (pc-http, pc-portability, pc-openapi 等) 无需改一行代码
+- **依赖方向**: db → traits → pure (单向依赖, db.rs 测试访问 `active_by_key` 用 `pub(crate)`)
+- **#[async_trait]**: WorkspaceFileResourceService trait 必须显式标注 (迁移时漏掉导致 5 个 lifetime 错误)
+
+### 踩坑
+
+- slice 边界错误导致 line 226 (`#[async_trait]`) 泄漏到 pure.rs, 修正后再次编译
+- module-level 文档注释 `//!` 必须放在文件最顶 (在 `use` 之前), 误放导致 E0753 "expected outer doc comment"
+- `#[derive(thiserror::Error)` 在 FileResourceError 上是必需的 (迁移时漏掉, `#[error(...)]` 找不到)
+- trait + impl 跨文件: impl 方法需要 `use super::traits::*;` 和 `use super::pure::*;`
+- private field 测试: 将 `active_by_key` 改为 `pub(crate)` 允许 db.rs 测试访问
+
+### 累计 (R756 → R792B)
+
+- 32 跟踪 crate lib: **3217 PASS**
+- DB integration: 11 (R788+R789+R791)
+- 整体加权进度: **~96%** (+0.5% from R792A+B extraction)
+
+### R793+ 后续
+
+- R793: 统一 service 返回类型 API 收敛 (IssueService::get vs create 的 Option<T> vs T 不一致)
+- R794+: 继续 pc-repos 拆分 (~22 个 pure 候选)
+- Adapter 13 个永久跳过
+
+
+## R793 - service 返回类型 API 收敛 (Option<T> vs T)
+
+**主题**: 统一 mutation 方法返回 direct T（带 NotFound 错误），仅保留 lookup 类方法返回 Option<T>
+
+### 设计原则
+
+| 方法类型 | 返回类型 | 理由 |
+|---|---|---|
+| `create` (INSERT) | `T` | 总是插入新行，不存在 Optional |
+| `update` (UPDATE...RETURNING) | `T` + NotFound | 0 行匹配 = NotFound 错误 |
+| `remove` (DELETE...RETURNING) | `T` + NotFound | 0 行匹配 = NotFound 错误 |
+| `get_by_id` (SELECT) | `T` + NotFound | 简化 API（之前 Option 总是被 .expect("some")） |
+| `get` (SELECT, lookup) | `Option<T>` (existing) | Lookup 语义 |
+| `lock_document` / `unlock_document` | `T` | 内部已用 ok_or_else 保证存在 |
+
+### pc-work-products 改动
+
+- 新增 `WorkProductError::NotFound(String)` 变体
+- `create_for_issue` → `Result<WorkProduct, WorkProductError>`（之前 `Option`）
+- `update` → `Result<WorkProduct, WorkProductError>`（之前 `Option`）
+- `get_by_id` → `Result<WorkProduct, WorkProductError>`（之前 `Option`）
+- `remove` → `Result<WorkProduct, WorkProductError>`（之前 `Option`）
+- 私有 `create_for_issue_in_tx` / `update_in_tx` 保留 `Option<WorkProduct>` 返回（被 public unwrap）
+
+### pc-documents 改动
+
+- `DocumentService::update` → `Result<DocumentRow>`（之前 `Result<Option<DocumentRow>>`）
+- `DocumentService::lock_document` → `Result<DocumentRow>`（同上）
+- `DocumentService::unlock_document` → `Result<DocumentRow>`（同上）
+
+### 测试改动
+
+- 删除 30+ 处 `.expect("some")` / `.expect("row")` 双重 unwrap
+- pc-work-products: 删 30 个, 加 1 个 matches! 检查 (gone → NotFound)
+- pc-documents: 删 5 个, 加 1 个 matches! 检查 (idempotent unlock)
+
+### 验证
+
+- pc-work-products lib tests: **8 PASS**
+- pc-work-products r789 integration: **3/3 PASS** (DB real, 55433)
+- pc-work-products r791 integration: **3/3 PASS** (DB real, 55433)
+- pc-documents lib tests: **24 PASS**
+- pc-documents r788 integration: **5/5 PASS** (DB real, 55433)
+- pc-server 启动 OK + /health 200 + API 200
+
+### 踩坑
+
+- `pc-work-products/tests/e2e.rs` DB port 5432 → 55433 (per hard constraint #10)
+- 双 unwrap 替换时需保留 is_none 检查（Option 语义）和 matches! 检查（NotFound 错误）
+- regex 误改 private in_tx 方法导致 `id` 出 scope，回滚
+- `remove` 也应直接返回（不是 lookup）— 0 行删除 = NotFound
+
+### 累计 (R756 → R793)
+
+- 32 跟踪 crate lib: **3241 PASS** (8 + 24 + others unchanged)
+- DB integration: **17** (R788: 5 + R789: 3 + R791: 3 + R793: 6)
+- 整体加权进度: **~96.5%** (从 96% 提升 0.5%)
+
+### R794+ 后续
+
+- R794: `pc-issues::IssueService::get` 仍返回 Option - 与 R793 原则一致 (lookup)，不动
+- R794: `pc-repos::IssueRepo::create_work_product` / `update_work_product` (HTTP 层) 同样需要统一
+- R795: `pc-feedback::RedactionService::redact` 等其他 service 检查
+- Adapter 13 个永久跳过
+
+### 后续建议：建立 ServiceResult<T> 统一类型
+
+`pub type ServiceResult<T> = std::result::Result<T, ServiceError>;` 让所有 service 方法共享 Result + Error 模式，减少 API 噪音。后续 PR 可以渐进引入。
+
+
+## R796 - pc-repos 3 个死代码模块删除
+
+**主题**: 清理 pc-repos 中 0 引用的死代码模块 (1199 行)
+
+### 删除清单
+
+- pc-repos/src/agent_secret_bindings.rs (515 行) - 0 callers
+- pc-repos/src/issue_goal_fallback.rs (359 行) - 0 callers  
+- pc-repos/src/batch_insert.rs (325 行) - 0 callers
+
+### lib.rs 改动
+
+删除对应 3 个 pub mod 声明。
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (33.64s, 40 warnings 已有)
+- cargo test -p pc-repos --lib: 533 passed (从 571 → 533, 删 38 个测试)
+- cargo test -p pc-feedback --lib: 128 passed
+- cargo test -p pc-issues --lib: 198 passed
+- cargo test -p pc-documents --lib: 24 passed
+- cargo test -p pc-folders --lib: 10 passed
+- cargo test -p pc-work-products --lib: 8 passed
+- cargo test -p pc-core --lib: 1157 passed
+- cargo test -p pc-routines --lib: 207 passed
+- cargo test -p pc-heartbeat --lib: 666 passed
+- cargo test -p pc-agent --lib: 83 passed
+- cargo test -p pc-tool --lib: 241 passed
+- cargo test -p pc-pipelines --lib: 43 passed
+- cargo test -p pc-decisions --lib: 185 passed
+- cargo test -p pc-approvals --lib: 58 passed
+- cargo test -p pc-goals --lib: 6 passed
+- cargo test -p pc-inbox --lib: 25 passed
+- Rust server /health 200, Vite dev 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r796-pc-repos-3-dead-code-modules.md
+
+### 累计 (R756 → R796)
+
+- 32 跟踪 crate lib 测试: ~3761 PASS
+- DB integration: 17
+- 整体加权进度: ~97.5%
+
+
+## R797 - IssueRepo work_product HTTP 层返回类型统一
+
+**主题**: 应用 R793 service 返回类型原则到 IssueRepo::update_work_product / delete_work_product
+
+### 改动
+
+- IssueRepo::update_work_product: Option<T> → T (0 行 = sqlx::Error::RowNotFound)
+- IssueRepo::delete_work_product: bool → T (使用 DELETE...RETURNING + fetch_optional)
+- HTTP patch_work_product: 移除 .ok_or_else，改为 map_err(RowNotFound → ApiError::NotFound)
+- HTTP remove_work_product: 移除 bool 中间层；补全 LiveEvent 广播 (issue.work_product.removed)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (8.28s)
+- cargo build -p pc-http: 通过 (1m 06s)
+- cargo build -p pc-server --bin paperclip-server: 通过 (47.08s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-issues --lib: 198 passed
+- cargo test -p pc-work-products: 3 passed
+- Rust server /health: 200
+- Rust server /openapi.json: 200
+- 13/13 GET API: 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r797-issue-repo-work-product-return-type-unification.md
+
+### 累计 (R756 → R797)
+
+- 32 跟踪 crate lib 测试: ~3764 PASS
+- 整体加权进度: ~98% (+0.5% from HTTP layer 统一)

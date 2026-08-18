@@ -3,13 +3,14 @@
 use pc_repos::Db;
 use pc_work_products::import_write_types::ImportIssueWorkProductRow;
 use pc_work_products::{
-    import_row_to_create_input, CreateWorkProductInput, UpdateWorkProductPatch, WorkProductService,
+    import_row_to_create_input, CreateWorkProductInput, UpdateWorkProductPatch,
+    WorkProductError, WorkProductService,
 };
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
+const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:55433/paperclip_repos";
 
 static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -136,15 +137,15 @@ async fn create_and_get() {
             },
         )
         .await
-        .expect("create")
-        .expect("some");
+        .expect("create");
 
     assert_eq!(created.kind, "pr");
     assert_eq!(created.provider, "github");
     assert!(created.is_primary);
     assert_eq!(created.review_state, "pending");
 
-    let got = svc.get_by_id(created.id).await.expect("get").expect("some");
+    let got = svc.get_by_id(created.id).await
+        .expect("get");
     assert_eq!(got.title, "PR #1");
 
     let listed = svc.list_for_issue(issue_id).await.expect("list");
@@ -177,8 +178,7 @@ async fn create_primary_clears_other_primary_same_type() {
             },
         )
         .await
-        .expect("create1")
-        .expect("some");
+        .expect("create1");
 
     let second = svc
         .create_for_issue(
@@ -194,11 +194,11 @@ async fn create_primary_clears_other_primary_same_type() {
             },
         )
         .await
-        .expect("create2")
-        .expect("some");
+        .expect("create2");
 
     // first 不再是 primary
-    let first_reloaded = svc.get_by_id(first.id).await.expect("get").expect("some");
+    let first_reloaded = svc.get_by_id(first.id).await
+        .expect("get");
     assert!(!first_reloaded.is_primary);
     assert!(second.is_primary);
 
@@ -228,8 +228,7 @@ async fn primary_does_not_clear_other_types() {
             },
         )
         .await
-        .expect("pr")
-        .expect("some");
+        .expect("pr");
 
     let _doc_primary = svc
         .create_for_issue(
@@ -245,15 +244,13 @@ async fn primary_does_not_clear_other_types() {
             },
         )
         .await
-        .expect("doc")
-        .expect("some");
+        .expect("doc");
 
     // pr 不应该被 doc 的 primary 创建清除
     let pr = svc
         .get_by_id(pr_primary.id)
         .await
-        .expect("get")
-        .expect("some");
+        .expect("get");
     assert!(pr.is_primary);
 
     cleanup(&pool, company_id).await;
@@ -281,8 +278,7 @@ async fn update_partial_fields() {
             },
         )
         .await
-        .expect("create")
-        .expect("some");
+        .expect("create");
 
     let updated = svc
         .update(
@@ -294,8 +290,7 @@ async fn update_partial_fields() {
             },
         )
         .await
-        .expect("update")
-        .expect("some");
+        .expect("update");
 
     assert_eq!(updated.status, "merged");
     assert_eq!(updated.review_state, "approved");
@@ -327,8 +322,7 @@ async fn update_setting_primary_clears_other_primary() {
             },
         )
         .await
-        .expect("create1")
-        .expect("some");
+        .expect("create1");
 
     let second = svc
         .create_for_issue(
@@ -344,8 +338,7 @@ async fn update_setting_primary_clears_other_primary() {
             },
         )
         .await
-        .expect("create2")
-        .expect("some");
+        .expect("create2");
 
     // 通过 update 把 second 设为 primary → first 应被清掉
     let _ = svc
@@ -357,9 +350,9 @@ async fn update_setting_primary_clears_other_primary() {
             },
         )
         .await
-        .expect("update")
-        .expect("some");
-    let first_reloaded = svc.get_by_id(first.id).await.expect("get").expect("some");
+        .expect("update");
+    let first_reloaded = svc.get_by_id(first.id).await
+        .expect("get");
     assert!(!first_reloaded.is_primary);
 
     cleanup(&pool, company_id).await;
@@ -387,14 +380,13 @@ async fn remove_returns_row_and_deletes() {
             },
         )
         .await
-        .expect("create")
-        .expect("some");
+        .expect("create");
 
-    let removed = svc.remove(created.id).await.expect("remove").expect("some");
+    let removed = svc.remove(created.id).await.expect("remove");
     assert_eq!(removed.id, created.id);
 
-    let gone = svc.get_by_id(created.id).await.expect("get");
-    assert!(gone.is_none());
+    let gone_result = svc.get_by_id(created.id).await;
+    assert!(matches!(gone_result, Err(WorkProductError::NotFound(_))));
 
     cleanup(&pool, company_id).await;
 }
@@ -404,8 +396,8 @@ async fn remove_nonexistent_returns_none() {
     let _guard = TEST_LOCK.lock().await;
     let (db, _pool) = setup_db().await;
     let svc = WorkProductService::new(&db);
-    let result = svc.remove(Uuid::new_v4()).await.expect("remove");
-    assert!(result.is_none());
+    let result = svc.remove(Uuid::new_v4()).await;
+    assert!(matches!(result, Err(WorkProductError::NotFound(_))));
 }
 
 #[tokio::test(flavor = "current_thread")]

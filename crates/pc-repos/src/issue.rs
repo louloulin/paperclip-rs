@@ -2422,13 +2422,18 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-    pub async fn delete_comment(&self, issue_id: Uuid, comment_id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM issue_comments WHERE id = $1 AND issue_id = $2")
-            .bind(comment_id)
-            .bind(issue_id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R798: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete_comment(&self, issue_id: Uuid, comment_id: Uuid) -> sqlx::Result<IssueCommentRow> {
+        sqlx::query_as::<_, IssueCommentRow>(
+            "DELETE FROM issue_comments WHERE id = $1 AND issue_id = $2 \
+             RETURNING id, company_id, issue_id, author_agent_id, author_user_id, body, \
+                presentation, metadata, created_at, updated_at",
+        )
+        .bind(comment_id)
+        .bind(issue_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     // ---------- labels ----------
@@ -2460,13 +2465,17 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
-    pub async fn delete_label(&self, company_id: Uuid, label_id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM labels WHERE id = $1 AND company_id = $2")
-            .bind(label_id)
-            .bind(company_id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R798: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete_label(&self, company_id: Uuid, label_id: Uuid) -> sqlx::Result<LabelRow> {
+        sqlx::query_as::<_, LabelRow>(
+            "DELETE FROM labels WHERE id = $1 AND company_id = $2 \
+             RETURNING id, company_id, name, color, created_at, updated_at",
+        )
+        .bind(label_id)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     pub async fn assign_label(
@@ -3422,6 +3431,7 @@ impl<'a> IssueRepo<'a> {
         .await
     }
 
+    /// R797: 0 rows updated returns `sqlx::Error::RowNotFound` (was Option<T>).
     pub async fn update_work_product(
         &self,
         id: Uuid,
@@ -3432,7 +3442,7 @@ impl<'a> IssueRepo<'a> {
         health_status: Option<&str>,
         summary: Option<&str>,
         metadata: Option<&serde_json::Value>,
-    ) -> sqlx::Result<Option<IssueWorkProductRow>> {
+    ) -> sqlx::Result<IssueWorkProductRow> {
         sqlx::query_as::<_, IssueWorkProductRow>(
             "UPDATE issue_work_products SET \
                 title = COALESCE($2, title), \
@@ -3458,15 +3468,23 @@ impl<'a> IssueRepo<'a> {
         .bind(summary)
         .bind(metadata)
         .fetch_optional(self.db.pool())
-        .await
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
-    pub async fn delete_work_product(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM issue_work_products WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R797: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete_work_product(&self, id: Uuid) -> sqlx::Result<IssueWorkProductRow> {
+        sqlx::query_as::<_, IssueWorkProductRow>(
+            "DELETE FROM issue_work_products WHERE id = $1 \
+             RETURNING id, company_id, project_id, issue_id, type as type_, provider, \
+                external_id, title, status, review_state, is_primary, health_status, \
+                summary, metadata, created_by_run_id, source_trust, \
+                created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 事务化「设为 primary」：在同一 issue + type 下先把所有 work_product 的
@@ -3710,12 +3728,19 @@ impl<'a> IssueRepo<'a> {
     ///
     /// 与 Node DELETE /issues/:id/interactions/:interactionId 对齐。
     /// 返回是否实际删除（false 表示原本就不存在）。
-    pub async fn delete_interaction(&self, interaction_id: Uuid) -> sqlx::Result<bool> {
-        let result = sqlx::query("DELETE FROM issue_thread_interactions WHERE id = $1")
-            .bind(interaction_id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(result.rows_affected() > 0)
+    /// R798: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete_interaction(&self, interaction_id: Uuid) -> sqlx::Result<IssueThreadInteractionRow> {
+        sqlx::query_as::<_, IssueThreadInteractionRow>(
+            "DELETE FROM issue_thread_interactions WHERE id = $1 \
+             RETURNING id, company_id, issue_id, kind, status, continuation_policy, \
+                source_comment_id, source_run_id, title, summary, created_by_agent_id, \
+                created_by_user_id, resolved_by_agent_id, resolved_by_user_id, payload, result, \
+                resolved_at, created_at, updated_at",
+        )
+        .bind(interaction_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     // =========================================================================
@@ -4141,12 +4166,16 @@ impl<'a> IssueRepo<'a> {
         Ok((attach, asset))
     }
 
-    pub async fn delete_attachment(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM issue_attachments WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R798: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete_attachment(&self, id: Uuid) -> sqlx::Result<AttachmentRow> {
+        sqlx::query_as::<_, AttachmentRow>(
+            "DELETE FROM issue_attachments WHERE id = $1 \
+             RETURNING id, company_id, issue_id, asset_id, issue_comment_id, created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     // =========================================================================

@@ -115,14 +115,15 @@ async fn r789_pure_to_db_end_to_end() {
 
     // Step 4: Persist via service
     let created = svc.create_for_issue(issue_id, company_id, input).await
-        .expect("create").expect("some");
+        .expect("create");
     assert_eq!(created.kind, "pr");
     assert_eq!(created.title, "R789 PR");
     assert_eq!(created.provider, "github");
     assert!(created.is_primary);
 
     // Step 5: Read back
-    let fetched = svc.get_by_id(created.id).await.expect("get").expect("some");
+    let fetched = svc.get_by_id(created.id).await
+        .expect("get");
     assert_eq!(fetched.id, created.id);
     assert_eq!(fetched.kind, "pr");
     assert_eq!(fetched.title, "R789 PR");
@@ -160,7 +161,7 @@ async fn r789_secondary_primary_clears_primary() {
         status: "open".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("create1").expect("some1");
+    }).await.expect("create1");
     assert!(first.is_primary);
 
     let second = svc.create_for_issue(issue_id, company_id, CreateWorkProductInput {
@@ -172,14 +173,16 @@ async fn r789_secondary_primary_clears_primary() {
         status: "open".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("create2").expect("some2");
+    }).await.expect("create2");
     assert!(second.is_primary);
 
     // First should lose primary
-    let first_after = svc.get_by_id(first.id).await.expect("get1").expect("some1");
+    let first_after = svc.get_by_id(first.id).await
+        .expect("get1");
     assert!(!first_after.is_primary, "first should lose primary");
 
-    let second_after = svc.get_by_id(second.id).await.expect("get2").expect("some2");
+    let second_after = svc.get_by_id(second.id).await
+        .expect("get2");
     assert!(second_after.is_primary);
 
     cleanup(&pool, company_id).await;
@@ -202,7 +205,7 @@ async fn r789_different_kind_preserves_primary() {
         status: "open".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("create_pr").expect("some_pr");
+    }).await.expect("create_pr");
 
     let deploy = svc.create_for_issue(issue_id, company_id, CreateWorkProductInput {
         kind: "deployment".to_string(),
@@ -213,10 +216,12 @@ async fn r789_different_kind_preserves_primary() {
         status: "ready".to_string(),
         is_primary: true,
         ..Default::default()
-    }).await.expect("create_deploy").expect("some_deploy");
+    }).await.expect("create_deploy");
 
-    let pr_after = svc.get_by_id(pr.id).await.expect("get_pr").expect("some_pr");
-    let deploy_after = svc.get_by_id(deploy.id).await.expect("get_deploy").expect("some_deploy");
+    let pr_after = svc.get_by_id(pr.id).await
+        .expect("get_pr");
+    let deploy_after = svc.get_by_id(deploy.id).await
+        .expect("get_deploy");
     assert!(pr_after.is_primary, "pr should keep primary (different kind)");
     assert!(deploy_after.is_primary, "deploy is primary too");
 

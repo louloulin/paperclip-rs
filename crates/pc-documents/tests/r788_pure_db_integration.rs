@@ -138,7 +138,7 @@ async fn r788_update_document_creates_revision_and_fires_updated() {
             updated_by_agent_id: None,
             updated_by_user_id: None,
         };
-        let row = service.update(company_id, document_id, patch).await.expect("update").expect("row");
+        let row = service.update(company_id, document_id, patch).await.expect("update");
         assert_eq!(row.title.as_deref(), Some("v2"));
         assert_eq!(row.latest_revision_number, 2);
     }
@@ -187,7 +187,7 @@ async fn r788_lock_blocks_update() {
 
     // Lock without actor (avoids FK on agents table)
     service.lock_document(company_id, document_id, None, None::<&str>)
-        .await.expect("lock").expect("row");
+        .await.expect("lock");
 
     // Verify Locked event
     let events = recorder.events_snapshot();
@@ -203,7 +203,7 @@ async fn r788_lock_blocks_update() {
     assert!(result.is_err(), "locked doc should reject update");
 
     // Unlock first
-    service.unlock_document(company_id, document_id).await.expect("unlock").expect("row");
+    service.unlock_document(company_id, document_id).await.expect("unlock");
     recorder.clear();
 
     // Now update succeeds
@@ -211,7 +211,7 @@ async fn r788_lock_blocks_update() {
         body: Some("unlocked body".to_string()),
         ..Default::default()
     };
-    let row = service.update(company_id, document_id, patch).await.expect("update after unlock").expect("row");
+    let row = service.update(company_id, document_id, patch).await.expect("update after unlock");
     assert_eq!(row.latest_revision_number, 2);
 
     cleanup(&pool, company_id, document_id).await;

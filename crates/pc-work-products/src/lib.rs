@@ -100,6 +100,9 @@ pub enum WorkProductError {
     Postgres(#[from] sqlx::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    /// R793: row expected to exist but not found (e.g. UPDATE ... RETURNING 0 rows).
+    #[error("not found: {0}")]
+    NotFound(String),
 }
 
 /// WorkProduct service。
@@ -136,7 +139,10 @@ impl<'a> WorkProductService<'a> {
         Ok(rows.into_iter().map(row_to_work_product).collect())
     }
 
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkProduct>, WorkProductError> {
+    /// R793: lookup returns `WorkProduct` directly (was `Option<WorkProduct>`).
+/// Missing row returns `NotFound` error — this is intentional API consistency with
+/// create/update mutations per R793 design principle.
+pub async fn get_by_id(&self, id: Uuid) -> Result<WorkProduct, WorkProductError> {
         let row: Option<WorkProductRow> = sqlx::query_as::<_, WorkProductRow>(
             "SELECT id, company_id, project_id, issue_id, execution_workspace_id, runtime_service_id, \
                     type, provider, external_id, title, url, status, review_state, is_primary, \
@@ -147,33 +153,41 @@ impl<'a> WorkProductService<'a> {
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
-        Ok(row.map(row_to_work_product))
+        row.ok_or_else(|| WorkProductError::NotFound(format!("work product {id}"))).map(row_to_work_product)
     }
 
-    pub async fn create_for_issue(
-        &self,
-        issue_id: Uuid,
-        company_id: Uuid,
-        data: CreateWorkProductInput,
-    ) -> Result<Option<WorkProduct>, WorkProductError> {
-        let mut tx = self.pool().begin().await?;
-        let outcome = self
-            .create_for_issue_in_tx(&mut tx, issue_id, company_id, data)
-            .await?;
-        tx.commit().await?;
-        Ok(outcome)
-    }
+    /// R793: returns `WorkProduct` directly (was `Option<WorkProduct>`).
+/// Always inserts and returns the new row; missing row is an internal error.
+pub async fn create_for_issue(
+    &self,
+    issue_id: Uuid,
+    company_id: Uuid,
+    data: CreateWorkProductInput,
+) -> Result<WorkProduct, WorkProductError> {
+    let mut tx = self.pool().begin().await?;
+    let outcome = self
+        .create_for_issue_in_tx(&mut tx, issue_id, company_id, data)
+        .await?
+        .ok_or_else(|| WorkProductError::NotFound(format!(
+            "create_for_issue returned no row for issue {issue_id}"
+        )))?;
+    tx.commit().await?;
+    Ok(outcome)
+}
 
-    pub async fn update(
-        &self,
-        id: Uuid,
-        patch: UpdateWorkProductPatch,
-    ) -> Result<Option<WorkProduct>, WorkProductError> {
-        let mut tx = self.pool().begin().await?;
-        let outcome = self.update_in_tx(&mut tx, id, patch).await?;
-        tx.commit().await?;
-        Ok(outcome)
-    }
+    /// R793: returns `WorkProduct` directly (was `Option<WorkProduct>`).
+/// 0 rows updated returns `NotFound` error.
+pub async fn update(
+    &self,
+    id: Uuid,
+    patch: UpdateWorkProductPatch,
+) -> Result<WorkProduct, WorkProductError> {
+    let mut tx = self.pool().begin().await?;
+    let outcome = self.update_in_tx(&mut tx, id, patch).await?
+        .ok_or_else(|| WorkProductError::NotFound(format!("work product {id}")))?;
+    tx.commit().await?;
+    Ok(outcome)
+}
 
     pub async fn create_many_for_import(
         &self,
@@ -255,7 +269,9 @@ impl<'a> WorkProductService<'a> {
         Ok(())
     }
 
-    pub async fn remove(&self, id: Uuid) -> Result<Option<WorkProduct>, WorkProductError> {
+    /// R793: delete returns `WorkProduct` directly (was `Option<WorkProduct>`).
+/// Missing row returns `NotFound` error.
+pub async fn remove(&self, id: Uuid) -> Result<WorkProduct, WorkProductError> {
         let row: Option<WorkProductRow> = sqlx::query_as::<_, WorkProductRow>(
             "DELETE FROM issue_work_products WHERE id = $1 RETURNING \
              id, company_id, project_id, issue_id, execution_workspace_id, runtime_service_id, \
@@ -266,7 +282,7 @@ impl<'a> WorkProductService<'a> {
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
-        Ok(row.map(row_to_work_product))
+        row.ok_or_else(|| WorkProductError::NotFound(format!("work product {id}"))).map(row_to_work_product)
     }
 
     async fn create_for_issue_in_tx(

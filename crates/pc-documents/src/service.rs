@@ -362,12 +362,14 @@ impl DocumentService {
         Ok(created)
     }
 
-    pub async fn update(
-        &self,
-        company_id: Uuid,
-        document_id: Uuid,
-        patch: DocumentPatch,
-    ) -> Result<Option<DocumentRow>> {
+    /// R793: returns `DocumentRow` directly (was `Option<DocumentRow>`).
+/// Document existence is validated at start, so update always returns a row.
+pub async fn update(
+    &self,
+    company_id: Uuid,
+    document_id: Uuid,
+    patch: DocumentPatch,
+) -> Result<DocumentRow> {
         patch.validate()?;
         let repo = DocumentRepo::new(&self.db);
         let existing = repo
@@ -424,7 +426,7 @@ impl DocumentService {
             latest_revision_number: updated.latest_revision_number,
         })
         .await?;
-        Ok(Some(updated))
+        Ok(updated)
     }
 
     pub async fn delete(&self, company_id: Uuid, document_id: Uuid) -> Result<bool> {
@@ -501,13 +503,14 @@ impl DocumentService {
 
     // ---- lock / unlock ------------------------------------------------------
 
-    pub async fn lock_document(
-        &self,
-        company_id: Uuid,
-        document_id: Uuid,
-        actor_agent_id: Option<Uuid>,
-        actor_user_id: Option<&str>,
-    ) -> Result<Option<DocumentRow>> {
+    /// R793: returns `DocumentRow` directly (was `Option<DocumentRow>`).
+pub async fn lock_document(
+    &self,
+    company_id: Uuid,
+    document_id: Uuid,
+    actor_agent_id: Option<Uuid>,
+    actor_user_id: Option<&str>,
+) -> Result<DocumentRow> {
         let repo = DocumentRepo::new(&self.db);
         let existing = repo
             .get_in_company(company_id, document_id)
@@ -529,14 +532,15 @@ impl DocumentService {
             locked_by_user_id: row.locked_by_user_id.clone(),
         })
         .await?;
-        Ok(Some(row))
+        Ok(row)
     }
 
-    pub async fn unlock_document(
-        &self,
-        company_id: Uuid,
-        document_id: Uuid,
-    ) -> Result<Option<DocumentRow>> {
+    /// R793: returns `DocumentRow` directly (was `Option<DocumentRow>`).
+pub async fn unlock_document(
+    &self,
+    company_id: Uuid,
+    document_id: Uuid,
+) -> Result<DocumentRow> {
         let repo = DocumentRepo::new(&self.db);
         let existing = repo
             .get_in_company(company_id, document_id)
@@ -544,7 +548,7 @@ impl DocumentService {
             .map_err(map_sql_error)?
             .ok_or_else(|| validation(format!("document {document_id} not found")))?;
         if existing.locked_at.is_none() {
-            return Ok(Some(existing));
+            return Ok(existing);
         }
         let row = repo
             .unlock_document(document_id)
@@ -556,7 +560,7 @@ impl DocumentService {
             company_id: row.company_id,
         })
         .await?;
-        Ok(Some(row))
+        Ok(row)
     }
 
     // ---- annotations --------------------------------------------------------
