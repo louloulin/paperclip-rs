@@ -293,12 +293,17 @@ async fn revoke_key(
         .and_then(|v| v.as_str())
         .and_then(|s| Uuid::parse_str(s).ok())
         .ok_or_else(|| ApiError::BadRequest("id (uuid) required".into()))?;
-    let revoked = AuthRepo::new(&state.db)
+    // R808: revoke_api_key returns BoardKeyRow; RepoError::NotFound -> 404
+    let row = AuthRepo::new(&state.db)
         .revoke_api_key(key_id, &user_id)
-        .await?;
-    if !revoked {
-        return Err(ApiError::NotFound(format!("api key {key_id}")));
-    }
+        .await
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => ApiError::NotFound(format!("api key {key_id}")),
+            other => ApiError::Internal(other.to_string()),
+        })?;
+    state.realtime.publish(
+        pc_realtime::LiveEvent::new("auth.api_key.revoked", "board_api_key", row.id),
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 

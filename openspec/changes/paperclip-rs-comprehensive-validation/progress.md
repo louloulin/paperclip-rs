@@ -3623,3 +3623,155 @@ openspec/changes/paperclip-rs-comprehensive-validation/evidence/r802-r803-decisi
 
 - 11 个跟踪 crate lib 测试: ~1399 PASS
 - 整体加权进度: ~99%
+
+
+## R804 - InviteRepo::revoke 返回类型统一
+
+**主题**: invite 撤销方法 bool → InviteRow
+
+### 改动
+
+- InviteRepo::revoke: bool → InviteRow (UPDATE...RETURNING)
+- InviteService::revoke: bool → InviteRow
+- HTTP revoke_invite 改用 map_err(NotFound → 404)
+- e2e_invite_service.rs: 改用 row.id 断言; 第二次撤销断言 is_err
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-invite: 通过
+- cargo build -p pc-http: 通过 (29.30s)
+- cargo test -p pc-invite --lib: 34 passed
+- cargo test -p pc-repos --lib: 533 passed
+- Rust server: /health + 7 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r804-invite-revoke-unification.md
+
+### 累计 (R756 → R804)
+
+- 12 个跟踪 crate lib 测试: ~1410 PASS
+- 整体加权进度: ~99%
+
+
+## R805-R806 - TeamInstall/Skill archive+soft_delete 返回类型统一
+
+**主题**: 3 个 repo 删除/归档方法批量统一 bool → T
+
+### 改动
+
+- TeamInstallRepo::delete: bool → TeamInstallRow (DELETE...RETURNING)
+- SkillRepo::archive: bool → CompanySkillRow (UPDATE...RETURNING)
+- SkillRepo::soft_delete: bool → CompanySkillRow (UPDATE...RETURNING)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (4.45s)
+- cargo build -p pc-server: 通过 (29.67s)
+- cargo test -p pc-repos --lib: 533 passed
+- round125_skill_basic_repo 集成测试: 失败 (line 12 db() 函数 DB 连接 — 预先存在基础设施问题，硬约束 #5 不修)
+- Rust server: /health + 8 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r805-r806-team-skill-unifications.md
+
+### 累计 (R756 → R806)
+
+- 12 个跟踪 crate lib 测试: ~1410 PASS
+- 整体加权进度: ~99%
+
+
+## R807 - ExecutionRepo 4 个 update 方法返回类型统一
+
+**主题**: execution workspace update 方法批量统一 bool → WorkspaceRow
+
+### 改动
+
+- ExecutionRepo::update_name: bool → WorkspaceRow
+- ExecutionRepo::set_status_to_reconciling: bool → WorkspaceRow
+- ExecutionRepo::set_branch_provider_ref: bool → WorkspaceRow
+- ExecutionRepo::clear_provider_ref: bool → WorkspaceRow
+- HTTP patch_workspace 改用 map_err(NotFound → 404) + 返回 row.name
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (5.20s)
+- cargo build -p pc-http: 通过 (18.74s)
+- cargo build -p pc-server: 通过 (16.03s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-decisions --lib: 185 passed
+- cargo test -p pc-routines --lib: 207 passed
+- Rust server: /health + 8 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r807-execution-workspace-update-unifications.md
+
+### 累计 (R756 → R807)
+
+- 13 个跟踪 crate lib 测试: ~1410 PASS
+- 整体加权进度: ~99%
+
+
+## R808 - AuthRepo 多个 bool 方法返回类型统一
+
+**主题**: 5 个 auth bool 方法批量统一为 T
+
+### 改动
+
+- AuthRepo::delete_account: bool → AccountRow
+- AuthRepo::consume_verification: bool → VerificationRow
+- AuthRepo::revoke_api_key: bool → BoardKeyRow
+- AuthRepo::update_user_name: bool → UserRow
+- AuthRepo::update_user_image: bool → UserRow
+- HTTP revoke_api_key handler 加 LiveEvent 广播
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (8.21s)
+- cargo build -p pc-http: 通过 (1m 03s)
+- cargo build -p pc-server: 通过 (14.85s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-auth --lib: 95 passed
+- Rust server: /health + 9 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r808-auth-account-api-key-unifications.md
+
+### 累计 (R756 → R808)
+
+- 14 个跟踪 crate lib 测试: ~1450 PASS
+- 整体加权进度: ~99.2%
+
+
+## R809 - Company/Auth 多个 update 方法返回类型统一
+
+**主题**: 3 个 update 方法批量统一 bool → T
+
+### 改动
+
+- CompanyRepo::set_logo_url: bool → CompanyRow
+- AuthRepo::set_email_verified: bool → UserRow
+- AuthRepo::extend_session: bool → SessionRow
+- CompanyService::set_logo_url 同步
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (4.13s)
+- cargo build -p pc-companies: 通过
+- cargo build -p pc-http: 通过 (16.68s)
+- cargo build -p pc-server: 通过 (11.73s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-companies --lib: 49 passed
+- Rust server: /health + 9 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r809-company-auth-update-unifications.md
+
+### 累计 (R756 → R809)
+
+- 14 个跟踪 crate lib 测试: ~1460 PASS
+- 整体加权进度: ~99.3%

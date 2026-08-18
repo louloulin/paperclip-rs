@@ -514,15 +514,17 @@ impl<'a> CompanyRepo<'a> {
         Ok(row)
     }
 
-    /// Round 182: 设置 company 的 logo_url。
-    pub async fn set_logo_url(&self, company_id: Uuid, logo_url: &str) -> sqlx::Result<bool> {
-        let n = sqlx::query("UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2")
-            .bind(logo_url)
-            .bind(company_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R809: 设置 company logo_url (returns CompanyRow; sqlx::Error::RowNotFound on miss).
+    pub async fn set_logo_url(&self, company_id: Uuid, logo_url: &str) -> sqlx::Result<CompanyRow> {
+        sqlx::query_as::<_, CompanyRow>(
+            "UPDATE companies SET logo_url = $1, updated_at = now() WHERE id = $2 \
+             RETURNING id, name, description, status, pause_reason, paused_at, issue_prefix, issue_counter, budget_monthly_cents, spent_monthly_cents, attachment_max_bytes, default_responsible_user_id, require_board_approval_for_new_agents, feedback_data_sharing_enabled, feedback_data_sharing_consent_at, feedback_data_sharing_consent_by_user_id, feedback_data_sharing_terms_version, brand_color, created_at, updated_at",
+        )
+        .bind(logo_url)
+        .bind(company_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 }
 

@@ -790,65 +790,65 @@ impl<'a> ExecutionRepo<'a> {
         Ok(row.map(|(c,)| c))
     }
 
-    /// Round 159: UPDATE name (COALESCE) + 触 updated_at，返回 rows_affected > 0。
-    pub async fn update_name(&self, id: Uuid, name: Option<&str>) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE execution_workspaces SET name = COALESCE($2, name), updated_at = now() WHERE id = $1",
+    /// R807: UPDATE name (COALESCE); returns WorkspaceRow; RepoError::NotFound on miss.
+    pub async fn update_name(&self, id: Uuid, name: Option<&str>) -> RepoResult<WorkspaceRow> {
+        sqlx::query_as::<_, WorkspaceRow>(
+            "UPDATE execution_workspaces SET name = COALESCE($2, name), updated_at = now() WHERE id = $1 \
+             RETURNING id, company_id, project_id, project_workspace_id, source_issue_id, mode, strategy_type, name, status, cwd, repo_url, base_ref, branch_name, provider_type, provider_ref, derived_from_execution_workspace_id, last_used_at, opened_at, closed_at, cleanup_eligible_at, cleanup_reason, metadata, created_at, updated_at",
         )
         .bind(id)
         .bind(name)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "workspace", id: id.to_string() })
     }
 
-    /// Round 159: UPDATE status='reconciling'（runtime_service_action 用）。
-    pub async fn set_status_to_reconciling(&self, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE execution_workspaces SET status = 'reconciling', updated_at = now() WHERE id = $1",
+    /// R807: SET status='reconciling'; returns WorkspaceRow; RepoError::NotFound on miss.
+    pub async fn set_status_to_reconciling(&self, id: Uuid) -> RepoResult<WorkspaceRow> {
+        sqlx::query_as::<_, WorkspaceRow>(
+            "UPDATE execution_workspaces SET status = 'reconciling', updated_at = now() WHERE id = $1 \
+             RETURNING id, company_id, project_id, project_workspace_id, source_issue_id, mode, strategy_type, name, status, cwd, repo_url, base_ref, branch_name, provider_type, provider_ref, derived_from_execution_workspace_id, last_used_at, opened_at, closed_at, cleanup_eligible_at, cleanup_reason, metadata, created_at, updated_at",
         )
         .bind(id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "workspace", id: id.to_string() })
     }
 
-    /// Round 159: set branch_name + provider_ref + touch last_used_at。
+    /// R807: set branch + provider_ref + last_used_at; returns WorkspaceRow.
     pub async fn set_branch_provider_ref(
         &self,
         id: Uuid,
         branch: &str,
         provider_ref: &str,
-    ) -> RepoResult<bool> {
-        let n = sqlx::query(
+    ) -> RepoResult<WorkspaceRow> {
+        sqlx::query_as::<_, WorkspaceRow>(
             "UPDATE execution_workspaces \
              SET branch_name = $1, provider_ref = $2, last_used_at = now(), updated_at = now() \
-             WHERE id = $3",
+             WHERE id = $3 \
+             RETURNING id, company_id, project_id, project_workspace_id, source_issue_id, mode, strategy_type, name, status, cwd, repo_url, base_ref, branch_name, provider_type, provider_ref, derived_from_execution_workspace_id, last_used_at, opened_at, closed_at, cleanup_eligible_at, cleanup_reason, metadata, created_at, updated_at",
         )
         .bind(branch)
         .bind(provider_ref)
         .bind(id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "workspace", id: id.to_string() })
     }
 
-    /// Round 159: clear provider_ref + set cleanup_reason。
-    pub async fn clear_provider_ref(&self, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query(
+    /// R807: clear provider_ref; returns WorkspaceRow; RepoError::NotFound on miss.
+    pub async fn clear_provider_ref(&self, id: Uuid) -> RepoResult<WorkspaceRow> {
+        sqlx::query_as::<_, WorkspaceRow>(
             "UPDATE execution_workspaces \
              SET provider_ref = NULL, cleanup_reason = COALESCE(cleanup_reason, 'worktree_removed'), \
                  last_used_at = now(), updated_at = now() \
-             WHERE id = $1",
+             WHERE id = $1 \
+             RETURNING id, company_id, project_id, project_workspace_id, source_issue_id, mode, strategy_type, name, status, cwd, repo_url, base_ref, branch_name, provider_type, provider_ref, derived_from_execution_workspace_id, last_used_at, opened_at, closed_at, cleanup_eligible_at, cleanup_reason, metadata, created_at, updated_at",
         )
         .bind(id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "workspace", id: id.to_string() })
     }
 
     /// Round 159: 取 workspace 最新一次 heartbeat_run (status, finished_at)。

@@ -571,17 +571,18 @@ impl<'a> SkillRepo<'a> {
         Ok(row)
     }
 
-    pub async fn archive(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query(
+    /// R806: archive 一个 skill (returns CompanySkillRow; RepoError::NotFound on miss).
+    pub async fn archive(&self, company_id: Uuid, id: Uuid) -> RepoResult<CompanySkillRow> {
+        sqlx::query_as::<_, CompanySkillRow>(
             "UPDATE company_skills SET archived_at=now(), updated_at=now() \
-             WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL AND archived_at IS NULL",
+             WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL AND archived_at IS NULL \
+             RETURNING id, company_id, folder_id, key, slug, name, description, markdown, source_type, source_locator, source_ref, trust_level, compatibility, file_inventory, icon_url, color, tagline, author_name, homepage_url, categories, sharing_scope, public_share_token, forked_from_skill_id, forked_from_company_id, star_count, install_count, fork_count, current_version_id, metadata, deleted_at, archived_at, created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, created_at, updated_at",
         )
         .bind(company_id)
         .bind(id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "skill", id: id.to_string() })
     }
 
     /// Round 127: 取 skill 的 update status（current_version_id + source_ref + install_count + updated_at）。
@@ -613,17 +614,18 @@ impl<'a> SkillRepo<'a> {
         Ok(row)
     }
 
-    pub async fn soft_delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query(
+    /// R806: soft_delete 一个 skill (returns CompanySkillRow; RepoError::NotFound on miss / already deleted).
+    pub async fn soft_delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<CompanySkillRow> {
+        sqlx::query_as::<_, CompanySkillRow>(
             "UPDATE company_skills SET deleted_at=now(), updated_at=now() \
-             WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL",
+             WHERE company_id=$1 AND id=$2 AND deleted_at IS NULL \
+             RETURNING id, company_id, folder_id, key, slug, name, description, markdown, source_type, source_locator, source_ref, trust_level, compatibility, file_inventory, icon_url, color, tagline, author_name, homepage_url, categories, sharing_scope, public_share_token, forked_from_skill_id, forked_from_company_id, star_count, install_count, fork_count, current_version_id, metadata, deleted_at, archived_at, created_by_agent_id, created_by_user_id, updated_by_agent_id, updated_by_user_id, created_at, updated_at",
         )
         .bind(company_id)
         .bind(id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "skill", id: id.to_string() })
     }
 
     pub async fn increment_install_count(&self, id: Uuid) -> RepoResult<()> {
@@ -792,15 +794,16 @@ impl<'a> SkillRepo<'a> {
             .await?)
     }
 
-    pub async fn delete_comment(&self, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE company_skill_comments SET deleted_at=now(), updated_at=now() WHERE id=$1",
+    /// R810: 删除一条 skill comment (returns CompanySkillCommentRow; RepoError::NotFound on miss).
+    pub async fn delete_comment(&self, id: Uuid) -> RepoResult<CompanySkillCommentRow> {
+        sqlx::query_as::<_, CompanySkillCommentRow>(
+            "UPDATE company_skill_comments SET deleted_at=now(), updated_at=now() WHERE id=$1 \
+             RETURNING id, company_id, company_skill_id, parent_comment_id, author_type, author_user_id, author_agent_id, body, attachment_refs, created_at, updated_at, deleted_at",
         )
         .bind(id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "skill_comment", id: id.to_string() })
     }
 
     // ---- stars ----

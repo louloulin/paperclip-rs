@@ -218,13 +218,18 @@ async fn patch_workspace(
     Path(id): Path<uuid::Uuid>,
     Json(body): Json<PatchBody>,
 ) -> ApiResult<Json<Value>> {
-    let changed = ExecutionRepo::new(&state.db)
+    // R807: update_name returns WorkspaceRow; RepoError::NotFound -> 404
+    let row = ExecutionRepo::new(&state.db)
         .update_name(id, body.name.as_deref())
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => ApiError::NotFound(format!("workspace {id}")),
+            other => ApiError::Internal(other.to_string()),
+        })?;
     Ok(Json(json!({
-        "id": id,
-        "status": if changed { "updated" } else { "noop" },
+        "id": row.id,
+        "status": "updated",
+        "name": row.name,
     })))
 }
 

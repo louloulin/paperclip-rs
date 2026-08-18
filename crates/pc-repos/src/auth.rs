@@ -12,6 +12,7 @@ use sqlx::FromRow;
 use pc_core::Timestamp;
 use uuid::Uuid;
 
+use crate::board_key::BoardKeyRow;
 use crate::{Db, RepoError, RepoResult};
 
 // ---------- user ----------
@@ -166,14 +167,16 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn set_email_verified(&self, user_id: &str) -> RepoResult<bool> {
-        let n =
-            sqlx::query("UPDATE \"user\" SET email_verified=true, updated_at=now() WHERE id=$1")
-                .bind(user_id)
-                .execute(self.db.pool())
-                .await?
-                .rows_affected();
-        Ok(n > 0)
+    /// R809: 设置 email_verified=true (returns UserRow; RepoError::NotFound on miss).
+    pub async fn set_email_verified(&self, user_id: &str) -> RepoResult<UserRow> {
+        sqlx::query_as::<_, UserRow>(
+            "UPDATE \"user\" SET email_verified=true, updated_at=now() WHERE id=$1 \
+             RETURNING id, name, email, email_verified, image, created_at, updated_at",
+        )
+        .bind(user_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "user", id: user_id.to_string() })
     }
 
     pub async fn update_profile(
@@ -295,16 +298,17 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn extend_session(&self, id: &str, new_expiry: Timestamp) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE session SET expires_at=$2, updated_at=now() WHERE id=$1 AND expires_at > now()",
+    /// R809: 延长 session (returns SessionRow; RepoError::NotFound on miss / already expired).
+    pub async fn extend_session(&self, id: &str, new_expiry: Timestamp) -> RepoResult<SessionRow> {
+        sqlx::query_as::<_, SessionRow>(
+            "UPDATE session SET expires_at=$2, updated_at=now() WHERE id=$1 AND expires_at > now() \
+             RETURNING id, expires_at, token, created_at, updated_at, ip_address, user_agent, user_id",
         )
         .bind(id)
         .bind(new_expiry)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "session", id: id.to_string() })
     }
 
     /// R801: 删除一个 session (returns SessionRow; RepoError::NotFound on miss).
@@ -387,13 +391,16 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn delete_account(&self, id: &str) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM account WHERE id=$1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R808: 删除一个 account (returns AccountRow; RepoError::NotFound on miss).
+    pub async fn delete_account(&self, id: &str) -> RepoResult<AccountRow> {
+        sqlx::query_as::<_, AccountRow>(
+            "DELETE FROM account WHERE id=$1 \
+             RETURNING id, account_id, provider_id, user_id, access_token, refresh_token, id_token, access_token_expires_at, refresh_token_expires_at, scope, password, created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "account", id: id.to_string() })
     }
 
     // ---- verification ----
@@ -407,16 +414,18 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn consume_verification(&self, identifier: &str, value: &str) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "DELETE FROM verification              WHERE identifier=$1 AND value=$2 AND expires_at > now()",
+    /// R808: consume 一个 verification (returns VerificationRow; RepoError::NotFound on miss).
+    pub async fn consume_verification(&self, identifier: &str, value: &str) -> RepoResult<VerificationRow> {
+        sqlx::query_as::<_, VerificationRow>(
+            "DELETE FROM verification \
+             WHERE identifier=$1 AND value=$2 AND expires_at > now() \
+             RETURNING id, identifier, value, expires_at, created_at, updated_at",
         )
         .bind(identifier)
         .bind(value)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "verification", id: identifier.to_string() })
     }
 
     pub async fn create_verification(&self, v: &NewVerification) -> RepoResult<VerificationRow> {
@@ -456,17 +465,17 @@ impl<'a> AuthRepo<'a> {
             .map_err(Into::into)
     }
 
-    /// 撤回 board_api_keys（设置 revoked_at = now()）。
-    pub async fn revoke_api_key(&self, key_id: Uuid, user_id: &str) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE board_api_keys SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    /// R808: 撤回 board_api_key (returns BoardKeyRow; RepoError::NotFound on miss).
+    pub async fn revoke_api_key(&self, key_id: Uuid, user_id: &str) -> RepoResult<BoardKeyRow> {
+        sqlx::query_as::<_, BoardKeyRow>(
+            "UPDATE board_api_keys SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL \
+             RETURNING id, user_id, name, key_hash, last_used_at, revoked_at, expires_at, created_at",
         )
         .bind(key_id)
         .bind(user_id)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "board_api_key", id: key_id.to_string() })
     }
 
     /// R801: 按 token 删除 session (returns SessionRow; RepoError::NotFound on miss).
@@ -491,26 +500,30 @@ impl<'a> AuthRepo<'a> {
             .map_err(Into::into)
     }
 
-    /// 按 user_id + name 更新用户 profile。
-    pub async fn update_user_name(&self, user_id: &str, name: &str) -> RepoResult<bool> {
-        let n = sqlx::query("UPDATE \"user\" SET name = $1, updated_at = now() WHERE id = $2")
-            .bind(name)
-            .bind(user_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R808: update user name (returns UserRow; RepoError::NotFound on miss).
+    pub async fn update_user_name(&self, user_id: &str, name: &str) -> RepoResult<UserRow> {
+        sqlx::query_as::<_, UserRow>(
+            "UPDATE \"user\" SET name = $1, updated_at = now() WHERE id = $2 \
+             RETURNING id, name, email, email_verified, image, created_at, updated_at",
+        )
+        .bind(name)
+        .bind(user_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "user", id: user_id.to_string() })
     }
 
-    /// 按 user_id 更新 image。
-    pub async fn update_user_image(&self, user_id: &str, image: &str) -> RepoResult<bool> {
-        let n = sqlx::query("UPDATE \"user\" SET image = $1, updated_at = now() WHERE id = $2")
-            .bind(image)
-            .bind(user_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R808: update user image (returns UserRow; RepoError::NotFound on miss).
+    pub async fn update_user_image(&self, user_id: &str, image: &str) -> RepoResult<UserRow> {
+        sqlx::query_as::<_, UserRow>(
+            "UPDATE \"user\" SET image = $1, updated_at = now() WHERE id = $2 \
+             RETURNING id, name, email, email_verified, image, created_at, updated_at",
+        )
+        .bind(image)
+        .bind(user_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "user", id: user_id.to_string() })
     }
 
     /// Round 152: 插入一条 bootstrap session（v3 schema 下 `sessions` 表不存在，

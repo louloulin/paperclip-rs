@@ -434,13 +434,13 @@ impl<'a> CompanyService<'a> {
         Ok(())
     }
 
-    /// 设置 logo URL — 直通 repo。
+    /// R809: 设置 logo URL (returns CompanyRow; sqlx::Error::RowNotFound on miss).
     pub async fn set_logo_url(
         &self,
         company_id: Uuid,
         logo_url: &str,
-    ) -> CompanyServiceResult<bool> {
-        Ok(self.repo.set_logo_url(company_id, logo_url).await?)
+    ) -> CompanyServiceResult<CompanyRow> {
+        self.repo.set_logo_url(company_id, logo_url).await.map_err(Into::into)
     }
 
     /// 检查 company 是否存在 — 直通 repo。

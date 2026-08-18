@@ -57,15 +57,17 @@ impl<'a> TeamInstallRepo<'a> {
         Ok(n > 0)
     }
 
-    /// Round 179: 卸载团队（删除一行）。
-    pub async fn delete(&self, company_id: Uuid, catalog_id: &str) -> sqlx::Result<bool> {
-        let n = sqlx::query("DELETE FROM team_installs WHERE company_id = $1 AND catalog_id = $2")
-            .bind(company_id)
-            .bind(catalog_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R805: 卸载团队 (returns TeamInstallRow; sqlx::Error::RowNotFound on miss).
+    pub async fn delete(&self, company_id: Uuid, catalog_id: &str) -> sqlx::Result<TeamInstallRow> {
+        sqlx::query_as::<_, TeamInstallRow>(
+            "DELETE FROM team_installs WHERE company_id = $1 AND catalog_id = $2 \
+             RETURNING catalog_id, status, snapshot, installed_at",
+        )
+        .bind(company_id)
+        .bind(catalog_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 }
 
