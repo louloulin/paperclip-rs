@@ -271,20 +271,21 @@ async fn delete_asset(
             attachments.len()
         )));
     }
-    let deleted = AssetRepo::new(&state.db)
+    // R800: delete_by_id returns AssetRow directly; sqlx::Error::RowNotFound -> 404
+    let row = AssetRepo::new(&state.db)
         .delete_by_id(asset_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if !deleted {
-        return Err(ApiError::NotFound(format!("asset {asset_id}")));
-    }
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("asset {asset_id}")),
+            other => ApiError::from(other),
+        })?;
     state
         .realtime
-        .publish(LiveEvent::new("asset.deleted", "asset", asset_id));
+        .publish(LiveEvent::new("asset.deleted", "asset", row.id).with_company(row.company_id));
     Ok((
         StatusCode::OK,
         Json(json!({
-            "id": asset_id,
+            "id": row.id,
             "deleted": true,
         })),
     ))

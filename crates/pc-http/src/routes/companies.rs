@@ -380,16 +380,15 @@ async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    // R590: 业务下沉到 CompanyService
-    let ok = company_service_with_activity(&state)
+    // R800: remove returns CompanyRow; sqlx::Error::RowNotFound -> 404
+    let row = company_service_with_activity(&state)
         .remove(id)
         .await
         .map_err(|e| map_company_service_error(e, id))?;
-    if ok {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("company {id}")))
-    }
+    state.realtime.publish(
+        LiveEvent::new("company.removed", "company", row.id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
@@ -1075,11 +1074,15 @@ async fn delete_folder(
     State(state): State<AppState>,
     Path((company_id, folder_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
+    // R800: delete returns FolderRow; RepoError::NotFound -> 404
     let repo = FolderRepo::new(&state.db);
-    let deleted = repo.delete(company_id, folder_id).await?;
-    if !deleted {
-        return Err(ApiError::NotFound(format!("folder {folder_id}")));
-    }
+    let row = repo.delete(company_id, folder_id).await.map_err(|err| match err {
+        pc_repos::RepoError::NotFound { .. } => ApiError::NotFound(format!("folder {folder_id}")),
+        other => ApiError::from(other),
+    })?;
+    state.realtime.publish(
+        LiveEvent::new("folder.removed", "folder", row.id).with_company(row.company_id),
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1238,13 +1241,17 @@ async fn revoke_invite(
     State(state): State<AppState>,
     Path((company_id, invite_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let ok = pc_repos::invite::InviteRepo::new(&state.db)
+    // R804: revoke returns InviteRow; RepoError::NotFound -> 404
+    let row = pc_repos::invite::InviteRepo::new(&state.db)
         .revoke(company_id, invite_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if !ok {
-        return Err(ApiError::NotFound(format!("invite {invite_id} not active")));
-    }
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => ApiError::NotFound(format!("invite {invite_id} not active")),
+            other => ApiError::Internal(other.to_string()),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("invite.revoked", "invite", row.id).with_company(row.company_id),
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 

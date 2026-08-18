@@ -306,7 +306,8 @@ impl<'a> GoalRepo<'a> {
         Ok(rows)
     }
 
-    pub async fn delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
+    /// R799: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<GoalRow> {
         // FK 不强制 ON DELETE CASCADE：将子级变孤儿 → 拒绝
         let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM goals WHERE parent_id=$1")
             .bind(id)
@@ -317,13 +318,16 @@ impl<'a> GoalRepo<'a> {
                 "goal has children; re-parent or delete children first".into(),
             ));
         }
-        let n = sqlx::query("DELETE FROM goals WHERE company_id=$1 AND id=$2")
-            .bind(company_id)
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+        sqlx::query_as::<_, GoalRow>(
+            "DELETE FROM goals WHERE company_id=$1 AND id=$2 \
+             RETURNING id, company_id, title, description, level, status, parent_id, \
+                owner_agent_id, created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "goal", id: id.to_string() })
     }
 
     pub async fn count_by_status(&self, company_id: Uuid, status: GoalStatus) -> RepoResult<i64> {
@@ -367,15 +371,18 @@ impl<'a> GoalRepo<'a> {
             .await?)
     }
 
-    /// Back-compat: delete by id only.
+    /// Back-compat: delete by id only. R799: returns GoalRow (was bool).
     #[allow(dead_code)]
-    pub async fn delete_one(&self, id: Uuid) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM goals WHERE id=$1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    pub async fn delete_one(&self, id: Uuid) -> RepoResult<GoalRow> {
+        sqlx::query_as::<_, GoalRow>(
+            "DELETE FROM goals WHERE id=$1 \
+             RETURNING id, company_id, title, description, level, status, parent_id, \
+                owner_agent_id, created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "goal", id: id.to_string() })
     }
 }
 

@@ -243,11 +243,14 @@ async fn sign_out(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<serde_json::Value>> {
+    // R801: revoke_session_by_token returns SessionRow directly; RepoError::NotFound on miss
     let mut deleted = 0;
     if let Some(token) = extract_token(&headers) {
-        deleted = AuthRepo::new(&state.db)
-            .revoke_session_by_token(&token)
-            .await? as u64;
+        match AuthRepo::new(&state.db).revoke_session_by_token(&token).await {
+            Ok(_row) => deleted = 1,
+            Err(pc_repos::RepoError::NotFound { .. }) => {} // already revoked
+            Err(e) => return Err(ApiError::Internal(e.to_string())),
+        }
     }
     state.realtime.publish(
         pc_realtime::LiveEvent::new("auth.signed_out", "user", Uuid::nil()).with_actor("anonymous"),

@@ -715,18 +715,13 @@ impl RoutineService {
         Ok(updated)
     }
 
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
+    /// R799: returns the deleted row directly (was bool). 0 rows = `RowNotFound` error.
+    pub async fn delete(&self, id: Uuid) -> Result<RoutineRow> {
         let repo = RoutineRepo::new(&self.db);
-        let company_id = match repo.get(id).await.map_err(map_sql_error)? {
-            Some(row) => row.company_id,
-            None => return Ok(false),
-        };
-        let removed = repo.delete(id).await.map_err(map_sql_error)?;
-        if removed {
-            self.dispatch(RoutineHookEvent::Archived { id, company_id })
-                .await?;
-        }
-        Ok(removed)
+        let row = repo.delete(id).await.map_err(map_sql_error)?;
+        self.dispatch(RoutineHookEvent::Archived { id, company_id: row.company_id })
+            .await?;
+        Ok(row)
     }
 
     // ---- triggers -----------------------------------------------------------

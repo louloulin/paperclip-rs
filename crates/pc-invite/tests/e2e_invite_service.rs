@@ -182,22 +182,21 @@ async fn revoke_emits_hook_and_is_idempotent() {
     let created = svc.create(make_input(company_id)).await.expect("create");
     recorder.clear();
 
-    let ok = svc
+    // R804: revoke now returns InviteRow; assert the row id matches
+    let row = svc
         .revoke(company_id, created.row.id)
         .await
         .expect("revoke");
-    assert!(ok);
+    assert_eq!(row.id, created.row.id);
 
     let events = recorder.events_snapshot();
     assert_eq!(events.len(), 1);
     assert!(matches!(events[0], InviteHookEvent::Revoked { .. }));
 
     recorder.clear();
-    let again = svc
-        .revoke(company_id, created.row.id)
-        .await
-        .expect("revoke 2");
-    assert!(!again);
+    // Second revoke now returns NotFound error (already revoked)
+    let again = svc.revoke(company_id, created.row.id).await;
+    assert!(again.is_err(), "second revoke should fail with NotFound");
     assert!(recorder.is_empty());
 
     cleanup(&pool, company_id).await;

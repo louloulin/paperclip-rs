@@ -222,19 +222,18 @@ impl AssetService {
             .await?)
     }
 
-    pub async fn delete_by_id(&self, company_id: Uuid, id: Uuid) -> AssetResult<bool> {
+    /// R800: 删除一个 asset (returns AssetRow; sqlx::Error::RowNotFound on miss).
+    pub async fn delete_by_id(&self, company_id: Uuid, id: Uuid) -> AssetResult<AssetRow> {
         if company_id.is_nil() {
             return Err(AssetError::Validation("companyId is required".into()));
         }
-        let deleted = self.repo().delete_by_id(id).await?;
-        if deleted {
-            self.dispatch(AssetHookEvent::Deleted {
-                company_id,
-                asset_id: id,
-            })
-            .await;
-        }
-        Ok(deleted)
+        let row = self.repo().delete_by_id(id).await?;
+        self.dispatch(AssetHookEvent::Deleted {
+            company_id,
+            asset_id: id,
+        })
+        .await;
+        Ok(row)
     }
 
     pub async fn find_logo_meta_by_company(

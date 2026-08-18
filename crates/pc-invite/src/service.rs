@@ -256,20 +256,19 @@ impl InviteService {
         Ok(created)
     }
 
-    /// Revoke a pending invite (mark `revoked_at`). Idempotent.
-    pub async fn revoke(&self, company_id: Uuid, invite_id: Uuid) -> InviteResult<bool> {
+    /// R804: Revoke a pending invite (returns InviteRow; RepoError::NotFound on miss).
+    /// Already-revoked invites also return NotFound (idempotent semantics preserved).
+    pub async fn revoke(&self, company_id: Uuid, invite_id: Uuid) -> InviteResult<InviteRow> {
         if company_id.is_nil() {
             return Err(InviteError::Validation("companyId is required".into()));
         }
-        let ok = self.repo().revoke(company_id, invite_id).await?;
-        if ok {
-            self.dispatch(InviteHookEvent::Revoked {
-                company_id,
-                invite_id,
-            })
-            .await;
-        }
-        Ok(ok)
+        let row = self.repo().revoke(company_id, invite_id).await?;
+        self.dispatch(InviteHookEvent::Revoked {
+            company_id,
+            invite_id,
+        })
+        .await;
+        Ok(row)
     }
 
     /// Mark an invite as accepted. Idempotent.

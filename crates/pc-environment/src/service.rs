@@ -308,18 +308,17 @@ impl EnvironmentService {
         }
         Ok(changed)
     }
-    pub async fn release_lease(&self, id: Uuid, reason: Option<&str>) -> EnvResult<bool> {
+    /// R803: 释放 env lease (returns EnvironmentLeaseRow).
+    pub async fn release_lease(&self, id: Uuid, reason: Option<&str>) -> EnvResult<EnvironmentLeaseRow> {
         require_non_nil(id, "leaseId")?;
-        let changed = self.repo().release_lease(id, reason).await?;
-        if changed {
-            self.dispatch(EnvironmentHookEvent::LeaseReleased {
-                lease_id: id,
-                environment_id: Uuid::nil(),
-                reason: reason.map(|s| s.to_string()),
-            })
-            .await;
-        }
-        Ok(changed)
+        let row = self.repo().release_lease(id, reason).await?;
+        self.dispatch(EnvironmentHookEvent::LeaseReleased {
+            lease_id: row.id,
+            environment_id: row.environment_id,
+            reason: reason.map(|s| s.to_string()),
+        })
+        .await;
+        Ok(row)
     }
     pub async fn expire_overdue(&self) -> EnvResult<u64> {
         let count = self.repo().expire_overdue().await?;

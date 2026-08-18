@@ -176,7 +176,8 @@ impl<'a> FolderRepo<'a> {
         Ok(n > 0)
     }
 
-    pub async fn delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<bool> {
+    /// R800: 删除一个 folder (returns FolderRow; RepoError::NotFound on miss).
+    pub async fn delete(&self, company_id: Uuid, id: Uuid) -> RepoResult<FolderRow> {
         let has_children: Option<i64> =
             sqlx::query_scalar("SELECT COUNT(*) FROM folders WHERE parent_id=$1")
                 .bind(id)
@@ -187,13 +188,16 @@ impl<'a> FolderRepo<'a> {
                 "folder has children; archive or move first".into(),
             ));
         }
-        let n = sqlx::query("DELETE FROM folders WHERE company_id=$1 AND id=$2")
-            .bind(company_id)
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+        sqlx::query_as::<_, FolderRow>(
+            "DELETE FROM folders WHERE company_id=$1 AND id=$2 \
+             RETURNING id, company_id, kind, parent_id, name, slug, system_key, color, position, \
+                created_at, updated_at",
+        )
+        .bind(company_id)
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "folder", id: id.to_string() })
     }
 
     pub async fn count_by_kind(&self, company_id: Uuid, kind: FolderKind) -> RepoResult<i64> {

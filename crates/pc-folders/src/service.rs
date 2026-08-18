@@ -480,32 +480,29 @@ impl FolderService {
         Ok(Some(updated))
     }
 
-    pub async fn delete(&self, company_id: Uuid, folder_id: Uuid) -> Result<bool> {
+    /// R800: 删除一个 folder (returns FolderRow; RepoError::NotFound on miss).
+    pub async fn delete(&self, company_id: Uuid, folder_id: Uuid) -> Result<FolderRow> {
         let repo = FolderRepo::new(&self.db);
-        let existing = match repo
+        let existing = repo
             .get(company_id, folder_id)
             .await
             .map_err(map_repo_error)?
-        {
-            Some(row) => row,
-            None => return Ok(false),
-        };
+            .ok_or_else(|| validation(format!("folder {folder_id} not found")))?;
         if existing.system_key.is_some() {
             return Err(forbidden("system-managed folders cannot be deleted"));
         }
-        let removed = repo
+        // R800: delete returns FolderRow directly; RepoError::NotFound on miss
+        let row = repo
             .delete(company_id, folder_id)
             .await
             .map_err(map_repo_error)?;
-        if removed {
-            self.dispatch(FolderHookEvent::Deleted {
-                id: folder_id,
-                company_id,
-                kind: existing.kind.clone(),
-            })
-            .await?;
-        }
-        Ok(removed)
+        self.dispatch(FolderHookEvent::Deleted {
+            id: folder_id,
+            company_id,
+            kind: existing.kind.clone(),
+        })
+        .await?;
+        Ok(row)
     }
 }
 

@@ -592,21 +592,21 @@ async fn release_lease_route(
     Path(_id): Path<uuid::Uuid>,
     Json(body): Json<ReleaseLeaseBody>,
 ) -> ApiResult<Json<Value>> {
+    // R803: release_lease returns LeaseRow; RepoError::NotFound -> 404
     let repo = ExecutionRepo::new(&state.db);
-    let released = repo
+    let row = repo
         .release_lease(body.lease_id, &body.token)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if released {
-        Ok(Json(
-            json!({ "leaseId": body.lease_id, "status": "released" }),
-        ))
-    } else {
-        Err(ApiError::NotFound(format!(
-            "lease {} not held",
-            body.lease_id
-        )))
-    }
+        .map_err(|err| match err {
+            pc_repos::RepoError::NotFound { .. } => ApiError::NotFound(format!(
+                "lease {} not held",
+                body.lease_id
+            )),
+            other => ApiError::Internal(other.to_string()),
+        })?;
+    Ok(Json(
+        json!({ "leaseId": row.id, "status": "released" }),
+    ))
 }
 
 async fn revoke_lease_route(

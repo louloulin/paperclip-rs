@@ -460,12 +460,19 @@ async fn trigger(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    let ok = RoutineRepo::new(&state.db).delete(id).await?;
-    if ok {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("routine {id}")))
-    }
+    // R799: delete returns RoutineRow directly; sqlx::Error::RowNotFound -> 404
+    let row = RoutineRepo::new(&state.db)
+        .delete(id)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("routine {id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("routine.removed", "routine", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================

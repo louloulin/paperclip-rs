@@ -230,16 +230,19 @@ impl<'a> InviteRepo<'a> {
         Ok(row)
     }
 
-    pub async fn revoke(&self, company_id: Uuid, invite_id: Uuid) -> RepoResult<bool> {
-        let r = sqlx::query(
+    /// R804: 撤销一个 invite (returns InviteRow; RepoError::NotFound on miss / already revoked).
+    pub async fn revoke(&self, company_id: Uuid, invite_id: Uuid) -> RepoResult<InviteRow> {
+        sqlx::query_as::<_, InviteRow>(
             "UPDATE invites SET revoked_at = now(), updated_at = now() \
-             WHERE company_id = $1 AND id = $2 AND revoked_at IS NULL",
+             WHERE company_id = $1 AND id = $2 AND revoked_at IS NULL \
+             RETURNING id, company_id, invite_type, allowed_join_types, defaults_payload, \
+                token_hash, expires_at, invited_by_user_id, revoked_at, accepted_at, created_at, updated_at",
         )
         .bind(company_id)
         .bind(invite_id)
-        .execute(self.db.pool())
-        .await?;
-        Ok(r.rows_affected() > 0)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "invite", id: invite_id.to_string() })
     }
 
     /// Round 150: 通过 token_hash 查找 invite 核心字段 + invited_by_user_id（revoke 路径用）。

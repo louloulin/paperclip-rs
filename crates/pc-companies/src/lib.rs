@@ -374,19 +374,17 @@ impl<'a> CompanyService<'a> {
         Ok(row)
     }
 
-    /// 删除 company。返回 `false` 表示不存在。
-    pub async fn remove(&self, id: Uuid) -> CompanyServiceResult<bool> {
-        let ok = self.repo.delete(id).await?;
-        if ok {
-            for hook in &self.hooks {
-                hook.on_lifecycle(CompanyLifecycleEvent::Removed {
-                    id,
-                    actor: CompanyActor::system(),
-                })
-                .await?;
-            }
+    /// R800: 删除一个 company (returns CompanyRow; sqlx::Error::RowNotFound on miss).
+    pub async fn remove(&self, id: Uuid) -> CompanyServiceResult<CompanyRow> {
+        let row = self.repo.delete(id).await?;
+        for hook in &self.hooks {
+            hook.on_lifecycle(CompanyLifecycleEvent::Removed {
+                id,
+                actor: CompanyActor::system(),
+            })
+            .await?;
         }
-        Ok(ok)
+        Ok(row)
     }
 
     /// 更新 branding 子集 — 当前底层仍走 `repo.update_branding`。

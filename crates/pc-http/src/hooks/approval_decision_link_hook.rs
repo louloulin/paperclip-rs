@@ -140,9 +140,10 @@ impl ApprovalHook for ApprovalDecisionLinkHook {
         };
 
         let repo = DecisionRepo::new(self.db.as_ref());
+        // R802: mark_cancelled returns DecisionRow; RowNotFound -> Skipped
         match repo.mark_cancelled(decision_id).await {
-            Ok(true) => pc_approvals::ApprovalHookOutcome::Ok,
-            Ok(false) => pc_approvals::ApprovalHookOutcome::Skipped,
+            Ok(_row) => pc_approvals::ApprovalHookOutcome::Ok,
+            Err(sqlx::Error::RowNotFound) => pc_approvals::ApprovalHookOutcome::Skipped,
             Err(e) => {
                 tracing::warn!(
                     approval_id = %approval.id,

@@ -1132,12 +1132,22 @@ impl<'a> RoutineRepo<'a> {
             .await
     }
 
-    pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM routines WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R799: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete(&self, id: Uuid) -> sqlx::Result<RoutineRow> {
+        sqlx::query_as::<_, RoutineRow>(
+            "DELETE FROM routines WHERE id = $1 \
+             RETURNING id, company_id, project_id, folder_id, goal_id, parent_issue_id, \
+                title, description, assignee_agent_id, priority, status, \
+                concurrency_policy, catch_up_policy, activity_gate_policy, activity_gate_scope, \
+                origin_kind, origin_id, variables, env, latest_revision_id, latest_revision_number, \
+                created_by_agent_id, created_by_user_id, responsible_user_id, \
+                updated_by_agent_id, updated_by_user_id, last_triggered_at, last_enqueued_at, \
+                created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     // =========================================================================
@@ -2491,12 +2501,15 @@ impl<'a> RoutineRepo<'a> {
         .await
     }
 
-    pub async fn delete_trigger(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM routine_triggers WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R799: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete_trigger(&self, id: Uuid) -> sqlx::Result<RoutineTriggerRow> {
+        sqlx::query_as::<_, RoutineTriggerRow>(
+            "DELETE FROM routine_triggers WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     // ---- Round 111: routine description annotations ----

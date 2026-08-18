@@ -228,9 +228,14 @@ async fn remove(
     {
         return Err(ApiError::Forbidden(err.to_string()));
     }
-    if GoalRepo::new(&s.db).delete_one(id).await? {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("goal {id}")))
-    }
+    // R799: delete_one returns GoalRow directly; RepoError::NotFound -> 404
+    let row = GoalRepo::new(&s.db).delete_one(id).await.map_err(|err| match err {
+        pc_repos::RepoError::NotFound { .. } => ApiError::NotFound(format!("goal {id}")),
+        other => ApiError::from(other),
+    })?;
+    s.realtime.publish(
+        LiveEvent::new("goal.removed", "goal", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }

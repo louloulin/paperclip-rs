@@ -425,16 +425,21 @@ impl<'a> EnvironmentRepo<'a> {
         Ok(n > 0)
     }
 
-    pub async fn release_lease(&self, id: Uuid, reason: Option<&str>) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE environment_leases SET status='released', released_at=now(),              failure_reason=$2, updated_at=now() WHERE id=$1 AND status='active'",
+    /// R803: 释放 env lease (returns EnvironmentLeaseRow; RepoError::NotFound on miss).
+    pub async fn release_lease(&self, id: Uuid, reason: Option<&str>) -> RepoResult<EnvironmentLeaseRow> {
+        sqlx::query_as::<_, EnvironmentLeaseRow>(
+            "UPDATE environment_leases SET status='released', released_at=now(), \
+                failure_reason=$2, updated_at=now() WHERE id=$1 AND status='active' \
+             RETURNING id, company_id, environment_id, execution_workspace_id, issue_id, \
+                heartbeat_run_id, status, lease_policy, provider, provider_lease_id, acquired_at, \
+                last_used_at, expires_at, released_at, failure_reason, cleanup_status, metadata, \
+                created_at, updated_at",
         )
         .bind(id)
         .bind(reason)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "environment_lease", id: id.to_string() })
     }
 
     pub async fn expire_overdue(&self) -> RepoResult<u64> {

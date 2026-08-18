@@ -256,12 +256,20 @@ impl<'a> DecisionRepo<'a> {
             .await
     }
 
-    pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM decisions WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R799: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete(&self, id: Uuid) -> sqlx::Result<DecisionRow> {
+        sqlx::query_as::<_, DecisionRow>(
+            "DELETE FROM decisions WHERE id = $1 \
+             RETURNING id, company_id, bundle_id, origin_agent_id, origin_issue_id, origin_run_id, \
+                rule_key, title, body, options, inputs, status, execution_status, \
+                chosen_option_id, input_values, decided_by_user_id, decided_at, expires_at, \
+                idempotency_key, signed_spec, target_snapshots, continuation_policy, metadata, \
+                created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     // ============ Round 173: signed fields + status transitions + stats ============
@@ -326,15 +334,20 @@ impl<'a> DecisionRepo<'a> {
         Ok(row.map(|(c,)| c))
     }
 
-    /// 将决策置为 cancelled。
-    pub async fn mark_cancelled(&self, decision_id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query(
-            "UPDATE decisions SET status = 'cancelled', updated_at = now()              WHERE id = $1",
+    /// R802: 将决策置为 cancelled (returns DecisionRow; 0 rows = RowNotFound).
+    pub async fn mark_cancelled(&self, decision_id: Uuid) -> sqlx::Result<DecisionRow> {
+        sqlx::query_as::<_, DecisionRow>(
+            "UPDATE decisions SET status = 'cancelled', updated_at = now() WHERE id = $1 \
+             RETURNING id, company_id, bundle_id, origin_agent_id, origin_issue_id, origin_run_id, \
+                rule_key, title, body, options, inputs, status, execution_status, \
+                chosen_option_id, input_values, decided_by_user_id, decided_at, expires_at, \
+                idempotency_key, signed_spec, target_snapshots, continuation_policy, metadata, \
+                created_at, updated_at",
         )
         .bind(decision_id)
-        .execute(self.db.pool())
-        .await?;
-        Ok(r.rows_affected() > 0)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 按状态统计某公司的决策数。

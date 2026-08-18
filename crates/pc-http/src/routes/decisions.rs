@@ -184,12 +184,19 @@ async fn create(
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
-    let ok = DecisionRepo::new(&state.db).delete(id).await?;
-    if ok {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound(format!("decision {id}")))
-    }
+    // R799: delete returns DecisionRow directly; sqlx::Error::RowNotFound -> 404
+    let row = DecisionRepo::new(&state.db)
+        .delete(id)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("decision {id}")),
+            other => ApiError::from(other),
+        })?;
+    state.realtime.publish(
+        LiveEvent::new("decision.removed", "decision", row.id)
+            .with_company(row.company_id),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============== Round 22: decision decide/dismiss/cancel/stats/bundles ==============

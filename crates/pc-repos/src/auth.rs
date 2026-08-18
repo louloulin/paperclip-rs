@@ -192,13 +192,16 @@ impl<'a> AuthRepo<'a> {
         .await?)
     }
 
-    pub async fn delete(&self, user_id: &str) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM \"user\" WHERE id = $1")
-            .bind(user_id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R801: 删除一个 user (returns UserRow; RepoError::NotFound on miss).
+    pub async fn delete(&self, user_id: &str) -> RepoResult<UserRow> {
+        sqlx::query_as::<_, UserRow>(
+            "DELETE FROM \"user\" WHERE id = $1 \
+             RETURNING id, name, email, email_verified, image, created_at, updated_at",
+        )
+        .bind(user_id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "user", id: user_id.to_string() })
     }
 
     /// Round 140: legacy ensure_user — INSERT ... ON CONFLICT (id) DO NOTHING。
@@ -304,13 +307,16 @@ impl<'a> AuthRepo<'a> {
         Ok(n > 0)
     }
 
-    pub async fn delete_session(&self, id: &str) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM session WHERE id=$1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R801: 删除一个 session (returns SessionRow; RepoError::NotFound on miss).
+    pub async fn delete_session(&self, id: &str) -> RepoResult<SessionRow> {
+        sqlx::query_as::<_, SessionRow>(
+            "DELETE FROM session WHERE id=$1 \
+             RETURNING id, expires_at, token, created_at, updated_at, ip_address, user_agent, user_id",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "session", id: id.to_string() })
     }
 
     pub async fn delete_sessions_for_user(&self, user_id: &str) -> RepoResult<u64> {
@@ -463,14 +469,16 @@ impl<'a> AuthRepo<'a> {
         Ok(n > 0)
     }
 
-    /// 按 token 软删除 session（保留行但 expires_at = now()）。
-    pub async fn revoke_session_by_token(&self, token: &str) -> RepoResult<bool> {
-        let n = sqlx::query("DELETE FROM session WHERE token = $1")
-            .bind(token)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R801: 按 token 删除 session (returns SessionRow; RepoError::NotFound on miss).
+    pub async fn revoke_session_by_token(&self, token: &str) -> RepoResult<SessionRow> {
+        sqlx::query_as::<_, SessionRow>(
+            "DELETE FROM session WHERE token = $1 \
+             RETURNING id, expires_at, token, created_at, updated_at, ip_address, user_agent, user_id",
+        )
+        .bind(token)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| RepoError::NotFound { entity: "session", id: token.to_string() })
     }
 
     /// 按 user_id 删除所有 session（sign_out 用）。

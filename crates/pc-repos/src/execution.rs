@@ -424,16 +424,19 @@ impl<'a> ExecutionRepo<'a> {
             .await?)
     }
 
-    pub async fn release_lease(&self, lease_id: Uuid, token: &str) -> RepoResult<bool> {
-        let n = sqlx::query(
-            "UPDATE execution_lease SET state='released', released_at=now()              WHERE id=$1 AND token=$2 AND state='holding'",
+    /// R803: 释放 lease (returns LeaseRow; RepoError::NotFound on miss / state mismatch).
+    pub async fn release_lease(&self, lease_id: Uuid, token: &str) -> RepoResult<LeaseRow> {
+        sqlx::query_as::<_, LeaseRow>(
+            "UPDATE execution_lease SET state='released', released_at=now() \
+             WHERE id=$1 AND token=$2 AND state='holding' \
+             RETURNING id, company_id, workspace_id, agent_id, run_id, heartbeat_run_id, state, \
+                token, acquired_at, expires_at, last_renewed_at, released_at, revocation_reason",
         )
         .bind(lease_id)
         .bind(token)
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await?
-        .rows_affected();
-        Ok(n > 0)
+        .ok_or_else(|| RepoError::NotFound { entity: "lease", id: lease_id.to_string() })
     }
 
     pub async fn revoke_lease(&self, lease_id: Uuid, reason: &str) -> RepoResult<()> {

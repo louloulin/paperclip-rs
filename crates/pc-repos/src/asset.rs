@@ -175,15 +175,17 @@ impl<'a> AssetRepo<'a> {
         Ok(row)
     }
 
-    /// Round 206: 删除一个 asset（按 id）。
-    /// 返回 true 表示实际删除了 1 行。
-    pub async fn delete_by_id(&self, id: Uuid) -> sqlx::Result<bool> {
-        let n = sqlx::query("DELETE FROM assets WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?
-            .rows_affected();
-        Ok(n > 0)
+    /// R800: 删除一个 asset (按 id). 返回被删除的 AssetRow; 0 行 = `RowNotFound`.
+    pub async fn delete_by_id(&self, id: Uuid) -> sqlx::Result<AssetRow> {
+        sqlx::query_as::<_, AssetRow>(
+            "DELETE FROM assets WHERE id = $1 \
+             RETURNING id, company_id, provider, object_key, content_type, byte_size, sha256, \
+                original_filename, created_by_agent_id, created_by_user_id, created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Round 206: 列出引用此 asset 的所有 issue_attachment（用于 usage 端点）。

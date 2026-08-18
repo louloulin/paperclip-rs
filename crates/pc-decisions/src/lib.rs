@@ -328,26 +328,23 @@ impl<'a> DecisionService<'a> {
         Ok(row)
     }
 
-    /// 取消一个决策（pending → cancelled）。
+    /// R802: 取消一个决策 (pending -> cancelled). 0 行 = NotFound.
     pub async fn cancel(&self, id: Uuid) -> DecisionServiceResult<DecisionRow> {
-        let changed = self.repo.mark_cancelled(id).await?;
-        if !changed {
-            return Err(DecisionServiceError::NotFound(format!("decision {id}")));
-        }
-        let row = self
-            .repo
-            .get(id)
-            .await?
-            .ok_or_else(|| DecisionServiceError::NotFound(format!("decision {id}")))?;
+        let row = self.repo.mark_cancelled(id).await.map_err(|err| match err {
+            sqlx::Error::RowNotFound => DecisionServiceError::NotFound(format!("decision {id}")),
+            other => DecisionServiceError::from(other),
+        })?;
         for hook in &self.hooks {
             hook.on_cancelled(&row).await?;
         }
         Ok(row)
     }
 
-    /// 删除一个决策。
-    pub async fn delete(&self, id: Uuid) -> DecisionServiceResult<bool> {
-        Ok(self.repo.delete(id).await?)
+    /// R799: 删除一个决策 (returns the deleted DecisionRow, 0 rows = NotFound).
+    pub async fn delete(&self, id: Uuid) -> DecisionServiceResult<DecisionRow> {
+        match self.repo.delete(id).await? {
+            row => Ok(row),
+        }
     }
 
     /// 执行一个 decided 决策的所有 effects（与上游 `decisionService.runEffects` 等价）。

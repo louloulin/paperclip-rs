@@ -3441,3 +3441,185 @@ openspec/changes/paperclip-rs-comprehensive-validation/evidence/r797-issue-repo-
 
 - 32 跟踪 crate lib 测试: ~3764 PASS
 - 整体加权进度: ~98% (+0.5% from HTTP layer 统一)
+
+
+## R798 - IssueRepo 多个 delete 方法返回类型统一
+
+**主题**: 4 个 delete 方法 (attachment/comment/interaction/label) 从 bool 改为 T
+
+### 改动
+
+- IssueRepo::delete_attachment: bool → AttachmentRow
+- IssueRepo::delete_comment: bool → IssueCommentRow
+- IssueRepo::delete_interaction: bool → IssueThreadInteractionRow
+- IssueRepo::delete_label: bool → LabelRow
+- IssueService::remove_comment: bool → IssueCommentRow
+- 4 个 HTTP handler 改用 map_err(RowNotFound → ApiError::NotFound)
+- 4 个 HTTP handler 补全 LiveEvent 广播 (issue.{comment,attachment,interaction,label}.removed)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过
+- cargo build -p pc-http: 通过
+- cargo build -p pc-issues: 通过
+- cargo build -p pc-server --bin paperclip-server: 通过 (48.81s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-issues --lib: 198 passed
+- cargo test -p pc-work-products --lib: 8 passed
+- 13/14 GET API: 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r798-issue-repo-multiple-delete-unifications.md
+
+### 累计 (R756 → R798)
+
+- 32 跟踪 crate lib 测试: ~3764 PASS
+- 整体加权进度: ~98.5%
+
+
+## R799 - RoutineRepo/DecisionRepo/GoalRepo delete 返回类型统一
+
+**主题**: 5 个 delete 方法批量统一 bool → T (持续 R793 原则)
+
+### 改动
+
+- RoutineRepo::delete: bool → RoutineRow
+- RoutineRepo::delete_trigger: bool → RoutineTriggerRow
+- DecisionRepo::delete: bool → DecisionRow
+- GoalRepo::delete: bool → GoalRow (用 RepoError::NotFound)
+- GoalRepo::delete_one: bool → GoalRow
+- RoutineService::delete: bool → RoutineRow
+- GoalService::delete: bool → GoalRow
+- pc-decisions::DecisionService::delete: bool → DecisionRow
+- 3 个 HTTP handler (routines/decisions/goals) 改用 map_err(RowNotFound → ApiError::NotFound)
+- 3 个 LiveEvent 广播 (routine.removed / decision.removed / goal.removed)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (7.12s)
+- cargo build -p pc-routines: 通过
+- cargo build -p pc-decisions: 通过 (1.01s)
+- cargo build -p pc-goals: 通过 (0.57s)
+- cargo build -p pc-http: 通过
+- cargo build -p pc-server: 通过 (20.02s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-decisions --lib: 185 passed
+- cargo test -p pc-routines --lib: 207 passed
+- cargo test -p pc-goals --lib: 6 passed
+- Rust server /health + 5 个 API: 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r799-routine-decision-goal-delete-unifications.md
+
+### 累计 (R756 → R799)
+
+- 32 跟踪 crate lib 测试: ~3593 PASS
+- 整体加权进度: ~99%
+
+
+## R800 - CompanyRepo/AssetRepo/FolderRepo delete 返回类型统一
+
+**主题**: 3 个 repo (company/asset/folder) 的 delete 统一 bool → T
+
+### 改动
+
+- CompanyRepo::delete: bool → CompanyRow
+- AssetRepo::delete_by_id: bool → AssetRow
+- FolderRepo::delete: bool → FolderRow (RepoError::NotFound on miss)
+- CompanyService::remove / AssetService::delete_by_id / FolderService::delete 同步
+- 3 个 HTTP handler 改用 map_err(RowNotFound → ApiError::NotFound)
+- LiveEvent 广播 (company.removed / asset.deleted / folder.removed)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (7.43s)
+- cargo build -p pc-folders: 通过 (0.94s)
+- cargo build -p pc-companies: 通过
+- cargo build -p pc-http: 通过 (14.94s)
+- cargo build -p pc-server: 通过 (14.08s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-decisions --lib: 185 passed
+- cargo test -p pc-routines --lib: 207 passed
+- cargo test -p pc-goals --lib: 6 passed
+- cargo test -p pc-companies --lib: 49 passed
+- cargo test -p pc-folders --lib: 10 passed
+- cargo test -p pc-issues --lib: 198 passed
+- Rust server: /health + 6 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r800-company-asset-folder-delete-unifications.md
+
+### 累计 (R756 → R800)
+
+- 7 个跟踪 crate lib 测试: 1188 PASS
+- 整体加权进度: ~99%
+
+
+## R801 - AuthRepo delete/delete_session/revoke_session_by_token 统一
+
+**主题**: 3 个 auth 删除方法批量统一 bool → T
+
+### 改动
+
+- AuthRepo::delete: bool → UserRow
+- AuthRepo::delete_session: bool → SessionRow
+- AuthRepo::revoke_session_by_token: bool → SessionRow
+- sign_out HTTP handler: 改成 idempotent (NotFound 不报错)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-repos: 通过 (7.45s)
+- cargo build -p pc-http: 通过 (12.86s)
+- cargo build -p pc-server: 通过 (15.31s)
+- cargo test -p pc-repos --lib: 533 passed
+- cargo test -p pc-auth --lib: 95 passed
+- Rust server: /health + 8 API 200
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r801-auth-delete-unifications.md
+
+### 累计 (R756 → R801)
+
+- 8 个跟踪 crate lib 测试: ~1283 PASS
+- 整体加权进度: ~99%
+
+
+## R802-R803 - decision/execution lease 方法统一
+
+**主题**: 3 个 lease/cancel 方法批量统一 bool → T
+
+### 改动
+
+- DecisionRepo::mark_cancelled: bool → DecisionRow (UPDATE...RETURNING)
+- ExecutionRepo::release_lease: bool → LeaseRow
+- EnvironmentRepo::release_lease: bool → EnvironmentLeaseRow
+- DecisionService::cancel + EnvironmentService::release_lease 同步
+- HTTP release_lease_route 改用 map_err(NotFound → 404)
+
+### 验证 (2026-08-18)
+
+- cargo build -p pc-decisions: 通过
+- cargo build -p pc-environment: 通过 (1.97s)
+- cargo build -p pc-http: 通过 (38.16s)
+- cargo build -p pc-server: 通过 (48.36s)
+- cargo test -p pc-decisions --lib: 185 passed
+- cargo test -p pc-repos --lib: 533 passed
+- Rust server: /health + 7 API 200
+
+### 磁盘清理
+
+- 增量编译缓存: 28G → 5.5G (清理 632 个旧 incremental dirs)
+- 磁盘从 100% → 31% (释放 ~22GB)
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r802-r803-decision-execution-lease-unifications.md
+
+### 累计 (R756 → R803)
+
+- 11 个跟踪 crate lib 测试: ~1399 PASS
+- 整体加权进度: ~99%

@@ -421,28 +421,20 @@ impl GoalService {
         Ok(Some(updated))
     }
 
-    pub async fn delete(&self, company_id: Uuid, goal_id: Uuid) -> Result<bool> {
+    /// R799: 删除一个 goal (returns GoalRow; RepoError::NotFound on miss).
+    pub async fn delete(&self, company_id: Uuid, goal_id: Uuid) -> Result<GoalRow> {
+        // R799: 删除一个 goal (returns GoalRow; RepoError::NotFound on miss)
         let repo = GoalRepo::new(&self.db);
-        let existing = match repo
-            .get(company_id, goal_id)
-            .await
-            .map_err(map_repo_error)?
-        {
-            Some(row) => row,
-            None => return Ok(false),
-        };
-        let removed = repo
+        let row = repo
             .delete(company_id, goal_id)
             .await
             .map_err(map_repo_error)?;
-        if removed {
-            self.dispatch(GoalHookEvent::Deleted {
-                id: goal_id,
-                company_id,
-            })
-            .await?;
-        }
-        Ok(removed)
+        self.dispatch(GoalHookEvent::Deleted {
+            id: goal_id,
+            company_id,
+        })
+        .await?;
+        Ok(row)
     }
 }
 

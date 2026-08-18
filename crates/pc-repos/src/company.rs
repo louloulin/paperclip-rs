@@ -463,12 +463,21 @@ impl<'a> CompanyRepo<'a> {
         Ok(())
     }
 
-    pub async fn delete(&self, id: Uuid) -> sqlx::Result<bool> {
-        let r = sqlx::query("DELETE FROM companies WHERE id = $1")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(r.rows_affected() > 0)
+    /// R800: returns the deleted row directly (was bool). 0 rows = `RowNotFound`.
+    pub async fn delete(&self, id: Uuid) -> sqlx::Result<CompanyRow> {
+        sqlx::query_as::<_, CompanyRow>(
+            "DELETE FROM companies WHERE id = $1 \
+             RETURNING id, name, description, status, pause_reason, paused_at, issue_prefix, \
+                issue_counter, budget_monthly_cents, spent_monthly_cents, attachment_max_bytes, \
+                default_responsible_user_id, require_board_approval_for_new_agents, \
+                feedback_data_sharing_enabled, feedback_data_sharing_consent_at, \
+                feedback_data_sharing_consent_by_user_id, feedback_data_sharing_terms_version, \
+                brand_color, created_at, updated_at",
+        )
+        .bind(id)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Round 168: 取 company 的 budget_monthly_cents。
