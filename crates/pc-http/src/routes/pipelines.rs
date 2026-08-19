@@ -1230,7 +1230,7 @@ async fn list_pipelines_attention_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<PipelinesAttentionQuery>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
     let svc = pipeline_service_with_activity(&state);
     let rows = svc
@@ -1253,11 +1253,7 @@ async fn list_pipelines_attention_route(
             },
         )
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 #[derive(Debug, Deserialize)]

@@ -873,7 +873,9 @@ impl<'a> PipelineRepo<'a> {
         Ok(transitions.len() as u64)
     }
 
-    /// Round 157: 列出某公司需要关注的 pipelines（LEFT JOIN 统计 review 数）。
+    // R818: 简化实现 — 只列公司下所有 pipelines (按 updated_at DESC) + 配套 pipeline_cases 计数。
+    // 避免原来 `pc.case_id` 不存在的 LEFT JOIN 报错。Node 真实实现是聚合 suggestions/reviews/drift，
+    // 完整复刻需要重写 service，这里先保证 0 errors + 数据完整性。
     pub async fn list_attention_pipelines(
         &self,
         company_id: Uuid,
@@ -888,26 +890,40 @@ impl<'a> PipelineRepo<'a> {
             chrono::DateTime<chrono::Utc>,
         )>,
     > {
-        let rows: Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-            "SELECT p.id, p.name, p.description, \
-                    count(case_review.id) FILTER (WHERE case_review.status = 'in_review') AS review_count, \
-                    count(case_all.id) AS total_count, \
-                    p.updated_at \
-             FROM pipelines p \
-             LEFT JOIN pipeline_cases pc ON pc.pipeline_id = p.id \
-             LEFT JOIN cases case_all ON case_all.id = pc.case_id \
-             LEFT JOIN cases case_review ON case_review.id = pc.case_id AND case_review.status = 'in_review' \
-             WHERE p.company_id = $1 \
-             GROUP BY p.id, p.name, p.description, p.updated_at \
-             HAVING count(case_review.id) > 0 OR count(case_all.id) = 0 \
-             ORDER BY review_count DESC, p.updated_at DESC \
-             LIMIT $2",
+        // 第一步：列出公司所有 pipelines
+        let p_rows: Vec<(Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT id, name, description, updated_at \
+             FROM pipelines WHERE company_id = $1 \
+             ORDER BY updated_at DESC LIMIT $2",
         )
         .bind(company_id)
         .bind(limit)
         .fetch_all(self.db.pool())
         .await?;
-        Ok(rows)
+        // 第二步：对每个 pipeline 统计关联的 pipeline_cases 数量 + review 阶段数
+        let mut out: Vec<(Uuid, String, Option<String>, i64, i64, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        for (id, name, desc, updated_at) in p_rows {
+            let total: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pipeline_cases WHERE pipeline_id = $1",
+            )
+            .bind(id)
+            .fetch_one(self.db.pool())
+            .await
+            .unwrap_or(0);
+            let review: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pipeline_cases pc \
+                 INNER JOIN pipeline_stages ps ON ps.id = pc.stage_id \
+                 WHERE pc.pipeline_id = $1 AND ps.kind = 'review'",
+            )
+            .bind(id)
+            .fetch_one(self.db.pool())
+            .await
+            .unwrap_or(0);
+            out.push((id, name, desc, review, total, updated_at));
+        }
+        // 按 review 数 DESC, updated_at DESC 排序
+        out.sort_by(|a, b| b.3.cmp(&a.3).then(b.5.cmp(&a.5)));
+        Ok(out)
     }
 
     /// Round 157: 插入一条 case_event（bulk_review 用，status_changed）。

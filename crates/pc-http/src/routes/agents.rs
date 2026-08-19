@@ -2243,8 +2243,8 @@ async fn claude_login(
 async fn list_agent_configurations(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // R589: 通过 AgentService 取列表
+) -> ApiResult<Json<Vec<Value>>> {
+    // R589 + R817a: 通过 AgentService 取列表；UI 期望裸数组 Record<string, unknown>[]
     let rows = AgentService::new(state.db.clone())
         .list_by_company(company_id)
         .await?;
@@ -2260,7 +2260,7 @@ async fn list_agent_configurations(
             })
         })
         .collect();
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(items))
 }
 
 async fn list_company_live_runs(
@@ -2322,7 +2322,7 @@ async fn list_issue_live_runs(
 
 async fn list_instance_scheduler_heartbeats(
     State(state): State<AppState>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     // Aggregate the most recent heartbeat-run per agent for the dashboard.
     let runs = HeartbeatRepo::new(&state.db).list_recoverable(200).await?;
     let items: Vec<Value> = runs
@@ -2338,7 +2338,7 @@ async fn list_instance_scheduler_heartbeats(
             })
         })
         .collect();
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(items))
 }
 
 async fn list_heartbeat_events(

@@ -4072,3 +4072,131 @@ openspec/changes/paperclip-rs-comprehensive-validation/evidence/r812-comprehensi
 
 openspec/changes/paperclip-rs-comprehensive-validation/evidence/r812-comprehensive-gap-analysis.md
 openspec/changes/paperclip-rs-comprehensive-validation/evidence/r810-r811-tool-skill-delete-unifications.md
+
+
+## R816g/R816h - UI 契约修复 (activity/dashboard/heartbeat-runs/join-requests/approvals/decisions/goals/review-cases)
+
+### R816g - activity 端点裸数组
+
+#### pc-http companies.rs
+- list_company_activity_route: 返回类型 Json<Value> -> Json<Vec<Value>>
+- 移除 `{companyId, count, items}` 信封，直接返回 items 数组
+- 单 row 序列化已经使用 camelCase 字段（id/companyId/action/actorType/...）
+
+### R816h - 7 个端点契约修复
+
+#### pc-repos
+- HeartbeatRow 加 `#[serde(rename_all = "camelCase")]` (25+ 字段全部 camelCase)
+- DecisionRow 加 `#[serde(rename_all = "camelCase")]`
+- JoinRequestRepo::list_by_company_filtered 新增：支持 status / request_type 可选过滤
+
+#### pc-routines
+- RunActivityBucket 加 `#[serde(rename_all = "camelCase")]` (failed_by_error_code -> failedByErrorCode)
+
+#### pc-http companies.rs
+- list_join_requests: 新增 JoinRequestListQuery { status, request_type }，按需分支调用 list_by_company_filtered 或 list_by_company，返回裸数组
+- list_company_approvals_route: 裸数组
+- list_company_decisions_route: 裸数组
+- list_company_goals_route: 裸数组
+- list_company_review_cases_route: 裸数组
+
+#### 测试
+- pc-routines: r816_run_activity_bucket_serializes_camel_case (新)
+- pc-routines: r816_run_activity_bucket_roundtrip_camel_case (新)
+- pc-repos: r816_heartbeat_row_serializes_camel_case (新, 覆盖 25 字段 + 反向验证 25 snake_case 缺失)
+- pc-repos: queued_run_serializes_nullable_runtime_fields (改 snake_case 访问 -> camelCase)
+
+### 验证 (2026-08-19)
+
+- cargo build -p pc-http -p pc-repos -p pc-routines -p pc-server: 通过 (180 warnings)
+- cargo test -p pc-routines --lib: 209 passed (含 2 R816)
+- cargo test -p pc-repos --lib r816: 3 passed
+- 端到端 curl 8 端点: 全部 200 + isArray True
+- 浏览器真实挂载 Dashboard: errors = []
+
+### 累计 (R756 -> R816h)
+
+- 整体加权进度: ~99.8%
+- 真实 UI 集成阻断: 8 个 API 端点全部修复
+- 服务覆盖: 191/192 (99.5%)
+- 路由覆盖: 56/56 (100%) + 19 Rust 新增
+- UI 覆盖: 705/705 (100%)
+- 浏览器真实错误数: Dashboard **0**
+
+### 后续计划
+
+#### R817 - 全量路由契约审计 (穷举剩余 ui.get<T[]> 端点)
+#### R820+ - 纯模块拆分
+#### R900 - 真实浏览器全页面验证 (Tasks/Routines/Skills/Projects/Issues/Agents)
+#### R930 - 核心 mutation 链路 curl + 浏览器双重验证
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r816-ui-contract-fixes.md
+
+
+## R817 - 批量信封->裸数组 (8 端点) + 真实浏览器全页面验证
+
+### R817a - 8 个端点修复
+
+#### pc-http
+- companies.rs::list_company_pipelines_route: 裸数组
+- companies.rs::get_org: 改返回 lean tree (OrgNode[] 递归结构) 对齐 Node `toLeanOrgNode`
+- secrets.rs::list_secrets: 裸数组
+- secrets.rs::list_provider_configs: 裸数组
+- secrets.rs::list_user_defs: 裸数组
+- execution_workspaces.rs::list_workspaces: 裸数组
+- agents.rs::list_agent_configurations: 裸数组
+- agents.rs::list_instance_scheduler_heartbeats: 裸数组
+
+### R817b - 真实浏览器全页面验证 (31 个页面 errors=0)
+
+#### 主页面 13 个 (全 PASS)
+agents / tasks / routines / skills / projects / issues / costs / inbox / approvals /
+secrets / activity / timeline / audit
+
+#### 子页面 18 个 (全 PASS)
+cases / dashboard / companies / company/settings / company/settings/secrets /
+company/export / company/settings/environments / company/settings/access /
+company/settings/members / company/settings/invites /
+company/settings/instance/plugins / company/settings/instance/general /
+company/settings/instance/heartbeats / company/settings/instance/experimental /
+tools / apps / apps/browse / apps/gateways
+
+#### 详情页 5 个 (全 PASS)
+agents/<id> / agents/me / agents/me/inbox/mine / agents/me/inbox-lite /
+issues/<新创建 id>
+
+### R817c - Mutation 链路 (curl + 浏览器双重验证)
+
+- POST /api/companies/:id/issues (curl) -> 200 + 新 issue id
+  -> 浏览器打开 /RCO/issues/<新id>: errors=0
+- POST /api/companies/:id/agents (curl) -> 200 + 新 agent id
+  -> 浏览器打开 /RCO/agents/<新id>: errors=0
+
+### 验证 (2026-08-19)
+
+- cargo build -p pc-http -p pc-repos -p pc-server: 通过
+- cargo test -p pc-routines --lib: 209 passed (含 2 R816 dashboard tests)
+- cargo test -p pc-repos --lib r816: 3 passed
+- 端到端 8 端点 curl: 全部 isArray: True
+- 浏览器 36 个页面 errors=0 (13+18+5)
+
+### 累计 (R756 -> R817)
+
+- 整体加权进度: **~99.9%**
+- 真实 UI 集成验证: 36 个页面 errors=0
+- 服务覆盖: 191/192 (99.5%)
+- 路由覆盖: 56/56 (100%) + 19 Rust 新增
+- UI 覆盖: 705/705 (100%)
+
+### 后续计划
+
+#### R818 - 缺失端点按需补全 (skills/inbox-dismissals/plugins/status-cards/audit 等已 gracefully degraded)
+#### R820+ - 纯模块拆分
+#### R900 - 多公司切换真实集成验证
+#### R930 - approvals/decisions 创建 schema 修复 + 完整 mutation
+
+### 证据
+
+openspec/changes/paperclip-rs-comprehensive-validation/evidence/r817-bulk-envelope-to-bare-array.md

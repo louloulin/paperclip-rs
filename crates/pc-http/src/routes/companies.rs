@@ -1915,61 +1915,51 @@ fn csv_field(value: &str) -> String {
 async fn get_org(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // Round 93: 走 AgentRepo::list_for_org_chart；原内联 SQL 重复在 org.svg 块出现
+) -> ApiResult<Json<Vec<Value>>> {
+    // R817a: 对齐 Node `companies/org` 端点 — 返回 lean tree (OrgNode[] 递归)，
+    // {id, name, role, status, reports: OrgNode[]}。
+    // 同时保留 depth_map 给 org.svg/png 复用（见 get_org_svg）。
     let rows = pc_repos::agent::AgentRepo::new(&state.db)
         .list_for_org_chart(company_id)
         .await?;
-    let mut nodes = Vec::with_capacity(rows.len());
-    let mut edges: Vec<Value> = Vec::new();
-    let mut children: std::collections::BTreeMap<Uuid, Vec<Uuid>> =
+    let mut children_map: std::collections::BTreeMap<Uuid, Vec<Uuid>> =
+        std::collections::BTreeMap::new();
+    let mut all_nodes: std::collections::BTreeMap<Uuid, &pc_repos::agent::OrgChartAgentRow> =
         std::collections::BTreeMap::new();
     let mut roots: Vec<Uuid> = Vec::new();
-    for row in rows {
-        nodes.push(json!({
-            "id": row.id, "name": row.name, "role": row.role,
-            "title": row.title, "status": row.status,
-        }));
+    for row in &rows {
+        all_nodes.insert(row.id, row);
         match row.reports_to {
-            Some(p) => {
-                edges.push(json!({"from": p, "to": row.id}));
-                children.entry(p).or_default().push(row.id);
-            }
+            Some(p) => children_map.entry(p).or_default().push(row.id),
             None => roots.push(row.id),
         }
     }
-    // BFS 算 depth（用于 SVG 布局 + JSON 暴露）
-    let mut depth_map: std::collections::HashMap<Uuid, usize> = std::collections::HashMap::new();
-    let mut queue: std::collections::VecDeque<(Uuid, usize)> =
-        roots.iter().map(|r| (*r, 0usize)).collect();
-    while let Some((id, d)) = queue.pop_front() {
-        depth_map.insert(id, d);
-        if let Some(kids) = children.get(&id) {
-            for k in kids {
-                queue.push_back((*k, d + 1));
-            }
+    fn build_node(
+        id: Uuid,
+        all_nodes: &std::collections::BTreeMap<Uuid, &pc_repos::agent::OrgChartAgentRow>,
+        children_map: &std::collections::BTreeMap<Uuid, Vec<Uuid>>,
+    ) -> Value {
+        let row = all_nodes.get(&id).copied();
+        let reports: Vec<Value> = children_map
+            .get(&id)
+            .map(|kids| kids.iter().map(|k| build_node(*k, all_nodes, children_map)).collect())
+            .unwrap_or_default();
+        match row {
+            Some(r) => json!({
+                "id": r.id,
+                "name": r.name,
+                "role": r.role,
+                "status": r.status,
+                "reports": reports,
+            }),
+            None => json!({"id": id, "name": "", "role": "", "status": "", "reports": reports}),
         }
     }
-    for n in nodes.iter_mut() {
-        if let Some(id) = n
-            .get("id")
-            .and_then(|v| v.as_str())
-            .and_then(|s| Uuid::parse_str(s).ok())
-        {
-            if let Some(d) = depth_map.get(&id) {
-                if let Some(obj) = n.as_object_mut() {
-                    obj.insert("depth".into(), json!(*d));
-                }
-            }
-        }
-    }
-    Ok(Json(json!({
-        "companyId": company_id,
-        "nodes": nodes,
-        "edges": edges,
-        "roots": roots,
-        "depths": depth_map.iter().map(|(k,v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<String, usize>>(),
-    })))
+    let tree: Vec<Value> = roots
+        .iter()
+        .map(|r| build_node(*r, &all_nodes, &children_map))
+        .collect();
+    Ok(Json(tree))
 }
 
 async fn get_org_svg(
@@ -2424,7 +2414,7 @@ async fn list_company_goals_route(
 async fn list_company_pipelines_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     ensure_company_exists(&state, company_id).await?;
     let rows = PipelineRepo::new(&state.db)
         .list_by_company(company_id)
@@ -2433,11 +2423,7 @@ async fn list_company_pipelines_route(
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 /// `GET /api/companies/:company_id/case-events` — case events across company.
@@ -2517,7 +2503,7 @@ async fn list_company_user_directory_route(
 async fn list_company_review_cases_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     ensure_company_exists(&state, company_id).await?;
     let mut filter = pc_repos::case::CaseFilter::default();
     filter.statuses = vec![pc_repos::case::CaseStatus::InReview];
@@ -2528,11 +2514,7 @@ async fn list_company_review_cases_route(
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 /// Round 245: watchdog evaluation worker 拉取候选。

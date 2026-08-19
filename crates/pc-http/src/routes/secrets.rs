@@ -296,12 +296,12 @@ async fn providers_health(
 async fn list_provider_configs(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     let rows = SecretRepo::new(&state.db)
         .list_providers(company_id)
         .await?;
     let items: Vec<Value> = rows.iter().map(provider_config_json).collect();
-    Ok(Json(json!({ "companyId": company_id, "items": items })))
+    Ok(Json(items))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -425,12 +425,12 @@ async fn provider_health_check(
 async fn list_secrets(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     let rows = SecretRepo::new(&state.db)
         .list_for_company(company_id)
         .await?;
     let items: Vec<Value> = rows.iter().map(secret_json).collect();
-    Ok(Json(json!({ "companyId": company_id, "items": items })))
+    Ok(Json(items))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -445,12 +445,12 @@ struct UserDefBody {
 async fn list_user_defs(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     let rows = SecretRepo::new(&state.db)
         .list_user_definitions(company_id)
         .await?;
     let items: Vec<Value> = rows.iter().map(user_def_json).collect();
-    Ok(Json(json!({ "companyId": company_id, "items": items })))
+    Ok(Json(items))
 }
 
 async fn create_user_def(
