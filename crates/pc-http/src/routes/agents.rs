@@ -2266,7 +2266,7 @@ async fn list_agent_configurations(
 async fn list_company_live_runs(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     let runs = HeartbeatRepo::new(&state.db)
         .list_by_company(company_id, None, 200)
         .await?;
@@ -2284,7 +2284,7 @@ async fn list_company_live_runs(
             })
         })
         .collect();
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(items))
 }
 
 // Round 107: 仓储化。

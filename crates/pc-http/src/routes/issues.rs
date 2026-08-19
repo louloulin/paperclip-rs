@@ -3810,7 +3810,7 @@ async fn list_company_issues(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<IssueListQuery>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let rows = IssueRepo::new(&state.db)
         .list_company_basic(company_id, limit)
@@ -3828,7 +3828,7 @@ async fn list_company_issues(
             })
         })
         .collect();
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(items))
 }
 
 async fn create_company_issue(

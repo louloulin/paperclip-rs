@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{ApiError, ApiResult, AppState};
 use pc_realtime::LiveEvent;
-use pc_repos::agent::AgentRepo;
+use pc_repos::agent::{AgentRepo, AgentRow};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -67,21 +67,125 @@ pub fn router() -> Router<AppState> {
 
 const BUILT_INS: &[(&str, &str, &str)] = &[
     (
-        "code-reviewer",
-        "Code Reviewer",
-        "Reviews code for issues and proposes fixes.",
+        "briefs",
+        "Briefs Agent",
+        "Prepares concise operational briefs for the board and agent company.",
     ),
     (
-        "doc-writer",
-        "Doc Writer",
-        "Writes and maintains documentation.",
+        "learning",
+        "Learning Agent",
+        "Maintains reusable company learning from completed work and recurring patterns.",
     ),
     (
-        "issue-triager",
-        "Issue Triager",
-        "Triages incoming issues and assigns priority.",
+        "reflection-coach",
+        "Reflection Coach",
+        "Runs evidence-backed reflection loops on recent agent work.",
+    ),
+    (
+        "summarizer",
+        "Summarizer",
+        "Refreshes stale status summaries from grounded company work.",
     ),
 ];
+
+const BUILT_IN_ALLOWED_ADAPTER_TYPES: &[&str] = &[
+    "codex_local",
+    "claude_local",
+    "gemini_local",
+    "opencode_local",
+    "process",
+];
+
+fn built_in_definition_json(key: &str, display_name: &str, short_purpose: &str) -> Value {
+    json!({
+        "key": key,
+        "displayName": display_name,
+        "featureKeys": [key],
+        "shortPurpose": short_purpose,
+        "defaultInstructions": short_purpose,
+        "defaultRole": "general",
+        "allowedAdapterTypes": BUILT_IN_ALLOWED_ADAPTER_TYPES,
+        "defaultAdapterType": BUILT_IN_ALLOWED_ADAPTER_TYPES[0],
+        "defaultAdapterConfig": {},
+        "defaultBudgetMonthlyCents": 0,
+    })
+}
+
+fn has_complete_adapter_config(adapter_type: &str, config: &Value) -> bool {
+    let Some(object) = config.as_object() else {
+        return false;
+    };
+    let non_empty = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    match adapter_type {
+        "process" | "command" => non_empty("command") || non_empty("script"),
+        "http" => non_empty("url") || non_empty("endpoint") || non_empty("webhookUrl"),
+        "openclaw_gateway" | "hermes_gateway" => non_empty("baseUrl") || non_empty("url"),
+        _ => non_empty("model"),
+    }
+}
+
+fn built_in_status(agent: Option<&AgentRow>) -> &'static str {
+    let Some(agent) = agent else {
+        return "not_provisioned";
+    };
+    if agent.status == "pending_approval" {
+        return "pending_approval";
+    }
+    if agent.status == "paused" || agent.paused_at.is_some() {
+        return "paused";
+    }
+    if has_complete_adapter_config(&agent.adapter_type, &agent.adapter_config) {
+        "ready"
+    } else {
+        "needs_setup"
+    }
+}
+
+fn redact_agent(agent: &AgentRow) -> Value {
+    let mut redacted = agent.clone();
+    redacted.adapter_config = json!({});
+    redacted.runtime_config = json!({});
+    serde_json::to_value(redacted).unwrap_or_else(|_| json!({}))
+}
+
+async fn built_in_state(
+    state: &AppState,
+    company_id: Uuid,
+    key: &str,
+) -> ApiResult<Value> {
+    let (display_name, short_purpose) = BUILT_INS
+        .iter()
+        .find(|(candidate, _, _)| *candidate == key)
+        .map(|(_, name, purpose)| (*name, *purpose))
+        .ok_or_else(|| ApiError::NotFound(format!("built-in {key}")))?;
+    let repo = AgentRepo::new(&state.db);
+    let agent = match repo
+        .find_built_in_agent_id(company_id, key)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+    {
+        Some(agent_id) => repo
+            .get(agent_id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?,
+        None => None,
+    };
+    let status = built_in_status(agent.as_ref());
+    Ok(json!({
+        "definition": built_in_definition_json(key, display_name, short_purpose),
+        "status": status,
+        "agentId": agent.as_ref().map(|row| row.id),
+        "agent": agent.as_ref().map(redact_agent),
+        "pauseReason": agent.as_ref().and_then(|row| row.pause_reason.clone()),
+        "resources": [],
+        "approval": null,
+    }))
+}
 
 #[derive(Debug, Deserialize, Default)]
 #[allow(dead_code)]
@@ -90,49 +194,19 @@ struct EmptyBody {}
 async fn list_built_in(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // Look up installed agents per built-in key
-    let installed = AgentRepo::new(&state.db)
-        .list_built_in_keys(company_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let installed_keys: Vec<&str> = installed.iter().map(|k| k.as_str()).collect();
-    let items: Vec<Value> = BUILT_INS
-        .iter()
-        .map(|(key, name, desc)| {
-            json!({
-                "key": key,
-                "name": name,
-                "description": desc,
-                "installed": installed_keys.contains(key),
-            })
-        })
-        .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "available": items,
-        "installedCount": installed_keys.len(),
-    })))
+) -> ApiResult<Json<Vec<Value>>> {
+    let mut states = Vec::with_capacity(BUILT_INS.len());
+    for (key, _, _) in BUILT_INS {
+        states.push(built_in_state(&state, company_id, key).await?);
+    }
+    Ok(Json(states))
 }
 
 async fn get_built_in_status(
     State(state): State<AppState>,
     Path((company_id, key)): Path<(Uuid, String)>,
 ) -> ApiResult<Json<Value>> {
-    let row = AgentRepo::new(&state.db)
-        .find_built_in_agent_id(company_id, &key)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let (status, agent_id) = match row {
-        Some(id) => ("installed", Some(id)),
-        None => ("available", None),
-    };
-    Ok(Json(json!({
-        "companyId": company_id,
-        "key": key,
-        "status": status,
-        "agentId": agent_id,
-    })))
+    Ok(Json(built_in_state(&state, company_id, &key).await?))
 }
 
 async fn reconcile_built_in(

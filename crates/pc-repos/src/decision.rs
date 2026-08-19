@@ -10,6 +10,7 @@ use pc_secrets::{DecisionSigningError, DecisionSigningService};
 use crate::Db;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DecisionRow {
     pub id: Uuid,
     pub company_id: Uuid,

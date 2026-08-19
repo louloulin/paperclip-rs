@@ -92,6 +92,7 @@ pub struct CompanyStatsRow {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompanyRow {
     pub id: Uuid,
     pub name: String,
@@ -116,6 +117,7 @@ pub struct CompanyRow {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompanyListRow {
     pub id: Uuid,
     pub name: String,
@@ -614,5 +616,63 @@ mod tests {
             type_name: "json".into(),
         };
         assert!(!is_issue_prefix_conflict(&err));
+    }
+}
+
+#[cfg(test)]
+mod internal_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn r816_company_list_row_serializes_node_api_camel_case() {
+        let row = CompanyListRow {
+            id: Uuid::nil(),
+            name: "Paperclip".to_string(),
+            status: "active".to_string(),
+            issue_prefix: "PAP".to_string(),
+            created_at: Timestamp::from_dt(chrono::Utc::now()),
+            updated_at: Timestamp::from_dt(chrono::Utc::now()),
+        };
+
+        let value = serde_json::to_value(row).expect("company list row serializes");
+        assert_eq!(value["issuePrefix"], json!("PAP"));
+        assert!(value.get("issue_prefix").is_none());
+        assert!(value.get("createdAt").is_some());
+        assert!(value.get("updatedAt").is_some());
+    }
+
+    #[test]
+    fn r816_company_row_serializes_all_api_keys_camel_case() {
+        let row = CompanyRow {
+            id: Uuid::nil(),
+            name: "Paperclip".to_string(),
+            description: None,
+            status: "active".to_string(),
+            pause_reason: None,
+            paused_at: None,
+            issue_prefix: "PAP".to_string(),
+            issue_counter: 3,
+            budget_monthly_cents: 100,
+            spent_monthly_cents: 20,
+            attachment_max_bytes: 1024,
+            default_responsible_user_id: None,
+            require_board_approval_for_new_agents: false,
+            feedback_data_sharing_enabled: false,
+            feedback_data_sharing_consent_at: None,
+            feedback_data_sharing_consent_by_user_id: None,
+            feedback_data_sharing_terms_version: None,
+            brand_color: None,
+            created_at: Timestamp::from_dt(chrono::Utc::now()),
+            updated_at: Timestamp::from_dt(chrono::Utc::now()),
+        };
+
+        let value = serde_json::to_value(row).expect("company row serializes");
+        assert_eq!(value["issuePrefix"], json!("PAP"));
+        assert_eq!(value["issueCounter"], json!(3));
+        assert_eq!(value["budgetMonthlyCents"], json!(100));
+        assert_eq!(value["requireBoardApprovalForNewAgents"], json!(false));
+        assert!(value.get("issue_prefix").is_none());
+        assert!(value.get("issue_counter").is_none());
     }
 }

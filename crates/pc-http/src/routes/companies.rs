@@ -1257,14 +1257,33 @@ async fn revoke_invite(
 
 // ---------- join requests ----------
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JoinRequestListQuery {
+    status: Option<String>,
+    request_type: Option<String>,
+}
+
 async fn list_join_requests(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let rows = pc_repos::join_request::JoinRequestRepo::new(&state.db)
-        .list_by_company(company_id)
+    axum::extract::Query(q): axum::extract::Query<JoinRequestListQuery>,
+) -> ApiResult<Json<Vec<Value>>> {
+    ensure_company_exists(&state, company_id).await?;
+    let repo = pc_repos::join_request::JoinRequestRepo::new(&state.db);
+    let rows = if q.status.is_some() || q.request_type.is_some() {
+        repo.list_by_company_filtered(
+            company_id,
+            q.status.as_deref(),
+            q.request_type.as_deref(),
+        )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    } else {
+        repo.list_by_company(company_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+    };
     let items: Vec<Value> = rows
         .into_iter()
         .map(|r| {
@@ -1291,7 +1310,7 @@ async fn list_join_requests(
             })
         })
         .collect();
-    Ok(Json(json!({"items": items, "companyId": company_id})))
+    Ok(Json(items))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2314,7 +2333,7 @@ async fn list_company_activity_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     ensure_company_exists(&state, company_id).await?;
     let filter = pc_repos::activity::ActivityFilter {
         limit: Some(q.limit.unwrap_or(50).clamp(1, 200)),
@@ -2341,11 +2360,7 @@ async fn list_company_activity_route(
             })
         })
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 /// `GET /api/companies/:company_id/approvals` — company-scoped approvals list.
@@ -2353,7 +2368,7 @@ async fn list_company_approvals_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     ensure_company_exists(&state, company_id).await?;
     let mut filter = pc_repos::approval::ApprovalFilter::default();
     filter.status = q
@@ -2368,11 +2383,7 @@ async fn list_company_approvals_route(
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 /// `GET /api/companies/:company_id/decisions` — company-scoped decisions.
@@ -2380,7 +2391,7 @@ async fn list_company_decisions_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<CompanyListQuery>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     ensure_company_exists(&state, company_id).await?;
     let mut rows = DecisionRepo::new(&state.db)
         .list_by_company(company_id)
@@ -2392,29 +2403,21 @@ async fn list_company_decisions_route(
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 /// `GET /api/companies/:company_id/goals` — company-scoped goals.
 async fn list_company_goals_route(
     State(state): State<AppState>,
     Path(company_id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<Vec<Value>>> {
     ensure_company_exists(&state, company_id).await?;
     let rows = GoalRepo::new(&state.db).list_by_company(company_id).await?;
     let items: Vec<Value> = rows
         .into_iter()
         .map(|row| serde_json::to_value(&row).unwrap_or_default())
         .collect();
-    Ok(Json(json!({
-        "companyId": company_id,
-        "items": items,
-        "count": items.len(),
-    })))
+    Ok(Json(items))
 }
 
 /// `GET /api/companies/:company_id/pipelines` — company-scoped pipelines.

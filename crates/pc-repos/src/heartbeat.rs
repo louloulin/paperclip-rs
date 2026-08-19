@@ -226,6 +226,7 @@ const WATCHDOG_COLUMNS: &str = "id, company_id, run_id, evaluation_issue_id, dec
 snoozed_until, reason, created_by_agent_id, created_by_user_id, created_by_run_id, created_at";
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct HeartbeatRow {
     pub id: Uuid,
     pub company_id: Uuid,
@@ -1643,9 +1644,112 @@ mod tests {
 
         let value = serde_json::to_value(row).unwrap();
         assert_eq!(value["status"], "queued");
-        assert!(value["started_at"].is_null());
-        assert!(value["finished_at"].is_null());
-        assert!(value["session_id_before"].is_null());
-        assert_eq!(value["issue_comment_status"], "not_applicable");
+        assert!(value["startedAt"].is_null());
+        assert!(value["finishedAt"].is_null());
+        assert!(value["sessionIdBefore"].is_null());
+        assert_eq!(value["issueCommentStatus"], "not_applicable");
+    }
+
+    // ============ R816: HeartbeatRow camelCase 序列化（对齐 UI RunForIssue） ============
+
+    #[test]
+    fn r816_heartbeat_row_serializes_camel_case() {
+        let now = Timestamp::now();
+        let row = HeartbeatRow {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            invocation_source: "scheduled".into(),
+            trigger_detail: None,
+            status: "succeeded".into(),
+            responsible_user_id: None,
+            started_at: Some(now),
+            finished_at: Some(now),
+            error: None,
+            wakeup_request_id: None,
+            exit_code: Some(0),
+            signal: None,
+            usage_json: Some(serde_json::json!({"tokens_in": 100})),
+            result_json: Some(serde_json::json!({"ok": true})),
+            session_id_before: Some("sess_before".into()),
+            session_id_after: Some("sess_after".into()),
+            log_store: None,
+            log_ref: None,
+            log_bytes: Some(1024),
+            log_sha256: None,
+            log_compressed: false,
+            stdout_excerpt: None,
+            stderr_excerpt: None,
+            error_code: None,
+            external_run_id: None,
+            process_pid: Some(123),
+            process_group_id: None,
+            process_started_at: Some(now),
+            last_output_at: Some(now),
+            last_output_seq: 5,
+            last_output_stream: Some("stdout".into()),
+            last_output_bytes: Some(256),
+            retry_of_run_id: None,
+            process_loss_retry_count: 0,
+            scheduled_retry_at: None,
+            scheduled_retry_attempt: 0,
+            scheduled_retry_reason: None,
+            issue_comment_status: "not_applicable".into(),
+            issue_comment_satisfied_by_comment_id: None,
+            issue_comment_retry_queued_at: None,
+            liveness_state: Some("completed".into()),
+            liveness_reason: None,
+            continuation_attempt: 0,
+            last_useful_action_at: None,
+            next_action: None,
+            context_snapshot: Some(serde_json::json!({"issueId": "iss_1"})),
+            created_at: now,
+            updated_at: now,
+        };
+        let value = serde_json::to_value(&row).expect("serialize");
+        // 顶层基础字段
+        assert!(value["id"].is_string());
+        assert!(value["companyId"].is_string());
+        assert!(value["agentId"].is_string());
+        assert_eq!(value["invocationSource"], "scheduled");
+        assert_eq!(value["status"], "succeeded");
+        assert!(value["startedAt"].is_string());
+        assert!(value["finishedAt"].is_string());
+        assert_eq!(value["exitCode"], 0);
+        // runtime/process 字段
+        assert!(value["sessionIdBefore"].is_string());
+        assert!(value["sessionIdAfter"].is_string());
+        assert!(value["usageJson"]["tokens_in"].is_number());
+        assert!(value["resultJson"]["ok"].as_bool().unwrap_or(false));
+        assert!(value["processPid"].is_number());
+        assert!(value["processStartedAt"].is_string());
+        // output 流字段
+        assert!(value["lastOutputAt"].is_string());
+        assert_eq!(value["lastOutputSeq"], 5);
+        assert_eq!(value["lastOutputStream"], "stdout");
+        assert!(value["lastOutputBytes"].is_number());
+        // retry/process-loss 字段
+        assert_eq!(value["retryOfRunId"], serde_json::Value::Null);
+        assert_eq!(value["processLossRetryCount"], 0);
+        assert_eq!(value["scheduledRetryAt"], serde_json::Value::Null);
+        assert_eq!(value["scheduledRetryAttempt"], 0);
+        // issue-comment
+        assert_eq!(value["issueCommentStatus"], "not_applicable");
+        // liveness / continuation
+        assert_eq!(value["livenessState"], "completed");
+        assert_eq!(value["continuationAttempt"], 0);
+        assert!(value["contextSnapshot"]["issueId"].is_string());
+        // 关键：snake_case 必须不存在
+        for snake in &[
+            "company_id", "agent_id", "invocation_source", "started_at", "finished_at",
+            "session_id_before", "session_id_after", "usage_json", "result_json",
+            "process_pid", "process_started_at", "last_output_at", "last_output_seq",
+            "last_output_stream", "last_output_bytes", "retry_of_run_id",
+            "process_loss_retry_count", "scheduled_retry_at", "scheduled_retry_attempt",
+            "issue_comment_status", "liveness_state", "continuation_attempt",
+            "context_snapshot", "created_at", "updated_at",
+        ] {
+            assert!(value.get(*snake).is_none(), "snake_case key should not exist: {}", snake);
+        }
     }
 }

@@ -174,6 +174,33 @@ impl<'a> JoinRequestRepo<'a> {
             .await?)
     }
 
+
+    /// R816h: 带 status / request_type 可选过滤的 join request 列表。
+    /// status: pending_approval | approved | rejected
+    /// request_type: human | agent
+    pub async fn list_by_company_filtered(
+        &self,
+        company_id: Uuid,
+        status: Option<&str>,
+        request_type: Option<&str>,
+    ) -> RepoResult<Vec<JoinRequestRow>> {
+        let mut sql = format!("SELECT {COLS} FROM join_requests WHERE company_id = $1");
+        let mut next_idx: u32 = 2;
+        if status.is_some() {
+            sql.push_str(&format!(" AND status = ${next_idx}"));
+            next_idx += 1;
+        }
+        if request_type.is_some() {
+            sql.push_str(&format!(" AND request_type = ${next_idx}"));
+            let _ = next_idx;
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT 100");
+        let mut q = sqlx::query_as(&sql).bind(company_id);
+        if let Some(s) = status { q = q.bind(s); }
+        if let Some(t) = request_type { q = q.bind(t); }
+        Ok(q.fetch_all(self.db.pool()).await?)
+    }
+
     /// 通过 id 锁定单条 request；用于状态机校验。
     pub async fn find_by_id(
         &self,

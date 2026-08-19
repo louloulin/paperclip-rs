@@ -100,6 +100,7 @@ pub struct BudgetSummary {
 
 /// 单日 run activity 桶。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunActivityBucket {
     pub date: String, // YYYY-MM-DD (UTC)
     pub succeeded: i64,
@@ -573,5 +574,55 @@ mod tests {
             .single()
             .unwrap();
         assert_eq!(format_utc_date_key(d), "2026-12-31");
+    }
+
+    // ============ R816: RunActivityBucket camelCase 序列化（对齐 UI DashboardRunActivityDay） ============
+
+    #[test]
+    fn r816_run_activity_bucket_serializes_camel_case() {
+        use std::collections::BTreeMap;
+        let mut failed_by_error_code = BTreeMap::new();
+        failed_by_error_code.insert("process_lost".to_string(), 2);
+        failed_by_error_code.insert("provider_quota".to_string(), 1);
+        let bucket = RunActivityBucket {
+            date: "2026-08-18".to_string(),
+            succeeded: 5,
+            failed: 3,
+            recovered: 1,
+            other: 0,
+            total: 9,
+            failed_by_error_code,
+        };
+        let json = serde_json::to_value(&bucket).expect("serialize");
+        // 验证 camelCase 字段（与 UI `DashboardRunActivityDay` 一致）
+        assert_eq!(json["date"], "2026-08-18");
+        assert_eq!(json["succeeded"], 5);
+        assert_eq!(json["failed"], 3);
+        assert_eq!(json["recovered"], 1);
+        assert_eq!(json["other"], 0);
+        assert_eq!(json["total"], 9);
+        assert_eq!(json["failedByErrorCode"]["process_lost"], 2);
+        assert_eq!(json["failedByErrorCode"]["provider_quota"], 1);
+        // snake_case 必须不存在
+        assert!(json.get("failed_by_error_code").is_none());
+    }
+
+    #[test]
+    fn r816_run_activity_bucket_roundtrip_camel_case() {
+        use std::collections::BTreeMap;
+        let mut codes = BTreeMap::new();
+        codes.insert("workspace_validation_failed".to_string(), 4);
+        let bucket = RunActivityBucket {
+            date: "2026-08-19".to_string(),
+            succeeded: 10,
+            failed: 4,
+            recovered: 0,
+            other: 2,
+            total: 16,
+            failed_by_error_code: codes,
+        };
+        let json = serde_json::to_string(&bucket).expect("serialize");
+        let parsed: RunActivityBucket = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, bucket);
     }
 }
