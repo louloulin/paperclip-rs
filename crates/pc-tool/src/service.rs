@@ -262,14 +262,14 @@ impl ToolService {
     pub async fn delete(&self, company_id: Uuid, id: Uuid) -> ToolResult<bool> {
         require_non_nil(company_id, "companyId")?;
         require_non_nil(id, "applicationId")?;
-        let ok = self.repo().delete_application(company_id, id).await?;
-        if ok {
+        let deleted = self.repo().delete_application(company_id, id).await?;
+        if deleted.id != Uuid::nil() {
             self.dispatch(ToolHookEvent::Deleted {
                 company_id,
                 application_id: id,
             })
             .await;
         }
-        Ok(ok)
+        Ok(deleted.id != Uuid::nil())
     }
 }
