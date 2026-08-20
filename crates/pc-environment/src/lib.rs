@@ -7,6 +7,7 @@ mod custom_image_terminal_sessions;
 mod runtime_parity;
 pub mod validate_environment_driver;
 pub mod validate_sandbox_provider;
+pub mod run_orchestrator_pure;
 pub mod plugin_registry;
 pub mod plugin_environment_driver_validate;
 pub mod plugin_worker_manager;
