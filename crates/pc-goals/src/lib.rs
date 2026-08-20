@@ -17,8 +17,13 @@
 //! (mission / company / team / project / task), a `status`, and an
 //! optional `parent_id` linking to another goal in the same company.
 
+mod pure;
 mod service;
 
+pub use pure::{
+    is_allowed_status_transition, is_valid_goal_level, is_valid_goal_title,
+    parent_id_matches_company, select_default_company_goal,
+};
 pub use service::{
     CreateGoal, GoalHook, GoalHookEvent, GoalPatch, GoalService, NoopGoalHook, RecordingGoalHook,
 };
