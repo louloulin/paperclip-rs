@@ -25,6 +25,7 @@
 pub mod capabilities;
 pub mod error;
 pub mod manifest;
+pub mod operations;
 pub mod result;
 pub mod validator;
 
