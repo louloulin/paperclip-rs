@@ -37,6 +37,7 @@ pub mod recovery_actions;
 pub mod references;
 pub mod rewake_throttle;
 pub mod routable_blocked;
+pub mod run_continuations_pure;
 pub mod thread_interactions;
 pub mod tree_control;
 pub mod visibility;
