@@ -137,6 +137,9 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit", "fs"] }
 hyper = "1"
 
+# 性能基准
+criterion = { version = "0.5", features = ["html_reports"] }
+
 # 数据库
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
 

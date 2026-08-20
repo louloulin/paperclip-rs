@@ -64,6 +64,22 @@ async fn get_session(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<SessionEnvelope>> {
+    // R818c: local_trusted 下返回合成 session，避免 UI 401。
+    if crate::middleware::auth::is_local_trusted_mode() {
+        return Ok(Json(SessionEnvelope {
+            session: SessionInner {
+                id: "paperclip:local_implicit:local-board".into(),
+                user_id: "local-board".into(),
+            },
+            user: SessionUser {
+                id: "local-board".into(),
+                email: "board@local".into(),
+                name: "Local Board".into(),
+                image: None,
+                email_verified: true,
+            },
+        }));
+    }
     let token = extract_token(&headers)
         .ok_or_else(|| ApiError::Unauthorized("missing credentials".into()))?;
     // Try API key first, then session

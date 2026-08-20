@@ -30,4 +30,10 @@ uuid = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 tempfile = "3"
+
+[[bench]]
+name = "scheduler_bench"
+harness = false
+

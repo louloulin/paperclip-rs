@@ -32,3 +32,8 @@ pc-errors = { path = "../pc-errors" }
 async-trait = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "pure_bench"
+harness = false

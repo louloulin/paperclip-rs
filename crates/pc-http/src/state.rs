@@ -20,6 +20,7 @@ use pc_storage::StorageRegistry;
 use pc_telemetry::TelemetryOptions;
 use pc_workflow::{RoutineRegistry, WorkflowEngine, WorkflowRegistry};
 use std::sync::Arc;
+use crate::middleware::auth::is_local_trusted_mode;
 
 #[derive(Debug, Clone)]
 pub struct ConfigSnapshot {
@@ -186,6 +187,13 @@ impl FromRef<AppState> for Arc<WsState> {
 }
 
 pub async fn require_user_id(state: &AppState, headers: &HeaderMap) -> crate::ApiResult<String> {
+    // R818c: 在 local_trusted 模式下，每个请求都被视为 instance-board 用户，
+    // 对齐 Node `actorMiddleware` 的 local_implicit 注入。
+    // 这样 UI 首次加载页面时不会被 401 拒绝。
+    if is_local_trusted_mode() {
+        return Ok("local-board".to_string());
+    }
+
     if let Some(token) = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())

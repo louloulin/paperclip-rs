@@ -27,3 +27,11 @@ parking_lot = { workspace = true }
 axum = { workspace = true }
 tokio-tungstenite = "0.24"
 anyhow = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "broadcast_bench"
+harness = false
+

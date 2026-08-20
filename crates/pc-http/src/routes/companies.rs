@@ -2584,8 +2584,12 @@ async fn ensure_company_exists(state: &AppState, company_id: Uuid) -> ApiResult<
 // =============================================================================
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct CreateCompanyApprovalBody {
+    // Node schema uses `type` (ApprovalType enum); legacy UIs and tests still
+    // send `approvalType` — accept either to keep both contracts working.
+    #[serde(rename = "type", alias = "approvalType")]
     approval_type: String,
     #[serde(default)]
     payload: Value,
@@ -2593,6 +2597,8 @@ struct CreateCompanyApprovalBody {
     requested_by_user_id: Option<String>,
     #[serde(default)]
     requested_by_agent_id: Option<Uuid>,
+    #[serde(default)]
+    issue_ids: Option<Vec<Uuid>>,
 }
 
 /// `POST /api/companies/:company_id/approvals` — company-scoped approval

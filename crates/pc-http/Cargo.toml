@@ -71,6 +71,7 @@ serde_path_to_error = "0.1"
 pc-network-bind = { path = "../pc-network-bind" }
 
 [dev-dependencies]
+criterion = { workspace = true }
 tempfile = "3"
 sha2 = "0.10"
 hex = "0.4"
@@ -84,3 +85,8 @@ rand = "0.8"
 
 [target.'cfg(unix)'.dev-dependencies]
 filetime = "0.2"
+
+[[bench]]
+name = "route_bench"
+harness = false
+
