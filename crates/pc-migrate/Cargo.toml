@@ -10,6 +10,14 @@ publish = false
 name = "paperclip-migrate"
 path = "src/main.rs"
 
+[[bin]]
+name = "lint"
+path = "src/bin/lint.rs"
+
+[[bin]]
+name = "diff-report"
+path = "src/bin/diff_report.rs"
+
 [lints]
 workspace = true
 
