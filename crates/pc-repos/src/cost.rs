@@ -505,16 +505,7 @@ impl<'a> CostRepo<'a> {
     pub async fn window_spend(&self, company_id: Uuid) -> sqlx::Result<Vec<CostWindowSpendRow>> {
         // R818: rename `windows.window` -> `windows.window_label` (Postgres 保留字冲突导致 syntax error)
         sqlx::query_as::<_, CostWindowSpendRow>(
-            r#"SELECT ce.provider, ce.biller, windows.window_label AS "window", windows.window_hours, \
-                    COALESCE(SUM(ce.cost_cents),0)::bigint AS cost_cents, \
-                    COALESCE(SUM(ce.input_tokens),0)::bigint AS input_tokens, \
-                    COALESCE(SUM(ce.cached_input_tokens),0)::bigint AS cached_input_tokens, \
-                    COALESCE(SUM(ce.output_tokens),0)::bigint AS output_tokens \
-             FROM (VALUES ('5h', 5), ('24h', 24), ('7d', 168)) AS windows(window_label, window_hours) \
-             JOIN cost_events ce ON ce.company_id = $1 \
-               AND ce.occurred_at >= now() - (windows.window_hours * interval '1 hour') \
-             GROUP BY ce.provider, ce.biller, windows.window_label, windows.window_hours \
-             ORDER BY windows.window_hours, cost_cents DESC"#,
+            r#"SELECT ce.provider, ce.biller, windows.window_label AS "window", windows.window_hours, COALESCE(SUM(ce.cost_cents),0)::bigint AS cost_cents, COALESCE(SUM(ce.input_tokens),0)::bigint AS input_tokens, COALESCE(SUM(ce.cached_input_tokens),0)::bigint AS cached_input_tokens, COALESCE(SUM(ce.output_tokens),0)::bigint AS output_tokens FROM (VALUES ('5h', 5), ('24h', 24), ('7d', 168)) AS windows(window_label, window_hours) JOIN cost_events ce ON ce.company_id = $1 AND ce.occurred_at >= now() - (windows.window_hours * interval '1 hour') GROUP BY ce.provider, ce.biller, windows.window_label, windows.window_hours ORDER BY windows.window_hours, cost_cents DESC"#,
         )
         .bind(company_id)
         .fetch_all(self.db.pool())

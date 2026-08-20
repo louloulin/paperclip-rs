@@ -1,0 +1,10 @@
+schema: comet.project.v1
+default_workflow: classic
+workflows:
+  - classic
+classic:
+  artifact_layout: legacy
+  language: zh-CN
+  context_compression: off
+  review_mode: standard
+  auto_transition: true
