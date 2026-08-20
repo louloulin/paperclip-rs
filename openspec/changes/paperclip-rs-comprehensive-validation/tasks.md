@@ -31,12 +31,12 @@
 
 ## 3. 跨 crate DRY 整合 (R-INTEGRATION 续)
 
-- [ ] 3.1 pc-mentions → pc-issues hook 集成验证
-- [ ] 3.2 pc-routine-variables → pc-routines 集成验证
-- [ ] 3.3 pc-pipeline-conversation-context → pc-pipelines 集成验证
-- [ ] 3.4 pc-plan-review-context → pc-issues 集成验证
-- [ ] 3.5 pc-decision-training → pc-decisions 集成验证
-- [ ] 3.6 pc-feedback-share / trace / vote → pc-feedback 集成验证
+- [x] 3.1 pc-mentions → pc-issues hook 集成验证 [R562 MentionExtractionHook]
+- [x] 3.2 pc-routine-variables → pc-routines 集成验证 [pc-routines::routine_variables 548 行]
+- [x] 3.3 pc-pipeline-conversation-context → pc-pipelines 集成验证 [LoadPipelineContextInput]
+- [x] 3.4 pc-plan-review-context → pc-issues 集成验证 [PLAN_REVIEW_CONTEXT_LIMITS]
+- [x] 3.5 pc-decision-training → pc-decisions 集成验证 [pc-decisions::TrainingRecordHook]
+- [x] 3.6 pc-feedback-share / trace / vote → pc-feedback 集成验证 [share/pure + trace/pure + vote/service]
 
 ## 4. 远程 execution (remote-execution-bridge)
 
