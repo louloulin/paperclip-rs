@@ -78,6 +78,7 @@ members = [
     "crates/pc-app-definitions",
     "crates/pc-trust-policy",
     "crates/pc-execution-workspace-guards",
+    "crates/pc-execution",
     "crates/pc-external-objects",
     "crates/pc-pipeline-case-type",
     "crates/pc-pipeline-case-outputs",

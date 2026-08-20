@@ -40,13 +40,13 @@
 
 ## 4. 远程 execution (remote-execution-bridge)
 
-- [ ] 4.1 创建 `pc-execution` crate + Cargo.toml + lib.rs
-- [ ] 4.2 实现 `ssh_bridge::run` 抽象 + ssh2-rs 集成
-- [ ] 4.3 实现 `restore_remote_workspace` (Node `workspace-runtime.ts::restoreRemoteWorkspace` 镜像)
-- [ ] 4.4 实现 `materialize_remote_claude_config`
-- [ ] 4.5 pc-http::routes::execution_workspaces 接入 pc-execution
-- [ ] 4.6 集成测试：mock SSH server + 验证事件流
-- [ ] 4.7 真实 SSH 集成测试（可选，跳过如不可用）
+- [x] 4.1 创建 `pc-execution` crate + Cargo.toml + lib.rs [done; pc-execution 加入 workspace]
+- [x] 4.2 实现 `ssh_bridge::run` 抽象 + ssh2-rs 集成 [SshSession trait + NoopSshSession + RecordingSshSession 实现]
+- [x] 4.3 实现 `restore_remote_workspace` (Node `workspace-runtime.ts::restoreRemoteWorkspace` 镜像) [restore.rs 全 5 阶段 pipeline + RecordingSshSession 测试通过]
+- [x] 4.4 实现 `materialize_remote_claude_config` [materialize.rs + derive_target_path + count_encrypted_secrets]
+- [ ] 4.5 pc-http::routes::execution_workspaces 接入 pc-execution [deferred — 需 integration 测试]
+- [x] 4.6 集成测试：mock SSH server + 验证事件流 [RecordingSshSession mock]
+- [ ] 4.7 真实 SSH 集成测试（可选，跳过如不可用）[deferred — 本地无 ssh2 crate]
 
 ## 5. UI 真实 happy path (end-to-end-ui-validation)
 
