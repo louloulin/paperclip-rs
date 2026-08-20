@@ -3,6 +3,7 @@
 //! 对应 Node `server/src/services/issue-tree_control.ts`。
 
 mod hook;
+pub mod pause_hold_guard;
 pub mod pure;
 mod policy;
 mod service;
@@ -12,6 +13,7 @@ pub use hook::{
     IssueTreeControlHook, IssueTreeControlHookEvent, NoopIssueTreeControlHook,
     RecordingIssueTreeControlHook,
 };
+pub use pause_hold_guard::is_automatic_recovery_suppressed_by_pause_hold;
 pub use policy::{
     default_release_policy, parse_mode, validate_mode, validate_release_policy,
     IssueTreeReleasePolicyStrategy, MODE_ISOLATE, MODE_PAUSE, MODE_STOP, MODE_THROTTLE,
