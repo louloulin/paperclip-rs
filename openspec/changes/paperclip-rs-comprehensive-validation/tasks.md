@@ -82,10 +82,10 @@
 
 ## 9. 文档补齐 (V15 续)
 
-- [ ] 9.1 写 `docs/RUNBOOK.md`：常见运维场景（启动 / 备份 / 恢复 / 升级）
-- [ ] 9.2 写 `docs/TROUBLESHOOTING.md`：故障排查指南（DB / 网络 / 性能 / 内存）
-- [ ] 9.3 写 `docs/FAQ.md`：常见问题解答
-- [ ] 9.4 更新 ARCHITECTURE.md：R-INTEGRATION 13+ 状态 + 完整模块覆盖表
+- [ ] 9.1 写 `docs/RUNBOOK.md` [deferred — 需真实运维场景记录]
+- [ ] 9.2 写 `docs/TROUBLESHOOTING.md` [deferred — 需真实故障样本]
+- [ ] 9.3 写 `docs/FAQ.md` [deferred — 需真实问题集合]
+- [x] 9.4 更新 ARCHITECTURE.md：R-INTEGRATION 13+ 状态 + 完整模块覆盖表 [ARCHITECTURE.md §10/§11 已含 R566-R572 + V1-V15 矩阵]
 
 ## 10. Workflow + Cron 端到端 (V9)
 
