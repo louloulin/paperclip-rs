@@ -1,8 +1,8 @@
 ## 1. 模块覆盖度自动化 (module-parity-validation)
 
-- [ ] 1.1 创建 `scripts/parity-check.sh` 扫描 `paperclip/server/src/` 和 `paperclip-rs/crates/`，输出 Node vs Rust 模块覆盖率
-- [ ] 1.2 添加 CI workflow 每周一自动跑 parity check，结果写入 `docs/parity-trend.md`
-- [ ] 1.3 实现 parity gap report：列出未 port 的 Node 服务 + LOC + 关键依赖
+- [x] 1.1 创建 `scripts/parity-check.sh` 扫描 `paperclip/server/src/` 和 `paperclip-rs/crates/`，输出 Node vs Rust 模块覆盖率 [commit 完成，113 行脚本，41.9% 覆盖率]
+- [ ] 1.2 添加 CI workflow 每周一自动跑 parity check，结果写入 `docs/parity-trend.md` [deferred — 需 GitHub Actions 配置]
+- [x] 1.3 实现 parity gap report：列出未 port 的 Node 服务 + LOC + 关键依赖 [docs/parity-gap-report.md 17 类别分类 + docs/parity-gap-report.txt raw 列表 + docs/parity-trend.md 历史]
 
 ## 2. 业务逻辑 pure helpers 复刻 (R719-R740)
 
