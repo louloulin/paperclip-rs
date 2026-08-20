@@ -1,0 +1,343 @@
+
+## 2026-08-20T12:38:42Z
+- Node total: 852
+- Rust crates: 108
+- Covered: 73
+- Coverage: 8.6%
+- Gap: 779
+- Unported:
+  - access
+  - access-routes-permissions-upgrade.test
+  - access-service.test
+  - access-validators.test
+  - activity-log
+  - activity-log-responsible-user.test
+  - activity-routes.test
+  - activity-service.test
+  - adapter-model-refresh-routes.test
+  - adapter-models-env
+  - adapter-models-env.test
+  - adapter-models.test
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapter-registry-bootstrap.reconcile.test
+  - adapter-registry-bootstrap.test
+  - adapter-registry.test
+  - adapter-routes-authz.test
+  - adapter-routes.test
+  - adapter-session-codecs.test
+  - adapters
+  - agent-action-audit
+  - agent-action-audit-routes.test
+  - agent-adapter-validation-routes.test
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-auth-jwt.test
+  - agent-auth-middleware.test
+  - agent-cross-tenant-authz-routes.test
+  - agent-instructions
+
+## 2026-08-20T12:39:12Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:39:27Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:39:36Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:39:44Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:39:56Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:40:05Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:40:14Z
+- Node total: 382
+- Rust crates: 108
+- Covered: 73
+- Coverage: 19.1%
+- Gap: 309
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapter-registry-bootstrap
+  - adapters
+  - agent-action-audit
+  - agent-assignability
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-invokability
+  - agent-permissions
+  - agent-secret-bindings
+  - agent-start-lock
+  - agents
+  - api-compression
+  - app
+  - assets
+  - attachment-types
+  - attention
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-chat
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+
+## 2026-08-20T12:41:01Z
+- Node total: 382
+- Rust crates: 108
+- Rust pub APIs: 10559
+- Covered: 160
+- Coverage: 41.9%
+- Gap: 222
+- Unported:
+  - access
+  - activity-log
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapters
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-permissions
+  - agent-secret-bindings
+  - agents
+  - api-compression
+  - assets
+  - attachment-types
+  - authorization
+  - aws-secrets-manager-provider
+  - batch-insert
+  - better-auth
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - build-commit
+  - build-version
+  - built-in-agents
+  - builtin-adapter-types
+  - bundled-plugins
+  - cases
+  - change-consent-gate
+  - claude-agent-id-header
+  - codex-models
+  - company-artifacts
