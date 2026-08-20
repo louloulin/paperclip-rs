@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 
+mod seed;
+
 use anyhow::Context;
 use axum::Router;
 use pc_adapter_api::AdapterRegistry;
@@ -160,6 +162,30 @@ async fn main() -> anyhow::Result<()> {
         elapsed_ms = migrations_start.elapsed().as_millis() as u64,
         "startup phase complete"
     );
+
+    // 5b. e2e seed (when PAPERCLIP_SEED_DEMO env var is set)
+    if let Ok(seed_username) = std::env::var("PAPERCLIP_SEED_DEMO") {
+        let seed_start = std::time::Instant::now();
+        match seed::seed_demo(&db, &seed_username, None).await {
+            Ok(outcome) => {
+                tracing::info!(
+                    phase = "seed",
+                    elapsed_ms = seed_start.elapsed().as_millis() as u64,
+                    reused = outcome.reused,
+                    agents = outcome.agents_seeded,
+                    issues = outcome.issues_seeded,
+                    pipelines = outcome.pipelines_seeded,
+                    projects = outcome.projects_seeded,
+                    routines = outcome.routines_seeded,
+                    company_id = %outcome.company_id,
+                    "seed_demo complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "seed_demo failed; continuing");
+            }
+        }
+    }
     let adapter_registration_start = std::time::Instant::now();
 
     // 6. 启动 Actor 根运行时并装配 axum 路由（pc-http 56 路由）
