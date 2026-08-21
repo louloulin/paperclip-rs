@@ -15,6 +15,7 @@ pc-db = { path = "../pc-db" }
 pc-errors = { path = "../pc-errors" }
 pc-secrets = { path = "../pc-secrets" }
 pc-workspace-commands = { path = "../pc-workspace-commands" }
+pc-log-redaction = { path = "../pc-log-redaction" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
