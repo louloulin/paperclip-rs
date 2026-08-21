@@ -28,12 +28,22 @@
 use thiserror::Error;
 
 mod identity;
+mod provider;
 mod retry;
 mod status;
 
 pub use identity::{
     display_key_for, display_title_for, external_id_for, parse_github_canonical_url,
     parse_github_object, GitHubObjectIdentity, ObjectType, PathKind,
+};
+pub use provider::{
+    create_github_external_object_provider, GitHubExternalObjectDetector,
+    GitHubExternalObjectDetection, GitHubExternalObjectProvider, GitHubExternalObjectRecord,
+    GitHubExternalObjectResolver, GitHubExternalObjectResolveResult,
+    GitHubExternalObjectSnapshot, SnapshotIconKey, StatusCategory, StatusTone,
+    DEFAULT_GITHUB_TOKEN_SECRET_NAMES, DetectionConfidence, FetchError, FetchFuture,
+    GitHubFetchResult, GitHubFetcher, GitHubTokenProvider, GITHUB_OBJECT_TTL_SECONDS, IssueData,
+    PullRequestData, SimpleCanonicalUrl, SnapshotData, TokenFuture,
 };
 pub use retry::{failure_from_github_response, retry_after_seconds, ResolveFailure};
 pub use status::{ErrorCode, LivenessState};

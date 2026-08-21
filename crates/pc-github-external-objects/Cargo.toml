@@ -14,3 +14,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 pc-github-fetch = { path = "../pc-github-fetch" }
 url = "2"
+
+[dev-dependencies]
+tokio = { workspace = true }
+parking_lot = { workspace = true }
