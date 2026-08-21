@@ -25,6 +25,7 @@ pub mod plugin_install_guard;
 pub mod plugin_stream_bus;
 pub mod pool;
 pub mod registry;
+pub mod runtime_sandbox;
 pub mod service_cleanup;
 pub mod supervisor;
 
