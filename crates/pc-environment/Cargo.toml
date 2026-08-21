@@ -21,6 +21,7 @@ tracing = "0.1"
 rand = { workspace = true }
 base64 = "0.22"
 sqlx = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 [dev-dependencies]
 pc-core = { path = "../pc-core" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

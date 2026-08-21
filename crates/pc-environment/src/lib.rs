@@ -18,6 +18,7 @@ pub mod environment_lease;
 pub mod environment_workspace;
 pub mod environment_setup;
 pub mod environment_template;
+pub mod managed_environments;
 pub mod json_schema_secret_refs;
 pub mod environment_custom_images_pure;
 pub mod plugin_job_scheduler_types;
@@ -85,4 +86,11 @@ pub use runtime_parity::{
 pub use service::{
     EnvironmentError, EnvironmentHook, EnvironmentHookEvent, EnvironmentService,
     NoopEnvironmentHook, RecordingEnvironmentHook,
+};
+pub use managed_environments::{
+    apply_managed_environments, ApplyManagedEnvironmentsOptions, ApplyManagedEnvironmentsResult,
+    EnsureManagedSandboxEnvironmentInput, ManagedEnvironmentsError, ManagedEnvironmentsReadyHandle,
+    ManagedEnvironmentsService, ManagedEnvironmentsWorkerManager, ManagedEnvironmentSpec,
+    ManagedInstanceConfig, ManagedSandboxEnvironment, ResolveSandboxProviderDriver,
+    ResolvedSandboxProviderDriver,
 };
