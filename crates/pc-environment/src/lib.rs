@@ -13,6 +13,7 @@ pub mod plugin_environment_driver_validate;
 pub mod plugin_worker_manager;
 pub mod plugin_environment_driver_validate_config;
 pub mod probe_environment_driver;
+pub mod probe;
 pub mod environment_lease;
 pub mod environment_workspace;
 pub mod environment_setup;
