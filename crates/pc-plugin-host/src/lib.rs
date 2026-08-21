@@ -14,6 +14,7 @@ pub mod config_validator;
 pub mod handle;
 #[cfg(test)]
 mod host_dispatcher_e2e;
+pub mod job_coordinator;
 pub mod job_store;
 pub mod jsonrpc;
 pub mod log_retention;
