@@ -10,11 +10,24 @@ use std::path::Path;
 use tracing::info;
 
 pub mod home_paths;
+pub mod instance_settings;
 
 pub use home_paths::{
     expand_home_prefix, resolve_env_path_for_config, resolve_home_aware_path, HomePathError,
     PaperclipHomePaths, DEFAULT_PAPERCLIP_INSTANCE_ID, PAPERCLIP_CONFIG_BASENAME,
     PAPERCLIP_ENV_FILENAME,
+};
+
+pub use instance_settings::{
+    apply_experimental_settings_patch, apply_managed_experimental_overlay,
+    get_runtime_instance_id, is_truthy_runtime_env_value,
+    normalize_experimental_settings, normalize_general_settings, resolve_worktree_run_execution_activation,
+    strip_server_managed_experimental_patch_fields, suppress_worktree_run_execution,
+    InstanceExperimentalSettings, InstanceGeneralSettings, ManagedExperimentalKeyMetadata,
+    ManagedExperimentalOverlayResult, ManagedInstanceConfig, ManagedSettingMetadata,
+    WorktreeRunExecutionActivationState, WorktreeRunExecutionSuppressedReason,
+    DEFAULT_BACKUP_RETENTION, DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
+    DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS, PAPERCLIP_CLOUD_MANAGED_BY,
 };
 
 #[derive(Debug, thiserror::Error)]

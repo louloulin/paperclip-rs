@@ -2642,6 +2642,7 @@ dependencies = [
  "dirs 6.0.0",
  "dotenvy",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tracing",
 ]
