@@ -15,6 +15,7 @@
 //! Round R593：起步 — 实现 `preview`（对应上游 `previewExport` / `getExportPreview`）。
 //! 完整 export/import 留待后续轮次。
 
+pub mod artifacts;
 pub mod catalog_provenance;
 pub mod export_readme;
 pub mod fidelity_collector;

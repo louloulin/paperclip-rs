@@ -10,11 +10,13 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+base64 = { workspace = true }
 chrono = { workspace = true }
 pc-core = { path = "../pc-core" }
 pc-pipelines = { path = "../pc-pipelines" }
 pc-project = { path = "../pc-project" }
 pc-repos = { path = "../pc-repos" }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
