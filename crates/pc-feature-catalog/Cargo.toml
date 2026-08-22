@@ -3,14 +3,20 @@ name = "pc-feature-catalog"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Feature catalog for cloud-managed instance experimental flags (port of paperclip packages/shared/src/feature-catalog.ts)"
+description = "Feature catalog for cloud-managed instance experimental flags + skills/teams catalogs (port of paperclip packages/shared/src/feature-catalog.ts, server/src/services/skills-catalog.ts, server/src/services/teams-catalog.ts)"
 
 [lints]
 workspace = true
 
 [dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
 
 [[test]]
 name = "r556_feature_catalog"
 path = "tests/r556_feature_catalog.rs"
+
+[[test]]
+name = "r846_skills_teams_catalog"
+path = "tests/r846_skills_teams_catalog.rs"

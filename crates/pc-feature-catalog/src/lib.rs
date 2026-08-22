@@ -4,11 +4,16 @@
 //! Feature catalog for cloud-managed instance experimental flags.
 //!
 //! R556: Direct port of `paperclip/packages/shared/src/feature-catalog.ts` (282 LOC).
+//! R846: Direct ports of `paperclip/server/src/services/skills-catalog.ts` and
+//!      `paperclip/server/src/services/teams-catalog.ts` (pure-helpers portion).
 //!
 //! Each flag is a key in `INSTANCE_FEATURE_CATALOG`. Keys are derived from
 //! the `instanceExperimentalSettingsSchema` (Node upstream). We mirror the
 //! keys as a `&'static str` constant so the catalog is discoverable and the
 //! Rust port doesn't depend on `zod`.
+
+pub mod skills;
+pub mod teams;
 
 /// All known feature tiers.
 pub const FEATURE_TIERS: [&str; 3] = ["preference", "managed", "floor"];
