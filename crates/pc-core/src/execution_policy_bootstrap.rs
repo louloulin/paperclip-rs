@@ -18,6 +18,8 @@
 
 use std::collections::HashMap;
 
+use crate::adapter_registry_bootstrap::{parse_adapter_registry_json, PAPERCLIP_ADAPTERS};
+
 // ============================================================================
 // Constants (env var names)
 // ============================================================================
@@ -193,6 +195,9 @@ pub enum ExecutionPolicyBootstrapError {
         "PAPERCLIP_K8S_RPC_TIMEOUT_MS must be a positive integer of milliseconds (got \"{value}\")"
     )]
     InvalidRpcTimeoutMs { value: String },
+
+    #[error("PAPERCLIP_ADAPTERS failed to parse: {0}")]
+    AdapterRegistry(String),
 }
 
 // ============================================================================
@@ -376,6 +381,21 @@ pub fn parse_execution_policy_bootstrap_env(
             .map(|s| s.as_str()),
     ) {
         kubernetes_config.egress_allow_cidrs = Some(cidrs);
+    }
+
+    // Adapter registry (inline JSON only — file-path variant is handled by the
+    // async adapter_registry_bootstrap::parse_adapter_registry_env and is out
+    // of scope for boot-time pure parsing).
+    if let Some(inline_json) = env
+        .get(PAPERCLIP_ADAPTERS)
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let entries = parse_adapter_registry_json(inline_json)
+            .map_err(|e| ExecutionPolicyBootstrapError::AdapterRegistry(e.to_string()))?;
+        let value = serde_json::to_value(&entries)
+            .map_err(|e| ExecutionPolicyBootstrapError::AdapterRegistry(e.to_string()))?;
+        kubernetes_config.adapters = Some(value);
     }
 
     Ok(Some(ExecutionPolicyBootstrap {
@@ -797,6 +817,96 @@ mod tests {
             Some(vec!["api.example.com".to_string()])
         );
         assert_eq!(cfg.egress_allow_cidrs, Some(vec!["10.0.0.0/8".to_string()]));
+    }
+
+    #[test]
+    fn kubernetes_omits_timeout_ms_when_rpc_timeout_ms_absent() {
+        let env = env_with_kv(&[(PAPERCLIP_EXECUTION_MODE, "kubernetes")]);
+        let result = parse_execution_policy_bootstrap_env(&env).unwrap().unwrap();
+        assert_eq!(result.kubernetes_config.timeout_ms, None);
+    }
+
+    #[test]
+    fn kubernetes_with_non_integer_timeout_ms_throws() {
+        let env = env_with_kv(&[
+            (PAPERCLIP_EXECUTION_MODE, "kubernetes"),
+            (PAPERCLIP_K8S_RPC_TIMEOUT_MS, "abc"),
+        ]);
+        let err = parse_execution_policy_bootstrap_env(&env).unwrap_err();
+        match err {
+            ExecutionPolicyBootstrapError::InvalidRpcTimeoutMs { value } => {
+                assert_eq!(value, "abc");
+            }
+            _ => panic!("unexpected error variant"),
+        }
+    }
+
+    #[test]
+    fn kubernetes_attaches_declared_adapter_registry() {
+        let adapter_json = r#"[{
+            "adapterType": "opencode_local",
+            "runtimeImage": "img",
+            "envKeys": ["ANTHROPIC_API_KEY"],
+            "allowFqdns": [],
+            "probeCommand": ["opencode", "--version"],
+            "defaultEnv": { "ANTHROPIC_BASE_URL": "http://bifrost:8080" }
+        }]"#;
+        let env = env_with_kv(&[
+            (PAPERCLIP_EXECUTION_MODE, "kubernetes"),
+            (PAPERCLIP_ADAPTERS, adapter_json),
+        ]);
+        let result = parse_execution_policy_bootstrap_env(&env).unwrap().unwrap();
+        let adapters = result
+            .kubernetes_config
+            .adapters
+            .expect("adapters must be set");
+        let arr = adapters
+            .as_array()
+            .expect("adapters must be a JSON array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(
+            arr[0].get("adapterType").and_then(|v| v.as_str()),
+            Some("opencode_local")
+        );
+        assert_eq!(
+            arr[0].get("runtimeImage").and_then(|v| v.as_str()),
+            Some("img")
+        );
+    }
+
+    #[test]
+    fn kubernetes_leaves_adapters_undefined_when_paperclip_adapters_absent() {
+        let env = env_with_kv(&[(PAPERCLIP_EXECUTION_MODE, "kubernetes")]);
+        let result = parse_execution_policy_bootstrap_env(&env).unwrap().unwrap();
+        assert_eq!(result.kubernetes_config.adapters, None);
+    }
+
+    #[test]
+    fn kubernetes_with_malformed_adapter_registry_throws() {
+        let env = env_with_kv(&[
+            (PAPERCLIP_EXECUTION_MODE, "kubernetes"),
+            (PAPERCLIP_ADAPTERS, "{ not-json"),
+        ]);
+        let err = parse_execution_policy_bootstrap_env(&env).unwrap_err();
+        match err {
+            ExecutionPolicyBootstrapError::AdapterRegistry(msg) => {
+                assert!(
+                    msg.contains("PAPERCLIP_ADAPTERS"),
+                    "expected error message to mention PAPERCLIP_ADAPTERS, got: {msg}"
+                );
+            }
+            _ => panic!("unexpected error variant"),
+        }
+    }
+
+    #[test]
+    fn kubernetes_with_blank_adapters_env_drops_field() {
+        let env = env_with_kv(&[
+            (PAPERCLIP_EXECUTION_MODE, "kubernetes"),
+            (PAPERCLIP_ADAPTERS, "   "),
+        ]);
+        let result = parse_execution_policy_bootstrap_env(&env).unwrap().unwrap();
+        assert_eq!(result.kubernetes_config.adapters, None);
     }
 
     #[test]
