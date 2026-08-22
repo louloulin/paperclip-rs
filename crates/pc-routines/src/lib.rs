@@ -24,6 +24,7 @@ pub mod pure;
 pub mod webhook_signature_pure;
 pub mod dashboard_pure;
 pub mod routines_validation_pure;
+pub mod summary_slots;
 mod service;
 pub mod session_cwd;
 
@@ -48,4 +49,23 @@ pub use worktree_eligibility::{
     evaluate_automatic_dispatch_eligibility, is_truthy_runtime_env_value,
     resolve_automatic_dispatch_eligibility, runtime_instance_id,
     AutomaticRoutineDispatchEligibility, AutomaticRoutineSuppressionReason,
+};
+pub use summary_slots::{
+    failure_reason_for_terminal_issue, finalize_summary_slots_for_terminal_issue,
+    build_finalization_patch, build_scope_snapshot_pure, finalization_scope,
+    generation_issue_description, generation_issue_idempotency_key, generation_issue_title,
+    generation_version_label, is_issue_active, is_terminal_issue_status,
+    recent_done_since, resolve_generation_target_project, resolve_selector, scope_issue_filter_project_id,
+    scope_label, urlencoding, assert_target_visible_preconditions, DocumentFormat,
+    FinalizationError, FinalizationPatch, FinalizationPlan, FinalizationResult, FinalizationScope,
+    GenerationTarget, GetSummarySlotResponse, IssueSnapshotRow, IssueStatus,
+    ListSummarySlotRevisionsResponse, ResolvedSelector, ScopeSnapshotInputs, SummaryGenerateActor,
+    SummarySlot, SummarySlotDocument, SummarySlotError, SummarySlotIssueRef, SummarySlotKey,
+    SummarySlotRevision, SummarySlotResult, SummarySlotScopeKind, SummarySlotSelectorInput,
+    SummarySlotService, SummarySlotStatus, SummaryWriteActor, TerminalGenerationIssue,
+    WriteSummarySlotRequest, WriteSummarySlotResponse, DEFAULT_SUMMARY_FORMAT,
+    GenerateSummarySlotResponse, SUMMARY_SLOT_REVISION_LIMIT,
+    SUMMARIZER_BUILT_IN_KEY,
+    SUMMARY_SNAPSHOT_GROUP_LIMIT, SUMMARY_SNAPSHOT_INITIAL_LOOKBACK_MS,
+    TERMINAL_ISSUE_STATUSES, summary_slot_service,
 };
