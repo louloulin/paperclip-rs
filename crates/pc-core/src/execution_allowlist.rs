@@ -124,169 +124,257 @@ pub fn evaluate_execution_allowlist(
 }
 
 // ============================================================================
-// Tests
+// Tests — mirror paperclip/server/src/services/execution-allowlist.test.ts 1:1
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn policy(mode: Option<ExecutionMode>) -> Option<ExecutionPolicy> {
-        mode.map(|execution_mode| ExecutionPolicy {
-            execution_mode: Some(execution_mode),
-        })
-    }
+    // -----------------------------------------------------------------------
+    // Fixtures — mirror Node top-level fixtures (localEnv, kubernetesEnv,
+    // fakeSandboxEnv, sshEnv).
+    // -----------------------------------------------------------------------
 
-    fn k8s_candidate() -> ExecutionEnvironmentCandidate {
-        ExecutionEnvironmentCandidate {
-            driver: "sandbox".to_string(),
-            provider: Some(KUBERNETES_PROVIDER_KEY.to_string()),
-        }
-    }
-
-    fn local_candidate() -> ExecutionEnvironmentCandidate {
+    fn local_env() -> ExecutionEnvironmentCandidate {
         ExecutionEnvironmentCandidate {
             driver: "local".to_string(),
             provider: None,
         }
     }
 
-    // -----------------------------------------------------------------------
-    // is_execution_forced_to_kubernetes
-    // -----------------------------------------------------------------------
+    fn kubernetes_env() -> ExecutionEnvironmentCandidate {
+        ExecutionEnvironmentCandidate {
+            driver: "sandbox".to_string(),
+            provider: Some(KUBERNETES_PROVIDER_KEY.to_string()),
+        }
+    }
 
-    #[test]
-    fn forced_to_kubernetes_only_when_explicit() {
-        assert!(!is_execution_forced_to_kubernetes(None));
-        assert!(!is_execution_forced_to_kubernetes(policy(None).as_ref()));
-        assert!(!is_execution_forced_to_kubernetes(
-            policy(Some(ExecutionMode::Any)).as_ref()
-        ));
-        assert!(is_execution_forced_to_kubernetes(
-            policy(Some(ExecutionMode::Kubernetes)).as_ref()
-        ));
+    fn fake_sandbox_env() -> ExecutionEnvironmentCandidate {
+        ExecutionEnvironmentCandidate {
+            driver: "sandbox".to_string(),
+            provider: Some("fake".to_string()),
+        }
+    }
+
+    fn ssh_env() -> ExecutionEnvironmentCandidate {
+        ExecutionEnvironmentCandidate {
+            driver: "ssh".to_string(),
+            provider: None,
+        }
+    }
+
+    fn sandbox_no_provider_env() -> ExecutionEnvironmentCandidate {
+        ExecutionEnvironmentCandidate {
+            driver: "sandbox".to_string(),
+            provider: None,
+        }
+    }
+
+    fn any_policy() -> Option<ExecutionPolicy> {
+        Some(ExecutionPolicy {
+            execution_mode: Some(ExecutionMode::Any),
+        })
+    }
+
+    fn kubernetes_policy() -> Option<ExecutionPolicy> {
+        Some(ExecutionPolicy {
+            execution_mode: Some(ExecutionMode::Kubernetes),
+        })
+    }
+
+    fn empty_policy() -> Option<ExecutionPolicy> {
+        Some(ExecutionPolicy::default())
+    }
+
+    fn policy_with_undefined_mode() -> Option<ExecutionPolicy> {
+        Some(ExecutionPolicy {
+            execution_mode: None,
+        })
     }
 
     // -----------------------------------------------------------------------
-    // is_kubernetes_sandbox_environment
+    // describe('executionMode "any" (unrestricted, default)')
+    // -----------------------------------------------------------------------
+
+    /// Node: `it("allows the local environment")`
+    #[test]
+    fn any_mode_allows_local_environment() {
+        let result = evaluate_execution_allowlist(any_policy().as_ref(), &local_env());
+        assert!(result.is_allowed());
+    }
+
+    /// Node: `it("allows the kubernetes sandbox environment")`
+    #[test]
+    fn any_mode_allows_kubernetes_sandbox() {
+        let result = evaluate_execution_allowlist(any_policy().as_ref(), &kubernetes_env());
+        assert!(result.is_allowed());
+    }
+
+    /// Node: `it("allows a non-kubernetes sandbox environment")`
+    #[test]
+    fn any_mode_allows_non_kubernetes_sandbox() {
+        let result = evaluate_execution_allowlist(any_policy().as_ref(), &fake_sandbox_env());
+        assert!(result.is_allowed());
+    }
+
+    /// Node: `it("treats absent executionMode as unrestricted")` — both `{}`
+    /// and `executionMode: undefined` collapse to the default policy.
+    #[test]
+    fn absent_execution_mode_is_unrestricted() {
+        assert!(evaluate_execution_allowlist(empty_policy().as_ref(), &local_env()).is_allowed());
+        assert!(
+            evaluate_execution_allowlist(policy_with_undefined_mode().as_ref(), &local_env())
+                .is_allowed()
+        );
+    }
+
+    /// No policy at all → unrestricted.
+    #[test]
+    fn missing_policy_is_unrestricted() {
+        assert!(evaluate_execution_allowlist(None, &local_env()).is_allowed());
+        assert!(evaluate_execution_allowlist(None, &kubernetes_env()).is_allowed());
+        assert!(evaluate_execution_allowlist(None, &fake_sandbox_env()).is_allowed());
+    }
+
+    // -----------------------------------------------------------------------
+    // describe('executionMode "kubernetes" (forced sandbox)')
+    // -----------------------------------------------------------------------
+
+    /// Node: `it("allows ONLY a kubernetes sandbox_provider environment")`
+    #[test]
+    fn kubernetes_mode_allows_only_k8s_sandbox() {
+        let result = evaluate_execution_allowlist(kubernetes_policy().as_ref(), &kubernetes_env());
+        assert!(result.is_allowed());
+    }
+
+    /// Node: `it("DENIES the local environment")` with reason/k8s regex + driver.
+    #[test]
+    fn kubernetes_mode_denies_local_environment() {
+        let result = evaluate_execution_allowlist(kubernetes_policy().as_ref(), &local_env());
+        assert!(!result.is_allowed());
+        match result {
+            ExecutionAllowlistDecision::False {
+                reason,
+                denied_driver,
+                ..
+            } => {
+                // Node: `expect(result.reason).toMatch(/kubernetes/i)`
+                assert!(reason.contains("kubernetes") || reason.contains("Kubernetes"));
+                // Node: `expect(result.deniedDriver).toBe("local")`
+                assert_eq!(denied_driver, "local");
+            }
+            _ => panic!("expected deny decision"),
+        }
+    }
+
+    /// Node: `it("DENIES an ssh environment")`
+    #[test]
+    fn kubernetes_mode_denies_ssh_environment() {
+        let result = evaluate_execution_allowlist(kubernetes_policy().as_ref(), &ssh_env());
+        assert!(!result.is_allowed());
+    }
+
+    /// Node: `it("DENIES a non-kubernetes sandbox provider (e.g. fake)")` with
+    /// `deniedProvider` assertion.
+    #[test]
+    fn kubernetes_mode_denies_non_kubernetes_sandbox_provider() {
+        let result = evaluate_execution_allowlist(kubernetes_policy().as_ref(), &fake_sandbox_env());
+        assert!(!result.is_allowed());
+        match result {
+            ExecutionAllowlistDecision::False {
+                denied_provider, ..
+            } => {
+                assert_eq!(denied_provider.as_deref(), Some("fake"));
+            }
+            _ => panic!("expected deny decision"),
+        }
+    }
+
+    /// Node: `it("DENIES a sandbox driver with no provider")`
+    #[test]
+    fn kubernetes_mode_denies_sandbox_without_provider() {
+        let result = evaluate_execution_allowlist(
+            kubernetes_policy().as_ref(),
+            &sandbox_no_provider_env(),
+        );
+        assert!(!result.is_allowed());
+    }
+
+    // -----------------------------------------------------------------------
+    // describe("isExecutionForcedToKubernetes helper")
+    // -----------------------------------------------------------------------
+
+    /// Node: `it("reflects the policy")` — three sequential assertions.
+    #[test]
+    fn is_execution_forced_to_kubernetes_reflects_policy() {
+        assert!(is_execution_forced_to_kubernetes(kubernetes_policy().as_ref()));
+        assert!(!is_execution_forced_to_kubernetes(any_policy().as_ref()));
+        assert!(!is_execution_forced_to_kubernetes(empty_policy().as_ref()));
+    }
+
+    /// Helper tolerates a fully-absent policy without panicking.
+    #[test]
+    fn is_execution_forced_to_kubernetes_none_policy() {
+        assert!(!is_execution_forced_to_kubernetes(None));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_kubernetes_sandbox_environment — guard the type-level predicate
+    // directly (Node does not cover this, but the predicate is part of the
+    // public surface).
     // -----------------------------------------------------------------------
 
     #[test]
-    fn k8s_sandbox_requires_both_driver_and_provider() {
-        // 必须 driver=sandbox
-        let mut c = k8s_candidate();
+    fn kubernetes_sandbox_predicate_requires_both_driver_and_provider() {
+        let mut c = kubernetes_env();
         c.driver = "local".to_string();
         assert!(!is_kubernetes_sandbox_environment(&c));
 
-        // 必须 provider=kubernetes
-        let mut c = k8s_candidate();
+        let mut c = kubernetes_env();
         c.provider = Some("docker".to_string());
         assert!(!is_kubernetes_sandbox_environment(&c));
 
-        // provider 缺失 → false
-        let mut c = k8s_candidate();
+        let mut c = kubernetes_env();
         c.provider = None;
         assert!(!is_kubernetes_sandbox_environment(&c));
 
-        // 完全匹配
-        assert!(is_kubernetes_sandbox_environment(&k8s_candidate()));
+        assert!(is_kubernetes_sandbox_environment(&kubernetes_env()));
     }
 
     // -----------------------------------------------------------------------
-    // evaluate_execution_allowlist: any policy
+    // Decision payload invariants — exercise fields the Node suite doesn't
+    // touch directly but that downstream consumers rely on.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn any_policy_allows_everything() {
-        assert!(evaluate_execution_allowlist(None, &local_candidate()).is_allowed());
-        assert!(evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Any)).as_ref(),
-            &local_candidate()
-        )
-        .is_allowed());
-        assert!(evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Any)).as_ref(),
-            &k8s_candidate()
-        )
-        .is_allowed());
-    }
-
-    // -----------------------------------------------------------------------
-    // evaluate_execution_allowlist: kubernetes policy
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn kubernetes_policy_allows_k8s_sandbox() {
-        let d = evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Kubernetes)).as_ref(),
-            &k8s_candidate(),
-        );
-        assert!(d.is_allowed());
-    }
-
-    #[test]
-    fn kubernetes_policy_denies_local() {
-        let d = evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Kubernetes)).as_ref(),
-            &local_candidate(),
-        );
-        assert!(!d.is_allowed());
+    fn deny_decision_carries_denied_driver_and_provider_for_sandbox_driver() {
+        let d = evaluate_execution_allowlist(kubernetes_policy().as_ref(), &fake_sandbox_env());
         match d {
             ExecutionAllowlistDecision::False {
-                reason,
                 denied_driver,
                 denied_provider,
-            } => {
-                assert_eq!(denied_driver, "local");
-                assert_eq!(denied_provider, None);
-                assert!(reason.contains("Kubernetes"));
-                assert!(reason.contains("local"));
-            }
-            _ => panic!("expected deny decision"),
-        }
-    }
-
-    #[test]
-    fn kubernetes_policy_denies_non_k8s_sandbox() {
-        let candidate = ExecutionEnvironmentCandidate {
-            driver: "sandbox".to_string(),
-            provider: Some("docker".to_string()),
-        };
-        let d = evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Kubernetes)).as_ref(),
-            &candidate,
-        );
-        assert!(!d.is_allowed());
-        match d {
-            ExecutionAllowlistDecision::False {
                 reason,
-                denied_driver,
-                denied_provider,
             } => {
                 assert_eq!(denied_driver, "sandbox");
-                assert_eq!(denied_provider.as_deref(), Some("docker"));
+                assert_eq!(denied_provider.as_deref(), Some("fake"));
                 assert!(reason.contains("sandbox provider"));
-                assert!(reason.contains("docker"));
+                assert!(reason.contains("fake"));
             }
             _ => panic!("expected deny decision"),
         }
     }
 
     #[test]
-    fn kubernetes_policy_denies_sandbox_without_provider() {
-        let candidate = ExecutionEnvironmentCandidate {
-            driver: "sandbox".to_string(),
-            provider: None,
-        };
+    fn deny_decision_reports_none_for_provider_when_missing() {
         let d = evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Kubernetes)).as_ref(),
-            &candidate,
+            kubernetes_policy().as_ref(),
+            &sandbox_no_provider_env(),
         );
-        assert!(!d.is_allowed());
         match d {
             ExecutionAllowlistDecision::False {
-                reason,
                 denied_provider,
+                reason,
                 ..
             } => {
                 assert_eq!(denied_provider, None);
@@ -297,18 +385,15 @@ mod tests {
     }
 
     #[test]
-    fn kubernetes_policy_denies_ssh() {
-        let candidate = ExecutionEnvironmentCandidate {
-            driver: "ssh".to_string(),
-            provider: None,
-        };
-        let d = evaluate_execution_allowlist(
-            policy(Some(ExecutionMode::Kubernetes)).as_ref(),
-            &candidate,
-        );
-        assert!(!d.is_allowed());
+    fn deny_decision_for_ssh_names_driver_in_reason() {
+        let d = evaluate_execution_allowlist(kubernetes_policy().as_ref(), &ssh_env());
         match d {
-            ExecutionAllowlistDecision::False { reason, .. } => {
+            ExecutionAllowlistDecision::False {
+                denied_driver,
+                reason,
+                ..
+            } => {
+                assert_eq!(denied_driver, "ssh");
                 assert!(reason.contains("ssh"));
             }
             _ => panic!("expected deny decision"),
@@ -358,8 +443,6 @@ mod tests {
                 execution_mode: None
             }
         );
-        assert!(!is_execution_forced_to_kubernetes(Some(
-            &ExecutionPolicy::default()
-        )));
+        assert!(!is_execution_forced_to_kubernetes(Some(&ExecutionPolicy::default())));
     }
 }
