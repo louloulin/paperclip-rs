@@ -114,14 +114,15 @@ pub use agent_eligibility::{
 };
 pub use execution_workspace_policy::{
     build_execution_workspace_adapter_config,
-    default_issue_execution_workspace_settings_for_project,
+    default_issue_execution_workspace_settings_for_project, gate_project_execution_workspace_policy,
     has_reusable_execution_workspace_binding, is_unrunnable_worktree_combo,
     issue_execution_workspace_mode_for_persisted_workspace,
     resolve_effective_workspace_strategy_type, resolve_execution_workspace_environment_id,
     resolve_execution_workspace_mode, resolve_pinned_issue_workspace_strategy_type,
     select_environment_execution_workspace_settings, ExecutionWorkspaceEnvironmentResolution,
     ExecutionWorkspaceStrategy, IssueExecutionWorkspaceSettings, NetworkEgress,
-    ParsedExecutionWorkspaceMode, ProjectExecutionWorkspacePolicy, UnrunnableWorktreeIssueRef,
+    ParsedExecutionWorkspaceMode, ParseIssueExecutionWorkspaceSettingsOptions,
+    ProjectExecutionWorkspacePolicy, UnrunnableWorktreeIssueRef,
     WORKSPACE_WORKTREE_REQUIRES_PROJECT_CODE, WORKSPACE_WORKTREE_REQUIRES_PROJECT_MESSAGE,
     WORKSPACE_WORKTREE_REQUIRES_PROJECT_REMEDIATION,
 };

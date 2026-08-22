@@ -6,6 +6,7 @@
 //! - `parse`：3 个 parser（strategy / policy / settings）+ environment 投影
 //! - `resolve`：mode / strategy / environment 解析 + 默认值计算
 //! - `guard`：worktree 不可运行守卫 + 错误码常量
+//! - `gate`：project policy 开关闸
 //! - `build`：adapter config 构造
 //!
 //! ## 设计原则
@@ -15,6 +16,7 @@
 //! - HTTP / DB 层仅 `use execution_workspace_policy::*;`
 
 pub mod build;
+pub mod gate;
 pub mod guard;
 pub mod parse;
 pub mod resolve;
@@ -27,6 +29,7 @@ pub mod types;
 pub use build::{
     build_execution_workspace_adapter_config, BuildExecutionWorkspaceAdapterConfigInput,
 };
+pub use gate::gate_project_execution_workspace_policy;
 pub use guard::{
     has_reusable_execution_workspace_binding, is_unrunnable_worktree_combo,
     IsUnrunnableWorktreeComboInput, WORKSPACE_WORKTREE_REQUIRES_PROJECT_CODE,
@@ -34,8 +37,9 @@ pub use guard::{
 };
 pub use parse::{
     as_string as parse_as_string, parse_execution_workspace_strategy,
-    parse_issue_execution_workspace_settings, parse_object as parse_value_object,
-    parse_project_execution_workspace_policy, select_environment_execution_workspace_settings,
+    parse_issue_execution_workspace_settings, parse_issue_execution_workspace_settings_with_options,
+    parse_object as parse_value_object, parse_project_execution_workspace_policy,
+    select_environment_execution_workspace_settings, ParseIssueExecutionWorkspaceSettingsOptions,
 };
 pub use resolve::{
     default_issue_execution_workspace_settings_for_project,

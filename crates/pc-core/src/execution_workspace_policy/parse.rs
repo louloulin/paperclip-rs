@@ -172,6 +172,51 @@ pub fn parse_project_execution_workspace_policy(
     if let Some(r) = workspace_runtime {
         policy.workspace_runtime = Some(r);
     }
+    if let Some(m) = parsed.get("branchPolicy").and_then(|v| {
+        if v.is_object() {
+            Some(parse_object(v))
+        } else {
+            None
+        }
+    }) {
+        policy.branch_policy = Some(m);
+    }
+    if let Some(m) = parsed.get("pullRequestPolicy").and_then(|v| {
+        if v.is_object() {
+            Some(parse_object(v))
+        } else {
+            None
+        }
+    }) {
+        policy.pull_request_policy = Some(m);
+    }
+    if let Some(m) = parsed.get("runtimePolicy").and_then(|v| {
+        if v.is_object() {
+            Some(parse_object(v))
+        } else {
+            None
+        }
+    }) {
+        policy.runtime_policy = Some(m);
+    }
+    if let Some(m) = parsed.get("cleanupPolicy").and_then(|v| {
+        if v.is_object() {
+            Some(parse_object(v))
+        } else {
+            None
+        }
+    }) {
+        policy.cleanup_policy = Some(m);
+    }
+    if let Some(m) = parsed.get("authorizationPolicy").and_then(|v| {
+        if v.is_object() {
+            Some(parse_object(v))
+        } else {
+            None
+        }
+    }) {
+        policy.authorization_policy = Some(m);
+    }
     Some(policy)
 }
 
@@ -179,13 +224,29 @@ pub fn parse_project_execution_workspace_policy(
 // parse_issue_execution_workspace_settings
 // ============================================================================
 
+/// `parse_issue_execution_workspace_settings` 的可选参数（与 Node
+/// `ParseIssueExecutionWorkspaceSettingsOptions` 1:1 对齐）。
+#[derive(Debug, Clone, Default)]
+pub struct ParseIssueExecutionWorkspaceSettingsOptions {
+    pub include_environment_id: bool,
+}
+
 /// 解析 issue 级 settings（与 Node `parseIssueExecutionWorkspaceSettings` 1:1 对齐）。
 ///
 /// - 空对象 → None
 /// - `mode` 字符串归一化（与 default_mode 类似）
 /// - `networkEgress.allowFqdns` / `allowCidrs` 数组 → trim + lowercase + 去空
+/// - `options.include_environment_id == true` 时，`environmentId`（字符串或 null）会被原样保留
 pub fn parse_issue_execution_workspace_settings(
     raw: &serde_json::Value,
+) -> Option<IssueExecutionWorkspaceSettings> {
+    parse_issue_execution_workspace_settings_with_options(raw, &ParseIssueExecutionWorkspaceSettingsOptions::default())
+}
+
+/// 与 Node `parseIssueExecutionWorkspaceSettings(raw, options)` 1:1 对齐的版本。
+pub fn parse_issue_execution_workspace_settings_with_options(
+    raw: &serde_json::Value,
+    options: &ParseIssueExecutionWorkspaceSettingsOptions,
 ) -> Option<IssueExecutionWorkspaceSettings> {
     let parsed = parse_object(raw);
     if parsed.is_empty() {
@@ -259,11 +320,30 @@ pub fn parse_issue_execution_workspace_settings(
         }
     });
 
+    // environmentId is included only when options.include_environment_id == true
+    // AND the raw value is either a string or explicit null.
+    let environment_id = if options.include_environment_id {
+        parsed.get("environmentId").and_then(|v| {
+            if v.is_string() {
+                Some(Some(v.as_str().unwrap().to_string()))
+            } else if v.is_null() {
+                Some(None)
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
+
     let mut settings = IssueExecutionWorkspaceSettings {
         ..Default::default()
     };
     if let Some(m) = normalized_mode {
         settings.mode = Some(m);
+    }
+    if let Some(eid) = environment_id {
+        settings.environment_id = Some(eid);
     }
     if let Some(s) = workspace_strategy {
         settings.workspace_strategy = Some(s);
@@ -523,6 +603,78 @@ mod tests {
         assert_eq!(p.default_project_workspace_id, None);
     }
 
+    #[test]
+    fn parse_policy_branch_policy_kept_as_object() {
+        let p = parse_project_execution_workspace_policy(&json!({
+            "enabled": true,
+            "branchPolicy": {"branchPrefix": "agent/"}
+        }))
+        .unwrap();
+        let bp = p.branch_policy.unwrap();
+        assert_eq!(bp.get("branchPrefix").unwrap().as_str(), Some("agent/"));
+    }
+
+    #[test]
+    fn parse_policy_pull_request_policy_kept_as_object() {
+        let p = parse_project_execution_workspace_policy(&json!({
+            "enabled": true,
+            "pullRequestPolicy": {"draft": true}
+        }))
+        .unwrap();
+        let prp = p.pull_request_policy.unwrap();
+        assert_eq!(prp.get("draft").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn parse_policy_runtime_policy_kept_as_object() {
+        let p = parse_project_execution_workspace_policy(&json!({
+            "enabled": true,
+            "runtimePolicy": {"maxCpuMs": 1000}
+        }))
+        .unwrap();
+        let rp = p.runtime_policy.unwrap();
+        assert_eq!(rp.get("maxCpuMs").unwrap().as_i64(), Some(1000));
+    }
+
+    #[test]
+    fn parse_policy_cleanup_policy_kept_as_object() {
+        let p = parse_project_execution_workspace_policy(&json!({
+            "enabled": true,
+            "cleanupPolicy": {"onSuccess": "delete"}
+        }))
+        .unwrap();
+        let cp = p.cleanup_policy.unwrap();
+        assert_eq!(cp.get("onSuccess").unwrap().as_str(), Some("delete"));
+    }
+
+    #[test]
+    fn parse_policy_authorization_policy_kept_as_object() {
+        let p = parse_project_execution_workspace_policy(&json!({
+            "enabled": true,
+            "authorizationPolicy": {"allowList": ["foo", "bar"]}
+        }))
+        .unwrap();
+        let ap = p.authorization_policy.unwrap();
+        let allow_list = ap.get("allowList").unwrap().as_array().unwrap();
+        assert_eq!(allow_list.len(), 2);
+        assert_eq!(allow_list[0].as_str(), Some("foo"));
+        assert_eq!(allow_list[1].as_str(), Some("bar"));
+    }
+
+    #[test]
+    fn parse_policy_extra_policy_map_non_object_dropped() {
+        let p = parse_project_execution_workspace_policy(&json!({
+            "enabled": true,
+            "branchPolicy": "not-an-object",
+            "pullRequestPolicy": ["also", "wrong"],
+            "runtimePolicy": 42
+        }))
+        .unwrap();
+        assert_eq!(p.branch_policy, None);
+        assert_eq!(p.pull_request_policy, None);
+        assert_eq!(p.runtime_policy, None);
+    }
+
     // ----- parse_issue_execution_workspace_settings -----
 
     #[test]
@@ -648,5 +800,80 @@ mod tests {
     fn select_returns_none_for_none_input() {
         assert!(select_environment_execution_workspace_settings(None, true).is_none());
         assert!(select_environment_execution_workspace_settings(None, false).is_none());
+    }
+
+    // ----- parse_issue_execution_workspace_settings_with_options -----
+
+    #[test]
+    fn parse_issue_settings_environment_id_omitted_by_default() {
+        let s = parse_issue_execution_workspace_settings(&json!({
+            "mode": "isolated_workspace",
+            "environmentId": "env-1"
+        }))
+        .unwrap();
+        assert_eq!(s.environment_id, None);
+    }
+
+    #[test]
+    fn parse_issue_settings_environment_id_included_when_requested() {
+        let opts = ParseIssueExecutionWorkspaceSettingsOptions {
+            include_environment_id: true,
+        };
+        let s = parse_issue_execution_workspace_settings_with_options(
+            &json!({
+                "mode": "isolated_workspace",
+                "environmentId": "env-1"
+            }),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(s.environment_id, Some(Some("env-1".to_string())));
+    }
+
+    #[test]
+    fn parse_issue_settings_environment_id_null_preserved_when_requested() {
+        let opts = ParseIssueExecutionWorkspaceSettingsOptions {
+            include_environment_id: true,
+        };
+        let s = parse_issue_execution_workspace_settings_with_options(
+            &json!({
+                "mode": "isolated_workspace",
+                "environmentId": null
+            }),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(s.environment_id, Some(None));
+    }
+
+    #[test]
+    fn parse_issue_settings_environment_id_non_string_dropped() {
+        let opts = ParseIssueExecutionWorkspaceSettingsOptions {
+            include_environment_id: true,
+        };
+        let s = parse_issue_execution_workspace_settings_with_options(
+            &json!({
+                "mode": "isolated_workspace",
+                "environmentId": 42
+            }),
+            &opts,
+        )
+        .unwrap();
+        // 42 is neither string nor null → dropped even when option is true
+        assert_eq!(s.environment_id, None);
+    }
+
+    #[test]
+    fn parse_issue_settings_environment_id_not_requested_keeps_null_when_present() {
+        let opts = ParseIssueExecutionWorkspaceSettingsOptions::default();
+        let s = parse_issue_execution_workspace_settings_with_options(
+            &json!({
+                "mode": "isolated_workspace",
+                "environmentId": "env-x"
+            }),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(s.environment_id, None);
     }
 }

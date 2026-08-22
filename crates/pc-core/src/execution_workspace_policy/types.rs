@@ -78,6 +78,10 @@ impl ExecutionWorkspaceStrategy {
 // ============================================================================
 
 /// 项目级 execution workspace 政策（与 Node `ProjectExecutionWorkspacePolicy` 1:1 对齐）。
+///
+/// 未在 Node 中以 `Option` 显式区分的策略 map（branchPolicy / pullRequestPolicy /
+/// runtimePolicy / cleanupPolicy / authorizationPolicy）在 Rust 中以
+/// `Option<HashMap<...>>` 表示；只有显式 `Some` 的字段会被保留。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectExecutionWorkspacePolicy {
     pub enabled: bool,
@@ -86,6 +90,11 @@ pub struct ProjectExecutionWorkspacePolicy {
     pub default_project_workspace_id: Option<String>,
     pub workspace_strategy: Option<ExecutionWorkspaceStrategy>,
     pub workspace_runtime: Option<HashMap<String, serde_json::Value>>,
+    pub branch_policy: Option<HashMap<String, serde_json::Value>>,
+    pub pull_request_policy: Option<HashMap<String, serde_json::Value>>,
+    pub runtime_policy: Option<HashMap<String, serde_json::Value>>,
+    pub cleanup_policy: Option<HashMap<String, serde_json::Value>>,
+    pub authorization_policy: Option<HashMap<String, serde_json::Value>>,
 }
 
 // ============================================================================
@@ -93,9 +102,13 @@ pub struct ProjectExecutionWorkspacePolicy {
 // ============================================================================
 
 /// Issue 级 execution workspace 设置（与 Node `IssueExecutionWorkspaceSettings` 1:1 对齐）。
+///
+/// `environment_id` 是可选透传字段：当 parser 收到 `includeEnvironmentId=true`
+/// 时，原始 `environmentId`（字符串或 null）会被原样保留下来，否则该字段为 `None`。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IssueExecutionWorkspaceSettings {
     pub mode: Option<String>,
+    pub environment_id: Option<Option<String>>,
     pub workspace_strategy: Option<ExecutionWorkspaceStrategy>,
     pub workspace_runtime: Option<HashMap<String, serde_json::Value>>,
     pub network_egress: Option<NetworkEgress>,
