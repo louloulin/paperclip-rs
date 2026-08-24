@@ -71,7 +71,10 @@ impl IntoResponse for ApiError {
             } => (status, Json(build_node_body(&message, details.as_ref()))).into_response(),
             ApiError::ConflictWith { message, payload } => {
                 let mut body = Map::new();
-                body.insert("error".into(), Value::String(message));
+                let mut error_obj = Map::new();
+                error_obj.insert("code".into(), Value::String("conflict".into()));
+                error_obj.insert("message".into(), Value::String(message));
+                body.insert("error".into(), Value::Object(error_obj));
                 if let Some(object) = payload.as_object() {
                     body.extend(
                         object
@@ -276,7 +279,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conflict_with_flattens_payload() {
+    async fn conflict_with_includes_code_and_message() {
         let response = ApiError::ConflictWith {
             message: "workspace closed".into(),
             payload: json!({"executionWorkspace": {"status": "closed"}}),
@@ -286,7 +289,10 @@ mod tests {
         assert_eq!(
             response_json(response).await,
             json!({
-                "error": "workspace closed",
+                "error": {
+                    "code": "conflict",
+                    "message": "workspace closed",
+                },
                 "executionWorkspace": {"status": "closed"},
             })
         );

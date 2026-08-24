@@ -295,7 +295,6 @@ async fn build_app() -> (axum::Router, Db) {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R566: workspace guard not fully implemented — returns 500 instead of 409"]
 async fn r566_add_comment_409_with_closed_isolated_workspace() {
     let (app, db) = build_app().await;
     let company_id = insert_company(&db).await;
@@ -406,12 +405,11 @@ async fn r566_add_comment_succeeds_for_non_isolated_workspace() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R566: workspace guard not fully implemented — returns 500 instead of 409"]
 async fn r566_checkout_409_with_closed_isolated_workspace() {
     let (app, db) = build_app().await;
     let company_id = insert_company(&db).await;
     let project_id = insert_project(&db, company_id).await;
-    let agent_id = insert_agent(&db, company_id).await;
+    let _agent_id = insert_agent(&db, company_id).await;
     let ws_id = insert_execution_workspace(
         &db,
         company_id,
@@ -449,7 +447,7 @@ async fn r566_checkout_succeeds_when_no_workspace_attached() {
     let (app, db) = build_app().await;
     let company_id = insert_company(&db).await;
     let project_id = insert_project(&db, company_id).await;
-    let agent_id = insert_agent(&db, company_id).await;
+    let _agent_id = insert_agent(&db, company_id).await;
     // issue has no execution_workspace_id
     let issue_id = insert_issue(&db, company_id, project_id, None).await;
     let session = setup_session(&db, "r566-checkout-noop").await;
