@@ -411,7 +411,6 @@ async fn http_create_decision_bundle_returns_201_with_payload() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "create_decision_bundle handler returns 500 instead of 400 for InvalidInput — error mapping gap"]
 async fn http_create_rejects_empty_title() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let state = test_state(db.clone());
