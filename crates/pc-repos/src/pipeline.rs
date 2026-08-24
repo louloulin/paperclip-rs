@@ -994,7 +994,7 @@ impl<'a> PipelineRepo<'a> {
         payload: &serde_json::Value,
     ) -> sqlx::Result<()> {
         sqlx::query(
-            "INSERT INTO pipeline_case_events (company_id, case_id, kind, actor_type, payload) \
+            "INSERT INTO pipeline_case_events (company_id, case_id, type, actor_type, payload) \
              VALUES ($1, $2, 'fields_changed', 'system', $3::jsonb)",
         )
         .bind(company_id)

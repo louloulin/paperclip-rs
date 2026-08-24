@@ -1195,7 +1195,6 @@ async fn r603v6_5_restore_pipeline_document_revision_via_service_returns_restore
 // ===========================================================================
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "pre-existing: list_attention_pipelines SQL uses pc.case_id (column does not exist)"]
 async fn r603v6_6_list_pipelines_attention_via_service() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
@@ -1209,7 +1208,7 @@ async fn r603v6_6_list_pipelines_attention_via_service() {
     )
     .await;
     assert_eq!(s, 200, "attention: {b}");
-    assert!(b["items"].is_array());
+    assert!(b.is_array(), "expected JSON array, got: {b}");
     cleanup(&pool, company_id).await;
 }
 
@@ -1332,7 +1331,6 @@ async fn r603v6_6_automation_retry_plan_via_service() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "pre-existing: insert_fields_changed_event writes `kind` to pipeline_case_events but schema column is `type`"]
 async fn r603v6_6_automation_retry_via_service_bumps_version() {
     let (db, pool) = setup_db().await;
     let company_id = insert_company(&pool).await;
