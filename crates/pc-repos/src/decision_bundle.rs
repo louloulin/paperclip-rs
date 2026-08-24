@@ -227,7 +227,7 @@ impl<'a> DecisionBundleRepo<'a> {
         let rows = sqlx::query_as::<_, DecisionBundleRow>(
             "DELETE FROM decision_bundles WHERE id = $1 \
              RETURNING id, company_id, title, summary, origin_agent_id, origin_issue_id, \
-                       origin_run_id, created_at, updated_at",
+                       origin_run_id, created_at",
         )
         .bind(id)
         .fetch_all(self.db.pool())

@@ -349,7 +349,6 @@ async fn repo_exists_for_origin_detects_duplicates() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "repo delete references non-existent updated_at column on decision_bundles — pre-existing schema mismatch"]
 async fn repo_delete_returns_true_only_when_row_existed() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db, "delete").await;
