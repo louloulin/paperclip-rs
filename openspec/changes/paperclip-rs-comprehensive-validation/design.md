@@ -1,3 +1,12 @@
+---
+name: paperclip-rs-comprehensive-validation
+description: 差距清零：前后端适配补全、中间件、services、UI 验证
+type: design
+role: technical-design
+comet_change: paperclip-rs-comprehensive-validation
+canonical_spec: openspec
+---
+
 # Design: 差距清零的实施设计
 
 ## 0. 进度基线（2026-08-12 独立核算）
