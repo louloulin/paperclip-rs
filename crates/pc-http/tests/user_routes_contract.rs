@@ -305,7 +305,6 @@ async fn resource_memberships_star_project_persists() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "inbox_dismissals POST returns null for item_key — response field mismatch"]
 async fn inbox_dismissals_create_and_list_lifecycle() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
@@ -328,7 +327,7 @@ async fn inbox_dismissals_create_and_list_lifecycle() {
     .await;
     assert_eq!(status, 201, "dismiss: {body}");
     let dismiss_id = body["id"].as_str().expect("id");
-    assert_eq!(body["item_key"], item_key);
+    assert_eq!(body["itemKey"], item_key);
 
     let (status, body) = call_with_session(
         &app,
