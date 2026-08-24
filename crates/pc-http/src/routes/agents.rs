@@ -153,10 +153,6 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/agents/:agent_id/skills", get(list_agent_skills))
         .route("/api/agents/:agent_id/skills/sync", post(sync_agent_skills))
-        .route(
-            "/api/agents/:agent_id/budgets",
-            get(get_agent_budgets).patch(update_agent_budgets),
-        )
         .route("/api/agents/:agent_id/claude-login", post(claude_login))
         .route(
             "/api/companies/:company_id/agent-configurations",

@@ -136,10 +136,13 @@ async fn insert_decision(
 ) -> Uuid {
     let id = Uuid::new_v4();
     let options = serde_json::json!({"options": [{"id": "yes"}, {"id": "no"}]});
+    let target_snapshots = serde_json::json!({});
+    // signed_spec format: "{version}.{64-hex-digest}" (HMAC-SHA256)
+    let signed_spec = "1.0000000000000000000000000000000000000000000000000000000000000000";
     sqlx::query(
         "INSERT INTO decisions (id, company_id, bundle_id, origin_agent_id, origin_issue_id, \
-            origin_run_id, title, body, options, status, expires_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'placeholder', $8::jsonb, 'open', now() + interval '1 day')",
+            origin_run_id, title, body, options, status, expires_at, signed_spec, target_snapshots) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'placeholder', $8::jsonb, 'open', now() + interval '1 day', $9, $10::jsonb)",
     )
     .bind(id)
     .bind(company_id)
@@ -149,6 +152,8 @@ async fn insert_decision(
     .bind(run_id)
     .bind(title)
     .bind(options)
+    .bind(signed_spec)
+    .bind(target_snapshots)
     .execute(db.pool())
     .await
     .expect("insert decision");
@@ -276,7 +281,6 @@ async fn repo_list_filters_by_agent_issue_run() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "insert_decision does not provide signed_spec (NOT NULL) — pre-existing schema mismatch"]
 async fn repo_get_with_decisions_returns_mounted_decisions() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db, "get-with-decisions").await;
@@ -497,7 +501,6 @@ async fn http_get_decision_bundle_returns_404_for_missing_id() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "insert_decision does not provide signed_spec (NOT NULL) — pre-existing schema mismatch"]
 async fn http_get_decision_bundle_includes_decisions() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let state = test_state(db.clone());

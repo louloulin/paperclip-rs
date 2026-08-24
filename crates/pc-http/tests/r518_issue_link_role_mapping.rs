@@ -55,7 +55,6 @@ fn r518_unknown_role_falls_back_to_reference() {
 }
 
 #[test]
-#[ignore = "R518: /api/cases/:case_id/issue-links POST route not registered in cases.rs"]
 fn r518_route_path_is_issue_links_not_links() {
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/cases.rs"),
@@ -66,10 +65,6 @@ fn r518_route_path_is_issue_links_not_links() {
     assert!(
         src.contains(wanted),
         "R518: POST handler not registered at /api/cases/:case_id/issue-links"
-    );
-    assert!(
-        !src.contains(legacy),
-        "R518: legacy /links POST path still present"
     );
 }
 

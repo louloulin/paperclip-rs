@@ -52,7 +52,6 @@ fn r522_event_order_is_ascending_chronological() {
 /// 文档化测试：响应 JSON shape 必含字段清单
 /// 当前端 React 代码读取 context-pack 时，它依赖以下字段存在
 #[test]
-#[ignore = "R522: context-pack response missing caseKey — not yet implemented in Rust cases.rs"]
 fn r522_response_shape_contains_required_keys() {
     // 这是一个字符串级契约检查：route handler 输出的 JSON 必须包含这些 key
     // 由于我们无法在单元测试中直接调用 DB-bound handler，这里做静态检查

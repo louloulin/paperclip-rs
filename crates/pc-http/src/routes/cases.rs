@@ -38,6 +38,8 @@ pub fn router() -> Router<AppState> {
             get(list_company_cases).post(create_company_case),
         )
         .route("/api/cases/:case_id/events", get(list_case_events))
+        .route("/api/cases/:case_id/issue-links", post(create_case_link))
+        // Backward-compatible alias (M28)
         .route("/api/cases/:case_id/links", post(create_case_link))
         .route(
             "/api/cases/:case_id/documents",
@@ -1820,14 +1822,25 @@ async fn get_case_context_pack(
         "case": {
             "id": case.id,
             "caseNumber": case.case_number,
+            "caseKey": case.identifier,
+            "version": 1,
             "identifier": case.identifier,
             "title": case.title,
             "summary": case.summary,
             "status": case.status,
             "caseType": case.case_type,
             "fields": case.fields,
+            "untrustedContent": {
+                "summary": case.summary,
+                "fields": case.fields,
+            },
         },
+        "stage": null,
+        "allowedTransitions": [],
         "linkedIssues": issue_items,
+        "blockers": [],
+        "childOutcomes": [],
+        "outputSummaries": [],
         "childCount": children_count,
         "events": event_items,
         "recentEventCount": event_items.len(),

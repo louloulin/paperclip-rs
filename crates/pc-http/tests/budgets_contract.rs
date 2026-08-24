@@ -252,7 +252,6 @@ async fn r586_http_resolve_incident_endpoint_handles_missing() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R586: /api/agents/:agent_id/budgets registered in agents.rs as cost-list (different shape); agent_budgets fn in budgets.rs is not routed"]
 async fn r586_http_agent_budgets_endpoint_runs_evaluation() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
