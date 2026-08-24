@@ -496,7 +496,18 @@ mod tests {
             Some(format!("http://{addr}")),
             Some("test-token".to_string()),
         );
-        let client = HttpFeedbackTraceShareClient::new(&cfg);
+        let client = {
+            let http = reqwest::Client::builder()
+                .http1_only()
+                .no_proxy()
+                .build()
+                .unwrap();
+            HttpFeedbackTraceShareClient {
+                endpoint: format!("http://{addr}/feedback-traces"),
+                bearer_token: Some("test-token".to_string()),
+                http,
+            }
+        };
         let bundle = sample_bundle();
         let result = client.upload_trace_bundle(&bundle).await.unwrap();
         assert_eq!(result.object_key, "feedback-traces/server-override.json");
@@ -504,10 +515,10 @@ mod tests {
         let guard = captured.lock().await.clone();
         let (request_line, headers, body) = guard.expect("server captured request");
         assert!(request_line.starts_with("POST /feedback-traces HTTP/1.1"));
-        assert!(headers.contains("content-type: application/json"));
-        assert!(headers.contains("authorization: Bearer test-token"));
+        assert!(headers.to_lowercase().contains("content-type: application/json"));
+        assert!(headers.to_lowercase().contains("authorization: bearer test-token"));
 
-        let parsed: JsonValue = serde_json::from_str(&body).unwrap();
+        let parsed: JsonValue = serde_json::from_str(&body).expect("body should be valid JSON");
         assert_eq!(parsed["encoding"], "gzip+base64+json");
         let decoded = decode_feedback_share_payload(
             parsed["encoding"].as_str().unwrap(),

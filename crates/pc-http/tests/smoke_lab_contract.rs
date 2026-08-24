@@ -82,7 +82,7 @@ async fn call(
 }
 
 async fn seed_company(db: &Db) -> Uuid {
-    let prefix = format!("SL{}", &Uuid::new_v4().simple().to_string()[..4]);
+    let prefix = Uuid::new_v4().simple().to_string();
     sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO companies (name, issue_prefix) VALUES ($1, $2) RETURNING id",
     )

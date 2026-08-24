@@ -76,7 +76,7 @@ async fn company_stats_returns_aggregates() {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(id)
         .bind(format!("stats-{id}"))
-        .bind(format!("ST{}", &id.simple().to_string()[..6]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");
@@ -102,7 +102,7 @@ async fn company_timeline_returns_events() {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(id)
         .bind(format!("tl-{id}"))
-        .bind(format!("TL{}", &id.simple().to_string()[..6]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");
@@ -126,7 +126,7 @@ async fn company_branding_patch_updates_name_and_logo() {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(id)
         .bind(format!("br-{id}"))
-        .bind(format!("BR{}", &id.simple().to_string()[..6]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");
@@ -156,7 +156,7 @@ async fn company_export_and_import_preview() {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(id)
         .bind(format!("ex-{id}"))
-        .bind(format!("EX{}", &id.simple().to_string()[..6]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");

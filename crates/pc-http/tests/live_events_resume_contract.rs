@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
+use rand::Rng;
 use axum::http::Request;
 use futures_util::{SinkExt, StreamExt};
 use pc_adapter_api::AdapterRegistry;
@@ -61,7 +62,7 @@ async fn spawn_app(state: AppState) -> String {
 }
 
 async fn seed_company(db: &Db) -> Uuid {
-    let prefix = format!("LE{}", &Uuid::new_v4().simple().to_string()[..4]);
+    let prefix = Uuid::new_v4().simple().to_string();
     sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO companies (name, issue_prefix) VALUES ($1, $2) RETURNING id",
     )
@@ -77,8 +78,7 @@ async fn seed_agent_api_key(db: &Db, company_id: Uuid) -> (String, Uuid) {
     // authorization path which queries `agentApiKeys` keyed on the SHA-256 of
     // the bearer token. `agent_api_keys` is agent-scoped and contains both
     // `agent_id` (FK → agents) and `company_id` (FK → companies).
-    use rand::Rng;
-    let mut buf = [0u8; 32];
+        let mut buf = [0u8; 32];
     rand::rngs::OsRng.fill(&mut buf);
     let token = format!("test-tok-{}", Uuid::new_v4().simple());
     let key_hash = pc_auth::hash_token(&token);

@@ -65,7 +65,7 @@ async fn insert_company_with_agent_issue_run(db: &Db) -> Uuid {
     )
     .bind(company_id)
     .bind(format!("dec-http-{company_id}"))
-    .bind(format!("DH{}", &company_id.simple().to_string()[..4]))
+    .bind(company_id.simple().to_string())
     .execute(db.pool())
     .await
     .expect("insert company");
@@ -216,7 +216,7 @@ async fn r587_http_decide_endpoint_runs_through_service() {
     .await;
     assert_eq!(status, 200, "decide: {body}");
     assert_eq!(body["status"], "decided");
-    assert_eq!(body["chosen_option_id"], "opt-a");
+    assert_eq!(body["chosenOptionId"], "opt-a");
 }
 
 #[tokio::test(flavor = "current_thread")]

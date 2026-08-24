@@ -136,8 +136,15 @@ mod tests {
 
     #[tokio::test]
     async fn r523_gh_fetch_returns_connection_error_on_unreachable_host() {
-        // 127.0.0.1:1 is reserved + unreachable; reqwest returns ConnectionRefused.
-        let resp = gh_fetch("http://127.0.0.1:1/", None).await;
+        // 127.0.0.1:0 is never a valid target; connecting to port 0 reliably produces
+        // a connection error (no service can bind to port 0). This avoids macOS proxy
+        // interference that can cause port 1 to return 502 instead of ConnectionRefused.
+        let client = Client::builder()
+            .no_proxy()
+            .user_agent("paperclip-rs/pc-github-fetch")
+            .build()
+            .unwrap();
+        let resp = gh_fetch_with(&client, client.get("http://127.0.0.1:0/")).await;
         match resp {
             Err(GitHubFetchError::Connection { host, .. }) => {
                 assert_eq!(host, "127.0.0.1");

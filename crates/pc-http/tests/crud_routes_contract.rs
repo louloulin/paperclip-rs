@@ -48,13 +48,17 @@ fn test_state(db: Db) -> AppState {
 
 async fn insert_company(db: &Db) -> Uuid {
     let id = Uuid::new_v4();
+    let prefix = id.simple().to_string();
     sqlx::query(
-        "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
-         VALUES ($1, $2, 'active', $3, now(), now())",
+        "INSERT INTO companies (id, name, status, issue_prefix, budget_monthly_cents, \
+         spent_monthly_cents, created_at, updated_at, issue_counter, \
+         require_board_approval_for_new_agents, feedback_data_sharing_enabled, \
+         attachment_max_bytes) \
+         VALUES ($1, $2, 'active', $3, 0, 0, now(), now(), 0, false, false, 100000000)",
     )
     .bind(id)
     .bind(format!("crud-{id}"))
-    .bind(format!("CR{}", &id.simple().to_string()[..4]))
+    .bind(&prefix)
     .execute(db.pool())
     .await
     .expect("insert company");
@@ -67,16 +71,16 @@ async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>)
         .as_ref()
         .map(|v| serde_json::to_vec(v).expect("serialize"))
         .unwrap_or_default();
+    let mut request = Request::builder()
+        .method(method)
+        .header("content-type", "application/json")
+        .uri(path)
+        .body(Body::from(payload))
+        .expect("request");
+    request.extensions_mut().insert(pc_auth::AuthContext::system());
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .header("content-type", "application/json")
-                .uri(path)
-                .body(Body::from(payload))
-                .expect("request"),
-        )
+        .oneshot(request)
         .await
         .expect("response");
     let status = response.status().as_u16();
@@ -249,11 +253,11 @@ async fn goals_create_get_update_delete() {
         &app,
         "PATCH",
         &format!("/api/goals/{goal_id}"),
-        Some(json!({ "status": "in_progress" })),
+        Some(json!({ "status": "active" })),
     )
     .await;
     assert_eq!(status, 200, "goal patch: {body}");
-    assert_eq!(body["status"], "in_progress");
+    assert_eq!(body["status"], "active");
 
     let (status, _) = call(&app, "DELETE", &format!("/api/goals/{goal_id}"), None).await;
     assert_eq!(status, 204);
@@ -270,15 +274,16 @@ async fn environments_create_and_list() {
         "/api/environments",
         Some(json!({
             "name": format!("dev-env-{}", Uuid::new_v4().simple()),
-            "driver": format!("driver-{}", Uuid::new_v4().simple()),
+            "driver": "docker",
             "config": { "shell": "zsh" }
         })),
     )
     .await;
+    eprintln!("DEBUG env create status={status} body={}", serde_json::to_string(&body).unwrap());
     assert_eq!(status, 201, "env create: {body}");
     let env_id = body["id"].as_str().expect("id");
     assert!(body["name"].as_str().unwrap().starts_with("dev-env-"));
-    assert!(body["driver"].as_str().unwrap().starts_with("driver-"));
+    assert_eq!(body["driver"], "docker");
 
     let (status, body) = call(&app, "GET", "/api/environments", None).await;
     assert_eq!(status, 200);
@@ -310,10 +315,9 @@ async fn folders_create_list_delete_lifecycle() {
     let (status, body) = call(
         &app,
         "POST",
-        "/api/folders",
+        &format!("/api/companies/{company_id}/folders"),
         Some(json!({
-            "company_id": company_id,
-            "kind": "issue",
+            "kind": "routine",
             "name": "Backlog",
             "slug": "backlog",
             "color": "#ff0000"
@@ -323,7 +327,8 @@ async fn folders_create_list_delete_lifecycle() {
     assert_eq!(status, 201, "folder create: {body}");
     let folder_id = body["id"].as_str().expect("id");
     assert_eq!(body["name"], "Backlog");
-    assert_eq!(body["kind"], "issue");
+    assert_eq!(body["kind"], "routine");
+    assert_eq!(body["color"], "#ff0000");
 
     let (status, body) = call(
         &app,

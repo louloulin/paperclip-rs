@@ -381,7 +381,7 @@ async fn delete_provider_config(
 ) -> ApiResult<impl IntoResponse> {
     // pc-authz：查 company_id
     let preview: Option<(Uuid,)> =
-        sqlx::query_as("SELECT company_id FROM secret_provider_configs WHERE id = $1")
+        sqlx::query_as("SELECT company_id FROM company_secret_provider_configs WHERE id = $1")
             .bind(id)
             .fetch_optional(state.db.pool())
             .await?;
@@ -810,7 +810,7 @@ async fn patch_provider_config(
     }
     // pc-authz: 查 provider config 的 company_id
     let preview: Option<(Uuid,)> =
-        sqlx::query_as("SELECT company_id FROM secret_provider_configs WHERE id = $1")
+        sqlx::query_as("SELECT company_id FROM company_secret_provider_configs WHERE id = $1")
             .bind(id)
             .fetch_optional(state.db.pool())
             .await?;

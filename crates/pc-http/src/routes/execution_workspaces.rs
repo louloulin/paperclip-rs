@@ -166,13 +166,13 @@ fn runtime_service_json(row: &RuntimeServiceRow) -> Value {
 async fn list_workspaces(
     State(state): State<AppState>,
     Path(company_id): Path<uuid::Uuid>,
-) -> ApiResult<Json<Vec<Value>>> {
+) -> ApiResult<Json<Value>> {
     let rows = ExecutionRepo::new(&state.db)
         .list_by_company(company_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let items: Vec<Value> = rows.iter().map(row_json).collect();
-    Ok(Json(items))
+    Ok(Json(json!({ "items": items })))
 }
 
 async fn workspace_overview(

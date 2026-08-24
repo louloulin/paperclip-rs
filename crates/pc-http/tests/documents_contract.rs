@@ -53,7 +53,7 @@ async fn insert_company(db: &Db) -> Uuid {
     )
     .bind(id)
     .bind(format!("doc-{id}"))
-    .bind(format!("DC{}", &id.simple().to_string()[..4]))
+    .bind(id.simple().to_string())
     .execute(db.pool())
     .await
     .expect("insert company");
@@ -66,18 +66,16 @@ async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>)
         .as_ref()
         .map(|v| serde_json::to_vec(v).expect("serialize"))
         .unwrap_or_default();
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .header("content-type", "application/json")
-                .uri(path)
-                .body(Body::from(payload))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
+    let mut request = Request::builder()
+        .method(method)
+        .header("content-type", "application/json")
+        .uri(path)
+        .body(Body::from(payload))
+        .expect("request");
+    request
+        .extensions_mut()
+        .insert(pc_auth::AuthContext::system());
+    let response = app.clone().oneshot(request).await.expect("response");
     let status = response.status().as_u16();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await

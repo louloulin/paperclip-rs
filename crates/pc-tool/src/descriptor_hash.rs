@@ -30,12 +30,34 @@ fn walk_keys(value: &serde_json::Value, keys: &mut std::collections::BTreeSet<St
     }
 }
 
+fn serialize_canonical(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => serde_json::to_string(s).unwrap(),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(serialize_canonical).collect();
+            format!("[{}]", items.join(","))
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let items: Vec<String> = keys
+                .iter()
+                .map(|k| format!("\"{}\":{}", k, serialize_canonical(&map[*k])))
+                .collect();
+            format!("{{{}}}", items.join(","))
+        }
+    }
+}
+
 /// Stable hash: SHA-256 hex of JSON.stringify(value, sortedKeys).
-/// 与 Node  1:1 parity。
+/// 与 Node 1:1 parity。
 pub fn stable_hash<T: Serialize>(value: &T) -> String {
     let json = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
     let keys = flatten_keys(&json);
-    let json_str = serde_json::to_string(&json).unwrap_or_default();
+    let json_str = serialize_canonical(&json);
     let key_list = keys.join(",");
     let mut hasher = Sha256::new();
     hasher.update(json_str.as_bytes());

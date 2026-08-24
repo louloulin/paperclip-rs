@@ -69,6 +69,46 @@ async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (u16
     (status, serde_json::from_slice(&bytes).unwrap_or_default())
 }
 
+async fn call_with_auth(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    body: Value,
+    token: &str,
+) -> (u16, Value) {
+    let _guard = TEST_LOCK.lock().await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .uri(path)
+                .body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+
+async fn sign_in(app: &axum::Router, email: &str) -> String {
+    let (status, body) = call(
+        app,
+        "POST",
+        "/api/auth/sign-in",
+        json!({ "email": email }),
+    )
+    .await;
+    assert_eq!(status, 200, "sign-in: {body}");
+    body["session_token"].as_str().expect("session_token").to_string()
+}
+
 async fn insert_company(db: &Db, suffix: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
@@ -144,10 +184,13 @@ async fn r590_companies_get_returns_404_for_missing() {
 #[tokio::test(flavor = "current_thread")]
 async fn r590_companies_create_via_service_returns_201() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
-    let app = routes::companies::router().with_state(test_state(db.clone()));
+    // POST /api/companies requires auth — use full router + session token
+    let app = routes::router().with_state(test_state(db.clone()));
+    let email = format!("r590-create-{}@example.com", Uuid::new_v4().simple());
+    let token = sign_in(&app, &email).await;
 
     let name = format!("R590-Create-{}", Uuid::new_v4());
-    let (status, body) = call(
+    let (status, body) = call_with_auth(
         &app,
         "POST",
         "/api/companies",
@@ -155,6 +198,7 @@ async fn r590_companies_create_via_service_returns_201() {
             "name": name,
             "description": "test create via service",
         }),
+        &token,
     )
     .await;
     assert_eq!(status, 201, "create: {body}");
@@ -176,13 +220,17 @@ async fn r590_companies_create_via_service_returns_201() {
 #[tokio::test(flavor = "current_thread")]
 async fn r590_companies_create_rejects_empty_name() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
-    let app = routes::companies::router().with_state(test_state(db));
+    // POST /api/companies requires auth — use full router + session token
+    let app = routes::router().with_state(test_state(db));
+    let email = format!("r590-empty-{}@example.com", Uuid::new_v4().simple());
+    let token = sign_in(&app, &email).await;
 
-    let (status, body) = call(
+    let (status, body) = call_with_auth(
         &app,
         "POST",
         "/api/companies",
         json!({ "name": "   ", "description": null }),
+        &token,
     )
     .await;
     assert_eq!(status, 400, "empty name should reject: {body}");

@@ -54,7 +54,7 @@ async fn insert_company(db: &Db, budget: i32) -> Uuid {
     )
     .bind(id)
     .bind(format!("dash-{id}"))
-    .bind(format!("DS{}", &id.simple().to_string()[..4]))
+    .bind(id.simple().to_string())
     .bind(budget)
     .execute(db.pool())
     .await

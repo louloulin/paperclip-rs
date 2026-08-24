@@ -72,7 +72,7 @@ async fn call(
     };
     let resp = app.clone().oneshot(req).await.expect("oneshot");
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+    let bytes = axum::body::to_bytes(resp.into_body(), 10_000_000)
         .await
         .unwrap();
     let body: Value = if bytes.is_empty() {
@@ -90,7 +90,7 @@ async fn insert_company(db: &Db) -> Uuid {
     )
     .bind(id)
     .bind(format!("r515-{id}"))
-    .bind(format!("R5{}", &id.simple().to_string()[..4]))
+    .bind(id.simple().to_string())
     .execute(db.pool())
     .await
     .expect("insert company");

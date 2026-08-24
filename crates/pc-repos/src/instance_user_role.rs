@@ -50,6 +50,19 @@ pub async fn promote(db: &Db, user_id: &str) -> RepoResult<Uuid> {
     Ok(row.0)
 }
 
+/// R800: promote 返回完整行（含 created_at），用于 TypeScript 兼容响应。
+pub async fn promote_returning_row(db: &Db, user_id: &str) -> RepoResult<InstanceUserRoleRow> {
+    sqlx::query_as::<_, InstanceUserRoleRow>(
+        "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin') \
+         ON CONFLICT (user_id, role) DO UPDATE SET updated_at = now() \
+         RETURNING id, user_id, role, created_at, updated_at",
+    )
+    .bind(user_id)
+    .fetch_one(db.pool())
+    .await
+    .map_err(RepoError::from)
+}
+
 /// Round 151: 撤销 instance_admin 角色（硬删除）。返回受影响行数。
 pub async fn demote(db: &Db, user_id: &str) -> RepoResult<u64> {
     let r = sqlx::query(
@@ -59,6 +72,20 @@ pub async fn demote(db: &Db, user_id: &str) -> RepoResult<u64> {
     .execute(db.pool())
     .await?;
     Ok(r.rows_affected())
+}
+
+/// R800: demote 返回被删除的行（含 createdAt），用于 TypeScript 兼容响应。
+/// 如果该用户没有 instance_admin 角色，返回 None。
+pub async fn demote_returning_row(db: &Db, user_id: &str) -> RepoResult<Option<InstanceUserRoleRow>> {
+    sqlx::query_as::<_, InstanceUserRoleRow>(
+        "DELETE FROM instance_user_roles \
+         WHERE user_id = $1 AND role = 'instance_admin' \
+         RETURNING id, user_id, role, created_at, updated_at",
+    )
+    .bind(user_id)
+    .fetch_optional(db.pool())
+    .await
+    .map_err(RepoError::from)
 }
 
 /// Repository handle — wrap `Db` so callers can use the OOP-style API.
@@ -83,8 +110,16 @@ impl<'a> InstanceUserRoleRepo<'a> {
         promote(self.db, user_id).await
     }
 
+    pub async fn promote_returning_row(&self, user_id: &str) -> RepoResult<InstanceUserRoleRow> {
+        promote_returning_row(self.db, user_id).await
+    }
+
     pub async fn demote(&self, user_id: &str) -> RepoResult<u64> {
         demote(self.db, user_id).await
+    }
+
+    pub async fn demote_returning_row(&self, user_id: &str) -> RepoResult<Option<InstanceUserRoleRow>> {
+        demote_returning_row(self.db, user_id).await
     }
     /// 检查某 user 是否为 instance_admin。
     pub async fn is_admin(&self, user_id: &str) -> RepoResult<bool> {

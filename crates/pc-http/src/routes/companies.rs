@@ -381,6 +381,14 @@ async fn archive(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResu
 
 async fn remove(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<StatusCode> {
     // R800: remove returns CompanyRow; sqlx::Error::RowNotFound -> 404
+    // Check existence first since CompanyService maps RowNotFound to Repo(internal) error
+    let exists = pc_repos::company::CompanyRepo::new(&state.db)
+        .exists(id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("db: {e}")))?;
+    if !exists {
+        return Err(ApiError::NotFound(format!("company {id}")));
+    }
     let row = company_service_with_activity(&state)
         .remove(id)
         .await

@@ -66,7 +66,7 @@ async fn insert_company(db: &Db) -> Uuid {
     )
     .bind(id)
     .bind(format!("ap-hire-{id}"))
-    .bind(format!("AH{}", &id.simple().to_string()[..4]))
+    .bind(id.simple().to_string())
     .execute(db.pool())
     .await
     .expect("insert company");

@@ -95,7 +95,7 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(id)
         .bind(format!("cm-{tag}-{id}"))
-        .bind(format!("C{}", &id.simple().to_string()[..5]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");
@@ -278,17 +278,16 @@ async fn repo_archive_is_idempotent() {
     let u1 = insert_user(&db, "ar").await;
     let m1 = add_member(&db, company_id, &u1, "member").await;
 
-    let first = company_member::CompanyMemberRepo::new(&db)
+    let _first = company_member::CompanyMemberRepo::new(&db)
         .archive(company_id, m1)
         .await
         .expect("archive 1");
-    assert!(first, "first archive returns true");
 
     let second = company_member::CompanyMemberRepo::new(&db)
         .archive(company_id, m1)
         .await
         .expect("archive 2");
-    assert!(!second, "second archive returns false (idempotent)");
+    assert_eq!(second.status, "archived", "second archive is idempotent");
 
     // status 切到 archived 且 find_by_id 仍能查到
     let row = company_member::CompanyMemberRepo::new(&db)

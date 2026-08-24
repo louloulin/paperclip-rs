@@ -48,13 +48,14 @@ fn test_state(db: Db) -> AppState {
 
 async fn insert_company(db: &Db) -> Uuid {
     let id = Uuid::new_v4();
+    let prefix: [u8; 2] = rand::random();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
     )
     .bind(id)
     .bind(format!("obs-{id}"))
-    .bind(format!("OB{}", &id.simple().to_string()[..4]))
+    .bind(format!("OB{:02X}{:02X}", prefix[0], prefix[1]))
     .execute(db.pool())
     .await
     .expect("insert company");

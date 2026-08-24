@@ -75,7 +75,7 @@ async fn insert_company(pool: &sqlx::PgPool) -> Uuid {
     )
     .bind(id)
     .bind(format!("R593-Contract-{id}"))
-    .bind(format!("PC{}", &id.simple().to_string()[..5]))
+    .bind(id.simple().to_string())
     .execute(pool)
     .await
     .expect("insert company");

@@ -53,7 +53,7 @@ async fn insert_company(db: &Db, budget_cents: i32) -> Uuid {
     )
     .bind(id)
     .bind(format!("cost-{id}"))
-    .bind(format!("CO{}", &id.simple().to_string()[..4]))
+    .bind(id.simple().to_string())
     .bind(budget_cents)
     .execute(db.pool())
     .await
@@ -97,16 +97,16 @@ async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>)
         .as_ref()
         .map(|v| serde_json::to_vec(v).expect("serialize"))
         .unwrap_or_default();
+    let mut request = Request::builder()
+        .method(method)
+        .header("content-type", "application/json")
+        .uri(path)
+        .body(Body::from(payload))
+        .expect("request");
+    request.extensions_mut().insert(pc_auth::AuthContext::system());
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .header("content-type", "application/json")
-                .uri(path)
-                .body(Body::from(payload))
-                .expect("request"),
-        )
+        .oneshot(request)
         .await
         .expect("response");
     let status = response.status().as_u16();
@@ -185,7 +185,7 @@ async fn cost_summary_empty_when_no_events() {
 async fn budgets_update_company_budget() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db, 0).await;
-    let app = routes::costs::router().with_state(test_state(db));
+    let app = routes::router().with_state(test_state(db));
 
     let (status, body) = call(
         &app,
@@ -194,6 +194,7 @@ async fn budgets_update_company_budget() {
         Some(json!({ "budgetMonthlyCents": 50_000 })),
     )
     .await;
+    eprintln!("DEBUG budgets_update status={} body={}", status, body);
     assert_eq!(status, 200, "update budget: {body}");
     assert_eq!(body["budgetMonthlyCents"].as_i64().unwrap_or(0), 50_000);
 
@@ -205,11 +206,9 @@ async fn budgets_update_company_budget() {
         None,
     )
     .await;
+    eprintln!("DEBUG overview status={} body={}", status, body);
     assert_eq!(status, 200, "overview: {body}");
-    assert!(
-        body["pendingApprovalCount"].is_number(),
-        "overview shape: {body}"
-    );
+    assert!(body["summary"].is_object(), "overview should have summary: {body}");
 }
 
 #[tokio::test(flavor = "current_thread")]

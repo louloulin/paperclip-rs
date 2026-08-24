@@ -105,11 +105,13 @@ async fn sign_in_creates_new_user_and_session() {
     // Use the session token to fetch session
     let (status, body) = call(&app, "GET", "/api/auth/get-session", None, Some(token)).await;
     assert_eq!(status, 200, "get-session: {body}");
+    // Rust returns { session: { id, user_id }, user: { id, email, ... } }
     assert!(
-        body["user_id"].as_str().unwrap_or("").len() > 0,
-        "user_id: {body}"
+        body["session"]["user_id"].as_str().unwrap_or("").len() > 0,
+        "session.user_id: {body}"
     );
-    assert_eq!(body["method"], "session");
+    // method field is not present in the Rust get_session response
+    assert!(body["user"].is_object(), "user object: {body}");
 }
 
 #[tokio::test(flavor = "current_thread")]

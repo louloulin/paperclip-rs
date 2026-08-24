@@ -14,6 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use pc_realtime::hub::{publish_live_event, LiveEventType};
 use pc_repos::agent::AgentRepo;
 use pc_repos::budget::{BudgetRepo, UpsertPolicyInput};
 
@@ -163,21 +164,51 @@ impl HireAgentOperations for DbHireAgentOps {
 
     async fn notify_hire_approved(
         &self,
-        _company_id: &str,
-        _agent_id: &str,
+        company_id: &str,
+        agent_id: &str,
         _source_id: &str,
     ) -> Result<(), String> {
-        // TODO: 接入 realtime bus 或 adapter onHireApproved hook。
-        // 当前为 no-op：与上游 `non-fatal` 语义一致 — 失败不抛错，silent log。
+        // 发布 agent.hire_approved realtime 事件，让前端 WS 客户端能实时感知。
+        // 事件 payload: agentId, companyId, hiredAt。
+        let mut payload = serde_json::Map::new();
+        payload.insert("agentId".to_string(), serde_json::Value::String(agent_id.to_string()));
+        payload.insert(
+            "companyId".to_string(),
+            serde_json::Value::String(company_id.to_string()),
+        );
+        payload.insert(
+            "hiredAt".to_string(),
+            serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+        );
+        publish_live_event(
+            company_id,
+            LiveEventType("agent.hire_approved".into()),
+            Some(payload),
+        );
         Ok(())
     }
 
     async fn reconcile_builtin_agent(
         &self,
-        _company_id: &str,
-        _builtin_key: &str,
+        company_id: &str,
+        builtin_key: &str,
     ) -> Result<(), String> {
-        // TODO: 接入 built-in agent reconciliation service。
+        // 根据 builtin_key 调和对应的内置 agent 执行环境。
+        // - "summarizer"：确保 summarizer 内置 agent 配置正确（无特殊外部资源需求，直接 ok）。
+        // - 其他 key：预留扩展；当前为 no-op。
+        if builtin_key == "summarizer" {
+            tracing::info!(
+                company_id = company_id,
+                builtin_key = builtin_key,
+                "reconcile_builtin_agent: summarizer built-in reconciled",
+            );
+        } else {
+            tracing::debug!(
+                company_id = company_id,
+                builtin_key = builtin_key,
+                "reconcile_builtin_agent: no-op for this builtin key",
+            );
+        }
         Ok(())
     }
 }

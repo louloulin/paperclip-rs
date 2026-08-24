@@ -59,17 +59,29 @@ fn test_state(db: Db) -> AppState {
 
 async fn insert_company(db: &Db) -> Uuid {
     let id = Uuid::new_v4();
+    let prefix = id.simple().to_string();
     sqlx::query(
         "INSERT INTO companies (id, name, status, issue_prefix, created_at, updated_at) \
          VALUES ($1, $2, 'active', $3, now(), now())",
     )
     .bind(id)
     .bind(format!("agent-r588-{id}"))
-    .bind(format!("A5{}", &id.simple().to_string()[..4]))
+    .bind(&prefix)
     .execute(db.pool())
     .await
     .expect("insert company");
     id
+}
+
+async fn cleanup_company(db: &Db, id: Uuid) {
+    let _ = sqlx::query("DELETE FROM agents WHERE company_id = $1")
+        .bind(id)
+        .execute(db.pool())
+        .await;
+    let _ = sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(id)
+        .execute(db.pool())
+        .await;
 }
 
 async fn insert_agent(db: &Db, company_id: Uuid, name: &str) -> Uuid {

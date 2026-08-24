@@ -14,6 +14,7 @@ pc-adapter-api = { path = "../pc-adapter-api" }
 chrono = { workspace = true }
 pc-core = { path = "../pc-core" }
 pc-errors = { path = "../pc-errors" }
+pc-realtime = { path = "../pc-realtime" }
 pc-repos = { path = "../pc-repos" }
 sqlx = { workspace = true }
 serde = { workspace = true }

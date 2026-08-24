@@ -800,82 +800,90 @@ async fn revoke_invite_by_token(
 
 /// `GET /api/admin/users` — instance admin user directory.  Mirrors Node
 /// `/admin/users`.  Limited to first 50 rows by `updated_at DESC`.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AdminUsersQuery {
+    #[serde(default)]
+    query: String,
+}
+
+/// `GET /api/admin/users` — instance admin user directory.
+/// Mirrors Node `GET /admin/users` with full parity:
+/// - Returns flat array (not {items, count})
+/// - Per-user: id, email, name, image, isInstanceAdmin, activeCompanyMembershipCount
 async fn list_admin_users(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<AdminUsersQuery>,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let rows = pc_repos::user_profile::UserProfileRepo::new(&state.db)
-        .list_recent(50)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(id, name, email, image, updated_at)| {
-            json!({
-                "id": id,
-                "name": name,
-                "email": email,
-                "image": image,
-                "updatedAt": updated_at,
+    let needle = q.query.trim().to_lowercase();
+
+    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> =
+        pc_repos::user_profile::UserProfileRepo::new(&state.db)
+            .list_recent(50)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // TypeScript: filters by name or email if needle is non-empty
+    let user_profiles: Vec<(String, Option<String>, Option<String>, Option<String>)> = if needle.is_empty() {
+        rows.into_iter().map(|(id, name, email, image, _)| (id, name, email, image)).collect()
+    } else {
+        rows.into_iter()
+            .filter(|(_, name, email, _, _)| {
+                let name_match = name.as_ref().map(|n| n.to_lowercase().contains(&needle)).unwrap_or(false);
+                let email_match = email.as_ref().map(|e| e.to_lowercase().contains(&needle)).unwrap_or(false);
+                name_match || email_match
             })
-        })
-        .collect();
-    let user_ids: Vec<String> = items
-        .iter()
-        .filter_map(|i| i.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
-        .collect();
+            .map(|(id, name, email, image, _)| (id, name, email, image))
+            .collect()
+    };
+
+    let user_ids: Vec<String> = user_profiles.iter().map(|(id, _, _, _)| id.clone()).collect();
+
     let admin_rows = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
         .list_user_ids_with_any_role(&user_ids)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let admin_set: std::collections::HashSet<String> = admin_rows.into_iter().collect();
-    let decorated: Vec<Value> = items
+
+    let membership_counts = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .count_active_memberships_for_users(&user_ids)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let result: Vec<Value> = user_profiles
         .into_iter()
-        .map(|mut v| {
-            let is_admin = v
-                .get("id")
-                .and_then(|x| x.as_str())
-                .map(|s| admin_set.contains(s))
-                .unwrap_or(false);
-            v["isInstanceAdmin"] = json!(is_admin);
-            v
+        .map(|(id, name, email, image)| {
+            let uid = &id;
+            let is_admin = admin_set.contains(uid);
+            let active_count = membership_counts.get(uid).copied().unwrap_or(0);
+            json!({
+                "id": id,
+                "email": email,
+                "name": name,
+                "image": image,
+                "isInstanceAdmin": is_admin,
+                "activeCompanyMembershipCount": active_count,
+            })
         })
         .collect();
-    Ok(Json(json!({
-        "items": decorated,
-        "count": decorated.len(),
-    })))
+
+    Ok(Json(Value::Array(result)))
 }
 
 /// `GET /api/admin/users/:user_id/company-access` — list the user's
 /// company access (memberships + invitations).
+/// Mirrors Node `GET /admin/users/:userId/company-access`.
+/// Returns { user: {id, email, name, image, isInstanceAdmin}, companyAccess: [...] }
 async fn get_user_company_access(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let memberships = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
-        .list_for_user_with_company(&user_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let items: Vec<Value> = memberships
-        .into_iter()
-        .map(|(id, name, role, status)| {
-            json!({
-                "companyId": id,
-                "companyName": name,
-                "role": role,
-                "status": status,
-            })
-        })
-        .collect();
-    Ok(Json(json!({
-        "userId": user_id,
-        "memberships": items,
-        "count": items.len(),
-    })))
+    let response = build_company_access_response(&state, &user_id).await?;
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -883,6 +891,85 @@ async fn get_user_company_access(
 struct PutUserCompanyAccessBody {
     #[serde(default)]
     company_ids: Vec<Uuid>,
+}
+
+/// Helper: build the `{ user: {...}, companyAccess: [...] }` response for
+/// the company-access endpoint.  Used by both GET and PUT.
+async fn build_company_access_response(
+    state: &AppState,
+    user_id: &str,
+) -> ApiResult<Value> {
+    // Fetch user profile directly (id, email, name, image) — matches TypeScript SELECT
+    #[derive(Debug, sqlx::FromRow)]
+    struct UserRow {
+        id: String,
+        email: Option<String>,
+        name: Option<String>,
+        image: Option<String>,
+    }
+    let user_row: Option<UserRow> = sqlx::query_as::<_, UserRow>(
+        r#"SELECT id, email, name, image FROM "user" WHERE id = $1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let is_admin = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
+        .is_admin(user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let user_json = user_row.map(|row| {
+        json!({
+            "id": row.id,
+            "email": row.email,
+            "name": row.name,
+            "image": row.image,
+            "isInstanceAdmin": is_admin,
+        })
+    });
+
+    let memberships = pc_repos::company_member::CompanyMemberRepo::new(&state.db)
+        .list_for_user_with_company(user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let company_ids: Vec<Uuid> = memberships.iter().map(|(id, _, _, _)| *id).collect();
+    let companies: std::collections::HashMap<Uuid, (String, Option<String>)> =
+        if company_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            let rows: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
+                "SELECT id, name, status FROM companies WHERE id = ANY($1)",
+            )
+            .bind(&company_ids)
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap_or_default();
+            rows.into_iter().map(|(id, name, status)| (id, (name, status))).collect()
+        };
+
+    let company_access: Vec<Value> = memberships
+        .into_iter()
+        .map(|(id, _, role, status)| {
+            let (name, company_status) =
+                companies.get(&id).cloned().unwrap_or((String::new(), None));
+            json!({
+                "principalType": "user",
+                "companyId": id,
+                "companyName": name,
+                "companyStatus": company_status,
+                "membershipRole": role,
+                "status": status,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "user": user_json,
+        "companyAccess": company_access,
+    }))
 }
 
 /// `PUT /api/admin/users/:user_id/company-access` — replace the user's full
@@ -902,11 +989,9 @@ async fn put_user_company_access(
         LiveEvent::new("user.company_access_updated", "user", Uuid::nil())
             .with_data(json!({"userId": user_id, "companyCount": body.company_ids.len()})),
     );
-    Ok(Json(json!({
-        "userId": user_id,
-        "companyIds": body.company_ids,
-        "count": body.company_ids.len(),
-    })))
+    // Return the same format as GET (matches TypeScript)
+    let response = build_company_access_response(&state, &user_id).await?;
+    Ok(Json(response))
 }
 
 /// `POST /api/admin/users/:user_id/promote-instance-admin` — grant instance
@@ -917,19 +1002,20 @@ async fn promote_instance_admin(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let row_id = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
-        .promote(&user_id)
+    // R800: Use promote_returning_row to get full row (matches TypeScript response)
+    let row = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
+        .promote_returning_row(&user_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.realtime.publish(
         LiveEvent::new("user.promoted_instance_admin", "user", Uuid::nil())
             .with_data(json!({"userId": user_id})),
     );
+    // TypeScript returns { userId, role, createdAt } from the row
     Ok(Json(json!({
-        "userId": user_id,
-        "roleAssignmentId": row_id,
-        "role": "instance_admin",
-        "promoted": true,
+        "userId": row.user_id,
+        "role": row.role,
+        "createdAt": row.created_at,
     })))
 }
 
@@ -941,11 +1027,12 @@ async fn demote_instance_admin(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Json<Value>> {
     let _ = crate::state::require_user_id(&state, &headers).await?;
-    let affected = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
-        .demote(&user_id)
+    // R800: Use demote_returning_row to get deleted row (matches TypeScript response)
+    let row_opt = pc_repos::instance_user_role::InstanceUserRoleRepo::new(&state.db)
+        .demote_returning_row(&user_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if affected == 0 {
+    if row_opt.is_none() {
         return Err(ApiError::NotFound(format!(
             "instance admin role for {user_id}"
         )));
@@ -954,9 +1041,12 @@ async fn demote_instance_admin(
         LiveEvent::new("user.demoted_instance_admin", "user", Uuid::nil())
             .with_data(json!({"userId": user_id})),
     );
+    let row = row_opt.unwrap();
+    // TypeScript returns the deleted row or null
     Ok(Json(json!({
-        "userId": user_id,
-        "demoted": true,
+        "userId": row.user_id,
+        "role": row.role,
+        "createdAt": row.created_at,
     })))
 }
 

@@ -80,7 +80,7 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1, $2, $3)")
         .bind(id)
         .bind(format!("inv-{tag}-{id}"))
-        .bind(format!("I{}", &id.simple().to_string()[..5]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");

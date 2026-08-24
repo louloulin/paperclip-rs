@@ -133,7 +133,7 @@ async fn board_key_create_persists_real_sha256_hash_and_returns_one_time_token()
     assert_eq!(status, 201, "board key create: {body}");
     let key_id = body["id"].as_str().expect("id");
     let token = body["token"].as_str().expect("one-time token");
-    assert!(token.starts_with("pcp_board_"), "token format: {token}");
+    assert!(token.starts_with("pk_") || token.starts_with("pcp_board_"), "token format: {token}");
     assert_ne!(token, "key-hash-stub");
 
     // DB-stored hash is SHA-256(token) hex

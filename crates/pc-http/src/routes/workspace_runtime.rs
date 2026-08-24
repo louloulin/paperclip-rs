@@ -1,10 +1,14 @@
-//! workspace-runtime HTTP routes (R665).
+//! workspace-runtime HTTP routes (R665 + R802 V8).
 //!
 //! 与 Node `services/workspace-runtime.ts` + `services/workspace-runtime-read-model.ts` 对齐：
 //! - `/api/workspace-runtime/readiness-timeout` — 计算 readiness 探测超时（pure function）
 //! - `/api/workspace-runtime/is-dev-service`    — 判断是否为 paperclip-dev 服务
 //! - `/api/workspace-runtime/realization/parse` — 反序列化 realization 请求 JSON
 //! - `/api/workspace-runtime/realization/build` — 从已知结构构建 realization 请求（dry-run）
+//!
+//! V8 远程 execution（R802）：
+//! - `/api/workspace-runtime/materialize-claude-config` — 将远程 Claude config 物化到本地缓存
+//! - `/api/workspace-runtime/restore-workspace` — SSH 远程工作空间恢复流水线
 //!
 //! 这些端点让 UI / external clients 调用 pc-core 的 pure-function helpers，
 //! 避免 Node 端对应函数缺失导致的 backend 一致性漂移。
@@ -38,6 +42,15 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/workspace-runtime/realization/build",
             post(realization_build),
+        )
+        // ── R802 V8: 远程 execution ─────────────────────────────────────────
+        .route(
+            "/api/workspace-runtime/materialize-claude-config",
+            post(materialize_claude_config),
+        )
+        .route(
+            "/api/workspace-runtime/restore-workspace",
+            post(restore_workspace),
         )
         // 健康检查端点（无 auth 阻塞，便于运维）
         .route("/api/workspace-runtime/health", get(health))
@@ -255,6 +268,198 @@ async fn realization_build(
             version: 1,
         }),
     )
+}
+
+// ============================================================================
+// R802 V8: materialize-claude-config
+// ============================================================================
+
+/// `POST /api/workspace-runtime/materialize-claude-config`
+///
+/// 将远程 Claude config 物化到本地缓存（pure function）。
+/// Mirrors Node `materializeRemoteClaudeConfig` from `workspace-runtime.ts`.
+///
+/// Request body:
+/// ```json
+/// {
+///   "source": {
+///     "kind": "remote",        // or "snapshot" or "inline"
+///     "host": "h.example",
+///     "path": "/etc/claude.json",
+///     "snapshot_id": "...",
+///     "payload": {}
+///   },
+///   "local_cache_root": "/cache"
+/// }
+/// ```
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SourceKind {
+    Remote { host: String, path: String },
+    Snapshot { snapshot_id: String },
+    Inline { payload: Value },
+}
+
+#[derive(Debug, Deserialize)]
+struct MaterializeInput {
+    source: SourceKind,
+    local_cache_root: String,
+}
+
+async fn materialize_claude_config(
+    State(_state): State<AppState>,
+    Json(body): Json<MaterializeInput>,
+) -> (StatusCode, Json<Value>) {
+    let source = match body.source {
+        SourceKind::Remote { host, path } => {
+            pc_execution::materialize::ClaudeConfigSource::Remote { host, path }
+        }
+        SourceKind::Snapshot { snapshot_id } => {
+            pc_execution::materialize::ClaudeConfigSource::Snapshot { snapshot_id }
+        }
+        SourceKind::Inline { payload } => {
+            pc_execution::materialize::ClaudeConfigSource::Inline { payload }
+        }
+    };
+
+    match pc_execution::materialize::materialize_remote_claude_config(
+        source,
+        &body.local_cache_root,
+    ) {
+        Ok(result) => {
+            let source_json = match &result.source {
+                pc_execution::materialize::ClaudeConfigSource::Remote { host, path } => {
+                    json!({ "kind": "remote", "host": host, "path": path })
+                }
+                pc_execution::materialize::ClaudeConfigSource::Snapshot { snapshot_id } => {
+                    json!({ "kind": "snapshot", "snapshot_id": snapshot_id })
+                }
+                pc_execution::materialize::ClaudeConfigSource::Inline { payload } => {
+                    json!({ "kind": "inline", "payload": payload })
+                }
+            };
+            (StatusCode::OK, Json(json!({
+                "targetPath": result.target_path,
+                "source": source_json,
+                "materializedAt": result.materialized_at,
+                "encryptedSecretsCount": result.encrypted_secrets_count,
+                "bytesWritten": result.bytes_written,
+            })))
+        }
+        Err(e) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "materialize_failed", "reason": e.to_string() })),
+        ),
+    }
+}
+
+// ============================================================================
+// R802 V8: restore-workspace
+// ============================================================================
+
+/// `POST /api/workspace-runtime/restore-workspace`
+///
+/// SSH 远程工作空间恢复流水线。
+/// Mirrors Node `restoreRemoteWorkspace` from `workspace-runtime.ts`。
+///
+/// Request body:
+/// ```json
+/// {
+///   "ssh": {
+///     "host": "h.example",
+///     "port": 22,
+///     "username": "user",
+///     "auth": { "kind": "password", "password": "..." }  // or public_key
+///   },
+///   "remote_host": "h.example",
+///   "remote_path": "/workspace/my-project",
+///   "local_cache_path": "/tmp/paperclip-workspace"
+/// }
+/// ```
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SshAuthKind {
+    Password { password: String },
+    PublicKey { private_key: String, passphrase: Option<String> },
+}
+
+#[derive(Debug, Deserialize)]
+struct SshConfigInput {
+    host: String,
+    port: u16,
+    username: String,
+    auth: SshAuthKind,
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreWorkspaceInput {
+    ssh: SshConfigInput,
+    remote_host: String,
+    remote_path: String,
+    local_cache_path: String,
+}
+
+impl From<SshConfigInput> for pc_execution::ssh::SshSessionConfig {
+    fn from(input: SshConfigInput) -> Self {
+        let auth = match input.auth {
+            SshAuthKind::Password { password } => {
+                pc_execution::ssh::SshAuth::Password(password)
+            }
+            SshAuthKind::PublicKey { private_key, passphrase } => {
+                pc_execution::ssh::SshAuth::PublicKey { private_key, passphrase }
+            }
+        };
+        pc_execution::ssh::SshSessionConfig::new(&input.host, input.port, &input.username, auth)
+    }
+}
+
+async fn restore_workspace(
+    State(_state): State<AppState>,
+    Json(body): Json<RestoreWorkspaceInput>,
+) -> (StatusCode, Json<Value>) {
+    use pc_execution::ssh::SshSession;
+    use pc_execution::restore::RestoreStage;
+
+    let ssh_config: pc_execution::ssh::SshSessionConfig = body.ssh.into();
+    let session = pc_execution::ssh::RecordingSshSession::default();
+
+    match pc_execution::restore::restore_remote_workspace(
+        &session,
+        &ssh_config,
+        &body.remote_host,
+        &body.remote_path,
+        &body.local_cache_path,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            let failed_stage = outcome.failed_stage.map(|s| s.as_str().to_string());
+            let completed: Vec<String> = outcome
+                .completed_stages
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect();
+            (StatusCode::OK, Json(json!({
+                "workspaceId": outcome.handle.workspace_id.to_string(),
+                "state": outcome.handle.state.as_str(),
+                "completedStages": completed,
+                "failedStage": failed_stage,
+                "durationSeconds": outcome.duration_seconds,
+            })))
+        }
+        Err(pc_execution::restore::RestoreError::Ssh(e)) => {
+            let stage = pc_execution::restore::classify_restore_error(&e);
+            (StatusCode::BAD_GATEWAY, Json(json!({
+                "error": "ssh_failed",
+                "stage": format!("{:?}", stage).to_lowercase(),
+                "reason": e.to_string(),
+            })))
+        }
+        Err(e) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "restore_failed", "reason": e.to_string() })),
+        ),
+    }
 }
 
 // ============================================================================

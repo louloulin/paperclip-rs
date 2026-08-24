@@ -184,6 +184,7 @@ impl<'a> CompanyMemberRepo<'a> {
              FROM company_memberships cm \
              INNER JOIN \"user\" u ON u.id = cm.principal_id \
              WHERE cm.company_id = $1 AND cm.principal_type = 'user' \
+               AND cm.status = 'active' \
              ORDER BY u.name NULLS LAST, u.email",
         )
         .bind(company_id)
@@ -393,6 +394,28 @@ impl<'a> CompanyMemberRepo<'a> {
         .fetch_all(self.db.pool())
         .await
         .map_err(RepoError::from)
+    }
+
+    /// R800: 批量统计各用户的 active company 成员数量（用于 admin user list）。
+    /// 返回 Map: user_id -> active membership count
+    pub async fn count_active_memberships_for_users(
+        &self,
+        user_ids: &[String],
+    ) -> RepoResult<std::collections::HashMap<String, i64>> {
+        if user_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT principal_id, COUNT(*) as cnt \
+             FROM company_memberships \
+             WHERE principal_type = 'user' AND status = 'active' AND principal_id = ANY($1::text[]) \
+             GROUP BY principal_id",
+        )
+        .bind(user_ids)
+        .fetch_all(self.db.pool())
+        .await
+        .unwrap_or_default();
+        Ok(rows.into_iter().collect())
     }
 }
 

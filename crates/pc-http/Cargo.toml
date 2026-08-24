@@ -42,6 +42,7 @@ pc-plugin-ui-static = { path = "../pc-plugin-ui-static" }
 pc-app-definitions = { path = "../pc-app-definitions" }
 pc-api-routes = { path = "../pc-api-routes" }
 pc-execution-workspace-guards = { path = "../pc-execution-workspace-guards" }
+pc-execution = { path = "../pc-execution" }
 dirs = "5"
 pc-activity = { path = "../pc-activity" }
 

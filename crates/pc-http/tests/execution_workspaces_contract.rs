@@ -75,11 +75,9 @@ async fn call(
     if let Some(t) = token {
         builder = builder.header("authorization", format!("Bearer {t}"));
     }
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::from(payload)).expect("request"))
-        .await
-        .expect("response");
+    let mut request = builder.body(Body::from(payload)).expect("request");
+    request.extensions_mut().insert(pc_auth::AuthContext::system());
+    let response = app.clone().oneshot(request).await.expect("response");
     let status = response.status().as_u16();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -94,7 +92,7 @@ async fn call(
 
 async fn seed_company(db: &Db) -> Uuid {
     // create a company with a unique issue_prefix
-    let prefix = format!("EW{}", &Uuid::new_v4().simple().to_string()[..4]);
+    let prefix = Uuid::new_v4().simple().to_string();
     sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO companies (name, issue_prefix) VALUES ($1, $2) RETURNING id",
     )

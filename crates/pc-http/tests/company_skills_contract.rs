@@ -82,10 +82,17 @@ async fn call(
 }
 
 async fn seed_company(db: &Db) -> Uuid {
-    let prefix = format!("SK{}", &Uuid::new_v4().simple().to_string()[..4]);
-    sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO companies (name, issue_prefix) VALUES ($1, $2) RETURNING id",
+    let id = Uuid::new_v4();
+    let prefix = id.simple().to_string();
+    sqlx::query_scalar(
+        "INSERT INTO companies (id, name, status, issue_prefix, budget_monthly_cents, \
+         spent_monthly_cents, created_at, updated_at, issue_counter, \
+         require_board_approval_for_new_agents, feedback_data_sharing_enabled, \
+         attachment_max_bytes) \
+         VALUES ($1, $2, 'active', $3, 0, 0, now(), now(), 0, false, false, 100000000) \
+         RETURNING id",
     )
+    .bind(id)
     .bind(format!("skills-test-{}", Uuid::new_v4().simple()))
     .bind(&prefix)
     .fetch_one(db.pool())

@@ -53,16 +53,16 @@ async fn call(
     body: serde_json::Value,
 ) -> (u16, serde_json::Value) {
     let _guard = TEST_LOCK.lock().await;
+    let mut request = Request::builder()
+        .method(method)
+        .header("content-type", "application/json")
+        .uri(path)
+        .body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
+        .unwrap();
+    request.extensions_mut().insert(pc_auth::AuthContext::system());
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .header("content-type", "application/json")
-                .uri(path)
-                .body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
-                .unwrap(),
-        )
+        .oneshot(request)
         .await
         .expect("request");
     let status = response.status().as_u16();
@@ -77,7 +77,7 @@ async fn insert_company(db: &Db, tag: &str) -> Uuid {
     sqlx::query("INSERT INTO companies (id, name, issue_prefix) VALUES ($1,$2,$3)")
         .bind(id)
         .bind(format!("drift-{tag}-{id}"))
-        .bind(format!("D{}", &id.simple().to_string()[..5]))
+        .bind(id.simple().to_string())
         .execute(db.pool())
         .await
         .expect("insert company");
@@ -116,14 +116,27 @@ async fn insert_provider_config(db: &Db, company_id: Uuid, label: &str) -> Uuid 
 }
 
 async fn insert_connection(db: &Db, company_id: Uuid, kind: &str) -> Uuid {
+    let app_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO tool_applications (id, company_id, name, type, status, metadata) \
+         VALUES ($1, $2, 'test-app', 'mcp', 'active', '{}'::jsonb)",
+    )
+    .bind(app_id)
+    .bind(company_id)
+    .execute(db.pool())
+    .await
+    .expect("insert tool_application");
+
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO tool_connections (id, company_id, kind, display_name, status) \
-         VALUES ($1, $2, $3, 'test', 'ready')",
+        "INSERT INTO tool_connections (id, company_id, application_id, name, transport, status, enabled, config, credential_refs, health_status, connection_kind, uid, ownership, auth_kind) \
+         VALUES ($1, $2, $3, 'test-conn', 'local_stdio', 'ready', false, '{}'::jsonb, '[]'::jsonb, 'unchecked', $4, $5, 'customer', 'none')",
     )
     .bind(id)
     .bind(company_id)
+    .bind(app_id)
     .bind(kind)
+    .bind(format!("conn-{}", &id.simple().to_string()[..8]))
     .execute(db.pool())
     .await
     .expect("insert connection");
@@ -162,7 +175,7 @@ async fn http_patch_provider_config_uses_real_table_and_display_name_column() {
     let (status, _body) = call(
         &app,
         "PATCH",
-        &format!("/api/secrets/provider-configs/{pid}"),
+        &format!("/api/secret-provider-configs/{pid}"),
         serde_json::json!({"label": "renamed-label", "status": "ready"}),
     )
     .await;
