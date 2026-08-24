@@ -104,6 +104,18 @@ async fn insert_skill(db: &Db, company_id: Uuid, key: &str) -> Uuid {
     id
 }
 
+async fn insert_agent(db: &Db, company_id: Uuid, name: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents (id, company_id, name) VALUES ($1, $2, $3)")
+        .bind(id)
+        .bind(company_id)
+        .bind(name)
+        .execute(db.pool())
+        .await
+        .expect("insert agent");
+    id
+}
+
 async fn current_star_count(db: &Db, company_id: Uuid, skill_id: Uuid) -> i32 {
     let row: (i32,) =
         sqlx::query_as("SELECT star_count FROM company_skills WHERE company_id=$1 AND id=$2")
@@ -149,13 +161,12 @@ async fn repo_star_twice_by_same_user_is_idempotent() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "agent_id FK constraint — test generates random UUID without inserting agent row first"]
 async fn repo_star_by_agent_and_user_count_separately() {
     // agent_id 和 user_id 走不同唯一索引，应分别计数
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let cid = insert_company(&db, "star-mixed").await;
     let sid = insert_skill(&db, cid, "mixed").await;
-    let agent_id = Uuid::new_v4();
+    let agent_id = insert_agent(&db, cid, "test-agent").await;
     let repo = pc_repos::skill::SkillRepo::new(&db);
     repo.star(cid, sid, Some(agent_id), None).await.unwrap();
     repo.star(cid, sid, None, Some("user-X")).await.unwrap();
