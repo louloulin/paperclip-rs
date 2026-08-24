@@ -177,7 +177,7 @@ async fn service_resolve_returns_metadata() {
     });
     let svc = DefaultWorkspaceFileResourceService::new(fake);
     let q = FileResolveQuery {
-        path: "src/main.rs".into(),
+        path: Some("src/main.rs".into()),
         workspace: Some("execution".into()),
         project_id: None,
         workspace_id: None,
@@ -197,7 +197,7 @@ async fn service_resolve_404_for_missing() {
     });
     let svc = DefaultWorkspaceFileResourceService::new(fake);
     let q = FileResolveQuery {
-        path: "nope.txt".into(),
+        path: Some("nope.txt".into()),
         workspace: None,
         project_id: None,
         workspace_id: None,
@@ -215,7 +215,7 @@ async fn service_resolve_rejects_empty_path() {
     });
     let svc = DefaultWorkspaceFileResourceService::new(fake);
     let q = FileResolveQuery {
-        path: "   ".into(),
+        path: Some("   ".into()),
         workspace: None,
         project_id: None,
         workspace_id: None,
@@ -238,7 +238,7 @@ async fn service_read_content_returns_text() {
     });
     let svc = DefaultWorkspaceFileResourceService::new(fake);
     let q = FileResolveQuery {
-        path: "hello.txt".into(),
+        path: Some("hello.txt".into()),
         workspace: None,
         project_id: None,
         workspace_id: None,
@@ -260,7 +260,7 @@ async fn service_read_content_truncates_at_max_bytes() {
     });
     let svc = DefaultWorkspaceFileResourceService::new(fake);
     let q = FileResolveQuery {
-        path: "big.txt".into(),
+        path: Some("big.txt".into()),
         workspace: None,
         project_id: None,
         workspace_id: None,
@@ -279,7 +279,7 @@ async fn service_prepare_download_returns_real_path() {
     });
     let svc = DefaultWorkspaceFileResourceService::new(fake);
     let q = FileResolveQuery {
-        path: "src/main.rs".into(),
+        path: Some("src/main.rs".into()),
         workspace: None,
         project_id: None,
         workspace_id: None,

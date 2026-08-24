@@ -104,9 +104,10 @@ where
         issue_id: Uuid,
         query: &FileResolveQuery,
     ) -> Result<ResolvedWorkspaceResource, FileResourceError> {
-        if query.path.trim().is_empty() {
-            return Err(FileResourceError::Invalid("path is required".into()));
-        }
+        let path_str = match query.path.as_deref() {
+            Some(p) if !p.trim().is_empty() => p.to_string(),
+            _ => return Err(FileResourceError::Invalid("path is required".into())),
+        };
         let workspace = query.workspace.clone().unwrap_or_else(|| "auto".into());
         // Look up real file metadata
         let files = self
@@ -116,8 +117,8 @@ where
             .map_err(|e| FileResourceError::Io(e.to_string()))?;
         let match_ = files
             .into_iter()
-            .find(|(p, _, _)| p == &query.path)
-            .ok_or_else(|| FileResourceError::NotFound(format!("{} not found", query.path)))?;
+            .find(|(p, _, _)| p == &path_str)
+            .ok_or_else(|| FileResourceError::NotFound(format!("{path_str} not found")))?;
         let (path, mime, size) = match_;
         Ok(ResolvedWorkspaceResource {
             path: path.clone(),
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(resp.total, 2);
 
         let rq = FileResolveQuery {
-            path: "src/main.rs".into(),
+            path: Some("src/main.rs".into()),
             workspace: Some("execution".into()),
             project_id: None,
             workspace_id: None,
@@ -321,7 +322,7 @@ mod tests {
         }
         let svc = DefaultWorkspaceFileResourceService::new(Arc::new(FakeDbLong));
         let q = FileResolveQuery {
-            path: "big.txt".into(),
+            path: Some("big.txt".into()),
             workspace: None,
             project_id: None,
             workspace_id: None,

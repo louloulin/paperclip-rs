@@ -176,6 +176,7 @@ pub struct FileListQuery {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub path: String,
     pub mime_type: Option<String>,
@@ -185,6 +186,7 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileListResponse {
     pub files: Vec<FileEntry>,
     pub issue_id: Uuid,
@@ -195,13 +197,14 @@ pub struct FileListResponse {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileResolveQuery {
-    pub path: String,
+    pub path: Option<String>,
     pub workspace: Option<String>,
     pub project_id: Option<Uuid>,
     pub workspace_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolvedWorkspaceResource {
     pub path: String,
     pub workspace: String,

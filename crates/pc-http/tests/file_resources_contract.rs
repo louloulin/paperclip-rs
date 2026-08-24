@@ -13,7 +13,7 @@ use pc_http::{
 };
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::Mutex as AsyncMutex;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -192,7 +192,6 @@ async fn file_resources_requires_authentication() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "require_user_id fails with session token in Bearer header — pre-existing auth gap"]
 async fn file_resources_list_returns_artifact_when_project_exists() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
@@ -218,7 +217,6 @@ async fn file_resources_list_returns_artifact_when_project_exists() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "require_user_id fails with session token in Bearer header — pre-existing auth gap"]
 async fn file_resources_resolve_returns_unresolved_path() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
@@ -226,6 +224,7 @@ async fn file_resources_resolve_returns_unresolved_path() {
     let token = insert_user_with_session(&db).await;
     let app = routes::file_resources::router().with_state(test_state(db));
 
+    // No `path` query param -> 400 BadRequest ("path is required").
     let (status, body) = call(
         &app,
         "GET",
@@ -233,9 +232,17 @@ async fn file_resources_resolve_returns_unresolved_path() {
         Some(&token),
     )
     .await;
-    assert_eq!(status, 200, "resolve: {body}");
-    assert!(body["resolved"].is_array(), "resolved array: {body}");
-    // Should also include 'unresolved-path' since the issue exists
-    let unresolved = body["unresolved"].as_array().expect("unresolved array");
-    assert!(unresolved.iter().any(|s| s == "unresolved-path"));
+    assert_eq!(status, 400, "no-path resolve: {body}");
+
+    // Path that does not exist in project files -> 404 NotFound
+    // ("<path> not found"), confirming the issue exists but the file
+    // does not resolve — the contract for "unresolved-path".
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/issues/{issue_id}/file-resources/resolve?path=unresolved-path"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, 404, "unresolved-path resolve: {body}");
 }
