@@ -36,7 +36,7 @@ impl ApprovalType {
     }
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "agent_action" => Some(Self::AgentAction),
+            "hire_agent" | "agent_action" => Some(Self::AgentAction),
             "budget_change" => Some(Self::BudgetChange),
             "secret_use" => Some(Self::SecretUse),
             "routine_update" => Some(Self::RoutineUpdate),

@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use pc_realtime::LiveEvent;
-use pc_repos::approval::ApprovalRepo;
+use pc_repos::approval::{ApprovalRepo, ApprovalType, NewApproval};
 use pc_repos::issue_approvals::IssueApprovalRepo;
 
 use pc_approvals::{
@@ -88,6 +88,10 @@ struct CreateBody {
     approval_type: String,
     #[serde(default)]
     payload: serde_json::Value,
+    #[serde(default)]
+    requested_by_agent_id: Option<Uuid>,
+    #[serde(default)]
+    requested_by_user_id: Option<String>,
 }
 
 async fn create(
@@ -116,9 +120,15 @@ async fn create(
     } else {
         body.payload
     };
-    let row = ApprovalRepo::new(&state.db)
-        .create_three_args(body.company_id, &body.approval_type, payload)
-        .await?;
+    let new_approval = NewApproval {
+        company_id: body.company_id,
+        approval_type: ApprovalType::parse(&body.approval_type).unwrap_or(ApprovalType::Custom),
+        requested_by_agent_id: body.requested_by_agent_id.or_else(|| actor.actor.agent_id()),
+        requested_by_user_id: body.requested_by_user_id.clone()
+            .or_else(|| actor.actor.user_id().map(String::from)),
+        payload,
+    };
+    let row = ApprovalRepo::new(&state.db).create(&new_approval).await?;
     state.realtime.publish(
         LiveEvent::new("approval.created", "approval", row.id).with_company(row.company_id),
     );

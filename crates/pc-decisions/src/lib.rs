@@ -58,7 +58,7 @@ pub enum DecisionServiceError {
     NotFound(String),
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    #[error("signature verification failed: {0}")]
+    #[error("Decision signature verification failed: {0}")]
     SignatureInvalid(String),
     #[error("forbidden: {0}")]
     Forbidden(String),
@@ -266,6 +266,8 @@ impl<'a> DecisionService<'a> {
                 spec.options.clone(),
                 Some(expires_at),
                 self.signing,
+                Some(spec.continuation_policy.as_str()),
+                spec.rule_key.as_deref(),
             )
             .await?;
         for hook in &self.hooks {

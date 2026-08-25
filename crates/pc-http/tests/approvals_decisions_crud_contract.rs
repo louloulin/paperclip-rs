@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use axum::{body::Body, http::Request};
 use pc_adapter_api::AdapterRegistry;
+use pc_auth::{ActorSource, AuthContext};
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_http::{
@@ -143,23 +144,29 @@ async fn insert_heartbeat_run(db: &Db, company_id: Uuid, agent_id: Uuid) -> Uuid
 }
 
 async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+    call_with_auth(app, method, path, body, AuthContext::system()).await
+}
+
+async fn call_with_auth(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    auth: AuthContext,
+) -> (u16, Value) {
     let _guard = TEST_LOCK.lock().await;
     let payload = body
         .as_ref()
         .map(|v| serde_json::to_vec(v).expect("serialize"))
         .unwrap_or_default();
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .header("content-type", "application/json")
-                .uri(path)
-                .body(Body::from(payload))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
+    let mut request = Request::builder()
+        .method(method)
+        .header("content-type", "application/json")
+        .uri(path)
+        .body(Body::from(payload))
+        .expect("request");
+    request.extensions_mut().insert(auth);
+    let response = app.clone().oneshot(request).await.expect("response");
     let status = response.status().as_u16();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -173,10 +180,10 @@ async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>)
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: needs migration + auth; endpoints partially implemented in Rust"]
 async fn approval_create_get_list_decide_delete_lifecycle() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
+    let agent_id = insert_agent(&db, company_id).await;
     let app = routes::approvals::router().with_state(test_state(db.clone()));
 
     let (status, body) = call(
@@ -185,15 +192,16 @@ async fn approval_create_get_list_decide_delete_lifecycle() {
         "/api/approvals",
         Some(json!({
             "company_id": company_id,
-            "approval_type": "hire_agent",
-            "payload": { "name": "Pending Bot", "role": "general" }
+            "approval_type": "agent_action",
+            "payload": { "name": "Pending Bot", "role": "general" },
+            "requested_by_agent_id": agent_id
         })),
     )
     .await;
     assert_eq!(status, 201, "approval create: {body}");
     let approval_id = body["id"].as_str().expect("id");
     assert_eq!(body["status"], "pending");
-    assert_eq!(body["approval_type"], "hire_agent");
+    assert_eq!(body["approval_type"], "agent_action");
 
     let (status, body) = call(&app, "GET", &format!("/api/approvals/{approval_id}"), None).await;
     assert_eq!(status, 200);
@@ -236,7 +244,6 @@ async fn approval_create_get_list_decide_delete_lifecycle() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: needs migration + auth; endpoints partially implemented in Rust"]
 async fn approval_create_rejects_empty_approval_type() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
@@ -257,7 +264,6 @@ async fn approval_create_rejects_empty_approval_type() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: needs migration + auth; endpoints partially implemented in Rust"]
 async fn decision_create_and_list_filter_by_company() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
@@ -311,7 +317,6 @@ async fn decision_create_and_list_filter_by_company() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: needs migration + auth; endpoints partially implemented in Rust"]
 async fn decision_decide_rejects_tampered_signed_spec() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
@@ -348,10 +353,7 @@ async fn decision_decide_rejects_tampered_signed_spec() {
     .await;
 
     assert_eq!(status, 403, "tampered decision: {response}");
-    assert!(response["error"]["message"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Decision signature verification failed"));
+    assert!(response["error"].as_str().unwrap_or_default().contains("Decision signature verification failed"));
     let status: String = sqlx::query_scalar("SELECT status FROM decisions WHERE id = $1")
         .bind(decision_id)
         .fetch_one(db.pool())

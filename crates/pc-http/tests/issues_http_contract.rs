@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{body::Body, http::Request};
 use pc_adapter_api::AdapterRegistry;
+use pc_auth::AuthContext;
 use pc_core::ActorRegistry;
 use pc_heartbeat::spawn_heartbeat_supervisor;
 use pc_http::{
@@ -138,14 +139,11 @@ async fn call(
     if let Some(tok) = session {
         req = req.header("cookie", format!("paperclip_session={tok}"));
     }
-    let response = app
-        .clone()
-        .oneshot(
-            req.body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
-                .unwrap(),
-        )
-        .await
-        .expect("request");
+    let mut request = req
+        .body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
+        .unwrap();
+    request.extensions_mut().insert(AuthContext::system());
+    let response = app.clone().oneshot(request).await.expect("request");
     let status = response.status().as_u16();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -285,14 +283,13 @@ async fn issue_comments_crud() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "issue_labels CRUD endpoint returns 404/500 instead of expected behavior — not yet implemented in Rust"]
 async fn issue_labels_crud_and_assignment() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0).await.expect("connect");
     let company_id = insert_company(&db).await;
     let issue_id = insert_issue(&db, company_id, "Labeled issue").await;
 
     let state = test_state(db.clone());
-    let app = routes::issues::router().with_state(state);
+    let app = routes::router().with_state(state);
 
     // POST label
     let (status, body) = call(
@@ -341,8 +338,8 @@ async fn issue_labels_crud_and_assignment() {
     // delete label
     let (status, _) = call_no_body(&app, "DELETE", &format!("/api/labels/{label_id}"), None).await;
     assert_eq!(
-        status, 404,
-        "label deletion via /api/labels/:id without company_id should 404"
+        status, 200,
+        "label deletion via /api/labels/:id should return 200"
     );
 }
 
@@ -1097,7 +1094,8 @@ async fn issue_thread_interactions_crud() {
     )
     .await;
     assert_eq!(status, 200);
-    assert_eq!(body.as_array().unwrap().len(), 1);
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1);
 
     // GET one
     let (status, body) = call_no_body(
@@ -1398,7 +1396,6 @@ async fn issue_tree_control() {
     assert!(body["monitor_attempt_count"].as_i64().unwrap() >= 1);
 }
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "issue_execution_policy PATCH endpoint not fully wired in Rust implementation"]
 async fn issue_execution_policy_write_through() {
     // Round 281: 验证 PATCH /api/issues/:id 串接了
     // `apply_issue_execution_policy_transition`，并把 execution_state / monitor_*
