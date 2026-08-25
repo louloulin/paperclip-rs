@@ -16,11 +16,11 @@ use pc_http::{
 use pc_realtime::{RealtimeHandle, WsState};
 use pc_repos::Db;
 use pc_db::Migrator;
-use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tower::ServiceExt;
 
 static TEST_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+use pc_auth::AuthContext;
 use uuid::Uuid;
 
 const TEST_DATABASE_URL: &str = "postgres://paperclip:paperclip@127.0.0.1:5432/paperclip_repos";
@@ -92,18 +92,14 @@ async fn call_json(
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
     let _guard = TEST_LOCK.lock().await;
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .header("content-type", "application/json")
-                .uri(path)
-                .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .expect("request");
+    let mut request = Request::builder()
+        .method(method)
+        .header("content-type", "application/json")
+        .uri(path)
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+    request.extensions_mut().insert(AuthContext::system());
+    let response = app.clone().oneshot(request).await.expect("request");
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -232,7 +228,6 @@ async fn company_agent_create_accepts_ui_payload_and_returns_full_agent() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: PATCH /api/agents/:id and config-revisions not in Rust yet"]
 async fn patch_records_and_exposes_config_revision_contract() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0)
         .await
@@ -261,24 +256,24 @@ async fn patch_records_and_exposes_config_revision_contract() {
         .expect("create agent");
     let app = routes::router().with_state(test_state(db.clone()));
 
+    let mut patch_request = Request::builder()
+        .method("PATCH")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .uri(format!("/api/agents/{}", agent.id))
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "name": "Revised Agent",
+                "adapterConfig": {"model": "gpt-5.1"},
+                "budgetMonthlyCents": 2400
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    patch_request.extensions_mut().insert(AuthContext::system());
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("PATCH")
-                .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {token}"))
-                .uri(format!("/api/agents/{}", agent.id))
-                .body(Body::from(
-                    serde_json::to_vec(&serde_json::json!({
-                        "name": "Revised Agent",
-                        "adapterConfig": {"model": "gpt-5.1"},
-                        "budgetMonthlyCents": 2400
-                    }))
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
+        .oneshot(patch_request)
         .await
         .expect("patch request");
     let patch_status = response.status();
@@ -317,12 +312,8 @@ async fn patch_records_and_exposes_config_revision_contract() {
         .await
         .expect("delete company");
 
-    // PATCH /api/agents/:id may not exist in Rust; skip detailed assertions
-    if patch_status == StatusCode::NOT_FOUND || patch_status == StatusCode::METHOD_NOT_ALLOWED {
-        eprintln!("patch /api/agents/{{id}} not available (status={patch_status}), skipping detailed checks");
-    } else {
-        assert_eq!(patch_status, StatusCode::OK, "patch agent: {patch_payload}");
-    }
+    // PATCH /api/agents/:id now implemented in Rust (R802)
+    assert_eq!(patch_status, StatusCode::OK, "patch agent: {patch_payload}");
     assert_eq!(
         revisions[0]["changedKeys"],
         serde_json::json!(["name", "adapterConfig", "budgetMonthlyCents"])
@@ -331,7 +322,6 @@ async fn patch_records_and_exposes_config_revision_contract() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: pause/resume/runtime-state/keys endpoints not yet implemented in Rust"]
 async fn runtime_lifecycle_and_key_routes_match_ui_contract() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0)
         .await
@@ -451,7 +441,6 @@ async fn runtime_lifecycle_and_key_routes_match_ui_contract() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: hire_approval endpoints not yet in Rust"]
 async fn hire_approval_and_permissions_use_real_tables_and_state_transitions() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0)
         .await
@@ -591,7 +580,6 @@ async fn hire_approval_and_permissions_use_real_tables_and_state_transitions() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: instructions/bundle routes not yet in Rust"]
 async fn instructions_bundle_routes_persist_config_and_reject_path_traversal() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0)
         .await
@@ -681,7 +669,6 @@ async fn instructions_bundle_routes_persist_config_and_reject_path_traversal() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "R802: instructions/path routes not yet in Rust"]
 async fn instructions_path_route_syncs_bundle_metadata_and_validates_relative_paths() {
     let db = Db::connect(TEST_DATABASE_URL, 4, 0)
         .await
