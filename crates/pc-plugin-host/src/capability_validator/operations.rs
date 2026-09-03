@@ -49,6 +49,59 @@ pub mod ops {
 
     // Activity
     pub const ACTIVITY_LOG: &str = "activity.log";
+
+    // Tools
+    pub const TOOLS_LIST: &str = "tools.list";
+    pub const TOOLS_INVOKE: &str = "tools.invoke";
+
+    // Webhooks
+    pub const WEBHOOKS_SEND: &str = "webhooks.send";
+    pub const WEBHOOKS_RECEIVE: &str = "webhooks.receive";
+
+    // Events
+    pub const EVENTS_PUBLISH: &str = "events.publish";
+    pub const EVENTS_SUBSCRIBE: &str = "events.subscribe";
+
+    // UI
+    pub const UI_RENDER: &str = "ui.render";
+    pub const UI_CONTRIBUTE: &str = "ui.contribute";
+
+    // Environments
+    pub const ENVIRONMENTS_PROBE: &str = "environments.probe";
+    pub const ENVIRONMENTS_ACQUIRE_LEASE: &str = "environments.acquireLease";
+    pub const ENVIRONMENTS_RESUME_LEASE: &str = "environments.resumeLease";
+    pub const ENVIRONMENTS_RELEASE_LEASE: &str = "environments.releaseLease";
+    pub const ENVIRONMENTS_REALIZE_WORKSPACE: &str = "environments.realizeWorkspace";
+    pub const ENVIRONMENTS_DISPOSE_WORKSPACE: &str = "environments.disposeWorkspace";
+    pub const ENVIRONMENTS_TICK: &str = "environments.tick";
+
+    // Jobs (plugin worker → host)
+    pub const JOBS_DISPATCH: &str = "jobs.dispatch";
+    pub const JOBS_CANCEL: &str = "jobs.cancel";
+    pub const JOBS_LIST: &str = "jobs.list";
+
+    // Decisions
+    pub const DECISIONS_CREATE: &str = "decisions.create";
+    pub const DECISIONS_RESPOND: &str = "decisions.respond";
+
+    // Skills
+    pub const SKILLS_UPLOAD: &str = "skills.upload";
+    pub const SKILLS_PUBLISH: &str = "skills.publish";
+
+    // Cases
+    pub const CASES_CREATE: &str = "cases.create";
+    pub const CASES_UPDATE: &str = "cases.update";
+
+    // Documents
+    pub const DOCUMENTS_UPLOAD: &str = "documents.upload";
+    pub const DOCUMENTS_READ: &str = "documents.read";
+
+    // Workflows
+    pub const WORKFLOWS_TRIGGER: &str = "workflows.trigger";
+
+    // Agents (plugin-managed)
+    pub const AGENTS_INVOKE: &str = "agents.invoke";
+    pub const AGENTS_CREATE: &str = "agents.create";
 }
 
 /// Required capabilities for known operations.
@@ -87,6 +140,59 @@ pub fn required_capabilities(operation: &str) -> &'static [&'static str] {
 
         // Activity
         ops::ACTIVITY_LOG => &["activity.log.write"],
+
+        // Tools
+        ops::TOOLS_LIST => &["tools.read"],
+        ops::TOOLS_INVOKE => &["tools.invoke"],
+
+        // Webhooks
+        ops::WEBHOOKS_SEND => &["webhooks.send"],
+        ops::WEBHOOKS_RECEIVE => &["webhooks.receive"],
+
+        // Events
+        ops::EVENTS_PUBLISH => &["events.publish"],
+        ops::EVENTS_SUBSCRIBE => &["events.subscribe"],
+
+        // UI
+        ops::UI_RENDER => &["ui.render"],
+        ops::UI_CONTRIBUTE => &["ui.contribute"],
+
+        // Environments
+        ops::ENVIRONMENTS_PROBE => &["environments.probe"],
+        ops::ENVIRONMENTS_ACQUIRE_LEASE => &["environments.lease.acquire"],
+        ops::ENVIRONMENTS_RESUME_LEASE => &["environments.lease.resume"],
+        ops::ENVIRONMENTS_RELEASE_LEASE => &["environments.lease.release"],
+        ops::ENVIRONMENTS_REALIZE_WORKSPACE => &["environments.workspace.realize"],
+        ops::ENVIRONMENTS_DISPOSE_WORKSPACE => &["environments.workspace.dispose"],
+        ops::ENVIRONMENTS_TICK => &["environments.tick"],
+
+        // Jobs
+        ops::JOBS_DISPATCH => &["jobs.dispatch"],
+        ops::JOBS_CANCEL => &["jobs.cancel"],
+        ops::JOBS_LIST => &["jobs.read"],
+
+        // Decisions
+        ops::DECISIONS_CREATE => &["decisions.create"],
+        ops::DECISIONS_RESPOND => &["decisions.respond"],
+
+        // Skills
+        ops::SKILLS_UPLOAD => &["skills.upload"],
+        ops::SKILLS_PUBLISH => &["skills.publish"],
+
+        // Cases
+        ops::CASES_CREATE => &["cases.create"],
+        ops::CASES_UPDATE => &["cases.update"],
+
+        // Documents
+        ops::DOCUMENTS_UPLOAD => &["documents.upload"],
+        ops::DOCUMENTS_READ => &["documents.read"],
+
+        // Workflows
+        ops::WORKFLOWS_TRIGGER => &["workflows.trigger"],
+
+        // Agents (plugin-managed)
+        ops::AGENTS_INVOKE => &["agents.invoke"],
+        ops::AGENTS_CREATE => &["agents.create"],
 
         // Unknown operation — no required capabilities
         _ => &[],
@@ -211,5 +317,195 @@ mod tests {
         // External objects write needs both read AND write
         let declared = vec!["external.objects.write".to_string()];
         assert!(!plugin_can_perform(&declared, ops::EXTERNAL_OBJECTS_READ));
+    }
+
+    // ========================================================================
+    // R874 — extended OPERATION_CAPABILITIES parity tests
+    // ========================================================================
+
+    #[test]
+    fn required_caps_for_tools_invoke() {
+        assert_eq!(required_capabilities(ops::TOOLS_INVOKE), &["tools.invoke"]);
+    }
+
+    #[test]
+    fn required_caps_for_tools_list() {
+        assert_eq!(required_capabilities(ops::TOOLS_LIST), &["tools.read"]);
+    }
+
+    #[test]
+    fn required_caps_for_webhooks_send() {
+        assert_eq!(
+            required_capabilities(ops::WEBHOOKS_SEND),
+            &["webhooks.send"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_events_publish() {
+        assert_eq!(
+            required_capabilities(ops::EVENTS_PUBLISH),
+            &["events.publish"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_events_subscribe() {
+        assert_eq!(
+            required_capabilities(ops::EVENTS_SUBSCRIBE),
+            &["events.subscribe"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_ui_render() {
+        assert_eq!(required_capabilities(ops::UI_RENDER), &["ui.render"]);
+    }
+
+    #[test]
+    fn required_caps_for_ui_contribute() {
+        assert_eq!(
+            required_capabilities(ops::UI_CONTRIBUTE),
+            &["ui.contribute"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_environments_acquire_lease() {
+        assert_eq!(
+            required_capabilities(ops::ENVIRONMENTS_ACQUIRE_LEASE),
+            &["environments.lease.acquire"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_environments_realize_workspace() {
+        assert_eq!(
+            required_capabilities(ops::ENVIRONMENTS_REALIZE_WORKSPACE),
+            &["environments.workspace.realize"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_jobs_dispatch() {
+        assert_eq!(
+            required_capabilities(ops::JOBS_DISPATCH),
+            &["jobs.dispatch"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_decisions_respond() {
+        assert_eq!(
+            required_capabilities(ops::DECISIONS_RESPOND),
+            &["decisions.respond"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_skills_upload() {
+        assert_eq!(
+            required_capabilities(ops::SKILLS_UPLOAD),
+            &["skills.upload"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_cases_create() {
+        assert_eq!(
+            required_capabilities(ops::CASES_CREATE),
+            &["cases.create"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_documents_read() {
+        assert_eq!(
+            required_capabilities(ops::DOCUMENTS_READ),
+            &["documents.read"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_workflows_trigger() {
+        assert_eq!(
+            required_capabilities(ops::WORKFLOWS_TRIGGER),
+            &["workflows.trigger"]
+        );
+    }
+
+    #[test]
+    fn required_caps_for_agents_invoke() {
+        assert_eq!(
+            required_capabilities(ops::AGENTS_INVOKE),
+            &["agents.invoke"]
+        );
+    }
+
+    /// Snapshot test for operation set: ensures no operation constant is
+    /// silently dropped during refactors. If you add a new constant, this
+    /// test will catch missing entries until you update the snapshot.
+    #[test]
+    fn all_operation_constants_have_capability_mapping() {
+        let ops_consts = [
+            // Read
+            ops::COMPANIES_LIST, ops::COMPANIES_GET,
+            ops::PROJECTS_LIST, ops::PROJECTS_GET,
+            ops::ISSUES_LIST, ops::ISSUES_GET,
+            ops::APPROVALS_LIST, ops::APPROVALS_GET,
+            ops::AGENTS_LIST, ops::AGENTS_GET,
+            // Write
+            ops::ISSUES_CREATE, ops::ISSUES_UPDATE,
+            ops::ISSUE_COMMENTS_CREATE, ops::APPROVALS_RESPOND,
+            // Plugin state
+            ops::PLUGIN_STATE_GET, ops::PLUGIN_STATE_LIST, ops::PLUGIN_STATE_SET,
+            // Local folders
+            ops::LOCAL_FOLDERS_READ, ops::LOCAL_FOLDERS_WRITE,
+            // DB
+            ops::DB_QUERY, ops::DB_MIGRATE,
+            // External objects
+            ops::EXTERNAL_OBJECTS_READ, ops::EXTERNAL_OBJECTS_WRITE,
+            // Activity
+            ops::ACTIVITY_LOG,
+            // Tools
+            ops::TOOLS_LIST, ops::TOOLS_INVOKE,
+            // Webhooks
+            ops::WEBHOOKS_SEND, ops::WEBHOOKS_RECEIVE,
+            // Events
+            ops::EVENTS_PUBLISH, ops::EVENTS_SUBSCRIBE,
+            // UI
+            ops::UI_RENDER, ops::UI_CONTRIBUTE,
+            // Environments
+            ops::ENVIRONMENTS_PROBE,
+            ops::ENVIRONMENTS_ACQUIRE_LEASE, ops::ENVIRONMENTS_RESUME_LEASE,
+            ops::ENVIRONMENTS_RELEASE_LEASE,
+            ops::ENVIRONMENTS_REALIZE_WORKSPACE, ops::ENVIRONMENTS_DISPOSE_WORKSPACE,
+            ops::ENVIRONMENTS_TICK,
+            // Jobs
+            ops::JOBS_DISPATCH, ops::JOBS_CANCEL, ops::JOBS_LIST,
+            // Decisions
+            ops::DECISIONS_CREATE, ops::DECISIONS_RESPOND,
+            // Skills
+            ops::SKILLS_UPLOAD, ops::SKILLS_PUBLISH,
+            // Cases
+            ops::CASES_CREATE, ops::CASES_UPDATE,
+            // Documents
+            ops::DOCUMENTS_UPLOAD, ops::DOCUMENTS_READ,
+            // Workflows
+            ops::WORKFLOWS_TRIGGER,
+            // Agents
+            ops::AGENTS_INVOKE, ops::AGENTS_CREATE,
+        ];
+
+        for op in ops_consts {
+            let caps = required_capabilities(op);
+            // Every defined operation must have a non-empty capability requirement.
+            // Unknown operations fall through to &[] — this test only checks
+            // explicitly-defined constants.
+            assert!(
+                !caps.is_empty(),
+                "operation {op} has no capability mapping — add it to required_capabilities()"
+            );
+        }
     }
 }

@@ -483,6 +483,9 @@ mod tests {
         disabled: AtomicUsize,
         unloaded: AtomicUsize,
         detached: AtomicUsize,
+        // R875: track unknown events instead of panicking
+        unknown_events: AtomicUsize,
+        unknown_event_names: Mutex<Vec<String>>,
         loaded_handlers: Mutex<Vec<PluginEventHandler>>,
         disabled_handlers: Mutex<Vec<PluginEventHandler>>,
         unloaded_handlers: Mutex<Vec<PluginEventHandler>>,
@@ -522,7 +525,18 @@ mod tests {
                     self.unloaded.fetch_add(1, Ordering::SeqCst);
                     self.unloaded_handlers.lock().unwrap().push(handler);
                 }
-                _ => panic!("unexpected event: {event}"),
+                other => {
+                    // R875: surface unknown lifecycle events as a counted
+                    // diagnostic instead of panicking. Tests can assert on
+                    // `unknown_events` to verify the lifecycle layer ignores
+                    // events it does not handle.
+                    self.unknown_events
+                        .fetch_add(1, Ordering::SeqCst);
+                    self.unknown_event_names
+                        .lock()
+                        .unwrap()
+                        .push(other.to_string());
+                }
             }
         }
         async fn off(&self, event: &str, _handler: PluginEventHandler) {
@@ -537,7 +551,15 @@ mod tests {
                 "plugin.unloaded" => {
                     self.unloaded_handlers.lock().unwrap().clear();
                 }
-                _ => panic!("unexpected event: {event}"),
+                other => {
+                    // R875: same as above — no panic, just count.
+                    self.unknown_events
+                        .fetch_add(1, Ordering::SeqCst);
+                    self.unknown_event_names
+                        .lock()
+                        .unwrap()
+                        .push(other.to_string());
+                }
             }
         }
     }

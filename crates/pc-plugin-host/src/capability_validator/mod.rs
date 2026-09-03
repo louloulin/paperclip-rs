@@ -29,6 +29,9 @@ pub mod operations;
 pub mod result;
 pub mod validator;
 
+#[cfg(test)]
+mod node_parity_test;
+
 // ============================================================================
 // Public re-exports
 // ============================================================================
@@ -47,4 +50,9 @@ pub use result::CapabilityCheckResult;
 
 pub use validator::{
     plugin_capability_validator, DefaultPluginCapabilityValidator, PluginCapabilityValidator,
+};
+
+// R874: re-export operation mapping for downstream parity tests
+pub use operations::{
+    missing_capabilities, plugin_can_perform, required_capabilities,
 };
