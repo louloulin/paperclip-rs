@@ -1,8 +1,33 @@
 # Paperclip-rs vs Paperclip (Node) — 全面对标文档
 
+[![协议兼容](https://img.shields.io/badge/protocol-100%25%20compatible-2ea44f)](#协议级等价性)
+[![路由覆盖](https://img.shields.io/badge/route%20coverage-90.33%25-brightgreen)](#覆盖率量化)
+[![综合行为等价](https://img.shields.io/badge/behavioral%20parity-~85%25-yellow)](#覆盖率量化)
+[![crates](https://img.shields.io/badge/crates-108-blue)](#crate-拓扑)
+[![LOC](https://img.shields.io/badge/Rust%20LOC-595K-orange)](#整体规模)
+[![migrations](https://img.shields.io/badge/migrations-207-red)](#协议级等价性)
+
 > **更新时间**：2026-09-03（基于 commit `861efc1`，领先 upstream `4fc96f3` 3 个 commit）
 > **对比基线**：[paperclipai/paperclip](https://github.com/paperclipai/paperclip) @ HEAD `480630041d68`
 > **文档定位**：本仓库与上游 Node 实现的**逐项对标**——协议等价性、模块映射、行为差异、覆盖度、剩余 gap 与演进路线
+
+---
+
+## 目录
+
+1. [项目定位](#一项目定位)
+2. [整体规模](#二整体规模)
+3. [协议级等价性](#三协议级等价性)
+4. [Crate 拓扑](#四crate-拓扑)
+5. [模块映射](#五模块映射)
+6. [覆盖率量化](#六覆盖率量化)
+7. [架构差异](#七架构差异)
+8. [Rust idiom 利用](#八rust-idiom-利用)
+9. [剩余 gap + 演进路线](#九剩余-gap--演进路线)
+10. [迁移路径](#十迁移路径)
+11. [测试与验证](#十一测试与验证)
+12. [参考文档](#十二参考文档)
+13. [结论](#十三结论)
 
 ---
 
