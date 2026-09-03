@@ -1,10 +1,220 @@
 {
-  "node_unique": 581,
-  "rust_unique": 883,
-  "common": 581,
-  "missing_in_rust": 0,
-  "extra_in_rust": 302,
-  "coverage_method_path": 100.0,
-  "missing_by_category": {},
-  "top_missing": []
+  "node_unique": 641,
+  "rust_unique": 903,
+  "common": 579,
+  "missing_in_rust": 62,
+  "extra_in_rust": 324,
+  "coverage_method_path": 90.33,
+  "missing_by_category": {
+    ":param": 46,
+    "oauth": 5,
+    "me": 3,
+    "runtime-tools": 2,
+    "task-drain": 2,
+    "connections": 2,
+    "root": 1,
+    "vercel-connect": 1
+  },
+  "top_missing": [
+    {
+      "method": "DELETE",
+      "path": "/api/agents/me/secret-proposals/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/heartbeat-runs/:param/provider-trace"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/instance/task-drain"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tool-connections/:param/grants/:param/delegations/:param"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tool-connections/:param/services/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/me/secret-proposals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies${COMPANY_IMPORT_TRANSFERS_ROUTE_PATH}/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/claude-oauth-token-status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/decision-queue-seed-rules"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/decision-queues"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/decision-queues/:param/items"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/decision-triage/:param/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/managed-agent-profiles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/provider-traces"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/remote-agent-profiles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/secret-proposals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/secrets/catalog"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/setup-token-login-sessions/:param"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/setup-token-login-sessions/:param/prompt"
+    },
+    {
+      "method": "GET",
+      "path": "/api/companies/:param/tools/apps/:param/preflight"
+    },
+    {
+      "method": "GET",
+      "path": "/api/connection-intents/:param/setup-options"
+    },
+    {
+      "method": "GET",
+      "path": "/api/heartbeat-runs/:param/provider-trace"
+    },
+    {
+      "method": "GET",
+      "path": "/api/instance/task-drain"
+    },
+    {
+      "method": "GET",
+      "path": "/api/issues/:param/queued-comments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/runtime-tools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stacks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tool-connections/:param/services"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tool-connections/:param/services/:param/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tool-connections/:param/test-agents/:param/access"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/oauth/cloud-connector/callback"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/oauth/cloud-connector/enrollment"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/oauth/cloud-connector/enrollment-callback"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/oauth/paperclip-id/callback"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/vercel-connect/callback"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/companies/:param/decision-queues/:param"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/me/secret-proposals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cases/:param/issue-links"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies${COMPANY_IMPORT_TRANSFERS_ROUTE_PATH}/:param/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies${COMPANY_IMPORT_TRANSFERS_ROUTE_PATH}/:param/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/decision-queues"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/decision-retention/:param/:param/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/decision-retention/:param/:param/revive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/managed-agent-profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/remote-agent-profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/secret-proposals/:param/approve"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/secret-proposals/:param/reject"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/setup-token-login-sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/setup-token-login-sessions/:param/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/setup-token-login-sessions/:param/code"
+    },
+    {
+      "method": "POST",
+      "path": "/api/companies/:param/setup-token-login-sessions/:param/completion"
+    }
+  ]
 }

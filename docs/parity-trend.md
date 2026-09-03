@@ -341,3 +341,42 @@
   - claude-agent-id-header
   - codex-models
   - company-artifacts
+
+## 2026-09-03T14:53:36Z
+- Node total: 534
+- Rust crates: 108
+- Rust pub APIs: 10896
+- Covered: 163
+- Coverage: 30.5%
+- Gap: 371
+- Unported:
+  - access
+  - activity-log
+  - adapter-login-lease
+  - adapter-login-route-spine
+  - adapter-models-env
+  - adapter-plugin-store
+  - adapters
+  - agent-auth-jwt
+  - agent-instructions
+  - agent-permissions
+  - agent-secret-bindings
+  - agents
+  - api-compression
+  - approved-execution-wait
+  - artifact-review-documents
+  - assets
+  - attachment-types
+  - authorization
+  - aws-secrets-manager-provider
+  - better-auth
+  - board-claim
+  - board-mutation-guard
+  - body-limits
+  - broker-client
+  - build-commit
+  - build-version
+  - built-in-agents
+  - builtin-adapter-types
+  - bundled-plugins
+  - canonical
