@@ -47,21 +47,78 @@ fn default_model(config: &Value) -> Option<String> {
 
 pub fn build_gemini_exec_args(config: &Value, resume_session_id: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
+
+    // Output format (always stream-json)
     args.push("--output-format".into());
     args.push("stream-json".into());
+
+    // Model selection
     if let Some(m) = default_model(config) {
         args.push("--model".into());
         args.push(m);
     }
+
+    // Temperature (R870)
+    if let Some(t) = config.get("temperature").and_then(Value::as_f64) {
+        args.push("--temperature".into());
+        args.push(t.to_string());
+    }
+
+    // Max output tokens (R870)
+    if let Some(m) = config.get("maxOutputTokens").and_then(Value::as_u64) {
+        args.push("--max-output-tokens".into());
+        args.push(m.to_string());
+    }
+
+    // Top-p sampling (R870)
+    if let Some(tp) = config.get("topP").and_then(Value::as_f64) {
+        args.push("--top-p".into());
+        args.push(tp.to_string());
+    }
+
+    // Top-k sampling (R870)
+    if let Some(tk) = config.get("topK").and_then(Value::as_u64) {
+        args.push("--top-k".into());
+        args.push(tk.to_string());
+    }
+
+    // Sandbox mode (R870)
+    if let Some(sandbox) = config.get("sandbox").and_then(Value::as_bool) {
+        if sandbox {
+            args.push("--sandbox".into());
+        }
+    }
+
+    // Workspace / cwd
     if let Some(cwd) = config.get("cwd").and_then(Value::as_str) {
         args.push("--cwd".into());
         args.push(cwd.to_owned());
     }
+
+    // System prompt (R870)
+    if let Some(sp) = config.get("systemPrompt").and_then(Value::as_str) {
+        if !sp.is_empty() {
+            args.push("--system-prompt".into());
+            args.push(sp.to_owned());
+        }
+    }
+
+    // Tools allowlist (R870) — comma-separated
+    if let Some(tools) = config.get("allowedTools").and_then(Value::as_str) {
+        if !tools.is_empty() {
+            args.push("--allowed-tools".into());
+            args.push(tools.to_owned());
+        }
+    }
+
+    // Extra args (user-supplied, applied before --resume)
     if let Some(extra) = config.get("extraArgs").and_then(Value::as_array) {
         for item in extra.iter().filter_map(|v| v.as_str()) {
             args.push(item.to_owned());
         }
     }
+
+    // Session resume (always last)
     if let Some(sid) = resume_session_id.map(str::trim).filter(|s| !s.is_empty()) {
         args.push("--resume".into());
         args.push(sid.to_owned());

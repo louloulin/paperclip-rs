@@ -38,6 +38,7 @@ pub mod company_skill_policy;
 pub mod cost;
 pub mod decision;
 pub mod decision_bundle;
+pub mod decision_bundle_typed;
 pub mod decision_typed;
 pub mod decision_training;
 pub mod decision_wakeup;
