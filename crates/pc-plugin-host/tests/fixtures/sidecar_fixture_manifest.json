@@ -1,0 +1,11 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "version": "1.0.0",
+  "manifestVersion": "v1",
+  "label": "E2E Fixture Plugin",
+  "description": "Minimal fixture for sidecar e2e tests",
+  "entry": "sidecar_fixture_plugin.cjs",
+  "capabilities": [
+    { "kind": "events" }
+  ]
+}

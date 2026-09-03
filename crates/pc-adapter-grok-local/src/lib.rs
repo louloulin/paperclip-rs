@@ -39,21 +39,70 @@ fn default_model(config: &Value) -> Option<String> {
 
 pub fn build_grok_exec_args(config: &Value, resume_session_id: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
+
+    // Output format (always stream-json for adapter)
     args.push("--output-format".into());
     args.push("stream-json".into());
+
+    // Model selection
     if let Some(m) = default_model(config) {
         args.push("--model".into());
         args.push(m);
     }
+
+    // Temperature (R870)
+    if let Some(t) = config.get("temperature").and_then(Value::as_f64) {
+        args.push("--temperature".into());
+        args.push(t.to_string());
+    }
+
+    // Max tokens (R870)
+    if let Some(m) = config.get("maxTokens").and_then(Value::as_u64) {
+        args.push("--max-tokens".into());
+        args.push(m.to_string());
+    }
+
+    // Sandbox mode (R870)
+    if let Some(sandbox) = config.get("sandbox").and_then(Value::as_bool) {
+        if sandbox {
+            args.push("--sandbox".into());
+        }
+    }
+
+    // Workspace / cwd
     if let Some(cwd) = config.get("cwd").and_then(Value::as_str) {
         args.push("--cwd".into());
         args.push(cwd.to_owned());
     }
+
+    // System prompt (R870)
+    if let Some(sp) = config.get("systemPrompt").and_then(Value::as_str) {
+        if !sp.is_empty() {
+            args.push("--system-prompt".into());
+            args.push(sp.to_owned());
+        }
+    }
+
+    // Append system prompt file (R870)
+    if let Some(path) = config.get("appendSystemPromptFile").and_then(Value::as_str) {
+        args.push("--append-system-prompt-file".into());
+        args.push(path.to_owned());
+    }
+
+    // Effort level (R870) — grok-specific
+    if let Some(effort) = config.get("effort").and_then(Value::as_str) {
+        args.push("--effort".into());
+        args.push(effort.to_owned());
+    }
+
+    // Extra args (user-supplied, applied last so they can override defaults)
     if let Some(extra) = config.get("extraArgs").and_then(Value::as_array) {
         for item in extra.iter().filter_map(|v| v.as_str()) {
             args.push(item.to_owned());
         }
     }
+
+    // Session resume (always last — it depends on the above args being valid)
     if let Some(sid) = resume_session_id.map(str::trim).filter(|s| !s.is_empty()) {
         args.push("--resume".into());
         args.push(sid.to_owned());
