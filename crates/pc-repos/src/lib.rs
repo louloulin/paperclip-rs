@@ -12,6 +12,7 @@
 //! - 测试通过集成测试使用真实 `PostgreSQL` 验证（`DATABASE_URL`）
 
 pub mod activity;
+pub mod typed_ids;
 pub mod agent;
 pub mod agent_action_audit;
 pub mod agent_assignability;

@@ -12,6 +12,7 @@ pub mod bundled_plugins;
 pub mod capability_validator;
 pub mod config_validator;
 pub mod handle;
+pub mod sidecar;
 #[cfg(test)]
 mod host_dispatcher_e2e;
 pub mod job_coordinator;

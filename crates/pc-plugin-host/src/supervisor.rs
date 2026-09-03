@@ -41,10 +41,28 @@ pub struct SupervisorConfig {
 }
 
 impl Default for SupervisorConfig {
+    /// Defaults aligned with Node paperclip `plugin-worker-manager.ts`
+    /// as of R878. Previously Rust used a stricter 5-restart cap with a
+    /// 500ms base — this made transient plugin crashes look like terminal
+    /// failures. Node's defaults (10 restarts, 1s base, 30s cap) match
+    /// real-world plugin reliability expectations.
     fn default() -> Self {
+        Self::from_node_parity()
+    }
+}
+
+impl SupervisorConfig {
+    /// Construct defaults that match Node paperclip exactly.
+    ///
+    /// Node `plugin-worker-manager.ts`:
+    /// - `MAX_RESTARTS = 10`
+    /// - `BASE_DELAY_MS = 1_000`
+    /// - `MAX_DELAY_MS = 30_000` (cap on exponential backoff)
+    /// - `POLL_INTERVAL_MS = 1_000` (1-second health poll)
+    pub fn from_node_parity() -> Self {
         Self {
-            max_restarts: 5,
-            base_delay_ms: 500,
+            max_restarts: 10,
+            base_delay_ms: 1_000,
             max_delay_ms: 30_000,
             poll_interval_ms: 1_000,
         }
