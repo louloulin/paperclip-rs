@@ -42,8 +42,6 @@ pub mod decision_bundle_typed;
 pub mod decision_typed;
 pub mod decision_training;
 pub mod decision_wakeup;
-pub mod decision_training;
-pub mod decision_wakeup;
 pub mod default_agent_instructions;
 pub mod document;
 pub mod environment;

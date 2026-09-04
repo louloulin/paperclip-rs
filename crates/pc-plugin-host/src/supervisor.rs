@@ -222,16 +222,15 @@ mod tests {
 
     #[test]
     fn backoff_grows_exponentially() {
+        // After R878, default base_delay is 1_000ms (Node parity).
         let c = SupervisorConfig::default();
-        assert_eq!(c.backoff_delay_ms(1), 500);
-        assert_eq!(c.backoff_delay_ms(2), 1_000);
-        assert_eq!(c.backoff_delay_ms(3), 2_000);
-        assert_eq!(c.backoff_delay_ms(4), 4_000);
-        assert_eq!(c.backoff_delay_ms(5), 8_000);
-        // 16_000 < cap 30_000
-        assert_eq!(c.backoff_delay_ms(6), 16_000);
+        assert_eq!(c.backoff_delay_ms(1), 1_000);
+        assert_eq!(c.backoff_delay_ms(2), 2_000);
+        assert_eq!(c.backoff_delay_ms(3), 4_000);
+        assert_eq!(c.backoff_delay_ms(4), 8_000);
+        assert_eq!(c.backoff_delay_ms(5), 16_000);
         // 32_000 -> capped to 30_000
-        assert_eq!(c.backoff_delay_ms(7), 30_000);
+        assert_eq!(c.backoff_delay_ms(6), 30_000);
         assert_eq!(c.backoff_delay_ms(20), 30_000);
     }
 

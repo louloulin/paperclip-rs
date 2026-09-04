@@ -6,11 +6,13 @@ use pc_plugin_host::{SupervisorConfig, SupervisorEvent};
 
 #[test]
 fn supervisor_config_default_backoff_caps_at_max() {
+    // After R878, defaults match Node paperclip: base 1_000ms,
+    // max_restarts 10, max_delay 30_000ms.
     let c = SupervisorConfig::default();
-    assert_eq!(c.base_delay_ms, 500);
+    assert_eq!(c.base_delay_ms, 1_000);
     assert_eq!(c.max_delay_ms, 30_000);
-    assert_eq!(c.max_restarts, 5);
-    // cap 行为：2^20 * 500 >> 30_000 → 应被 cap 住
+    assert_eq!(c.max_restarts, 10);
+    // cap 行为：2^20 * 1_000 >> 30_000 → 应被 cap 住
     assert_eq!(c.backoff_delay_ms(20), 30_000);
 }
 

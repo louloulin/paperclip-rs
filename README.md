@@ -9,7 +9,7 @@
 [![crates](https://img.shields.io/badge/crates-108-blue)](#仓库布局)
 [![LOC](https://img.shields.io/badge/Rust%20LOC-595K-orange)](#仓库布局)
 [![pub APIs](https://img.shields.io/badge/pub%20APIs-12K-purple)](#仓库布局)
-[![migrations](https://img.shields.io/badge/migrations-207-red)](#协议一致性)
+[![migrations](https://img.shields.io/badge/migrations-211-red)](#协议一致性)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](#协议与许可)
 
 [English](#english-summary) | [中文](#中文概述)
@@ -19,7 +19,7 @@
 <a id="中文概述"></a>
 ## 🌟 一句话介绍
 
-**Paperclip** 是一个让"AI agent + 人类成员 + 决策 + 议题 + 工具 + 技能"协同工作的智能体公司平台。**paperclip-rs** 是它的 Rust 实现 —— 用 108 个 crate / 595K 行 Rust / 207 个数据库 migration 复刻了上游 Node 单体的全部外部契约。
+**Paperclip** 是一个让"AI agent + 人类成员 + 决策 + 议题 + 工具 + 技能"协同工作的智能体公司平台。**paperclip-rs** 是它的 Rust 实现 —— 用 108 个 crate / 602K 行 Rust / 211 个数据库 migration 复刻了上游 Node 单体的全部外部契约。
 
 ---
 
@@ -28,7 +28,7 @@
 | 上游 paperclip（Node 24） | paperclip-rs（Rust 1.80） |
 |---|---|
 | Express + ws + better-auth + Drizzle + embedded-postgres | axum + tokio + sqlx + kameo + 外部 PostgreSQL |
-| 760 个 TS 文件 / 44.4 万行 | **108 个 crate / 595,845 行 Rust** |
+| 760 个 TS 文件 / 44.4 万行 | **108 个 crate / 601,723 行 Rust** |
 | 嵌入式 PostgreSQL | 外部 PostgreSQL 14+（生产可扩展） |
 | 单体 node 进程 | 模块化 crate workspace（编译期可裁剪） |
 | 运行时内存 ~500 MB | 运行时内存 ~80 MB（实测） |
@@ -78,7 +78,7 @@
                 │
                 ▼
    ┌─────────────────────────────────────────────────────────┐
-   │         PostgreSQL 14+（207 migrations，最高 0208）      │
+   │         PostgreSQL 14+（211 migrations，最高 0208）      │
    │   + sqlx 强类型查询 + 事务 + 连接池                        │
    └─────────────────────────────────────────────────────────┘
                                 ▲
@@ -149,7 +149,7 @@ cargo build --release
 createdb paperclip
 export PAPERCLIP_DATABASE_URL='postgres://user:pass@127.0.0.1:5432/paperclip'
 
-# 3. 启动服务器（自动执行 207 个 migration）
+# 3. 启动服务器（自动执行 211 个 migration）
 ./target/release/paperclip-server
 # → 监听 127.0.0.1:3100，启动 < 100ms（热路径）
 
@@ -256,11 +256,11 @@ pub struct IssueService {
 | Git 总提交 | **415** | — |
 | Rust crate 数 | **108** | 38（README 旧声明）→ 108 |
 | `.rs` 文件数 | 1,577 | — |
-| `.rs` 代码行数 | **595,845** | 74,970（README 旧声明）→ 595K |
-| 公开 API 数 | **12,025** | 10,559 → 12,025 |
+| `.rs` 代码行数 | **601,723** | 74,970 → 601K |
+| 公开 API 数 | **10,144** | 10,559 → 10,144 |
 | 路由文件（pc-http） | **75** | 56 → 75 |
 | 仓储文件（pc-repos） | **114** | 76 → 114 |
-| 数据库 migration | **207**（最高 0208） | 109 → 207 |
+| 数据库 migration | **211**（最高 0208） | 109 → 211 |
 | 集成测试文件 | 493 | — |
 | `.rs` 测试文件 | 500 | — |
 | OpenAPI 产物 | 828 KB / 32,664 行 | 真实生成 |
@@ -274,7 +274,7 @@ pub struct IssueService {
 | 路由 method+path | **90.33%**（579/641） | `scripts/diff-routes.sh` |
 | HTTP 路由形状 | 100%（56/56 路由文件） | 手工核对 |
 | WebSocket `/live-events` | 95% | R252-R257 完整化 |
-| 数据库 schema | ~95%（207 migrations） | 实测 |
+| 数据库 schema | ~95%（211 migrations） | 实测 |
 | 插件 IPC 协议 | 100%（JSON-RPC 2.0） | 实测 |
 | 插件能力校验 | 100%（49 operation + drift fixture） | 实测 |
 | 适配器 CLI | ~60%（4 完整 + 4 stub + 3 HTTP API） | 实测 |
@@ -374,7 +374,7 @@ pub struct IssueService {
 
 - **HTTP**：56 个路由模块，路径 / 方法 / 请求体 schema / 响应 schema / 错误码与 `paperclip/server/src/routes/*.ts` 一一对应
 - **WebSocket**：`/live-events` + `last_event_id` resume + `event_id` / `resource` / `resource_id` / `actor` / `at`
-- **数据库**：207 个 migration（最高 0208）保留原 DDL、索引、外键、check 约束
+- **数据库**：211 个 migration（最高 0208）保留原 DDL、索引、外键、check 约束
 - **插件 IPC**：JSON-RPC 2.0 over stdio，方法名 / envelope / 错误码不变
 - **认证**：session / cookie / API key / 双主体（user + agent）模型与 `better-auth.ts` 行为等价；`X-Paperclip-*` 头部语义不变
 - **适配器**：worker 子进程 IPC（model resolve / token metering / heartbeat / quota / config schema）保持兼容
@@ -487,8 +487,8 @@ Paperclip 与 Paperclip Labs, Inc. 的商标与产品名称归属上游；本仓
 **paperclip-rs** is a Rust rewrite of the [Paperclip](https://github.com/paperclipai/paperclip) agent-company platform backend — preserving the upstream Node + TypeScript monolith's **external contracts** (HTTP / WebSocket / DB schema / plugin IPC / adapter CLI) byte-for-byte, while replacing the runtime with **axum + tokio + sqlx + kameo** for better safety, performance, and deployability.
 
 **Numbers (as of commit `861efc1`, 2026-09-03)**:
-- 108 Rust crates / 595,845 LOC / 12,025 public APIs
-- 207 database migrations (highest 0208)
+- 108 Rust crates / 601,723 LOC / 10,144 public APIs
+- 211 database migrations (highest 0208)
 - 90.33% HTTP route method+path coverage (579/641)
 - ~85% behavioral parity with upstream
 

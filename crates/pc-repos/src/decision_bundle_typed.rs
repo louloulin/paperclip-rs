@@ -14,18 +14,22 @@
 //! typed variants. When all call sites have migrated, the typed
 //! wrappers become the canonical API and the `Uuid` originals can
 //! be deprecated.
+//!
+//! ## Error type note
+//!
+//! `DecisionBundleRepo::create` returns `Result<T, DecisionBundleError>`
+//! (a domain-specific error), while the read methods return
+//! `RepoResult<T>` (`Result<T, RepoError>`). The typed wrappers
+//! preserve both signatures faithfully.
 
 #![forbid(unsafe_code)]
 
-use sqlx::Result;
-
 use crate::decision_bundle::{
-    DecisionBundleDetail, DecisionBundleFilter, DecisionBundleRepo, DecisionBundleRow,
-    NewDecisionBundle,
+    DecisionBundleDetail, DecisionBundleError, DecisionBundleFilter, DecisionBundleRepo,
+    DecisionBundleRow, NewDecisionBundle,
 };
-use crate::typed_ids::{
-    AgentId, CompanyId, DecisionBundleId, IssueId, RunId,
-};
+use crate::typed_ids::{AgentId, CompanyId, DecisionBundleId, IssueId, RunId};
+use crate::RepoResult;
 
 /// Typed input for creating a decision bundle.
 ///
@@ -96,12 +100,19 @@ impl<'a> TypedDecisionBundleRepo<'a> {
         Self { inner }
     }
 
+    pub fn into_inner(self) -> DecisionBundleRepo<'a> {
+        self.inner
+    }
+
     /// Typed variant of `DecisionBundleRepo::create`.
+    ///
+    /// Returns `DecisionBundleError` (domain-specific), matching the
+    /// underlying `create` method.
     pub async fn create_typed(
         &self,
         company_id: CompanyId,
         input: NewDecisionBundleTyped,
-    ) -> Result<DecisionBundleRow, crate::decision_bundle::DecisionBundleError> {
+    ) -> Result<DecisionBundleRow, DecisionBundleError> {
         self.inner
             .create(company_id.as_uuid(), input.into_uuid_input())
             .await
@@ -112,7 +123,7 @@ impl<'a> TypedDecisionBundleRepo<'a> {
         &self,
         company_id: CompanyId,
         filter: DecisionBundleFilterTyped,
-    ) -> sqlx::Result<Vec<DecisionBundleRow>> {
+    ) -> RepoResult<Vec<DecisionBundleRow>> {
         self.inner
             .list_by_company(company_id.as_uuid(), &filter.into_uuid_filter())
             .await
@@ -122,7 +133,7 @@ impl<'a> TypedDecisionBundleRepo<'a> {
     pub async fn get_typed(
         &self,
         id: DecisionBundleId,
-    ) -> sqlx::Result<Option<DecisionBundleRow>> {
+    ) -> RepoResult<Option<DecisionBundleRow>> {
         self.inner.get(id.as_uuid()).await
     }
 
@@ -130,7 +141,7 @@ impl<'a> TypedDecisionBundleRepo<'a> {
     pub async fn get_with_decisions_typed(
         &self,
         id: DecisionBundleId,
-    ) -> sqlx::Result<Option<DecisionBundleDetail>> {
+    ) -> RepoResult<Option<DecisionBundleDetail>> {
         self.inner.get_with_decisions(id.as_uuid()).await
     }
 
@@ -141,7 +152,7 @@ impl<'a> TypedDecisionBundleRepo<'a> {
         agent_id: AgentId,
         issue_id: IssueId,
         run_id: RunId,
-    ) -> sqlx::Result<bool> {
+    ) -> RepoResult<bool> {
         self.inner
             .exists_for_origin(
                 company_id.as_uuid(),
@@ -156,7 +167,7 @@ impl<'a> TypedDecisionBundleRepo<'a> {
     pub async fn delete_typed(
         &self,
         id: DecisionBundleId,
-    ) -> sqlx::Result<Vec<DecisionBundleRow>> {
+    ) -> RepoResult<Vec<DecisionBundleRow>> {
         self.inner.delete(id.as_uuid()).await
     }
 }
@@ -164,7 +175,6 @@ impl<'a> TypedDecisionBundleRepo<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typed_ids::{AgentId, CompanyId, IssueId, RunId};
 
     #[test]
     fn new_bundle_typed_to_uuid_input() {
@@ -215,6 +225,6 @@ mod tests {
     #[test]
     fn typed_wrapper_compiles_standalone() {
         // Smoke test: wrapper type itself is constructible without DB.
-        fn _type_check(_: TypedDecisionBundleRepo) {}
+        fn _type_check<'a>(_: TypedDecisionBundleRepo<'a>) {}
     }
 }

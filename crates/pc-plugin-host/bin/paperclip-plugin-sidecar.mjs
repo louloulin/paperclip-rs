@@ -24,6 +24,15 @@
 
 'use strict';
 
+// Bridge to allow require() in this ESM script (.mjs). Without this,
+// Node ESM scope rejects CommonJS `require` with "ReferenceError:
+// require is not defined". Using createRequire keeps the script
+// runnable as `.mjs` (preserving the original file extension that other
+// tools — Cargo include, IDE plugins — key off) while still letting the
+// body use CommonJS-style imports.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');

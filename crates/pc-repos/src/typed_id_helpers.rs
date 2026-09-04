@@ -37,6 +37,8 @@ use sqlx::{Postgres, Transaction};
 
 use pc_core::Id;
 
+#[cfg(test)]
+#[allow(unused_imports)] // imported for the compile-only smoke test
 use crate::typed_ids::{
     AgentId, ApprovalId, CompanyId, DecisionBundleId, DecisionId, HeartbeatRunId, IssueId,
     ProjectId, RunId, UserId,

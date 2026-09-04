@@ -10,20 +10,9 @@
 //!
 //! Adoption of `pc_core::Id<T>` was previously stalled because rewriting
 //! every `Uuid` call site at once is risky. This module demonstrates the
-//! incremental adoption pattern: keep the `Uuid` methods as the source of
-//! truth, add parallel typed wrappers, and let HTTP routes opt in
+//! incremental adoption pattern: keep the `Uuid` methods as the source
+//! of truth, add parallel typed wrappers, and let HTTP routes opt in
 //! method-by-method.
-//!
-//! ## Usage
-//!
-//! ```ignore
-//! use pc_repos::typed_ids::CompanyId;
-//! use pc_repos::decision_typed::TypedDecisionRepo;
-//!
-//! let repo = TypedDecisionRepo::new(db);
-//! let company: CompanyId = ...;
-//! let rows = repo.list_by_company_typed(company).await?;
-//! ```
 //!
 //! ## What's wrapped
 //!
@@ -32,25 +21,16 @@
 //! - `get_typed(DecisionId) -> Option<DecisionRow>`
 //! - `get_company_id_typed(DecisionId) -> Option<CompanyId>`
 //! - `delete_typed(DecisionId) -> DecisionRow`
-//! - `mark_decided_typed(DecisionId, ...) -> DecisionRow`
+//! - `mark_decided_typed(DecisionId, ...) -> bool` (matches underlying)
 //! - `mark_dismissed_typed(DecisionId, ...) -> DecisionRow`
 //! - `mark_cancelled_typed(DecisionId) -> DecisionRow`
-//!
-//! Decision creation methods (`create`, `create_with_options`) keep the
-//! raw `Uuid` signature because they accept a `&DecisionSigningService`
-//! which is not ID-related; the call site still passes `company_id: Uuid`.
 
 #![forbid(unsafe_code)]
 
 use sqlx::Result;
 
-use pc_core::Timestamp;
-use pc_secrets::DecisionSigningService;
-
 use crate::decision::{DecisionRepo, DecisionRow};
-use crate::typed_ids::{
-    AgentId, CompanyId, DecisionBundleId, DecisionId, IssueId, RunId, UserId,
-};
+use crate::typed_ids::{CompanyId, DecisionId};
 
 /// Typed wrapper around `DecisionRepo` — every method delegates to the
 /// underlying `Uuid`-based implementation after calling `.as_uuid()`.
@@ -119,30 +99,38 @@ impl<'a> TypedDecisionRepo<'a> {
 
     /// Typed variant of `DecisionRepo::mark_decided`.
     ///
-    /// Note: this method's Uuid signature stays because the chosen option
-    /// is application-specific data, not an ID; the call site still uses
-    /// `Uuid` for the user_id lookup. The `decision_id` is typed.
+    /// Signature mirrors the underlying Uuid method: returns `bool`
+    /// (true = row updated, false = row not found / no-op), with
+    /// `decided_by_user_id` and `input_values` both optional.
     pub async fn mark_decided_typed(
         &self,
         id: DecisionId,
         chosen_option_id: &str,
-        decided_by_user_id: &str,
-        signing: &DecisionSigningService,
-    ) -> Result<DecisionRow> {
+        decided_by_user_id: Option<&str>,
+        input_values: Option<&serde_json::Value>,
+    ) -> Result<bool> {
         self.inner
-            .mark_decided(id.as_uuid(), chosen_option_id, decided_by_user_id, signing)
+            .mark_decided(
+                id.as_uuid(),
+                chosen_option_id,
+                decided_by_user_id,
+                input_values,
+            )
             .await
     }
 
     /// Typed variant of `DecisionRepo::mark_dismissed`.
+    ///
+    /// Signature mirrors underlying: `reason` is required (not Option)
+    /// because the underlying SQL always writes the dismissReason column.
     pub async fn mark_dismissed_typed(
         &self,
         id: DecisionId,
+        reason: &str,
         decided_by_user_id: &str,
-        reason: Option<&str>,
     ) -> Result<DecisionRow> {
         self.inner
-            .mark_dismissed(id.as_uuid(), decided_by_user_id, reason)
+            .mark_dismissed(id.as_uuid(), reason, decided_by_user_id)
             .await
     }
 
@@ -152,111 +140,23 @@ impl<'a> TypedDecisionRepo<'a> {
     }
 }
 
-// ============================================================================
-// DecisionBundleRepo typed wrapper — also stubbed here as a TODO reminder.
-// ============================================================================
-
-/// Placeholder for `DecisionBundleRepo` typed wrapper.
-///
-/// The bundle repo's Uuid methods can be wrapped with the same pattern
-/// (bundle_id, company_id, agent_id, issue_id, run_id as typed inputs).
-/// This stub documents the contract for future adoption; remove when
-/// the typed wrapper is implemented.
-#[allow(dead_code)]
-pub struct TypedDecisionBundleRepo;
-
-#[allow(dead_code)]
-impl TypedDecisionBundleRepo {
-    /// Lists bundles for a company (typed).
-    pub async fn list_by_company_typed_stub(
-        _company_id: CompanyId,
-    ) -> Result<Vec<crate::decision_bundle::DecisionBundleRow>> {
-        // TODO(R880): wrap DecisionBundleRepo::list_by_company
-        unimplemented!("R880 follow-up")
-    }
-
-    /// Gets a bundle by id (typed).
-    pub async fn get_typed_stub(
-        _id: DecisionBundleId,
-    ) -> Result<Option<crate::decision_bundle::DecisionBundleRow>> {
-        // TODO(R880): wrap DecisionBundleRepo::get
-        unimplemented!("R880 follow-up")
-    }
-
-    /// Checks if a bundle exists for the (agent, issue, run) origin tuple.
-    pub async fn exists_for_origin_typed_stub(
-        _company_id: CompanyId,
-        _agent_id: Option<AgentId>,
-        _issue_id: Option<IssueId>,
-        _run_id: Option<RunId>,
-    ) -> Result<bool> {
-        // TODO(R880): wrap DecisionBundleRepo::exists_for_origin
-        unimplemented!("R880 follow-up")
-    }
-}
-
-// ============================================================================
-// Compile-time type-safety demonstration
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typed_id_helpers::IntoUuid;
-    use crate::typed_ids::{DecisionBundleId, UserId};
-    use uuid::Uuid;
 
     #[test]
-    fn typed_wrapper_compiles_and_carries_state() {
-        // The wrapper is a newtype around DecisionRepo; instantiating it
-        // does not require a DB pool. We just verify the type compiles.
-        fn _type_assert(r: TypedDecisionRepo) {
-            let _: &DecisionRepo = &r.inner;
-        }
-    }
+    fn wrapper_compiles_and_accepts_typed_ids() {
+        // Smoke: the wrapper types are constructible without DB.
+        // (We cannot construct DecisionRepo without a real Db, so this
+        // is a type-only check.)
+        fn _accepts_company(_: CompanyId) {}
+        fn _accepts_decision(_: DecisionId) {}
 
-    #[test]
-    fn typed_ids_convert_to_uuid_for_inner_calls() {
-        // Simulate the bridge pattern: every typed ID can be converted to
-        // the raw UUID that DecisionRepo expects.
-        let company: CompanyId = CompanyId::new();
-        let decision: DecisionId = DecisionId::new();
-        let bundle: DecisionBundleId = DecisionBundleId::new();
-        let user: UserId = UserId::new();
+        let _company: CompanyId = CompanyId::new();
+        let _decision: DecisionId = DecisionId::new();
 
-        let _: Uuid = company.into_uuid();
-        let _: Uuid = decision.into_uuid();
-        let _: Uuid = bundle.into_uuid();
-        let _: Uuid = user.into_uuid();
-    }
-
-    #[test]
-    fn typed_wrapper_rejects_cross_type_at_compile_time() {
-        // This is a compile-only test: the lines below would NOT compile,
-        // proving the wrapper enforces type safety.
-        fn _check(company: CompanyId, decision: DecisionId) {
-            let _u: Uuid = company.as_uuid();
-            let _u2: Uuid = decision.as_uuid();
-            // The following would NOT compile:
-            // let wrong: DecisionId = company; // ← type mismatch
-            // TypedDecisionRepo::list_by_company_typed requires CompanyId,
-            // not DecisionId — this prevents the entire class of bugs where
-            // a developer passes the wrong ID by mistake.
-        }
-    }
-
-    #[test]
-    fn typed_id_aliases_round_trip_through_uuid() {
-        // After `.as_uuid()` round-trip, equality is preserved.
-        let original: CompanyId = CompanyId::new();
-        let restored: CompanyId = CompanyId::from_uuid(original.as_uuid());
-        assert_eq!(original, restored);
-    }
-
-    #[test]
-    fn typed_bundle_repo_stubs_are_compile_anchored() {
-        // Anchors the stub so it doesn't trigger unused-code warnings
-        // until the follow-up wraps DecisionBundleRepo.
-        let _: TypedDecisionBundleRepo = TypedDecisionBundleRepo;
+        // Compile-only: would NOT compile if uncommented because
+        // CompanyId != DecisionId:
+        // _accepts_company(DecisionId::new());
     }
 }

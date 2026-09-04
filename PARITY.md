@@ -5,7 +5,7 @@
 [![综合行为等价](https://img.shields.io/badge/behavioral%20parity-~85%25-yellow)](#覆盖率量化)
 [![crates](https://img.shields.io/badge/crates-108-blue)](#crate-拓扑)
 [![LOC](https://img.shields.io/badge/Rust%20LOC-595K-orange)](#整体规模)
-[![migrations](https://img.shields.io/badge/migrations-207-red)](#协议级等价性)
+[![migrations](https://img.shields.io/badge/migrations-211-red)](#协议级等价性)
 
 > **更新时间**：2026-09-03（基于 commit `861efc1`，领先 upstream `4fc96f3` 3 个 commit）
 > **对比基线**：[paperclipai/paperclip](https://github.com/paperclipai/paperclip) @ HEAD `480630041d68`
@@ -60,8 +60,8 @@ Paperclip-rs 是上游 Node + TypeScript 单体（760 个 TS 源文件 / 44.4 �
 | Git 总提交数 | 415 |
 | Rust crate 数 | **108** |
 | `.rs` 文件数 | 1,577 |
-| `.rs` 代码行数 | **595,845** |
-| 公开 API 数（pub fn/struct/enum/trait） | **12,025** |
+| `.rs` 代码行数 | **601,723** |
+| 公开 API 数（pub fn/struct/enum/trait/type/mod/use） | **10,144** |
 | 集成测试文件数 | 493 |
 | `.rs` 测试文件总数 | 500 |
 | TS/TSX 文件数（含 UI） | 1,864 |
@@ -69,7 +69,7 @@ Paperclip-rs 是上游 Node + TypeScript 单体（760 个 TS 源文件 / 44.4 �
 | 总代码行数（rs + ts + tsx） | **787,098** |
 | 路由文件（pc-http/src/routes/） | 75 |
 | 仓储文件（pc-repos/src/） | 114 |
-| 数据库迁移 SQL 文件 | **207** |
+| 数据库迁移 SQL 文件 | **211** |
 | 最新 migration 编号 | **0208** |
 | OpenAPI 产物 | 828 KB / 32,664 行 |
 
@@ -100,7 +100,7 @@ Paperclip-rs 是上游 Node + TypeScript 单体（760 个 TS 源文件 / 44.4 �
 
 ### 3.3 数据库 schema
 
-- ✅ **109+ 张表 schema**（207 个 migration 文件，最高 0208）
+- ✅ **109+ 张表 schema**（211 个 migration 文件，最高 0208）
 - ✅ 保留原 DDL、索引、外键、check 约束
 - ✅ `PAPERCLIP_DB_RUN_MIGRATIONS=false` 时跳过迁移
 - ✅ migration runner 用 `sqlx::Migrator`
@@ -312,7 +312,7 @@ Coverage (method+path) : 90.33%
 | HTTP method+path | 90.33% | diff-routes.sh 实测 |
 | HTTP 响应 schema | ~85% | 主要响应类型已对齐；部分子资源 404/500 |
 | WebSocket live-events | 95% | R252-R257 完整化（resume + filter + rate limit + since-until + replay） |
-| 数据库 schema | 95% | 207 个 migration 文件，最高 0208 |
+| 数据库 schema | 95% | 211 个 migration 文件，最高 0208 |
 | 插件 IPC 协议 | 100% | JSON-RPC 2.0 over stdio，方法名 / envelope / 错误码不变 |
 | 插件能力校验 | 100% | 49 个 OPERATION_CAPABILITIES + drift detection |
 | 适配器 CLI 协议 | ~60% | 4 个完整 + 4 个 stub + 3 个 HTTP API |
