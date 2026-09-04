@@ -7,7 +7,7 @@
 //! These tests use serde_json::json! to construct realistic adapter
 //! configs; the helper avoids any process spawning.
 
-use pc_adapter_grok_local::build_grok_exec_args;
+use crate::build_grok_exec_args;
 use serde_json::json;
 
 #[test]

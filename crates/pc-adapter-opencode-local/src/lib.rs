@@ -47,10 +47,44 @@ pub fn build_opencode_exec_args(config: &Value, resume_session_id: Option<&str>)
         args.push("--model".into());
         args.push(m);
     }
+    // R870: temperature (sampling)
+    if let Some(t) = config.get("temperature").and_then(Value::as_f64) {
+        args.push("--temperature".into());
+        args.push(t.to_string());
+    }
+    // R870: max tokens
+    if let Some(m) = config.get("maxTokens").and_then(Value::as_u64) {
+        args.push("--max-tokens".into());
+        args.push(m.to_string());
+    }
+    // R870: sandbox (only emit when true; opencode treats omitted as default)
+    if config
+        .get("sandbox")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        args.push("--sandbox".into());
+    }
+    // R870: system prompt (skip if empty)
+    if let Some(sp) = config
+        .get("systemPrompt")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        args.push("--system-prompt".into());
+        args.push(sp.to_owned());
+    }
+    // R870: append system prompt file (path)
+    if let Some(path) = config.get("appendSystemPromptFile").and_then(Value::as_str) {
+        args.push("--append-system-prompt-file".into());
+        args.push(path.to_owned());
+    }
     if let Some(cwd) = config.get("cwd").and_then(Value::as_str) {
         args.push("--cwd".into());
         args.push(cwd.to_owned());
     }
+    // extraArgs go BEFORE --session so user-provided flags cannot be
+    // overridden by the resume flag appended last.
     if let Some(extra) = config.get("extraArgs").and_then(Value::as_array) {
         for item in extra.iter().filter_map(|v| v.as_str()) {
             args.push(item.to_owned());
@@ -203,6 +237,9 @@ impl Adapter for OpencodeLocalAdapter {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod r870_cli_args;
 
 #[cfg(test)]
 mod tests {

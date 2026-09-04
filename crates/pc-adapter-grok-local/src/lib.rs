@@ -247,6 +247,9 @@ impl Adapter for GrokLocalAdapter {
 }
 
 #[cfg(test)]
+mod r870_cli_args;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

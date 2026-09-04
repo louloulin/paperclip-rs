@@ -1,0 +1,119 @@
+# paperclip-rs CI — catch the regressions that have burned us.
+#
+# Three independent gates; any failure blocks the PR:
+#   1. check  — `cargo check --workspace` (compiler-only)
+#   2. unit   — `cargo test --workspace --lib` (every crate's own #[cfg(test)])
+#   3. build  — `cargo build` of every public binary (pc-server, pc-cli, sidecar)
+#
+# Postgres-dependent e2e lives in the dedicated r626-ux-flow-e2e.yml workflow
+# (slower, only triggers on the route files it covers). The plugin-host sidecar
+# e2e is here so it runs on every change to pc-plugin-host.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: never
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  check:
+    name: cargo check --workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ci-check-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-check-
+      - name: cargo check
+        run: cargo check --workspace --all-targets
+
+  unit:
+    name: cargo test --workspace --lib
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ci-unit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-unit-
+      - name: cargo test --lib
+        # Run all #[cfg(test)] unit tests in the workspace. Integration tests
+        # that require a live Postgres are excluded by name (see below).
+        run: |
+          cargo test --workspace --lib \
+            --exclude pc-goals \
+            --exclude pc-companies \
+            --exclude pc-authz
+
+  build:
+    name: build public binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ci-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-build-
+      - name: build pc-server
+        run: cargo build -p pc-server --bin paperclip-server
+      - name: build pc-cli
+        run: cargo build -p pc-cli --bin paperclip
+
+  sidecar-e2e:
+    name: plugin-host sidecar e2e
+    # Only run when pc-plugin-host changes; otherwise fast PRs are wasted on
+    # a Node-toolchain install.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ci-sidecar-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-sidecar-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: sidecar integration tests
+        working-directory: crates/pc-plugin-host
+        run: cargo test --test sidecar_integration -- --nocapture
+      - name: sidecar e2e (initialize/health/shutdown over stdio)
+        working-directory: crates/pc-plugin-host
+        run: cargo test --test sidecar_e2e -- --nocapture
