@@ -34,6 +34,10 @@ pub mod inbox;
 pub mod issues;
 pub mod subscribers;
 
+// M2-D（LUM-1355）：issue table 查询面（`/api/issues/table/*` + `/api/issues/limit-usage`）。
+// 由 `issues::router()` 内部 `merge`，因此 `mount.rs` 不需要改动。
+pub mod issue_table;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }
