@@ -16,7 +16,7 @@
 | 项 | 值 |
 | --- | --- |
 | 集成分支 | `feat/multica-rs-initial` |
-| 远端 head | **`69e9f4b`**（`f05b803` = M2-C 合并 → `69e9f4b` = docs） |
+| 远端 head | **`9c57592`**（`f05b803` = M2-C 合并 → `8df6888`/`90cd17c`/`9c57592` = 19:00 cycle 的 docs） |
 | 已并入的 M2 切片 | **M2-C（LUM-1349）**：`fc8727b` → `f05b803`（inbox 仓储 + `/api/inbox` 14 条 + subscriber 4 条，`docs/13-M2-INBOX.md`） |
 | 待并入 | M1-E（LUM-1362）、M2-A（LUM-1348）、M2-B（LUM-1350） |
 | 迁移编号水位 | `0001`–`0004`（`0005` 空闲，按 `docs/10` §5.1 由集成 master 统一分配） |
@@ -199,3 +199,19 @@ grep -rnoE '\.route\( *"[^"]*\{[a-zA-Z_]+\}' crates/mc-http/src/routes/*.rs   # 
 **禁止**在 `git init` + `fetch --filter=blob:none` 的 blobby 仓库里跑 `git grep`（逐 blob 懒取，
 单次 ETA ≈ 74 分钟，2026-09-22 实测卡死两个并发位）。要 grep 就先做 5.4s 的全 blob 浅克隆，
 或按 `docs/20` §救援 给对象库补 blob。集成切片最容易踩到这个坑（要跨切片 grep 同名字段/路由）。
+
+---
+
+## 9. 运行中断（daemon restart）与被中断切片的状态
+
+**2026-09-22 11:35:34Z daemon 重启**，三个在飞切片（M2-A/LUM-1348、M1-F/LUM-1375、T1/LUM-1376）
+被同时判死并同秒自动重试（`error="daemon restarted while task was in flight"`、
+`failure_reason=runtime_recovery`、`attempt 2`）。重试 run 拿到的是**全新空工作区**，旧工作区里
+未提交的改动（M2-A 有 2h02m 工作量：+4134 −13 + 2 个新文件）需要**主动抢救**，平台不提供指针。
+
+- 完整事实、可复制的抢救命令、必须做的三项校验、以及「不要写别人的 workdir」这条硬规则 →
+  **`docs/23-RUN-RECOVERY.md`**（实测于本 cycle）。
+- 对集成的影响：§2 表格里 M2-A 的「未提交」状态就是从被中断的旧工作区读到的；
+  集成前请以**远端分支 + `docs/23` §3 的哈希对账**为准，别把「只恢复了一半」的分支当完整切片。
+- 运维面：切片在跑时重启 daemon 的实测代价 ≈ 2h45m 并行算力，而 M2-A 正在关键路径上。
+
