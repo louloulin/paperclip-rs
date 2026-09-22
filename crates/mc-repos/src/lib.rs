@@ -22,6 +22,7 @@ pub mod inbox;
 pub mod invitation;
 pub mod issue;
 pub mod issue_status;
+pub mod issue_table;
 pub mod member;
 pub mod pat;
 pub mod share_link;

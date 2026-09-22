@@ -85,13 +85,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/issues/child-progress", get(child_progress))
         .route("/api/issues/batch-update", post(batch_update))
         .route("/api/issues/batch-delete", post(batch_delete))
-        // ---- 尚未实现（501；依赖 agent/squad/task/attachment/table 等 M3 能力）----
-        .route("/api/issues/limit-usage", get(not_implemented))
+        // ---- 尚未实现（501；依赖 agent/squad/task/attachment 等 M3 能力）----
         .route("/api/issues/quick-create", post(quick_create_issue))
         .route("/api/issues/preview-trigger", post(not_implemented))
-        .route("/api/issues/table/groups", post(not_implemented))
-        .route("/api/issues/table/rows", post(not_implemented))
-        .route("/api/issues/table/facets", post(not_implemented))
         // ---- 单体 ----------------------------------------------------------
         .route(
             "/api/issues/:id",
@@ -162,20 +158,24 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/issue-statuses/:id",
             patch(update_status).delete(delete_status),
         )
+        // M2-D（LUM-1355）：`/api/issues/table/{groups,rows,facets}` 与
+        // `/api/issues/limit-usage` 在独立文件里实现，这里**委托合并**（`mount.rs`
+        // 与 `routes/mod.rs` 现有注册点都不动）。清单与理由见 `docs/14-M2-TABLE.md` §6。
+        .merge(super::issue_table::router())
 }
 
 // ---------------------------------------------------------------------------
 // 错误 / 参数小工具
 // ---------------------------------------------------------------------------
 
-fn validation(message: impl Into<String>) -> Error {
+pub(crate) fn validation(message: impl Into<String>) -> Error {
     Error::Validation {
         message: message.into(),
         details: Vec::new(),
     }
 }
 
-fn repo_err(e: RepoError) -> Error {
+pub(crate) fn repo_err(e: RepoError) -> Error {
     match e {
         RepoError::NotFound => Error::NotFound {
             resource: "issue".into(),
@@ -257,7 +257,7 @@ pub struct WorkspaceQuery {
 /// 上游是从 session 的 "current workspace" / task token 里取；本仓 M1 的 auth 只有
 /// `X-Multica-User-Id` dev-mode 提取器，没有 workspace 上下文，因此显式传参（详见
 /// `docs/11-M2-ISSUE.md`）。四个来源都缺 → 400。
-async fn resolve_workspace(
+pub(crate) async fn resolve_workspace(
     state: &AppState,
     headers: &HeaderMap,
     query: &WorkspaceQuery,
@@ -313,7 +313,7 @@ fn parse_target_id(field: &str, raw: &str) -> Result<Id, Error> {
 
 /// status key → (展示名, 生命周期分类)。内置目录打底，DB 里的自定义 status 覆盖。
 #[derive(Debug, Clone, Default)]
-struct StatusCatalog {
+pub(crate) struct StatusCatalog {
     names: HashMap<String, String>,
     categories: HashMap<String, StatusCategory>,
 }
@@ -374,7 +374,10 @@ impl StatusCatalog {
     }
 }
 
-async fn load_catalog(state: &AppState, workspace_id: Id) -> Result<StatusCatalog, Error> {
+pub(crate) async fn load_catalog(
+    state: &AppState,
+    workspace_id: Id,
+) -> Result<StatusCatalog, Error> {
     let mut catalog = StatusCatalog::with_builtins();
     let rows = status_repo(state)
         .list(workspace_id)
@@ -691,7 +694,7 @@ pub struct IssueDto {
 }
 
 impl IssueDto {
-    fn from_row(row: &IssueRow, catalog: &StatusCatalog) -> Self {
+    pub(crate) fn from_row(row: &IssueRow, catalog: &StatusCatalog) -> Self {
         let category = catalog
             .category_of(&row.status)
             .or_else(|| row.status_category());
