@@ -106,7 +106,7 @@ async fn workspace_member_http_e2e() {
     use axum::http::{Request, StatusCode};
     use mc_repos::Repository;
     use serde_json::json;
-    use tower04::ServiceExt;
+    use tower::ServiceExt;
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
         let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();

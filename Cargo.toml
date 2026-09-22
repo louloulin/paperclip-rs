@@ -1,35 +1,12 @@
 [workspace]
 resolver = "2"
-members = [
-    # ----- 基础设施 -----
-    "crates/mc-config",
-    "crates/mc-errors",
-    "crates/mc-telemetry",
-    "crates/mc-db",
-    "crates/mc-core",
-    "crates/mc-storage",
-    "crates/mc-secrets",
-    "crates/mc-auth",
-    "crates/mc-authz",
-    "crates/mc-realtime",
-    "crates/mc-ws",
-    "crates/mc-openapi",
-    "crates/mc-feature-flags",
-
-    # ----- 协议层 -----
-    "crates/mc-plugin-protocol",
-
-    # ----- 仓储层 -----
-    "crates/mc-repos",
-
-    # ----- 二进制 -----
-    "apps/mc-server",
-    "apps/mc-cli",
-
-    # ----- 工具 -----
-    "crates/mc-migrate",
-    "crates/mc-http",
-]
+# 用 glob 而不是逐个列成员：新增 crate 只加目录，不再需要动根 manifest
+# （否则每个新 crate 的切片都要改这一行 → 全员冲突）。
+# 约束：`crates/*`、`apps/*` 展开到的**每一个**目录都必须有 Cargo.toml，
+# 否则 cargo 会在 `failed to load manifest for workspace member` 处直接失败。
+# 另：`xtask` 目前不存在；不给不存在的字面路径当成员（cargo 会报错，实测 exit 101），
+# 等到真的创建 `xtask/` 时再把它加进这个列表。详见 docs/28-WORKSPACE-REFACTOR.md。
+members = ["crates/*", "apps/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -50,6 +27,9 @@ async-trait = "0.1"
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# URL (mc-config)
+url = { version = "2", features = ["serde"] }
+
 # WebSocket
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots", "url"] }
 futures-util = "0.3"
@@ -59,6 +39,14 @@ axum = { version = "0.7", features = ["macros", "ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "cors", "limit", "fs"] }
 hyper = "1"
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+
+# 注：这里曾经有一个 `tower04 = { package = "tower", version = "0.4", features = ["util"] }`
+# 别名（给根 `tests/smoke.rs` 的 oneshot 用）。**已删除**：tower 0.4/0.5 共用同一个
+# `tower-service 0.3.3`（`Service` trait 的提供者），axum 0.7.9 自身依赖的就是 tower 0.5.3，
+# 所以 tower 0.5 的 `util::ServiceExt::oneshot` 一样能用 —— 见 docs/28-WORKSPACE-REFACTOR.md。
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
@@ -81,6 +69,16 @@ sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
 hex = "0.4"
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+# Object storage / Secrets Manager —— optional，由 mc-storage/`s3`、mc-secrets/`aws` 打开。
+# 注意：`optional` 不能写在 [workspace.dependencies] 里（cargo 报
+# "workspace dependencies cannot be optional"），成员侧写 `{ workspace = true, optional = true }`。
+aws-config = "1"
+aws-sdk-s3 = "1"
+aws-sdk-secretsmanager = "1"
+aws-credential-types = "1"
 
 # Regex / Random
 regex = "1"
@@ -98,10 +96,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 dirs = "6"
 dotenvy = "0.15"
 
+# Telemetry OTLP export —— optional，由 mc-telemetry/`otlp` feature 打开
+opentelemetry = "0.24"
+opentelemetry_sdk = "0.24"
+opentelemetry-otlp = "0.17"
+tracing-opentelemetry = "0.25"
+
 # Test
 proptest = "1"
 mockall = "0.13"
 pretty_assertions = "1"
+tempfile = "3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

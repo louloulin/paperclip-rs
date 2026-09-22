@@ -23,10 +23,10 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 
 # OTLP (optional)
-opentelemetry = { version = "0.24", optional = true }
-opentelemetry_sdk = { version = "0.24", optional = true }
-opentelemetry-otlp = { version = "0.17", optional = true }
-tracing-opentelemetry = { version = "0.25", optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

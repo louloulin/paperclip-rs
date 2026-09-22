@@ -48,10 +48,8 @@ mc-openapi = { path = "../mc-openapi" }
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 mc-config = { path = "../mc-config" }
-# axum 0.7 基于 tower 0.4 的 Service trait；集成测试 oneshot 需要同版本。
-tower04 = { package = "tower", version = "0.4", features = ["util"] }
 # M1 sub-issue C 的 e2e 测试（tests/{invitations,pats}.rs）依赖以下三件套。
-http-body-util = "0.1"
+http-body-util = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 hyper = { workspace = true }
 
