@@ -289,7 +289,12 @@ impl InboxRepo {
     ///
     /// 上游 `loadInboxItemForUser` 的等价物：把"别人的通知"与"不存在的通知"都收敛
     /// 成 404，不泄漏资源存在性。
-    pub async fn get_for_user(&self, id: Id, workspace_id: Id, user_id: Id) -> Result<InboxItemRow> {
+    pub async fn get_for_user(
+        &self,
+        id: Id,
+        workspace_id: Id,
+        user_id: Id,
+    ) -> Result<InboxItemRow> {
         let sql = format!(
             "SELECT {ITEM_COLUMNS} {ITEM_FROM} \
              WHERE i.id = $1 AND i.workspace_id = $2 AND i.user_id = $3"
@@ -308,7 +313,13 @@ impl InboxRepo {
     ///
     /// 上游 `GET /api/inbox` 不分页（返回全部活跃行）；本仓按 sub-issue 要求加
     /// `limit` / `offset`（路由默认 `limit=200`，见 `docs/13-M2-INBOX.md`）。
-    pub async fn list(&self, workspace_id: Id, user_id: Id, limit: i64, offset: i64) -> Result<Vec<InboxItemRow>> {
+    pub async fn list(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<InboxItemRow>> {
         let sql = format!(
             "SELECT {ITEM_COLUMNS} {ITEM_FROM} \
              WHERE i.workspace_id = $1 AND i.user_id = $2 AND i.archived_at IS NULL \
@@ -508,11 +519,8 @@ impl InboxRepo {
 
     /// 标记已读（item 级，幂等）：已读行保持不变，`read_at` 不会被刷新。
     pub async fn mark_read(&self, id: Id) -> Result<InboxItemRow> {
-        self.retouch(
-            "read_at = COALESCE(read_at, now())",
-            id.as_uuid(),
-        )
-        .await
+        self.retouch("read_at = COALESCE(read_at, now())", id.as_uuid())
+            .await
     }
 
     /// 标记未读（item 级，幂等）。
@@ -874,7 +882,10 @@ mod tests {
                 .create(item(user, ws.as_uuid(), Some(issue), "a2"))
                 .await
                 .unwrap();
-            let solo = repo.create(item(user, ws.as_uuid(), None, "solo")).await.unwrap();
+            let solo = repo
+                .create(item(user, ws.as_uuid(), None, "solo"))
+                .await
+                .unwrap();
 
             let archived = repo.archive(a.id()).await.unwrap();
             assert!(archived.is_archived());
@@ -903,7 +914,11 @@ mod tests {
 
             // 取消归档后，该组回到主列表，归档列表里不再有它。
             assert_eq!(repo.list(ws, user_id, 50, 0).await.unwrap().len(), 3);
-            assert!(repo.list_archived(ws, user_id, 200).await.unwrap().is_empty());
+            assert!(repo
+                .list_archived(ws, user_id, 200)
+                .await
+                .unwrap()
+                .is_empty());
         }
 
         #[tokio::test]
@@ -1002,7 +1017,11 @@ mod tests {
 
             let facets = repo.archived_facets(ws, user_id, &filter).await.unwrap();
             assert_eq!(facets.unread_count, 0);
-            assert_eq!(facets.actors.values().sum::<i64>(), 3, "one actor per group");
+            assert_eq!(
+                facets.actors.values().sum::<i64>(),
+                3,
+                "one actor per group"
+            );
             assert_eq!(facets.statuses.get("in_progress"), Some(&3));
             assert_eq!(facets.priorities.get("medium"), Some(&3));
 
@@ -1032,7 +1051,10 @@ mod tests {
                 .is_empty());
 
             // 无 issue 的通知：组键就是自己的行 id。
-            let solo = repo.create(item(user, ws.as_uuid(), None, "solo")).await.unwrap();
+            let solo = repo
+                .create(item(user, ws.as_uuid(), None, "solo"))
+                .await
+                .unwrap();
             repo.archive(solo.id()).await.unwrap();
             let filter = ArchivedInboxFilter {
                 group_id: Some(solo.id()),
@@ -1097,9 +1119,14 @@ mod tests {
             .unwrap();
 
             for (i, status) in ["shipped", "done", "in_progress"].iter().enumerate() {
-                let issue =
-                    new_issue(&pool, ws.as_uuid(), user, status, i32::try_from(i).unwrap() + 10)
-                        .await;
+                let issue = new_issue(
+                    &pool,
+                    ws.as_uuid(),
+                    user,
+                    status,
+                    i32::try_from(i).unwrap() + 10,
+                )
+                .await;
                 repo.create(item(user, ws.as_uuid(), Some(issue), status))
                     .await
                     .unwrap();

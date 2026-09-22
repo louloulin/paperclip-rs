@@ -105,7 +105,10 @@ async fn call(
 
 /// 错误体里的 message（本仓形状 `{"error":{"code","message"}}`）。
 fn message(body: &Value) -> String {
-    body["error"]["message"].as_str().unwrap_or_default().to_string()
+    body["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
 }
 
 async fn get(app: &Router, uri: &str, user: Uuid, ws: Uuid) -> (StatusCode, Value) {
@@ -142,12 +145,13 @@ async fn seed(pool: &sqlx::PgPool) -> Fx {
 
     let mut users = Vec::new();
     for tag in ["owner", "peer", "third", "outsider"] {
-        let id: Uuid = sqlx::query_scalar(r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#)
-            .bind(format!("itest-inbox-{tag}"))
-            .bind(format!("inbox-{tag}-{}@example.com", Uuid::new_v4()))
-            .fetch_one(pool)
-            .await
-            .expect("insert user");
+        let id: Uuid =
+            sqlx::query_scalar(r#"INSERT INTO "user"(name, email) VALUES ($1, $2) RETURNING id"#)
+                .bind(format!("itest-inbox-{tag}"))
+                .bind(format!("inbox-{tag}-{}@example.com", Uuid::new_v4()))
+                .fetch_one(pool)
+                .await
+                .expect("insert user");
         users.push(id);
     }
     let (owner, peer, third, outsider) = (users[0], users[1], users[2], users[3]);
@@ -300,7 +304,10 @@ async fn route_paths_are_mounted() {
         // (a) 缺 `X-Multica-User-Id` → 401（extractor 阶段），绝不是 404。
         let (status, body) = call(&app, method, &path, None, None, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {path} → {body}");
-        assert_eq!(body["error"]["code"], "unauthorized", "{method} {path} → {body}");
+        assert_eq!(
+            body["error"]["code"], "unauthorized",
+            "{method} {path} → {body}"
+        );
 
         // (b) 有用户、缺 workspace 上下文 → 400（workspace 解析早于成员校验，不碰 DB）。
         let (status, body) = call(&app, method, &path, Some(Uuid::new_v4()), None, None).await;
@@ -429,7 +436,10 @@ async fn list_read_flow_and_visibility() {
     assert_eq!(status, StatusCode::OK);
     let (status, body) = get(&app, "/api/inbox?limit=0", fx.owner, ws).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(message(&body), "validation error: limit must be between 1 and 500");
+    assert_eq!(
+        message(&body),
+        "validation error: limit must be between 1 and 500"
+    );
 
     // --- unread-count（行粒度）---
     let (_, body) = get(&app, "/api/inbox/unread-count", fx.owner, ws).await;
@@ -439,7 +449,11 @@ async fn list_read_flow_and_visibility() {
     let (status, body) = post(&app, &format!("/api/inbox/{comment}/read"), fx.owner, ws).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["read"], true);
-    assert_eq!(body["body"].as_str().unwrap().chars().count(), 500, "单条不截断");
+    assert_eq!(
+        body["body"].as_str().unwrap().chars().count(),
+        500,
+        "单条不截断"
+    );
     post(&app, &format!("/api/inbox/{comment}/read"), fx.owner, ws).await;
     let (_, body) = get(&app, "/api/inbox/unread-count", fx.owner, ws).await;
     assert_eq!(body["count"], 2, "重复已读不重复计数");
@@ -474,13 +488,7 @@ async fn list_read_flow_and_visibility() {
     let (status, body) = post(&app, &format!("/api/inbox/{peer_item}/read"), fx.owner, ws).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(message(&body), "not found: inbox item");
-    let (status, body) = post(
-        &app,
-        &format!("/api/inbox/{solo}/read"),
-        fx.third,
-        ws,
-    )
-    .await;
+    let (status, body) = post(&app, &format!("/api/inbox/{solo}/read"), fx.third, ws).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(message(&body), "not found: inbox item");
     let (status, body) = post(&app, &format!("/api/inbox/{solo}/read"), fx.outsider, ws).await;
@@ -529,22 +537,65 @@ async fn archived_facets_and_cursor_paging() {
     let issue_b = new_issue(&pool, ws, fx.owner, 2, "done", "urgent", None).await;
 
     // solo（issue 无）最早 → a1 → a2 → b1，保证分页顺序确定。
-    let solo = new_item(&pool, ws, fx.owner, None, "new_issue", "solo", None, true, true).await;
+    let solo = new_item(
+        &pool,
+        ws,
+        fx.owner,
+        None,
+        "new_issue",
+        "solo",
+        None,
+        true,
+        true,
+    )
+    .await;
     new_item(
-        &pool, ws, fx.owner, Some(issue_a), "new_comment", "a1", None, true, true,
+        &pool,
+        ws,
+        fx.owner,
+        Some(issue_a),
+        "new_comment",
+        "a1",
+        None,
+        true,
+        true,
     )
     .await;
     let a2 = new_item(
-        &pool, ws, fx.owner, Some(issue_a), "new_comment", "a2", None, false, true,
+        &pool,
+        ws,
+        fx.owner,
+        Some(issue_a),
+        "new_comment",
+        "a2",
+        None,
+        false,
+        true,
     )
     .await;
     new_item(
-        &pool, ws, fx.owner, Some(issue_b), "new_comment", "b1", None, true, true,
+        &pool,
+        ws,
+        fx.owner,
+        Some(issue_b),
+        "new_comment",
+        "b1",
+        None,
+        true,
+        true,
     )
     .await;
     // 有活跃行的 issue 组不进归档视图。
     new_item(
-        &pool, ws, fx.owner, Some(issue_b), "new_comment", "b2", None, false, false,
+        &pool,
+        ws,
+        fx.owner,
+        Some(issue_b),
+        "new_comment",
+        "b2",
+        None,
+        false,
+        false,
     )
     .await;
 
@@ -605,7 +656,13 @@ async fn archived_facets_and_cursor_paging() {
     )
     .await;
     assert_eq!(ids(&body["items"]), vec![Id(a2).as_string()]);
-    let (_, body) = get(&app, "/api/inbox/archived/page?unread_only=true", fx.owner, ws).await;
+    let (_, body) = get(
+        &app,
+        "/api/inbox/archived/page?unread_only=true",
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(ids(&body["items"]), vec![Id(a2).as_string()]);
     let (_, body) = get(
         &app,
@@ -614,7 +671,11 @@ async fn archived_facets_and_cursor_paging() {
         ws,
     )
     .await;
-    assert_eq!(ids(&body["items"]), vec![Id(a2).as_string()], "issue 组的 key 是 issue id");
+    assert_eq!(
+        ids(&body["items"]),
+        vec![Id(a2).as_string()],
+        "issue 组的 key 是 issue id"
+    );
     let (_, body) = get(
         &app,
         &format!("/api/inbox/archived/page?group_id={solo}"),
@@ -630,10 +691,19 @@ async fn archived_facets_and_cursor_paging() {
 
     // --- 参数校验（与上游逐字对齐）---
     for (query, expected) in [
-        ("limit=0", "validation error: limit must be between 1 and 100"),
-        ("limit=101", "validation error: limit must be between 1 and 100"),
+        (
+            "limit=0",
+            "validation error: limit must be between 1 and 100",
+        ),
+        (
+            "limit=101",
+            "validation error: limit must be between 1 and 100",
+        ),
         ("unread_only=1", "validation error: invalid unread_only"),
-        ("statuses=todo,,done", "validation error: empty filter value"),
+        (
+            "statuses=todo,,done",
+            "validation error: empty filter value",
+        ),
         ("group_id=nope", "validation error: invalid group_id"),
         ("cursor=zzzz", "validation error: invalid archive cursor"),
     ] {
@@ -691,9 +761,42 @@ async fn bulk_operations_and_unread_summary() {
     let shipped = new_issue(&pool, ws, fx.owner, 1, "shipped", "low", None).await;
     let open = new_issue(&pool, ws, fx.owner, 2, "todo", "low", None).await;
 
-    let c1 = new_item(&pool, ws, fx.owner, Some(shipped), "new_comment", "c1", None, false, false).await;
-    let d1 = new_item(&pool, ws, fx.owner, Some(open), "new_comment", "d1", None, false, false).await;
-    let solo = new_item(&pool, ws, fx.owner, None, "new_issue", "solo", None, false, false).await;
+    let c1 = new_item(
+        &pool,
+        ws,
+        fx.owner,
+        Some(shipped),
+        "new_comment",
+        "c1",
+        None,
+        false,
+        false,
+    )
+    .await;
+    let d1 = new_item(
+        &pool,
+        ws,
+        fx.owner,
+        Some(open),
+        "new_comment",
+        "d1",
+        None,
+        false,
+        false,
+    )
+    .await;
+    let solo = new_item(
+        &pool,
+        ws,
+        fx.owner,
+        None,
+        "new_issue",
+        "solo",
+        None,
+        false,
+        false,
+    )
+    .await;
 
     // --- mark-all-read ---
     let (status, body) = post(&app, "/api/inbox/mark-all-read", fx.owner, ws).await;
@@ -733,7 +836,10 @@ async fn bulk_operations_and_unread_summary() {
     }
     let (status, body) = post(&app, "/api/inbox/archive-completed", fx.owner, ws).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["count"], 1, "只归档 shipped（issue_status 里 category='closed'）");
+    assert_eq!(
+        body["count"], 1,
+        "只归档 shipped（issue_status 里 category='closed'）"
+    );
     let (_, body) = get(&app, "/api/inbox", fx.owner, ws).await;
     assert_eq!(ids(&body).len(), 2);
 
@@ -746,22 +852,38 @@ async fn bulk_operations_and_unread_summary() {
     let (_, body) = post(&app, "/api/inbox/archive-completed", fx.owner, ws).await;
     assert_eq!(body["count"], 1, "内置 done 也算终结态");
     let (_, body) = get(&app, "/api/inbox", fx.owner, ws).await;
-    assert_eq!(ids(&body), vec![Id(solo).as_string()], "无 issue 的通知不受影响");
+    assert_eq!(
+        ids(&body),
+        vec![Id(solo).as_string()],
+        "无 issue 的通知不受影响"
+    );
 
     // --- unread-summary：账户级（跨 workspace），但仍要求 workspace 上下文 ---
-    let ws2: Uuid =
-        sqlx::query_scalar("INSERT INTO workspace(name, slug) VALUES ('itest-inbox-ws2', $1) RETURNING id")
-            .bind(format!("itest-inbox2-{}", Uuid::new_v4()))
-            .fetch_one(&pool)
-            .await
-            .expect("insert ws2");
+    let ws2: Uuid = sqlx::query_scalar(
+        "INSERT INTO workspace(name, slug) VALUES ('itest-inbox-ws2', $1) RETURNING id",
+    )
+    .bind(format!("itest-inbox2-{}", Uuid::new_v4()))
+    .fetch_one(&pool)
+    .await
+    .expect("insert ws2");
     sqlx::query("INSERT INTO member(workspace_id, user_id, role) VALUES ($1, $2, 'member')")
         .bind(ws2)
         .bind(fx.owner)
         .execute(&pool)
         .await
         .expect("insert member ws2");
-    let other = new_item(&pool, ws2, fx.owner, None, "new_issue", "other", None, false, false).await;
+    let other = new_item(
+        &pool,
+        ws2,
+        fx.owner,
+        None,
+        "new_issue",
+        "other",
+        None,
+        false,
+        false,
+    )
+    .await;
     // 上一步的 bulk 操作把 solo 留在"已读"状态；汇总按"每组最新一条是否未读"计数，
     // 所以先把它置回未读，两个 workspace 才各有一个未读组。
     post(&app, &format!("/api/inbox/{solo}/unread"), fx.owner, ws).await;
@@ -774,8 +896,7 @@ async fn bulk_operations_and_unread_summary() {
         summary
             .iter()
             .find(|row| row["workspace_id"] == Id(w).as_string())
-            .unwrap_or_else(|| panic!("workspace {w} missing in {body}"))
-            ["count"]
+            .unwrap_or_else(|| panic!("workspace {w} missing in {body}"))["count"]
             .as_i64()
             .unwrap()
     };
@@ -786,7 +907,15 @@ async fn bulk_operations_and_unread_summary() {
     let (_, body) = get(&app, "/api/inbox/unread-summary", fx.owner, ws).await;
     assert_eq!(body.as_array().unwrap().len(), 1);
     // 缺 workspace 上下文 → 400（上游该路由在 RequireWorkspaceMember 组内）。
-    let (status, body) = call(&app, "GET", "/api/inbox/unread-summary", Some(fx.owner), None, None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/inbox/unread-summary",
+        Some(fx.owner),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
     let _ = sqlx::query("DELETE FROM workspace WHERE id = $1")
@@ -817,16 +946,34 @@ async fn subscriber_routes_round_trip() {
     let child = new_issue(&pool, ws, fx.owner, 2, "todo", "high", Some(parent)).await;
 
     // --- 初始为空 ---
-    let (status, body) = get(&app, &format!("/api/issues/{parent}/subscribers"), fx.owner, ws).await;
+    let (status, body) = get(
+        &app,
+        &format!("/api/issues/{parent}/subscribers"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.as_array().unwrap().is_empty());
 
     // --- 无 body 订阅（上游忽略解码失败，落到调用者本人）---
-    let (status, body) = post(&app, &format!("/api/issues/{parent}/subscribe"), fx.owner, ws).await;
+    let (status, body) = post(
+        &app,
+        &format!("/api/issues/{parent}/subscribe"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, json!({"subscribed": true}));
 
-    let (_, body) = get(&app, &format!("/api/issues/{parent}/subscribers"), fx.owner, ws).await;
+    let (_, body) = get(
+        &app,
+        &format!("/api/issues/{parent}/subscribers"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(body.as_array().unwrap().len(), 1);
     assert_eq!(body[0]["issue_id"], Id(parent).as_string());
     assert_eq!(body[0]["user_type"], "user");
@@ -834,8 +981,20 @@ async fn subscriber_routes_round_trip() {
     assert_eq!(body[0]["reason"], "manual");
 
     // --- 幂等 ---
-    post(&app, &format!("/api/issues/{parent}/subscribe"), fx.owner, ws).await;
-    let (_, body) = get(&app, &format!("/api/issues/{parent}/subscribers"), fx.owner, ws).await;
+    post(
+        &app,
+        &format!("/api/issues/{parent}/subscribe"),
+        fx.owner,
+        ws,
+    )
+    .await;
+    let (_, body) = get(
+        &app,
+        &format!("/api/issues/{parent}/subscribers"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(body.as_array().unwrap().len(), 1);
 
     // --- body 指定成员：可以；指定非成员：403；非法 user_type：400 ---
@@ -873,17 +1032,44 @@ async fn subscriber_routes_round_trip() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(message(&body), "validation error: invalid user_type: member");
-    let (_, body) = get(&app, &format!("/api/issues/{parent}/subscribers"), fx.owner, ws).await;
+    assert_eq!(
+        message(&body),
+        "validation error: invalid user_type: member"
+    );
+    let (_, body) = get(
+        &app,
+        &format!("/api/issues/{parent}/subscribers"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(body.as_array().unwrap().len(), 2);
 
     // --- 退订（固定回 `{"subscribed": false}`，本来没订阅也 200）---
-    let (status, body) = post(&app, &format!("/api/issues/{parent}/unsubscribe"), fx.owner, ws).await;
+    let (status, body) = post(
+        &app,
+        &format!("/api/issues/{parent}/unsubscribe"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, json!({"subscribed": false}));
-    let (_, body) = get(&app, &format!("/api/issues/{parent}/subscribers"), fx.owner, ws).await;
+    let (_, body) = get(
+        &app,
+        &format!("/api/issues/{parent}/subscribers"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(body.as_array().unwrap().len(), 1);
-    let (_, body) = post(&app, &format!("/api/issues/{parent}/unsubscribe"), fx.owner, ws).await;
+    let (_, body) = post(
+        &app,
+        &format!("/api/issues/{parent}/unsubscribe"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert_eq!(body, json!({"subscribed": false}));
 
     // --- 子树退订：parent + child 一起退 ---
@@ -920,13 +1106,31 @@ async fn subscriber_routes_round_trip() {
     let mut expected = vec![Id(parent).as_string(), Id(child).as_string()];
     expected.sort();
     assert_eq!(removed, expected);
-    let (_, body) = get(&app, &format!("/api/issues/{child}/subscribers"), fx.owner, ws).await;
+    let (_, body) = get(
+        &app,
+        &format!("/api/issues/{child}/subscribers"),
+        fx.owner,
+        ws,
+    )
+    .await;
     assert!(body.as_array().unwrap().is_empty());
 
     // --- 错误分支：坏 issue id / 别人的 workspace / 非成员 ---
     for (user, ws_id, issue, expected_status, expected_message) in [
-        (fx.owner, ws, "nope".to_string(), StatusCode::NOT_FOUND, "not found: issue"),
-        (fx.outsider, ws, parent.to_string(), StatusCode::NOT_FOUND, "not found: workspace"),
+        (
+            fx.owner,
+            ws,
+            "nope".to_string(),
+            StatusCode::NOT_FOUND,
+            "not found: issue",
+        ),
+        (
+            fx.outsider,
+            ws,
+            parent.to_string(),
+            StatusCode::NOT_FOUND,
+            "not found: workspace",
+        ),
     ] {
         let (status, body) = call(
             &app,

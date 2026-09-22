@@ -313,11 +313,7 @@ async fn list_archived_page(
         None
     };
     Ok(Json(ArchivedPageDto {
-        items: page
-            .items
-            .iter()
-            .map(InboxItemDto::from_list_row)
-            .collect(),
+        items: page.items.iter().map(InboxItemDto::from_list_row).collect(),
         next_cursor,
         has_more: page.has_more,
     }))
@@ -548,7 +544,10 @@ fn bad_request(message: &str) -> Error {
 
 /// 上游 `q.Get(name) != ""` 的等价语义：空值等于没传。
 fn query_value<'a>(query: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
-    query.get(name).map(String::as_str).filter(|v| !v.is_empty())
+    query
+        .get(name)
+        .map(String::as_str)
+        .filter(|v| !v.is_empty())
 }
 
 fn parse_list_window(query: &HashMap<String, String>) -> Result<(i64, i64), Error> {
@@ -628,11 +627,7 @@ fn parse_group_id(query: &HashMap<String, String>) -> Result<Option<Id>, Error> 
 }
 
 /// 游标作用域：绑定「用户 + workspace + 过滤条件 + 分组」，防止跨查询续页。
-fn archive_scope_tag(
-    workspace_id: Id,
-    user_id: Id,
-    filter: &ArchivedInboxFilter,
-) -> String {
+fn archive_scope_tag(workspace_id: Id, user_id: Id, filter: &ArchivedInboxFilter) -> String {
     let canonical = format!(
         "{}|{}|{}|{}|{}|{}|{}",
         workspace_id.as_string(),
@@ -641,9 +636,7 @@ fn archive_scope_tag(
         filter.priorities.join(","),
         filter.actors.join(","),
         filter.unread_only,
-        filter
-            .group_id
-            .map_or_else(String::new, Id::as_string),
+        filter.group_id.map_or_else(String::new, Id::as_string),
     );
     hex::encode(Sha256::digest(canonical.as_bytes()))
 }
@@ -774,7 +767,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(WORKSPACE_ID_HEADER, ws.as_string().parse().unwrap());
         assert_eq!(
-            resolve_workspace_id(&headers, &q(&[("workspace_id", &Id::new().as_string())])).unwrap(),
+            resolve_workspace_id(&headers, &q(&[("workspace_id", &Id::new().as_string())]))
+                .unwrap(),
             ws
         );
         let empty = HeaderMap::new();
@@ -814,11 +808,20 @@ mod tests {
         assert_eq!(filter.actors, Vec::<String>::new());
 
         // 空串等于未传（上游 `q.Get(name) != ""`）。
-        assert!(parse_filter(&q(&[("statuses", "")])).unwrap().statuses.is_empty());
+        assert!(parse_filter(&q(&[("statuses", "")]))
+            .unwrap()
+            .statuses
+            .is_empty());
 
         for (query, message) in [
-            (q(&[("unread_only", "1")]), "validation error: invalid unread_only"),
-            (q(&[("statuses", "a,,b")]), "validation error: empty filter value"),
+            (
+                q(&[("unread_only", "1")]),
+                "validation error: invalid unread_only",
+            ),
+            (
+                q(&[("statuses", "a,,b")]),
+                "validation error: empty filter value",
+            ),
         ] {
             let err = parse_filter(&query).unwrap_err();
             assert_eq!(err.http_status(), 400);
@@ -827,7 +830,9 @@ mod tests {
 
         let long = "x".repeat(FILTER_MAX_RAW_LEN + 1);
         assert_eq!(
-            parse_filter(&q(&[("statuses", &long)])).unwrap_err().message(),
+            parse_filter(&q(&[("statuses", &long)]))
+                .unwrap_err()
+                .message(),
             "validation error: filter is too long"
         );
         let many = (0..=FILTER_MAX_VALUES)
@@ -835,7 +840,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join(",");
         assert_eq!(
-            parse_filter(&q(&[("statuses", &many)])).unwrap_err().message(),
+            parse_filter(&q(&[("statuses", &many)]))
+                .unwrap_err()
+                .message(),
             "validation error: too many filter values"
         );
     }
@@ -863,11 +870,15 @@ mod tests {
             (5, 10)
         );
         assert_eq!(
-            parse_list_window(&q(&[("limit", "501")])).unwrap_err().message(),
+            parse_list_window(&q(&[("limit", "501")]))
+                .unwrap_err()
+                .message(),
             "validation error: limit must be between 1 and 500"
         );
         assert_eq!(
-            parse_list_window(&q(&[("offset", "-1")])).unwrap_err().message(),
+            parse_list_window(&q(&[("offset", "-1")]))
+                .unwrap_err()
+                .message(),
             "validation error: offset must be >= 0"
         );
     }
@@ -937,7 +948,10 @@ mod tests {
             list_body_preview("new_issue", true, Some(&long)),
             Some(long.clone())
         );
-        assert_eq!(list_body_preview("new_comment", false, Some(&long)), Some(long.clone()));
+        assert_eq!(
+            list_body_preview("new_comment", false, Some(&long)),
+            Some(long.clone())
+        );
         assert_eq!(list_body_preview("new_comment", true, None), None);
 
         // 恰好 200 字符：不截断。

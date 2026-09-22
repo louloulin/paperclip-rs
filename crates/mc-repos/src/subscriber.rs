@@ -147,12 +147,7 @@ impl IssueSubscriberRepo {
     }
 
     /// 退订（幂等）。删除到行返回 `true`，本来就没订阅返回 `false`。
-    pub async fn unsubscribe(
-        &self,
-        issue_id: Id,
-        user_type: &str,
-        user_id: Id,
-    ) -> Result<bool> {
+    pub async fn unsubscribe(&self, issue_id: Id, user_type: &str, user_id: Id) -> Result<bool> {
         let res = sqlx::query(
             "DELETE FROM issue_subscriber \
              WHERE issue_id = $1 AND user_type = $2 AND user_id = $3",
@@ -216,12 +211,7 @@ impl IssueSubscriberRepo {
     }
 
     /// 是否已订阅。
-    pub async fn is_subscribed(
-        &self,
-        issue_id: Id,
-        user_type: &str,
-        user_id: Id,
-    ) -> Result<bool> {
+    pub async fn is_subscribed(&self, issue_id: Id, user_type: &str, user_id: Id) -> Result<bool> {
         let row = sqlx::query_as::<_, (bool,)>(
             "SELECT EXISTS(SELECT 1 FROM issue_subscriber \
              WHERE issue_id = $1 AND user_type = $2 AND user_id = $3)",
@@ -328,12 +318,14 @@ mod tests {
                 .execute(pool)
                 .await
                 .unwrap();
-            sqlx::query("INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')")
-                .bind(ws)
-                .bind(user)
-                .execute(pool)
-                .await
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+            )
+            .bind(ws)
+            .bind(user)
+            .execute(pool)
+            .await
+            .unwrap();
             let mut issues = Vec::new();
             for n in numbers {
                 let id = Uuid::new_v4();
@@ -376,7 +368,10 @@ mod tests {
                 .await
                 .unwrap());
 
-            let first = repo.subscribe(sub(issues[0], user, REASON_MANUAL)).await.unwrap();
+            let first = repo
+                .subscribe(sub(issues[0], user, REASON_MANUAL))
+                .await
+                .unwrap();
             assert_eq!(first.reason, REASON_MANUAL);
             let second = repo
                 .subscribe(sub(issues[0], user, REASON_COMMENTER))
@@ -412,7 +407,10 @@ mod tests {
                 .is_workspace_entity(Id::from(ws), USER_TYPE_AGENT, Id::from(user))
                 .await
                 .unwrap());
-            assert_eq!(repo.issue_workspace(issue).await.unwrap(), Some(Id::from(ws)));
+            assert_eq!(
+                repo.issue_workspace(issue).await.unwrap(),
+                Some(Id::from(ws))
+            );
             assert!(repo.require_issue(Id::new()).await.is_err());
         }
 
@@ -434,7 +432,9 @@ mod tests {
                 .unwrap();
 
             for issue in [root, child, outsider] {
-                repo.subscribe(sub(issue, user, REASON_MANUAL)).await.unwrap();
+                repo.subscribe(sub(issue, user, REASON_MANUAL))
+                    .await
+                    .unwrap();
             }
 
             let mut removed = repo
@@ -447,7 +447,10 @@ mod tests {
             expected.sort_by_key(|id| id.as_uuid());
             removed.sort_by_key(|id| id.as_uuid());
             assert_eq!(removed, expected);
-            assert_eq!(repo.list_for_issue(Id::from(outsider)).await.unwrap().len(), 1);
+            assert_eq!(
+                repo.list_for_issue(Id::from(outsider)).await.unwrap().len(),
+                1
+            );
             // 幂等：再退一次没有可删的行
             assert!(repo
                 .unsubscribe_subtree(Id::from(root), USER_TYPE_USER, Id::from(user))
