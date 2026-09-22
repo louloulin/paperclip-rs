@@ -530,3 +530,51 @@ $ python3 scripts/file_size_check.py
 3. **没有**晋升 M3-4/5/6：三片正文的晋升条件逐字写着「**LUM-1387 已合入 base**」（实测 `LUM-1427` 正文原文），而 `LUM-1387` 仍在跑（工作区实测有 21 个文件的未提交改动 + `migrations/compat/` 新目录 + `target/` 8.7G 活跃写入 ⇒ **活着且在推进**，不是静默死亡）。
 
 **下一个 cycle 的第一动作**（与 `docs/36` §7 第 4 步一致）：`LUM-1387` 合入后先复验 base 已前进（`dc4a45f` → …），再同波晋升 `LUM-1427`/`1428`/`1429`（此时并发位会同时空出）。
+
+---
+
+## 11. 04:30 cycle 落地记录（LUM-1446）—— W0-B2 合入 ⇒ base 前进，W3b 三片同波晋升
+
+**base 链**：`28e5c56` → **`ef07bf9`**（`merge(#27)` = W0-B2 schema 切换 / LUM-1387）→ **`57e6a83`**（`merge(#26)` = 本文件 §2.5 口径补充 / LUM-1437）→ **`2a759ae`**（`merge(#28)` = daemon ws 传输层预切片 / LUM-1439）。三个 PR 合入前均 `state=open` + `mergeable=true` + `mergeable_state=clean`，head 各自 CI 全绿（#27 head `d23e06d`）。
+
+### 11.1 合并后的 base 独立复验（`2a759ae`，不引用 PR 内 CI 结论）
+
+```
+$ MULTICA_TEST_DATABASE_URL=<db-url> bash scripts/gates.sh --with-db        # 159s，10/10 PASS
+  ①fmt 0 ②build 0 ③clippy 0 ④clippy-test-util 0 ⑤test 0 ⑥db 0 ⑦route-parity 0
+  ⑧schema-drift 0 ⑨conformance 0 ⑩file-size 0
+```
+
+| 门 | 实测 |
+| --- | --- |
+| ⑤ test | **83 suites / 610 passed / 0 failed**（脚本不带 `MULTICA_TEST_DATABASE_URL`，按设计跳过 DB 用例） |
+| ⑥ db | `migrations done applied=566 elapsed_ms=2922` → 13 suites / **90 passed / 0 failed**；`migrate=0, e2e=0` |
+| ⑦ route-parity | `local 136 / implemented 122（112 real + 10 placeholder）/ known_gap 334 / unclaimed 0 / regression 0 / local_only 11` —— **与 `8895abe` 预删后逐字相同** |
+| ⑧ schema-drift | 非 `--quiet` 重跑取原文：`apply set local — 566 file(s), 1189 statements, 566 applied, 9 skipped`；scratch 库 2168 objects；`differences (45)` 全是 9 条 `apply-exception`（`pg_bigm` / `pg_cron` 不可用）等已登记项；**`OK — every difference is registered`**，registry **45 row(s): 45 matched, 0 stale**，exit 0 |
+| ⑨ conformance | `pass 4 / mismatch 1 / unmounted 6 / placeholder 0 / unevaluable 47`，`report matches`，exit 0 —— **与 `8895abe` 后逐字相同** ⇒ 切库不动 stateless 契约面，正是 `docs/36` §11.3 第 2 条的预期 |
+
+### 11.2 本 cycle 动作
+
+1. 合入 **PR #27**（LUM-1387 / W0-B2）⇒ base `ef07bf9`。**schema 切换落底**：运行库 = 上游 560 迁移（PIN `f41fae6b`）+ `migrations/compat/` 6 个补丁 = **566 文件 / 117 张 public 表**。
+2. 合入 **PR #26**（LUM-1437 的 docs 追加，+45/−7，仅本文件）⇒ `57e6a83`。
+3. 合入 **PR #28**（LUM-1439 / ws 传输层预切片，15 文件 +4220/−7）⇒ `2a759ae`。**W3c 串行链第一环进 base** ⇒ M3-7（LUM-1438）的「1439 先合」前置就此满足。
+4. 复验 base（§11.1）。
+5. **同波晋升 M3-4/5/6**（`LUM-1427` / `LUM-1428` / `LUM-1429`）：晋升前 `daemon active_task_count` = **1**（只有本 cycle）⇒ 3 个 worker 位全空，三片同时 `backlog → todo`（20:39:20Z 三条 run 全部起）。晋升后 `active_task_count` = **4**（3 worker + cycle），即 **3/3**。三片写集两两不重叠（`docs/36` §6），且都不碰 §3 已收归 base 的三个共享文件。
+
+### 11.3 晋升时对三片正文的两处修订（`--no-start`，只改描述不起 run）
+
+1. **前置打勾**：三片的「硬前置 W0-B2 已合入 base」补 `✅ merge(#27) ⇒ ef07bf9`，省掉新 run 的第一轮自主复核。
+2. **文档编号去撞号**：三片原声明 `docs/37-M3-4-…` / `docs/38-M3-5-…` / `docs/39-M3-6-…`，其中 **37 与 base 已有 `docs/37-M3-W3C-PREFLIGHT.md` 重号、38 与已合入的 `docs/38-M3-WS-TRANSPORT.md`（LUM-1439 交付）撞号**，而 `docs/32`/`docs/33` 又是 W3c 片的预留号 ⇒ 按切片序单调改派 **M3-4 → `docs/39`、M3-5 → `docs/40`、M3-6 → `docs/41`**，并在各正文追加「晋升修订块」（含本 cycle 数字与 base 起点）。base 内无任何文件引用这三个旧文件名（`grep` 实测为空），改派零外部影响。
+
+### 11.4 本 cycle 没做（边界）
+
+- **没碰** ⑦ 基线（`docs/fixtures/route-parity-baseline.json`）、⑨ 快照（`crates/mc-conformance/report.json`）、`mount.rs`、`Cargo.lock` —— 按 `docs/36` §6 由**集成 cycle** 统一持有。⇒ **W3b 三片合入的那个 cycle 必须补做**：⑦ 基线随 `known_gap` 减少刷新（三片共 46 条：M3-4 15 + M3-5 16 + M3-6 15，其中 M3-6 的 6 条是**原地替换 stub**、只改实现不改 path），⑨ 快照重生成（`--write-baseline`），否则 ⑦/⑨ 会因「已实现路由未登记」而红。
+- **没有**晋升 M2-E（`LUM-1370`）：worker 位已 3/3；且它的 5 条回填落在 `/api/issues/{id}/labels|properties`，与 M3-6 的 `routes/issues*` 写集**是否重叠未实测**，不宜与 M3-6 同波。其正文已含「不手写迁移 0005 / 前置改为 W0-B2 已合」的修订节（LUM-1384 cycle），**不需要**再改。
+- **没有**改 `docs/15` / `docs/36` / `docs/38` 正文；本 cycle 的文档写集只有本文件。
+
+### 11.5 下一个 cycle 的动作队列
+
+1. **W3b 三片交付后**（三条 PR，base 均从 `2a759ae` 起）：按序合入，**同一 cycle 内**刷新 ⑦ 基线与 ⑨ 快照（§11.4 那条）并复跑 `gates.sh --with-db`——这是 W3b 合入唯一需要 cycle 补做的集成动作。
+2. **M3-4 合入后**，W3c 链可推进：晋升 **LUM-1438**（M3-7：daemon 面 44 条 + ws hub/notifier，最重；前置 = W0-B2 ✅ + M3-1/M3-3 ✅ + **M3-4** + **LUM-1439 ✅**）。**不能**同时派 1440/1441 —— 二者前置是「**LUM-1438 已合**」（`docs/37` §7：execenv 与 M3-7 同 crate `mc-daemon`，`Cargo.toml`/`lib.rs` 会撞）。
+3. 因此 1438 合并前的空位由**非 W3c** 片填：候选为 M2-E（`LUM-1370`，先实测写集重叠）与其后任何 `backlog` 片（目前 epic 下 `backlog` 只剩 1438/1440/1441/1442/1443 五个）。
+4. 1438 合入后：并行 **LUM-1440**（execenv）+ **LUM-1441**（adapters 批 1）→ 串行 **LUM-1442** → **LUM-1443**。
