@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use mc_db::{Db, Migrator};
+use serde::Serialize;
 use serde_json::json;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -62,7 +63,10 @@ pub const DEFAULT_REQUIRED_TABLES: &[&str] = &[
     "squad",
     "skill",
     "chat_session",
-    "wakeup",
+    // 上游没有本地自造的 `wakeup` / `plugin` 表（`344_plugin_v2_reset` 之后
+    // 插件状态落在 `plugin_installation`）：唤醒用 `issue_wakeup` 系列。
+    "issue_wakeup",
+    "issue_wakeup_receipt",
 ];
 
 /// 连接到 DB。
@@ -70,19 +74,64 @@ pub async fn connect_db(url: &str) -> Result<Db> {
     Db::connect(url, 5, 1).await.context("connect db")
 }
 
-/// 应用 migrations 目录里的所有 .up.sql 文件。
-pub async fn run_migrations(db: &Db, dir: PathBuf) -> Result<usize> {
+/// 应用 migrations 目录里的所有 .up.sql 文件（可传多个目录，按词干合并）。
+pub async fn run_migrations(db: &Db, dirs: Vec<PathBuf>) -> Result<usize> {
     let start = Instant::now();
-    let steps = Migrator::load(dir)?;
-    info!(count = steps.len(), "loaded migration files");
-    Migrator::run(db, steps).await?;
-    let applied = Migrator::list_applied(db).await?.len();
+    let steps = Migrator::load_dirs(&dirs).context("load migration files")?;
+    info!(count = steps.len(), dirs = ?dirs, "loaded migration files");
+    let applied = Migrator::run(db, steps).await?;
     info!(
         applied,
         elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
         "migrations done"
     );
     Ok(applied)
+}
+
+/// 就绪性报告：上游 readiness = **所有** up 版本都已记账 + 关键表存在。
+///
+/// 只比条数会漏掉「编号低于已应用版本的乱序补丁漏记录」（上游 `AllVersions()` 专防此病），
+/// 所以这里列出**缺记账的版本清单**而不是只给布尔值。
+#[derive(Debug, Clone, Serialize)]
+pub struct Readiness {
+    pub loaded: usize,
+    pub applied: usize,
+    pub pending: Vec<String>,
+    pub missing_tables: Vec<String>,
+}
+
+impl Readiness {
+    #[must_use]
+    pub fn is_ready(&self) -> bool {
+        self.pending.is_empty() && self.missing_tables.is_empty()
+    }
+}
+
+/// 关键表是否存在（逐表 `to_regclass`）。
+pub async fn missing_tables(db: &Db) -> Result<Vec<String>> {
+    let mut missing = Vec::new();
+    for table in DEFAULT_REQUIRED_TABLES {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
+            .fetch_one(db.pool())
+            .await
+            .with_context(|| format!("probe table {table}"))?;
+        if !exists {
+            missing.push((*table).to_owned());
+        }
+    }
+    Ok(missing)
+}
+
+/// 校验就绪性（不写库）。
+pub async fn verify(db: &Db, dirs: Vec<PathBuf>) -> Result<Readiness> {
+    let steps = Migrator::load_dirs(&dirs).context("load migration files")?;
+    Ok(Readiness {
+        loaded: steps.len(),
+        applied: Migrator::list_applied(db).await?.len(),
+        pending: Migrator::pending(db, &steps).await?,
+        missing_tables: missing_tables(db).await?,
+    })
 }
 
 /// 输出 JSON 报告（用于 CI）。
