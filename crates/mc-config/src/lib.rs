@@ -114,6 +114,10 @@ pub struct AuthConfig {
     pub send_code_per_min: u32,
     /// 单邮箱每分钟允许的 `send-code` 请求数（防爆破）。默认 5。
     pub send_code_per_email_per_min: u32,
+    /// 单 workspace 每小时最大邀请条数（对应上游 multica
+    /// `RATE_LIMIT_INVITATION_PER_WORKSPACE_PER_HOUR`）。默认 50。
+    /// 由 M1 sub-issue C 追加。
+    pub invitation_per_workspace_per_hour: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +199,7 @@ impl Default for Config {
                 verification_code_ttl_secs: 600,
                 send_code_per_min: 20,
                 send_code_per_email_per_min: 5,
+                invitation_per_workspace_per_hour: 50,
             },
             storage: StorageConfig {
                 default_provider: "local_disk".into(),
@@ -323,6 +328,12 @@ impl Config {
             .and_then(|s| s.parse().ok())
         {
             config.auth.send_code_per_email_per_min = n;
+        }
+        // Invitation rate limit（M1 sub-issue C 追加）。
+        if let Some(n) = lookup("MULTICA_INVITATION_PER_WORKSPACE_PER_HOUR")
+            .and_then(|s| s.parse().ok())
+        {
+            config.auth.invitation_per_workspace_per_hour = n;
         }
 
         // Storage

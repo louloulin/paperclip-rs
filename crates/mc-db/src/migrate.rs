@@ -223,16 +223,14 @@ fn split_sql_statements(input: &str) -> Vec<String> {
     let mut iter = input.chars().peekable();
     while let Some(c) = iter.next() {
         if in_line_comment {
-            buf.push(c);
             if c == '\n' {
                 in_line_comment = false;
             }
             continue;
         }
         if in_block_comment {
-            buf.push(c);
             if c == '*' && iter.peek() == Some(&'/') {
-                buf.push(iter.next().unwrap());
+                iter.next();
                 in_block_comment = false;
             }
             continue;
@@ -261,12 +259,10 @@ fn split_sql_statements(input: &str) -> Vec<String> {
         }
         if c == '-' && iter.peek() == Some(&'-') {
             in_line_comment = true;
-            buf.push(c);
             continue;
         }
         if c == '/' && iter.peek() == Some(&'*') {
             in_block_comment = true;
-            buf.push(c);
             continue;
         }
         if c == '\'' || c == '"' {

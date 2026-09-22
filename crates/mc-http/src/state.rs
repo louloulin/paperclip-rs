@@ -26,6 +26,10 @@ pub struct ConfigSnapshot {
     pub verification_code_ttl_secs: u64,
     /// `send-code` 速率限制（每邮箱每分钟）。
     pub send_code_per_email_per_min: u32,
+    /// 邀请速率限制：单 workspace 每小时最大邀请条数。
+    /// `None` 表示未设置（调用方应使用默认值 50）。
+    /// 由 M1 sub-issue C 追加。
+    pub invitation_per_workspace_per_hour: Option<u32>,
 }
 
 #[derive(Clone)]

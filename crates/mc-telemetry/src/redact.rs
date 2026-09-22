@@ -73,109 +73,73 @@ impl Redactor {
 
     /// redact 一行文本：把 `key=value` / `"key": "value"` / `key: value` 的模式替换。
     ///
-    /// 解析策略：扫描 word run 作为候选 key，向后窥视（允许空白 + 至多一个闭引号）
-    /// 找 `=` / `:` 分隔符；命中才按 key-value 处理，否则原文透传。
-    pub fn redact_str(&self, input: &str) -> String {
+    /// 扫描 key token（`[A-Za-z_-]`），若 key 敏感且其后（可跨引号与空白）出现
+    /// `=` / `:` 分隔符，则消费对应 value 并替换为 replacement；否则原样输出。
+    pub fn redact_str<'a>(&self, input: &'a str) -> String {
         let chars: Vec<char> = input.chars().collect();
-        let n = chars.len();
-        let mut out = String::with_capacity(input.len());
-        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+        let mut out = String::with_capacity(chars.len());
         let mut i = 0;
-        while i < n {
-            if !is_word(chars[i]) {
+        let is_key_char = |c: char| c.is_ascii_alphabetic() || c == '-' || c == '_';
+        while i < chars.len() {
+            if !is_key_char(chars[i]) {
                 out.push(chars[i]);
                 i += 1;
                 continue;
             }
-            // 收集候选 key
             let start = i;
-            while i < n && is_word(chars[i]) {
+            while i < chars.len() && is_key_char(chars[i]) {
                 i += 1;
             }
             let key: String = chars[start..i].iter().collect();
-
-            // 窥视分隔符：ws [""] ws [=|:]
-            let mut j = i;
-            while j < n && chars[j].is_whitespace() {
-                j += 1;
-            }
-            let had_close_quote = j < n && chars[j] == '"';
-            if had_close_quote {
-                j += 1;
-                while j < n && chars[j].is_whitespace() {
-                    j += 1;
-                }
-            }
-            let is_kv = j < n && (chars[j] == '=' || chars[j] == ':');
-            if !is_kv {
-                out.push_str(&key);
-                continue;
-            }
-            let sep_idx = j;
-
             if !self.is_sensitive(&key) {
-                // 非敏感 key：只透传 key 本身，后续字符走常规扫描。
                 out.push_str(&key);
                 continue;
             }
-
-            // 解析 value：sep 后空白，再引号或裸词。
-            let mut v = sep_idx + 1;
-            while v < n && chars[v].is_whitespace() {
+            // lookahead: key [" ]? [ws] (= | :) [ws] value
+            let mut k = i;
+            if k < chars.len() && chars[k] == '"' {
+                k += 1;
+            }
+            while k < chars.len() && chars[k].is_whitespace() {
+                k += 1;
+            }
+            if k >= chars.len() || (chars[k] != '=' && chars[k] != ':') {
+                // 敏感词但不是键值对（如 prose 中出现）→ 原样输出
+                out.push_str(&key);
+                continue;
+            }
+            // 输出到分隔符为止（含 key、闭引号、空白与 `=`/`:`）
+            out.extend(&chars[start..=k]);
+            let mut v = k + 1;
+            while v < chars.len() && chars[v].is_whitespace() {
+                out.push(chars[v]);
                 v += 1;
             }
-            let quoted = v < n && chars[v] == '"';
-            let value_start;
-            let value_end; // exclusive
-            if quoted {
+            if v < chars.len() && chars[v] == '"' {
+                // 引号值 → 保持引号风格
+                out.push('"');
+                out.push_str(&self.replacement);
+                out.push('"');
                 v += 1;
-                value_start = v;
-                while v < n {
-                    if chars[v] == '\\' && v + 1 < n {
-                        v += 2;
-                        continue;
-                    }
-                    if chars[v] == '"' {
-                        break;
-                    }
+                while v < chars.len() && chars[v] != '"' {
                     v += 1;
                 }
-                value_end = v; // 停在闭引号或末尾
+                if v < chars.len() {
+                    v += 1; // 跳过闭引号
+                }
             } else {
-                value_start = v;
-                while v < n
+                out.push_str(&self.replacement);
+                while v < chars.len()
                     && !chars[v].is_whitespace()
                     && chars[v] != ','
                     && chars[v] != ';'
                     && chars[v] != '}'
-                    && chars[v] != ']'
+                    && chars[v] != '\n'
                 {
                     v += 1;
                 }
-                value_end = v;
             }
-
-            // 输出：key + key/sep 之间的原文（含引号/空白） + sep + sep 到 value 的空白 + 替换值。
-            out.push_str(&key);
-            out.extend(chars[i..sep_idx].iter());
-            out.push(chars[sep_idx]);
-            // sep 后到 value_start 之间的空白保持原样（仅 quoted 时可能非空）。
-            let ws_start = sep_idx + 1;
-            out.extend(chars[ws_start..value_start].iter());
-            if quoted {
-                out.push('"');
-                out.push_str(&self.replacement);
-                out.push('"');
-                // 消费闭引号
-                if value_end < n && chars[value_end] == '"' {
-                    i = value_end + 1;
-                } else {
-                    i = value_end;
-                }
-            } else {
-                out.push_str(&self.replacement);
-                i = value_end;
-            }
+            i = v;
         }
         out
     }

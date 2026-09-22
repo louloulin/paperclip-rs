@@ -23,7 +23,7 @@ use axum::extract::State;
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -50,8 +50,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/auth/verify-code", post(verify_code))
         .route("/auth/logout", post(logout))
         .route("/api/auth/refresh", post(refresh_session))
-        // 显式保留占位：`/api/me` 由 sub-issue A 的 routes/workspaces.rs 真实实现
-        .route("/api/me", get(me_placeholder))
+    // 注：`/api/me` 由 M1-A 的 routes/workspaces.rs 真实实现（仲裁 #4）。
+    // 此处不得再注册同 path+method —— axum 0.7 `.merge` 重复注册会 panic。
 }
 
 // ============================================================
@@ -122,21 +122,6 @@ fn sha256_hex(input: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(input);
     hex::encode(h.finalize())
-}
-
-// ============================================================
-// `/api/me` 占位：sub-issue A 的真实 handler 在 routes/workspaces.rs。
-// ============================================================
-
-#[derive(Debug, Serialize)]
-struct MePlaceholder {
-    note: &'static str,
-}
-
-async fn me_placeholder() -> Json<MePlaceholder> {
-    Json(MePlaceholder {
-        note: "sub-issue A will provide the real /api/me handler in routes/workspaces.rs",
-    })
 }
 
 // ============================================================

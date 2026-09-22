@@ -81,6 +81,12 @@ impl Bus {
     }
 }
 
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new(DEFAULT_CHANNEL_CAPACITY)
+    }
+}
+
 /// 全局事件总线（包装 Arc<Bus>）。
 #[derive(Clone)]
 pub struct EventBus {

@@ -125,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
             session_ttl_secs: cfg.auth.session_ttl_secs,
             verification_code_ttl_secs: cfg.auth.verification_code_ttl_secs,
             send_code_per_email_per_min: cfg.auth.send_code_per_email_per_min,
+            invitation_per_workspace_per_hour: Some(cfg.auth.invitation_per_workspace_per_hour),
         },
         realtime,
         ws,

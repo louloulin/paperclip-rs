@@ -54,6 +54,29 @@ impl Db {
         Ok(Self { pool })
     }
 
+    /// 测试用占位 Db：返回一个未实际建立连接的 pool。
+    /// 仅用于不需要实际查库的 handler（PAT / 内存型 store）。
+    /// 调用 `pool().acquire()` 会失败，不要在集成测试里发起实际查询。
+    #[cfg(any(test, feature = "test-util"))]
+    pub async fn placeholder() -> Self {
+        use sqlx::postgres::PgConnectOptions;
+        let opts = PgConnectOptions::new()
+            .host("127.0.0.1")
+            .port(1) // 不可用端口：connect_lazy_with 不会立即连接。
+            .database("none");
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .min_connections(0)
+            .connect_lazy_with(opts);
+        Self { pool }
+    }
+
+    /// 用一个已连接的 `PgPool` 构造 Db（供集成测试使用）。
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     /// 拿到底层 `sqlx::PgPool`，供 repo 直接调用。
     pub fn pool(&self) -> &PgPool {
         &self.pool

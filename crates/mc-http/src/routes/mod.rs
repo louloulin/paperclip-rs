@@ -18,6 +18,12 @@ pub mod mount;
 pub mod openapi;
 pub mod workspaces;
 
+// M1 sub-issue C 添加：invitation + PAT 用户管理路由。命名刻意避开 sub-issue B
+// 的 `auth` 命名空间，所以这里另起 `auth_user`（仅含 `AuthUser` 提取器）。
+pub mod auth_user;
+pub mod invitations;
+pub mod pats;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }
