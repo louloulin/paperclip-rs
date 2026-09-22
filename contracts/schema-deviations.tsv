@@ -1,0 +1,22 @@
+# contracts/schema-deviations.tsv — every difference between this repo's schema and
+# contracts/upstream-schema.json, registered with a reason and the issue that closes it.
+#
+# scripts/schema_drift.py exits 0 only when every difference it finds is registered here.
+# Columns (tab separated):
+#   对象         an object key, or a glob such as `issue.*` for one table's columns
+#   类型         table | column | constraint | index | function | trigger | type | view |
+#                extension | statement
+#   差异摘要     `missing:`, `extra:`, `differs:` or `apply-exception:` followed by what was
+#                compared; the tool checks the prefix and reports the rest verbatim
+#   原因         why the difference is acceptable — not what it looks like
+#   承接 issue   the issue that must close it; `W0-B2` is the plan1 P4 slice that switches the
+#                runtime to the vendored upstream migration set
+#
+# 原因 and 承接 issue are mandatory and must be filled in by a person.  The skeleton rows from
+# `scripts/schema_drift.py --emit-deviations` leave them blank on purpose, so pasting that
+# output back can never satisfy the check.
+#
+# apply-exception rows are not hand-measured at all: they mirror
+# contracts/upstream-apply-exceptions.tsv (generated, one row per skipped statement).  A row
+# of that category with no matching skip, or a skip with no row, fails the check.
+# 对象	类型	差异摘要	原因	承接 issue
