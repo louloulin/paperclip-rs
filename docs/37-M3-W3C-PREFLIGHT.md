@@ -1234,3 +1234,99 @@ multica issue runs LUM-1427 ; multica issue runs LUM-1429
 - **没动任何源码**；没跑 `bash scripts/gates.sh`（本轮无源码改动，⑦/⑩ 的静态面已单独复核）。
 - 没派批 2/3、`LUM-1440`、`LUM-1438`、`LUM-1370`、`LUM-1458`（并发位 3/3 已满，且四者的前置换片都还没落地）。
 - 没合任何 PR —— 合 PR 是人工动作（本仓 `617036e`/`e4ee275` 的作者是 `linchong <729883852@qq.com>`，不是 agent）。
+
+---
+
+## 17. 07:30 cycle 落地记录（LUM-1463）—— 并发位 3/3 仍满 ⇒ 修掉「⑧ 并发互踩」这个**稳定假红**（实测修前 2/2 红、修后 2/2 绿）
+
+### 17.0 并发位算术：3/3，仍无位可派
+
+| 位 | 片 | run | 起跑（UTC） | 本轮实测的在飞写集（`git status --short`） |
+| --- | --- | --- | --- | --- |
+| 1 | M3-6 `LUM-1429` | `01a0cb55-…-f6fb55c00646` | 22:56:15Z | `mc-http/src/routes/{agents.rs,issues/mod.rs,tasks.rs}` + `routes/tasks/**` + `tests/tasks/**` + `mc-repos/src/{agent.rs,task/**}` + `mc-repos/Cargo.toml` + `Cargo.lock` |
+| 2 | M3-8 批 1 `LUM-1441` | `01a0cb5e-…-624aadc49c4f` | 23:06:25Z | `crates/mc-runtime/src/adapters/**`（实测正在跑 `cargo test -p mc-runtime --lib`） |
+| 3 | 本 cycle（autopilot `LUM-1463`） | 本 run | 23:30Z | `scripts/schema_drift.py` + `scripts/gates.sh` 注释 + docs |
+
+⇒ 本轮**不派发**（§15.0 的算术与 §16.1 的判据不变），把这一位花在「让下一轮的门更可信」上：⑧ 的并发假红是本仓唯一一个
+**已知 + 可复现 + 修法早已写在 `docs/26` §8** 的缺陷（它是「绿了才是真的绿」这条链上唯一漏点）。
+
+### 17.1 根因与修法：⑧ 的 scratch 库名写死 ⇒ 同一台 PG 上并发两片互删对方的库
+
+- 写死值在 `scripts/schema_drift.py:87`（`DEFAULT_DB_NAME = "schema_probe_w0b_drift"`）；`schema_snapshot.ScratchDatabase.__enter__`
+  进入时先 `DROP DATABASE IF EXISTS "<name>"` 再 `CREATE DATABASE` ⇒ **后来者的 DROP 会把先到者正在用的 scratch 库删掉**。
+- 实测（本机 PG 16.15，`MULTICA_TEST_DATABASE_URL=postgres://mc_lum1463:…@127.0.0.1:5432/multica_lum1463`，两个
+  `bash scripts/gates.sh --only schema-drift` 同时起）：
+
+| | round 1 | round 2 | 结果 |
+| --- | --- | --- | --- |
+| **修前**（`git stash` 掉本 commit） | 0.6s：`CREATE DATABASE "schema_probe_w0b_drift"` → `duplicate key value violates unique constraint "pg_database_datname_index"` | 24s：`002_agent_config.up.sql: psql failed (exit 2)` → `FATAL: database "schema_probe_w0b_drift" does not exist` | **2/2 FAIL** |
+| **修后** | 24.3s，`GATE_SCHEMA_DRIFT_EXIT=0` | 24.3s，`GATE_SCHEMA_DRIFT_EXIT=0`（两份 scratch 名 = `…_51157` / `…_51158`） | **2/2 PASS** |
+
+- 修法（最小面，只动默认值）：`DEFAULT_DB_NAME = f"schema_probe_w0b_drift_{os.getpid()}"`（`os` 早已 import）；
+  `--db-name` 仍可显式覆盖（显式同名照样互踩，那是调用者的选择）。
+  * `scripts/schema_drift.py`：797 → **799 行**（门 ⑩ 上限 800）⇒ **没有**去动已在 800 行上限的 `scripts/schema_snapshot.py`，
+    也没有给自己加白名单（§16 刚立的纪律：白名单只减不增）。
+  * `scripts/gates.sh` 顶部那段「写死名 ⇒ 并发互踩」的 ⚠️ 就地改写成「已修 + 只有显式同名才会互踩」（**行数不变**，同样是为了 ⑩）。
+- **故意不改 `scripts/build_upstream_schema.py`**（`schema_probe_w0b_up`）：它的库名会被写进提交产物 `contracts/upstream-schema.json:5`
+  的 `meta.database`，PID 后缀会把**不可复现的噪声**带进契约文件；而且它不在门里跑，没有并发场景。这是取舍，不是遗漏。
+- 验收命令（复制即用）：
+
+  ```bash
+  export MULTICA_TEST_DATABASE_URL=…   # 需 CREATEDB 的角色
+  ( bash scripts/gates.sh --only schema-drift & bash scripts/gates.sh --only schema-drift & wait )
+  # 期望两行 ⑧ exit 0、overall: PASS 1/1；修前这里稳定 2/2 FAIL（0.6s / 24s）
+  ```
+
+### 17.2 晋升闸门矩阵：任一槽空出时，下一片该派谁（写集实测，不是推断）
+
+判据只有一条：**与「在飞未提交写集」和「在审未合 PR 的写集」都不相交**，才可以在别的片还在跑时开工。
+（在飞写集取自两个 run 的工作树 `git status --short`；在审写集取自 `git diff --name-only`，见 §17.3。）
+
+| 候选片（backlog） | 关键写集 | 与在飞 A=批1 / B=M3-6 的交点 | 与在审 #31 / #32 的交点 | 何时可派 |
+| --- | --- | --- | --- | --- |
+| **`LUM-1442` 批 2** | `mc-runtime/src/{adapters/mod.rs,catalog.rs,registry.rs}` + `mc-runtime/tests/**` | **与 A 相交 3 文件**；与 B 不相交 | 不相交 | **A（批 1）的 PR 落地后立刻**；它是唯一「不需要任何 PR 合并」的候选 |
+| `LUM-1443` 批 3 | 同批 2 + `docs/16` | 与 A、批 2 相交 | 不相交 | 批 2 之后（批内串行；`docs/33` 的族表是批 2 的交付） |
+| `LUM-1458` 尾斜杠剩余 9 键 | `mc-http/src/routes/{issues/mod.rs,comments.rs}` + `scripts/{gates.sh,slash_alias_audit.py,file_size_baseline.tsv}` + `mc-conformance/report.json` | 与 B **相交 `issues/mod.rs`** | **与 #32 相交 `scripts/gates.sh`/`slash_alias_audit.py`/`docs/37`** | B 落地 **且 #32 已合** 之后（先于 `LUM-1370`：它按 ⑩ 拆 `issues/mod.rs`，给 1370 腾空间） |
+| `LUM-1370` M2-E label/property | `mc-http/src/routes/{issues/mod.rs,labels.rs}` + `mc-repos/src/lib.rs` + `migrations/0005_*` | 与 B 相交 `issues/mod.rs` | 不相交 | B 落地之后；与 `LUM-1458` **互斥**（都改 `issues/mod.rs`）、与 `LUM-1438` **互斥**（都改 `mc-repos/src/lib.rs`） |
+| `LUM-1438` M3-7 daemon 面 | `mc-daemon/src/**` + `mc-http/src/routes/{daemon.rs,runtimes.rs}` + `mc-ws/**` + `mc-repos/src/lib.rs` + ⑦ 基线 / `report.json` | 与 A、B 都不相交 | **与 #31 相交 `routes/runtimes.rs`** | **#31 已合** 且有空位；与 `LUM-1440` 串行 |
+| `LUM-1440` execenv | `mc-daemon/src/{execenv/**,lib.rs}` + `Cargo.toml` + `mc-http/**` + `migrations/**` | 与 A/B 不相交 | 与 #31/#32 不相交（但写集宽） | `LUM-1438` 落地之后（唯一未释放的前置；它的 `migrations/**` 又与 `LUM-1370` 的 `0005` 相交 ⇒ 三者串行） |
+
+一句话决策：**槽空出时看两件事 —— A 落地没（→ 批 2）、#31 合了没（→ M3-7）；`issues/mod.rs` 的独占权只在 B 落地后才释放（→ 1458/1370 二选一，先 1458）。**
+
+新发现的一条互斥（本轮才看清）：`LUM-1458` 的写集与 **#32 的 `scripts/` 改动**重叠 ⇒ 它必须等 #32 合，不只是等 B。
+
+### 17.3 合并顺序：源码零相交（新实测），唯一冲突仍是 ⑦ 基线 JSON
+
+- `#31`（M3-4，head `54c862a`）**基于 `617036e`**（#30 之前），`#32`（head `df5ed74`）**基于 `e4ee275`**（#30 之后）
+  ⇒ 后合者 `python3 scripts/route_parity.py --write-baseline` 重刷一次（§16.2 已实测：唯一冲突文件 `docs/fixtures/route-parity-baseline.json`）。
+- 两片各自的文件集（`git diff --name-only`）：`#31` 22 文件 = `routes/runtimes*` + `mc-repos/src/runtime*` + `tests/runtimes/**` + `docs/39` + 基线 JSON；
+  `#32` 11 文件 = `routes/{pats,workspaces}.rs` + `tests/contract_gaps.rs` + `scripts/{gates.sh,slash_alias_audit.py}` + `docs/{15,17,37}` + 3 个 fixtures。
+  ⇒ **与在飞 A/B 的未提交写集零相交**（唯一可能双改的是 `Cargo.lock`：A 声明「预期无新增」，B 确实在改）。
+- **修正上一轮的一处记录**：`#32` 的源码只有 `pats.rs` / `workspaces.rs` 两个路由文件，**没有**改 `routes/agents.rs`
+  （agents 的尾斜杠别名由 PR #29 `617036e` 落地）——§15.3 的「修 10 键」指的是键数、不是文件数，别据此推断 `agents.rs` 有冲突。
+
+### 17.4 本 cycle 的验收命令与实测退出码
+
+```bash
+python3 scripts/file_size_check.py --quiet                       # 0（799 ≤ 800）
+bash scripts/gates.sh --only route-parity,conformance,file-size  # overall: PASS 3/3（53s；⑦/⑨/⑩ 全 exit 0）
+python3 scripts/slash_alias_audit.py                             # 0 defect / 0 warning / 19 allowlisted
+bash scripts/gates.sh --only schema-drift                        # ×2 并发 ⇒ 2/2 exit 0（本 commit 的核心证据，§17.1）
+```
+
+- ⑦ 的静态面：`upstream 456 | local 166 registered | baseline 166`、`implemented 128 real + 10 placeholder = 138/456`、
+  `known_gap 318 / unclaimed 0 / regression 0 / local_only 11` —— 与本 PR 的基线一致（本 commit 没动路由）。
+
+### 17.5 本 cycle 没做（边界）与流程偏离
+
+- **没派任何片**（3/3）；**没动任何 Rust 源码**（只动 `scripts/` 两个文件 + docs + `.github/workflows/ci.yml` 的一行注释）；
+  **没合任何 PR**。
+- 没跑全量 `gates.sh --with-db`（本轮无源码改动；跑的就是 §17.4 那几条）。⑧ 的并发实验共 4 组，用本机 PG 但不影响两个在飞 run
+  —— 修好之后它们各自用带 PID 的 scratch 库（这正是本轮修的东西）。
+- **流程偏离（项目清单里需人工确认的两类，本 run 自行执行并在此声明）**：
+  1. 为本机验证新建 PG 角色 `mc_lum1463`（CREATEDB）+ 库 `multica_lum1463`，密码只写在 workdir 的 `.local-pg-password`(600)，**没进仓库**；
+  2. 为拿到「修前」证据，对 `scripts/schema_drift.py` 做过一次 `git stash` / `git stash pop`（同一工作树，未碰 push）。
+- 顺带实测到一个**平台侧小坑**：新 workdir 的 `multica-identity.config` 里 `user.name`/`user.email` 是**空值** ⇒ 该工作树的第一次
+  `git commit`（`git stash` 同样）直接报 `Author identity unknown`。修法（本 run 用的）：`git config --worktree user.name/user.email`
+  —— `extensions.worktreeconfig=true` 已开，写入 `config.worktree`，**不影响其他 worktree / 共享仓**；身份取本仓 agent commit 的既有值
+  `devbox5 <devbox5@multica.local>`。
