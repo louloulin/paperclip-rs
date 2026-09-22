@@ -31,6 +31,9 @@ mc-core = { path = "../mc-core" }
 mc-db = { path = "../mc-db" }
 mc-errors = { path = "../mc-errors" }
 mc-auth = { path = "../mc-auth" }
+# M3-6 / W3b：task 领域层（状态机 / 租约 / 重试 / 取消 / usage）。
+# 添加这条依赖会让 `Cargo.lock` 多出 `mc-repos → mc-task` 一条边（见 docs/41）。
+mc-task = { path = "../mc-task" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -396,6 +396,27 @@ impl AgentRepo {
             .map_err(map_sqlx_err)
     }
 
+    /// 同 [`AgentRepo::get_in_workspace`]，但「不存在」返回 `None` 而不是错误。
+    ///
+    /// preview-trigger 这类**批量判定**需要它：一个 agent 不可见不等于请求非法，
+    /// 结果只是「这条候选不产生触发」（上游 `WillEnqueueRun` 的 agent 加载分支）。
+    ///
+    /// # Errors
+    ///
+    /// 仅 DB 错误。
+    pub async fn find_in_workspace(&self, workspace_id: Id, id: Id) -> Result<Option<AgentRow>> {
+        let sql = format!(
+            "SELECT {AGENT_COLUMNS} FROM agent \
+             WHERE id = $1 AND workspace_id = $2 AND kind = 'user'"
+        );
+        sqlx::query_as::<_, AgentRow>(&sql)
+            .bind(id.0)
+            .bind(workspace_id.0)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(map_sqlx_err)
+    }
+
     /// workspace 的 agent 列表（`kind='user'`）。
     ///
     /// `include_archived=false` 等价上游 `ListAgents`（`archived_at IS NULL`）；

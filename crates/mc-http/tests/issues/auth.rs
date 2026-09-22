@@ -119,17 +119,18 @@ async fn issue_auth_workspace_and_not_implemented() {
     assert_eq!(quick["origin"], "quick_create");
     assert_eq!(quick["status"], "todo");
 
-    // 501 占位（M3 能力）。原先这里断言的是 `/api/issues/table/groups`，
-    // M2-D（LUM-1355）把它实现成真实路由后改用仍未实现的 `preview-trigger`
-    // 继续覆盖“占位返回 501 + `not_implemented` 错误码”这条约定。
+    // 501 占位（M3 能力）。这条断言换过两次落点：先是 `/api/issues/table/groups`，
+    // M2-D（LUM-1355）实现后改用 `preview-trigger`，M3-6（LUM-1429）把它也实现成
+    // 真实路由（入队预演 200）后改用 `GET /api/issues/:id/labels` —— 本仓 schema 里
+    // 连 `issue_label` 表都不存在（见 `docs/10-M2-PLAN.md` §5），是当前最稳的缺口。
     let res = app
         .clone()
         .oneshot(req(
-            "POST",
-            "/api/issues/preview-trigger",
+            "GET",
+            &format!("/api/issues/{}/labels", Uuid::new_v4()),
             ws,
             user,
-            Some(json!({})),
+            None,
         ))
         .await
         .unwrap();

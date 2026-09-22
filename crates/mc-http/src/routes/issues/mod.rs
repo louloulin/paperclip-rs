@@ -20,6 +20,14 @@
 //! 上游存在但本仓尚未实现的端点统一返回 **501**（`not_implemented`），清单与原因见
 //! `docs/11-M2-ISSUE.md`。
 //!
+//! **M3-6（LUM-1429）移交**：原先在本文件以 501 stub 注册的 6 条
+//! （`POST /api/issues/preview-trigger`、`GET /api/issues/:id/active-task`、
+//! `POST /api/issues/:id/rerun`、`GET /api/issues/:id/task-runs`、
+//! `GET /api/issues/:id/usage`、`POST /api/issues/:id/tasks/:taskId/cancel`）
+//! 已由 `super::tasks::router()` 真实实现，本文件**删除**这些注册（同 path+method
+//! 重复注册会让 axum 在 `Router::route` 处 panic）。`not_implemented` 仍为其余
+//! 未实现端点服务。
+//!
 //! 注意（M1-D 实测踩过的坑）：axum 0.7（matchit 0.7）路径参数必须写 `:id`，
 //! `{id}` 会被当字面量段——编译通过但恒 404。
 //!
@@ -106,7 +114,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/issues/batch-delete", post(batch_delete))
         // ---- 尚未实现（501；依赖 agent/squad/task/attachment 等 M3 能力）----
         .route("/api/issues/quick-create", post(quick_create_issue))
-        .route("/api/issues/preview-trigger", post(not_implemented))
         // ---- 单体 ----------------------------------------------------------
         .route(
             "/api/issues/:id",
@@ -135,19 +142,11 @@ pub fn router() -> Router<Arc<AppState>> {
             post(not_implemented),
         )
         .route("/api/issues/:id/timeline", get(not_implemented))
-        .route("/api/issues/:id/active-task", get(not_implemented))
-        .route("/api/issues/:id/rerun", post(not_implemented))
-        .route("/api/issues/:id/task-runs", get(not_implemented))
-        .route("/api/issues/:id/usage", get(not_implemented))
         .route("/api/issues/:id/attachments", get(not_implemented))
         .route("/api/issues/:id/pull-requests", get(not_implemented))
         .route("/api/issues/:id/labels", get(not_implemented))
         .route("/api/issues/:id/labels/:labelId", delete(not_implemented))
         .route("/api/issues/:id/quick-actions", get(not_implemented))
-        .route(
-            "/api/issues/:id/tasks/:taskId/cancel",
-            post(not_implemented),
-        )
         .route(
             "/api/issues/:id/wakeups",
             get(not_implemented).post(not_implemented),
