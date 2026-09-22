@@ -2696,6 +2696,7 @@ dependencies = [
  "axum",
  "futures-util",
  "mc-core",
+ "mc-daemon-proto",
  "mc-realtime",
  "serde",
  "serde_json",
@@ -2703,6 +2704,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

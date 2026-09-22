@@ -1,10 +1,22 @@
-//! Multica WebSocket handler：`/live-events` 通道。
+//! Multica WebSocket handlers。
 //!
-//! 协议：
-//! - server → client: `EventEnvelope` JSON
-//! - client → server: `{ "type": "ping" }` / `{ "type": "resume", "last_event_id": "..." }`
+//! 两条互不相干的通道：
 //!
-//! 与 multica `server/internal/daemonws/*` + `apps/web/.../live-events.ts` 等价。
+//! - **`/live-events`**（前端实时事件，[`live_events_handler`]）：server → client 是
+//!   `EventEnvelope` JSON，client → server 是 `{"type":"ping"}` /
+//!   `{"type":"resume","last_event_id":"..."}`。与 multica
+//!   `apps/web/.../live-events.ts` 等价。
+//! - **`/api/daemon/ws`**（daemon 控制通道，[`hub`]）：双向的 daemon 协议帧
+//!   （心跳、RPC、唤醒提示），协议在 [`mc_daemon_proto`]。本 crate 只提供**传输层**：
+//!   连接注册表、扇出、去重、慢客户端驱逐、读/写泵。路由注册与身份鉴权在 M3-7。
+//!
+//! [`identity`] 描述调用方注入的连接身份，[`frames`] 描述帧与 RPC 契约类型。
+
+mod connection;
+pub mod frames;
+pub mod hub;
+pub mod identity;
+mod pump;
 
 use std::sync::Arc;
 

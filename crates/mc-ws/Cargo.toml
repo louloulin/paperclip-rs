@@ -3,7 +3,7 @@ name = "mc-ws"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Multica WebSocket handler (live-events)"
+description = "Multica WebSocket handlers (live-events + daemon transport)"
 
 [lints]
 workspace = true
@@ -19,5 +19,8 @@ tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 axum = { workspace = true }
 
+uuid = { workspace = true }
+
+mc-daemon-proto = { path = "../mc-daemon-proto" }
 mc-realtime = { path = "../mc-realtime" }
 mc-core = { path = "../mc-core" }
