@@ -280,8 +280,10 @@ e2e 覆盖到的契约点：`total` 语义（分组全额 vs 续页 0）、`valu
 
 ## 8. 交接与后续
 
-- **`/api/issues` 的 `POST` 校验缺口**（assignee 存在性、attachment uuid）不属于本切片，已登记为
-  **LUM-1410**。
+- **`/api/issues` 的 `POST` 校验缺口**（assignee 存在性、attachment uuid）已由 **LUM-1410** 补齐：
+  `create_issue` 在写库之前调 `validate_assignee_target`（上游 `validateAssigneePair` 的移植）+
+  `parse_attachment_ids`；`PUT /api/issues/:id`、`/move`、`/batch-update` 走同一个
+  `apply_update_request`，口径一致。
 - **label / property 维度**依赖上游 schema（`issue_label` / `issue_to_label` / `issue_properties`），
   当前实现是**显式 422**。承接：LUM-1370（label 维度）+ W0-B2（schema 切换，与 M3-0 互斥，见
   `docs/25-W0-SCHEMA-DRIFT.md`）。
