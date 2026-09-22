@@ -266,6 +266,12 @@ mod tests {
     // ---- DB 集成测试 ----
     // 需要可达的 Postgres：cargo test -p mc-repos --lib workspace::tests::db_*
     // 环境变量 `MULTICA_TEST_DATABASE_URL` 未设置时，`#[ignore]` 下的测试会被跳过。
+    // slug 每次运行唯一（workspace 软删后 slug 仍占唯一约束），保证可重复跑。
+
+    fn unique_slug(prefix: &str) -> Slug {
+        let s = Id::new().to_string().replace('-', "");
+        Slug::parse(&format!("{prefix}-{}", &s[..10])).unwrap()
+    }
 
     #[ignore]
     #[tokio::test]
@@ -274,7 +280,7 @@ mod tests {
             .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let repo = WorkspaceRepo::new(pool);
-        let slug = Slug::parse("test-roundtrip").unwrap();
+        let slug = unique_slug("test-roundtrip");
         let created = repo
             .create(NewWorkspace {
                 name: "Test".into(),
@@ -297,7 +303,7 @@ mod tests {
             .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let repo = WorkspaceRepo::new(pool);
-        let slug = Slug::parse("test-conflict").unwrap();
+        let slug = unique_slug("test-conflict");
         let a = repo
             .create(NewWorkspace {
                 name: "A".into(),
@@ -325,18 +331,27 @@ mod tests {
             .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let repo = WorkspaceRepo::new(pool);
-        let user_id = Id::new();
         let ws_id = repo
             .create(NewWorkspace {
                 name: "Member".into(),
-                slug: Slug::parse("list-for-user").unwrap(),
+                slug: unique_slug("list-for-user"),
                 description: None,
             })
             .await
             .unwrap()
             .id;
-        let member_repo =
-            crate::member::MemberRepo::new(repo.db().clone());
+        // member.user_id 有 FK 指向 "user"，先建真实 user。
+        let s = Id::new().to_string().replace('-', "");
+        let user = crate::user::UserRepo::new(repo.db().clone())
+            .create(crate::user::NewUser {
+                name: "list-for-user".into(),
+                email: format!("list-for-user-{}@example.com", &s[..12]),
+                avatar_url: None,
+            })
+            .await
+            .unwrap();
+        let user_id = user.id;
+        let member_repo = crate::member::MemberRepo::new(repo.db().clone());
         member_repo
             .create(crate::member::NewMember {
                 workspace_id: ws_id,
@@ -348,5 +363,9 @@ mod tests {
         let list = repo.list_for_user(user_id).await.unwrap();
         assert!(list.iter().any(|w| w.id == ws_id));
         repo.delete(&ws_id).await.ok();
+        crate::user::UserRepo::new(repo.db().clone())
+            .delete(&user_id)
+            .await
+            .ok();
     }
 }

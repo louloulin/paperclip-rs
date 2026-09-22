@@ -176,7 +176,7 @@ where
     }
 
     async fn list(&self, filter: UserFilter) -> Result<Vec<User>> {
-        let limit: i64 = filter.limit.unwrap_or(100).min(500);
+        let limit: i64 = filter.limit.unwrap_or(100).min(500) as i64;
         let after_id = filter.after_id;
         let rows = sqlx::query_as::<_, UserRow>(
             "SELECT id, name, email, avatar_url, email_verified_at, language, timezone, \
@@ -242,6 +242,7 @@ impl UserRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Repository;
 
     #[test]
     fn filter_default_shape() {
@@ -277,8 +278,8 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn db_upsert_by_email_is_idempotent() {
-        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
-            .expect("set MULTICA_TEST_DATABASE_URL");
+        let url =
+            std::env::var("MULTICA_TEST_DATABASE_URL").expect("set MULTICA_TEST_DATABASE_URL");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let repo = UserRepo::new(pool);
 
@@ -308,8 +309,8 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn db_get_by_email_returns_none_on_missing() {
-        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
-            .expect("set MULTICA_TEST_DATABASE_URL");
+        let url =
+            std::env::var("MULTICA_TEST_DATABASE_URL").expect("set MULTICA_TEST_DATABASE_URL");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let repo = UserRepo::new(pool);
         let none = repo
@@ -322,8 +323,8 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn db_update_me_partial_fields() {
-        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
-            .expect("set MULTICA_TEST_DATABASE_URL");
+        let url =
+            std::env::var("MULTICA_TEST_DATABASE_URL").expect("set MULTICA_TEST_DATABASE_URL");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let repo = UserRepo::new(pool);
         let u = repo

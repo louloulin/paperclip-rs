@@ -165,7 +165,6 @@ pub enum AuthzError {
 pub fn decide(req: &AuthorizationRequest) -> Decision {
     use Action::*;
     use Principal::*;
-    use Resource::*;
 
     // 系统始终允许内部操作
     if matches!(req.principal, System) {
@@ -245,6 +244,8 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
             (Resource::Comment, Comment | Write) => Decision::Allow,
             _ => Decision::Deny,
         },
+        // System 在函数开头已提前返回 Allow；此臂仅为 match 完备性。
+        System => Decision::Allow,
     }
 }
 

@@ -6,14 +6,15 @@
 //! `list_with_user` 通过 `LEFT JOIN "user"` 把 user 元信息一起取出，避免 N+1。
 
 use chrono::{DateTime, Utc};
-use mc_core::workspace::{WorkspaceMember, WorkspaceRole};
+use mc_core::member::WorkspaceMember;
+use mc_core::workspace::WorkspaceRole;
 use mc_core::{Id, Timestamp};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-use crate::{RepoError, RepoWithDb, Repository, Result};
 use crate::workspace::map_sqlx_err;
+use crate::{RepoError, RepoWithDb, Repository, Result};
 
 use mc_db::Db;
 
@@ -36,7 +37,7 @@ impl RepoWithDb for MemberRepo {
 }
 
 /// 新增 member 请求。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewMember {
     pub workspace_id: Id,
     pub user_id: Id,
@@ -44,7 +45,7 @@ pub struct NewMember {
 }
 
 /// member patch（更新角色）。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemberUpdate {
     pub role: Option<WorkspaceRole>,
 }
@@ -200,10 +201,7 @@ where
 
 impl MemberRepo {
     /// 列出某个 workspace 的所有 member。
-    pub async fn list_for_workspace(
-        &self,
-        workspace_id: Id,
-    ) -> Result<Vec<WorkspaceMember>> {
+    pub async fn list_for_workspace(&self, workspace_id: Id) -> Result<Vec<WorkspaceMember>> {
         self.list(MemberFilter {
             workspace_id: Some(workspace_id),
             ..Default::default()
@@ -214,10 +212,7 @@ impl MemberRepo {
     /// 列出某 workspace 的 member（含 user 名称 / 邮箱 / 头像）。
     ///
     /// 使用 LEFT JOIN 一次性获取，匹配上游 `ListMembersWithUser`。
-    pub async fn list_with_user(
-        &self,
-        workspace_id: Id,
-    ) -> Result<Vec<MemberWithUser>> {
+    pub async fn list_with_user(&self, workspace_id: Id) -> Result<Vec<MemberWithUser>> {
         let rows = sqlx::query_as::<_, MemberWithUserRow>(
             "SELECT m.id, m.workspace_id, m.user_id, m.role, m.created_at, \
                     u.name as user_name, u.email as user_email, \
@@ -248,11 +243,7 @@ impl MemberRepo {
     }
 
     /// 给 `(workspace_id, user_id)` 查 member；测试与权限检查用。
-    pub async fn get_for_user(
-        &self,
-        workspace_id: Id,
-        user_id: Id,
-    ) -> Result<WorkspaceMember> {
+    pub async fn get_for_user(&self, workspace_id: Id, user_id: Id) -> Result<WorkspaceMember> {
         let row = sqlx::query_as::<_, MemberRow>(
             "SELECT id, workspace_id, user_id, role, created_at, updated_at FROM member \
              WHERE workspace_id = $1 AND user_id = $2",
@@ -270,7 +261,8 @@ impl MemberRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mc_core::workspace::WorkspaceRole;
+    use mc_core::workspace::{NewWorkspace, WorkspaceRole};
+    use mc_core::Slug;
 
     #[test]
     fn parse_role_known_values() {
@@ -299,6 +291,26 @@ mod tests {
     }
 
     // ---- DB 集成测试 ----
+    // member.user_id FK → "user"，测试先建真实 user；slug/邮箱每次运行唯一，
+    // 保证在持久 Postgres 上可重复跑。
+
+    async fn fresh_user(db: &mc_db::Db, tag: &str) -> Id {
+        let s = Id::new().to_string().replace('-', "");
+        crate::user::UserRepo::new(db.clone())
+            .create(crate::user::NewUser {
+                name: tag.into(),
+                email: format!("{tag}-{}@example.com", &s[..12]),
+                avatar_url: None,
+            })
+            .await
+            .unwrap()
+            .id
+    }
+
+    fn unique_slug(prefix: &str) -> Slug {
+        let s = Id::new().to_string().replace('-', "");
+        Slug::parse(&format!("{prefix}-{}", &s[..10])).unwrap()
+    }
 
     #[ignore]
     #[tokio::test]
@@ -310,14 +322,14 @@ mod tests {
         let m_repo = MemberRepo::new(pool.clone());
 
         let ws = ws_repo
-            .create(crate::workspace::NewWorkspace {
+            .create(NewWorkspace {
                 name: "WS".into(),
-                slug: Slug::parse("member-add-list").unwrap(),
+                slug: unique_slug("member-add-list"),
                 description: None,
             })
             .await
             .unwrap();
-        let user = mc_core::Id::new();
+        let user = fresh_user(&pool, "member-add-list").await;
         let m = m_repo
             .create(NewMember {
                 workspace_id: ws.id,
@@ -332,13 +344,22 @@ mod tests {
 
         // role 检查：更新为 admin
         let updated = m_repo
-            .update(&m.id, MemberUpdate { role: Some(WorkspaceRole::Admin) })
+            .update(
+                &m.id,
+                MemberUpdate {
+                    role: Some(WorkspaceRole::Admin),
+                },
+            )
             .await
             .unwrap();
         assert_eq!(updated.role, WorkspaceRole::Admin);
 
         m_repo.delete(&m.id).await.expect("remove");
         ws_repo.delete(&ws.id).await.ok();
+        crate::user::UserRepo::new(pool.clone())
+            .delete(&user)
+            .await
+            .ok();
     }
 
     #[ignore]
@@ -348,16 +369,16 @@ mod tests {
             .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let ws_repo = crate::workspace::WorkspaceRepo::new(pool.clone());
-        let m_repo = MemberRepo::new(pool);
+        let m_repo = MemberRepo::new(pool.clone());
         let ws = ws_repo
-            .create(crate::workspace::NewWorkspace {
+            .create(NewWorkspace {
                 name: "WS".into(),
-                slug: Slug::parse("member-conflict").unwrap(),
+                slug: unique_slug("member-conflict"),
                 description: None,
             })
             .await
             .unwrap();
-        let user = mc_core::Id::new();
+        let user = fresh_user(&pool, "member-conflict").await;
         m_repo
             .create(NewMember {
                 workspace_id: ws.id,
@@ -376,47 +397,66 @@ mod tests {
             .expect_err("duplicate insert must error");
         assert!(matches!(err, RepoError::Conflict));
         ws_repo.delete(&ws.id).await.ok();
+        crate::user::UserRepo::new(pool.clone())
+            .delete(&user)
+            .await
+            .ok();
     }
 
     #[ignore]
     #[tokio::test]
     async fn db_role_check_admin_can_grant_owner_only_owner_can_change() {
-        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
-            .expect("set MULTICA_TEST_DATABASE_URL");
+        let url =
+            std::env::var("MULTICA_TEST_DATABASE_URL").expect("set MULTICA_TEST_DATABASE_URL");
         let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
         let ws_repo = crate::workspace::WorkspaceRepo::new(pool.clone());
-        let m_repo = MemberRepo::new(pool);
+        let m_repo = MemberRepo::new(pool.clone());
         let ws = ws_repo
-            .create(crate::workspace::NewWorkspace {
+            .create(NewWorkspace {
                 name: "WS".into(),
-                slug: Slug::parse("role-check").unwrap(),
+                slug: unique_slug("role-check"),
                 description: None,
             })
             .await
             .unwrap();
-        let owner = mc_core::Id::new();
-        let admin = mc_core::Id::new();
-        let member = mc_core::Id::new();
-        m_repo.create(NewMember {
-            workspace_id: ws.id,
-            user_id: owner,
-            role: WorkspaceRole::Owner,
-        }).await.unwrap();
-        m_repo.create(NewMember {
-            workspace_id: ws.id,
-            user_id: admin,
-            role: WorkspaceRole::Admin,
-        }).await.unwrap();
-        let m3 = m_repo.create(NewMember {
-            workspace_id: ws.id,
-            user_id: member,
-            role: WorkspaceRole::Member,
-        }).await.unwrap();
+        let owner = fresh_user(&pool, "role-owner").await;
+        let admin = fresh_user(&pool, "role-admin").await;
+        let member = fresh_user(&pool, "role-member").await;
+        m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: owner,
+                role: WorkspaceRole::Owner,
+            })
+            .await
+            .unwrap();
+        m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: admin,
+                role: WorkspaceRole::Admin,
+            })
+            .await
+            .unwrap();
+        let m3 = m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: member,
+                role: WorkspaceRole::Member,
+            })
+            .await
+            .unwrap();
 
         // 角色 update 仅允许 owner → owner/admin/member 或 admin → admin/member/guest
-        let promoted = m_repo.update(&m3.id, MemberUpdate {
-            role: Some(WorkspaceRole::Admin),
-        }).await.unwrap();
+        let promoted = m_repo
+            .update(
+                &m3.id,
+                MemberUpdate {
+                    role: Some(WorkspaceRole::Admin),
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(promoted.role, WorkspaceRole::Admin);
         ws_repo.delete(&ws.id).await.ok();
     }

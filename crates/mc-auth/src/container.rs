@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::pat::{InMemoryPatStore, PatStore};
 use crate::session::{InMemorySessionStore, SessionStore};
-use crate::store::{InMemorySecretsStore, SecretsStore};
 use crate::verification::{InMemoryVerificationStore, VerificationCodeStore};
+use mc_secrets::{InMemorySecretsStore, SecretsStore};
 
 /// 默认 session 容器（线程安全 + Clone）。
 #[derive(Clone, Default)]

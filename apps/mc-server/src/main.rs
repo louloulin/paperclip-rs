@@ -99,7 +99,9 @@ async fn main() -> anyhow::Result<()> {
         .context("register root actor")?;
 
     let adapters = Arc::new(AdapterRegistryStub::default());
-    adapters.register(16);
+    // M0 占位：register 接受 adapter 名称（String），原 `register(16)` 不匹配 API。
+    // 真实 adapter 注册在 M3 落地；此处暂不注册。
+    // adapters.register(16);
 
     let realtime = RealtimeHandle::start(1024);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs"));
@@ -118,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
         ws,
     ));
 
-    let api_router = mc_http::routes::router();
+    let api_router = mc_http::routes::router(state.clone());
     let app: Router = apply_default_middleware(api_router).with_state(state);
 
     let addr = std::net::SocketAddr::from((

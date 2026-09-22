@@ -21,6 +21,11 @@ tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
+sqlx = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+chrono-tz = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-errors = { path = "../mc-errors" }
@@ -33,6 +38,16 @@ mc-secrets = { path = "../mc-secrets" }
 mc-feature-flags = { path = "../mc-feature-flags" }
 mc-db = { path = "../mc-db" }
 mc-openapi = { path = "../mc-openapi" }
+mc-repos = { path = "../mc-repos" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+mc-config = { path = "../mc-config" }
+# axum 0.7 基于 tower 0.4 的 Service trait；集成测试 oneshot 需要同版本。
+tower04 = { package = "tower", version = "0.4", features = ["util"] }
+
+# 根目录 tests/smoke.rs 属于虚拟 workspace 根（无 [package]），默认不会被
+# cargo 编译；这里把它声明为 mc-http 的集成测试 target，使其真正可跑。
+[[test]]
+name = "smoke"
+path = "../../tests/smoke.rs"

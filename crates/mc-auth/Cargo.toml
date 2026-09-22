@@ -29,6 +29,7 @@ base64 = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-errors = { path = "../mc-errors" }
+mc-secrets = { path = "../mc-secrets" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

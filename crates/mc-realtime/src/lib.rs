@@ -77,9 +77,16 @@ impl Bus {
 }
 
 /// 全局事件总线（包装 Arc<Bus>）。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EventBus {
     inner: Arc<Bus>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        // broadcast::channel 至少需要 1；256 是常规事件突发的默认容量。
+        Self { inner: Arc::new(Bus::new(256)) }
+    }
 }
 
 impl EventBus {
