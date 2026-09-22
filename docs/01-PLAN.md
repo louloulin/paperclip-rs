@@ -225,8 +225,19 @@ UI 兼容性：`apps/web` / `apps/desktop` 仅切换 base URL 即可对接 multi
 - ✅ migrations：0001_init.up.sql（建表骨架，对应 multica 001_init）
 - ✅ smoke test：单测 + 集成（`mc-db::Migrator` + `mc-config::build_with`）
 
+### 进度更新（2026-09-22 13:40 CST，LUM-1346 cycle）
+
+- ✅ M1 scaffold 已合入 `feat/multica-rs-initial`（`056d2ae`）：六个 Repo stub + 四个 `mount_slice_*` 切片锚点。
+- 🔄 **M1 三个切片并行实现中**（都基于 `056d2ae`，完成后 PR 回 `feat/multica-rs-initial`）：
+  - LUM-1343 `feat/multica-rs-m1a-workspace-member`：workspace / member / user Repo + `/api/workspaces/*` + `/api/me`
+  - LUM-1345 `feat/multica-rs-m1b-auth`：verification_code / pat Repo + send-code / verify-code / logout / refresh
+  - LUM-1344 `feat/multica-rs-m1c-invitation-pat`：invitation Repo + `/api/invitations/*` + `/api/me/pats`
+- 📦 平行实现 `feat/multica-rs-m1`（LUM-1335，`3ad402e`，in_review）：完整 M1 + share-link + cli-token + `migrations/0002`，
+  集成时按 `docs/09-M1-INTEGRATION.md` 的仲裁规则 cherry-pick 增量，不整支合并。
+- 📋 后续规划已就绪：M1 集成操作手册 `docs/09-M1-INTEGRATION.md`、M2 三切片计划 `docs/10-M2-PLAN.md`。
+
 下一里程碑（M1）目标：完成 workspace / member / invitation / PAT / verification 路由与服务，
-完成 auth 双因素。
+完成 auth 双因素。（M1 集成与 M2 晋升规则见 `docs/09` / `docs/10`。）
 
 ## 8. 风险与权衡
 
