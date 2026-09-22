@@ -39,7 +39,6 @@
 //! 8. `cancel` 幂等 → 终态 `Cancelled` + `Manual`；
 //! 9. 解码器容忍非 JSON / 未知事件类型，不会因此中断 run。
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -182,9 +181,34 @@ impl FakeCli {
     }
 
     fn install(&self, body: &str) {
-        std::fs::write(&self.executable, body).expect("写脚本");
-        std::fs::set_permissions(&self.executable, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod +x");
+        use std::io::Write as _;
+        use std::process::{Command as StdCommand, Stdio as StdStdio};
+
+        // 脚本**刻意不**由本进程直接写（不用 `std::fs::write`）：
+        // 测试是多线程跑的，别的线程 `fork` 到 `execve` 之间会复制本进程的 FD。
+        // 若本进程正持有这个脚本的写 FD，别的线程的子进程就会短暂带着它，
+        // 此刻我们 exec 这个刚写好的文件会随机得到 ETXTBSY（Text file busy）——
+        // 实测 25 次连跑挂 2 次。交给子进程写（内容走 stdin）、等它退出再 exec，
+        // 本进程的 FD 表里从未出现过写 FD，竞态就从根上没了。
+        let mut child = StdCommand::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "cat > {path} && chmod +x {path}",
+                path = quoted(&self.executable)
+            ))
+            .stdin(StdStdio::piped())
+            .stdout(StdStdio::null())
+            .stderr(StdStdio::null())
+            .spawn()
+            .expect("起写脚本的子进程");
+        child
+            .stdin
+            .take()
+            .expect("stdin 管道")
+            .write_all(body.as_bytes())
+            .expect("写脚本内容");
+        let status = child.wait().expect("等写脚本的子进程");
+        assert!(status.success(), "写脚本失败（chmod 一起）：{status}");
     }
 
     /// 公共前缀：把 argv 与 stdin 落到临时目录，便于"prompt 必须走 stdin"的断言。

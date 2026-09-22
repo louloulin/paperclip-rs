@@ -370,10 +370,10 @@ impl RuntimeAdapter for PiLocal {
             stream_drain_grace: self.config.stream_drain_grace,
             fallback_model: request.model,
             started_at: Instant::now(),
-            events,
+            events: Some(events),
             outcome: Some(outcome_tx),
             runs: Arc::clone(&self.runs),
-            _session_guard: session_guard,
+            session_guard: Some(session_guard),
         };
         tokio::spawn(PiRun::new(context, cancel_rx).execute(child, stdin, stdout, stderr, pid));
 

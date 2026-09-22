@@ -45,13 +45,15 @@ pub(super) struct PiRunContext {
     pub stream_drain_grace: Duration,
     pub fallback_model: Option<String>,
     pub started_at: Instant,
-    pub events: EventSender,
+    /// 事件发送端；`execute` 收尾时**先** `take` + drop 它，再发终态
+    /// （契约：事件通道先关闭，终态后到）。
+    pub events: Option<EventSender>,
     pub outcome: Option<oneshot::Sender<RunOutcome>>,
     /// 本 adapter 的 run/cancel 槽位表（run 结束时要自己摘掉）。
     pub runs: Arc<RunRegistry>,
-    /// 会话独占锁，随 run 任务的栈一起释放（= 覆盖整个子进程生命周期）。
-    /// 只做 RAII，不读，故以下划线开头。
-    pub _session_guard: SessionGuard,
+    /// 会话独占锁，覆盖整个子进程生命周期；`execute` 在发终态**之前**显式释放
+    /// （否则调用方拿到终态后立刻续跑同一个会话文件会撞 `SessionBusy`）。
+    pub session_guard: Option<SessionGuard>,
 }
 
 /// 运行任务：持有解码器状态、取消信号与终态发送端。
@@ -203,6 +205,13 @@ impl PiRun {
             stderr_tail,
         );
         self.ctx.runs.finish(&self.ctx.run_id);
+        // 契约 #3：事件通道**先**关闭（drop 发送端），**然后**终态到达 ——
+        // 否则 `drain()` 会在"事件流还没结束"和"终态已就绪"之间空转。
+        drop(self.ctx.events.take());
+        // 会话锁也要在终态之前释放。上游用 flock，由内核在子进程退出时释放，
+        // 顺序天然正确；进程内 guard 若留给任务栈展开，调用方"收终态 → 立刻续跑
+        // 同一个 JSONL" 会随机撞上 `SessionBusy`（本片 e2e 用例真抓到过）。
+        drop(self.ctx.session_guard.take());
         if let Some(tx) = outcome_tx {
             let _ = tx.send(outcome);
         }
@@ -210,7 +219,9 @@ impl PiRun {
 
     /// 发送一条事件；接收端已 drop（调用方走了 `outcome()`）时静默停发。
     fn emit(&self, event: RuntimeEvent) {
-        let _ = self.ctx.events.send(event);
+        if let Some(events) = self.ctx.events.as_ref() {
+            let _ = events.send(event);
+        }
     }
 
     /// 按上游优先级算出终态。
@@ -399,10 +410,10 @@ mod tests {
                 stream_drain_grace: Duration::from_secs(1),
                 fallback_model: None,
                 started_at: Instant::now(),
-                events,
+                events: Some(events),
                 outcome: Some(outcome),
                 runs,
-                _session_guard: session_guard,
+                session_guard: Some(session_guard),
             },
             cancel_rx,
         )

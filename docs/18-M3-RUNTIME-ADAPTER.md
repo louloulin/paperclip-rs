@@ -36,6 +36,9 @@ stdout ──► BufReader::lines ──► PiDecoder ──► RuntimeEvent（T
 2. **`Started` 是第一条事件**，且带 `executable` 与 `pid`（pid 缺失时 `None`，但事件本身必须发）。
 3. **终态一定会到**：事件通道**先**关闭（所有事件发完），**然后** `RunOutcome` 到达。
    因此 `drain()` 能"先收全事件、再拿终态"，两个 `await` 不会互相饿死。
+   同理，**拿到终态时会话锁已经释放**：调用方"收终态 → 立刻续跑同一个 JSONL"
+   不会随机撞上 `SessionBusy`（上游 flock 由内核在子进程退出时释放，顺序天然正确；
+   进程内 guard 必须显式先放）。
 4. **事件通道无界**。不用有界通道 + `.await` 背压：阻塞在 `send` 上的 run 连 `cancel` 都响应不了。
    契约因此要求调用方二选一 —— `next_event()`/`drain()`（消费）或 `outcome()`（丢弃未读事件）。
    后者会 drop 接收端，`send` 立刻返回 `Err`，**生产方必须容忍 send 失败**。
@@ -76,7 +79,10 @@ crate::adapter_conformance!(MyAdapter);
 | `decoder_tolerates_junk` | stdout 混日志/坏 JSON 行不中断 run |
 
 `FakeCli`（`conformance.rs`）现场生成 `#!/bin/sh` 脚本并记录 argv/stdin，退出时删临时目录；
-没有 `tempfile` 依赖。断言都写在泛型 `check_*::<A>()` 里，宏体只负责起 8 个 `#[tokio::test]`，
+没有 `tempfile` 依赖。脚本的写入交给一个子进程（`sh -c 'cat > …'`）而不是本进程的 `fs::write`：
+多线程测试里，别的线程 `fork`→`execve` 之间会复制本进程的 FD，若本进程正持有脚本的写 FD，
+立刻 exec 这个刚写好的文件会随机拿到 `ETXTBSY`（本片连跑 25 次挂 2 次，已修）。
+断言都写在泛型 `check_*::<A>()` 里，宏体只负责起 8 个 `#[tokio::test]`，
 因此每个 adapter 的覆盖度完全相同。
 
 ## 4. 接一个新 adapter 的 6 步
@@ -207,4 +213,7 @@ MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db
 `pi_local_e2e.rs` 的 7 个用例 = issue 点名的 4 个（生命周期 / 取消 / 超时 / 非零退出）
 + 会话文件互斥与释放 + 空白 prompt 拒绝 + 二进制缺失归类为 `runtime_offline`。
 它们全部通过**公开 API**（注册表 → adapter → `RunHandle`），因此接口一旦被改成
-M3-3 用不了的样子，这里就会红。
+M3-3 用不了的样子，这里就会红。这两个非确定性问题就是这套用例抓出来的：
+
+1. 会话锁晚于终态释放 ⇒ 续跑偶发 `SessionBusy`；
+2. 假 CLI 刚写完就 exec ⇒ 偶发 `ETXTBSY`。
