@@ -31,7 +31,12 @@ async fn missing_or_malformed_user_header_is_unauthorized() {
 
     let paths: Vec<(&str, String)> = vec![
         ("GET", "/api/agents/".to_string()),
+        // 尾斜杠别名：上游 chi 的两种写法都必须命中（不带斜杠时若未注册 → 404，
+        // 而 `contracts/golden/agents/*` 的 fixture 用的正是不带斜杠的形态）。
+        ("GET", "/api/agents".to_string()),
+        ("POST", "/api/agents".to_string()),
         ("GET", format!("/api/agents/{agent_id}/")),
+        ("GET", format!("/api/agents/{agent_id}")),
         ("GET", format!("/api/agents/{agent_id}/tasks")),
         ("GET", format!("/api/agents/{agent_id}/env")),
         ("POST", format!("/api/agents/{agent_id}/archive")),

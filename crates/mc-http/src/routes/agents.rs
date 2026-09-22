@@ -65,7 +65,14 @@ mod env;
 mod labels;
 mod stats;
 
-/// agent 面 16 条路由。
+/// agent 面 16 条上游路由（+2 条尾斜杠别名 = 18 个注册键）。
+///
+/// **尾斜杠别名**：上游是 chi 的 `Route("/api/agents") + Get("/")`，两种写法都能命中；
+/// 而 axum 0.7 / matchit 0.7 里树中只有 `/api/agents/` 时 `at("/api/agents")` 返回
+/// `Err(MissingTrailingSlash)`（`axum-0.7.9/src/routing/path_router.rs:381` 并入 `Err`）
+/// ⇒ **404 而不是 307**。三条 golden fixture（`contracts/golden/agents/00{1,2,3}-*`）恰好
+/// 请求不带斜杠的 `/api/agents`，只注册带斜杠形态会让它们全落 `unmounted`（⑦ 折叠尾斜杠，
+/// 看不见这个故障）。做法与 M3-4（`routes/runtimes.rs` L80-90）一致：两种都注册。
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -73,7 +80,15 @@ pub fn router() -> Router<Arc<AppState>> {
             get(crud::list_agents).post(crud::create_agent),
         )
         .route(
+            "/api/agents",
+            get(crud::list_agents).post(crud::create_agent),
+        )
+        .route(
             "/api/agents/:id/",
+            get(crud::get_agent).put(crud::update_agent),
+        )
+        .route(
+            "/api/agents/:id",
             get(crud::get_agent).put(crud::update_agent),
         )
         .route("/api/agents/:id/archive", post(crud::archive_agent))
@@ -377,8 +392,8 @@ mod tests {
 
     #[test]
     fn router_builds_without_panicking() {
-        // axum 0.7 同 path+method 重复注册会在 build 期 panic；本断言保证 16 条
-        // 路由互不冲突（含 `:id` / `:label_id` 两个参数位）。
+        // axum 0.7 同 path+method 重复注册会在 build 期 panic；本断言保证 16 条上游路由
+        // + 2 条尾斜杠别名互不冲突（含 `:id` / `:label_id` 两个参数位）。
         let _ = router();
     }
 
