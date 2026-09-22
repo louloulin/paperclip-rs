@@ -258,3 +258,84 @@ M0 的 `/api/auth/login` / `/api/auth/session` 占位在上游并不存在（M0 
   `GET+POST /api/me/pats`、`DELETE /api/me/pats/:id`
 - 交叉点只有两处，都无同 path+method 冲突：`/api/me`（删 B 占位）、
   `/api/workspaces/:id/members`（A 的 GET + C 的 POST，实测可合并）。
+
+## 9. M1-D 执行记录（2026-09-22，LUM-1347）
+
+**本节是 M1-D 的实测结果，与第 1–8 节的"计划/预判"冲突时以本节为准。**
+
+### 9.1 结果
+
+- 集成分支：`feat/multica-rs-m1-integration`（基于 `875c3f4`），已并入 `feat/multica-rs-initial`。
+- 合并顺序 A(`f2e2e8b`) → B(`cce354c`) → C(`d88b259`)，随后一次 cherry-pick（§9.3）+ 一次 M2 scaffold（§9.4）。
+- 第 7.2 节的"假冲突"判断成立：7 处 M0 基线修复逐字节相同，取任一方即可，未产生语义分歧。
+- 第 8.3 节的删除清单执行结果：删 B 的 `/api/me` 占位（仲裁 #4）；`/api/workspaces` 系列沿用 A 的删除；
+  `/api/auth/logout` 占位按 §8.3 允许项**删除**（B 的真实路由是无 `/api` 前缀的 `/auth/logout`），
+  并顺手把 `/api/issues/{id}` 的字面量占位改成 `:id`（axum 0.7 只认 `:id`），避免 M2 照抄。
+- `mount.rs` 另删 M0 的 `/api/issues`、`/api/issues/:id`、`/api/inbox`、`/api/comments` 占位（§9.4）。
+
+### 9.2 合并产物的缺陷修复（都发生在 M1-D 内，非切片缺陷）
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| `cargo build` 失败 E0252 | 自动合并把 `use async_trait::async_trait;` 叠加两份（`mc-storage`） | 去重 |
+| `cargo build` 失败 E0063 | `ConfigSnapshot` 新增 `invitation_per_workspace_per_hour` 未在 `state.rs` 的 `Default` / 测试字面量补 | 补字段 |
+| `cargo build` 失败 | `Cargo.toml` 自动合并后出现重复键（`anyhow` ×3、`mc-secrets`、`tokio` ×2） | 去重 |
+| clippy `-D warnings` 全仓失败 | M0 基线 + 合并产物从未过过 fmt/clippy（`pedantic` 全开） | 逐 crate 修，见 §9.5 |
+| doctest 失败 | `middleware/authn.rs` 的文档代码块是伪代码但用了 ```` ```ignore ```` | 改 ```` ```text ```` |
+| `--features test-util` 下 clippy/test 失败 | `tests/{invitations,pats}.rs` 从未在默认 `cargo test --workspace` 里编译过（feature gate） | 修 lint + `async fn` 改同步构造；**测试命令必须带 `--features test-util`** |
+
+### 9.3 对 `feat/multica-rs-m1`（LUM-1335）的增量拣选
+
+整支**未合并**（理由见 §2.1）。只取本仓 M1 未覆盖的三个功能增量，并全部按本仓约定重写：
+
+1. workspace share link：`mc-repos/src/share_link.rs` + `mc-http/src/routes/share_links.rs`
+   （独立文件 + 独立 `mount_slice_share_link()`）+ `mc-http/tests/share_links.rs`（3 个 ignored PG e2e）。
+   路由：`POST|GET /api/workspaces/:id/share-links`、`DELETE .../share-links/:linkId`、
+   `GET /api/share-links/:code`（公开）、`POST /api/share-links/join`（幂等：已是成员时
+   `joined=false` 且不消耗 `use_count`）。
+2. member 最后 owner 保护：`member.rs` 的 `update`/`delete` 走事务 + `SELECT … FOR UPDATE` +
+   其它 owner 计数。上游用 `RepoError::Invalid`，本仓无该变体 → `RepoError::Conflict`（HTTP 409）。
+3. `POST /api/auth/cli-token`：上游签 JWT，本仓 M1 无 JWT 链 → 返回 30 天 TTL 的 PAT，
+   写入与 `/api/me/pats` 同一个 `PatStore`（可列出/可撤销）。签名与上游一致（无请求体、200 + `{token}`）。
+   LUM-1335 原实现只拼 `mc_cli_<uuid>` 字符串且不落库，token 无法通过任何校验路径——已修正。
+
+### 9.4 M2 anchor scaffold（`migrations/0004`）
+
+- 预声明 `mc-repos::{comment,inbox,issue,subscriber}`（比 §6 多 `subscriber`——`docs/10` §2 的 M2-C
+  有 `inbox.rs` + `subscriber.rs` 两个文件）与 `routes::{comments,inbox,issues,subscribers}`，
+  四个空 `router()` + `mount.rs` 的四个 `mount_slice_*` 已接好。
+- **迁移编号从 §6 写的 `0003` 顺延为 `0004_reactions_and_subscribers`**：0003 被 §9.3 的
+  cherry-pick 增量占用（`0003_auth_and_invitations`）。migrator 按文件名升序执行，顺序无影响。
+- 三张表（`comment_reaction` / `issue_reaction` / `issue_subscriber`）**有意偏离上游列定义**：
+  上游是 `actor_type IN ('member','agent')` + `actor_id UUID`，本仓 0001 的同类列一律是
+  `TEXT IN ('user','agent',…)` + `actor_id TEXT`（`comment.author_type`、`issue.creator_type`、
+  `inbox_item.actor_type`）。跟随本仓词汇表 = M2 handler 不需要 member↔user 映射。
+- 三张表都建在 M2 之前，避免两个 M2 分支配额同号迁移。
+
+### 9.5 验证门实测（最终树）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cargo build --workspace` | exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo clippy -p mc-http --all-targets --features test-util -- -D warnings` | exit 0（**默认命令不覆盖 `tests/{invitations,pats,share_links}.rs`**） |
+| `cargo test --workspace` | exit 0（41 suites ok；14 个 DB 测试 ignore） |
+| `cargo fmt --all --check` | exit 0 |
+
+PG16 全新库（migrator 建表 0001→0004）e2e：`smoke` 2/2、`invitations` 3/3、`pats` 3/3、
+`share_links` 3/3、`mc-repos -- --ignored` 16/16（含新增的 last-owner 保护与 share-link 消费）。
+
+环境提示（写进后续切片）：`/usr/bin/cargo` 1.75 **不能**构建本仓（`rust-version = "1.80"`），
+必须 `PATH="$HOME/.cargo/bin:$PATH"`（rustup stable 1.98）；clippy 1.98 建议的
+`Option::is_none_or` / `Duration::from_mins` 超出 MSRV 1.80，**不要采纳**——用
+`!….is_some_and(…)` / `from_secs` 等价改写。
+
+### 9.6 记录在案的 `#[allow]` 例外
+
+只用于"改代码会 churn 冻结的 M0 公共 API"或函数形态类 pedantic lint，且每处都带理由注释：
+`too_many_lines`（`mc-config::build_with`、`apps/mc-server::main`、`mc-repos::invitation::accept`、
+`tests/smoke.rs::workspace_member_http_e2e`）、`unused_async`（`mc-openapi::openapi_json_handler`、
+`mc-ws::live_events_handler`）、`needless_pass_by_value`（`mc-repos` 的 4 处 `map_sqlx*`/`new`、
+`mc-http` 的切片 `router`/`pat_err`/`internal`）、`cast_precision_loss`
+（`verification_code::recent_for`）、`duration_suboptimal_units`（`mc-db::pool::connect*`）。
+`Cargo.toml` 的 lint 配置**未做任何降级**。
