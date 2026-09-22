@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::state::AppState;
 
+pub mod auth;
 pub mod health;
 pub mod mount;
 pub mod openapi;

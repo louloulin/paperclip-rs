@@ -29,6 +29,7 @@ hex = { workspace = true }
 mc-core = { path = "../mc-core" }
 mc-db = { path = "../mc-db" }
 mc-errors = { path = "../mc-errors" }
+mc-auth = { path = "../mc-auth" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -19,7 +19,10 @@ mod inner {
 
     impl S3Storage {
         pub fn new(client: Client, bucket: impl Into<String>) -> Self {
-            Self { client, bucket: bucket.into() }
+            Self {
+                client,
+                bucket: bucket.into(),
+            }
         }
 
         pub fn from_env() -> anyhow::Result<Self> {

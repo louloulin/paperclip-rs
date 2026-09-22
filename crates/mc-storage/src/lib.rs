@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use tracing::info;
@@ -64,7 +65,8 @@ pub trait StorageProvider: Send + Sync {
 /// 顶层 Storage facade：bucket → provider 路由。
 #[derive(Default, Clone)]
 pub struct Storage {
-    pub providers: Arc<std::sync::RwLock<std::collections::HashMap<String, Arc<dyn StorageProvider>>>>,
+    pub providers:
+        Arc<std::sync::RwLock<std::collections::HashMap<String, Arc<dyn StorageProvider>>>>,
     pub bucket_routes: Arc<std::sync::RwLock<std::collections::HashMap<String, String>>>,
 }
 
@@ -95,10 +97,9 @@ impl Storage {
             .get(bucket)
             .ok_or_else(|| StorageError::NotFound(format!("bucket not routed: {bucket}")))?;
         let providers = self.providers.read().unwrap();
-        providers
-            .get(provider_name)
-            .cloned()
-            .ok_or_else(|| StorageError::NotFound(format!("provider not registered: {provider_name}")))
+        providers.get(provider_name).cloned().ok_or_else(|| {
+            StorageError::NotFound(format!("provider not registered: {provider_name}"))
+        })
     }
 
     pub async fn put(
@@ -193,7 +194,9 @@ mod tests {
     #[test]
     fn storage_routes_to_provider() {
         let storage = Storage::new();
-        storage.register(Arc::new(local::LocalDiskStorage::new("/tmp/mc-test"))).unwrap();
+        storage
+            .register(Arc::new(local::LocalDiskStorage::new("/tmp/mc-test")))
+            .unwrap();
         storage.route_bucket("mc-assets", "local_disk").unwrap();
         let provider = storage.provider_for("mc-assets").unwrap();
         assert_eq!(provider.name(), "local_disk");

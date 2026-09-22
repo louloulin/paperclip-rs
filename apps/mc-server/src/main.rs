@@ -16,7 +16,7 @@ use axum::Router;
 use mc_config::Config;
 use mc_core::actor::{spawn_system_actor, ActorKey, ActorRegistry};
 use mc_db::{Db, Migrator};
-use mc_http::middleware::apply_default_middleware;
+use mc_http::apply_default_middleware;
 use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
@@ -95,31 +95,43 @@ async fn main() -> anyhow::Result<()> {
     // 6. 装配 axum 路由
     let actors = ActorRegistry::new();
     actors
-        .register(ActorKey::new("system", "root"), spawn_system_actor("multica-root"))
+        .register(
+            ActorKey::new("system", "root"),
+            spawn_system_actor("multica-root"),
+        )
         .context("register root actor")?;
 
     let adapters = Arc::new(AdapterRegistryStub::default());
-    // M0 占位：register 接受 adapter 名称（String），原 `register(16)` 不匹配 API。
-    // 真实 adapter 注册在 M3 落地；此处暂不注册。
-    // adapters.register(16);
+    // M0/M1 stub：注册占位 adapter 名（真实 adapter 注册在 M3）。
+    adapters.register("stub-adapter");
 
     let realtime = RealtimeHandle::start(1024);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs"));
 
     let state = Arc::new(AppState::new(
         db.clone(),
-        RuntimeHandles { actors: actors.clone(), adapters },
+        RuntimeHandles {
+            actors: actors.clone(),
+            adapters,
+        },
         ConfigSnapshot {
             host: cfg.server.host.clone(),
             port: cfg.server.port,
             session_cookie: cfg.auth.session_cookie_name.clone(),
             api_key_header: cfg.auth.api_key_header.clone(),
             csrf_header: cfg.auth.csrf_header.clone(),
+            dev_mode: cfg.server.mode == mc_config::RunMode::Development
+                || cfg.server.mode == mc_config::RunMode::Test,
+            session_ttl_secs: cfg.auth.session_ttl_secs,
+            verification_code_ttl_secs: cfg.auth.verification_code_ttl_secs,
+            send_code_per_email_per_min: cfg.auth.send_code_per_email_per_min,
         },
         realtime,
         ws,
     ));
 
+    // routes::router 以 A 的签名为基（接受 Arc<AppState>）；这里再 with_state 注入，
+    // 使 Router<Arc<AppState>> → Router<()> 后套默认 middleware 链。
     let api_router = mc_http::routes::router(state.clone());
     let app: Router = apply_default_middleware(api_router).with_state(state);
 
@@ -150,7 +162,9 @@ async fn main() -> anyhow::Result<()> {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("install Ctrl+C handler");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl+C handler");
     };
 
     #[cfg(unix)]

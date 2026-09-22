@@ -21,11 +21,14 @@ tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-sqlx = { workspace = true }
-parking_lot = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
 chrono-tz = { workspace = true }
+hex = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-errors = { path = "../mc-errors" }
@@ -37,6 +40,7 @@ mc-storage = { path = "../mc-storage" }
 mc-secrets = { path = "../mc-secrets" }
 mc-feature-flags = { path = "../mc-feature-flags" }
 mc-db = { path = "../mc-db" }
+mc-repos = { path = "../mc-repos" }
 mc-openapi = { path = "../mc-openapi" }
 mc-repos = { path = "../mc-repos" }
 

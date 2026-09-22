@@ -64,11 +64,9 @@ pub fn status_for(err: &Error) -> u16 {
         | MemberAlreadyExists(_)
         | VcsConflict(_)
         | IssueTransitionInvalid { .. } => 409,
-        Unprocessable { .. }
-        | IssueClosed(_)
-        | AgentUnavailable(_)
-        | RuntimeOffline(_)
-        | VerificationCodeInvalid(_) => 422,
+        Unprocessable { .. } | IssueClosed(_) | AgentUnavailable(_) | RuntimeOffline(_) => 422,
+        // 验证码错误 / 已消费 / 过期 —— 按未通过凭证校验处理（LUM-1345 要求 401）
+        VerificationCodeInvalid(_) => 401,
         RateLimited { .. } => 429,
         // 业务资源已下线 / 软删除
         WorkspaceArchived(_) => 410,
