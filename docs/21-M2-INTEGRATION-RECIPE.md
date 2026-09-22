@@ -21,29 +21,32 @@
 | 待并入 | M1-E（LUM-1362）、M2-A（LUM-1348）、M2-B（LUM-1350） |
 | 迁移编号水位 | `0001`–`0004`（`0005` 空闲，按 `docs/10` §5.1 由集成 master 统一分配） |
 
-`git ls-remote --heads origin` 实测存在的切片分支：`feat/multica-rs-m1a-*`、`m1b-*`、`m1c-*`、
-`m2c-inbox`、`feat/multica-rs-m1` —— **M2-A / M2-B / M1-E 的分支尚未 push**，集成时它们必须先把
-分支推上去（否则集成方只能从工作区捞未提交改动，风险极高）。
+> ⚠️ **本文件的 SHA 快照会过期，且实测已经过期过一次**：本 cycle 19:0x 首次实测时
+> M1-E 还是 `592ef90`+`9ec5b56` 且未 push，M2-B 还是未提交的工作区文件；十几分钟后复测发现
+> **M1-E 已 rebase 并 push（`ae1dd3b`+`9851ebf`）、M2-B 已提交并 push（`48666c2`）**。
+> 集成时请**以远端分支 + issue 状态为准**，把 §2 当作「怎么核」的样例而不是真值。
 
 ---
 
 ## 2. 在飞切片实况（2026-09-22 19:0x CST，工作区实测）
 
-| 切片 | issue | 实际分支 | 基线 | 提交 | 未提交文件（`git diff --stat` 实测） |
+| 切片 | issue | 远端分支 | 基线 | 提交（已 push？） | 实测 diff（`git diff --stat <base> <branch>`） |
 | --- | --- | --- | --- | --- | --- |
-| M1-E 契约缺口 | LUM-1362 | `feat/multica-rs-m1e-contract-gaps` | `69e9f4b` | `592ef90` + `9ec5b56` | 无（已提交，17 文件 / +1743 −175） |
-| M2-A issue 核心 | LUM-1348 | `feat/multica-rs-m2a-issue` | `fd6dfd6` | 无 | `mc-repos/src/issue.rs` +1816、`mc-repos/src/lib.rs` +1、新文件 `issue_status.rs`（25 KB） |
-| M2-B comment | LUM-1350 | ⚠️ `agent/devbox5/28f8edc92edd` | `fd6dfd6` | 无 | `mc-http/src/routes/comments.rs` +827、`mc-repos/src/comment.rs` +1404、新文件 `tests/comments.rs` |
+| M1-E 契约缺口 | LUM-1362 | `feat/multica-rs-m1e-contract-gaps` | `69e9f4b` | `ae1dd3b` + `9851ebf`（✓ 已 push） | 17 文件 +1748 −175 |
+| M2-A issue 核心 | LUM-1348 | `feat/multica-rs-m2a-issue`（✗ **未 push**） | `fd6dfd6` | **无提交** | 工作区未提交：`mc-repos/src/issue.rs` +1816、`lib.rs` +1、新 `issue_status.rs` |
+| M2-B comment | LUM-1350 | `feat/multica-rs-m2b-comment` | `fd6dfd6` | `48666c2`（✓ 已 push） | 4 文件 +3160 −13（含新增 `docs/12-M2-COMMENT.md`） |
 
-**⚠️ M2-B 的分支名偏离约定**：`docs/10-M2-PLAN.md` §2 写的是 `feat/multica-rs-m2b-comment`，
-实际是 `multica repo checkout` 自动生成的 `agent/devbox5/28f8edc92edd`。两个后果：
+两条由此得到的规程：
 
-1. 集成方按计划名 `feat/multica-rs-m2b-comment` 找不到分支 → **集成前先 `git branch --show-current` /
-   `multica issue runs` 核对工作区，别按计划名盲找**（LUM-1354 已写进描述）；
-2. 该分支在 base 上是「沿用现有 checkout」语义，**M2-B 结束时必须显式 push**（别指望 merge 时被动发现）。
+1. **分支名以远端为准**。M2-B 的工作区分支名曾是 `multica repo checkout` 自动生成的
+   `agent/devbox5/28f8edc92edd`，交付时按 `docs/10` §2 的计划名 push 成了 `feat/multica-rs-m2b-comment`；
+   集成方不要去猜工作区里的名字（`git branch --show-current` 只能看到本地 checkout 的状态）。
+2. **工作区里有改动 ≠ 切片在跑**（反过来也成立）：M2-A 是真在跑（head 仍是 `fd6dfd6`、改动未提交）；
+   而 M1-E / M2-B 已提交并 push。判断在飞状态要同时看 `git log <base>..<branch>`、
+   `git ls-remote origin <branch>` 与 issue 状态，不能只看文件 mtime。
 
-`fd6dfd6` → `69e9f4b` 的差集只有 M2-C 的 5 个源文件 + docs（见 §3），所以 M2-A / M2-B 从 `fd6dfd6`
-起的分支**可以先 merge 再 rebase，冲突面不变**。
+`fd6dfd6` → 当前 base 的差集只有 M2-C 的 5 个源文件 + docs（见 §3），所以 M2-A / M2-B 从 `fd6dfd6`
+起的分支**可以直接 merge，无需 rebase**。
 
 ---
 
@@ -52,7 +55,7 @@
 | 切片 | Repo 层 | HTTP 路由层 | 测试 | docs |
 | --- | --- | --- | --- | --- |
 | M2-A | `mc-repos/src/issue.rs`、`issue_status.rs`(新)、`lib.rs`(+1 行) | — | — | — |
-| M2-B | `mc-repos/src/comment.rs` | `mc-http/src/routes/comments.rs` | `tests/comments.rs`(新) | — |
+| M2-B | `mc-repos/src/comment.rs` | `mc-http/src/routes/comments.rs` | `mc-http/tests/comments.rs`(新) | `12-M2-COMMENT.md`(新) |
 | M2-C（已并入） | `mc-repos/src/inbox.rs`、`subscriber.rs` | `routes/inbox.rs`、`subscribers.rs` | `tests/inbox.rs` | `13-M2-INBOX.md` |
 | M1-E（在飞） | `mc-repos/src/inbox.rs`、`subscriber.rs` | `routes/{auth,inbox,invitations,mount,pats,subscribers,workspaces}.rs` | `tests/{contract_gaps,inbox,invitations}.rs` | `05/07/08/09/17-*` |
 
@@ -89,22 +92,41 @@ MULTICA_TEST_DATABASE_URL=postgres://... cargo test -p mc-repos -p mc-http -- --
 
 ## 5. `cargo fmt` 债务实测（本轮新增证据）
 
-在独立 checkout（`agent/devbox5/47571b2fa65b`）里对两个 revision 各跑一次 `cargo fmt --all --check`：
+在**独立工作树**里对三个 revision 各跑一次 `cargo fmt --all --check`（复测命令见下方第 0 条）：
 
 | revision | 内容 | `fmt --check` | 差异文件（`^Diff in` 计数） |
 | --- | --- | --- | --- |
-| **`69e9f4b`** | 当前 base（含 M2-C 合并） | **exit 1，54 处** | `tests/inbox.rs` 27、`routes/inbox.rs` 11、`mc-repos/inbox.rs` 8、`mc-repos/subscriber.rs` 7、`routes/subscribers.rs` 1 |
-| **`9ec5b56`** | M1-E 分支上的 fmt 修复提交 | **exit 0** | — |
+| **`90cd17c`**（≈`69e9f4b`，当前 base） | 含 M2-C 合并 | **exit 1，54 处** | `crates/mc-http/tests/inbox.rs` 27、`routes/inbox.rs` 11、`mc-repos/inbox.rs` 8、`mc-repos/subscriber.rs` 7、`routes/subscribers.rs` 1 |
+| **`9851ebf`** | M1-E 分支 head（`chore(fmt)`；rebase 前的同内容版本 `9ec5b56`） | **exit 0** | — |
+| **`48666c2`** | M2-B 分支 head（comment 切片） | **exit 0** | — |
 
 两点结论：
 
+0. 复测方式与可复现性：`git worktree add --detach ../_wt_<rev> <rev>` 后在那个**独立工作树**里跑
+   `cargo fmt --all --check`（fmt 不编译、不加 target 锁，所以三个切片并发时也能安全跑；
+   本轮对 `90cd17c` / `9851ebf` / `48666c2` 各跑一次，数字如上）。
+   ⚠️ 失败输出以 `Diff in <abs-path>:<line>:` 开头，计数用 `grep -c '^Diff in'`；
+   管道 + `tail` 会吞掉退出码（要用 `${PIPESTATUS[0]}` 或先重定向再看 `$?`）。
+
 1. **M2-C 是以 fmt 不干净的形态并入 base 的**：54 处差异 100% 落在 M2-C 的 5 个文件里，
-   说明 M2-C 的验收只跑了 clippy/build/test，**没跑①**。base 在 `9ec5b56` 落入 base 之前一直是脏的。
-2. `9ec5b56`（题面写 `chore(fmt)`）**确实只是格式化**：`git diff -w 69e9f4b 9ec5b56 -- <文件>`
-   的残余差异全部是 rustfmt 换行/尾逗号引起的「一行拆成多行」（如 `self.retouch(...)` 拆成两行、
-   `assert_eq!(a, b, "msg")` 拆成三行），**无逻辑改动**；结论是它可以安全并入，但仍应作为
-   M1-E「越界修 M2-C 文件」在 PR 里注明（它已在 commit message 里注明）。
-   → 因此：**集成时 M1-E 必须先于任何 `fmt --check` 判定**，否则会把「M2-C 的历史欠账」
+   说明 M2-C 的验收只跑了 clippy/build/test，**没跑①**。base 在 M1-E 的 `chore(fmt)` 提交落进 base 之前一直是脏的。
+2. M1-E 的 `9851ebf chore(fmt)` **确实只是格式化**，但**别用 `git diff -w` 去证明**：
+   rustfmt 的「多行链重新合成一行」在 `-w` 下仍是真实行变更，本处 `git diff -w ae1dd3b 9851ebf`
+   实测**仍有 346 行残余差异**，所以 `-w` 只能排除「纯空白改动」，证明不了「仅格式化」。
+   能证明的可复现检查是**删掉空白与逗号后逐文件比哈希**（rustfmt 换行 + 尾逗号是它唯一能引入的 token 差）：
+
+   ```bash
+   for f in crates/mc-http/src/routes/inbox.rs crates/mc-http/src/routes/subscribers.rs \
+            crates/mc-http/tests/inbox.rs crates/mc-repos/src/inbox.rs crates/mc-repos/src/subscriber.rs; do
+     a=$(git show ae1dd3b:$f | tr -d '[:space:],' | sha256sum | cut -c1-12)
+     b=$(git show 9851ebf:$f | tr -d '[:space:],' | sha256sum | cut -c1-12)
+     [ "$a" = "$b" ] && echo "OK  $f" || echo "REAL DIFF  $f"
+   done
+   # 本轮实测：5/5 文件均 OK（删除空白+逗号后哈希相同 → 只剩空白与尾逗号的改动）
+   ```
+
+   结论：该提交可以安全并入，但它修的是 **M2-C 的文件**（属 M1-E 越界改动，已在 commit message 注明）；
+   → **集成时 M1-E 必须先于任何 `fmt --check` 判定**，否则会把「M2-C 的历史欠账」
    误判成「M1-E 引入的回归」。
 
 ---

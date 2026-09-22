@@ -214,14 +214,16 @@ M1-E（LUM-1362）以 `9ec5b56 chore(fmt)` 补齐，该 revision `fmt --check` =
 
 **规程**：§2 各切片与集成切片 LUM-1354 的验收必须包含 `cargo fmt --all --check`；
 M2-A / M2-B 在提交前先跑一次，不要把这个欠账留给下一个切片（这次是 M1-E 替 M2-C 还的）。
+实测已转绿的分支：`9851ebf`（M1-E head，exit 0）与 `48666c2`（M2-B head，exit 0）——
+说明新门禁确实被执行了；而 base 自身（含 M2-C）仍为 exit 1、54 处，**要等 M1-E 并入才清账**。
 
-### 6.2 分支名实况（计划名 ≠ 实际名）
+### 6.2 分支名实况（计划名 ≠ 工作区名）
 
-实测：M2-B（LUM-1350）落在 `multica repo checkout` 自动生成的 `agent/devbox5/28f8edc92edd` 上，
-**不是** §2 写的 `feat/multica-rs-m2b-comment`。M1-E / M2-A 用的分别是
-`feat/multica-rs-m1e-contract-gaps` / `feat/multica-rs-m2a-issue`（符合约定）。
-集成方（LUM-1354）不要去按计划名找分支，先 `git branch --show-current` 核工作区、
-`git log --oneline origin/feat/multica-rs-initial..<分支>` 核提交。
+实测：M2-B（LUM-1350）的工作区分支名曾是 `multica repo checkout` 自动生成的
+`agent/devbox5/28f8edc92edd`，但**交付时按 §2 的计划名 push 成了 `feat/multica-rs-m2b-comment`**
+（@ `48666c2`）；M1-E / M2-A 分别是 `feat/multica-rs-m1e-contract-gaps` / `feat/multica-rs-m2a-issue`。
+集成方不要只看工作区里的 `git branch --show-current`，也不要把工作区名当成远端分支名：
+先 `git ls-remote origin`（或 `git fetch` 后 `git log <base>..<branch>`）核远端真实分支与提交。
 
 ### 6.3 集成手册
 
