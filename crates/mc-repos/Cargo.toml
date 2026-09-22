@@ -3,7 +3,7 @@ name = "mc-repos"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Multica 仓储层（占位 — 后续 milestone 填充）"
+description = "Multica 仓储层：workspace / member / invitation / share-link / user / verification / PAT"
 
 [lints]
 workspace = true
@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+sqlx = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-db = { path = "../mc-db" }

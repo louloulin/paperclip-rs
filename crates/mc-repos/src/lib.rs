@@ -1,63 +1,81 @@
-//! Multica 仓储层占位。
+//! Multica 仓储层。
 //!
-//! 后续 milestone 填充：
-//! - `workspace.rs` — workspace CRUD
-//! - `member.rs` — member
-//! - `issue.rs` — issue / status / view
-//! - `comment.rs` — comment
-//! - `agent.rs` — agent
-//! - `runtime.rs` — agent_runtime
-//! - `task_queue.rs` — agent task queue
-//! - `chat.rs` — chat session / message
-//! - `project.rs` — project
-//! - `inbox.rs` — inbox
-//! - `autopilot.rs` — autopilot
-//! - `wakeup.rs` — wakeup
-//! - `skill.rs` — skill
-//! - `plugin.rs` — plugin
-//! - `channel.rs` — channel
-//! - `vcs.rs` — vcs
-//! - `mcp.rs` — mcp
-//!
-//! 每个文件一个 Repo 结构体，单一职责。
-//! M0 仅暴露 lib 与 trait skeleton，避免 2000+ 文件一次性 commit。
+//! 设计原则：
+//! - 一个文件 = 一个 Repo 结构体
+//! - Repo 只负责与持久层交互；业务规则在对应的 service / handler 层
+//! - sqlx 是可选 feature（`default = []`，启用 `db` 才连接 PostgreSQL）
+//! - 单元测试使用内存 fake repo（`memory.rs`），集成测试通过 `mc_db::Db` 跑真实库
 
-use async_trait::async_trait;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 
-use mc_db::Db;
+use mc_core::Id;
+
+pub mod memory;
+
+pub mod user;
+pub mod workspace;
+pub mod member;
+pub mod invitation;
+pub mod share_link;
+pub mod verification;
+pub mod pat;
+
+pub use user::{UserFilter, UserRepo, UserRow, NewUser, UserUpdate};
+pub use workspace::{
+    NewWorkspace, WorkspaceFilter, WorkspaceRepo, WorkspaceRow, WorkspaceUpdate,
+};
+pub use member::{MemberFilter, MemberRepo, MemberRow, NewMember, MemberUpdate};
+pub use invitation::{
+    InvitationFilter, InvitationRepo, InvitationRow, NewInvitation, UpdateInvitationStatus,
+};
+pub use share_link::{NewShareLink, ShareLinkFilter, ShareLinkRepo, ShareLinkRow};
+pub use verification::{NewVerificationCode, VerificationCodeFilter, VerificationCodeRepo, VerificationRow};
+pub use pat::{NewPat, PatFilter, PatRepo, PatRow};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {
     #[error("not found")]
     NotFound,
-    #[error("conflict")]
-    Conflict,
+    #[error("conflict: {0}")]
+    Conflict(String),
+    #[error("invalid input: {0}")]
+    Invalid(String),
     #[error("database error: {0}")]
     Db(String),
+    #[error("io error: {0}")]
+    Io(String),
+    #[error("unimplemented: {0}")]
+    Unimplemented(&'static str),
+}
+
+impl From<sqlx::Error> for RepoError {
+    fn from(value: sqlx::Error) -> Self {
+        match value {
+            sqlx::Error::RowNotFound => Self::NotFound,
+            other => Self::Db(other.to_string()),
+        }
+    }
+}
+
+impl From<serde_json::Error> for RepoError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Invalid(format!("json: {value}"))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, RepoError>;
 
-/// Repository trait skeleton — 所有 Repo 都遵守。
-#[async_trait]
-pub trait Repository<T, NewT, UpdateT, Filter>: Send + Sync
+/// Create-only / read-many capabilities that every Repo shares.
+pub trait RepoBase<T, NewT>: Send + Sync
 where
     T: Serialize + DeserializeOwned + Send + Sync + 'static,
     NewT: Serialize + DeserializeOwned + Send + Sync + 'static,
-    UpdateT: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    async fn create(&self, item: NewT) -> Result<T>;
-    async fn get(&self, id: &mc_core::Id) -> Result<T>;
-    async fn update(&self, id: &mc_core::Id, patch: UpdateT) -> Result<T>;
-    async fn delete(&self, id: &mc_core::Id) -> Result<()>;
-    async fn list(&self, filter: Filter) -> Result<Vec<T>>;
-}
+    fn db_label() -> &'static str;
 
-/// Repo 共享 db。
-pub trait RepoWithDb {
-    fn db(&self) -> &Db;
+    async fn create(&self, item: NewT) -> Result<T>;
+    async fn get(&self, id: Id) -> Result<T>;
+    async fn delete(&self, id: Id) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -65,8 +83,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repo_error_displays() {
-        let e = RepoError::NotFound;
-        assert_eq!(e.to_string(), "not found");
+    fn repo_error_display_is_human_readable() {
+        assert_eq!(RepoError::NotFound.to_string(), "not found");
+        assert_eq!(
+            RepoError::Conflict("dup".into()).to_string(),
+            "conflict: dup"
+        );
     }
 }

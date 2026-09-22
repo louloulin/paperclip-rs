@@ -33,6 +33,7 @@ mc-secrets = { path = "../mc-secrets" }
 mc-feature-flags = { path = "../mc-feature-flags" }
 mc-db = { path = "../mc-db" }
 mc-openapi = { path = "../mc-openapi" }
+mc-repos = { path = "../mc-repos" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

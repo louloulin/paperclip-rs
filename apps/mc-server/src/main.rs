@@ -116,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
         },
         realtime,
         ws,
+        mc_http::state::RepoHandles::from_pg_pool(db.pool().clone()),
     ));
 
     let api_router = mc_http::routes::router();
