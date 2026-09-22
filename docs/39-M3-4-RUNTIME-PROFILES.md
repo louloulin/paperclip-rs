@@ -152,6 +152,11 @@ MULTICA_TEST_DATABASE_URL=postgres://… \
    `mc-repos::runtime::teardown::delete_strict` 的**事务内**（`LockAgentRuntime` →
    再查一次活跃 agent，避免 TOCTOU）。因此「precheck 用的是事务外的快照」是本片的
    已知偏离；它与上游一样是 fail-closed（事务内二次判定同样拒绝）。
+   附带的错误类型偏离：普通路径按仓约定走 `crate::workspace::map_sqlx_err`
+   （`ledger` / `profiles` / `usage`），但**拆除事务**必须把
+   「活跃 agent 快照 / 计划漂移 / 未排空 / 跨 workspace 绑定」四类业务失败与真正的
+   DB 错误分开，`RepoError{NotFound,Conflict,Db}` 表达不了 ⇒ `teardown.rs` 自带
+   `DeleteRuntimeError` / `TeardownError`（各自的 `Db(String)` 才是真 DB 错误）。
 7. **`apply_to_machine` 的作用域**：普通成员只能重命名自己在同一 `daemon_id` 上的行
    （`owner_filter = member.user_id`），owner/admin 重命名该 daemon 上的全部行
    （`owner_filter = None`）。上游 `UpdateAgentRuntime` L489-630 同款。
