@@ -104,3 +104,23 @@ git -C "$dir" count-objects -v | grep in-pack
 - `louloulin/multica` main = `f41fae6b08fb734afcbd13205c0b3203dd0bc9c6`（2026-09-22 实测）。
 - 本机：`git ls-remote` 1.25s；`/tmp/up1371/full` 为本次对照用的全量浅克隆。
 - 本文所有耗时均为 `time` 实测，未跑 cargo（避免与 M2 三切片的 build 抢 `~/.cargo/.package-cache`）。
+
+## 9. 路由快照的生成（LUM-1376 起）
+
+上游 `(method, path)` 全量清单不再手抄，改为从快照仓库一条命令生成，并成为 `scripts/route_parity.py`
+对账的"上游那一半"：
+
+```bash
+git clone --depth 1 --single-branch --branch main https://github.com/louloulin/multica /tmp/up-multica
+python3 scripts/gen_upstream_routes.py \
+  --router     /tmp/up-multica/server/cmd/server/router.go \
+  --const-file /tmp/up-multica/server/pkg/publicapi/v1/routes.go \
+  --owner-rules scripts/route-owners.tsv \
+  --out docs/fixtures/upstream-routes.tsv \
+  --commit f41fae6b08fb734afcbd13205c0b3203dd0bc9c6
+```
+
+命令记录在 fixture 头部；`--check` 可做漂移检查（只比对、不写文件）。它展开
+`r.Route(...)`/`r.Group(...)` 前缀、内联 `registerPluginActionRoutes(...)`（`/v1` 与
+`/api/plugin-bridge/v1` 两个前缀），并从 `--const-file` 解析 `publicapiv1.*` 常量。完整规程（owner 词表、
+刷新流程、能力边界）见 **`docs/22-ROUTE-PARITY.md`**。

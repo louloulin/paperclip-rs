@@ -1,0 +1,93 @@
+# route-owners.tsv — ordered seeding rules for the fixture's `owner` column.
+#
+# Format: regex<TAB>owner<TAB>rationale   (regex matches anywhere in the path)
+# FIRST MATCH WINS — keep the order meaningful when editing.
+#
+# Used by scripts/gen_upstream_routes.py --owner-rules, which only fills in
+# owner cells that are still EMPTY; an explicit owner in
+# docs/fixtures/upstream-routes.tsv always wins, so hand-written corrections are
+# never silently overwritten.  Rationale + vocabulary: docs/22-ROUTE-PARITY.md.
+
+^/v1/	M6	公开 Plugin API v1 契约（publicapiv1.Operations）
+^/api/plugin-bridge/	M6	插件 iframe 的浏览器会话中继
+^/plugin-surfaces/	M6	插件 surface HTML 承载
+^/api/skills	M6	结构化 skill + skill bundle
+^/api/plugins	M6	plugin host / package / hook
+^/api/workspaces/[^/]+/plugins	M6	workspace plugin 安装与配置
+^/api/agents/[^/]+/skills	M6	agent-skill 绑定
+^/api/agents/[^/]+/runtime-skills	M6	runtime skill 开关
+^/api/(slack|lark|dingtalk|telegram|wecom)	M7	6 内置 channel 适配器
+^/api/workspaces/[^/]+/(slack|lark|dingtalk|telegram|wecom)/	M7	workspace 级 channel 安装
+^/api/agents/[^/]+/dingtalk/	M7	agent 的 dingtalk 群绑定
+^/api/webhooks/(github|vcs/)	M8	GitHub / VCS webhook 入口
+^/api/github/	M8	GitHub App 安装回调
+^/api/workspaces/[^/]+/(github|vcs)/	M8	workspace 级 VCS 连接
+^/api/workspaces/[^/]+/mcp-servers	M8	workspace MCP server
+^/api/agents/[^/]+/mcp-servers	M8	agent MCP server
+^/api/issues/[^/]+/pull-requests	M8	issue ↔ PR 关联（VCS 数据）
+^/api/integrations/composio	M8	第三方工具集成（agent 工具面）
+^/api/cloud-billing	M9	cloud 计费
+^/api/cloud-subscriptions	M9	cloud 订阅
+^/api/webhooks/stripe	M9	Stripe webhook
+^/api/contact-sales	M9	contact-sales 表单
+^/api/feedback	M9	feedback
+^/api/me/onboarding	M9	onboarding + cloud waitlist
+^/api/notification-preferences	M9	通知偏好（docs/10 §2 M2-C 明确不做 → M9）
+^/api/dashboard	M9	usage / failure 聚合看板
+^/api/issues/[^/]+/timeline	M9	activity log（docs/10 §2 M2-A 明确不做 → M9）
+^/api/agents/mika	M9	Mika（内置 agent，docs/01 §6 M9 列）
+^/api/autopilots	M5	autopilot（cron / webhook / quota）
+^/api/webhooks/autopilots	M5	autopilot webhook
+^/api/issues/[^/]+/wakeups	M5	issue wakeup（event + time）
+^/api/issue-wakeups	M5	wakeup 列表
+^/api/issue-wakeup-summaries	M5	wakeup 摘要
+^/api/chat/	M4	chat session / message / draft
+^/api/projects	M4	project + project resource
+^/api/squads	M4	squad briefing / 成员
+^/api/daemon/	M3	daemon pair 协议
+^/api/agent-builder	M3	agent builder session
+^/api/agents	M3	agent CRUD / env / 生命周期
+^/api/runtimes	M3	runtime profile 生命周期
+^/api/cloud-runtime	M3	远程 runtime 节点池（执行后端，非计费）
+^/api/tasks/	M3	task queue 生命周期
+^/api/working-agents	M3	worker agent 视图
+^/api/client-usage	M3	runtime 用量上报
+^/api/agent-activity-30d	M3	agent 活动统计
+^/api/agent-run-counts	M3	agent run 计数
+^/api/agent-task-snapshot	M3	agent task 快照
+^/api/issues/[^/]+/(active-task|task-runs|rerun|usage|tasks/)	M3	依赖 task queue（docs/10 §2 M2-A 明确不做）
+^/api/issues/preview-trigger	M3	依赖 task queue（docs/10 §2 M2-A 明确不做）
+^/api/comments/[^/]+/trigger-preview	M3	mention 触发派单（docs/10 §2 M2-B 明确不做）
+^/api/workspaces/[^/]+/runtime-profiles	M3	runtime profile 管理面
+^/api/attachments	M3+	附件面未排期（docs/10 §2 M2-A 列为不做）
+^/api/upload-file	M3+	附件上传未排期
+^/api/issues/[^/]+/attachments	M3+	issue 附件未排期
+^/api/issues/[^/]+/quick-actions	M3+	依赖 task queue（docs/10 §5.2：M3+，未立项）
+^/api/quick-actions	M3+	autopilot 域定义目录（docs/10 §5.2：M3+，未立项）
+^/api/comments/[^/]+/sub-issue-preview	M3+	human-only（docs/10 §2 M2-B：M3+）
+^/api/comments/[^/]+/sub-issues	M2-B	展开子 issue（M2-B 覆盖，随 LUM-1350 落地）
+^/api/issues/table/	M2-D	issue table 查询面（docs/10 §2 立 M2-D）
+^/api/issues	M2-A	issue 核心（M2-A）
+^/api/comments	M2-B	comment + reactions（M2-B）
+^/api/issue-statuses	M2-A	status catalog（M2-A）
+^/api/issue-views	M2-A	issue view（M2-A）
+^/api/issue-view-preferences	M2-A	issue view 偏好（M2-A）
+^/api/pins	M2-A	issue pin（M2-A）
+^/api/inbox	M2-C	inbox（M2-C）
+^/api/assignee-frequency	M2-A	issue 指派人统计（M2-A）
+^/api/labels	M2-E	label 定义目录（LUM-1370 / M2-E，docs/10 §5.2）
+^/api/properties	M2-E	property 定义目录（LUM-1370 / M2-E，docs/10 §5.2）
+^/api/workspaces	M1	workspace / member / invitation / share-link（M1）
+^/api/me	M1	当前用户（M1-A）
+^/api/tokens	M1	PAT（M1-C）
+^/api/cli-token	M1	CLI token（M1-C）
+^/api/invitations	M1	invitation（M1-C）
+^/api/share-links	M1	share link（M1-C）
+^/auth/	M1	verification code / logout（无 /api 前缀）
+^/api/auth/	M1	auth 面 404 占位（上游无同路径路由，本仓自造）
+^/(health|healthz|readyz)$	M10	ops 探针（release / 兼容性面）
+^/health/realtime$	M10	realtime 指标探针
+^/api/config$	M10	UI 启动配置（UI 兼容面）
+^/ws$	M3+	realtime hub 端点未排期
+^/uploads/	M3+	本地上传目录服务未排期
+^/api/avatars/	M3+	头像签名读取未排期

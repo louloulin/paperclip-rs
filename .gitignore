@@ -35,3 +35,6 @@ coverage/
 
 # Bench artifacts
 benches/data/
+# Python bytecode from scripts/*.py (route parity tooling)
+__pycache__/
+*.pyc
