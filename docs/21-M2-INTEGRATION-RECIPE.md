@@ -313,6 +313,13 @@ MULTICA_TEST_DATABASE_URL=postgres://multica:***@127.0.0.1:5432/multica_test \
 | `scripts/route_parity.py` | **exit 0**（见 §10.3） | T1 引入的丢失门禁，基线需刷新一次 |
 | 迁移编号 | 五条分支 `git diff --diff-filter=A f213403 <branch> -- migrations/` **全为空** ⇒ 合并后仍是 `0001`–`0004`，**`0005` 空闲** | |
 
+**事后复跑（最终树）**：本节表格里的数字原本取自合并树 HEAD `7e7b818`；随后为记录仲裁又改了一个响应字符串
+与若干 docs（代码面只改 `comments.rs` 的注释 + 501 响应 `todo` 文本），故在**最终 HEAD `8dd6f7f`** 上
+把 ①–⑤ 与 `route_parity.py` 又原样复跑了一遗：**退出码全 0，且计数一字不差**
+（`test --workspace` 233/0/43、DB e2e `--ignored` 77/0、parity regression 0），另外
+`cargo build --workspace --all-targets --locked` **exit 0** ⇒ `Cargo.lock` 与 manifest 一致，
+五条切片未引入需要重新锁定的依赖变更（工作区 `git status` 干净）。
+
 **运行期守卫也真的跑到了**：DB e2e 里 ~20 处 `mc_http::routes::router(state)` 构造
 （`tests/{comments,inbox,invitations,issues,pats,contract_gaps}.rs`），
 ⇒ §6 说的「同 `(method, path)` 重复注册会在构造 router 时 panic」这条守卫**已被 77 条 e2e 实际执行过**，
