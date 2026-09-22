@@ -52,10 +52,9 @@ use mc_core::Id;
 use mc_errors::Error;
 use mc_repos::issue_table::{
     IssueTableRepo, TableActor, TableCursor, TableDateField, TableDateFilter, TableFacetKind,
-    TableFacetsQuery, TableFilter, TableGroupCursor, TableGroupKey, TableGroupKind,
-    TableGroupSpec, TableGroupsQuery, TableMyRelation, TableOrder, TableRowsQuery, TableScope,
-    TableSortDirection, TableSortField, ACTOR_TYPES, TABLE_DEFAULT_PAGE_SIZE, TABLE_MAX_FACETS,
-    TABLE_MAX_PAGE_SIZE,
+    TableFacetsQuery, TableFilter, TableGroupCursor, TableGroupKey, TableGroupKind, TableGroupSpec,
+    TableGroupsQuery, TableMyRelation, TableOrder, TableRowsQuery, TableScope, TableSortDirection,
+    TableSortField, ACTOR_TYPES, TABLE_DEFAULT_PAGE_SIZE, TABLE_MAX_FACETS, TABLE_MAX_PAGE_SIZE,
 };
 use mc_repos::RepoError;
 
@@ -84,7 +83,7 @@ pub fn router() -> Router<Arc<AppState>> {
         // 静态段优先于 `issues.rs` 的 `/api/issues/:id`（matchit 的优先级规则），
         // 否则 "limit-usage" 会被当成 identifier 走进单体路由。
         .route("/api/issues/limit-usage", get(limit_usage))
-    }
+}
 
 // ---------------------------------------------------------------------------
 // 错误：400 用本仓 Error，409 / 422 用上游的扁平形状
@@ -97,9 +96,15 @@ enum TableError {
     /// 409 `cursor_query_mismatch`。
     CursorMismatch,
     /// 422 `unsupported_group`（分组维度 / facet 维度不支持）。
-    Unsupported { code: String, message: String },
+    Unsupported {
+        code: String,
+        message: String,
+    },
     /// 422 `unsupported_filter`（过滤维度不支持）。
-    UnsupportedFilter { code: String, message: String },
+    UnsupportedFilter {
+        code: String,
+        message: String,
+    },
 }
 
 impl From<Error> for TableError {
@@ -360,10 +365,11 @@ struct FacetsRequest {
 /// 解码请求体：上限 1 MiB、未知字段 400（上游 `decodeIssueTableJSON`）。
 fn decode_body<T: serde::de::DeserializeOwned>(body: &Bytes) -> Result<T, Error> {
     if body.len() > MAX_BODY_BYTES {
-        return Err(validation("invalid issue table query: request body too large"));
+        return Err(validation(
+            "invalid issue table query: request body too large",
+        ));
     }
-    serde_json::from_slice(body)
-        .map_err(|e| validation(format!("invalid issue table query: {e}")))
+    serde_json::from_slice(body).map_err(|e| validation(format!("invalid issue table query: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -541,7 +547,9 @@ fn build_filters(
             let field = TableDateField::parse(&dto.field)
                 .ok_or_else(|| validation("invalid filters.date.field"))?;
             if dto.start.trim().is_empty() || dto.end.trim().is_empty() {
-                return Err(validation("filters.date.start and filters.date.end are required").into());
+                return Err(
+                    validation("filters.date.start and filters.date.end are required").into(),
+                );
             }
             Some(TableDateFilter {
                 field,
@@ -601,9 +609,18 @@ fn build_order(sort: &SortDto) -> Result<TableOrder, Error> {
 /// 分组 kind 的解析。`allow_none=false` 时 `none` 直接 400（`/groups` 不允许分组头）；
 /// 未知 / 不支持的 kind → 422（`label` / `parent` / `property` / `compound` / `status_category`）。
 fn build_group_spec(group: &GroupDto, allow_none: bool) -> Result<TableGroupSpec, TableError> {
-    if group.property_id.as_deref().is_some_and(|v| !v.trim().is_empty())
-        || group.primary.as_deref().is_some_and(|v| !v.trim().is_empty())
-        || group.secondary.as_deref().is_some_and(|v| !v.trim().is_empty())
+    if group
+        .property_id
+        .as_deref()
+        .is_some_and(|v| !v.trim().is_empty())
+        || group
+            .primary
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
+        || group
+            .secondary
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
         || group
             .secondary_values
             .as_ref()
@@ -645,10 +662,12 @@ fn build_facets(facets: &[FacetSpecDto]) -> Result<Vec<TableFacetKind>, TableErr
         ))
         .into());
     }
-    if facets
-        .iter()
-        .any(|facet| facet.property_id.as_deref().is_some_and(|v| !v.trim().is_empty()))
-    {
+    if facets.iter().any(|facet| {
+        facet
+            .property_id
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
+    }) {
         return Err(unsupported_group_err(
             "facet_kind_unsupported",
             "facets[].kind=property is not supported in multica-rs yet (no issue_properties table)",
@@ -853,7 +872,8 @@ impl CursorWire {
             return Err(validation("invalid cursor"));
         }
         let bytes = hex::decode(raw.trim()).map_err(|_| validation("invalid cursor"))?;
-        let wire: Self = serde_json::from_slice(&bytes).map_err(|_| validation("invalid cursor"))?;
+        let wire: Self =
+            serde_json::from_slice(&bytes).map_err(|_| validation("invalid cursor"))?;
         if wire.v != CURSOR_VERSION {
             return Err(validation("invalid cursor"));
         }
@@ -891,11 +911,9 @@ impl CursorWire {
 
     /// 解析 `/groups` 的 keyset cursor（缺字段 → 400，镜像上游）。
     fn into_group_cursor(self) -> Result<TableGroupCursor, Error> {
-        let (Some(order), Some(sort_key), Some(value)) = (
-            self.group_order,
-            self.group_sort_key,
-            self.group_cursor_key,
-        ) else {
+        let (Some(order), Some(sort_key), Some(value)) =
+            (self.group_order, self.group_sort_key, self.group_cursor_key)
+        else {
             return Err(validation("invalid cursor"));
         };
         Ok(TableGroupCursor {
@@ -1000,9 +1018,12 @@ fn parse_group_key(kind: TableGroupKind, raw: Option<&str>) -> Result<TableGroup
             })))
         }
         (TableGroupKind::Project, Some("project:none")) => Ok(TableGroupKey::Project(None)),
-        (TableGroupKind::Project, Some(value)) => Ok(TableGroupKey::Project(Some(
-            parse_project_id("group_key", value.strip_prefix("project:").unwrap_or_default())?,
-        ))),
+        (TableGroupKind::Project, Some(value)) => {
+            Ok(TableGroupKey::Project(Some(parse_project_id(
+                "group_key",
+                value.strip_prefix("project:").unwrap_or_default(),
+            )?)))
+        }
     }
 }
 
@@ -1106,8 +1127,7 @@ async fn table_groups(
     let limit = normalize_page(&request.page)?;
     let search = build_search(request.query.search.as_deref());
     let scope = build_scope(&request.query.scope, user.id())?;
-    let (filter, explicit_empty_assignees) =
-        build_filters(&request.query.filters, scope, &search)?;
+    let (filter, explicit_empty_assignees) = build_filters(&request.query.filters, scope, &search)?;
     let order = build_order(&request.query.sort)?;
     let group = build_group_spec(&request.group, false)?;
     let fingerprint = query_fingerprint(workspace_id, &filter, order, explicit_empty_assignees);
@@ -1177,8 +1197,7 @@ fn build_rows_input(
     let limit = normalize_page(&request.page)?;
     let search = build_search(request.query.search.as_deref());
     let scope = build_scope(&request.query.scope, user_id)?;
-    let (filter, explicit_empty_assignees) =
-        build_filters(&request.query.filters, scope, &search)?;
+    let (filter, explicit_empty_assignees) = build_filters(&request.query.filters, scope, &search)?;
     let order = build_order(&request.query.sort)?;
     let group = build_group_spec(&request.group, true)?;
     let group_key = parse_group_key(group.kind, request.group_key.as_deref())?;
@@ -1231,7 +1250,10 @@ async fn table_rows(
         )?;
     }
     // 只在真的带 cursor 时解析；缺 `row_id` / `row_created_at` → 400（上游同）。
-    let cursor = input.cursor_raw.map(CursorWire::into_row_cursor).transpose()?;
+    let cursor = input
+        .cursor_raw
+        .map(CursorWire::into_row_cursor)
+        .transpose()?;
 
     let catalog = load_catalog(&state, workspace_id)
         .await
@@ -1256,8 +1278,9 @@ async fn table_rows(
         wire.parent_id.clone_from(&normalized_parent_id);
         wire.sort_value = next.sort_value;
         wire.sort_is_null = next.sort_is_null;
-        wire.row_created_at =
-            next.row_created_at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        wire.row_created_at = next
+            .row_created_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
         wire.row_id = next.row_id.0.to_string();
         wire.encode()
     });
@@ -1296,8 +1319,7 @@ async fn table_facets(
     let workspace_id = authorize(&state, &headers, &selector, &user).await?;
     let search = build_search(request.query.search.as_deref());
     let scope = build_scope(&request.query.scope, user.id())?;
-    let (filter, explicit_empty_assignees) =
-        build_filters(&request.query.filters, scope, &search)?;
+    let (filter, explicit_empty_assignees) = build_filters(&request.query.filters, scope, &search)?;
     let order = build_order(&request.query.sort)?;
     let facets = build_facets(&request.facets)?;
     let fingerprint = query_fingerprint(workspace_id, &filter, order, explicit_empty_assignees);
@@ -1389,7 +1411,10 @@ mod tests {
 
     #[test]
     fn page_limit_bounds() {
-        assert_eq!(normalize_page(&PageDto::default()).unwrap(), TABLE_DEFAULT_PAGE_SIZE);
+        assert_eq!(
+            normalize_page(&PageDto::default()).unwrap(),
+            TABLE_DEFAULT_PAGE_SIZE
+        );
         assert!(normalize_page(&PageDto {
             limit: 0,
             cursor: None
@@ -1427,7 +1452,7 @@ mod tests {
                 TableGroupKind::Assignee,
                 Some(&format!("assignee:user:{}", uuid(7)))
             )
-                .unwrap(),
+            .unwrap(),
             TableGroupKey::Assignee(Some(actor("user", 7)))
         );
         assert_eq!(
@@ -1650,7 +1675,14 @@ mod tests {
             true
         )
         .is_ok());
-        for kind in ["label", "parent", "property", "compound", "status_category", ""] {
+        for kind in [
+            "label",
+            "parent",
+            "property",
+            "compound",
+            "status_category",
+            "",
+        ] {
             assert!(
                 matches!(
                     build_group_spec(

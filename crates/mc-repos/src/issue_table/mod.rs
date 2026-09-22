@@ -47,6 +47,9 @@ use crate::issue::IssueRow;
 pub(crate) mod repo;
 pub(crate) mod sql;
 
+#[cfg(test)]
+mod tests;
+
 pub use repo::IssueTableRepo;
 
 /// `/api/issues/table/*` 默认页大小（上游 `issueTableDefaultPageSize`）。

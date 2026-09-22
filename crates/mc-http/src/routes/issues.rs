@@ -374,7 +374,10 @@ impl StatusCatalog {
     }
 }
 
-pub(crate) async fn load_catalog(state: &AppState, workspace_id: Id) -> Result<StatusCatalog, Error> {
+pub(crate) async fn load_catalog(
+    state: &AppState,
+    workspace_id: Id,
+) -> Result<StatusCatalog, Error> {
     let mut catalog = StatusCatalog::with_builtins();
     let rows = status_repo(state)
         .list(workspace_id)
