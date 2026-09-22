@@ -54,6 +54,109 @@ impl AdapterRegistryStub {
     }
 }
 
+/// Google OAuth 出站配置（上游 `handler.GoogleLogin` 读的 `os.Getenv` 面）。
+///
+/// 为什么挂在 `AppState` 而不是 `ConfigSnapshot`：
+/// - `ConfigSnapshot` 派生 `Serialize`，`client_secret` 不应进入任何可序列化的快照
+///   （M1-E 之后会有 `/api/config`）；
+/// - `ConfigSnapshot` 有 12 处字面量构造（8 个测试文件 + `main.rs` + 本 crate），
+///   而 `AppState` 只有 2 处 —— W1-Google 切片只想动 `/auth/*` 路由文件。
+///
+/// 环境变量（前三个与上游同名；后两个是本仓为测试加的 base URL 覆盖开关）：
+/// - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` —— 任一为空 = 功能未配置；
+/// - `GOOGLE_REDIRECT_URI` —— 可选，请求体里的 `redirect_uri` 优先；
+/// - `MC_GOOGLE_TOKEN_URL` —— 默认 [`GoogleOAuthConfig::DEFAULT_TOKEN_URL`]；
+/// - `MC_GOOGLE_USERINFO_URL` —— 默认 [`GoogleOAuthConfig::DEFAULT_USERINFO_URL`]。
+///
+/// 完整语义与偏离见 `docs/29-W1-GOOGLE.md`。
+#[derive(Clone, Debug)]
+pub struct GoogleOAuthConfig {
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub token_url: String,
+    pub userinfo_url: String,
+    /// 出站 HTTP client；`None` = 构造失败（TLS 后端初始化异常）→
+    /// `/auth/google` 按「换 token 传输失败」返回 502。
+    pub http: Option<reqwest::Client>,
+}
+
+impl GoogleOAuthConfig {
+    /// 上游 `GoogleLogin` 里硬编码的 token 端点。
+    pub const DEFAULT_TOKEN_URL: &'static str = "https://oauth2.googleapis.com/token";
+    /// 上游 `GoogleLogin` 里硬编码的 userinfo 端点。
+    pub const DEFAULT_USERINFO_URL: &'static str = "https://www.googleapis.com/oauth2/v2/userinfo";
+    /// 出站超时（秒）。上游用 `http.DefaultClient`（无超时），本仓给一个上限，
+    /// 避免 Google 侧挂起时长期占用 axum worker（登记在 docs/29）。
+    pub const HTTP_TIMEOUT_SECS: u64 = 15;
+
+    /// 构造出站 client；失败返回 `None`（不 panic）。
+    pub fn build_http_client() -> Option<reqwest::Client> {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(Self::HTTP_TIMEOUT_SECS))
+            .build()
+            .map_err(|e| tracing::error!(error = %e, "failed to build google oauth http client"))
+            .ok()
+    }
+
+    /// 从进程环境读取（生产路径）。
+    pub fn from_env() -> Self {
+        Self::from_env_with(|name| std::env::var(name).ok())
+    }
+
+    /// 从任意名字→值的查询函数读取 —— 与 `mc_config::Config::build_with` 同款，
+    /// 让映射本身可以在不触碰进程全局 env 的情况下被单测。
+    pub fn from_env_with<F>(get: F) -> Self
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let non_empty = |name: &str| {
+            get(name)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        Self {
+            client_id: non_empty("GOOGLE_CLIENT_ID"),
+            client_secret: non_empty("GOOGLE_CLIENT_SECRET"),
+            redirect_uri: non_empty("GOOGLE_REDIRECT_URI"),
+            token_url: non_empty("MC_GOOGLE_TOKEN_URL")
+                .unwrap_or_else(|| Self::DEFAULT_TOKEN_URL.to_string()),
+            userinfo_url: non_empty("MC_GOOGLE_USERINFO_URL")
+                .unwrap_or_else(|| Self::DEFAULT_USERINFO_URL.to_string()),
+            http: Self::build_http_client(),
+        }
+    }
+
+    /// 上游判据：`clientID == "" || clientSecret == ""` → feature disabled。
+    pub fn is_configured(&self) -> bool {
+        self.client_id.is_some() && self.client_secret.is_some()
+    }
+
+    /// `redirect_uri` 解析：请求体优先，其次 `GOOGLE_REDIRECT_URI`，都没有则空串
+    /// （上游同样会把空串发给 Google）。
+    pub fn redirect_uri_for(&self, requested: Option<&str>) -> String {
+        requested
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .or_else(|| self.redirect_uri.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl Default for GoogleOAuthConfig {
+    fn default() -> Self {
+        Self {
+            client_id: None,
+            client_secret: None,
+            redirect_uri: None,
+            token_url: Self::DEFAULT_TOKEN_URL.to_string(),
+            userinfo_url: Self::DEFAULT_USERINFO_URL.to_string(),
+            http: Self::build_http_client(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
@@ -73,6 +176,11 @@ pub struct AppState {
     /// （`routes/auth.rs`）使用 —— 该路由与本 store 的收敛登记在 `docs/17` R9。
     pub pat: mc_auth::PatStoreContainer,
     pub verification: mc_auth::VerificationStoreContainer,
+    /// Google OAuth 出站配置（W1-Google / LUM-1399）。
+    ///
+    /// 生产装配点就在 `AppState::new`（读进程环境）；测试用结构体字面量注入
+    /// 指向本机 stub 的 base URL。
+    pub google_oauth: GoogleOAuthConfig,
 }
 
 impl AppState {
@@ -95,6 +203,7 @@ impl AppState {
             auth: mc_auth::SessionStoreContainer::default(),
             pat: mc_auth::PatStoreContainer::default(),
             verification: mc_auth::VerificationStoreContainer::default(),
+            google_oauth: GoogleOAuthConfig::from_env(),
         }
     }
 }
@@ -114,5 +223,72 @@ impl Default for ConfigSnapshot {
             // None → 调用方按 50/h 兜底（routes/invitations.rs `unwrap_or(50)`）。
             invitation_per_workspace_per_hour: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| (*v).to_string())
+        }
+    }
+
+    #[test]
+    fn google_config_defaults_to_upstream_endpoints() {
+        let cfg = GoogleOAuthConfig::from_env_with(env(&[]));
+        assert!(!cfg.is_configured());
+        assert_eq!(cfg.token_url, "https://oauth2.googleapis.com/token");
+        assert_eq!(
+            cfg.userinfo_url,
+            "https://www.googleapis.com/oauth2/v2/userinfo"
+        );
+    }
+
+    #[test]
+    fn google_config_reads_and_trims_env() {
+        let cfg = GoogleOAuthConfig::from_env_with(env(&[
+            ("GOOGLE_CLIENT_ID", "  cid  "),
+            ("GOOGLE_CLIENT_SECRET", "secret"),
+            ("GOOGLE_REDIRECT_URI", "https://app.example/auth/callback"),
+            ("MC_GOOGLE_TOKEN_URL", "http://127.0.0.1:9/token"),
+            ("MC_GOOGLE_USERINFO_URL", "http://127.0.0.1:9/userinfo"),
+        ]));
+        assert!(cfg.is_configured());
+        assert_eq!(cfg.client_id.as_deref(), Some("cid"));
+        assert_eq!(cfg.token_url, "http://127.0.0.1:9/token");
+        assert_eq!(cfg.userinfo_url, "http://127.0.0.1:9/userinfo");
+    }
+
+    #[test]
+    fn google_config_ignores_blank_env() {
+        let cfg = GoogleOAuthConfig::from_env_with(env(&[
+            ("GOOGLE_CLIENT_ID", ""),
+            ("GOOGLE_CLIENT_SECRET", "  "),
+            ("MC_GOOGLE_TOKEN_URL", "   "),
+        ]));
+        assert!(!cfg.is_configured());
+        assert_eq!(cfg.token_url, GoogleOAuthConfig::DEFAULT_TOKEN_URL);
+    }
+
+    #[test]
+    fn google_redirect_uri_prefers_request() {
+        let mut cfg = GoogleOAuthConfig {
+            redirect_uri: Some("https://env.example/cb".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.redirect_uri_for(Some(" https://req.example/cb ")),
+            "https://req.example/cb"
+        );
+        assert_eq!(cfg.redirect_uri_for(Some("   ")), "https://env.example/cb");
+        assert_eq!(cfg.redirect_uri_for(None), "https://env.example/cb");
+        cfg.redirect_uri = None;
+        assert_eq!(cfg.redirect_uri_for(None), "");
     }
 }
