@@ -1,0 +1,118 @@
+name: CI
+
+# plan1 §5 W0② / §6.2 / §6.4 — 「每切片必须全绿」的机器化。
+#
+# 这里**不重写**任何门禁命令：每条 `run:` 都调用 `scripts/gates.sh --only <gate>`，
+# 门禁命令的唯一实现在 `scripts/gates.sh`，本地 `bash scripts/gates.sh` 与 CI 跑的是
+# 逐字同一批命令（避免「CI 绿、本地红」式的两处漂移）。
+# 门 ↔ job 对应表、期望数字、例外说明见 `docs/24-W0-CI.md`。
+
+on:
+  push:
+    branches:
+      - main
+      - feat/multica-rs-initial
+  pull_request:
+    branches:
+      - main
+      - feat/multica-rs-initial
+  workflow_dispatch:
+
+# 同一分支的旧跑一律取消：push 风暴下不要排队烧额度。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # 本仓 .cargo/config.toml 开了 `[build] incremental = true`；CI 上关掉它：
+  # 增量编译会复用已编译产物、可能不重复发出 warning，而 ③ 是 `-D warnings` 门禁，
+  # 每次都从干净状态编译才是可复现的那个信号（也让 rust-cache 的文件集更稳定）。
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # ①–⑤：不需要数据库，每次 push 都跑。
+  fast:
+    name: fast — fmt / build / clippy / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml 只声明 `channel = "stable"`；rustfmt/clippy 必须显式带上，
+      # 否则 runner 上可能缺失组件（本仓 rust-toolchain.toml 也声明了这两个 component，
+      # 这里再显式声明一次是冗余保险，不是依赖）。
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "① fmt — cargo fmt --all --check"
+        run: bash scripts/gates.sh --only fmt
+
+      - name: "② build — cargo build --workspace --all-targets --locked"
+        run: bash scripts/gates.sh --only build
+
+      - name: "③ clippy — cargo clippy --workspace --all-targets -- -D warnings"
+        run: bash scripts/gates.sh --only clippy
+
+      # ③ 与 ④ 不可合并：只有 ④ 会检查 `crates/mc-http/tests/*` 的 DB e2e 代码。
+      - name: "④ clippy (mc-http/test-util) — 覆盖 tests/* 的 DB e2e"
+        run: bash scripts/gates.sh --only clippy-test-util
+
+      # ⑤ 由 gates.sh 用 `env -u MULTICA_TEST_DATABASE_URL` 显式剥掉库变量：
+      # 带上它会让 mc-http 的 `smoke` 集成测试对同一个库重跑迁移 → `relation "user" already exists`。
+      - name: "⑤ test — cargo test --workspace（不带 DB 变量）"
+        run: bash scripts/gates.sh --only test
+
+  # ⑥：真 PostgreSQL 16 service 容器；**先建表**再跑 DB e2e（测试自己不做迁移）。
+  db:
+    name: db — postgres:16 + DB e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: multica
+          POSTGRES_PASSWORD: multica
+          POSTGRES_DB: multica
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U multica -d multica"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # gates.sh 的 db 门（缺这个变量会 exit 2，绝不静默跳过）。
+      MULTICA_TEST_DATABASE_URL: postgres://multica:multica@127.0.0.1:5432/multica
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "⑥ db — mc-migrate run + cargo test --features mc-http/test-util -- --ignored"
+        run: bash scripts/gates.sh --only db
+
+  # ⑦：纯离线契约门禁（读 docs/fixtures/{upstream-routes.tsv,route-parity-baseline.json}，
+  # 不 clone 上游、不需要 Rust 工具链、不需要数据库）。
+  contract:
+    name: contract — route parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "⑦ route parity — python3 scripts/route_parity.py"
+        run: bash scripts/gates.sh --only route-parity
