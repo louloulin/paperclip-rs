@@ -144,10 +144,9 @@ impl InvitationRepo {
 
         let row = sqlx::query_as::<_, InvitationRow>(
             r"
-            INSERT INTO workspace_invitation
-                (workspace_id, email, role, invited_by_user_id, token, expires_at, created_at)
+            INSERT INTO workspace_invitation (workspace_id, invitee_email, role, inviter_id, token, expires_at, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, workspace_id, email, role, invited_by_user_id, token,
+            RETURNING id, workspace_id, invitee_email AS email, role, inviter_id AS invited_by_user_id, token,
                       expires_at, accepted_at, revoked_at, created_at
             ",
         )
@@ -179,7 +178,7 @@ impl InvitationRepo {
     pub async fn get_by_token(&self, token: &str) -> Result<Option<InvitationRow>> {
         let row = sqlx::query_as::<_, InvitationRow>(
             r"
-            SELECT id, workspace_id, email, role, invited_by_user_id, token,
+            SELECT id, workspace_id, invitee_email AS email, role, inviter_id AS invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE token = $1
@@ -196,7 +195,7 @@ impl InvitationRepo {
     pub async fn get_by_id(&self, id: Id) -> Result<InvitationRow> {
         let row = sqlx::query_as::<_, InvitationRow>(
             r"
-            SELECT id, workspace_id, email, role, invited_by_user_id, token,
+            SELECT id, workspace_id, invitee_email AS email, role, inviter_id AS invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE id = $1
@@ -215,7 +214,7 @@ impl InvitationRepo {
         let now = Utc::now();
         let rows = sqlx::query_as::<_, InvitationRow>(
             r"
-            SELECT id, workspace_id, email, role, invited_by_user_id, token,
+            SELECT id, workspace_id, invitee_email AS email, role, inviter_id AS invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE workspace_id = $1
@@ -237,10 +236,10 @@ impl InvitationRepo {
         let now = Utc::now();
         let rows = sqlx::query_as::<_, InvitationRow>(
             r"
-            SELECT id, workspace_id, email, role, invited_by_user_id, token,
+            SELECT id, workspace_id, invitee_email AS email, role, inviter_id AS invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
-            WHERE email = $1
+            WHERE invitee_email = $1
               AND revoked_at IS NULL
               AND accepted_at IS NULL
               AND expires_at > $2
@@ -272,7 +271,7 @@ impl InvitationRepo {
 
         let row: Option<InvitationRow> = sqlx::query_as::<_, InvitationRow>(
             r"
-            SELECT id, workspace_id, email, role, invited_by_user_id, token,
+            SELECT id, workspace_id, invitee_email AS email, role, inviter_id AS invited_by_user_id, token,
                    expires_at, accepted_at, revoked_at, created_at
             FROM workspace_invitation
             WHERE token = $1
@@ -323,14 +322,15 @@ impl InvitationRepo {
                 already_accepted: true,
             });
         }
-
-        // 标记 accepted_at
-        sqlx::query("UPDATE workspace_invitation SET accepted_at = $2 WHERE id = $1")
-            .bind(row.id)
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_db_err("invitation.accept.update"))?;
+        // 接受：写本地 `accepted_at`，并镜像上游 `status`
+        sqlx::query(
+            "UPDATE workspace_invitation SET accepted_at = $2, status = 'accepted' WHERE id = $1",
+        )
+        .bind(row.id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_err("invitation.accept.update"))?;
 
         // 插入 member 行。
         let member_id = Uuid::new_v4();
@@ -410,7 +410,7 @@ impl InvitationRepo {
         let res = sqlx::query(
             r"
             UPDATE workspace_invitation
-            SET revoked_at = $2
+            SET revoked_at = $2, status = 'declined'
             WHERE token = $1
               AND revoked_at IS NULL
               AND accepted_at IS NULL
@@ -435,7 +435,7 @@ impl InvitationRepo {
         let res = sqlx::query(
             r"
             UPDATE workspace_invitation
-            SET revoked_at = $2
+            SET revoked_at = $2, status = 'declined'
             WHERE id = $1
               AND revoked_at IS NULL
               AND accepted_at IS NULL

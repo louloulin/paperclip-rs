@@ -173,7 +173,7 @@ impl IssueStatusRepo {
     /// 目录列表（按 position 升序）。
     pub async fn list(&self, workspace_id: Id) -> Result<Vec<IssueStatusRow>> {
         sqlx::query_as::<_, IssueStatusRow>(
-            "SELECT id, workspace_id, name, key, category, icon, position, created_at, updated_at \
+            "SELECT id, workspace_id, name, key, category, NULLIF(icon, '') AS icon, position, created_at, updated_at \
              FROM issue_status WHERE workspace_id = $1 \
              ORDER BY position ASC, key ASC",
         )
@@ -186,7 +186,7 @@ impl IssueStatusRepo {
     /// 按 id 取。
     pub async fn get(&self, workspace_id: Id, id: Id) -> Result<IssueStatusRow> {
         sqlx::query_as::<_, IssueStatusRow>(
-            "SELECT id, workspace_id, name, key, category, icon, position, created_at, updated_at \
+            "SELECT id, workspace_id, name, key, category, NULLIF(icon, '') AS icon, position, created_at, updated_at \
              FROM issue_status WHERE workspace_id = $1 AND id = $2",
         )
         .bind(workspace_id.0)
@@ -200,7 +200,7 @@ impl IssueStatusRepo {
     /// 按 key 取（自定义 key 的 category 解析入口）。
     pub async fn find_by_key(&self, workspace_id: Id, key: &str) -> Result<Option<IssueStatusRow>> {
         sqlx::query_as::<_, IssueStatusRow>(
-            "SELECT id, workspace_id, name, key, category, icon, position, created_at, updated_at \
+            "SELECT id, workspace_id, name, key, category, NULLIF(icon, '') AS icon, position, created_at, updated_at \
              FROM issue_status WHERE workspace_id = $1 AND key = $2",
         )
         .bind(workspace_id.0)
@@ -249,8 +249,8 @@ impl IssueStatusRepo {
         };
         sqlx::query_as::<_, IssueStatusRow>(
             "INSERT INTO issue_status (workspace_id, name, key, category, icon, position) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
-             RETURNING id, workspace_id, name, key, category, icon, position, created_at, updated_at",
+             VALUES ($1, $2, $3, $4, COALESCE($5::text, ''), $6) \
+             RETURNING id, workspace_id, name, key, category, NULLIF(icon, '') AS icon, position, created_at, updated_at",
         )
         .bind(workspace_id.0)
         .bind(&input.name)
@@ -274,11 +274,11 @@ impl IssueStatusRepo {
             "UPDATE issue_status SET \
                  name = CASE WHEN $3::boolean THEN $4::text ELSE name END, \
                  category = CASE WHEN $5::boolean THEN $6::text ELSE category END, \
-                 icon = CASE WHEN $7::boolean THEN $8::text ELSE icon END, \
+                 icon = CASE WHEN $7::boolean THEN COALESCE($8::text, '') ELSE icon END, \
                  position = CASE WHEN $9::boolean THEN $10::double precision ELSE position END, \
                  updated_at = now() \
              WHERE workspace_id = $1 AND id = $2 \
-             RETURNING id, workspace_id, name, key, category, icon, position, created_at, updated_at",
+             RETURNING id, workspace_id, name, key, category, NULLIF(icon, '') AS icon, position, created_at, updated_at",
         )
         .bind(workspace_id.0)
         .bind(id.0)
@@ -559,12 +559,15 @@ mod db_tests {
         assert!(!custom.is_builtin());
         assert!(custom.position > 6.0, "custom status goes to the tail");
 
-        // 派生的 key 与内置 key 撞车 → 加后缀
+        // 派生的 key 与内置 key 撞车 → 加后缀。
+        // 展示名取 `"Todo!"`：它派生出同一个 key `todo`（非字母数字折成 `_` 再去尾），
+        // 但上游 `idx_issue_status_workspace_name_active` 对 `lower(name)` 唯一，
+        // 与内置 `Todo` 同名的展示名会被该唯一索引直接拒（409），走不到派生逻辑。
         let collides = repo
             .create(
                 ws,
                 &NewIssueStatus {
-                    name: "Todo".into(),
+                    name: "Todo!".into(),
                     key: None,
                     category: StatusCategory::Open,
                     icon: None,
@@ -688,7 +691,7 @@ mod db_tests {
         // issue 正在使用该 key → 删除被拒（Conflict，handler 映射 409）
         let issue_id: Uuid = sqlx::query_scalar(
             "INSERT INTO issue (workspace_id, number, identifier, title, status, creator_type, creator_id) \
-             VALUES ($1, 1, 'ITESTM2AS-1', 'uses custom status', $2, 'user', $3) RETURNING id",
+             VALUES ($1, 1, 'ITESTM2AS-1', 'uses custom status', $2, 'user', $3::uuid) RETURNING id",
         )
         .bind(ws.0)
         .bind(&a.key)

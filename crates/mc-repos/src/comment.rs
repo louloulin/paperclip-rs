@@ -39,12 +39,15 @@ pub const COMMENT_DEFAULT_LIMIT: u32 = 50;
 /// 单次请求允许的最大窗口（防止 agent 一次拉爆整个 issue）。
 pub const COMMENT_MAX_LIMIT: u32 = 200;
 
-const COLUMNS: &str = "id, workspace_id, issue_id, parent_id, author_type, author_id, \
-                       body, source_task_id, routing_escalation, revision, \
+/// W0-B2 对齐上游：`content`→API 字段 `body`（`AS body`）、`author_id` 上游是 `UUID` ⇒ `::text` 投影；
+/// `routing_escalation` 是 compat 列（`migrations/compat/537_local_only_columns.up.sql`）。
+const COLUMNS: &str =
+    "id, workspace_id, issue_id, parent_id, author_type, author_id::text AS author_id, \
+                       content AS body, source_task_id, routing_escalation, revision, \
                        resolved_at, deleted_at, created_at, updated_at";
 
 const REACTION_COLUMNS: &str =
-    "id, comment_id, workspace_id, actor_type, actor_id, emoji, created_at";
+    "id, comment_id, workspace_id, actor_type, actor_id::text AS actor_id, emoji, created_at";
 
 /// “该评论仍挂着活后代”的相关子查询（外层表必须别名成 `c`）。
 ///
@@ -296,8 +299,8 @@ impl CommentRepo {
 
         let row = sqlx::query_as::<_, CommentRow>(&format!(
             "INSERT INTO comment \
-                (workspace_id, issue_id, parent_id, author_type, author_id, body, source_task_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                (workspace_id, issue_id, parent_id, author_type, author_id, content, source_task_id) \
+             VALUES ($1, $2, $3, $4, $5::uuid, $6, $7) \
              RETURNING {COLUMNS}"
         ))
         .bind(input.workspace_id.as_uuid())
@@ -425,7 +428,7 @@ impl CommentRepo {
     pub async fn update(&self, id: Id, patch: CommentPatch) -> Result<CommentRow> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_err)?;
         let updated = sqlx::query_as::<_, CommentRow>(&format!(
-            "UPDATE comment SET body = $2, revision = revision + 1, updated_at = now() \
+            "UPDATE comment SET content = $2, revision = revision + 1, updated_at = now() \
              WHERE id = $1 AND deleted_at IS NULL \
                AND ($3::bigint IS NULL OR revision = $3) \
              RETURNING {COLUMNS}"
@@ -480,7 +483,7 @@ impl CommentRepo {
 
         if keep_replies {
             sqlx::query(
-                "UPDATE comment SET body = '', deleted_at = now(), resolved_at = NULL, \
+                "UPDATE comment SET content = '', deleted_at = now(), resolved_at = NULL, \
                         revision = revision + 1, updated_at = now() \
                  WHERE id = $1 AND deleted_at IS NULL",
             )
@@ -495,7 +498,7 @@ impl CommentRepo {
                      UNION \
                      SELECT c.id FROM comment c JOIN subtree s ON c.parent_id = s.id \
                  ) \
-                 UPDATE comment SET body = '', deleted_at = now(), resolved_at = NULL, \
+                 UPDATE comment SET content = '', deleted_at = now(), resolved_at = NULL, \
                         revision = revision + 1, updated_at = now() \
                  WHERE id IN (SELECT id FROM subtree) AND deleted_at IS NULL",
             )
@@ -531,8 +534,7 @@ impl CommentRepo {
                  revision = revision + CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END, \
                  updated_at = CASE WHEN resolved_at IS NULL THEN now() ELSE updated_at END \
              WHERE id = $1 AND deleted_at IS NULL \
-             RETURNING id, workspace_id, issue_id, parent_id, author_type, author_id, \
-                       body, source_task_id, routing_escalation, revision, \
+             RETURNING id, workspace_id, issue_id, parent_id, author_type, author_id::text AS author_id, content AS body, source_task_id, routing_escalation, revision, \
                        resolved_at, deleted_at, created_at, updated_at"
         } else {
             "UPDATE comment SET \
@@ -540,8 +542,7 @@ impl CommentRepo {
                  revision = revision + CASE WHEN resolved_at IS NULL THEN 0 ELSE 1 END, \
                  updated_at = CASE WHEN resolved_at IS NULL THEN updated_at ELSE now() END \
              WHERE id = $1 AND deleted_at IS NULL \
-             RETURNING id, workspace_id, issue_id, parent_id, author_type, author_id, \
-                       body, source_task_id, routing_escalation, revision, \
+             RETURNING id, workspace_id, issue_id, parent_id, author_type, author_id::text AS author_id, content AS body, source_task_id, routing_escalation, revision, \
                        resolved_at, deleted_at, created_at, updated_at"
         };
         let row = sqlx::query_as::<_, CommentRow>(sql)
@@ -568,7 +569,7 @@ impl CommentRepo {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_err)?;
         let inserted = sqlx::query_as::<_, CommentReactionRow>(&format!(
             "INSERT INTO comment_reaction (comment_id, workspace_id, actor_type, actor_id, emoji) \
-             SELECT c.id, c.workspace_id, $2, $3, $4 FROM comment c \
+             SELECT c.id, c.workspace_id, $2, $3::uuid, $4 FROM comment c \
              WHERE c.id = $1 AND c.deleted_at IS NULL \
              ON CONFLICT (comment_id, actor_type, actor_id, emoji) DO NOTHING \
              RETURNING {REACTION_COLUMNS}"
@@ -586,7 +587,7 @@ impl CommentRepo {
         } else {
             let existing = sqlx::query_as::<_, CommentReactionRow>(&format!(
                 "SELECT {REACTION_COLUMNS} FROM comment_reaction \
-                 WHERE comment_id = $1 AND actor_type = $2 AND actor_id = $3 AND emoji = $4"
+                 WHERE comment_id = $1 AND actor_type = $2 AND actor_id = $3::uuid AND emoji = $4"
             ))
             .bind(comment_id.as_uuid())
             .bind(actor_type)
@@ -633,7 +634,7 @@ impl CommentRepo {
 
         let res = sqlx::query(
             "DELETE FROM comment_reaction \
-             WHERE comment_id = $1 AND actor_type = $2 AND actor_id = $3 AND emoji = $4",
+             WHERE comment_id = $1 AND actor_type = $2 AND actor_id = $3::uuid AND emoji = $4",
         )
         .bind(comment_id.as_uuid())
         .bind(actor_type)
@@ -854,8 +855,7 @@ mod tests {
 
         let number = i32::try_from(Uuid::new_v4().as_u128() % 1_000_000).unwrap_or(1);
         let issue_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO issue (workspace_id, number, identifier, title, creator_type, creator_id) \
-             VALUES ($1, $2, $3, $4, 'user', $5) RETURNING id",
+            "INSERT INTO issue (workspace_id, number, identifier, title, creator_type, creator_id) VALUES ($1, $2, $3, $4, 'user', $5::uuid) RETURNING id",
         )
         .bind(workspace.id.as_uuid())
         .bind(number)

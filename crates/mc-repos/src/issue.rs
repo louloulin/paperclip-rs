@@ -57,20 +57,21 @@ const NUMBER_ALLOC_RETRIES: usize = 4;
 /// `issue` 表全列（所有 `SELECT` 共用，避免列顺序漂移）。
 ///
 /// M2-D 起 `pub(crate)`：`crate::issue_table` 的 `/rows` 查询复用同一份列清单。
+/// W0-B2：上游 `assignee_id`/`creator_id` 是 `UUID` ⇒ 读出时 `::text`（`prefixed_issue_columns()` 仍合法）。
 pub(crate) const ISSUE_COLUMNS: &str =
     "id, workspace_id, number, identifier, title, description, status, \
-     status_name, priority, assignee_type, assignee_id, creator_type, creator_id, \
+     status_name, priority, assignee_type, assignee_id::text AS assignee_id, creator_type, creator_id::text AS creator_id, \
      parent_issue_id, project_id, position, stage, start_date, due_date, last_activity_at, \
      revision, metadata, properties, triage_state, origin, origin_task_id, source_context_id, \
      created_at, updated_at";
 
-/// `list` / `count` 共用的 WHERE 片段（$1..$13，见 `bind_list_filters`）。
+/// `list` / `count` 共用的 WHERE 片段（$1..$13，见 `bind_list_filters`）。过滤值来自查询串（任意字符串）⇒ 比较侧保留 `::text`：非法 UUID 照旧「匹配不到任何行」（不 500）。
 const LIST_WHERE: &str = "workspace_id = $1 \
      AND ($2::text[] IS NULL OR status = ANY($2::text[])) \
      AND ($3::text[] IS NULL OR priority = ANY($3::text[])) \
      AND ($4::text IS NULL OR assignee_type = $4::text) \
-     AND ($5::text[] IS NULL OR assignee_id = ANY($5::text[])) \
-     AND ($6::text IS NULL OR creator_id = $6::text) \
+     AND ($5::text[] IS NULL OR assignee_id::text = ANY($5::text[])) \
+     AND ($6::text IS NULL OR creator_id::text = $6::text) \
      AND ($7::uuid IS NULL OR parent_issue_id = $7::uuid) \
      AND ($8::uuid IS NULL OR project_id = $8::uuid) \
      AND ($9::int4 IS NULL OR stage = $9::int4) \
@@ -694,7 +695,7 @@ impl IssueRepo {
                  status_name, priority, assignee_type, assignee_id, creator_type, creator_id, \
                  parent_issue_id, project_id, position, stage, start_date, due_date, \
                  metadata, properties, origin, last_activity_at, revision) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11, $12::uuid, $13, $14, \
                  (SELECT COALESCE(MAX(position), 0) + 1 FROM issue \
                    WHERE workspace_id = $1 AND status = $6), \
                  $15, $16, $17, $18, $19, $20, now(), 1) \
@@ -763,7 +764,7 @@ impl IssueRepo {
                  status_name = CASE WHEN $7::boolean THEN $9::text ELSE status_name END, \
                  priority = CASE WHEN $10::boolean THEN $11::text ELSE priority END, \
                  assignee_type = CASE WHEN $12::boolean THEN $13::text ELSE assignee_type END, \
-                 assignee_id = CASE WHEN $12::boolean THEN $14::text ELSE assignee_id END, \
+                 assignee_id = CASE WHEN $12::boolean THEN $14::uuid ELSE assignee_id END, \
                  parent_issue_id = CASE WHEN $15::boolean THEN $16::uuid ELSE parent_issue_id END, \
                  project_id = CASE WHEN $17::boolean THEN $18::uuid ELSE project_id END, \
                  position = CASE WHEN $19::boolean THEN $20::double precision ELSE position END, \
@@ -1236,8 +1237,8 @@ impl IssueRepo {
     /// issue 的 reactions。
     pub async fn list_reactions(&self, issue_id: Id) -> Result<Vec<IssueReactionRow>> {
         sqlx::query_as::<_, IssueReactionRow>(
-            "SELECT id, issue_id, workspace_id, actor_type, actor_id, emoji, created_at \
-             FROM issue_reaction WHERE issue_id = $1 ORDER BY created_at",
+            "SELECT id, issue_id, workspace_id, actor_type, actor_id::text AS actor_id, emoji, created_at FROM issue_reaction \
+             WHERE issue_id = $1 ORDER BY created_at",
         )
         .bind(issue_id.0)
         .fetch_all(self.db.pool())
@@ -1256,10 +1257,9 @@ impl IssueRepo {
     ) -> Result<IssueReactionRow> {
         sqlx::query_as::<_, IssueReactionRow>(
             "INSERT INTO issue_reaction (issue_id, workspace_id, actor_type, actor_id, emoji) \
-             VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (issue_id, actor_type, actor_id, emoji) \
-             DO UPDATE SET emoji = EXCLUDED.emoji \
-             RETURNING id, issue_id, workspace_id, actor_type, actor_id, emoji, created_at",
+             VALUES ($1, $2, $3, $4::uuid, $5) \
+             ON CONFLICT (issue_id, actor_type, actor_id, emoji) DO UPDATE SET emoji = EXCLUDED.emoji \
+             RETURNING id, issue_id, workspace_id, actor_type, actor_id::text AS actor_id, emoji, created_at",
         )
         .bind(issue_id.0)
         .bind(workspace_id.0)
@@ -1280,9 +1280,8 @@ impl IssueRepo {
         emoji: &str,
     ) -> Result<IssueReactionRow> {
         sqlx::query_as::<_, IssueReactionRow>(
-            "DELETE FROM issue_reaction \
-             WHERE issue_id = $1 AND actor_type = $2 AND actor_id = $3 AND emoji = $4 \
-             RETURNING id, issue_id, workspace_id, actor_type, actor_id, emoji, created_at",
+            "DELETE FROM issue_reaction WHERE issue_id = $1 AND actor_type = $2 AND actor_id = $3::uuid AND emoji = $4 \
+             RETURNING id, issue_id, workspace_id, actor_type, actor_id::text AS actor_id, emoji, created_at",
         )
         .bind(issue_id.0)
         .bind(actor_type)
@@ -1597,8 +1596,7 @@ mod db_tests {
 
         // 同 (workspace, number) 唯一约束仍在
         let dup = sqlx::query(
-            "INSERT INTO issue (workspace_id, number, identifier, title, creator_type, creator_id) \
-             VALUES ($1, $2, $3, 'dup', 'user', $4)",
+            "INSERT INTO issue (workspace_id, number, identifier, title, creator_type, creator_id) VALUES ($1, $2, $3, 'dup', 'user', $4::uuid)",
         )
         .bind(fx.workspace_id.0)
         .bind(1_i32)
@@ -1629,7 +1627,7 @@ mod db_tests {
         done.priority = Priority::Urgent;
         let mut assigned = new_issue(&fx, "searchable needle");
         assigned.assignee_type = Some(AssigneeType::Agent);
-        assigned.assignee_id = Some("agent-1".into());
+        assigned.assignee_id = Some("11111111-1111-4111-8111-111111111111".into());
         for issue in [backlog, done, assigned] {
             repo.create(issue).await.expect("create");
         }
@@ -1666,7 +1664,7 @@ mod db_tests {
         // assignee 过滤
         let mut by_assignee = IssueFilter::new(fx.workspace_id);
         by_assignee.assignee_type = Some("agent".into());
-        by_assignee.assignee_ids = Some(vec!["agent-1".into()]);
+        by_assignee.assignee_ids = Some(vec!["11111111-1111-4111-8111-111111111111".into()]);
         assert_eq!(repo.list(&by_assignee).await.expect("by assignee").len(), 1);
 
         // q 搜索（title / description）
@@ -1849,23 +1847,24 @@ mod db_tests {
             Err(RepoError::NotFound)
         ));
 
-        // reactions：幂等加 / 删
+        // reactions：幂等加 / 删（上游 actor_id 是 UUID ⇒ actor 用真 UUID）
+        let actor = "33333333-3333-4333-8333-333333333333";
         let r1 = repo
-            .add_reaction(fx.workspace_id, a.id(), "user", "u1", "👍")
+            .add_reaction(fx.workspace_id, a.id(), "user", actor, "👍")
             .await
             .expect("react");
         let r2 = repo
-            .add_reaction(fx.workspace_id, a.id(), "user", "u1", "👍")
+            .add_reaction(fx.workspace_id, a.id(), "user", actor, "👍")
             .await
             .expect("react again");
         assert_eq!(r1.id, r2.id, "duplicate reaction must be idempotent");
         assert_eq!(repo.list_reactions(a.id()).await.expect("list").len(), 1);
-        repo.remove_reaction(a.id(), "user", "u1", "👍")
+        repo.remove_reaction(a.id(), "user", actor, "👍")
             .await
             .expect("unreact");
         assert!(repo.list_reactions(a.id()).await.expect("list").is_empty());
         assert!(matches!(
-            repo.remove_reaction(a.id(), "user", "u1", "👍").await,
+            repo.remove_reaction(a.id(), "user", actor, "👍").await,
             Err(RepoError::NotFound)
         ));
 

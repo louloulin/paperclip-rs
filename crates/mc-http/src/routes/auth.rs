@@ -1196,7 +1196,7 @@ mod tests {
         sqlx::query(
             r"
             INSERT INTO verification_code
-                (id, email, purpose, code_hash, expires_at, created_at)
+                (id, email, purpose, code, expires_at, created_at)
             VALUES ($1, $2, 'email_verification', $3,
                     now() - interval '1 hour', now() - interval '2 hours')
             ",

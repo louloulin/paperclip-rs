@@ -332,7 +332,7 @@ mod tests {
                 sqlx::query(
                     "INSERT INTO issue (id, workspace_id, number, identifier, title, status, \
                       creator_type, creator_id) \
-                     VALUES ($1, $2, $3, $4, 'sub issue', 'todo', 'user', $5)",
+                     VALUES ($1, $2, $3, $4, 'sub issue', 'todo', 'user', $5::uuid)",
                 )
                 .bind(id)
                 .bind(ws)
