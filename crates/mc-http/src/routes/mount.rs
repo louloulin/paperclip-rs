@@ -15,6 +15,9 @@ use super::health;
 use super::openapi;
 use crate::state::AppState;
 
+// M1 sub-issue C 的模块（invitations / pats / auth_user）在 routes/mod.rs 中声明。
+// 本文件仅负责把各 sub-issue 的 router 切片合并到全局 router。
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         // ----- 健康 / OpenAPI / 通用 -----
@@ -77,8 +80,12 @@ fn mount_slice_auth() -> Router<Arc<AppState>> {
 ///
 /// 由 M1 sub-issue C 填充：crates/mc-http/src/routes/invitations.rs 真实 handler 后
 /// 在本函数里 `.merge(invitations::router())`。
+///
+/// 子 router 仅声明路由表，不在内部 `with_state` —— 真正的 state 由
+/// `apps/mc-server/src/main.rs` 在调用 `mc_http::routes::router().with_state(state)` 时
+/// 一次性注入。
 fn mount_slice_invitation() -> Router<Arc<AppState>> {
-    Router::new()
+    super::invitations::router()
 }
 
 /// PAT 切片：list / create / revoke PAT。
@@ -86,5 +93,5 @@ fn mount_slice_invitation() -> Router<Arc<AppState>> {
 /// 由 M1 sub-issue C 填充：crates/mc-http/src/routes/pats.rs 真实 handler 后
 /// 在本函数里 `.merge(pats::router())`。
 fn mount_slice_pat() -> Router<Arc<AppState>> {
-    Router::new()
+    super::pats::router()
 }

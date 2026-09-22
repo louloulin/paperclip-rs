@@ -17,6 +17,10 @@ pub struct ConfigSnapshot {
     pub session_cookie: String,
     pub api_key_header: String,
     pub csrf_header: String,
+    /// 邀请速率限制：单 workspace 每小时最大邀请条数。
+    /// `None` 表示未设置（调用方应使用默认值 50）。
+    /// 由 M1 sub-issue C 追加。
+    pub invitation_per_workspace_per_hour: Option<u32>,
 }
 
 #[derive(Clone)]

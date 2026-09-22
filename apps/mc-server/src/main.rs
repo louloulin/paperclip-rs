@@ -113,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
             session_cookie: cfg.auth.session_cookie_name.clone(),
             api_key_header: cfg.auth.api_key_header.clone(),
             csrf_header: cfg.auth.csrf_header.clone(),
+            invitation_per_workspace_per_hour: Some(cfg.auth.invitation_per_workspace_per_hour),
         },
         realtime,
         ws,

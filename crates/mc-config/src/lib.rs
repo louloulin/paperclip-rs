@@ -107,6 +107,10 @@ pub struct AuthConfig {
     pub pat_ttl_secs: u64,
     pub require_csrf: bool,
     pub require_email_verified: bool,
+    /// 单 workspace 每小时最大邀请条数（对应上游 multica
+    /// `RATE_LIMIT_INVITATION_PER_WORKSPACE_PER_HOUR`）。默认 50。
+    /// 由 M1 sub-issue C 追加。
+    pub invitation_per_workspace_per_hour: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +189,7 @@ impl Default for Config {
                 pat_ttl_secs: 60 * 60 * 24 * 365,
                 require_csrf: true,
                 require_email_verified: false,
+                invitation_per_workspace_per_hour: 50,
             },
             storage: StorageConfig {
                 default_provider: "local_disk".into(),
@@ -298,6 +303,12 @@ impl Config {
             .and_then(|s| s.parse().ok())
         {
             config.auth.session_ttl_secs = ttl;
+        }
+        // Invitation rate limit（M1 sub-issue C 追加）。
+        if let Some(n) = lookup("MULTICA_INVITATION_PER_WORKSPACE_PER_HOUR")
+            .and_then(|s| s.parse().ok())
+        {
+            config.auth.invitation_per_workspace_per_hour = n;
         }
 
         // Storage

@@ -11,6 +11,7 @@ workspace = true
 [features]
 default = []
 test = []
+test-util = []
 
 [dependencies]
 serde = { workspace = true }

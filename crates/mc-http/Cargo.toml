@@ -10,6 +10,7 @@ workspace = true
 
 [features]
 default = []
+test-util = ["mc-db/test-util"]
 
 [dependencies]
 serde = { workspace = true }
@@ -36,3 +37,6 @@ mc-openapi = { path = "../mc-openapi" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+http-body-util = "0.1"
+tower = { workspace = true, features = ["util"] }
+hyper = { workspace = true }
