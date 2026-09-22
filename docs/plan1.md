@@ -570,6 +570,10 @@ P4 的"逐字复用 + 两目录合并"在**跑之前**必须先对齐两侧 runn
 
 上游编号实况：**560 个 `*.up.sql` / 560 个互不相同的词干 / 只有 513 个互不相同的数字版本**；**30 个数字版本各带 2–4 个文件**（共 77 个文件，例：`109_{agent_task_waiting_local_directory,drop_agent_skills_local,issue_pull_request_close_intent,lark_integration}.up.sql`），最大编号 534，1..534 内有 21 个空号。⇒ **用 `BIGINT version` 做主键会冲突/丢失 47 个文件**，"逐字复用"不可能建在有损键上。
 
+> ✅ **2026-09-22 已落实（W0-B2 = LUM-1387）**：本表左侧四行已全部对齐上游——键 = 文件词干（`TEXT`）、账本表同名同形、
+> 按词干排序合并 `upstream/` + `compat/`、`--dir` 可重复 + 递归枚举；老 `BIGINT` 账本库直接报错要求重建。
+> 实测：560 + 6 = **566 个迁移从零应用成功**（117 张表）、drift `missing = 0` / `exit 0`。见 `docs/26-W0-SCHEMA-SWITCHOVER.md`。
+
 附带一处语义差异（W10 双跑/就绪探监会踩）：上游 `AllVersions()` + readiness 检查要求**所有 up 版本都已记入 `schema_migrations`**（专防"编号低于已应用版本的乱序补丁漏记录"），而 Rust 侧只有 `Migrator::list_applied(db)?.len()`；接管时需对齐。
 
 四条硬约束：
