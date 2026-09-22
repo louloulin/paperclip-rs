@@ -9,15 +9,14 @@
     "fixtures": 58,
     "pass": 4,
     "mismatch": 1,
-    "unmounted": 5,
-    "placeholder": 1,
+    "unmounted": 6,
+    "placeholder": 0,
     "unevaluable": 47,
     "by_actor": {
       "anonymous": {
         "mismatch": 1,
         "pass": 4,
-        "placeholder": 1,
-        "unmounted": 5
+        "unmounted": 6
       },
       "member": {
         "unevaluable": 47
@@ -31,18 +30,16 @@
       },
       "router": {
         "pass": 4,
-        "placeholder": 1,
         "unevaluable": 12,
-        "unmounted": 3
+        "unmounted": 4
       }
     },
     "tiers": {
       "stateless": {
         "mismatch": 1,
         "pass": 4,
-        "placeholder": 1,
         "unevaluable": 47,
-        "unmounted": 5
+        "unmounted": 6
       }
     }
   },
@@ -94,12 +91,12 @@
       "via": "router",
       "status_expected": 401,
       "source": "server/cmd/server/integration_test.go:433",
-      "outcome": "placeholder",
+      "outcome": "unmounted",
       "tier": "stateless",
-      "status_observed": 200,
-      "offline": "placeholder",
+      "status_observed": 404,
+      "offline": "unmounted",
       "database": null,
-      "detail": "route returns the M0 placeholder envelope (status 200), expected 401"
+      "detail": "no route: 404 with empty body (axum fallback), expected 401"
     },
     {
       "id": "auth/TestGoogleLoginSuccessfulExistingUser@server/internal/handler/auth_google_error_code_test.go:289#1",
