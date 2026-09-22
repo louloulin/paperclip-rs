@@ -24,6 +24,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
+tokio = { workspace = true }
 
 mc-config = { path = "../mc-config" }
 mc-db = { path = "../mc-db" }

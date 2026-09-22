@@ -71,96 +71,113 @@ impl Redactor {
         }
     }
 
-    /// redact 一行文本：把 `key=value` / `"key":"value"` / `key: value` 的模式替换。
-    pub fn redact_str<'a>(&self, input: &'a str) -> String {
-        let mut output = String::with_capacity(input.len());
-        let mut chars = input.chars().peekable();
-        let mut key_buf = String::new();
-        while let Some(c) = chars.next() {
-            if c.is_ascii_alphabetic() || c == '-' || c == '_' {
-                key_buf.push(c);
+    /// redact 一行文本：把 `key=value` / `"key": "value"` / `key: value` 的模式替换。
+    ///
+    /// 解析策略：扫描 word run 作为候选 key，向后窥视（允许空白 + 至多一个闭引号）
+    /// 找 `=` / `:` 分隔符；命中才按 key-value 处理，否则原文透传。
+    pub fn redact_str(&self, input: &str) -> String {
+        let chars: Vec<char> = input.chars().collect();
+        let n = chars.len();
+        let mut out = String::with_capacity(input.len());
+        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+        let mut i = 0;
+        while i < n {
+            if !is_word(chars[i]) {
+                out.push(chars[i]);
+                i += 1;
                 continue;
             }
-            // key finished
-            if !key_buf.is_empty() {
-                if self.is_sensitive(&key_buf) {
-                    // skip until separator
-                    output.push_str(&key_buf);
-                    output.push(c);
-                    // consume value: `=value` or `: value` or `: "value"`
-                    let mut consumed = false;
-                    if c == '=' {
-                        // read until whitespace or comma or quote-end
-                        while let Some(&next) = chars.peek() {
-                            if next.is_whitespace() || next == ',' || next == ';' {
-                                break;
-                            }
-                            chars.next();
-                            consumed = true;
-                        }
-                        output.push_str(&self.replacement);
-                    } else if c == ':' {
-                        // skip whitespace
-                        while let Some(&next) = chars.peek() {
-                            if next.is_whitespace() {
-                                output.push(next);
-                                chars.next();
-                                continue;
-                            }
-                            if next == '"' {
-                                // quoted value
-                                output.push(next);
-                                chars.next();
-                                while let Some(&next) = chars.peek() {
-                                    output.push(next);
-                                    chars.next();
-                                    if next == '"' {
-                                        break;
-                                    }
-                                }
-                                // overwrite last quoted block with replacement
-                                // find the actual quoted region
-                                if let Some(start) = output.rfind('"') {
-                                    let after = output[start..].to_string();
-                                    let prefix_len = output.len() - after.len();
-                                    output.truncate(prefix_len);
-                                    output.push('"');
-                                    output.push_str(&self.replacement);
-                                    output.push('"');
-                                }
-                                consumed = true;
-                                break;
-                            }
-                            // unquoted value
-                            while let Some(&next) = chars.peek() {
-                                if next.is_whitespace() || next == ',' || next == '}' {
-                                    break;
-                                }
-                                chars.next();
-                                consumed = true;
-                            }
-                            output.push_str(&self.replacement);
-                            break;
-                        }
-                        if !consumed {
-                            // nothing after colon
-                        }
-                    } else {
-                        output.push(c);
-                    }
-                } else {
-                    output.push_str(&key_buf);
-                    output.push(c);
+            // 收集候选 key
+            let start = i;
+            while i < n && is_word(chars[i]) {
+                i += 1;
+            }
+            let key: String = chars[start..i].iter().collect();
+
+            // 窥视分隔符：ws [""] ws [=|:]
+            let mut j = i;
+            while j < n && chars[j].is_whitespace() {
+                j += 1;
+            }
+            let had_close_quote = j < n && chars[j] == '"';
+            if had_close_quote {
+                j += 1;
+                while j < n && chars[j].is_whitespace() {
+                    j += 1;
                 }
-                key_buf.clear();
+            }
+            let is_kv = j < n && (chars[j] == '=' || chars[j] == ':');
+            if !is_kv {
+                out.push_str(&key);
+                continue;
+            }
+            let sep_idx = j;
+
+            if !self.is_sensitive(&key) {
+                // 非敏感 key：只透传 key 本身，后续字符走常规扫描。
+                out.push_str(&key);
+                continue;
+            }
+
+            // 解析 value：sep 后空白，再引号或裸词。
+            let mut v = sep_idx + 1;
+            while v < n && chars[v].is_whitespace() {
+                v += 1;
+            }
+            let quoted = v < n && chars[v] == '"';
+            let value_start;
+            let value_end; // exclusive
+            if quoted {
+                v += 1;
+                value_start = v;
+                while v < n {
+                    if chars[v] == '\\' && v + 1 < n {
+                        v += 2;
+                        continue;
+                    }
+                    if chars[v] == '"' {
+                        break;
+                    }
+                    v += 1;
+                }
+                value_end = v; // 停在闭引号或末尾
             } else {
-                output.push(c);
+                value_start = v;
+                while v < n
+                    && !chars[v].is_whitespace()
+                    && chars[v] != ','
+                    && chars[v] != ';'
+                    && chars[v] != '}'
+                    && chars[v] != ']'
+                {
+                    v += 1;
+                }
+                value_end = v;
+            }
+
+            // 输出：key + key/sep 之间的原文（含引号/空白） + sep + sep 到 value 的空白 + 替换值。
+            out.push_str(&key);
+            out.extend(chars[i..sep_idx].iter());
+            out.push(chars[sep_idx]);
+            // sep 后到 value_start 之间的空白保持原样（仅 quoted 时可能非空）。
+            let ws_start = sep_idx + 1;
+            out.extend(chars[ws_start..value_start].iter());
+            if quoted {
+                out.push('"');
+                out.push_str(&self.replacement);
+                out.push('"');
+                // 消费闭引号
+                if value_end < n && chars[value_end] == '"' {
+                    i = value_end + 1;
+                } else {
+                    i = value_end;
+                }
+            } else {
+                out.push_str(&self.replacement);
+                i = value_end;
             }
         }
-        if !key_buf.is_empty() {
-            output.push_str(&key_buf);
-        }
-        output
+        out
     }
 }
 

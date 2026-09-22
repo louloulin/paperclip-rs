@@ -13,9 +13,10 @@ use std::sync::Arc;
 
 use super::health;
 use super::openapi;
+use super::workspaces;
 use crate::state::AppState;
 
-pub fn router() -> Router<Arc<AppState>> {
+pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         // ----- 健康 / OpenAPI / 通用 -----
         .route("/api/health", get(health::health))
@@ -25,33 +26,54 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/login", post(health::placeholder))
         .route("/api/auth/logout", post(health::placeholder))
         .route("/api/auth/session", get(health::placeholder))
+        // 注：`/api/workspaces` 与其 `{id}` 占位路由已由 sub-issue A 的
+        // mount_slice_workspace_member 真实路由替换（axum 0.7 同 path+method
+        // 重复注册会 panic，不能共存）。
         .route(
-            "/api/workspaces",
+            "/api/issues",
             get(health::placeholder).post(health::placeholder),
         )
-        .route("/api/workspaces/{id}", get(health::placeholder))
-        .route("/api/workspaces/{id}/members", get(health::placeholder))
-        .route("/api/issues", get(health::placeholder).post(health::placeholder))
         .route("/api/issues/{id}", get(health::placeholder))
-        .route("/api/agents", get(health::placeholder).post(health::placeholder))
-        .route("/api/runtimes", get(health::placeholder).post(health::placeholder))
+        .route(
+            "/api/agents",
+            get(health::placeholder).post(health::placeholder),
+        )
+        .route(
+            "/api/runtimes",
+            get(health::placeholder).post(health::placeholder),
+        )
         .route(
             "/api/chat/sessions",
             get(health::placeholder).post(health::placeholder),
         )
         .route("/api/inbox", get(health::placeholder))
-        .route("/api/skills", get(health::placeholder).post(health::placeholder))
-        .route("/api/plugins", get(health::placeholder).post(health::placeholder))
+        .route(
+            "/api/skills",
+            get(health::placeholder).post(health::placeholder),
+        )
+        .route(
+            "/api/plugins",
+            get(health::placeholder).post(health::placeholder),
+        )
         .route(
             "/api/autopilots",
             get(health::placeholder).post(health::placeholder),
         )
-        .route("/api/squads", get(health::placeholder).post(health::placeholder))
-        .route("/api/projects", get(health::placeholder).post(health::placeholder))
-        .route("/api/comments", get(health::placeholder).post(health::placeholder))
+        .route(
+            "/api/squads",
+            get(health::placeholder).post(health::placeholder),
+        )
+        .route(
+            "/api/projects",
+            get(health::placeholder).post(health::placeholder),
+        )
+        .route(
+            "/api/comments",
+            get(health::placeholder).post(health::placeholder),
+        )
         .route("/api/feature-flags", get(health::placeholder))
         // ----- M1 切片占位（sub-issue A/B/C 在 mount_slice_* 里追加真实 router） -----
-        .merge(mount_slice_workspace_member())
+        .merge(mount_slice_workspace_member(state.clone()))
         .merge(mount_slice_auth())
         .merge(mount_slice_invitation())
         .merge(mount_slice_pat())
@@ -59,10 +81,10 @@ pub fn router() -> Router<Arc<AppState>> {
 
 /// workspace + member + me 切片。
 ///
-/// 由 M1 sub-issue A 填充：crates/mc-http/src/routes/workspaces.rs 真实 handler 后
-/// 在本函数里 `.merge(workspaces::router())`。
-fn mount_slice_workspace_member() -> Router<Arc<AppState>> {
-    Router::new()
+/// M1 sub-issue A：真实 handler 在 crates/mc-http/src/routes/workspaces.rs，
+/// 注入 `State(state: Arc<AppState>)` 后 merge 进来。
+fn mount_slice_workspace_member(state: Arc<AppState>) -> Router<Arc<AppState>> {
+    Router::new().merge(workspaces::router(state.clone()))
 }
 
 /// auth 切片：send-code / verify-code / logout / refresh / me。

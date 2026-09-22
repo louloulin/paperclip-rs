@@ -36,15 +36,12 @@ pub struct MigrationStep {
 
 impl MigrationStep {
     pub fn from_file(path: &Path) -> std::io::Result<Self> {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "migration path has no filename",
-                )
-            })?;
+        let filename = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "migration path has no filename",
+            )
+        })?;
         let (version, name) = parse_filename(filename).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -279,15 +276,71 @@ fn split_sql_statements(input: &str) -> Vec<String> {
             continue;
         }
         if c == ';' {
-            out.push(std::mem::take(&mut buf));
+            let stmt = std::mem::take(&mut buf);
+            if has_sql_content(&stmt) {
+                out.push(stmt);
+            }
             continue;
         }
         buf.push(c);
     }
-    if !buf.trim().is_empty() {
+    if has_sql_content(&buf) {
         out.push(buf);
     }
     out
+}
+
+/// 判断切分出的语句是否含非注释、非空白内容（纯 `--` / `/* */` 注释残留不算语句）。
+fn has_sql_content(stmt: &str) -> bool {
+    let mut in_line = false;
+    let mut in_block = false;
+    let mut in_string = false;
+    let mut quote = '\0';
+    let mut chars = stmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_line {
+            if c == '\n' {
+                in_line = false;
+            }
+            continue;
+        }
+        if in_block {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        if in_string {
+            if c == '\\' {
+                chars.next();
+                continue;
+            }
+            if c == quote {
+                in_string = false;
+            }
+            continue;
+        }
+        if c == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            in_line = true;
+            continue;
+        }
+        if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block = true;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            in_string = true;
+            quote = c;
+            continue;
+        }
+        if !c.is_whitespace() {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
