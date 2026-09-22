@@ -17,6 +17,13 @@ pub struct ConfigSnapshot {
     pub session_cookie: String,
     pub api_key_header: String,
     pub csrf_header: String,
+    /// 开发模式 —— 当 false 时 cookie 不设 Secure，send-code 不返回 dev_code，
+    /// 邮件发送用纯生产日志路径。
+    pub dev_mode: bool,
+    /// Session TTL（秒）；由 `/api/auth/refresh` 与 `verify-code` 使用。
+    pub session_ttl_secs: u64,
+    /// `send-code` 速率限制（每邮箱每分钟）。
+    pub send_code_per_email_per_min: u32,
 }
 
 #[derive(Clone)]
@@ -70,6 +77,21 @@ impl AppState {
             auth: mc_auth::SessionStoreContainer::default(),
             pat: mc_auth::PatStoreContainer::default(),
             verification: mc_auth::VerificationStoreContainer::default(),
+        }
+    }
+}
+
+impl Default for ConfigSnapshot {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".into(),
+            port: 3500,
+            session_cookie: "multica_session".into(),
+            api_key_header: "X-Multica-Api-Key".into(),
+            csrf_header: "X-Multica-Csrf".into(),
+            dev_mode: true,
+            session_ttl_secs: 60 * 60 * 24 * 30,
+            send_code_per_email_per_min: 5,
         }
     }
 }

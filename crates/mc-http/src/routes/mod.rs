@@ -15,6 +15,7 @@ use crate::state::AppState;
 
 pub mod health;
 pub mod openapi;
+pub mod auth;
 pub mod mount;
 
 pub fn router() -> Router<Arc<AppState>> {

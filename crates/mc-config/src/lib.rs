@@ -103,10 +103,17 @@ pub struct AuthConfig {
     pub session_cookie_name: String,
     pub api_key_header: String,
     pub csrf_header: String,
+    /// 滑窗 session TTL（秒）。默认 30 天；`/api/auth/refresh` 在窗口内续期。
     pub session_ttl_secs: u64,
     pub pat_ttl_secs: u64,
     pub require_csrf: bool,
     pub require_email_verified: bool,
+    /// 邮件验证码 TTL（秒）。默认 600 = 10 分钟。
+    pub verification_code_ttl_secs: u64,
+    /// 单 IP / 全局每秒允许的 `send-code` 请求数。默认 20。
+    pub send_code_per_min: u32,
+    /// 单邮箱每分钟允许的 `send-code` 请求数（防爆破）。默认 5。
+    pub send_code_per_email_per_min: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +192,9 @@ impl Default for Config {
                 pat_ttl_secs: 60 * 60 * 24 * 365,
                 require_csrf: true,
                 require_email_verified: false,
+                verification_code_ttl_secs: 600,
+                send_code_per_min: 20,
+                send_code_per_email_per_min: 5,
             },
             storage: StorageConfig {
                 default_provider: "local_disk".into(),
@@ -298,6 +308,21 @@ impl Config {
             .and_then(|s| s.parse().ok())
         {
             config.auth.session_ttl_secs = ttl;
+        }
+        if let Some(ttl) = lookup("MULTICA_AUTH_VERIFICATION_CODE_TTL_SECS")
+            .and_then(|s| s.parse().ok())
+        {
+            config.auth.verification_code_ttl_secs = ttl;
+        }
+        if let Some(n) = lookup("MULTICA_AUTH_SEND_CODE_PER_MIN")
+            .and_then(|s| s.parse().ok())
+        {
+            config.auth.send_code_per_min = n;
+        }
+        if let Some(n) = lookup("MULTICA_AUTH_SEND_CODE_PER_EMAIL_PER_MIN")
+            .and_then(|s| s.parse().ok())
+        {
+            config.auth.send_code_per_email_per_min = n;
         }
 
         // Storage

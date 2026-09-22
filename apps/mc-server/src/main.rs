@@ -113,6 +113,10 @@ async fn main() -> anyhow::Result<()> {
             session_cookie: cfg.auth.session_cookie_name.clone(),
             api_key_header: cfg.auth.api_key_header.clone(),
             csrf_header: cfg.auth.csrf_header.clone(),
+            dev_mode: cfg.server.mode == mc_config::RunMode::Development
+                || cfg.server.mode == mc_config::RunMode::Test,
+            session_ttl_secs: cfg.auth.session_ttl_secs,
+            send_code_per_email_per_min: cfg.auth.send_code_per_email_per_min,
         },
         realtime,
         ws,

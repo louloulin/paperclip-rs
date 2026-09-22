@@ -37,6 +37,23 @@ impl Db {
         Ok(Self { pool })
     }
 
+    /// 用于测试 / 占位场景的懒构造 —— 不会立即拨号，但 pool 类型保持一致。
+    /// 调用方负责在使用前确保 DB 可达；调用 `pool()` / `stats()` 不会触发网络。
+    pub fn connect_lazy(
+        url: &str,
+        max_connections: u32,
+        min_connections: u32,
+    ) -> Result<Self, crate::DbError> {
+        let pool = PgPoolOptions::new()
+            .max_connections(max_connections)
+            .min_connections(min_connections)
+            .acquire_timeout(Duration::from_secs(5))
+            .idle_timeout(Some(Duration::from_secs(60 * 5)))
+            .connect_lazy(url)
+            .map_err(crate::DbError::Connect)?;
+        Ok(Self { pool })
+    }
+
     /// 拿到底层 `sqlx::PgPool`，供 repo 直接调用。
     pub fn pool(&self) -> &PgPool {
         &self.pool

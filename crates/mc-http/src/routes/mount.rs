@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use super::health;
 use super::openapi;
+use super::auth;
 use crate::state::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -70,7 +71,7 @@ fn mount_slice_workspace_member() -> Router<Arc<AppState>> {
 /// 由 M1 sub-issue B 填充：crates/mc-http/src/routes/auth.rs 真实 handler 后
 /// 在本函数里 `.merge(auth::router())`。
 fn mount_slice_auth() -> Router<Arc<AppState>> {
-    Router::new()
+    auth::router()
 }
 
 /// invitation 切片：workspace invitation + 我的 invitation + accept/decline。
