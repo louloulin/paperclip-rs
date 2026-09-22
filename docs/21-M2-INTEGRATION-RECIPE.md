@@ -16,7 +16,7 @@
 | 项 | 值 |
 | --- | --- |
 | 集成分支 | `feat/multica-rs-initial` |
-| 远端 head | **`9c57592`**（`f05b803` = M2-C 合并 → `8df6888`/`90cd17c`/`9c57592` = 19:00 cycle 的 docs） |
+| 远端 head | **`6770df4`**（`f05b803` = M2-C 合并 → `8df6888`/`90cd17c`/`9c57592` = 19:00 cycle docs → `4e1e558`/`6770df4` = 本 cycle 的 `docs/23` + 本文 §9） |
 | 已并入的 M2 切片 | **M2-C（LUM-1349）**：`fc8727b` → `f05b803`（inbox 仓储 + `/api/inbox` 14 条 + subscriber 4 条，`docs/13-M2-INBOX.md`） |
 | 待并入 | M1-E（LUM-1362）、M2-A（LUM-1348）、M2-B（LUM-1350） |
 | 迁移编号水位 | `0001`–`0004`（`0005` 空闲，按 `docs/10` §5.1 由集成 master 统一分配） |
