@@ -16,7 +16,10 @@ pub struct LocalDiskStorage {
 
 impl LocalDiskStorage {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), name: PROVIDER_NAME }
+        Self {
+            root: root.into(),
+            name: PROVIDER_NAME,
+        }
     }
 
     fn path_for(&self, bucket: &str, key: &str) -> std::result::Result<PathBuf, StorageError> {
@@ -119,6 +122,9 @@ mod tests {
     async fn rejects_traversal() {
         let tmp = tempfile::tempdir().unwrap();
         let storage = LocalDiskStorage::new(tmp.path().to_path_buf());
-        assert!(storage.put("bucket", "a/../b", ::bytes::Bytes::from_static(b"x"), None).await.is_err());
+        assert!(storage
+            .put("bucket", "a/../b", ::bytes::Bytes::from_static(b"x"), None)
+            .await
+            .is_err());
     }
 }

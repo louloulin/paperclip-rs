@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use mc_auth::VerificationCodePurpose;
+use mc_auth::verification::VerificationCodePurpose;
 use mc_core::Id;
 use mc_db::Db;
 
@@ -61,6 +61,26 @@ impl VerificationRow {
     }
 }
 
+// `mc_core::Id` 目前未实现 sqlx 的 `Decode`/`Encode`（mc-core 不直接依赖 sqlx），
+// 因此不能用 `#[derive(sqlx::FromRow)]`；这里手写 `FromRow`，先取 `Uuid` 再转 `Id`。
+// 若后续 LUM-1342 master 决定在 mc-core 增加 feature-gated sqlx impl，可替换本实现。
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for VerificationRow {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        Ok(Self {
+            id: Id::from(row.try_get::<Uuid, _>("id")?),
+            user_id: row.try_get::<Option<Uuid>, _>("user_id")?.map(Id::from),
+            email: row.try_get("email")?,
+            purpose: row.try_get("purpose")?,
+            code_hash: row.try_get("code_hash")?,
+            attempts: row.try_get("attempts")?,
+            expires_at: row.try_get("expires_at")?,
+            consumed_at: row.try_get("consumed_at")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+}
+
 impl From<&VerificationRow> for VerificationCodePurpose {
     fn from(row: &VerificationRow) -> Self {
         match row.purpose.as_str() {
@@ -80,12 +100,16 @@ pub struct VerificationCodeRepo {
 
 impl VerificationCodeRepo {
     pub fn new(db: Db) -> Self {
-        Self { pool: Arc::new(db.pool().clone()) }
+        Self {
+            pool: Arc::new(db.pool().clone()),
+        }
     }
 
     /// 在共享 `sqlx::PgPool` 上持有引用（与 `new(db)` 等价，但避免所有权转移）。
     pub fn from_pool(pool: PgPool) -> Self {
-        Self { pool: Arc::new(pool) }
+        Self {
+            pool: Arc::new(pool),
+        }
     }
 
     fn pool(&self) -> &PgPool {
@@ -124,7 +148,11 @@ impl VerificationCodeRepo {
     /// 已消费 → `Ok(None)`；过期 / 不存在 / 不匹配 → `Ok(None)`。
     ///
     /// 标记 `consumed_at` 在单条 SQL 内完成，避免 verify 后的 TOCTOU 重放。
-    pub async fn consume(&self, code_hash: &str, purpose: VerificationCodePurpose) -> Result<Option<VerificationRow>> {
+    pub async fn consume(
+        &self,
+        code_hash: &str,
+        purpose: VerificationCodePurpose,
+    ) -> Result<Option<VerificationRow>> {
         let purpose_str = VerificationRow::purpose_str(purpose);
 
         // 1) 找出最近一条匹配 hash + purpose、未消费、未过期的行
@@ -238,8 +266,7 @@ impl VerificationCodeRepo {
         Ok(row.0.unwrap_or(0))
     }
 
-    /// 取某 email 最新一条未消费的验证码（仅调试 / 测试用；生产路径走 `consume`）。
-    #[allow(dead_code)]
+    /// 取某 email 最新一条未消费的验证码（verify 失败时由 handler 累计 attempts）。
     pub async fn latest_active_for(
         &self,
         email: &str,
@@ -281,7 +308,7 @@ fn map_sqlx(e: sqlx::Error) -> RepoError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mc_auth::VerificationCodePurpose;
+    use mc_auth::verification::VerificationCodePurpose;
     use sha2::{Digest, Sha256};
 
     async fn try_db() -> Option<(Db, PgPool)> {

@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use mc_core::Id;
 use mc_core::timestamp::Timestamp;
+use mc_core::Id;
 
 /// 事件类型（业务）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,8 +60,13 @@ impl EventEnvelope {
     }
 
     pub fn lagged(skipped: u64) -> Self {
-        Self::new("system", "lagged", None, serde_json::json!({"skipped": skipped}))
-            .with_type("system.lagged")
+        Self::new(
+            "system",
+            "lagged",
+            None,
+            serde_json::json!({"skipped": skipped}),
+        )
+        .with_type("system.lagged")
     }
 }
 

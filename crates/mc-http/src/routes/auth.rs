@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use mc_auth::cookie::{CookieOptions, SameSite};
 use mc_auth::session::Session;
-use mc_auth::VerificationCodePurpose;
+use mc_auth::verification::VerificationCodePurpose;
 use mc_core::Id;
 use mc_errors::Error;
 use mc_repos::verification_code::{NewVerificationCode, VerificationCodeRepo};
@@ -110,10 +110,7 @@ fn session_response(
     // 2. CSRF header —— 与 session.csrf_token 对齐；前端把它回写到
     //    X-Multica-Csrf 做 CSRF 防护（MUL-7436）。
     if let Ok(v) = HeaderValue::from_str(&session.csrf_token) {
-        headers.insert(
-            axum::http::HeaderName::from_static("x-multica-csrf"),
-            v,
-        );
+        headers.insert(axum::http::HeaderName::from_static("x-multica-csrf"), v);
     }
 
     let mut response = (status, Json(body)).into_response();
@@ -189,7 +186,9 @@ async fn send_code(
         .await
         .map_err(|e| ApiError(Error::Database(e.to_string())))?;
     if recent >= per_min {
-        return Err(ApiError(Error::RateLimited { retry_after_secs: 60 }));
+        return Err(ApiError(Error::RateLimited {
+            retry_after_secs: 60,
+        }));
     }
 
     // 生成 6 位数字 code
@@ -262,9 +261,10 @@ async fn verify_code(
         }));
     }
     if !is_six_digits(code) {
-        return Err(ApiError(Error::VerificationCodeInvalid(
-            "code must be 6 digits".into(),
-        )));
+        return Err(ApiError(Error::Validation {
+            message: "code must be 6 digits".into(),
+            details: vec![],
+        }));
     }
 
     // 校验代码 —— dev 模式下接受 `MULTICA_DEV_VERIFICATION_CODE` 万能码。
@@ -291,6 +291,15 @@ async fn verify_code(
     };
 
     if !is_dev_pass && row.is_none() {
+        // 与上游 `Handler.VerifyCode`（auth.go:388，内部 L415 调
+        // `IncrementVerificationCodeAttempts`）对齐：命中该邮箱待用验证码时累计
+        // attempts（best-effort，不影响 401 响应）。`consume` 的 SQL 只匹配
+        // `attempts < 5` 的行，累计到 5 后该行自然失效，起到暴力枚举防护作用。
+        if let Ok(Some(latest)) = repo.latest_active_for(&email, purpose).await {
+            if let Err(e) = repo.increment_attempts(latest.id).await {
+                tracing::warn!(error = %e, "increment verification attempts failed");
+            }
+        }
         return Err(ApiError(Error::VerificationCodeInvalid(
             "code invalid, expired, or already used".into(),
         )));
@@ -334,7 +343,12 @@ async fn verify_code(
         session_id: session.id.clone(),
         csrf_token: session.csrf_token.clone(),
     };
-    Ok(session_response(&state, &session, StatusCode::OK, serde_json::to_value(body).unwrap()))
+    Ok(session_response(
+        &state,
+        &session,
+        StatusCode::OK,
+        serde_json::to_value(body).unwrap(),
+    ))
 }
 
 fn email_local_part(email: &str) -> String {
@@ -350,10 +364,7 @@ pub struct LogoutResponse {
     pub message: &'static str,
 }
 
-async fn logout(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> ApiResult<Response> {
+async fn logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> ApiResult<Response> {
     // 从 cookie 拿 session_id；找不到也视为"已经登出"。
     let cookie_header = headers
         .get(axum::http::header::COOKIE)
@@ -371,8 +382,13 @@ async fn logout(
     cookie.same_site = SameSite::Lax;
     let cookie_str = cookie.render();
 
-    let mut response =
-        (StatusCode::OK, Json(LogoutResponse { message: "logged out" })).into_response();
+    let mut response = (
+        StatusCode::OK,
+        Json(LogoutResponse {
+            message: "logged out",
+        }),
+    )
+        .into_response();
     if let Ok(v) = HeaderValue::from_str(&cookie_str) {
         response.headers_mut().insert(SET_COOKIE, v);
     }
@@ -413,22 +429,21 @@ async fn refresh_session(
 ) -> ApiResult<Response> {
     let sid = match req.session_id {
         Some(s) if !s.is_empty() => s,
-        _ => return Err(ApiError(Error::Validation {
-            message: "session_id is required".into(),
-            details: vec![],
-        })),
+        _ => {
+            return Err(ApiError(Error::Validation {
+                message: "session_id is required".into(),
+                details: vec![],
+            }))
+        }
     };
 
     let session_store = state.auth.store();
-    let mut session = session_store
-        .get(&sid)
-        .await
-        .map_err(|e| match e {
-            mc_auth::session::SessionError::NotFound => {
-                ApiError(Error::Unauthorized { message: "session not found".into() })
-            }
-            mc_auth::session::SessionError::Expired => ApiError(Error::SessionExpired),
-        })?;
+    let mut session = session_store.get(&sid).await.map_err(|e| match e {
+        mc_auth::session::SessionError::NotFound => ApiError(Error::Unauthorized {
+            message: "session not found".into(),
+        }),
+        mc_auth::session::SessionError::Expired => ApiError(Error::SessionExpired),
+    })?;
 
     // 续期：touch + 延长 TTL；新 csrf_token 不再更换（MUL-7436 把 csrf 绑
     // session.id 而不是 token 字符串本身）。
@@ -499,10 +514,11 @@ mod tests {
                 csrf_header: "X-Multica-Csrf".into(),
                 dev_mode,
                 session_ttl_secs,
+                verification_code_ttl_secs: 600,
                 send_code_per_email_per_min: 5,
             },
             storage: mc_storage::Storage::new(),
-            secrets: mc_secrets::Secrets::new(Arc::new(mc_auth::DefaultSecretsBackend::in_memory())),
+            secrets: mc_secrets::Secrets::new(mc_auth::DefaultSecretsBackend::in_memory()),
             feature_flags: Arc::new(mc_feature_flags::FeatureFlagCatalog::new()),
             realtime,
             ws,
@@ -584,7 +600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verify_with_wrong_code_returns_400() {
+    async fn verify_with_wrong_code_returns_401() {
         if !require_db() {
             return;
         }
@@ -601,11 +617,11 @@ mod tests {
             )))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn verify_with_consumed_code_returns_400() {
+    async fn verify_with_consumed_code_returns_401() {
         if !require_db() {
             return;
         }
@@ -650,11 +666,11 @@ mod tests {
             )))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn verify_with_expired_code_returns_400() {
+    async fn verify_with_expired_code_returns_401() {
         if !require_db() {
             return;
         }
@@ -686,7 +702,7 @@ mod tests {
             )))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

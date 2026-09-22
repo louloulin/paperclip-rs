@@ -53,6 +53,25 @@ pub struct PatRow {
     pub created_at: DateTime<Utc>,
 }
 
+// `mc_core::Id` 尚未实现 sqlx `Decode`/`Encode`，故手写 `FromRow`（先取 `Uuid` 再转 `Id`）。
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for PatRow {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        Ok(Self {
+            id: Id::from(row.try_get::<Uuid, _>("id")?),
+            user_id: Id::from(row.try_get::<Uuid, _>("user_id")?),
+            name: row.try_get("name")?,
+            token_hash: row.try_get("token_hash")?,
+            token_last4: row.try_get("token_last4")?,
+            expires_at: row.try_get("expires_at")?,
+            last_used_at: row.try_get("last_used_at")?,
+            scopes: row.try_get("scopes")?,
+            revoked_at: row.try_get("revoked_at")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct PatRepo {
     pool: Arc<PgPool>,
@@ -60,11 +79,15 @@ pub struct PatRepo {
 
 impl PatRepo {
     pub fn new(db: Db) -> Self {
-        Self { pool: Arc::new(db.pool().clone()) }
+        Self {
+            pool: Arc::new(db.pool().clone()),
+        }
     }
 
     pub fn from_pool(pool: PgPool) -> Self {
-        Self { pool: Arc::new(pool) }
+        Self {
+            pool: Arc::new(pool),
+        }
     }
 
     fn pool(&self) -> &PgPool {
@@ -84,15 +107,21 @@ impl PatRepo {
         if n < 4 {
             raw.to_string()
         } else {
-            raw.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()
+            raw.chars()
+                .rev()
+                .take(4)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect()
         }
     }
 
     /// 插入一条新 PAT；`revoked_at = NULL`。
     pub async fn create(&self, input: NewPat) -> Result<PatRow> {
         let id = Uuid::new_v4();
-        let scopes_json = serde_json::to_value(&input.scopes)
-            .unwrap_or_else(|_| serde_json::json!([]));
+        let scopes_json =
+            serde_json::to_value(&input.scopes).unwrap_or_else(|_| serde_json::json!([]));
         let row = sqlx::query_as::<_, PatRow>(
             r#"
             INSERT INTO personal_access_token
@@ -216,14 +245,17 @@ mod tests {
     /// 找一个或创建用户（需要 `user` 表中有匹配行才能跑 FK 测试）。
     /// 测试中我们直接插入临时 user 以避免依赖外部 fixture。
     async fn ensure_user(db: &Db) -> Id {
-        let row: (Uuid,) = sqlx::query_as(
-            "INSERT INTO \"user\" (name, email) VALUES ($1, $2) RETURNING id",
-        )
-        .bind(format!("pat-test-{}", Uuid::new_v4()))
-        .bind(format!("pat-{}-{}@example.test", Uuid::new_v4(), Uuid::new_v4()))
-        .fetch_one(db.pool())
-        .await
-        .expect("insert user");
+        let row: (Uuid,) =
+            sqlx::query_as("INSERT INTO \"user\" (name, email) VALUES ($1, $2) RETURNING id")
+                .bind(format!("pat-test-{}", Uuid::new_v4()))
+                .bind(format!(
+                    "pat-{}-{}@example.test",
+                    Uuid::new_v4(),
+                    Uuid::new_v4()
+                ))
+                .fetch_one(db.pool())
+                .await
+                .expect("insert user");
         Id::from(row.0)
     }
 

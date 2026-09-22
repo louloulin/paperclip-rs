@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use mc_core::Id;
 use mc_core::timestamp::Timestamp;
+use mc_core::Id;
 
 pub mod envelope;
 pub mod handle;
@@ -28,7 +28,10 @@ pub struct WsState {
 
 impl WsState {
     pub fn new(handle: RealtimeHandle, label: &'static str) -> Self {
-        Self { handle, service_label: label }
+        Self {
+            handle,
+            service_label: label,
+        }
     }
 }
 
@@ -68,7 +71,9 @@ impl Bus {
     }
 
     pub fn subscribe(&self) -> Subscription {
-        Subscription { rx: self.tx.subscribe() }
+        Subscription {
+            rx: self.tx.subscribe(),
+        }
     }
 
     pub fn receiver_count(&self) -> usize {
@@ -77,9 +82,15 @@ impl Bus {
 }
 
 /// 全局事件总线（包装 Arc<Bus>）。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EventBus {
     inner: Arc<Bus>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::with_capacity(DEFAULT_CHANNEL_CAPACITY)
+    }
 }
 
 impl EventBus {
@@ -88,7 +99,9 @@ impl EventBus {
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        Self { inner: Arc::new(Bus::new(capacity)) }
+        Self {
+            inner: Arc::new(Bus::new(capacity)),
+        }
     }
 
     pub fn publish<E: Into<EventEnvelope>>(&self, event: E) {
@@ -124,7 +137,12 @@ mod tests {
     async fn subscribe_receives_published_event() {
         let bus = EventBus::with_capacity(8);
         let mut sub = bus.subscribe();
-        bus.publish(envelope("issue", "issue-1", None, serde_json::json!({"x":1})));
+        bus.publish(envelope(
+            "issue",
+            "issue-1",
+            None,
+            serde_json::json!({"x":1}),
+        ));
         let env = tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv())
             .await
             .expect("event arrived")

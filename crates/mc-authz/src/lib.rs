@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use mc_core::Id;
 use mc_core::workspace::WorkspaceRole;
+use mc_core::Id;
 
 /// Multica 资源类型（粗粒度）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -165,7 +165,9 @@ pub enum AuthzError {
 pub fn decide(req: &AuthorizationRequest) -> Decision {
     use Action::*;
     use Principal::*;
-    use Resource::*;
+    // 注意：不要 `use Resource::*;` —— Resource 与 Action / Principal 存在同名 variant
+    //（Comment / Agent / Channel / Plugin），glob 导入会导致 E0659 歧义与 E0408 绑定错误。
+    // 下文所有 Resource variant 均使用 `Resource::` 全路径。
 
     // 系统始终允许内部操作
     if matches!(req.principal, System) {
@@ -208,7 +210,10 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
                 _ => Decision::Deny,
             },
         },
-        Agent { agent_id, workspace_id } => {
+        Agent {
+            agent_id,
+            workspace_id,
+        } => {
             // agent 仅能操作自己的 issue / task
             if req.workspace_id == Some(workspace_id) {
                 match (req.resource, req.action) {
@@ -229,7 +234,9 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
                 Decision::Deny
             }
         }
-        Plugin { workspace_id: pid, .. } => {
+        Plugin {
+            workspace_id: pid, ..
+        } => {
             if pid.is_none() || pid == req.workspace_id {
                 match (req.resource, req.action) {
                     (Resource::Comment, Comment | Write | Read) => Decision::Allow,
@@ -245,6 +252,8 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
             (Resource::Comment, Comment | Write) => Decision::Allow,
             _ => Decision::Deny,
         },
+        // 上方 `if matches!(req.principal, System)` 已提前返回；此处补齐穷尽性。
+        System => Decision::Allow,
     }
 }
 
@@ -314,11 +323,7 @@ mod tests {
 
     #[test]
     fn anonymous_is_denied_business_resources() {
-        let req = AuthorizationRequest::new(
-            Principal::Anonymous,
-            Resource::Issue,
-            Action::Read,
-        );
+        let req = AuthorizationRequest::new(Principal::Anonymous, Resource::Issue, Action::Read);
         assert_eq!(decide(&req), Decision::Deny);
     }
 
@@ -389,11 +394,19 @@ mod tests {
             role: WorkspaceRole::Guest,
         };
         assert_eq!(
-            decide(&AuthorizationRequest::new(user, Resource::Issue, Action::Read)),
+            decide(&AuthorizationRequest::new(
+                user,
+                Resource::Issue,
+                Action::Read
+            )),
             Decision::Allow
         );
         assert_eq!(
-            decide(&AuthorizationRequest::new(user, Resource::Issue, Action::Write)),
+            decide(&AuthorizationRequest::new(
+                user,
+                Resource::Issue,
+                Action::Write
+            )),
             Decision::Deny
         );
     }
@@ -420,7 +433,8 @@ mod tests {
 
     #[test]
     fn authorize_returns_err_on_deny() {
-        let req = AuthorizationRequest::new(Principal::Anonymous, Resource::Workspace, Action::Admin);
+        let req =
+            AuthorizationRequest::new(Principal::Anonymous, Resource::Workspace, Action::Admin);
         assert!(authorize(&req).is_err());
     }
 }

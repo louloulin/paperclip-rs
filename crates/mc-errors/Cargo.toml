@@ -9,6 +9,7 @@ description = "Multica 统一错误类型与 HTTP 状态码映射"
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -22,6 +22,8 @@ pub struct ConfigSnapshot {
     pub dev_mode: bool,
     /// Session TTL（秒）；由 `/api/auth/refresh` 与 `verify-code` 使用。
     pub session_ttl_secs: u64,
+    /// 验证码 TTL（秒）；`send-code` 签发时写入 `expires_at`。
+    pub verification_code_ttl_secs: u64,
     /// `send-code` 速率限制（每邮箱每分钟）。
     pub send_code_per_email_per_min: u32,
 }
@@ -64,13 +66,19 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: Db, runtime: RuntimeHandles, config: ConfigSnapshot, realtime: RealtimeHandle, ws: Arc<WsState>) -> Self {
+    pub fn new(
+        db: Db,
+        runtime: RuntimeHandles,
+        config: ConfigSnapshot,
+        realtime: RealtimeHandle,
+        ws: Arc<WsState>,
+    ) -> Self {
         Self {
             db,
             runtime,
             config,
             storage: Storage::new(),
-            secrets: Secrets::new(Arc::new(mc_auth::DefaultSecretsBackend::in_memory())),
+            secrets: Secrets::new(mc_auth::DefaultSecretsBackend::in_memory()),
             feature_flags: Arc::new(FeatureFlagCatalog::new()),
             realtime,
             ws,
@@ -91,6 +99,7 @@ impl Default for ConfigSnapshot {
             csrf_header: "X-Multica-Csrf".into(),
             dev_mode: true,
             session_ttl_secs: 60 * 60 * 24 * 30,
+            verification_code_ttl_secs: 600,
             send_code_per_email_per_min: 5,
         }
     }

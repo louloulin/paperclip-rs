@@ -36,15 +36,12 @@ pub struct MigrationStep {
 
 impl MigrationStep {
     pub fn from_file(path: &Path) -> std::io::Result<Self> {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "migration path has no filename",
-                )
-            })?;
+        let filename = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "migration path has no filename",
+            )
+        })?;
         let (version, name) = parse_filename(filename).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -214,6 +211,9 @@ impl Migrator {
 fn split_sql_statements(input: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut buf = String::new();
+    // buf 中是否已经出现过真正的 SQL（非纯注释 / 纯空白），
+    // 用于避免把尾部仅剩的 `-- ...` 注释当成一条独立语句。
+    let mut buf_has_sql = false;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut in_string = false;
@@ -239,6 +239,7 @@ fn split_sql_statements(input: &str) -> Vec<String> {
         }
         if in_dollar_quote {
             buf.push(c);
+            buf_has_sql = true;
             if c == '$' {
                 in_dollar_quote = false;
             }
@@ -246,6 +247,7 @@ fn split_sql_statements(input: &str) -> Vec<String> {
         }
         if in_string {
             buf.push(c);
+            buf_has_sql = true;
             if c == '\\' {
                 if let Some(next) = iter.next() {
                     buf.push(next);
@@ -271,20 +273,26 @@ fn split_sql_statements(input: &str) -> Vec<String> {
             in_string = true;
             string_quote = c;
             buf.push(c);
+            buf_has_sql = true;
             continue;
         }
         if c == '$' {
             in_dollar_quote = true;
             buf.push(c);
+            buf_has_sql = true;
             continue;
         }
         if c == ';' {
             out.push(std::mem::take(&mut buf));
+            buf_has_sql = false;
             continue;
         }
         buf.push(c);
+        if !c.is_whitespace() {
+            buf_has_sql = true;
+        }
     }
-    if !buf.trim().is_empty() {
+    if buf_has_sql && !buf.trim().is_empty() {
         out.push(buf);
     }
     out
