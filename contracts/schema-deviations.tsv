@@ -1,0 +1,65 @@
+# contracts/schema-deviations.tsv — every difference between this repo's schema and
+# contracts/upstream-schema.json, registered with a reason and the issue that closes it.
+#
+# scripts/schema_drift.py exits 0 only when every difference it finds is registered here.
+# Columns (tab separated):
+#   对象         an object key, or a glob such as `issue.*` for one table's columns
+#   类型         table | column | constraint | index | function | trigger | type | view |
+#                extension | statement
+#   差异摘要     `missing:`, `extra:`, `differs:` or `apply-exception:` followed by what was
+#                compared; the tool checks the prefix and reports the rest verbatim
+#   原因         why the difference is acceptable — not what it looks like
+#   承接 issue   the issue that must close it; `W0-B2` is the plan1 P4 slice that switches the
+#                runtime to the vendored upstream migration set
+#
+# 原因 and 承接 issue are mandatory and must be filled in by a person.  The skeleton rows from
+# `scripts/schema_drift.py --emit-deviations` leave them blank on purpose, so pasting that
+# output back can never satisfy the check.
+#
+# apply-exception rows are not hand-measured at all: they mirror
+# contracts/upstream-apply-exceptions.tsv (generated, one row per skipped statement).  A row
+# of that category with no matching skip, or a skip with no row, fails the check.
+
+# 对象	类型	差异摘要	原因	承接 issue
+
+#
+# §1 本 issue 点名的三类缺失（D1 源头）—— 单独成行，不被下面的批量行吞掉
+#
+
+issue_label	table	missing: 上游 `001_init.up.sql` 建、本仓 `0001_init.up.sql` 未建	plan1 D1 的事故源头。上游 `001_init.up.sql` 建了 issue_label 与 issue_to_label，本仓 `0001_init.up.sql`（数字版本同为 1，曾被当成同一份）没有这两张表 ⇒ 文档写「已有」而运行时没有，label 相关路由无处落。W0-B2 采用上游迁移集合后消除。	LUM-1387
+issue_to_label	table	missing: 上游 `001_init.up.sql` 建、本仓 `0001_init.up.sql` 未建	同 issue_label：label 的 join 表（issue_id + label_id，PRIMARY KEY 两者）。本仓 0001 里 `grep -i label migrations/0001-0004` 为空 ⇒ 9 条 label/properties 路由无法实现。W0-B2 采用上游集合后消除。	LUM-1387
+issue_property	table	missing: 上游 `191_issue_properties.up.sql` 建、本仓未建（表名是单数）	上游 head 的表名是 issue_property（单数）——plan1/issue 里写的 `issue_properties` 是 pg 表名误记，登记按脚本实测输出写。本仓有的是 `issue.properties` JSONB 列（`migrations/0001_init.up.sql:153`），且与上游 `issue.properties` 定义一致（jsonb / NOT NULL / DEFAULT '{}'::jsonb ⇒ 不在 differs 里）⇒ 缺的是表，不是列。W0-B2 采用上游集合后消除。	LUM-1387
+#
+# §2 本仓自造、上游 head 没有的两张表 —— 单独成行
+#
+
+plugin	table	extra: 本仓自造、上游 head 没有	上游 head 的插件表是 plugin_package / plugin_package_version / plugin_package_file / plugin_invocation / plugin_storage / plugin_secret / plugin_hook_schedule；v1 的 plugin_identity / plugin_release / plugin_installation / plugin_grant / plugin_binding 已被 `344_plugin_v2_reset.up.sql` 退役。本仓 `0001_init.up.sql` 自造了简化的 plugin 表，crates/ 里没有任何 SQL 读它。W0-B2 退役本地 0001–0004 时一并消失。	LUM-1387
+wakeup	table	extra: 本仓自造、上游 head 没有	上游 head 是 issue_wakeup + issue_wakeup_receipt（`509_issue_wakeup.up.sql`），本仓自造 wakeup 表。注意 `crates/mc-migrate/src/lib.rs::DEFAULT_REQUIRED_TABLES` 里仍列着 "wakeup" ⇒ W0-B2 切表集时必须同步改成 issue_wakeup / issue_wakeup_receipt，否则 mc-migrate 的 verify 会在切换后立刻红灯。	LUM-1387
+#
+# §3 首次运行 767 处差异的批量登记（按 差异类别 × 对象类型）；逐条计数与清单见 docs/25-W0-SCHEMA-DRIFT.md §5
+#
+
+*	table	missing: 上游 head 有、本仓 `0001`–`0004` 未建（共 90 张，含上面单独登记的 3 张）	本仓 4 个手写迁移只建 28 张表，其中 26 张与上游 head 同名 ⇒ 覆盖率 26/116 ≈ 22%。这些表覆盖 M2 之后全部波次（channel/lark/dingtalk/github/vcs/autopilot/usage/issue_view/skill_file…）。登记的是「还没建」，不是「决定不建」；W0-B2 采用上游 560 个迁移后全部建出。	LUM-1387
+*	column	missing: 两侧都有的表上本仓缺的列（共 167 列 / 22 张表）	本仓手写迁移只复刻了上游某一早期版本的列子集，上游后续迁移持续加列（agent_task_queue 46、agent 13、runtime_profile 11、chat_message 11、autopilot 10、chat_session 8、agent_runtime 7、channel_installation 7、comment 7、inbox_item 7…）。这些列在上游由 `00x`–`5xx` 之间的迁移逐步加出，本仓没有任何迁移加了它们。W0-B2 采用上游集合后消除。	LUM-1387
+*	constraint	missing: 两侧都有的表上本仓缺的约束（共 56 / 18 张表）	上游在 head 之前陆续加的 PK/UNIQUE/CHECK/FK（issue 10、agent 8、agent_task_queue 6、issue_status 6、autopilot 4、runtime_profile 3 …），本仓手写形态里没有。W0-B2 采用上游集合后消除。	LUM-1387
+*	index	missing: 上游 head 有、本仓没有的独立索引（共 110）	上游索引在本仓基本全缺（本仓只有手写的二十来个）。逐条清单见 docs/25 §5.2。多数是查询路径索引（claim candidates、keyset 分页、trgm/bigm 搜索、dirty-hourly 队列），功能上不影响表结构，但性能与上游不等价。W0-B2 采用上游集合后消除。	LUM-1387
+*	function	missing: 上游 head 有、本仓没有的函数（共 26）	上游的触发器函数与辅助函数（capture_*_wakeup 系列、rollup_task_usage_hourly、issue_status_category、lock_task_owner_rows、task_usage_hour_bucket…），本仓一个都没有。其中 wakeup 相关函数依赖 issue_wakeup 表，必须与表一起落地。W0-B2 采用上游集合后消除。	LUM-1387
+*	trigger	missing: 上游 head 有、本仓没有的触发器（共 11）	触发器随函数一起缺（agent_task_queue / comment / issue / issue_reaction / comment_reaction 上的 capture_*_wakeup 与 trg_*_dirty_hourly）。语义上是「写表时自动入队」的行为差异，不只是 DDL 差异 ⇒ W0-B2 切换时必须连同运行时行为一起核对。	LUM-1387
+*	column	extra: 本仓有、上游 head 没有的列（共 86 / 21 张表）	本仓 `0001`–`0004` 手写形态里的列（autopilot 9、agent_task_queue 7、workspace_invitation 7、agent_runtime 6、chat_message 6、skill 6、issue 5 …）：一部分是上游后来改名/搬迁的早期列名，一部分是本地新增。依赖这些列的本仓 SQL（`crates/**`）属于 W0-B2 的改动范围，本切片刻意不碰；本行只登记「存在偏离」与承接 issue。	LUM-1387
+*	constraint	extra: 本仓有、上游 head 没有的约束（共 31 / 17 张表）	本仓自造命名的约束（agent.agent_workspace_id_name_key、verification_code.verification_code_purpose_check、workspace_invitation.workspace_invitation_token_key …），上游 head 用别的约束或别的名字表达同一不变量。W0-B2 以上游定义为准重定，重复的本地约束随之退役。	LUM-1387
+*	index	extra: 本仓有、上游 head 没有的索引（共 21）	本仓手写命名的索引，其中若干与上游只差命名（issue_project_idx vs 上游 idx_issue_project、idx_share_link_code vs workspace_share_link_code_uidx、comment_issue_idx vs idx_comment_issue_keyset），另有本地自造的（idx_pat_user_active、idx_verification_code_user…）。W0-B2 采用上游集合后消除。	LUM-1387
+*	column	differs: 同名列定义不同（共 138 / 23 张表，其中 111 处只是列序、27 处是真实差异）	111 处只有 attnum（同列、同类型、同默认值、同可空性，只是排在不同位置——上游后续 ALTER 加列造成的列序差异）；27 处是真实差异：类型 text→uuid（comment.author_id、issue.creator_id、issue.assignee_id、inbox_item.actor_id、issue_reaction.actor_id、comment_reaction.actor_id）、integer→bigint（chat_message.elapsed_ms）、jsonb→text（user.starter_content_state）、text→character varying(20)（user.language），以及 DEFAULT/NOT NULL（agent.description、agent.visibility 默认值 'workspace'→'private'、personal_access_token.expires_at 可空性、workspace_invitation.expires_at 默认值…）。逐条见 docs/25 §5.3。W0-B2 以上游定义为准（含列序）；对运行时可见的类型变更由 W0-B2 连同 mc-repos 的 SQL 一起处置。	LUM-1387
+*	constraint	differs: 同名约束定义不同（共 20 / 15 张表）	本仓手写的是上游早期版本的同一约束（CHECK 表达式或 FK 目标不同），例如 issue_status.issue_status_category_check、member.member_role_check、comment.comment_author_type_check、runtime_profile.runtime_profile_pkey、issue_subscriber.* 的两个 CHECK、workspace_invitation.* 的两个 CHECK。W0-B2 以上游定义为准。	LUM-1387
+#
+# §4 upstream 快照构建时被显式跳过的 9 条语句（环境缺扩展）—— 与 contracts/upstream-apply-exceptions.tsv 一一对应，键必须逐字相同（脚本硬校验：跳过的语句没有登记 → 红灯，反之亦然）
+#
+
+pg_bigm	extension	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	本机 PostgreSQL 16 没有 pg_bigm（上游生产库装了它），`032_issue_search_index.up.sql:3` 的 CREATE EXTENSION 被显式跳过并记入 contracts/upstream-apply-exceptions.tsv。这是本机环境限制，不是上游缺陷：装上 pg_bigm 后重跑 scripts/build_upstream_schema.py 即消失。在缺失期间，依赖它的 6 个 bigram 索引一并缺失（下一批 apply-exception 行）。	LUM-1386
+idx_issue_title_bigm	index	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	`032_issue_search_index.up.sql:13` 的 CREATE INDEX ... USING gin (title gin_bigm_ops) 需要 pg_bigm，被显式跳过。上游 issue 标题的 bigram 搜索索引在本机不可复现 ⇒ 上游快照里没有它，本仓也不会；不影响表/列契约。	LUM-1386
+idx_issue_description_bigm	index	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	同 idx_issue_title_bigm：`032_issue_search_index.up.sql:13` 的 pg_bigm 索引，被显式跳过（本机无该扩展，不影响表/列契约）。	LUM-1386
+idx_comment_content_bigm	index	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	`033_comment_search_index.up.sql:3` 的 pg_bigm 索引，被显式跳过（本机无该扩展，不影响表/列契约）。	LUM-1386
+idx_project_title_bigm	index	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	`039_project_search_index.up.sql:2` 的 pg_bigm 索引，被显式跳过（本机无该扩展，不影响表/列契约）。	LUM-1386
+idx_project_description_bigm	index	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	同 idx_project_title_bigm：`039_project_search_index.up.sql:2` 的 pg_bigm 索引，被显式跳过。	LUM-1386
+pg_cron	extension	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	本机 PostgreSQL 16 没有 pg_cron，`076_task_usage_pgcron_extension.up.sql:24` 的 CREATE EXTENSION 被显式跳过并记录（上游自己也是用 DO ... EXCEPTION 兜底，只是它把 skip 吞成 NOTICE）。定时 rollup 的调度在本仓由平台侧承担，不落 PG。	LUM-1386
+103_drop_legacy_daily_rollups.up.sql:101	statement	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	`103_drop_legacy_daily_rollups.up.sql:101` 这段 DO 块只在 pg_cron 存在时调用 cron.unschedule(...)，本机无 pg_cron ⇒ 语句被解析为不可执行并整体跳过（记 `statement:<file>:<line>` 兜底键，防止跳过语句逃出本表）。它不建任何对象，只清理上游已退役的定时任务 ⇒ 对 head schema 无影响。	LUM-1386
+idx_issue_properties_bigm	index	apply-exception: 上游会建、本机构建快照时无法执行（见 contracts/upstream-apply-exceptions.tsv）	`446_issue_properties_bigm_index.up.sql:19` 的 CREATE INDEX CONCURRENTLY ... gin_bigm_ops 需要 pg_bigm，被显式跳过。注意它同时是 CONCURRENTLY 语句：在事务里跑不了，本仓对它的处理与 pg_bigm 缺失同为「记录 + 跳过」。	LUM-1386
