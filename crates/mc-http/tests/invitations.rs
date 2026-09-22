@@ -19,16 +19,18 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use mc_core::actor::ActorRegistry;
+use mc_core::workspace::WorkspaceRole;
 use mc_core::Id;
 use mc_db::Db;
 use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
+use mc_repos::invitation::{InvitationRepo, NewInvitation};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 const USER_ID_HEADER: &str = "x-multica-user-id";
 
-async fn build_state_with_db(db: Db) -> Arc<AppState> {
+fn build_state_with_db(db: Db) -> Arc<AppState> {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
@@ -43,6 +45,7 @@ async fn build_state_with_db(db: Db) -> Arc<AppState> {
             api_key_header: "X-Multica-Api-Key".into(),
             csrf_header: "X-Multica-Csrf".into(),
             invitation_per_workspace_per_hour: Some(50),
+            ..Default::default()
         },
         realtime,
         ws,
@@ -101,7 +104,7 @@ async fn cleanup(pool: &sqlx::PgPool, workspace_id: Uuid, inviter: Uuid) {
         .await;
 }
 
-/// 1) admin 邀请 → list_my_invitations 收到。
+/// 1) admin 邀请 → `list_my_invitations` 收到。
 #[tokio::test]
 #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
 async fn admin_invite_then_list_my_invitations() {
@@ -112,8 +115,8 @@ async fn admin_invite_then_list_my_invitations() {
 
     let (ws, inviter) = seed_admin_and_workspace(&pool).await;
     let inviter_id = Id(inviter);
-    let state = build_state_with_db(db).await;
-    let app = mc_http::routes::router().with_state(state.clone());
+    let state = build_state_with_db(db);
+    let app = mc_http::routes::router(state.clone()).with_state(state.clone());
 
     // POST 邀请
     let req = Request::builder()
@@ -174,8 +177,8 @@ async fn accept_invitation_becomes_member() {
 
     let inviter_id = Id(inviter);
     let recipient_id = Id(recipient);
-    let state = build_state_with_db(db).await;
-    let app = mc_http::routes::router().with_state(state.clone());
+    let state = build_state_with_db(db);
+    let app = mc_http::routes::router(state.clone()).with_state(state.clone());
 
     // admin invite recipient
     let req = Request::builder()
@@ -206,7 +209,7 @@ async fn accept_invitation_becomes_member() {
     let body = body_json(res.into_body()).await;
     assert_eq!(body["member"]["user_id"], recipient_id.as_string());
     assert_eq!(body["member"]["workspace_id"], ws.to_string());
-    assert!(body["already_accepted"] == false);
+    assert_eq!(body["already_accepted"].as_bool(), Some(false));
 
     // 校验 member 表里真的有这条
     let count: i64 = sqlx::query_scalar(
@@ -237,8 +240,6 @@ async fn rate_limit_rejects_extra_invite() {
     let (ws, inviter) = seed_admin_and_workspace(&pool).await;
 
     // 直接走 repo 层插 50 条
-    use mc_core::workspace::WorkspaceRole;
-    use mc_repos::invitation::{InvitationRepo, NewInvitation};
     let repo = InvitationRepo::new(&db);
     let inviter_id = Id(inviter);
     for i in 0..50 {
@@ -253,8 +254,8 @@ async fn rate_limit_rejects_extra_invite() {
         .expect("seed invite");
     }
 
-    let state = build_state_with_db(db).await;
-    let app = mc_http::routes::router().with_state(state.clone());
+    let state = build_state_with_db(db);
+    let app = mc_http::routes::router(state.clone()).with_state(state.clone());
 
     let req = Request::builder()
         .method("POST")

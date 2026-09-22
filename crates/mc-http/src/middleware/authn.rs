@@ -241,8 +241,8 @@ pub fn require_role_guard(
 
 /// `require_role(roles)`：验证当前用户在该 workspace 的 role 属于 `roles`。
 ///
-/// 用法（配合 `Router::route_layer`）：
-/// ```ignore
+/// 用法（配合 `Router::route_layer`，片段非独立可编译单元，故用 `text`）：
+/// ```text
 /// .route_layer(require_role(state.clone(), &[WorkspaceRole::Owner]))
 /// ```
 pub fn require_role(app: Arc<AppState>, roles: &[WorkspaceRole]) -> RoleLayer {

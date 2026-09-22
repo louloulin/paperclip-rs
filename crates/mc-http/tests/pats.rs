@@ -10,7 +10,6 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use mc_auth::PatStore;
 use mc_core::actor::ActorRegistry;
 use mc_core::Id;
 use mc_db::Db;
@@ -20,7 +19,7 @@ use tower::ServiceExt;
 
 const USER_ID_HEADER: &str = "x-multica-user-id";
 
-async fn build_state() -> Arc<AppState> {
+fn build_state() -> Arc<AppState> {
     let realtime = RealtimeHandle::start(8);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs-test"));
     let actors = ActorRegistry::new();
@@ -36,6 +35,7 @@ async fn build_state() -> Arc<AppState> {
             api_key_header: "X-Multica-Api-Key".into(),
             csrf_header: "X-Multica-Csrf".into(),
             invitation_per_workspace_per_hour: Some(50),
+            ..Default::default()
         },
         realtime,
         ws,
@@ -50,8 +50,8 @@ async fn body_json(body: Body) -> serde_json::Value {
 
 #[tokio::test]
 async fn create_and_revoke_pat_round_trip() {
-    let state = build_state().await;
-    let app = mc_http::routes::router().with_state(state.clone());
+    let state = build_state();
+    let app = mc_http::routes::router(state.clone()).with_state(state.clone());
 
     let user_id = Id::new();
     let create_body = serde_json::json!({
@@ -118,8 +118,8 @@ async fn create_and_revoke_pat_round_trip() {
 
 #[tokio::test]
 async fn create_pat_rejects_empty_name() {
-    let state = build_state().await;
-    let app = mc_http::routes::router().with_state(state);
+    let state = build_state();
+    let app = mc_http::routes::router(state.clone()).with_state(state);
 
     let user_id = Id::new();
     let req = Request::builder()
@@ -135,8 +135,8 @@ async fn create_pat_rejects_empty_name() {
 
 #[tokio::test]
 async fn missing_user_header_returns_401() {
-    let state = build_state().await;
-    let app = mc_http::routes::router().with_state(state);
+    let state = build_state();
+    let app = mc_http::routes::router(state.clone()).with_state(state);
 
     let req = Request::builder()
         .method("GET")
