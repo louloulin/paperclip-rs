@@ -65,6 +65,12 @@ pub struct AppState {
     pub realtime: RealtimeHandle,
     pub ws: Arc<WsState>,
     pub auth: mc_auth::SessionStoreContainer,
+    /// PAT 存储容器（`mc_auth` 内存实现）。
+    ///
+    /// **`/api/tokens*` 生产路径不走它**：`routes/pats.rs` 直连
+    /// `mc_repos::pat::PatRepo`（`personal_access_token` 表，M1-F / LUM-1375）。
+    /// 保留作为无库场景的 fallback，眼下仍被 `POST /api/cli-token`
+    /// （`routes/auth.rs`）使用 —— 该路由与本 store 的收敛登记在 `docs/17` R9。
     pub pat: mc_auth::PatStoreContainer,
     pub verification: mc_auth::VerificationStoreContainer,
 }

@@ -10,9 +10,11 @@
 //! | 4 | PAT 路径偏离（`/api/me/pats` → `/api/tokens`） | `tokens_*` |
 //! | 5 | 多出 `POST /api/auth/{login,session}` 幽灵占位 | `ghost_auth_placeholders_are_gone` |
 //!
-//! PAT 用例走完整 axum 栈但不依赖数据库（`InMemoryPatStore`），因此**不加**
-//! `#[ignore]`；workspace/member 用例需要真实 PG，通过 `MULTICA_TEST_DATABASE_URL`
-//! 触发，未设置时静默 skip。
+//! PAT 用例**同样需要真实 PG**：M1-F（LUM-1375）起 `/api/tokens*` 直连
+//! `personal_access_token` 表（`mc_repos::pat::PatRepo`），不再走 `InMemoryPatStore`，
+//! 所以它们和 workspace/member 用例一样标 `#[ignore]` + `MULTICA_TEST_DATABASE_URL`。
+//! 不需要 DB 的 PAT 契约守卫（401 / 400 / 非法 id 404 / 迁移头）在
+//! `tests/pats.rs` 里。
 //!
 //! 运行示例：
 //! ```text
@@ -101,15 +103,33 @@ fn empty_req(method: &str, uri: &str, auth: (&str, &str)) -> Request<Body> {
         .unwrap()
 }
 
+/// `seed()` + skip-on-missing-DB + 组装 app。标识符由调用点传入
+/// （`macro_rules` 宏的卫生性：宏内新引入的 `let` 名对调用点不可见）。
+///
+/// 定义必须**在首个调用点之前**（`macro_rules!` 按文本顺序生效），PAT 与
+/// workspace/member 两类 DB 用例共用它。
+macro_rules! seeded {
+    ($fx:ident, $app:ident, $name:ident) => {
+        let Some($fx) = seed().await else {
+            eprintln!(
+                "skipping {}: set MULTICA_TEST_DATABASE_URL",
+                stringify!($name)
+            );
+            return;
+        };
+        let $app = $fx.app();
+    };
+}
+
 // ===========================================================================
-// PAT：`/api/tokens`（无 DB）
+// PAT：`/api/tokens`（需要真实 PG，M1-F 起走 `personal_access_token` 表）
 // ===========================================================================
 
 #[tokio::test]
+#[ignore = "requires MULTICA_TEST_DATABASE_URL"]
 async fn tokens_create_list_revoke_round_trip() {
-    let app = app(Db::placeholder());
-    let user = Id::new();
-    let auth = (USER_HEADER, user.as_string());
+    seeded!(fx, app, tokens_create_list_revoke_round_trip);
+    let auth = (USER_HEADER, Id(fx.owner).as_string());
 
     // create
     let res = app
@@ -159,13 +179,15 @@ async fn tokens_create_list_revoke_round_trip() {
         .unwrap();
     let body = body_json(res.into_body()).await;
     assert!(body.as_array().expect("array").is_empty());
+
+    fx.cleanup().await;
 }
 
 #[tokio::test]
+#[ignore = "requires MULTICA_TEST_DATABASE_URL"]
 async fn tokens_create_accepts_upstream_expires_in_days() {
-    let app = app(Db::placeholder());
-    let user = Id::new();
-    let auth = (USER_HEADER, user.as_string());
+    seeded!(fx, app, tokens_create_accepts_upstream_expires_in_days);
+    let auth = (USER_HEADER, Id(fx.owner).as_string());
 
     let res = app
         .clone()
@@ -188,13 +210,19 @@ async fn tokens_create_accepts_upstream_expires_in_days() {
         lifetime < chrono::Duration::hours(25),
         "expires_in_days ignored: lifetime={lifetime}"
     );
+
+    fx.cleanup().await;
 }
 
 #[tokio::test]
+#[ignore = "requires MULTICA_TEST_DATABASE_URL"]
 async fn tokens_renew_inside_window_extends_and_outside_is_noop() {
-    let app = app(Db::placeholder());
-    let user = Id::new();
-    let auth = (USER_HEADER, user.as_string());
+    seeded!(
+        fx,
+        app,
+        tokens_renew_inside_window_extends_and_outside_is_noop
+    );
+    let auth = (USER_HEADER, Id(fx.owner).as_string());
 
     // 1 天 TTL ⇒ 落在上游 7 天续期窗口内 ⇒ renewed=true
     let fresh = create_pat(
@@ -256,6 +284,8 @@ async fn tokens_renew_inside_window_extends_and_outside_is_noop() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    fx.cleanup().await;
 }
 
 async fn create_pat(app: &Router, auth: (&str, String), body: Value) -> String {
@@ -277,10 +307,10 @@ async fn create_pat(app: &Router, auth: (&str, String), body: Value) -> String {
 }
 
 #[tokio::test]
+#[ignore = "requires MULTICA_TEST_DATABASE_URL"]
 async fn legacy_me_pats_still_works_and_is_marked_deprecated() {
-    let app = app(Db::placeholder());
-    let user = Id::new();
-    let auth = (USER_HEADER, user.as_string());
+    seeded!(fx, app, legacy_me_pats_still_works_and_is_marked_deprecated);
+    let auth = (USER_HEADER, Id(fx.owner).as_string());
 
     let res = app
         .clone()
@@ -305,6 +335,8 @@ async fn legacy_me_pats_still_works_and_is_marked_deprecated() {
         .await
         .unwrap();
     assert!(res.headers().get("deprecation").is_none());
+
+    fx.cleanup().await;
 }
 
 // ===========================================================================
@@ -439,21 +471,8 @@ async fn seed() -> Option<Fixture> {
     })
 }
 
-/// `seed()` + skip-on-missing-DB + 组装 app。标识符由调用点传入
-/// （`macro_rules` 宏的卫生性：宏内新引入的 `let` 名对调用点不可见）。
-macro_rules! seeded {
-    ($fx:ident, $app:ident, $name:ident) => {
-        let Some($fx) = seed().await else {
-            eprintln!(
-                "skipping {}: set MULTICA_TEST_DATABASE_URL",
-                stringify!($name)
-            );
-            return;
-        };
-        let $app = $fx.app();
-    };
-}
-
+/// `seed()` + skip-on-missing-DB + 组装 app —— 见文件上方的 `seeded!` 定义。
+///
 /// 1) `PUT /api/workspaces/{id}`（上游 router.go:1699，与 PATCH 同 handler）。
 #[tokio::test]
 #[ignore = "requires MULTICA_TEST_DATABASE_URL"]
