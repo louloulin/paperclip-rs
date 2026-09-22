@@ -199,3 +199,31 @@ M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
   §4 第 2 条举的 M0 占位反例（`/api/workspaces/{id}`、`/api/issues/{id}`）已不存在——
   workspace 占位被 M1-A 真实路由替换，`/api/issues`、`/api/issues/{id}`、`/api/comments`、`/api/inbox`
   占位由 M1-D 删除（M2 切片**无需**再删占位行）。
+
+---
+
+## 6. 切片验收门禁增补 + 分支实况（2026-09-22 19:00 CST，LUM-1373 cycle 实测）
+
+### 6.1 `cargo fmt --all --check` 是必须跑的一道门禁（M2-C 漏了）
+
+独立 checkout 实测：base **`69e9f4b` 的 `cargo fmt --all --check` = exit 1，54 处差异**，
+全部落在 M2-C 的 5 个文件（`tests/inbox.rs` 27、`routes/inbox.rs` 11、`mc-repos/inbox.rs` 8、
+`mc-repos/subscriber.rs` 7、`routes/subscribers.rs` 1）——即 **M2-C 是以 fmt 不干净的形态并入 base 的**。
+M1-E（LUM-1362）以 `9ec5b56 chore(fmt)` 补齐，该 revision `fmt --check` = exit 0，且 `git diff -w` 证明
+其差异仅为 rustfmt 换行/尾逗号，无逻辑改动。
+
+**规程**：§2 各切片与集成切片 LUM-1354 的验收必须包含 `cargo fmt --all --check`；
+M2-A / M2-B 在提交前先跑一次，不要把这个欠账留给下一个切片（这次是 M1-E 替 M2-C 还的）。
+
+### 6.2 分支名实况（计划名 ≠ 实际名）
+
+实测：M2-B（LUM-1350）落在 `multica repo checkout` 自动生成的 `agent/devbox5/28f8edc92edd` 上，
+**不是** §2 写的 `feat/multica-rs-m2b-comment`。M1-E / M2-A 用的分别是
+`feat/multica-rs-m1e-contract-gaps` / `feat/multica-rs-m2a-issue`（符合约定）。
+集成方（LUM-1354）不要去按计划名找分支，先 `git branch --show-current` 核工作区、
+`git log --oneline origin/feat/multica-rs-initial..<分支>` 核提交。
+
+### 6.3 集成手册
+
+跨切片冲突矩阵、五道门禁、重复路由静态扫查、合并顺序与冲突预案、blobby `git grep` 环境警示，
+全部整理在 **`docs/21-M2-INTEGRATION-RECIPE.md`**（19:00 cycle 实测快照），集成前先读它。
