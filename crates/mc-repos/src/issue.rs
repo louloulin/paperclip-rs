@@ -55,7 +55,9 @@ pub const CHILDREN_PARENTS_MAX: usize = 200;
 const NUMBER_ALLOC_RETRIES: usize = 4;
 
 /// `issue` 表全列（所有 `SELECT` 共用，避免列顺序漂移）。
-const ISSUE_COLUMNS: &str = "id, workspace_id, number, identifier, title, description, status, \
+///
+/// M2-D 起 `pub(crate)`：`crate::issue_table` 的 `/rows` 查询复用同一份列清单。
+pub(crate) const ISSUE_COLUMNS: &str = "id, workspace_id, number, identifier, title, description, status, \
      status_name, priority, assignee_type, assignee_id, creator_type, creator_id, \
      parent_issue_id, project_id, position, stage, start_date, due_date, last_activity_at, \
      revision, metadata, properties, triage_state, origin, origin_task_id, source_context_id, \
