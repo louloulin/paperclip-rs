@@ -146,9 +146,10 @@ Overlapping method route. Handler for `GET /api/agents` already exists
 
 1. **W3a 三片交付后**（按 LUM-1421 的 octopus merge 先例一次落底）⇒ 空出 3 个并发位。
 2. 空出后**第一位给 LUM-1387（独占）**；另两位给 LUM-1423（只碰 `routes/issues*`，与 1387 不重叠）+ 可选的 docs-only 片。
-3. LUM-1387 合入后：落 §3 的 anchor 预删（若 1387 顺带做了更好）→ 晋升 M3-4/5/6 三片（**issue 已按本文件预建**：M3-4 = **LUM-1427**、M3-5 = **LUM-1428**、M3-6 = **LUM-1429**，均为 `backlog`、已挂 LUM-1334、已含路由清单/写集/禁区/晋升条件；晋升 = `multica issue status <id> todo`）。
-4. M3-1 + M3-3 合入后才谈 W3c（M3-7 / M3-8）。
-5. **LUM-1370（M2-E）的正文需要改** —— 见 §7.1。
+3. **§3 的 anchor 预删 —— 已由 03:30 cycle 落底**（commit `8895abe`，见 §11）：`mount.rs`、⑦ 基线、⑨ 快照三个共享文件已收归 base，**不必再等 LUM-1387**。
+4. **LUM-1387 合入后**：合入前先复验 base 已前进（`b0ec5ef` → `a09789d` → `8895abe`），再 `multica issue status <id> todo` 晋升 M3-4/5/6 三片（**issue 已按本文件预建**：M3-4 = **LUM-1427**、M3-5 = **LUM-1428**、M3-6 = **LUM-1429**，均为 `backlog`、已挂 LUM-1334、已含路由清单/写集/禁区/晋升条件）。
+5. M3-1 + M3-3 合入后才谈 W3c（M3-7 / M3-8）；其预飞片 = **LUM-1437**（03:30 cycle 派发，产 `docs/37-M3-W3C-PREFLIGHT.md` + 预建 backlog）。
+6. **LUM-1370（M2-E）的正文需要改** —— 见 §7.1。
 
 ### 7.1 LUM-1370「新增 `0005_labels_and_properties.up.sql`」的前提已失效（重要更正）
 
@@ -212,6 +213,35 @@ wc -l crates/mc-http/src/routes/issues.rs crates/mc-http/tests/issues.rs        
 
 ### 10.2 本 cycle 未做（边界）
 
-- **§3 的 anchor 预删仍未落**（`mount.rs` 两条 M0 占位 + ⑦ 基线 + ⑨ 快照）：配方未变，留给 LUM-1387 合入后的 cycle。
+- **§3 的 anchor 预删仍未落**（`mount.rs` 两条 M0 占位 + ⑦ 基线 + ⑨ 快照）：配方未变，留给 LUM-1387 合入后的 cycle。（**已被 §11 取代**：03:30 cycle 已提前落在 `8895abe`。）
 - **没有**动 `docs/15` §8 的门禁数字；**没有**改 LUM-1370 的正文（它已由 LUM-1384 cycle 改成「不写 `0005`、前置 = W0-B2」）。
 - octopus merge 用了 git 的默认 commit message（`Merge commit '…'`，没带 `merge(...)` 标题）—— 下次集成请用 `git merge --no-ff -m "…" <sha1> <sha2> <sha3>`。
+
+---
+
+## 11. 03:30 cycle 落地记录（LUM-1435）—— §3 已落底、§7 队列第 3 步完成
+
+| 事实 | 实测（2026-09-23 03:36 CST） |
+| --- | --- |
+| base 前进 | `b0ec5ef` → **`a09789d`**（merge PR #24 = R7 拆分 / LUM-1423，带进 #19 = assignee/attachment 校验 / LUM-1410）→ **`8895abe`**（本 cycle 的 anchor 预删）。PR #24 与 **#19 均 `state=merged`**（GitHub 侧 19:36:52 同时翻绿 ⇐ #19 的 head 已被 #24 的第一个 merge commit 包含） |
+| merge 前的集成验证 | 在 `a09789d` 上 `gates.sh --with-db` **10/10 绿，186s**：⑤ `458 passed / 0 failed`（65 suites，与 base 逐字相同）、⑥ `migrate=0 / e2e=0`、⑦ `implemented 125/456` + `regression 0` + `unclaimed 0`、⑨ `pass 4 / mismatch 1 / unmounted 5 / placeholder 1 / unevaluable 47`；⑨ 的 `report.json` 与 ⑦ 的基线对 `b0ec5ef` **`git diff` 无输出**（拆分没动契约面） |
+| **§3 anchor 预删已落** | commit `8895abe`，**3 个文件**：`mount.rs` −8 行占位 + 两处 slice 注释改写、⑦ 基线 −4 行、⑨ 快照重生成。⑦ 漂移：local **140→136**、implemented **125→122**（real 112、placeholder 13→10）、known_gap **331→334**、local_only **12→11**（`POST /api/runtimes`）；regression 4 条即 `GET/POST × /api/agents|/api/runtimes`，刷基线后 `--quiet` exit 0 |
+| ⑨ 受影响的**唯一** fixture | `agents/TestProtectedRoutesRequireAuth@server/cmd/server/integration_test.go:433#1`（`GET /api/agents`、anonymous/router）：`200 + placeholder 信封` → `404 + unmounted`；计数 `unmounted 5→6`、`placeholder 1→0`，`--check` exit 0 |
+| 预删后的门禁 | `gates.sh --with-db` **10/10 绿，19s（暖 target）**：⑤ 65 suites / **458 passed / 0 failed**（删占位前后逐字相同 ⇒ 无任何测试或代码依赖这两条 M0 占位）、⑥ 13 suites / **90 passed / 0 failed**（`migrate=0,e2e=0`）、⑦ `implemented 122/456` + `regression 0`、⑨ `pass 4 / mismatch 1 / unmounted 6 / placeholder 0 / unevaluable 47`、⑩ 绿（`mount.rs` 只变短） |
+| 并发 | 本 cycle 只有 1 个空位（`daemon active_task_count` = 2：LUM-1387 + 本 cycle）⇒ 派发 **LUM-1437**（W3c 预飞，docs-only，见 §7 第 5 步）。**理由**：此刻所有能推进关键路径的**代码**切片都要写 `mc-repos/**`（M3-4/5/6、M2-E、任何 W2 片），与 LUM-1387 的独占位互斥；唯一可派的是 docs-only 的 W3c 摸底 |
+
+### 11.1 §3 预演的复现精度
+
+§3 在 `0acbae0` 上的预演数字**逐项命中**（local 140→136、implemented 125→122、known_gap 331→334、local_only 12→11；⑨ `unmounted` +1、`placeholder` −1、受影响 fixture 仅 `TestProtectedRoutesRequireAuth#1`）。§3 唯一没写到的是 `implemented_placeholder` 13→10（`GET/POST /api/agents` + `POST /api/runtimes` 三条本就算 placeholder），不影响结论。
+
+### 11.2 本 cycle 未做（边界）
+
+- **没有**碰 `docs/11` / `docs/12` / `docs/24` / `docs/25` / `docs/26`（LUM-1387 的文档写集）；**没有**晋升任何 `backlog` 片（M3-4/5/6 仍等 LUM-1387）。
+- **没有**改 §5 的路由清单与 §6 的写集矩阵 —— 预删只让 M3-4/M3-5 的写集**少**三个共享文件，不改变路由覆盖口径。
+- 本 cycle 的 merge 用了带标题的 merge commit（`a09789d`，`merge(#24): …`），落实 §10.2 最后一条的提醒。
+
+### 11.3 下一个 cycle 的动作队列（在 §7 基础上的增量）
+
+1. **LUM-1437 的产出**（`docs/37-M3-W3C-PREFLIGHT.md` + 4~5 个 backlog 片）合入后，W3c 即具备「照写集派片」的条件，不必临场摸底。
+2. **LUM-1387 合入**时：先确认它**没有**顺带删过 `mount.rs` 的占位（已删，重复删会冲突）——它的 PR 若基于 `4a61450`/`b0ec5ef` 且未碰 `mount.rs`，则与 `8895abe` 无冲突；合入后立刻复跑 `gates.sh --with-db` 并**重核 ⑦/⑨ 计数**（切库会让 DB 侧 e2e 计数大幅变动，⑦/⑨ 的 stateless 计数不应变，除非它顺带改路由）。
+3. 随后晋升 **LUM-1427 / LUM-1428 / LUM-1429**（三片同波；它们的写集已不含 `mount.rs` / ⑦ 基线 / ⑨ 快照 / `Cargo.lock`）。
