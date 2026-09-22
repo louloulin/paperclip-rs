@@ -460,3 +460,35 @@ multica issue runs 01a0c94e-0798-79c3-b176-78b4d38d980e --output json 2>/dev/nul
 - **没有派发**：6 个 issue 全部 `backlog`，创建时不启动 run；晋升判据写在各自正文里。
 - **没有做 M3-4/5/6（W3b）的事**：M0 占位删除、501 stub 原地替换都在那边；本片只给出「W3c 无预删项」的实测结论。
 - **没有验真库**：本片是文档切片，⑥/⑧ 两门未跑；M3-7 的 `--with-db` 验收在其自己的 issue 里。
+
+---
+
+## 10. 04:00 cycle 落地记录（LUM-1444）
+
+**base 链**：`7888cf3` → **`dc4a45f`**（`merge(#25)` = 本文件落底，PR #25 / LUM-1437，docs-only 2 文件 +464）。自本 cycle 起本文件已是 base 文档。
+
+**并发位口径**（沿用 `docs/36` §1）：worker 位 3 个，cycle run 另计。
+本 cycle 实测：`LUM-1387`（running，19:07 起）+ `LUM-1439`（本 cycle 晋升，20:03 起）= **2/3**；`LUM-1437` 已于 20:01 交付（`in_review`）。
+
+**本 cycle 实测（在 `dc4a45f` 上重跑，非引用旧值）**：
+
+```
+$ python3 scripts/route_parity.py
+upstream 456 (commit f41fae6b08fb) | local 136 registered | baseline 136
+  implemented  112 real +  10 placeholder =  122 / 456   known_gap  334   unclaimed    0   regression   0   local_only   11
+OK: every upstream route is either implemented or owned        # ⑦ exit 0
+
+$ python3 scripts/file_size_check.py
+  OK: 0 violation(s)                                          # ⑩ exit 0
+```
+
+**§2.2 的 ⑦ 数字已过时（本 cycle 更正）**：§2.2 写的 `local 140 / implemented 125 (112+13) / known_gap 331 / local_only 12` 是 **`a09789d` 时点**的实测；03:30 cycle 的 anchor 预删（`8895abe`：删 `mount.rs` 的 `/api/agents` + `/api/runtimes` 两条 M0 占位）已把基线刷成上表那组。同理 §2.1 表里的 `mount.rs:49`/`:53` 两行占位**在 base 上已不存在**（该表描述的是 `a09789d`）。**凡引用 ⑦ 计数一律以脚本实时输出为准。**
+（`8895abe` 之后 `mount.rs` 里 `health::placeholder` 由 9 处降为 7 处，W3c 的「预删项 0 个」结论不变。）
+
+**本 cycle 动作**：
+
+1. 合入 **PR #25**（`docs/37` + `docs/15` §3 编号登记）⇒ base `dc4a45f`。
+2. 晋升 **LUM-1439**（ws 传输层预切片）：正文的 ⑦ 期望值已同步刷新到 `dc4a45f` 的实测数字，并补注「`multica repo checkout` 的 `agent/devbox5/<hash>` 分支等效可用」；`backlog` → `todo` 触发 run（20:03:41Z）。
+3. **没有**晋升 M3-4/5/6：三片正文的晋升条件逐字写着「**LUM-1387 已合入 base**」（实测 `LUM-1427` 正文原文），而 `LUM-1387` 仍在跑（工作区实测有 21 个文件的未提交改动 + `migrations/compat/` 新目录 + `target/` 8.7G 活跃写入 ⇒ **活着且在推进**，不是静默死亡）。
+
+**下一个 cycle 的第一动作**（与 `docs/36` §7 第 4 步一致）：`LUM-1387` 合入后先复验 base 已前进（`dc4a45f` → …），再同波晋升 `LUM-1427`/`1428`/`1429`（此时并发位会同时空出）。
