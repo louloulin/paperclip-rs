@@ -10,6 +10,22 @@ use mc_secrets::Secrets;
 use mc_storage::Storage;
 use serde::Serialize;
 
+/// 配置快照 —— M3 anchor scaffold（LUM-1406 / docs/15 §7.2 第 6 项）点名的**共享锚点**之一。
+///
+/// 规则（scaffold 冻结）：新增字段时**只改本文件两处** —— 本 struct 与下面手写的
+/// `impl Default for ConfigSnapshot`。所有构造点已按 `..Default::default()` 收尾，
+/// 所以给 M3 追加字段不会波及 `apps/mc-server`、`mc-conformance` 或任何 `tests/*.rs`。
+///
+/// 为什么这里**没有** `#[derive(Default)]`（scaffold 对 §7.2 第 6 项的替代分支）：
+/// 本 struct 的默认值是**语义默认**而不是全零 —— `dev_mode: true`（`send-code` 因此返回
+/// `dev_code`）、`host: "127.0.0.1"`、`port: 3500`、`session_ttl_secs: 30 天`。
+/// 这个手写 impl 由 W1-Google（LUM-1399）先于本片加入；改回 derive 会一次性把它们清零，
+/// 静默改变 `/api/auth/send-code` 的行为与 `mc-conformance` 的回放结论（⑨ 门），
+/// 并丢掉调用方依赖的默认值。因此按 §7.2 第 6 项的「若不采纳」分支处理：
+/// 保留手写 impl，把剩余的字面量构造点收敛成 `..Default::default()`，
+/// 并在 PR / issue 里列出全部构造点。
+/// `config_snapshot_defaults_are_semantic` 用例锁住这些默认值，
+/// 防止后来者「顺手」把它换成 derive。
 #[derive(Clone, Debug, Serialize)]
 pub struct ConfigSnapshot {
     pub host: String,
@@ -209,6 +225,8 @@ impl AppState {
 }
 
 impl Default for ConfigSnapshot {
+    /// ⚠️ 这些是**语义默认**（取的是 M0/M1 真实装配值，不是结构零值）；
+    /// 改这里之前先读本 struct 的文档注释。
     fn default() -> Self {
         Self {
             host: "127.0.0.1".into(),
@@ -237,6 +255,31 @@ mod tests {
                 .find(|(k, _)| *k == name)
                 .map(|(_, v)| (*v).to_string())
         }
+    }
+
+    #[test]
+    fn config_snapshot_defaults_are_semantic() {
+        // M3 anchor scaffold（LUM-1406）：锁住 `ConfigSnapshot::default()` 的语义值。
+        // 若有人把手写 impl 换成 `#[derive(Default)]`，本用例会红 —— 那是**故意的**：
+        // derive 会把 host/port/session_ttl_secs 清零、把 dev_mode 翻成 false，
+        // 静默改变 send-code 与 conformance 回放结论（docs/15 §7.2 第 6 项）。
+        let cfg = ConfigSnapshot::default();
+        assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.port, 3500);
+        assert_eq!(cfg.session_cookie, "multica_session");
+        assert_eq!(cfg.api_key_header, "X-Multica-Api-Key");
+        assert_eq!(cfg.csrf_header, "X-Multica-Csrf");
+        assert!(
+            cfg.dev_mode,
+            "dev_mode 默认必须是 true（send-code 的 dev_code）"
+        );
+        assert_eq!(cfg.session_ttl_secs, 60 * 60 * 24 * 30);
+        assert_eq!(cfg.verification_code_ttl_secs, 600);
+        assert_eq!(cfg.send_code_per_email_per_min, 5);
+        assert_eq!(
+            cfg.invitation_per_workspace_per_hour, None,
+            "None ⇒ 调用方按 50/h 兜底（routes/invitations.rs）"
+        );
     }
 
     #[test]

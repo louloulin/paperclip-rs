@@ -1,0 +1,37 @@
+[package]
+name = "mc-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M3 anchor scaffold 占位 — daemon client + execenv，由 M3-7/M3-8 填充（ws 依赖已预声明）"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.5）：依赖一次声明到位。
+#
+# `axum` 的 `ws` feature 与 `tokio-tungstenite` 是 docs/15 §7.2.5 点名要「先确认版本已
+# 在 lock 中，否则由本片显式加入并说明」的两项 —— 实测**都已在 `Cargo.lock`**：
+#   axum 0.7.9（workspace 依赖已开 `macros, ws`）、tokio-tungstenite 0.24.0
+#   （workspace 依赖已开 `connect, rustls-tls-webpki-roots, url`）。
+# 因此本片**不新增三方包**，只是把既有 workspace 依赖接到这个新 crate 上，
+# M3-7 的 ws 服务端不必再动 `Cargo.toml` / `Cargo.lock`（docs/15 §7.5）。
+# `futures-util` 给 ws 流的 Sink/Stream 组合（与 `mc-ws` 同款用法）。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+mc-daemon-proto = { path = "../mc-daemon-proto" }

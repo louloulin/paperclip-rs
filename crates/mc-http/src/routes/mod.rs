@@ -38,6 +38,14 @@ pub mod subscribers;
 // 由 `issues::router()` 内部 `merge`，因此 `mount.rs` 不需要改动。
 pub mod issue_table;
 
+// M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.2）：四个空切片一次性声明，
+// 让 W3a/W3b/W3c 的四个切片（agent / runtime-profile / task / daemon）不再同时编辑本文件。
+// 真实实现在各切片内的 `routes/*.rs`，`mount.rs` 已接好 `mount_slice_*()`。
+pub mod agents;
+pub mod daemon;
+pub mod runtimes;
+pub mod tasks;
+
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     mount::router(state)
 }

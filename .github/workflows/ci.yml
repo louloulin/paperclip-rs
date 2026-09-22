@@ -34,9 +34,9 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  # ①–⑤：不需要数据库，每次 push 都跑。
+  # ①–⑤ + ⑩：不需要数据库，每次 push 都跑。
   fast:
-    name: fast — fmt / build / clippy / test
+    name: fast — fmt / build / clippy / test / file-size
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -68,6 +68,12 @@ jobs:
       # 带上它会让 mc-http 的 `smoke` 集成测试对同一个库重跑迁移 → `relation "user" already exists`。
       - name: "⑤ test — cargo test --workspace（不带 DB 变量）"
         run: bash scripts/gates.sh --only test
+
+      # ⑩ 纯 Python + `git ls-files`，亚秒级：R7 的「单文件 800 行硬上限」。它只读工作区，
+      # 不编译、不需要数据库，所以放在 ①–⑤ 之后（不是新 job，也不引新 action）。
+      # 存量违规钉在 `scripts/file_size_baseline.tsv`（只减不增）；刷新用 `--write-baseline`。
+      - name: "⑩ file-size — python3 scripts/file_size_check.py --quiet"
+        run: bash scripts/gates.sh --only file-size
 
   # ⑥：真 PostgreSQL 16 service 容器；**先建表**再跑 DB e2e（测试自己不做迁移）。
   db:

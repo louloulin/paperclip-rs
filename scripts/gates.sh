@@ -5,7 +5,7 @@
 # 这是门禁命令的**唯一实现**：CI（`.github/workflows/ci.yml`）不重写命令，只调用本脚本
 # （`scripts/gates.sh --only <gate>`），因此本地与 CI 跑的是逐字同一批命令，不存在两处漂移。
 #
-# 九道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应）：
+# 十道门（编号与 docs/plan1.md §5 W0 / §6.4、docs/24-W0-CI.md 的表格一一对应）：
 #
 #   ① fmt              cargo fmt --all --check
 #   ② build            cargo build --workspace --all-targets --locked
@@ -16,8 +16,9 @@
 #   ⑦ route-parity     python3 scripts/route_parity.py --quiet
 #   ⑧ schema-drift     python3 scripts/schema_drift.py --quiet      （**需要** MULTICA_TEST_DATABASE_URL）
 #   ⑨ conformance      cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json
+#   ⑩ file-size        python3 scripts/file_size_check.py --quiet    （R7 单文件 800 行硬上限）
 #
-# 默认跑 ①–⑤ + ⑦ + ⑨（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
+# 默认跑 ①–⑤ + ⑦ + ⑨ + ⑩（不需要数据库）；`--with-db` 追加 ⑥ 与 ⑧（两者都需要真 PostgreSQL）。
 # 每道门打印一行 `GATE_<NAME>_EXIT=<code>`，末尾打印汇总表；任一非 0 → 本脚本 exit 1。
 #
 # 用法：
@@ -43,6 +44,10 @@
 #     塞进 CI 日志只会把真正的信号淹掉。它对着库 URL 建/删自己的 scratch 库
 #     `schema_probe_w0b_drift`，**不读**目标库里的表；但目标库必须存在、该角色要有 CREATEDB 权限，
 #     否则脚本 exit 2 → 本脚本记 FAIL（绝不静默跳过）。
+#   * ⑩ 只看**跟踪的代码文件**（`git ls-files`，不含 `docs/**`），并把存量违规钉在
+#     `scripts/file_size_baseline.tsv` 里：清单外的文件不得超过 800 行，清单内的只允许变短，
+#     已达标或已消失的条目必须从清单里删掉。刷新清单用 `--write-baseline`（基线只减不增）。
+#     拆分大文件时 **改动会同时打到 mc-http 的热点文件**：拆完先跑 `--only file-size` 确认。
 #   * ⑨ 必须显式 `--no-db` 且剥掉库变量：`report.json` 是 **stateless 层**快照，而 mc-conformance 的
 #     `--db-url` 带了 `env = "MULTICA_TEST_DATABASE_URL"` —— 谁 export 过这个变量（跑 ⑥/⑧ 的人都会），
 #     它就会追加 database 层、把「合并取强者」的报告拿去比 stateless 快照 → 门因为**环境**而红。
@@ -62,7 +67,7 @@ cd "$SCRIPT_DIR/.." || exit 2
 
 # 门的规范顺序与显示编号（编号 == plan1 §6.4 的清单序号；⑦ 之后的编号由追加切片顺延，不重编）。
 # 排列把两道**需要库**的门（⑥ ⑧）放在一起，离线门 ⑦ ⑨ 收尾；因此汇总表里 ⑧ 会印在 ⑦ 之前。
-ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance"
+ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size"
 
 gate_label() {
     case "$1" in
@@ -75,6 +80,7 @@ gate_label() {
         schema-drift) echo "⑧" ;;
         route-parity) echo "⑦" ;;
         conformance) echo "⑨" ;;
+        file-size) echo "⑩" ;;
         *) echo "?" ;;
     esac
 }
@@ -90,6 +96,7 @@ gate_env_name() {
         schema-drift) echo "SCHEMA_DRIFT" ;;
         route-parity) echo "ROUTE_PARITY" ;;
         conformance) echo "CONFORMANCE" ;;
+        file-size) echo "FILE_SIZE" ;;
         *) echo "UNKNOWN" ;;
     esac
 }
@@ -145,8 +152,8 @@ if [ -n "$ONLY" ]; then
 else
     SELECTED=" fmt build clippy clippy-test-util test"
     [ "$WITH_DB" -eq 1 ] && SELECTED="$SELECTED db schema-drift"
-    # ⑦ ⑨ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
-    SELECTED="$SELECTED route-parity conformance"
+    # ⑦ ⑨ ⑩ 都是离线确定性门（⑨ 用 --no-db 跑 stateless 层），因此留在默认集合里。
+    SELECTED="$SELECTED route-parity conformance file-size"
 fi
 
 selected_gate() {
@@ -277,6 +284,8 @@ for gate in $SELECTED; do
         conformance)    run_gate conformance env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL \
                             cargo run -q -p mc-conformance -- --no-db \
                             --check crates/mc-conformance/report.json ;;
+        # ⑩ 纯离线、秒级；判据是 scripts/file_size_check.py 的退出码（越限 → 1）。
+        file-size)      run_gate file-size python3 scripts/file_size_check.py --quiet ;;
         *)              echo "error: unhandled gate '$gate'" >&2; exit 2 ;;
     esac
 done

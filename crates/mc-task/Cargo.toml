@@ -1,0 +1,29 @@
+[package]
+name = "mc-task"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M3 anchor scaffold 占位 — task 领域层（状态机/租约/重试/结算），由 M3-3 填充"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+# M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.5）：依赖一次声明到位。
+# `proptest` 只给 M3-3 的「任意事件序列不产生非法状态」属性测试用（已在 lock 中）。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+mc-core = { path = "../mc-core" }
+
+[dev-dependencies]
+proptest = { workspace = true }

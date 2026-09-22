@@ -15,7 +15,10 @@
 | `crates/mc-repos/src/issue_table/sql.rs` | 618 | `$n` 参数绑定、WHERE 编译、分组/排序解析、keyset 谓词、行结构 |
 | `crates/mc-repos/src/issue_table/repo.rs` | 396 | `IssueTableRepo`：`status_order` / `table_groups` / `table_rows` / `table_facets` |
 | `crates/mc-repos/src/issue_table/tests.rs` | 415 | 6 条 PG 集成测试（从 `repo.rs` 拆出，保证单文件在 R7 的 800 行以内） |
-| `crates/mc-http/src/routes/issue_table.rs` | 1789 | 4 条路由 + 请求/响应 DTO + 400/409/422 判定 + `query_fingerprint` + cursor 编解码（**R7 超标，见 §6.4**） |
+| `crates/mc-http/src/routes/issue_table/mod.rs` | 509 | 4 条路由 + 4 个 handler + `authorize` + 响应 DTO + `TableError` |
+| `crates/mc-http/src/routes/issue_table/spec.rs` | 790 | 请求 DTO + 400/409/422 判定 + `query_fingerprint` + 分组 key/value 映射 |
+| `crates/mc-http/src/routes/issue_table/cursor.rs` | 145 | cursor 编解码（`CursorWire`） |
+| `crates/mc-http/src/routes/issue_table/tests.rs` | 433 | 11 条纯函数单元测试（无数据库） |
 | `crates/mc-http/tests/issue_table.rs` | 479 | 4 条 DB e2e（正路径 3 + 契约负路径 1） |
 
 `mount.rs` / `routes/mod.rs` / `state.rs` / 各 `Cargo.toml` **零改动**：M2 anchor scaffold（LUM-1347）
@@ -150,7 +153,7 @@ workspace 是否存在，与 M1 切片一致），缺用户头 401，坏 workspa
 7. **facet 逐个查询**而非上游的 `GROUPING SETS`：契约（计数与取值集合）一致，差异只在 SQL 形状
    与扫描次数（§3.3）。
 
-**HTTP 层**（`crates/mc-http/src/routes/issue_table.rs` 模块注释同款清单）：
+**HTTP 层**（`crates/mc-http/src/routes/issue_table/mod.rs` 模块注释同款清单）：
 
 8. **cursor 是 hex 编码的 JSON**，上游是 `base64.RawURLEncoding`：沿用 M2-C `routes/inbox.rs`
    的先例，避免给 mc-http 增依赖。cursor 对客户端不透明（上游文档也不承诺稳定编码），因此这不是
@@ -208,17 +211,31 @@ workspace 是否存在，与 M1 切片一致），缺用户头 401，坏 workspa
   `Any` 泛型（与 M2-A 的"构建期不需要数据库"约定一致：`query_as` + 运行时 `.bind()`，
   不用 compile-time 宏）。
 
-### 6.4 已知 R7 超标（登记，未在本切片修）
+### 6.4 R7 单文件上限：本切片的超标已消除（LUM-1416）
 
-`crates/mc-http/src/routes/issue_table.rs` 是 **1789 行**，超出 `docs/plan1.md` R7 的"单文件 800 行硬上限"。
-原因：本切片把上游同一份 handler 文件里的"DTO + 校验 + 指纹 + cursor + 四个 handler + 单元测试"
-一次性搬过来，没有再做文件级切分。**当前无人执行该上限**：R7 点名的 `scripts/file_size_check.py`
-从未落地，`scripts/gates.sh` 的 9 个门里也没有文件尺寸门；全仓已有 14 个 `.rs` 文件超过 700 行
-（`routes/issues.rs` 2227、`mc-repos/src/issue.rs` 1950、`routes/auth.rs` 1704、…）。
+本切片（M2-D）交出的 `crates/mc-http/src/routes/issue_table.rs` 当时是 **1789 行**，超出
+`docs/plan1.md` R7 的"单文件 800 行硬上限"；原因是一次性把上游同一份 handler 文件里的
+"DTO + 校验 + 指纹 + cursor + 四个 handler + 单元测试"搬了过来，没有再切分。
+**该超标已由 LUM-1416 拆分消除**（纯移动、零行为变化），四份的实测行数：
 
-建议的切分（follow-up，不改契约）：`routes/issue_table/mod.rs`（router + 4 个 handler）、
-`spec.rs`（DTO + `build_*` 校验 + 指纹）、`cursor.rs`（`CursorWire`）、`tests.rs`（现有 ~430 行单元测试）
-——四份都落在 800 行以内。在该门落地之前，本文件尺寸不再变化（新增代码进新文件）。
+| 文件 | 行数 | 内容 |
+| --- | ---: | --- |
+| `routes/issue_table/mod.rs` | 509 | 模块 doc + `pub fn router()` + 4 个 handler + `authorize` / `table_repo` + 响应 DTO + `TableError` |
+| `routes/issue_table/spec.rs` | 790 | 请求 DTO + `decode_body` + `build_*` 校验 + `query_fingerprint` + 分组 key/value 映射 |
+| `routes/issue_table/cursor.rs` | 145 | `CursorWire` + `decode_cursor` |
+| `routes/issue_table/tests.rs` | 433 | 原有单元测试（11 条纯函数测试） |
+
+与拆分前登记的“建议的切分”的差异（见本文 `git log` 里的初版 §6.4）：**响应 DTO 与 `TableError`（错误→HTTP 形状）落在 `mod.rs`**
+而不是全部挤进 `spec.rs`（`spec.rs` 若把响应 DTO 也算上会越过 800）；`spec.rs` 自己多了
+`group_identity` / `group_value` / `parse_group_key`（上游 `issue_table_group.go` 那一半）。
+文件从 `routes/issue_table.rs` 变成目录模块，对 `routes/mod.rs` 的 `pub mod issue_table;`
+与 `super::` 路径透明，路由挂载点（`issues::router()` 末尾的 `.merge`）未动。
+
+上限现在**有机器执行**：`scripts/file_size_check.py`（存量违规钉在
+`scripts/file_size_baseline.tsv`，只减不增）+ `scripts/gates.sh` 的门 ⑩ `file-size`
+（进默认集合、CI 在 `fast` job，见 `docs/24-W0-CI.md` §12）。本文件拆分后已从该基线里消失；
+全仓剩下 14 个存量违规（`routes/issues.rs` 2227、`mc-repos/src/issue.rs` 1950、`routes/auth.rs` 1704、…）
+已逐行登记，它们只允许变短。
 - **挂载点**：`issues::router()` 末尾 `.merge(super::issue_table::router())`。选择 merge 而不是
   新开 `mount_slice_*` 的理由：这四个路由的逻辑归属就是 issue 资源（上游也在同一份 handler 里
   注册），而且 `mount.rs` / `routes/mod.rs` 是 M2-A / M2-B / M2-C / W0-1 多分支的共享锚点文件，
@@ -247,8 +264,13 @@ MULTICA_TEST_DATABASE_URL=… cargo test -p mc-http --test issue_table --feature
 #   table_groups_counts_by_status / table_rows_paginates_and_rejects_cursor_mismatch
 #   table_facets_and_limit_usage / table_contract_errors
 
-# 4) 真库门（⑨ 门之外的 8 门）
-bash scripts/gates.sh --with-db
+# 4) 单元测试（拆分后 11 条纯函数测试全部保留）
+env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL cargo test -p mc-http --lib -- issue_table
+# test result: ok. 11 passed; 0 failed; 0 ignored
+
+# 5) 真库门 + ⑩ 尺寸门（`--with-db` = 10 门；⑥ 需要真 PG）
+MULTICA_TEST_DATABASE_URL=… bash scripts/gates.sh --with-db
+#   ① ② ③ ④ ⑤ ⑥ ⑦ ⑨ ⑩ → 10/10 green；⑥ 里 issue_table 的 6 条仓储测试 + 4 条 e2e 逐条 ok
 ```
 
 e2e 覆盖到的契约点：`total` 语义（分组全额 vs 续页 0）、`value` 对象形状、`include_empty` 补齐
