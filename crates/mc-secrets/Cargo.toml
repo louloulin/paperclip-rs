@@ -33,3 +33,4 @@ aws-config = { version = "1", optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tempfile = "3"

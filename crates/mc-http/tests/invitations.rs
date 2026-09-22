@@ -144,7 +144,10 @@ async fn admin_invite_then_list_my_invitations() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = body_json(res.into_body()).await;
     let arr = body.as_array().expect("array");
-    assert!(!arr.is_empty(), "expected at least one invitation, got {body}");
+    assert!(
+        !arr.is_empty(),
+        "expected at least one invitation, got {body}"
+    );
     assert_eq!(arr[0]["email"], "alice@example.com");
 
     cleanup(&pool, ws, inviter).await;
@@ -234,8 +237,8 @@ async fn rate_limit_rejects_extra_invite() {
     let (ws, inviter) = seed_admin_and_workspace(&pool).await;
 
     // 直接走 repo 层插 50 条
-    use mc_repos::invitation::{InvitationRepo, NewInvitation};
     use mc_core::workspace::WorkspaceRole;
+    use mc_repos::invitation::{InvitationRepo, NewInvitation};
     let repo = InvitationRepo::new(&db);
     let inviter_id = Id(inviter);
     for i in 0..50 {

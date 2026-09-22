@@ -135,7 +135,9 @@ impl InvitationRepo {
 
     /// 创建一个邀请。返回 (row, token)。
     pub async fn create(&self, input: NewInvitation) -> Result<InvitationRow> {
-        let ttl = input.ttl_secs.unwrap_or(INVITATION_DEFAULT_TTL_DAYS * 24 * 3600);
+        let ttl = input
+            .ttl_secs
+            .unwrap_or(INVITATION_DEFAULT_TTL_DAYS * 24 * 3600);
         let now = Utc::now();
         let expires_at = now + Duration::seconds(ttl);
         let token = Self::generate_token();
@@ -260,11 +262,7 @@ impl InvitationRepo {
     /// 2. 校验：未撤销 / 未过期 / 未接受
     /// 3. 写 `accepted_at = now()`
     /// 4. 插入 `member` row，UNIQUE 冲突 → 已接受过，返回已存在 member
-    pub async fn accept(
-        &self,
-        token: &str,
-        accepting_user_id: Id,
-    ) -> Result<AcceptOutcome> {
+    pub async fn accept(&self, token: &str, accepting_user_id: Id) -> Result<AcceptOutcome> {
         let mut tx = self
             .pool
             .begin()
@@ -296,19 +294,18 @@ impl InvitationRepo {
         }
         if row.accepted_at.is_some() {
             // 已经被接受：直接返回当前 member，幂等。
-            let member_row: Option<(Uuid, String, DateTime<Utc>, DateTime<Utc>)> =
-                sqlx::query_as(
-                    r#"
+            let member_row: Option<(Uuid, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+                r#"
                     SELECT id, role, created_at, updated_at
                     FROM member
                     WHERE workspace_id = $1 AND user_id = $2
                     "#,
-                )
-                .bind(row.workspace_id)
-                .bind(accepting_user_id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(map_db_err("invitation.accept.find_existing_member"))?;
+            )
+            .bind(row.workspace_id)
+            .bind(accepting_user_id.0)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_err("invitation.accept.find_existing_member"))?;
             let (mid, role, created_at, updated_at) = member_row.ok_or(RepoError::NotFound)?;
             tx.commit()
                 .await
@@ -386,8 +383,7 @@ impl InvitationRepo {
                     .fetch_optional(&mut *tx)
                     .await
                     .map_err(map_db_err("invitation.accept.find_existing_member"))?;
-                let (mid, role, created_at, updated_at) =
-                    member_row.ok_or(RepoError::NotFound)?;
+                let (mid, role, created_at, updated_at) = member_row.ok_or(RepoError::NotFound)?;
                 tx.commit()
                     .await
                     .map_err(map_db_err("invitation.accept.commit"))?;
@@ -776,7 +772,10 @@ mod integration_tests {
         repo.revoke(Id(row.id), inviter).await.expect("revoke ok");
         // 再次 revoke → NotFound
         let err = repo.revoke(Id(row.id), inviter).await.unwrap_err();
-        assert!(matches!(err, RepoError::NotFound), "expected NotFound, got {err:?}");
+        assert!(
+            matches!(err, RepoError::NotFound),
+            "expected NotFound, got {err:?}"
+        );
 
         cleanup_workspace(&pool, ws.0).await;
         cleanup_user(&pool, inviter.0).await;

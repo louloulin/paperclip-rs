@@ -14,9 +14,10 @@
 //! 注意：当前实现**不**校验 header 与数据库中 user 的对应关系——只信任 header。
 //! 这与 upstream multica 的 dev-mode 行为一致；生产模式由 sub-issue B 接管。
 
+use async_trait::async_trait;
 use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
 use axum::http::header::HeaderName;
+use axum::http::request::Parts;
 
 use mc_core::Id;
 use mc_errors::Error;
@@ -37,6 +38,7 @@ impl AuthUser {
     }
 }
 
+#[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
@@ -44,12 +46,11 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let header_value = parts
-            .headers
-            .get(&USER_ID_HEADER)
-            .ok_or_else(|| ApiError(Error::Unauthorized {
+        let header_value = parts.headers.get(&USER_ID_HEADER).ok_or_else(|| {
+            ApiError(Error::Unauthorized {
                 message: "missing X-Multica-User-Id header (M1 dev-mode auth)".into(),
-            }))?;
+            })
+        })?;
         let raw = header_value.to_str().map_err(|_| {
             ApiError(Error::Unauthorized {
                 message: "invalid X-Multica-User-Id header (non-ascii)".into(),

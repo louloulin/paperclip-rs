@@ -32,19 +32,25 @@ use crate::routes::auth_user::AuthUser;
 use crate::state::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
+    // 注意：axum 0.7（matchit 0.7）路径参数语法是 `:id`，不是 `{id}`（那是 axum 0.8）。
     Router::new()
         .route(
-            "/api/workspaces/{id}/invitations",
+            "/api/workspaces/:id/invitations",
             get(list_workspace_invitations).post(create_invitation),
         )
         .route(
-            "/api/workspaces/{id}/invitations/{invitationId}",
+            "/api/workspaces/:id/invitations/:invitationId",
             axum::routing::delete(revoke_invitation),
         )
+        // 规格表中的 create_invitation 路径。上游 multica 将
+        // “POST /members（直接加已有用户）”与“按 email 邀请”合并为同一个
+        // CreateInvitation handler；仲裁（docs/09 §2.3）：以 sub-issue C 的
+        // “创建邀请”语义为准，与 sub-issue A 的占位冲突由 M1-D 集成时删除占位。
+        .route("/api/workspaces/:id/members", post(create_invitation))
         .route("/api/invitations", get(list_my_invitations))
-        .route("/api/invitations/{id}", get(get_my_invitation))
-        .route("/api/invitations/{id}/accept", post(accept_invitation))
-        .route("/api/invitations/{id}/decline", post(decline_invitation))
+        .route("/api/invitations/:id", get(get_my_invitation))
+        .route("/api/invitations/:id/accept", post(accept_invitation))
+        .route("/api/invitations/:id/decline", post(decline_invitation))
 }
 
 // ---------------------------------------------------------------------------
@@ -132,17 +138,17 @@ async fn create_invitation(
 
     // 速率限制：单 workspace 1h 内 N 条
     let since = Utc::now() - Duration::hours(1);
-    let limit = state
-        .config
-        .invitation_per_workspace_per_hour
-        .unwrap_or(50) as i64;
+    let limit = state.config.invitation_per_workspace_per_hour.unwrap_or(50) as i64;
     let repo = InvitationRepo::new(&state.db);
     let recent = repo
         .count_recent_in_workspace(ws_id, since)
         .await
         .map_err(repo_err)?;
     if recent >= limit {
-        return Err(Error::RateLimited { retry_after_secs: 3600 }.into());
+        return Err(Error::RateLimited {
+            retry_after_secs: 3600,
+        }
+        .into());
     }
 
     let row = repo
@@ -172,7 +178,7 @@ async fn revoke_invitation(
     let repo = InvitationRepo::new(&state.db);
     // 先校验邀请属于该 workspace
     let row = repo.get_by_id(inv_id).await.map_err(repo_err)?;
-    if row.workspace_id.0 != ws_id.0 {
+    if row.workspace_id != ws_id.0 {
         return Err(not_found("invitation").into());
     }
     repo.revoke(inv_id, user.id()).await.map_err(repo_err)?;
@@ -187,10 +193,7 @@ async fn list_my_invitations(
 ) -> ApiResult<Json<Vec<InvitationDto>>> {
     let email = resolve_user_email(&state, user.id(), &headers).await?;
     let repo = InvitationRepo::new(&state.db);
-    let rows = repo
-        .list_for_user_email(&email)
-        .await
-        .map_err(repo_err)?;
+    let rows = repo.list_for_user_email(&email).await.map_err(repo_err)?;
     Ok(Json(rows.iter().map(InvitationDto::from).collect()))
 }
 
@@ -246,7 +249,9 @@ async fn decline_invitation(
     let repo = InvitationRepo::new(&state.db);
     let row = repo.get_by_id(inv_id).await.map_err(repo_err)?;
     // 仅收件人本人可拒绝
-    let email = resolve_user_email(&state, user.id(), &HeaderMap::new()).await.ok();
+    let email = resolve_user_email(&state, user.id(), &HeaderMap::new())
+        .await
+        .ok();
     if email
         .as_deref()
         .map(|e| !row.email.eq_ignore_ascii_case(e))
@@ -301,14 +306,13 @@ async fn require_workspace_member(
     workspace_id: Id,
     user_id: Id,
 ) -> Result<(), Error> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT role FROM member WHERE workspace_id = $1 AND user_id = $2",
-    )
-    .bind(workspace_id.0)
-    .bind(user_id.0)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| Error::Database(e.to_string()))?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT role FROM member WHERE workspace_id = $1 AND user_id = $2")
+            .bind(workspace_id.0)
+            .bind(user_id.0)
+            .fetch_optional(state.db.pool())
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
     if row.is_none() {
         return Err(not_found("workspace"));
     }
@@ -320,14 +324,13 @@ async fn require_workspace_admin(
     workspace_id: Id,
     user_id: Id,
 ) -> Result<(), Error> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT role FROM member WHERE workspace_id = $1 AND user_id = $2",
-    )
-    .bind(workspace_id.0)
-    .bind(user_id.0)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| Error::Database(e.to_string()))?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT role FROM member WHERE workspace_id = $1 AND user_id = $2")
+            .bind(workspace_id.0)
+            .bind(user_id.0)
+            .fetch_optional(state.db.pool())
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
     let role = row.ok_or_else(|| not_found("workspace"))?.0;
     if !matches!(role.as_str(), "admin" | "owner") {
         return Err(Error::Forbidden {

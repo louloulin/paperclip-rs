@@ -165,7 +165,6 @@ pub enum AuthzError {
 pub fn decide(req: &AuthorizationRequest) -> Decision {
     use Action::*;
     use Principal::*;
-    use Resource::*;
 
     // 系统始终允许内部操作
     if matches!(req.principal, System) {
@@ -229,6 +228,7 @@ pub fn decide(req: &AuthorizationRequest) -> Decision {
                 Decision::Deny
             }
         }
+        System => Decision::Allow,
         Plugin { workspace_id: pid, .. } => {
             if pid.is_none() || pid == req.workspace_id {
                 match (req.resource, req.action) {

@@ -21,7 +21,7 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use mc_auth::pat::{Pat, PatStore};
+use mc_auth::pat::Pat;
 use mc_core::Id;
 use mc_errors::Error;
 
@@ -33,12 +33,10 @@ use crate::state::AppState;
 pub const PAT_PREFIX: &str = "mk_pat_";
 
 pub fn router() -> Router<Arc<AppState>> {
+    // 注意：axum 0.7（matchit 0.7）路径参数语法是 `:id`，不是 `{id}`（那是 axum 0.8）。
     Router::new()
-        .route(
-            "/api/me/pats",
-            get(list_my_pats).post(create_my_pat),
-        )
-        .route("/api/me/pats/{id}", axum::routing::delete(revoke_my_pat))
+        .route("/api/me/pats", get(list_my_pats).post(create_my_pat))
+        .route("/api/me/pats/:id", axum::routing::delete(revoke_my_pat))
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +119,14 @@ async fn create_my_pat(
     let raw = generate_pat_secret();
     let token = format!("{PAT_PREFIX}{raw}");
     let token_hash = sha256_hex(&raw);
-    let token_last4 = raw.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    let token_last4 = raw
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
 
     let now = Utc::now();
     let ttl = req.ttl_secs.unwrap_or(60 * 60 * 24 * 30);
@@ -230,7 +235,14 @@ mod tests {
     #[test]
     fn last4_extraction() {
         let raw = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let last4: String = raw.chars().rev().take(4).collect::<String>().chars().rev().collect();
+        let last4: String = raw
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         assert_eq!(last4, "cdef");
     }
 

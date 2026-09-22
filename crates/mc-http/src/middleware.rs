@@ -3,7 +3,10 @@
 use axum::Router;
 
 /// 默认 middleware 链：trace + compression + cors + body-limit。
-pub fn apply_default(router: Router) -> Router {
+pub fn apply_default<S>(router: Router<S>) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     router
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(tower_http::compression::CompressionLayer::new())

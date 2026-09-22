@@ -16,7 +16,7 @@ use axum::Router;
 use mc_config::Config;
 use mc_core::actor::{spawn_system_actor, ActorKey, ActorRegistry};
 use mc_db::{Db, Migrator};
-use mc_http::middleware::apply_default_middleware;
+use mc_http::apply_default_middleware;
 use mc_http::state::{AdapterRegistryStub, AppState, ConfigSnapshot, RuntimeHandles};
 use mc_realtime::{RealtimeHandle, WsState};
 use mc_telemetry::{log_banner, StartupBanner, TelemetryOptions};
@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
         .context("register root actor")?;
 
     let adapters = Arc::new(AdapterRegistryStub::default());
-    adapters.register(16);
+    adapters.register("multica-server");
 
     let realtime = RealtimeHandle::start(1024);
     let ws = Arc::new(WsState::new(realtime.clone(), "multica-rs"));

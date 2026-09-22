@@ -67,7 +67,7 @@ impl AppState {
             runtime,
             config,
             storage: Storage::new(),
-            secrets: Secrets::new(Arc::new(mc_auth::DefaultSecretsBackend::in_memory())),
+            secrets: Secrets::new(mc_auth::DefaultSecretsBackend::in_memory()),
             feature_flags: Arc::new(FeatureFlagCatalog::new()),
             realtime,
             ws,

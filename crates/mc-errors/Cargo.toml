@@ -17,3 +17,4 @@ http = "1"
 uuid = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
+anyhow = { workspace = true }

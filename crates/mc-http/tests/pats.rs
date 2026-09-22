@@ -72,7 +72,10 @@ async fn create_and_revoke_pat_round_trip() {
     let body = body_json(res.into_body()).await;
     let pat_id = body["id"].as_str().expect("id field").to_string();
     let token = body["token"].as_str().expect("token field").to_string();
-    assert!(token.starts_with("mk_pat_"), "token has expected prefix: {token}");
+    assert!(
+        token.starts_with("mk_pat_"),
+        "token has expected prefix: {token}"
+    );
     assert_eq!(body["name"], "ci-deploy");
     assert_eq!(body["scopes"][0], "read");
 

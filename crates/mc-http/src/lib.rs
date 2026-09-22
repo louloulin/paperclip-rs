@@ -17,6 +17,9 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 /// 默认 middleware 链：trace + compression + cors + body-limit。
-pub fn apply_default_middleware(router: Router) -> Router {
+pub fn apply_default_middleware<S>(router: Router<S>) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     middleware::apply_default(router)
 }

@@ -18,10 +18,15 @@
 
 ## 路由清单
 
+> 实现说明：axum 0.7（matchit 0.7）的路径参数语法是 `:id`，不是 `{id}`（那是
+> axum 0.8）。下表按 OpenAPI 惯例写 `{id}`，实际注册代码（`routes/invitations.rs`）
+> 用 `:id`——曾因用 `{id}` 导致全部参数化路由 404，e2e 测试抓住了这个问题。
+
 | Method | Path | Handler | 鉴权 | DB 写 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/workspaces/{id}/invitations` | `list_workspace_invitations` | workspace member | R |
 | POST | `/api/workspaces/{id}/invitations` | `create_invitation` | workspace admin / owner | W |
+| POST | `/api/workspaces/{id}/members` | `create_invitation`（alias，见兼容决策） | workspace admin / owner | W |
 | DELETE | `/api/workspaces/{id}/invitations/{invitationId}` | `revoke_invitation` | workspace admin / owner | W |
 | GET | `/api/invitations` | `list_my_invitations` | authenticated | R |
 | GET | `/api/invitations/{id}` | `get_my_invitation` | authenticated（仅收件人） | R |
@@ -76,19 +81,21 @@ COMMIT;
 
 ## 与 sub-issue A 的兼容决策
 
-`POST /api/workspaces/{id}/members` 在 sub-issue A 的规划里是「直接添加已存在 user」。
-multica 上游是把这两条语义合并到 `CreateInvitation` handler。
+`POST /api/workspaces/{id}/members` 的语义冲突（A：直接加已存在 user vs C：按 email
+创建邀请），仲裁结论见 `docs/09-M1-INTEGRATION.md` §2.3：**上游 multica 把两者
+合并为同一个 `CreateInvitation` handler，以 sub-issue C 的「创建邀请」语义为准**。
 
-本 sub-issue C 的实现：占用了 `POST /api/workspaces/{id}/invitations` 路径，但**没有
-占用** `/api/workspaces/{id}/members`。两条路径并存：
+本 sub-issue C 的落地：
 
-- `POST /api/workspaces/{id}/invitations` → 创建邀请（本 sub-issue C 实现）
-- `POST /api/workspaces/{id}/members` → 添加已存在 user（sub-issue A 实现，stub 占位）
+- `POST /api/workspaces/{id}/invitations` → 创建邀请（主路径，e2e 测试打它）
+- `POST /api/workspaces/{id}/members` → 同一个 `create_invitation` handler（alias，
+  满足规格路由表；上游兼容矩阵打这条）
+- `GET /api/workspaces/{id}/members` 仍归 sub-issue A（当前 mount.rs 占位）；
+  GET 与 POST 方法不同，merge 不冲突
 
-`GET /api/workspaces/{id}/invitations` 与 `GET /api/workspaces/{id}/members` 也分别
-处理「邀请」与「已加入成员」。merge 时不会冲突。
-
-如果上游需要统一为单 endpoint，由 LUM-1342 master 在 merge 后协调重命名。
+⚠️ 如果 sub-issue A 也实现了 `POST /api/workspaces/{id}/members`（直接 add user
+语义），合并时 axum 会对同 path+method 重复注册 panic——按 docs/09 决策删除 A 的
+该 handler（或迁到非冲突路径），由 LUM-1342 master 在集成 PR 里落实并注明。
 
 ## 测试
 
@@ -106,6 +113,15 @@ multica 上游是把这两条语义合并到 `CreateInvitation` handler。
 
 集成测试在 `crates/mc-repos/src/invitation.rs::integration_tests`，通过
 `MULTICA_TEST_DATABASE_URL` env 触发，无 PG 时静默 skip。
+
+本地验证（2026-09-22，PG 16 + `0001_init.up.sql`）：
+
+- `cargo build --workspace` ✅
+- `cargo test --workspace` ✅（exit 0）
+- `cargo test -p mc-repos -- --ignored` → 5/5 ✅
+- `cargo test -p mc-http --features test-util --test invitations -- --ignored` → 3/3 ✅
+  （admin invite → list、accept → member、速率限制 429）
+- `cargo test -p mc-http --features test-util --test pats` → 3/3 ✅
 
 ## 配置项
 
