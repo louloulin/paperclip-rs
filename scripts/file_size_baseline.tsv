@@ -1,0 +1,26 @@
+# scripts/file_size_baseline.tsv — R7「单文件 800 行硬上限」的**存量违规**白名单。
+# 格式：<path>\t<lines>（按 path 排序；# 开头为注释，空行忽略）。
+# 生成 / 刷新：python3 scripts/file_size_check.py --write-baseline
+# 执行者：scripts/file_size_check.py（本地）与 scripts/gates.sh 的门 ⑩ file-size（CI）。
+#
+# 基线只减不增，新增违规不得写进白名单。
+#
+# 判据（见 scripts/file_size_check.py --help）：
+#   * 清单外文件 > 上限          -> 失败（新代码必须自己拆到 800 以内）
+#   * 清单内文件 > 记录的行数    -> 失败（只允许变短，不允许变长）
+#   * 清单内文件 <= 上限         -> 失败（请从基线删除，它已达标）
+#   * 清单内文件已不在 git 里    -> 失败（请从基线删除）
+crates/mc-conformance/src/lib.rs	1024
+crates/mc-http/src/routes/auth.rs	1704
+crates/mc-http/src/routes/comments.rs	831
+crates/mc-http/src/routes/inbox.rs	981
+crates/mc-http/src/routes/issues.rs	2227
+crates/mc-http/tests/inbox.rs	1149
+crates/mc-http/tests/issues.rs	1104
+crates/mc-repos/src/comment.rs	1403
+crates/mc-repos/src/inbox.rs	1186
+crates/mc-repos/src/invitation.rs	828
+crates/mc-repos/src/issue.rs	1950
+scripts/extract_upstream_fixtures.py	1863
+scripts/schema_drift.py	807
+scripts/schema_snapshot.py	1093
