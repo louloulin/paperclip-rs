@@ -38,3 +38,8 @@ benches/data/
 # Python bytecode from scripts/*.py (route parity tooling)
 __pycache__/
 *.pyc
+
+# Upstream clone used by scripts/build_upstream_schema.py — never committed
+# (the vendored bytes live in migrations/upstream/, with PIN + MANIFEST.sha256)
+/upstream-multica/
+/.upstream-multica/

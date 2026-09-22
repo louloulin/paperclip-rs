@@ -6,10 +6,15 @@
 # are exactly the bytes upstream ships.
 #
 # Do NOT re-vendor with a blob-less clone.  A full-blob shallow clone of this repo is
-# 96 MB and takes ~5 s, after which grep is instant.  `git init` + `fetch
+# 96 MB; measured wall clock on this box: 5.4 s and 21.9 s on two different runs
+# (network dependent), after which grep is instant (0.010 s).  `git init` + `fetch
 # --filter=blob:none` defers every blob fetch to first read (~1.4 s per object), which
 # turns a single grep into a ~74 minute stall — it has wedged two earlier slices.
 # Recipe and timings: docs/20-UPSTREAM-ANALYSIS-RECIPE.md §4.
+#
+# Verified twice: (a) `sha256sum -c MANIFEST.sha256` over the 560 vendored files, and
+# (b) an independent `cmp` of every vendored file against
+# `git fetch --depth 1 origin <commit>` in a fresh clone (see docs/25 §3.1).
 repo: https://github.com/louloulin/multica
 commit: f41fae6b08fb734afcbd13205c0b3203dd0bc9c6
 branch: main
