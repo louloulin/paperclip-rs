@@ -253,6 +253,25 @@ UI 兼容性：`apps/web` / `apps/desktop` 仅切换 base URL 即可对接 multi
 - ⏭ 下一 cycle（16:00 CST）动作：若 M1×3 交付（status `in_review` 且分支已 push）→
   晋升 LUM-1347 开始集成；否则继续健康核查，不硬塞新任务（并发上限 3）。
 
+### 进度更新（2026-09-22 15:30 CST，LUM-1358 cycle）
+
+- ✅ **M1-C（LUM-1344）已交付并 push**：`feat/multica-rs-m1c-invitation-pat` @ `d88b259`，
+  `cargo build/test --workspace` 全绿（39 suites/0 failed），PG16 e2e：invitations 3/3、pats 3/3、
+  invitation repo 5/5；顺带修掉 axum 0.7 的 `{id}` → `:id` 路由语法缺陷（`{id}` 被当字面量段，恒 404）。
+- 🔄 M1-A（LUM-1343）/ M1-B（LUM-1345）继续运行、无 429：A 已完成 workspace/member/user 三 Repo +
+  session 中间件（新目录 `mc-http/src/middleware/`），**routes 尚未开始**；B 已落 `routes/auth.rs` 5 条路由
+  + pat/verification_code Repo。
+- 🔧 **工具链事实更正**：`/usr/bin/cargo` 是 1.75.0，**无法构建本仓库**（`rust-version = "1.80"`）；
+  实际可用的是 `~/.cargo/bin` 下的 rustup stable **1.98.1**，构建/测试必须
+  `PATH="$HOME/.cargo/bin:$PATH"`。
+- 🔍 **M0 基线 `056d2ae` 自身不编译**（`mc-errors` 缺 `anyhow`、`mc-auth` 用 `crate::store` 等，7 个文件）；
+  三个切片各自独立做了**逐字节相同**的修复 → 集成时这些文件属"假冲突"，取任一方即可。
+- 📌 `docs/09-M1-INTEGRATION.md` 新增第 7 节（实测增量）：切片状态、22 个共有文件的分类、
+  4 个真分歧文件（`redact.rs` / `migrate.rs` / `state.rs` / `mc-http/Cargo.toml`）的仲裁建议、
+  axum 路由语法扫查命令、`/api/me` 重复注册点。
+- ⏭ 下一 cycle（16:00 CST）：M1×3 全部交付（`in_review` + 分支已 push）才晋升 LUM-1347；
+  A 是 M1 关键路径，若仍无路由落地需重点跟进。
+
 ## 8. 风险与权衡
 
 | 风险 | 缓解 |

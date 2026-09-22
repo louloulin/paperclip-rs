@@ -125,3 +125,25 @@ GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Grouped L1873）、
   （受 autopilot「最多 3 个并行任务」约束：晋升前先 `multica issue runs <LUM-1334> --siblings --active`
   确认空位）。
 - 集成由 master（下一个 autopilot cycle 或 LUM-1342 复跑）执行，规则见 `docs/09-M1-INTEGRATION.md`。
+
+## 4. 开工前置：环境与已知陷阱（2026-09-22 15:30 实测，LUM-1358 cycle）
+
+M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
+
+1. **工具链**：`PATH` 上的 `/usr/bin/cargo` 是 1.75.0，**无法构建本仓库**
+   （workspace 声明 `rust-version = "1.80"`）。可用的是 rustup stable **1.98.1**，在 `~/.cargo/bin`：
+
+   ```bash
+   export PATH="$HOME/.cargo/bin:$PATH"
+   cargo --version   # 应为 1.98.1
+   ```
+
+   并发跑三个切片时 crates.io 索引会抢 `/home/devbox/.cargo/.package-cache` 锁；编译卡住时
+   用 `ps aux | grep cargo` 判断是哪个 slice 占着，不要盲目重启 build。
+2. **axum 0.7 路径参数写法**：`axum = "0.7"`（matchit 0.7）下 `{id}` 会被当成**字面量段**——
+   编译通过、注册成功，但请求恒返 404。必须写 `:id`。M0 遗留的占位路由（`routes/mount.rs`
+   里的 `/api/workspaces/{id}`、`/api/issues/{id}`）就是反例，M2 切片新增/接替路由时
+   一并改掉（集成时的扫查命令见 `docs/09` §7.4）。
+3. **不要重新修 M0 基线缺陷**：`056d2ae` 自身不编译（缺 `anyhow`/`dirs`/`tokio` 依赖等），
+   M1 的三个切片各自重复修了一遍。M1-D 集成后基线即可编译，M2 切片从集成后的
+   `feat/multica-rs-initial` 开分支，不会再遇到。

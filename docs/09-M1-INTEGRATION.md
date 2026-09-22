@@ -72,8 +72,11 @@ cargo fmt   --all --check
 
 注意：
 
-- 本机 `cargo 1.75 / rustc 1.75`（无 rustup，`rust-toolchain.toml` 不生效）；crates.io 索引在
-  多 agent 并行时会抢 `/home/devbox/.cargo/.package-cache` 锁——集成任务应**独占跑**，
+- **工具链（2026-09-22 15:30 实测更正）**：`PATH` 上的 `/usr/bin/cargo` 是 **1.75.0，无法构建本仓库**
+  （workspace 声明 `rust-version = "1.80"`）。可用工具链是 rustup stable **1.98.1**，位于 `~/.cargo/bin`
+  （`~/.cargo/bin/cargo --version` → `cargo 1.98.1`）。集成任务必须显式加 PATH：
+  `export PATH="$HOME/.cargo/bin:$PATH"`（或 `PATH="$HOME/.cargo/bin:$PATH" cargo build --workspace`）。
+- crates.io 索引在多 agent 并行时会抢 `/home/devbox/.cargo/.package-cache` 锁——集成任务应**独占跑**，
   避开其它 agent 的 cargo 进程（`ps aux | grep cargo` 确认空闲）。
 - 仓库**没有提交 `Cargo.lock`**，而 CI 用 `--locked`。集成时提交一份 `Cargo.lock`，
   或在 CI 配置里去掉 `--locked`（二选一，建议前者）。
@@ -100,3 +103,82 @@ cargo fmt   --all --check
   （上游 026/027/015 对应，multica-rs `0001_init` 尚缺）——避免两个 M2 分支各自加同号迁移。
 - **依赖前置**：`mc-repos/Cargo.toml` 若 M2 需要新依赖（如 `serde_json` 查询 filter），
   在本 scaffold commit 里一并加。
+
+## 7. 实测增量（2026-09-22 15:30 CST，LUM-1358 cycle）
+
+本节是集成任务开工前的最新实测情报（直接取自三个切片的活动工作树 + GitHub 分支），
+与第 1 节 13:40 的历史快照冲突时**以本节为准**。
+
+### 7.1 切片状态（实测）
+
+| 切片 | 分支 / commit | 状态 | 证据 |
+| --- | --- | --- | --- |
+| C（LUM-1344） | `feat/multica-rs-m1c-invitation-pat` @ `d88b259` | **已交付并 push** | commit message + 工作树日志：`cargo build/test --workspace` 通过（39 suites/0 failed）；PG16 e2e invitations 3/3、pats 3/3、invitation repo 5/5 |
+| B（LUM-1345） | `feat/multica-rs-m1b-auth` @ `89f5e94` + 未提交改动 | 运行中，仍在编辑（最后写盘 07:30 UTC） | 新增 `routes/auth.rs` 已落 5 条路由（send-code / verify-code / logout / refresh / `/api/me` 占位）+ `mc-repos/{pat,verification_code}.rs`、`docs/06-M1-AUTH.md` |
+| A（LUM-1343） | `feat/multica-rs-m1a-workspace-member` @ `2c4da9f` + 未提交改动 | 运行中，**routes 仍未开始** | 已完成 `mc-repos/{workspace,member,user}.rs` + 新建 `crates/mc-http/src/middleware/`（session 中间件，对应仲裁 #5）；`crates/mc-http/src/routes/` 下无 workspaces.rs |
+
+A 是 M1 关键路径：它的路由部分尚未落地，若下一 cycle 仍无进展，集成会卡在 A。
+
+### 7.2 M0 基线 `056d2ae` 不编译——三个切片各自做了同构修复
+
+`cargo build --workspace` 在 `056d2ae` 上直接失败（首个错误：`crates/mc-errors/src/lib.rs:163`
+`E0433: cannot find module or crate \`anyhow\``）。三个切片**各自独立**修了同一批 M0 缺陷，
+且修复内容逐字节相同：
+
+| 文件 | 修复 |
+| --- | --- |
+| `crates/mc-errors/Cargo.toml` | `+ anyhow = { workspace = true }`（C 另加 `+ sqlx`） |
+| `crates/mc-config/Cargo.toml` | `+ dirs` |
+| `crates/mc-migrate/Cargo.toml` | `+ tokio` |
+| `crates/mc-auth/Cargo.toml` | `+ mc-secrets` |
+| `crates/mc-auth/src/container.rs` | `use crate::store::…` → `use mc_secrets::…` |
+| `crates/mc-secrets/Cargo.toml` | `+ tempfile`、`+ async-trait`（`features` 同步加 `async_trait::async_trait` import） |
+| `crates/mc-plugin-protocol/Cargo.toml`、`crates/mc-storage/src/lib.rs` | 同构小改（各 1 行） |
+
+**规则：这些文件取任意一方即可**——三方 hunk 相同，属"假冲突"，不要逐 hunk 手工仲裁，
+否则会把同一处修复叠成三份。
+
+### 7.3 实测冲突矩阵（`git diff --name-only 056d2ae`，含工作树未提交改动）
+
+- **三方共有（15 个）**：`apps/mc-server/src/main.rs`、`crates/mc-db/src/migrate.rs`、
+  `crates/mc-http/src/state.rs`、`crates/mc-auth/src/container.rs`、`crates/mc-authz/src/lib.rs`、
+  `crates/mc-realtime/src/lib.rs`、`crates/mc-storage/src/lib.rs`、`crates/mc-telemetry/src/redact.rs`、
+  `crates/{mc-auth,mc-config,mc-errors,mc-http,mc-migrate,mc-plugin-protocol,mc-secrets}/Cargo.toml`。
+- **A+C 共有（2 个）**：`crates/mc-http/src/lib.rs`、`crates/mc-http/src/middleware.rs`。
+- **B+C 共有（5 个）**：`crates/mc-config/src/lib.rs`、`crates/mc-db/src/pool.rs`、
+  `crates/mc-http/src/routes/{mod.rs,mount.rs}`、`crates/mc-repos/Cargo.toml`。
+- **独有**：A = `mc-repos/{workspace,member,user}.rs` + `mc-http/src/middleware/`（新目录）；
+  B = `routes/auth.rs`、`mc-repos/{pat,verification_code}.rs`、`docs/06`、`.cargo/config.toml`；
+  C = `routes/{auth_user,invitations,pats}.rs`、`mc-repos/invitation.rs`、`mc-http/tests/{invitations,pats}.rs`、
+  `mc-db/Cargo.toml`、`docs/07/08`。
+
+**真正需要仲裁的分歧文件**（其余共有文件按 §2/§3 规则合并）：
+
+| 文件 | 三方 diff 规模（+ / −） | 建议 |
+| --- | --- | --- |
+| `crates/mc-telemetry/src/redact.rs` | A 99/82、B 65/75、C 64/83 | `redact_str` 被三方各自重写为互不兼容的实现，**取一份**（推荐 C：其 workspace test 已全绿），不要三方合并 |
+| `crates/mc-db/src/migrate.rs` | A 58/2、B 12/1、C 5/6 | A 改动最大，取 A 的结构为底，再补 B/C 的索引/查询 |
+| `crates/mc-http/src/state.rs` + `apps/mc-server/src/main.rs` | B 26/1、C 5/1 | `ConfigSnapshot` 字段取并集（§3 已列为必冲突点） |
+| `crates/mc-http/Cargo.toml` | C 追加最多 | 依赖并集；**必须保留 C 的 `test-util` feature 与 dev-deps**（`http-body-util`/`tower`/`hyper`/`pretty_assertions`），C 的 e2e 依赖它 |
+
+### 7.4 axum 0.7 路由语法缺陷（集成后必须全仓扫一遍）
+
+workspace 用 `axum = "0.7"`（matchit 0.7）：路径参数必须写成 `:id`，`{id}` 会被当作**字面量段**——
+编译通过、注册成功，但请求恒返 404（C 在 e2e 里踩到并已全修）。
+
+- **未修 · A 即将写的路由**：`/api/workspaces/{id}`、`/api/workspaces/{id}/members` 等仍会是 `{id}` 写法。
+- **未修 · M0 遗留占位**：`crates/mc-http/src/routes/mount.rs` 的 `/api/workspaces/{id}`、`/api/issues/{id}`——
+  M2 切片照抄就会复发。
+- 集成后检查：
+
+```bash
+# 命中的应当是 format!/json! 字符串；若命中 .route("…{param}…") 即为缺陷
+grep -rn '\.route(' crates/mc-http/src | grep -E '\{[a-zA-Z_]+\}'
+```
+
+### 7.5 其它集成注意
+
+- B 新增仓库级 `.cargo/config.toml`（`incremental = true` / sparse registry / `git-fetch-with-cli` / musl static flags），**保留**。
+- B 在 `crates/mc-http/src/routes/auth.rs:54` 注册了 `/api/me` 的 `me_placeholder`（代码注释已标注"由 sub-issue A 提供真实现"）。
+  按 §2 仲裁 #4，集成时删除该占位、只留 A 的 handler，否则同 path 重复注册。
+- `Cargo.lock` 三方都未提交（工作树里是新生成的未跟踪文件），按 §4 由 M1-D 统一生成并提交。
