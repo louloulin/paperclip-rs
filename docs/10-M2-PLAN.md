@@ -109,7 +109,7 @@ GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Grouped L1873）、
 
 - Repo：`crates/mc-repos/src/inbox.rs` + `subscriber.rs`（`issue_subscriber` 读写）。
 - 路由：`crates/mc-http/src/routes/inbox.rs`，挂入 `mount_slice_inbox()`。
-- 覆盖：`/api/inbox` 全部 15 条（含 `archived/*` 4 条、`unread-summary` 账户级）、
+- 覆盖：`/api/inbox` 全部 **14** 条（含 `archived/*` 4 条、`unread-summary` 账户级；§5.3 有实测更正）、
   `/api/issues/{id}` 下 `subscribers` / `subscribe` / `unsubscribe` / `unsubscribe/subtree`
   （这 4 条挂在 `mount_slice_issue` 里会踩 M2-A 的文件——约定：这 4 条注册在
   `routes/subscribers.rs` 的独立 router 里，通过 `mount_slice_inbox()` 一并 merge，
@@ -180,13 +180,13 @@ M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
 
 | 上游路由块 | router.go 行号 | 条数 | 归属 |
 | --- | --- | --- | --- |
-| `/api/labels`（GET/POST `/`、GET/PUT/DELETE `/{id}`） | L2041–L2051 | 5 | **M2-E（新立项）** |
-| `/api/properties`（GET/POST `/`、GET/PATCH `/{id}`） | L2031–L2039 | 4 | **M2-E（新立项）** |
+| `/api/labels`（GET/POST `/`、GET/PUT/DELETE `/{id}`） | L2041–L2051 | 5 | **M2-E（LUM-1370，backlog）** |
+| `/api/properties`（GET/POST `/`、GET/PATCH `/{id}`） | L2031–L2039 | 4 | **M2-E（LUM-1370，backlog）** |
 | `/api/quick-actions`（GET/POST `/`、PATCH/DELETE `/{id}`） | L2021–L2029 | 4 | autopilot 域（M3+，未立项） |
 | `POST /api/issues/{id}/quick-actions/{quickActionId}/{run,render}` | L1995–L1996 | 2 | 依赖 task queue（M3+，未立项） |
 
 注：M2-A 只覆盖 issue-**从属**的 `/api/issues/{id}/labels`、`/properties`，上游的**定义目录**
-（`/api/labels`、`/api/properties`）在 §0／§2 里从未出现——这是本计划的覆盖盲区，已单独立 M2-E。
+（`/api/labels`、`/api/properties`）在 §0／§2 里从未出现——这是本计划的覆盖盲区，已单独立 **LUM-1370（M2-E）**。
 
 ### 5.3 计数更正与实测基线
 
