@@ -272,6 +272,22 @@ UI 兼容性：`apps/web` / `apps/desktop` 仅切换 base URL 即可对接 multi
 - ⏭ 下一 cycle（16:00 CST）：M1×3 全部交付（`in_review` + 分支已 push）才晋升 LUM-1347；
   A 是 M1 关键路径，若仍无路由落地需重点跟进。
 
+### 进度更新（2026-09-22 16:00 CST，LUM-1359 cycle）
+
+- ✅ **M1 三切片全部交付**（GitHub 实测 head）：
+  A（LUM-1343）`feat/multica-rs-m1a-workspace-member` @ `f2e2e8b` / PR #3；
+  B（LUM-1345）`feat/multica-rs-m1b-auth` @ `cce354c` / PR #2；
+  C（LUM-1344）`feat/multica-rs-m1c-invitation-pat` @ `d88b259` / PR #1。
+  三个切片的 run 均已结束，`--siblings --active` 只剩协调 run → 并发位空出。
+- 🚀 **晋升 LUM-1347（M1-D 集成）**：晋升条件（三子 issue `in_review` + 分支已 push + 并发位空 + 无 cargo 抢锁）全部满足。
+- 🔬 **axum 0.7.9 `.merge` 实测**（同版本最小复现，非推断）：同 path + 同 method 重复注册
+  **panic**（`Overlapping method route`）；同 path 不同 method 可合并；字面量 `{id}` 与 `:id` 可共存（静默 404）。
+  → 合并后必须删掉 B 的 `GET /api/me` 占位，并以 A 的 `mount.rs::router()`（已删 `/api/workspaces` 系列占位）为底。
+- 🔍 上游路由前缀核对：`/auth/{send-code,verify-code,logout}` 无 `/api` 前缀（`server/cmd/server/router.go:1472-1475`），
+  B 的实现与上游一致，集成时**不要**"统一"成 `/api/auth/*`。
+- ⏭ 下一 cycle（16:30 CST）：核查 LUM-1347 集成进度（merge 结果 / 四条验证命令输出 / CI），
+  集成合入后按其评论结论晋升 M2 三切片（LUM-1348 / 1350 / 1349，三路并行 = 并发上限）。
+
 ## 8. 风险与权衡
 
 | 风险 | 缓解 |

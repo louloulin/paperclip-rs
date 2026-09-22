@@ -182,3 +182,79 @@ grep -rn '\.route(' crates/mc-http/src | grep -E '\{[a-zA-Z_]+\}'
 - B 在 `crates/mc-http/src/routes/auth.rs:54` 注册了 `/api/me` 的 `me_placeholder`（代码注释已标注"由 sub-issue A 提供真实现"）。
   按 §2 仲裁 #4，集成时删除该占位、只留 A 的 handler，否则同 path 重复注册。
 - `Cargo.lock` 三方都未提交（工作树里是新生成的未跟踪文件），按 §4 由 M1-D 统一生成并提交。
+
+## 8. 交付收尾 + 路由重复注册实测（2026-09-22 16:00 CST，LUM-1359 cycle）
+
+**本节取代第 7.1 节的"运行中"状态**：三个切片全部交付，运行已结束（`multica issue runs … --siblings --active`
+实测并发位只剩协调 run）。
+
+### 8.1 交付清单（GitHub 实测 head）
+
+| 切片 | 分支 @ head | PR | 交付时间（UTC） |
+| --- | --- | --- | --- |
+| A（LUM-1343） | `feat/multica-rs-m1a-workspace-member` @ `f2e2e8b` | #3 | 07:53 |
+| B（LUM-1345） | `feat/multica-rs-m1b-auth` @ `cce354c` | #2 | 07:46 |
+| C（LUM-1344） | `feat/multica-rs-m1c-invitation-pat` @ `d88b259` | #1 | 07:33 |
+| 基线 | `feat/multica-rs-initial` @ `7e26c07` | — | — |
+
+- 三个 PR 的 base 都是 `feat/multica-rs-initial`。**若 M1-D 在本地完成合并，请把 #1 / #2 / #3 三个 PR 一起关闭**
+  （原描述只提到 #1 冗余）；否则改为在 GitHub 上逐个 merge 三个 PR。
+- 各切片相对 `056d2ae` 的改动面：A 29 文件、B 34 文件、C 34 文件。
+
+### 8.2 axum 0.7.9 `.merge` 重复注册 = **panic**（实测，非推断）
+
+在 workspace 锁定的同一版本组合（`axum 0.7.9` + `matchit 0.7.3`）上跑最小复现：
+
+| 场景 | 结果 |
+| --- | --- |
+| 两个 Router 各自 `.route("/api/me", get(..))` 后 `.merge` | **panic**：`Overlapping method route. Handler for \`GET /api/me\` already exists`（`routing/path_router.rs:70`） |
+| 同 path **不同** method（A 的 `GET /api/workspaces/:id/members` + C 的 `POST` 同 path） | 合并成功 |
+| 字面量 `/api/workspaces/{id}` 与参数 `/api/workspaces/:id` 共存 | 合并成功（字面量段永远匹配不上 UUID → 静默 404，不 panic） |
+
+**结论**：M0 占位行里只有"同 path + 同 method"的那几条会炸；`{id}` 字面量占位不会炸但也不通。
+A 的 `routes/workspaces.rs` 已在注释里记录了同一结论（同一 path+method 重复注册会 panic）。
+
+### 8.3 合并后**必须**删除的占位行（否则 `mc_http::router()` 构造即 panic）
+
+| 占位行（`mount.rs::router()`） | 与谁冲突 | 谁已删 | 处理 |
+| --- | --- | --- | --- |
+| `GET /api/me`（B 的 `routes/auth.rs:54` `me_placeholder`） | A 的真实 `/api/me` | 未删 | **删 B 的占位行**（§2 仲裁 #4） |
+| `GET+POST /api/workspaces` | A 的真实 `get(list_my_workspaces).post(create_workspace)` | **A 已删** | 合并 B/C 时**不要把它加回来** |
+| `GET /api/workspaces/{id}`、`GET /api/workspaces/{id}/members` | 与 A 的 `:id` 形式不冲突（字面量段） | **A 已删** | 同上：保留 A 的删除结果 |
+| `POST /api/auth/logout` | B 的真实路由是 **`/auth/logout`**（不同 path） | 三方都未删 | 不 panic；上游也无 `/api/auth/*`（除 refresh），可留可删（留 = 404 之外多一个 stub） |
+
+**合并顺序建议不变（A → B → C），但 `mount.rs::router()` 的最终形态应以 A 的版本为底**：
+A 已经把 `/api/workspaces` 系列的 M0 占位行连同注释一起清掉了，B/C 版本里那几行是**回退**，
+逐 hunk 仲裁反而会把它们留下。检查手段（合并后、跑测试前）：
+
+```bash
+# 期望输出为空：真实切片已覆盖却仍保留的同 path+method 占位
+sed -n '/fn router/,/^}/p' crates/mc-http/src/routes/mount.rs \
+  | grep -nE 'health::placeholder'   # 对照各 slice 的 .route("…") 清单人工核
+```
+
+### 8.4 B 的路由前缀是对的，别"顺手"改
+
+上游 `server/cmd/server/router.go` 实测：
+
+| 上游行号 | 路径 |
+| --- | --- |
+| 1472–1475 | `POST /auth/send-code`、`/auth/verify-code`、`/auth/google`、`/auth/logout`（**无 `/api` 前缀**） |
+| 1615–1616 | `GET` / `PATCH /api/me` |
+| 1632 | `POST /api/auth/refresh`（有 `/api`） |
+| 1657 | `r.Route("/api/workspaces", …)` |
+
+B 的 `routes/auth.rs` 与上游逐条一致（`/auth/*` 三条 + `/api/auth/refresh` + `/api/me` 占位），
+M1-B 的 issue 描述里也是这么写的 → **不要**在集成时把它们"统一"成 `/api/auth/send-code`。
+M0 的 `/api/auth/login` / `/api/auth/session` 占位在上游并不存在（M0 自造），可保留到 M2+ 再清理。
+
+### 8.5 切片互不冲突的真实路由面（供合并后核对）
+
+- A：`GET+POST /api/workspaces`、`GET+PATCH /api/me`、`GET /api/workspaces/:id`、
+  `PATCH`/`DELETE /api/workspaces/:id`、`POST /api/workspaces/:id/leave`、`GET /api/workspaces/:id/members`
+- B：`POST /auth/{send-code,verify-code,logout}`、`POST /api/auth/refresh`、`GET /api/me`（占位→删）
+- C：`POST /api/workspaces/:id/members`（create invitation）、`GET /api/invitations`、
+  `GET /api/invitations/:id`、`POST /api/invitations/:id/{accept,decline}`、
+  `GET+POST /api/me/pats`、`DELETE /api/me/pats/:id`
+- 交叉点只有两处，都无同 path+method 冲突：`/api/me`（删 B 占位）、
+  `/api/workspaces/:id/members`（A 的 GET + C 的 POST，实测可合并）。
