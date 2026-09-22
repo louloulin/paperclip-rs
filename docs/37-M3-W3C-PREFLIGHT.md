@@ -578,3 +578,112 @@ $ MULTICA_TEST_DATABASE_URL=<db-url> bash scripts/gates.sh --with-db        # 15
 2. **M3-4 合入后**，W3c 链可推进：晋升 **LUM-1438**（M3-7：daemon 面 44 条 + ws hub/notifier，最重；前置 = W0-B2 ✅ + M3-1/M3-3 ✅ + **M3-4** + **LUM-1439 ✅**）。**不能**同时派 1440/1441 —— 二者前置是「**LUM-1438 已合**」（`docs/37` §7：execenv 与 M3-7 同 crate `mc-daemon`，`Cargo.toml`/`lib.rs` 会撞）。
 3. 因此 1438 合并前的空位由**非 W3c** 片填：候选为 M2-E（`LUM-1370`，先实测写集重叠）与其后任何 `backlog` 片（目前 epic 下 `backlog` 只剩 1438/1440/1441/1442/1443 五个）。
 4. 1438 合入后：并行 **LUM-1440**（execenv）+ **LUM-1441**（adapters 批 1）→ 串行 **LUM-1442** → **LUM-1443**。
+
+---
+
+## 12. 05:00 cycle 落地记录（LUM-1449）—— 并发位 3/3 ⇒ 只做 W3b **合并预飞**（无集成动作可做）
+
+**base 链**：`2a759ae` → **`757f9ee`**（`docs(37)` = 本文件 §11，LUM-1446）。`git diff --stat 2a759ae..757f9ee` 实测是 **docs-only 1 文件 +48/−0** ⇒ code/tests 与 `2a759ae` **逐字节相同**，§11.1 的 10/10 全绿直接沿用。**本 cycle 没有推进 base**：`open PR = 0` 实测（PR #28 之后无人开新 PR），也没有可合的 PR。
+
+**并发位口径**：worker 位 3 个。起手实测 `LUM-1427` / `LUM-1428` / `LUM-1429` 三条 run **全部 running**（20:39:20Z 起）= **3/3**；`LUM-1387`（PR #27）、`LUM-1439`（PR #28）均已合 ⇒ **无空位**。⇒ 本 cycle **不晋升任何 issue**（晋升就是制造第 4 个并发），产出改为「让下一个 cycle 的合并一次过」的预飞。
+
+**本 cycle 在 `757f9ee` 上的离线复验**（重跑，非引用）：
+
+```
+$ cargo fmt --all --check                                     # ①  0.5s   exit 0
+$ python3 scripts/route_parity.py --quiet                      # ⑦  0.09s  exit 0
+upstream 456 (commit f41fae6b08fb) | local 136 registered | baseline 136
+  implemented  112 real +  10 placeholder =  122 / 456   known_gap  334   unclaimed    0   regression   0   local_only   11
+OK: every upstream route is either implemented or owned
+$ python3 scripts/file_size_check.py --quiet                   # ⑩  0.04s  exit 0
+```
+
+②③④⑤⑥⑧⑨ 本 cycle **没跑**，理由两条且都可复核：①代码面与 30 分钟前的 10/10 全绿点 `2a759ae` 逐字节相同（上一段）；②**资源实测** —— 本机 `/` 可用 **14G**，三片各自 `target/` 已占 **8.4G + 1.1G + 2.1G 且在增长**（已完成的 `lum-1387` 另有 15G）⇒ 再起一个冷 target 构建**有把三片挤到 ENOSPC 的实测风险**，本 cycle 不制造这个风险（R13）。
+
+### 12.1 W3b 合入预飞（本 cycle 的主要产出，全部实测）
+
+1. **46 条路由的机械复核**（逐条从三片正文提取 + 与 ⑦ 的 `implemented` 集合求交，命令见 §12.4）：**40 条新增 + 6 条原地替换**，三片两两**无重复 `(method,path)`**，46 条**全部命中** `docs/fixtures/upstream-routes.tsv`（有一条对不上就会进 `local_only` 而不是 `implemented`）。
+
+   | 切片 | 正文条数 | 已在 local（stub） | 合入后 ⑦ 新增 |
+   | --- | ---: | ---: | ---: |
+   | M3-4 `LUM-1427` | 15 | 0 | **+15** |
+   | M3-5 `LUM-1428` | 16 | 0 | **+16** |
+   | M3-6 `LUM-1429` | 15 | **6**（`preview-trigger` / `active-task` / `rerun` / `task-runs` / `usage` / `tasks/:taskId/cancel`） | **+9** |
+   | 合计 | **46** | 6 | **+40** |
+
+   M3-5 的 `GET/POST /api/agents` 两条 M0 占位已由 03:30 cycle 的 anchor 预删（§10）⇒ 它也算「纯新增」而不是替换。
+
+2. **⑦ 合入后计数是预演出来的，不是推算**：把 40 条新注册合成进 `crates/mc-http/src` 的一份**副本**（`--routes-dir` 指向副本，仓库工作区不动），跑 ⑦ 得
+   **`local 176 / implemented 162（152 real + 10 placeholder）/ known_gap 294 / unclaimed 0 / regression 0 / local_only 11`，exit 0**。`local_only 11` 与 `placeholder 10` 都不变（W3b 的 46 条全在上游 fixture 内，且一条都不碰 M4/M5/M6 的那 10 条占位）。
+
+3. **§11.4 的「⑦ 不刷会红」是错的 —— 本 cycle 用实验证伪**：⑦ 的基线**只对丢路由判红**（`regressions = baseline − live`，`scripts/route_parity.py:529`）。实验：注入 40 条后**再删掉其中 1 条**，同一棵树换基线跑两次 ——
+   - 旧基线（136）：`regression 0`、**exit 0** ⇒ 新路由**根本没有保护**，删掉也无人报；
+   - 刷新后基线（176）：`regression 1`、`!! PUT /api/workspaces/:param/runtime-profiles/:param … are gone`、**exit 1**。
+
+   ⇒ 合并 cycle **仍然必须刷新 ⑦ 基线**，但理由要改写成「**给新增的 40 条契约上锁**」；「不刷会红」不成立，不刷的真实后果是**静默丢契约**（比红更危险）。
+
+4. **⑨ 的合入后漂移只有一条，且能点名**：58 条 golden fixture 里只有 **3 条**命中 W3b 路由（都在 `agents` 域），其中两条 member actor 在 stateless tier 直接 `unevaluable` 且不回放；**唯一会动的**是
+   `agents/TestProtectedRoutesRequireAuth@server/cmd/server/integration_test.go:433#1`（匿名 `GET /api/agents`，期望 401）—— 它当前 `unmounted` 正是 §10 那次 anchor 预删造成的。M3-5 把 `GET /api/agents` 注册进路由组后它会重新可判，而 `crates/mc-http/src/middleware/authn.rs` 的规则是「否则 → 401」⇒ **预测** ⑨ 变为 `pass 5 / mismatch 1 / unmounted 5 / placeholder 0 / unevaluable 47`（总数 58 不变）⇒ **合并 cycle 必须 `mc-conformance --write crates/mc-conformance/report.json` 重生成并在 PR 里逐条解释**（实际值以那次运行输出为准）。
+
+5. **三片共享面审计（读各自工作区，不是读 PR 描述）**：`mount.rs` / ⑦ 基线 / ⑨ 快照 **三片都没碰** ✅（anchor 预删生效）；但 **M3-6 动了 `crates/mc-repos/Cargo.toml`（+`mc-task` path 依赖）与 `Cargo.lock`（+1 条边）**，与 `docs/36` §6「`Cargo.lock` 由集成统一提交」不一致 ⇒ 合并时由集成方复核 lock 边（path 依赖，确定性可解）并在 PR 说明。
+
+6. **⑦ 的 `real` 会高估（顺带实测）**：`crates/mc-http/src/routes/issues/mod.rs` 里仍有 **19 条 `.route(...)`（20 个 method key）指向 501 的 `not_implemented`**，而 ⑦ 的 placeholder 检测只认字面 `placeholder`（`health::placeholder` 那 10 条）⇒ ⑦ 的 `112 real`（合入后 `152 real`）**包含这些 501**。**不要把 ⑦ 的 `real` 当「真实现」口径**，handler 语义以 ⑨ / PR 为准。
+
+### 12.2 空位怎么填：本 cycle 实测的依赖解耦与重叠
+
+- **M3-7（`LUM-1438`）只依赖 M3-4 合入**：它的表 B 8 条与 M3-4 的 9 条台账同在 `crates/mc-http/src/routes/runtimes.rs`（正文自己写「M3-4 必须先合」），**不依赖 M3-5/M3-6**；写集里没有 `routes/issues*` / `mount.rs` / `routes/mod.rs`。⇒ **三片不必等同波全合**：`LUM-1427` 一合就能晋升 1438（前置 = W0-B2 ✅ + M3-1/M3-3 ✅ + LUM-1439 ✅ + M3-4 合 + 空位）。
+- **M2-E（`LUM-1370`）× M3-6 = 硬重叠（已实测）**：两者都改 **`crates/mc-http/src/routes/issues/mod.rs`** —— M3-6 替换 L109 / L138-141 / L149-152 的 6 个 `not_implemented`，M2-E 要回填 **L144-145**（`/api/issues/:id/labels`、`/api/issues/:id/labels/:labelId`）并接 `properties`（L128-132 已是真 handler）。两处相距 **3-5 行、同属一条 `.route()` 链式表达式** ⇒ 同波必冲突。**M2-E 必须在 M3-6 合入之后再晋升**，分支基线取含 M3-6 的 head。（§11.4 把这条记为「未实测」，本 cycle 已实测。）
+  顺带把 M2-E 那侧的量也实测清了（它自己正文写的「回填 5 条」已过时）：`/api/issues/:id/labels` 上游 3 条，本地 **GET/DELETE 是 501（要回填）+ `POST` 根本没注册**（⑦ `--list-gaps` 在列）⇒ 是「2 替换 + 1 新注册」；`/api/issues/:id/properties/:propertyId` **已经是真 handler**（L128-132，M2-A 已交值面）⇒ 0 条待回填。因此 M2-E 在 `issues/mod.rs` 的改动 = **1 新行 + 2 处 501 换真**，全落在与 M3-6 相邻的链上。
+- **M2-E × M3-7 可同波**，只有一个次要共享锚点：两者都往 `crates/mc-repos/src/lib.rs` 的模块表加行（M2-E 加 `label`/`property`，M3-7 加 `daemon`），插入点相距 5 行、可按文本合并；`mount.rs` / `routes/mod.rs` 只有 M2-E 碰。
+- **M3-7 之后仍不能同波 1440/1441**（同 crate `mc-daemon` 撞 `Cargo.toml`/`lib.rs`，§7）。
+- `LUM-1370` 的正文修订（不手写 `0005_*` 迁移）**已在正文里**（「范围修订」节，本 cycle 逐字核对）⇒ 不需要再改正文；其前置「W0-B2 已合」自本 cycle 起**已满足**。
+
+### 12.3 下一个 cycle 的动作队列（取代 §11.5）
+
+1. 三片 PR 到齐 → 按 `1427 → 1428 → 1429` 合入（或 octopus）：**同一 cycle 内**复核 `Cargo.lock` 边（§12.1 第 5 条）→ 刷 ⑦ 基线（`--write-baseline`，预期 `baseline 136 → 176`）→ 若 ⑨ 漂移就 `--write` + 逐条解释（预期只有 `agents/…RequireAuth#1` 一条，§12.1 第 4 条）→ `gates.sh --with-db` 全量复验（⑦ 预期 = §12.1 第 2 条那组）。
+2. **`LUM-1427` 一合**就把空位给 **`LUM-1438`**（M3-7，最重的一刀）。
+3. 若 `LUM-1429` 也已合，用第二个空位晋升 **M2-E（`LUM-1370`）**（**不得**与仍在跑的 M3-6 同波，§12.2 第 2 条）。
+4. 第三个空位只能由非 W3c 片填：epic 下 `backlog` 实测只剩 `1438`/`1440`/`1441`/`1442`/`1443`，其中 1440/1441 要等 1438 合 ⇒ 实际可用的是「先实测写集」后的 M2 余片，或本 cycle 之后新立的片。
+
+### 12.4 复算命令（§12.1 每条结论都能重跑）
+
+```bash
+# ① 46 条 = 40 新增 + 6 替换；三片两两无重复；全部命中上游 fixture
+python3 - <<'PY'
+import re, itertools
+S="./scratch"          # 三片正文各自 multica issue get <id> --output json 落地成 desc-<编号>.md
+norm=lambda p: re.sub(r'[:{][^/}]*\}?','*',p.rstrip('/'))
+R=[{(m.group(1),norm(m.group(2))) for m in re.finditer(r'^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`',open(f"{S}/desc-{n}.md").read(),re.M)}
+   for n in ("1427","1428","1429")]
+up={(l.split('\t')[0],norm(l.split('\t')[1])) for l in open("docs/fixtures/upstream-routes.tsv") if not l.startswith('#') and '\t' in l}
+print([len(s) for s in R], len(set().union(*R)),
+      [len(R[i]&R[j]) for i,j in itertools.combinations(range(3),2)], len(set().union(*R)-up))
+PY
+# → [15, 16, 15] 46 [0, 0, 0] 0      # 交叉重复 0、不在上游 fixture 的 0
+
+# ② ⑦ 合入后计数预演：把 40 条新注册写进 src 的副本（副本放仓库外，别让 ①⑦⑩ 把演练当真）
+SCRATCH=$(mktemp -d); cp -r crates/mc-http/src "$SCRATCH/src"
+#    在 $SCRATCH/src/routes/w3b_sim.rs 里生成 40 条 `.route("/api/…", get(sim_hN))`（46 条去掉上面那 6 条 stub）
+python3 scripts/route_parity.py --quiet --routes-dir "$SCRATCH/src"
+# → local 176 / implemented 162（152 real + 10 placeholder）/ known_gap 294 / regression 0，exit 0
+
+# ③ ⑦ 基线实验：同一棵树换基线（证明「刷新是保护、不是防红」）
+rm -f "$SCRATCH/src/routes/w3b_sim.rs.bak"; cp "$SCRATCH/src/routes/w3b_sim.rs" "$SCRATCH/w3b_sim.bak"
+sed -i '/sim_h40/d' "$SCRATCH/src/routes/w3b_sim.rs"        # 删掉 1 条新注册
+python3 scripts/route_parity.py --quiet --routes-dir "$SCRATCH/src" --baseline docs/fixtures/route-parity-baseline.json   # regression 0, exit 0
+python3 scripts/route_parity.py --quiet --routes-dir "$SCRATCH/src" --write-baseline --baseline "$SCRATCH/baseline-176.json"
+python3 scripts/route_parity.py --quiet --routes-dir "$SCRATCH/src" --baseline "$SCRATCH/baseline-176.json"             # regression 1, exit 1
+
+# ④ ⑨ 命中 W3b 路由的 fixture 只有 3 条（其中唯一会从 unmounted 变可判的是第 3 条）
+python3 -c "import json;d=json.load(open('crates/mc-conformance/report.json'));\
+print([(f['outcome'],f['id']) for f in d['fixtures'] if f['path']=='/api/agents'])"
+
+# ⑤ 501 口径：issues/mod.rs 里 not_implemented 的路由注册数 = 19
+grep -n 'not_implemented' crates/mc-http/src/routes/issues/mod.rs | grep -c 'route('
+```
+
+### 12.5 本 cycle 没做（边界）
+
+- **没碰** base 上的任何代码、⑦ 基线、⑨ 快照、`mount.rs`、`Cargo.lock`（§12.1 第 5 条的 Cargo 面留给合并 cycle）；**没晋升、没改状态**任何 worker issue（晋升 = 制造第 4 个并发）。
+- 本 cycle 的全部写集 = **本文件这一段** + **`LUM-1370` / `LUM-1438` 两份 issue 描述各追加一个「预飞追加」块**（`--no-start`，实测两条都是 `backlog` 不变、未起 run）：把上面的 M3-6 硬重叠 + 实测行号、M2-E 回填量的更正、以及「M3-7 的 ws 层已进 base、别重写」写进被晋升者要看的地方，省下一轮自主复核。
+- 三片正文**只核对未改**（它们自身没写错）；`gates.sh` 只跑了 ①②⑦⑩ 四门（②③④⑤⑥⑧⑨ 的未跑理由见上文）。
