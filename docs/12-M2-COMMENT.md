@@ -105,7 +105,7 @@ list_reactions(&[Id])                     -> Vec<CommentReactionRow>
 | `trigger-preview` / `POST /api/comments/:commentId/trigger` | 不实现 | 属 agent 派单（`triggerTasksForComment` 全套），依赖 M3 task queue |
 | mention 触发 agent 派单、`suppress_agent_ids` | 不实现（接住但忽略） | 同上，M3 |
 | `sub-issue-preview` | 不实现 | 上游 human-only 端点 |
-| `POST /:commentId/sub-issues` | **501 + 代码 TODO** | 依赖 M2-A 的 `IssueRepo` + source-context token 流程（见 §6） |
+| `POST /:commentId/sub-issues` | **501 + 代码 TODO** | M2-A 已并入（`IssueRepo` 可用），真正阻塞是 `mc-source-context` crate 本仓不存在 → 集成时按仲裁**维持 501**（见 §6.1） |
 
 请求体里出现 DTO 未声明的字段（如 `suppress_agent_ids`）不会 400——上游客户端可能带，忽略即可；**已知会改变语义**的字段才显式拒绝（`type`）。
 
@@ -127,7 +127,7 @@ list_reactions(&[Id])                     -> Vec<CommentReactionRow>
 
 `content` 落库前剥离 NUL 字节（上游 `CreateComment` 同样 sanitize），随后要求非空——**只含 NUL 的评论**会得到 400 而不是存进一个空 body。
 
-## 6. `POST /api/comments/:commentId/sub-issues` = 501（M2-A 未合并）
+## 6. `POST /api/comments/:commentId/sub-issues` = 501（M2 集成后**维持**）
 
 上游 `CreateCommentSubIssue` 的完整流程：`ParseSourceContextToken` → 校验 token 里的 issue/revision digest
 （不匹配 → 409 `source_context_changed`）→ 按 `mode`（`manual` / `agent`）建子 issue 并回写来源。
@@ -138,11 +138,25 @@ M2-B 开工时 M2-A（LUM-1348）尚未合并，`IssueRepo` 不存在，所以�
 2. 响应体：`{ code: "not_implemented", message: ..., todo: ... }`；
 3. 代码内 TODO 注释 + 本 issue 评论里给出**期望的 `IssueRepo` 接口签名**，供 M2 集成时对齐。
 
-**集成时需要做的**（交给 M2 集成的 master / M2-A 作者）：
+### 6.1 M2 集成仲裁（LUM-1354，2026-09-22）：**维持 501，不在集成切片里实现**
 
-- 用 `IssueRepo` 建子 issue，并把 source-context token 的 digest 校验接上（409 语义）；
-- 501 分支替换为真实实现后，本文件 §5 表格里那一行同步删除；
-- `sub-issues` 的请求体 schema（`createCommentSubIssueRequest`）按上游 `source_context.go` 落。
+M2-A 已并入 `feat/multica-rs-initial`（`IssueRepo::create` / `has_ancestor` 等可用），但是**真正的阻塞不在 M2-A**：
+
+- 上游的 `ParseSourceContextToken` / `BuildSourceContext` 属于 `mc-source-context`——`docs/01-PLAN.md:162`
+  计划中的 crate，**本仓 `crates/` 下不存在**（集成时实测：全仓 `grep -rn "ParseSourceContextToken" crates/`
+  只命中本文件对应 handler 的 TODO 注释）。`issue.source_context_id` 列在 `0001` 里存在，
+  但 token 的签发 / 解析 / digest 比对整套缺失。
+- 该 token 流程是**独立子系统**（含 `source_context_changed` 409 语义与 `createCommentSubIssueRequest`
+  请求体 schema），既不在 M2-A/B/C 任一切片的文件面内，也不是“接线”能补齐的。
+
+因此 M2 集成按 `docs/10-M2-PLAN.md` §2 仲裁给出的第二选项（“替换为真实实现**或**明确记录到后续 issue”）执行后者：
+
+- **维持 501**（`code: not_implemented`）；鉴权 + workspace 成员校验 + 404 语义保持在现有实现上，不放松；
+- 遗留项登记为**后续切片**：`mc-source-context` crate + `POST /api/comments/{commentId}/sub-issues` 真实实现
+  （含上游 `source_context.go` 的请求体 schema 与 409 语义）。集成切片**不**凭空设计该子系统
+  （`docs/21-M2-INTEGRATION-RECIPE.md` §10.3 有同一结论与证据命令）。
+- 本节原先那句“集成时需要做的：用 `IssueRepo` 建子 issue……”已被本次仲裁取代：`IssueRepo` 就绪
+  但 token 子系统未就绪，所以该路由**不是**一条接线任务。
 
 ## 7. 测试
 

@@ -23,7 +23,8 @@
 //! `{commentId}` 会被当字面量段——编译通过但恒 404（docs/09 §7.4）。
 //!
 //! 偏差与简化（完整清单见 `docs/12-M2-COMMENT.md`）：
-//! - `sub-issues` 依赖 issue 域 repo + source-context token（M2-A 未合并）→ 501
+//! - `sub-issues` 依赖 source-context token 基础设施（`mc-source-context` crate，本仓尚未建立）→ 501
+//!   （M2-A 已并入，`IssueRepo` 可用；集成仲裁见 `docs/12-M2-COMMENT.md` §6.1）
 //! - `recent` / `tail` / `summary` / `fold` 读模式未实现 → 400（明确报错，不静默降级）
 //! - 单线程唯一 resolution（上游 `ClearOtherThreadResolutions`）未实现 → TODO
 //! - `comment.type` / `resolved_by_*` / `quick_action_id` 列在本仓库 0001 里不存在 → 响应省略
@@ -693,8 +694,9 @@ async fn remove_reaction(
 /// 上游 `CreateCommentSubIssue` 走 source-context token 流程：
 /// `ParseSourceContextToken` → `BuildSourceContext` → digest 比对（不符 409
 /// `source_context_changed`）→ `CreateIssue`（mode `manual` / `agent`）。
-/// 它依赖 issue 域 repo（M2-A）与 source-context token 基础设施，两者都未合并，
-/// 所以这里返回 **501 Not Implemented**（鉴权前置照常执行，权限边界不放松）。
+/// 其中 issue 域 repo（M2-A）已并入，但 source-context token 基础设施属于
+/// `mc-source-context`——本仓尚未建立，所以这里返回 **501 Not Implemented**
+/// （鉴权前置照常执行，权限边界不放松）。集成仲裁见 `docs/12-M2-COMMENT.md` §6.1。
 async fn create_comment_sub_issue(
     State(state): State<Arc<AppState>>,
     Path(comment_id): Path<String>,
@@ -709,7 +711,7 @@ async fn create_comment_sub_issue(
         Json(NotImplementedBody {
             code: "not_implemented",
             message: "POST /api/comments/{commentId}/sub-issues is not implemented in the M2-B slice",
-            todo: "needs IssueRepo (M2-A) + source-context token flow (ParseSourceContextToken/BuildSourceContext)",
+            todo: "needs mc-source-context (ParseSourceContextToken/BuildSourceContext) — not part of the M2 slices",
         }),
     )
         .into_response())

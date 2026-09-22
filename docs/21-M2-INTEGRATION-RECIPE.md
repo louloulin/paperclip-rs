@@ -260,3 +260,134 @@ grep -rnoE '\.route\( *"[^"]*\{[a-zA-Z_]+\}' crates/mc-http/src/routes/*.rs   # 
   集成前请以**远端分支 + `docs/23` §3 的哈希对账**为准，别把「只恢复了一半」的分支当完整切片。
 - 运维面：切片在跑时重启 daemon 的实测代价 ≈ 2h45m 并行算力，而 M2-A 正在关键路径上。
 
+
+---
+
+## 10. 执行记录：M2 集成完成（2026-09-22，LUM-1354 实测）
+
+> 本节是**结果**记录（§1–§9 是开工前的配方与快照）。基线 = 开工时的
+> `feat/multica-rs-initial` **`f213403`**（比 §1.1 的 `afccdd5` 又多了 2 个 docs-only 提交）。
+> 全程在**本集成任务自己的 worktree** 里执行，未触碰任何切片工作区；
+> cargo 用的是本仓 `target/`（`/usr/bin/cargo` 1.75 不可用，已 `PATH="$HOME/.cargo/bin:$PATH"` → 1.98.1）。
+
+### 10.1 实际执行顺序（§7.2 的顺序照做，但比预告多并了两条）
+
+| # | 切片 | 分支 @ head | PR | merge commit | 冲突 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | M1-E 契约缺口 | `feat/multica-rs-m1e-contract-gaps` @ `9851ebf` | #5 | `1e3ddc7` | 无 |
+| 2 | M2-A issue 核心 | `feat/multica-rs-m2a-issue` @ `82d6b77` | #7 | `1b7c2f3` | 无 |
+| 3 | M2-B comment | `feat/multica-rs-m2b-comment` @ `48666c2` | #4 | `5bf5747` | 无 |
+| 4 | M1-F PAT 持久化 | `feat/multica-rs-m1f-pat-persistence` @ `256c497` | #8 | `805bd5f` | 无 |
+| 5 | T1 路由对账 | `feat/multica-rs-tooling-route-parity` @ `2147b59` | #6 | `7e7b818` | 无 |
+
+**5/5 `--no-ff` 零冲突**，与 §1.1 的 dry-run 结论一致（`mount.rs::router()` 与 `mc-repos/src/lib.rs`
+这两个 §3 点名的"要人看"的共享区**根本没产生冲突标记**：各切片改的是不同段落，
+`lib.rs` 的 `pub mod` 追加行彼此不相邻）。因此**本次没有任何 conflict resolution**——
+"解决冲突"环节退化为"核对合并后语义"，下面 §10.2 就是那个核对。
+
+`feat/multica-rs-m1`（`3ad402e`）**不并入**：见 §10.4。
+
+### 10.2 五道门 + 静态扫查（本条为验收证据，均在本集成树 HEAD 上实测）
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo fmt --all --check
+cargo build --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p mc-http --all-targets --features mc-http/test-util -- -D warnings
+cargo test --workspace          # 注意：**不带** MULTICA_TEST_DATABASE_URL
+MULTICA_TEST_DATABASE_URL=postgres://multica:***@127.0.0.1:5432/multica_test \
+  cargo test -p mc-repos -p mc-http --features mc-http/test-util -- --ignored
+```
+
+| 门 | 实测 | 备注 |
+| --- | --- | --- |
+| ① `cargo fmt --all --check` | **exit 0，零 Diff** | 「M1-E 必须先并」成立：base `f213403` 本身是红的（M2-C 的 54 处欠账），并完 M1-E 即转绿 |
+| ② `cargo build --workspace --all-targets` | **exit 0**（47.3s，含全部 test target） | |
+| ③ `cargo clippy --workspace --all-targets -- -D warnings` | **exit 0**（27.0s） | |
+| ④ `cargo clippy -p mc-http --all-targets --features mc-http/test-util -- -D warnings` | **exit 0**（8.6s） | |
+| ③附 `cargo test --workspace`（**不带** DB 变量） | **exit 0**：233 passed / **0 failed** / 43 ignored，45 个 test target | 带 `MULTICA_TEST_DATABASE_URL` 跑这条会让 `tests/smoke.rs::workspace_member_http_e2e` 对同一库重跑迁移 → `relation "user" already exists`（M1 遗留测试设计问题，非本次回归） |
+| ⑤ DB e2e（`--ignored`） | **exit 0：77 passed / 0 failed**（mc-repos 43 + mc-http 34） | 真库 `multica_test`；mc-http 34 条分组 comments 6 / contract_gaps 8 / inbox 4 / invitations 3 / issues 6 / pats 4 / share_links 3 |
+| §6 重复路由静态扫查 | **(method, path) = 139 对，dups = none** | 与 §1.1 的 dry-run 树数字一致（139） |
+| §6 `{param}` 字面量段扫描 | **无输出** | axum 0.7 写错恒 404 |
+| `scripts/route_parity.py` | **exit 0**（见 §10.3） | T1 引入的丢失门禁，基线需刷新一次 |
+| 迁移编号 | 五条分支 `git diff --diff-filter=A f213403 <branch> -- migrations/` **全为空** ⇒ 合并后仍是 `0001`–`0004`，**`0005` 空闲** | |
+
+**运行期守卫也真的跑到了**：DB e2e 里 ~20 处 `mc_http::routes::router(state)` 构造
+（`tests/{comments,inbox,invitations,issues,pats,contract_gaps}.rs`），
+⇒ §6 说的「同 `(method, path)` 重复注册会在构造 router 时 panic」这条守卫**已被 77 条 e2e 实际执行过**，
+不是只靠静态扫查。
+
+### 10.3 仲裁落实（`docs/10-M2-PLAN.md` §2 三条）
+
+1. **subscriber 的 4 条路由**（`/api/issues/:id/{subscribers,subscribe,unsubscribe,unsubscribe/subtree}`）
+   ——**无需搬运**。M2-C 当时已经把它们放在**独立的 `mount_slice_subscriber()`** 里
+   （`crates/mc-http/src/routes/subscribers.rs`），与 M2-A 的 `/api/issues/:id` **不同 path**，
+   axum 不冲突；集成后的 139 对扫查零重复 + 77 条 e2e 全绿即为证据。
+   即 §2 预留的"若冲突则搬进 `mount_slice_issue()`"这条**边界从未被触发**。
+2. **`POST /api/issues/:id/comments` 与 `GET /api/issues/:id`** ——不同 method，**不冲突**；
+   两条都在 139 对里，且 comments e2e 6 条全过（列表/发评论走的就是这两条）。
+   同理"仅当注册报错时统一挂到 issue 切片"这个后备方案**未触发**。
+3. **`POST /api/comments/{commentId}/sub-issues`** ——按 §2 的**第二选项**执行：
+   **维持 501，明确记录为后续切片**。理由（不是"M2-A 未合并"这个已失效的理由）：
+   上游 `ParseSourceContextToken` / `BuildSourceContext` 属于 `mc-source-context` crate，
+   `docs/01-PLAN.md:162` 计划中但**本仓 `crates/` 下不存在**：
+
+   ```bash
+   grep -rn "ParseSourceContextToken" crates/   # 实测只命中 comments.rs 自己那条 TODO 注释
+   ls crates/ | grep source-context            # 实测：无输出
+   ```
+
+   该 token 流程是独立子系统（含 409 `source_context_changed` 与 `createCommentSubIssueRequest` schema），
+   不在 M2-A/B/C 任一切片的文件面内，也不是接线能补齐的。集成切片**不**凭空设计
+   （`docs/10` 范围限制 + 本 issue 的"不要凭空设计"）。
+   结论与代码注释同步写进 **`docs/12-M2-COMMENT.md` §6.1**，handler 的 `todo` 字段已改为
+   `needs mc-source-context (ParseSourceContextToken/BuildSourceContext)`。
+
+### 10.4 `feat/multica-rs-m1`（`3ad402e`）的拣选检查：**无 M2 增量，不并入**
+
+`git show --stat 3ad402e` 是单一 M1 巨石提交（workspace / member / auth / invitation / share_link /
+verification / PAT + `migrations/0002_auth_and_invitations.up.sql`），**没有任何 M2 域文件的新增**；
+其覆盖的三块能力（share-link、`/api/cli-token`、`migrations/0002`）已分别由 M1-D/M1-E 与 base 上的
+`0002_pat_revoked_at.up.sql` 以不同（且已与上游对账过的）形态落地。
+`git diff f213403 origin/feat/multica-rs-m1` 显示为 -18870 行的大反向 diff，是 **stale 基线的假象**
+（该分支停在早期 M1 阶段，base 之后的 M1-A…F + M2 全在它的"未来"里），**不要**据此认为它能并入。
+⇒ 结论：**不 cherry-pick，不 merge**。
+
+### 10.5 T1 路由基线的刷新（唯一一处集成期的"有意退役"接受动作）
+
+T1 的基线 `docs/fixtures/route-parity-baseline.json` 是在 **T1 自己的基点 `9c57592`** 生成的（71 条），
+而 M1-E 在它之后做了 3 条**有意退役** + 1 条**改名**，所以五条合并后 `route_parity.py` 会报 4 条
+`regression`（exit 1）：
+
+| 基线里有 | 现状 | 依据 |
+| --- | --- | --- |
+| `POST /api/auth/cli-token` | 改名为 `POST /api/cli-token` | 上游 `router.go:1628` 就是 `/api/cli-token`（`docs/fixtures/upstream-routes.tsv`） |
+| `POST /api/auth/login`、`GET /api/auth/session` | 已删除 | M0 幽灵占位，上游无此二路由（`docs/17-M1-CONTRACT-GAPS.md` §3、`routes/mount.rs` 注释） |
+| `POST /api/workspaces/:param/invitations` | 已删除 | 上游只有 `GET`(`:1667`) + `DELETE`(`:1706`)，无 `POST`；退役决定写在 `routes/invitations.rs` 头部 |
+
+按 `docs/22-ROUTE-PARITY.md` §4.4「有意退役 → 先删路由，再 `--write-baseline` 把决定写进 diff」执行，
+刷新后实测：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 139 registered | baseline 139
+  implemented  111 real +  13 placeholder =  124 / 456   known_gap  332   unclaimed    0   regression   0   local_only   12
+OK: every upstream route is either implemented or owned        # exit 0
+```
+
+基线文件 diff = **+72 新增 / −4 退役**，`old−new` 恰好等于上表 4 条 ⇒ **没有任何一条路由是在集成时被误删的**。
+（`--write-baseline` 属于"接受退役决定"的显式动作，故单独一个提交，message 里点名这 4 条。）
+
+### 10.6 M3 anchor scaffold：**本轮不做**（计划未就绪）
+
+`docs/` 下**没有任何 M3 切片计划文档**（`docs/01-PLAN.md` §6 只有 M3 = Runtime / Agent / Task Queue
+的粗粒度划分；切片级计划 = LUM-1357，仍 backlog）。按本 issue 任务清单第 5 条
+"若 M3 计划未就绪，留 TODO 由下一个规划 cycle 补，**不要凭空设计**" ⇒ 本轮**不预埋**
+`mc-repos` 的 runtime/agent/task repo stub、`mount_slice_*` 空切片、缺失迁移表。
+**留给下一个规划 cycle**：先出 M3 切片计划（含每切片文件面与共享锚点），再照 `docs/09` §6 的模式
+一次性预埋 anchor，避免现在凭空设计出来的 stub 与后续计划打架。
+
+### 10.7 PR 收尾
+
+五条待并分支已全部本地 merge 并 push 到 `feat/multica-rs-initial`（见 §10.1 的 merge commit），
+故 **PR #4 / #5 / #6 / #7 / #8 一并关闭**（不是 GitHub 上逐个 merge —— 二者只能选一种）。

@@ -226,6 +226,32 @@ OK: every upstream route is either implemented or owned    # exit 0
 同一次运行里那一条也以 `known_gap owner=M1 router.go:1664` 出现（`known_gap` 400→401，M1 计数 9→10），
 即"报成 known_gap"和"退出码非零"两份证据对得上。
 
+### 4.5 M2 集成后的基线刷新（LUM-1354，2026-09-22 实测）
+
+上面那份基线（71 条）是在 **T1 自己的基点 `9c57592`** 上生成的。M1-E（LUM-1362）在 T1 之后做了
+**3 条有意退役 + 1 条改名**，所以五条切片并入 `feat/multica-rs-initial` 后，本命令会按 §4.4 报 4 条
+`regression`（exit 1）：
+
+| 基线里有 | 集成后现状 | 依据 |
+| --- | --- | --- |
+| `POST /api/auth/cli-token` | 改名为 `POST /api/cli-token` | 上游 `router.go:1628` 就是 `/api/cli-token`（`docs/fixtures/upstream-routes.tsv`） |
+| `POST /api/auth/login`、`GET /api/auth/session` | 已删除 | M0 幽灵占位，上游无此二路由（`docs/17-M1-CONTRACT-GAPS.md` §3） |
+| `POST /api/workspaces/:param/invitations` | 已删除 | 上游只有 `GET`(1667) + `DELETE`(1706)，没有 `POST` |
+
+处理照 §4.4 表格的「有意退役」那一行：先删/改路由（已由 M1-E 完成并合入），再
+`python3 scripts/route_parity.py --write-baseline` 接受新集合，把决定写进 diff。刷新后实测：
+
+```
+upstream 456 (commit f41fae6b08fb) | local 139 registered | baseline 139
+  implemented  111 real +  13 placeholder =  124 / 456   known_gap  332   unclaimed    0   regression   0   local_only   12
+  note: same route with and without trailing slash (legal; folded in comparison): ...
+OK: every upstream route is either implemented or owned        # exit 0
+```
+
+基线文件 diff = **+72 新增 / −4 退役**，`old − new` 恰好等于上表 4 条 ⇒ **没有一条路由是在集成时被误删的**
+（“新增路由 → 绿”这条也顺带得到一次真实复核）。集成期**唯一**的基线动作就是这个，
+完整执行记录见 `docs/21-M2-INTEGRATION-RECIPE.md` §10.5。
+
 ## 5. 刷新上游快照（上游 main 变了 / 本轮集成后）
 
 ```bash

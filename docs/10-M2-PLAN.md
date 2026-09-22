@@ -204,6 +204,10 @@ M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
   §4 第 2 条举的 M0 占位反例（`/api/workspaces/{id}`、`/api/issues/{id}`）已不存在——
   workspace 占位被 M1-A 真实路由替换，`/api/issues`、`/api/issues/{id}`、`/api/comments`、`/api/inbox`
   占位由 M1-D 删除（M2 切片**无需**再删占位行）。
+- **M2 集成后（LUM-1354，2026-09-22）实测：`(method, path)` 139 条、零重复、零 `{param}` 字面量段**
+  （M1-E + M2-A/B + M1-F + T1 五条分支并入 `feat/multica-rs-initial` 后的最终树）。
+  权威计数与 owner 看板以 `python3 scripts/route_parity.py` 为准（`docs/22-ROUTE-PARITY.md`），
+  执行记录见 `docs/21-M2-INTEGRATION-RECIPE.md` §10。
 
 ---
 
