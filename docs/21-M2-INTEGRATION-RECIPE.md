@@ -54,13 +54,21 @@
 | 检查 | 命令 | 实测 |
 | --- | --- | --- |
 | rustfmt 门（§4 ①） | `cargo fmt --all --check` | **exit 0**（「M1-E 必须先并」的先决条件成立，见 §5） |
+| 构建（§4 ②） | `cargo build --workspace --all-targets` | **exit 0**（48.2s，含全部 test target） |
+| clippy（§4 ③） | `cargo clippy --workspace --all-targets -- -D warnings` | **exit 0** |
+| clippy test-util（§4 ④） | `cargo clippy -p mc-http --all-targets --features mc-http/test-util -- -D warnings` | **exit 0** |
+| 工作区测试（§4 ③ 附） | `cargo test --workspace`（不带 DB 变量） | **exit 0，0 failed** |
+| DB e2e（§4 ⑤） | `MULTICA_TEST_DATABASE_URL=… cargo test -p mc-repos -p mc-http --features mc-http/test-util -- --ignored` | **exit 0：mc-repos 43 passed + mc-http 34 passed（comments 6 / contract_gaps 8 / inbox 4 / invitations 3 / issues 6 / pats 4 / share_links 3），0 failed** |
 | 重复路由静态预检（§6） | `(method, path)` 配对脚本 | **139 对、零重复**（单切片 base 上是 71 对） |
 | `{param}` 字面量段（§6） | `grep -rnoE '\.route\( *"[^"]*\{[a-zA-Z_]+\}'` | **无输出** |
 | 迁移编号冲突 | 各分支 `git diff --diff-filter=A afccdd5 <branch> -- migrations/` | **五条全为空** ⇒ `0005` 仍空闲，M2-E 可用 |
 
-⇒ LUM-1354 的**合并阶段已是机械操作**，剩余风险只在编译/测试面（§4 ②–⑤：`build` / `clippy` /
-`clippy test-util` / DB e2e）—— 那是集成任务自己的验收门。
+⇒ **五道门在合并树上全绿**（①–⑤ 一次跑通），LUM-1354 的合并+验证阶段已被预先证伪风险；
+正式交付只需在集成任务自己的最终树上重跑一遍并 push（数字可能因合并顺序/后续改动而变）。
 **建议一次性把 M1-F 与 T1 也并进去**（它们同样零冲突）：base 越接近全绿，后续 M2-D / M2-E / M3 计划的基线才越不脏。
+
+> 跑这些门禁**不需要**碰其他 agent 的工作区：本次全部在 `/tmp` 下的独立 worktree + 独立 `CARGO_TARGET_DIR` 里跑，
+> 未在任何切片工作区执行 cargo；DB e2e 用的是本机 `multica_test`（`postgres://multica:***@127.0.0.1:5432/multica_test`）。
 
 ---
 
