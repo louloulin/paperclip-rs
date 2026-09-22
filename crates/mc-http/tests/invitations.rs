@@ -1,4 +1,7 @@
-//! `/api/workspaces/{id}/invitations` 系列路由的端到端测试。
+//! `/api/workspaces/{id}/members`（创建邀请）+ `/api/invitations*` 系列路由的端到端测试。
+//!
+//! M1-E（LUM-1362）仲裁：邀请创建路径改为上游的 `POST /api/workspaces/{id}/members`；
+//! `POST /api/workspaces/{id}/invitations` 已从路由表删除（上游该路径只有 GET）。
 //!
 //! 邀请存储在 `workspace_invitation` 表 + `member` 表，需要真实 PG。
 //! 本文件包含 `#[ignore]` 标注的集成测试，通过 `MULTICA_TEST_DATABASE_URL` env
@@ -118,10 +121,11 @@ async fn admin_invite_then_list_my_invitations() {
     let state = build_state_with_db(db);
     let app = mc_http::routes::router(state.clone()).with_state(state.clone());
 
-    // POST 邀请
+    // POST 邀请（上游 router.go:1701 —— `POST /members` 即 CreateInvitation；
+    // `POST /workspaces/{id}/invitations` 是 M1-C 的多余 alias，M1-E/LUM-1362 已删除）
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/workspaces/{ws}/invitations"))
+        .uri(format!("/api/workspaces/{ws}/members"))
         .header(USER_ID_HEADER, inviter_id.as_string())
         .header("content-type", "application/json")
         .header("x-multica-user-email", "alice@example.com")
@@ -183,7 +187,7 @@ async fn accept_invitation_becomes_member() {
     // admin invite recipient
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/workspaces/{ws}/invitations"))
+        .uri(format!("/api/workspaces/{ws}/members"))
         .header(USER_ID_HEADER, inviter_id.as_string())
         .header("content-type", "application/json")
         .header("x-multica-user-email", "anyone@example.com")
@@ -259,7 +263,7 @@ async fn rate_limit_rejects_extra_invite() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/workspaces/{ws}/invitations"))
+        .uri(format!("/api/workspaces/{ws}/members"))
         .header(USER_ID_HEADER, inviter_id.as_string())
         .header("content-type", "application/json")
         .header("x-multica-user-email", "alice@example.com")

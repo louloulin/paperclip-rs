@@ -23,7 +23,8 @@
      `workspace_invitation` 的 `status / invitee_user_id / declined_at / revoked_at_explicit` 列、
      `personal_access_token.token_prefix` + 回填、verification_code 查询索引。
    - `crates/mc-repos/src/share_link.rs` + share-link 路由（三分支范围外，上游 M1 含它）。
-   - `POST /api/auth/cli-token` handler。
+   - `POST /api/cli-token` handler。（路径已于 M1-E / LUM-1362 修正：m1-B 当时写成
+     `/api/auth/cli-token`，上游 `router.go:1628` 无 `/auth` 这一层，见 `docs/17`。）
    - `member` owner-safeguard（最后一个 owner 不可降级/移除）——若 m1a 已实现等价逻辑则跳过。
 3. **`POST /api/workspaces/{id}/members` 语义**：上游是 `CreateInvitation`（管理员按 email 邀请），
    即 sub-issue C 的实现为准。sub-issue A 若实现了「直接 add existing user」，
@@ -295,7 +296,7 @@ M0 的 `/api/auth/login` / `/api/auth/session` 占位在上游并不存在（M0 
    `joined=false` 且不消耗 `use_count`）。
 2. member 最后 owner 保护：`member.rs` 的 `update`/`delete` 走事务 + `SELECT … FOR UPDATE` +
    其它 owner 计数。上游用 `RepoError::Invalid`，本仓无该变体 → `RepoError::Conflict`（HTTP 409）。
-3. `POST /api/auth/cli-token`：上游签 JWT，本仓 M1 无 JWT 链 → 返回 30 天 TTL 的 PAT，
+3. `POST /api/cli-token`（m1-B 当时误注册为 `/api/auth/cli-token`，M1-E / LUM-1362 已修正）：上游签 JWT，本仓 M1 无 JWT 链 → 返回 30 天 TTL 的 PAT，
    写入与 `/api/me/pats` 同一个 `PatStore`（可列出/可撤销）。签名与上游一致（无请求体、200 + `{token}`）。
    LUM-1335 原实现只拼 `mc_cli_<uuid>` 字符串且不落库，token 无法通过任何校验路径——已修正。
 

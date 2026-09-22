@@ -7,7 +7,7 @@
 //!
 //! 公共 anchor（本文件）：仅维护一个稳定的 `Router::new()` + 健康/占位切片。
 
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 use std::sync::Arc;
 
@@ -29,12 +29,14 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/health/db", get(health::db_health))
         .route("/api/openapi.json", get(openapi::openapi_json))
         // ----- M0 占位（M1+ 各 sub-issue 用真实 handler 替换） -----
-        // `/api/auth/logout` 占位已删（M1-D / LUM-1347）：B 切片的真实 logout 是
-        // 上游路径 `POST /auth/logout`（无 `/api` 前缀，见 docs/09 §8.4），两者并存会
-        // 出现"看似可用其实是 empty 200 占位"的假路由。`/api/auth/login` 与
-        // `/api/auth/session` 上游没有同路径路由（M0 自造），保留给 M2+ 实现。
-        .route("/api/auth/login", post(health::placeholder))
-        .route("/api/auth/session", get(health::placeholder))
+        // `/api/auth/*` 三个 M0 幽灵占位已全部删除：`/api/auth/logout` 由 M1-D
+        // （LUM-1347）删除，`/api/auth/login` 与 `/api/auth/session` 由 M1-E
+        // （LUM-1362）删除。
+        //
+        // 理由：上游 `router.go` 只有 `/auth/{send-code,verify-code,google,logout}`
+        // （L1472-1475）与 `POST /api/auth/refresh`（L1632），**没有**这三条路径；
+        // 它们是 M0 自造、返回 200 empty placeholder 的「静默假成功」路由——会让
+        // 客户端以为登录/会话接口已实现。见 docs/17-M1-CONTRACT-GAPS.md §3。
         // 注：`/api/workspaces` 与其 `{id}` 占位路由已由 sub-issue A 的
         // mount_slice_workspace_member 真实路由替换（axum 0.7 同 path+method
         // 重复注册会 panic，不能共存）。
