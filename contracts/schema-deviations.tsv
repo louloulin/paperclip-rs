@@ -20,3 +20,781 @@
 # contracts/upstream-apply-exceptions.tsv (generated, one row per skipped statement).  A row
 # of that category with no matching skip, or a skip with no row, fails the check.
 # 对象	类型	差异摘要	原因	承接 issue
+#
+# 本文件 2026-09-22（LUM-1386 / W0-B）按 `scripts/schema_drift.py --emit-deviations` 的
+# 真实输出逐条登记：`python3 scripts/schema_drift.py --db-url <url> --json` 的
+# `differences` / `counts` 是唯一来源，行里的 `对象|类型|差异摘要` 都由脚本产出。
+#
+# 这是 **W0-B2 之前的基线**：本仓 0001–0004 只覆盖上游 114 张表里的 26 张，所以
+# missing/extra/differs 有 758 行是「本仓还没接管上游迁移集」这一件事的展开，
+# 全部承接 LUM-1387（W0-B2）。切换迁移集后这一块应当整块消失——LUM-1387 收尾时
+# 必须重跑本脚本，把归零的行删掉，只留真正需要长期豁免的行（9 条 apply-exception）。
+#
+# 红灯依然锋利：任何**新**出现的对象键都不在上表里，脚本立刻非 0。
+pg_bigm	extension	apply-exception: extension-unavailable at 032_issue_search_index.up.sql:3	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+pg_cron	extension	apply-exception: extension-unavailable at 076_task_usage_pgcron_extension.up.sql:24	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+idx_comment_content_bigm	index	apply-exception: extension-unavailable at 033_comment_search_index.up.sql:3; also skipped at 036_search_index_lower.up.sql:22	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+idx_issue_description_bigm	index	apply-exception: extension-unavailable at 032_issue_search_index.up.sql:13; also skipped at 036_search_index_lower.up.sql:13	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+idx_issue_properties_bigm	index	apply-exception: extension-unavailable at 446_issue_properties_bigm_index.up.sql:19	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+idx_issue_title_bigm	index	apply-exception: extension-unavailable at 032_issue_search_index.up.sql:13; also skipped at 036_search_index_lower.up.sql:13	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+idx_project_description_bigm	index	apply-exception: extension-unavailable at 039_project_search_index.up.sql:2	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+idx_project_title_bigm	index	apply-exception: extension-unavailable at 039_project_search_index.up.sql:2	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+103_drop_legacy_daily_rollups.up.sql:101	statement	apply-exception: extension-unavailable at 103_drop_legacy_daily_rollups.up.sql:101	本机与 CI 都没有 pg_bigm / pg_cron 扩展，上游自带的 DO ... EXCEPTION 守卫跳过了这些语句（逐条记录在 contracts/upstream-apply-exceptions.tsv），因此快照里天然不存在这些对象；本切片把跳过显式登记，不静默	LUM-1386
+agent.archived_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.avatar_url	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.description	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=4 upstream=13	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent.disabled_runtime_skills	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.max_concurrent_tasks	column	differs: default: repo='1' upstream='6'; position: repo=8 upstream=9	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent.model	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.owner_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.service_tier	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.status	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.thinking_level	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent.visibility	column	differs: default: repo="'workspace'::text" upstream="'private'::text"; position: repo=6 upstream=7	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent_runtime.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.custom_name	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.last_seen_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.name	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.runtime_mode	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.status	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.visibility	column	differs: default: repo="'workspace'::text" upstream="'private'::text"; position: repo=12 upstream=16	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent_task_queue.agent_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.dispatched_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.initiator_user_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.issue_id	column	differs: nullability: repo='not null' upstream='null'; position: repo=4 upstream=3	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent_task_queue.retired_session_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.runtime_connected_apps	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.runtime_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.runtime_mcp_overlay	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.session_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.status	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_task_queue.trigger_comment_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+autopilot.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+autopilot.description	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+autopilot.project_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+autopilot.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+channel_installation.config	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+channel_installation.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+channel_installation.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_message.content	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_message.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_message.elapsed_ms	column	differs: position: repo=10 upstream=8; type: repo='integer' upstream='bigint'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+chat_message.role	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_message.task_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_session.agent_id	column	differs: nullability: repo='null' upstream='not null'; position: repo=4 upstream=3	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+chat_session.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_session.project_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_session.runtime_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_session.title	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=7 upstream=5	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+chat_session.unread_since	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+chat_session.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.author_id	column	differs: position: repo=6 upstream=4; type: repo='text' upstream='uuid'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+comment.author_type	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.deleted_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.issue_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.parent_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.revision	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.source_task_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment.workspace_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+comment_reaction.actor_id	column	differs: type: repo='text' upstream='uuid'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+inbox_item.actor_id	column	differs: nullability: repo='not null' upstream='null'; position: repo=6 upstream=14; type: repo='text' upstream='uuid'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+inbox_item.actor_type	column	differs: nullability: repo='not null' upstream='null'; position: repo=5 upstream=13	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+inbox_item.issue_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.assignee_id	column	differs: position: repo=11 upstream=8; type: repo='text' upstream='uuid'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue.assignee_type	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.creator_id	column	differs: position: repo=13 upstream=10; type: repo='text' upstream='uuid'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue.creator_type	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.description	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.due_date	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.last_activity_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.metadata	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.number	column	differs: default: repo='' upstream='0'; position: repo=3 upstream=18	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue.parent_issue_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.position	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.priority	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.project_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.properties	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.revision	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.stage	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.start_date	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.status	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.title	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.triage_state	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue_reaction.actor_id	column	differs: type: repo='text' upstream='uuid'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue_status.category	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue_status.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue_status.icon	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=6 upstream=13	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue_status.key	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue_status.name	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue_status.position	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+issue_status.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+personal_access_token.expires_at	column	differs: nullability: repo='not null' upstream='null'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+personal_access_token.token_prefix	column	differs: default: repo="''::text" upstream=''; position: repo=11 upstream=5	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+project.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project.description	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project.icon	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project.priority	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project.start_date	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project_resource.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+project_resource.resource_type	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+runtime_profile.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+runtime_profile.description	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+skill.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+skill.description	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=5 upstream=4	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+skill.plugin_installation_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+skill.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+squad.avatar_url	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+squad.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+squad.description	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=5 upstream=4	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+squad.instructions	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=7 upstream=12	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+squad.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+user.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+user.language	column	differs: default: repo='' upstream='NULL::character varying'; position: repo=6 upstream=12; type: repo='text' upstream='character varying(20)'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+user.onboarded_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+user.profile_description	column	differs: default: repo='' upstream="''::text"; nullability: repo='null' upstream='not null'; position: repo=8 upstream=13	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+user.starter_content_state	column	differs: type: repo='jsonb' upstream='text'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+user.timezone	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+user.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+verification_code.attempts	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+verification_code.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+verification_code.email	column	differs: nullability: repo='null' upstream='not null'; position: repo=3 upstream=2	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+verification_code.expires_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace.attribution_fail_closed	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace.avatar_url	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace.settings	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace.updated_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace_invitation.created_at	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace_invitation.expires_at	column	differs: default: repo='' upstream="(now() + '7 days'::interval)"; position: repo=7 upstream=10	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+workspace_invitation.invitee_user_id	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace_invitation.role	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+workspace_invitation.status	column	differs: 仅物理顺序 (attnum) 不同	只差物理列序（attnum），语义等价；W0-B2 用上游迁移重建后自然归零	LUM-1387
+agent_runtime.agent_runtime_visibility_check	constraint	differs: definition: repo="CHECK (visibility = ANY (ARRAY['workspace'::text, 'private'::text]))" upstream="CHECK (vi...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent_task_queue.agent_task_queue_runtime_id_fkey	constraint	differs: definition: repo='FOREIGN KEY (runtime_id) REFERENCES agent_runtime(id)' upstream='FOREIGN KEY (runtime_id)...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent_task_queue.agent_task_queue_status_check	constraint	differs: definition: repo="CHECK (status = ANY (ARRAY['queued'::text, 'running'::text, 'terminal_completed'::text, '...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+autopilot.autopilot_project_id_fkey	constraint	differs: definition: repo='FOREIGN KEY (project_id) REFERENCES project(id)' upstream='FOREIGN KEY (project_id) REFER...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+chat_message.chat_message_role_check	constraint	differs: definition: repo="CHECK (role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text, 'tool'::text]))...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+chat_session.chat_session_agent_id_fkey	constraint	differs: definition: repo='FOREIGN KEY (agent_id) REFERENCES agent(id)' upstream='FOREIGN KEY (agent_id) REFERENCES ...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+chat_session.chat_session_runtime_id_fkey	constraint	differs: definition: repo='FOREIGN KEY (runtime_id) REFERENCES agent_runtime(id)' upstream='FOREIGN KEY (runtime_id)...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+comment.comment_author_type_check	constraint	differs: definition: repo="CHECK (author_type = ANY (ARRAY['user'::text, 'agent'::text, 'system'::text, 'plugin'::te...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+comment_reaction.comment_reaction_actor_type_check	constraint	differs: definition: repo="CHECK (actor_type = ANY (ARRAY['user'::text, 'agent'::text, 'system'::text]))" upstream="...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+inbox_item.inbox_item_issue_id_fkey	constraint	differs: definition: repo='FOREIGN KEY (issue_id) REFERENCES issue(id) ON DELETE SET NULL' upstream='FOREIGN KEY (is...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue.issue_assignee_type_check	constraint	differs: definition: repo="CHECK (assignee_type = ANY (ARRAY['user'::text, 'agent'::text, 'squad'::text, 'autopilot'...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue.issue_creator_type_check	constraint	differs: definition: repo="CHECK (creator_type = ANY (ARRAY['user'::text, 'agent'::text, 'system'::text]))" upstream...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue_reaction.issue_reaction_actor_type_check	constraint	differs: definition: repo="CHECK (actor_type = ANY (ARRAY['user'::text, 'agent'::text, 'system'::text]))" upstream="...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue_status.issue_status_category_check	constraint	differs: definition: repo="CHECK (category = ANY (ARRAY['open'::text, 'closed'::text]))" upstream="CHECK (category =...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue_subscriber.issue_subscriber_reason_check	constraint	differs: definition: repo="CHECK (reason = ANY (ARRAY['creator'::text, 'assignee'::text, 'commenter'::text, 'mention...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+issue_subscriber.issue_subscriber_user_type_check	constraint	differs: definition: repo="CHECK (user_type = ANY (ARRAY['user'::text, 'agent'::text]))" upstream="CHECK (user_type ...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+member.member_role_check	constraint	differs: definition: repo="CHECK (role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text, 'guest'::text]))" ...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+runtime_profile.runtime_profile_pkey	constraint	differs: definition: repo='PRIMARY KEY (name)' upstream='PRIMARY KEY (id)'	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+workspace_invitation.workspace_invitation_role_check	constraint	differs: definition: repo="CHECK (role = ANY (ARRAY['admin'::text, 'member'::text, 'guest'::text]))" upstream="CHECK...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+workspace_invitation.workspace_invitation_status_check	constraint	differs: definition: repo="CHECK (status = ANY (ARRAY['pending'::text, 'accepted'::text, 'declined'::text, 'revoked'...	同名对象的定义与上游不同（见差异摘要），当前运行时以本仓 migrations 为准；W0-B2 统一到上游口径，届时本行必须删掉或改成真正的例外	LUM-1387
+agent.starter_prompts	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.daemon_uuid	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.online_since	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.owner_user_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.profile	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.runtime_type	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.timezone	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.delegated_failure_evidence	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.lease_expires_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.retry_count	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.source_task_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.terminal_completed_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.updated_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.workspace_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.cron_expression	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.enabled	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.name	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.rule	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.rule_version	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.squad_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.trigger	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.trigger_event_filters	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.webhook_url	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.display_name	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.enabled	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.external_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.kind	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.input_owner	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.kind	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.session_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.tool_call_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.truncated	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.workspace_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_session.pinned	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_session.pinned_agent	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_session.read_cursor	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_session.user_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+comment.body	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+comment.routing_escalation	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+inbox_item.archived_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+inbox_item.category	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+inbox_item.read_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+inbox_item.user_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue.identifier	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue.origin	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue.origin_task_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue.source_context_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue.status_name	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+member.updated_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+personal_access_token.revoked_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+personal_access_token.scopes	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+personal_access_token.token_last4	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project.archived_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project.name	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project.slug	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project.target_date	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project_resource.resource_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+runtime_profile.added_in_migration	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+runtime_profile.cli_command	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+runtime_profile.enabled_by_default	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+runtime_profile.name	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.body	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.enabled	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.owner_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.plugin_key	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.slug	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.visibility	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+squad.leader_agent_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+squad.slug	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+user.cloud_waitlist_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+user.email_verified_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+user.onboarding_runtime_choice	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+user.onboarding_state	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+verification_code.code_hash	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+verification_code.consumed_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+verification_code.purpose	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+verification_code.user_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace.archived_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace.private_plugin_identity	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.accepted_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.declined_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.email	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.invited_by_user_id	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.revoked_at	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.revoked_at_explicit	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.token	column	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent.agent_workspace_id_name_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.agent_runtime_owner_user_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime.agent_runtime_workspace_id_name_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue.agent_task_queue_workspace_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.autopilot_squad_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+autopilot.autopilot_trigger_check	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.channel_installation_kind_check	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.channel_installation_workspace_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+channel_installation.channel_installation_workspace_id_kind_external_id_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.chat_message_session_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_message.chat_message_workspace_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_session.chat_session_project_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+chat_session.chat_session_user_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+inbox_item.inbox_item_actor_type_check	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+inbox_item.inbox_item_user_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue.issue_workspace_id_number_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_status.issue_status_workspace_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_status.issue_status_workspace_id_key_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project.project_workspace_id_slug_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project_resource.project_resource_project_id_resource_type_resource_id_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.skill_owner_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.skill_visibility_check	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+skill.skill_workspace_id_slug_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+squad.squad_leader_agent_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+squad.squad_workspace_id_slug_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+verification_code.verification_code_purpose_check	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+verification_code.verification_code_user_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.workspace_invitation_invited_by_user_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_invitation.workspace_invitation_token_key	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_share_link.workspace_share_link_created_by_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+workspace_share_link.workspace_share_link_workspace_id_fkey	constraint	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime_status_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_runtime_workspace_id_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue_agent_id_keyset_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent_task_queue_workspace_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+comment_issue_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+comment_parent_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+comment_reaction_comment_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_invitation_email_pending	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_invitation_workspace_status	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_pat_user_active	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_share_link_code	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_share_link_workspace_active	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_verification_code_email_purpose	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+idx_verification_code_user	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_parent_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_project_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_reaction_issue_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_subscriber_user_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_workspace_assignee_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+issue_workspace_status_position_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+project_workspace_idx	index	extra:	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+plugin	table	extra: 连带 17 个从属对象（column×14, constraint×3）	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+wakeup	table	extra: 连带 19 个从属对象（column×14, constraint×5）	本仓手写迁移自造、上游 head 没有这个对象；W0-B2 逐条判定搬进 migrations/compat/ 还是随上游口径删除	LUM-1387
+agent.archived_by	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.composio_toolkit_allowlist	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.conversation_starters	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.custom_args	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.custom_env	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.instructions	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.kind	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.mcp_config	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.permission_mode	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.runtime_config	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.runtime_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.runtime_mode	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.system_key	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.daemon_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.device_info	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.legacy_daemon_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.metadata	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.owner_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.profile_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.provider	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.accountable_user_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.attempt	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.autopilot_run_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.branch_name	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.cancelled_by_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.cancelled_by_name	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.cancelled_by_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.channel_context_revision	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.chat_finalize_deferred_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.chat_input_task_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.chat_session_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.coalesced_comment_ids	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.comment_thread_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.completed_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.context	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.delegated_from_task_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.delivered_comment_ids	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.durable_work_dir	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.error	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.escalation_for_task_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.failure_reason	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.fire_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.force_fresh_session	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.handoff_note	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.is_leader_task	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.issue_snapshot	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.max_attempts	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.originator_source	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.originator_user_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.parent_task_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.prepare_lease_expires_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.priority	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.quick_actions_disabled	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.regenerate_quick_actions_for	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.rerun_of_task_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.result	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.retry_of_task_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.rule_version_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.session_rollout_missing	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.squad_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.started_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.trigger_evidence_kind	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.trigger_evidence_ref_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.trigger_summary	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.wait_reason	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.work_dir	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.assignee_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.assignee_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.created_by_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.created_by_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.execution_mode	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.issue_title_template	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.last_run_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.pause_reason	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.status	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.title	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.agent_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.channel_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.installed_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.installer_user_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.status	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.ws_lease_expires_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.ws_lease_token	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_context_revision	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_ingested	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_media_pending_until	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_outbound_chat_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_outbound_installation_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_outbound_message_ids	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.channel_outbound_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.chat_session_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.failure_reason	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.message_kind	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.quick_actions	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.creator_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.explicitly_created_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.is_agent_intro	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.last_read_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.pinned_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.session_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.status	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.work_dir	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.content	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.quick_action_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.recovery_settled_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.resolved_by_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.resolved_by_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.via_plugin_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.archived	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.details	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.read	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.recipient_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.recipient_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.severity	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.acceptance_criteria	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.context_refs	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.first_executed_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.origin_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.origin_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.archived_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.color	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.description	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.is_system	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_subscriber.opt_out_scope	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_subscriber.unsubscribed_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+personal_access_token.revoked	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.due_date	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.lead_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.lead_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.status	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.title	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.created_by	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.label	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.position	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.resource_ref	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.workspace_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.command_name	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.created_by	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.display_name	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.enabled	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.fixed_args	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.protocol_family	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.runtime_type	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.updated_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.visibility	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.workspace_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill.config	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill.content	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill.created_by	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+squad.archived_by	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+squad.creator_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+squad.leader_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+user.cloud_waitlist_email	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+user.cloud_waitlist_reason	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+user.onboarding_questionnaire	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+verification_code.code	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+verification_code.used	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace.context	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace.issue_counter	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace.issue_prefix	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace.repos	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_invitation.invitee_email	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_invitation.inviter_id	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_invitation.updated_at	column	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_archived_by_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_conversation_starters_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_description_length	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_kind_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_permission_mode_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_runtime_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_runtime_mode_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent.agent_workspace_name_unique	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime.agent_runtime_owner_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_queue_accountable_matches_originator	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_queue_active_requires_runtime	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_queue_autopilot_run_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_queue_chat_session_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_queue_parent_task_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_queue_trigger_comment_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.autopilot_assignee_type_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.autopilot_created_by_type_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.autopilot_execution_mode_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot.autopilot_status_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.channel_installation_status_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_installation.channel_installation_workspace_id_agent_id_channel_type_key	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.chat_message_chat_session_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.chat_session_creator_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_session.chat_session_status_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.comment_resolved_consistency	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.comment_type_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.inbox_item_recipient_type_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+inbox_item.inbox_item_severity_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_metadata_is_object	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_metadata_size_limit	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_origin_type_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_project_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_properties_is_object	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_properties_size_limit	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_stage_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_status_format_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.issue_triage_state_known	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.uq_issue_workspace_number	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.issue_status_color_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.issue_status_description_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.issue_status_key_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.issue_status_name_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.issue_status_system_is_canonical	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status.issue_status_system_not_archivable	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_subscriber.issue_subscriber_opt_out_scope_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.project_lead_type_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project.project_status_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.project_resource_project_id_resource_type_resource_ref_key	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+project_resource.project_resource_workspace_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.runtime_profile_protocol_family_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.runtime_profile_visibility_check	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+runtime_profile.runtime_profile_workspace_id_display_name_key	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill.skill_created_by_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill.skill_workspace_id_name_key	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+squad.squad_leader_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_invitation.workspace_invitation_inviter_id_fkey	constraint	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_attachment_wakeup()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_comment_wakeup()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_issue_collaboration_wakeup()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_issue_label_wakeup()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_issue_wakeup(p_issue uuid, p_type text, p_key text, p_agent uuid, p_task uuid, p_payload jsonb)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_reaction_wakeup()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+capture_task_wakeup()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+clear_runtime_mcp_overlay_on_terminal_state()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment_thread_root_id(comment_id uuid)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+enforce_channel_message_task_context_revision()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+enqueue_task_usage_hourly_dirty_for_atq()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+enqueue_task_usage_hourly_dirty_for_issue_delete()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+enqueue_task_usage_hourly_dirty_for_issue_project()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+enqueue_task_usage_hourly_dirty_for_tu()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+guard_issue_wakeup_capacity()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_effective_status(p_workspace_id uuid, p_status text)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_status_category(p_category text)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lock_task_owner_rows(p_agent_id uuid, p_issue_id uuid, p_runtime_id uuid)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+mirror_dingtalk_group_presence_bot_identity()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+mirror_legacy_dingtalk_group_route_presence()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+prune_task_usage_hourly_dirty(p_retention interval)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+rollup_task_usage_hourly()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+rollup_task_usage_hourly_window(p_from timestamp with time zone, p_to timestamp with time zone)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+set_agent_task_comment_thread()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_usage_hour_bucket(ts timestamp with time zone)	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_usage_hourly_rollup_lag_seconds()	function	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime_workspace_daemon_profile_key	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_runtime_workspace_daemon_provider_key	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_system_identity_unique	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue_originator_user_id_idx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue_squad_id_idx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_wakeup_active_idx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_wakeup_lookup_idx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_wakeup_terminal_idx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment_issue_resolved_at_idx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_runtime_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_runtime_offline_last_seen	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_runtime_online_last_seen	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_runtime_status	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_runtime_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_runtime_workspace_id_keyset	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_agent	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_agent_id_keyset	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_agent_terminal_latest	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_autopilot_run_created_at	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_chat_pending_v3	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_chat_retired_session	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_chat_session	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_chat_terminal_resume	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_claim_candidates	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_deferred_fire	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_delegated_failure_evidence	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_dispatched_reclaim_v2	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_escalation_for	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_issue_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_issue_id_keyset	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_parent	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_pending	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_queued_created_at	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_running_started_at	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_runtime_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_runtime_pending	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_telemetry_started	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_terminal_completed_at_v2	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_task_queue_trigger_comment_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_agent_workspace_id_keyset	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_autopilot_assignee	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_autopilot_assignee_type_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_autopilot_project	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_autopilot_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_channel_installation_agent	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_channel_installation_lease	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_channel_installation_type_appid	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_channel_installation_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_message_assistant_task	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_message_input_owner	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_message_session	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_session_agent_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_session_creator	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_session_pinned	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_session_project	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_session_runtime_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_chat_session_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_comment_delegated_failure_unsettled	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_comment_issue_keyset	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_comment_parent_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_comment_reaction_comment_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_comment_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_comment_workspace_issue_parent	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_inbox_active_by_issue	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_inbox_item_issue_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_inbox_recipient	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_inbox_recipient_archived_created	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_invitation_invitee_email	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_invitation_invitee_user	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_invitation_unique_pending	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_assignee	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_first_executed_at	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_metadata_gin	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_origin	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_parent	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_project	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_project_status	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_properties_gin	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_reaction_issue_id	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_status	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_status_workspace_key	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_status_workspace_name_active	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_subscriber_user	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_title_trgm	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_triage_state	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_workspace_assignee	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_workspace_id_keyset	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_workspace_parent	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_workspace_position	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_issue_workspace_status_position	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_member_user_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_member_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_one_pending_task_per_issue_agent_thread	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_pat_token_hash	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_pat_user	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_project_description_trgm	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_project_resource_project	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_project_resource_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_project_title_trgm	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_project_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_runtime_profile_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_skill_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_squad_workspace	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_task_chat_finalize_deferred	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_user_created_at	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+idx_verification_code_email	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_share_link_active_ws_uidx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_share_link_code_uidx	index	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+activity_log	table	missing: 连带 15 个从属对象（column×8, constraint×4, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_builder_draft	table	missing: 连带 5 个从属对象（column×4, constraint×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_invocation_target	table	missing: 连带 11 个从属对象（column×6, constraint×3, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_mcp_server	table	missing: 连带 6 个从属对象（column×4, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_skill	table	missing: 连带 9 个从属对象（column×4, constraint×3, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_to_label	table	missing: 连带 5 个从属对象（column×3, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+attachment	table	missing: 连带 30 个从属对象（column×15, constraint×7, index×7, trigger×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_collaborator	table	missing: 连带 8 个从属对象（column×5, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_quota_period	table	missing: 连带 13 个从属对象（column×9, constraint×4）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_quota_reservation	table	missing: 连带 16 个从属对象（column×11, constraint×3, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_rule_version	table	missing: 连带 9 个从属对象（column×7, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_run	table	missing: 连带 34 个从属对象（column×18, constraint×8, index×8）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_subscriber	table	missing: 连带 7 个从属对象（column×4, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+autopilot_trigger	table	missing: 连带 26 个从属对象（column×19, constraint×4, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_binding_token	table	missing: 连带 11 个从属对象（column×8, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_chat_context_generation	table	missing: 连带 12 个从属对象（column×11, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_chat_session_binding	table	missing: 连带 21 个从属对象（column×17, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_inbound_audit	table	missing: 连带 12 个从属对象（column×9, constraint×1, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_inbound_message_dedup	table	missing: 连带 7 个从属对象（column×5, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_media_pending_object	table	missing: 连带 17 个从属对象（column×13, constraint×2, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_outbound_card_message	table	missing: 连带 13 个从属对象（column×9, constraint×2, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_outbound_message	table	missing: 连带 10 个从属对象（column×8, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_reply_delivery	table	missing: 连带 23 个从属对象（column×16, constraint×4, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_task_delivery	table	missing: 连带 15 个从属对象（column×12, constraint×1, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+channel_user_binding	table	missing: 连带 12 个从属对象（column×8, constraint×2, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_draft_restore	table	missing: 连带 9 个从属对象（column×6, constraint×1, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_pinned_agent	table	missing: 连带 9 个从属对象（column×6, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+client_usage_daily	table	missing: 连带 27 个从属对象（column×17, constraint×8, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+contact_sales_inquiry	table	missing: 连带 17 个从属对象（column×14, constraint×1, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+daemon_connection	table	missing: 连带 12 个从属对象（column×8, constraint×4）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+daemon_token	table	missing: 连带 10 个从属对象（column×6, constraint×2, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+dingtalk_bot_identity	table	missing: 连带 8 个从属对象（column×6, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+dingtalk_group_presence	table	missing: 连带 15 个从属对象（column×11, constraint×1, index×2, trigger×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+dingtalk_group_route	table	missing: 连带 13 个从属对象（column×9, index×3, trigger×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+feedback	table	missing: 连带 10 个从属对象（column×6, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+github_installation	table	missing: 连带 16 个从属对象（column×9, constraint×5, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+github_pending_check_suite	table	missing: 连带 14 个从属对象（column×12, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+github_pending_installation	table	missing: 连带 9 个从属对象（column×6, constraint×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+github_pull_request	table	missing: 连带 34 个从属对象（column×28, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+github_pull_request_check_run	table	missing: 连带 9 个从属对象（column×8, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+github_pull_request_check_suite	table	missing: 连带 10 个从属对象（column×7, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+instance_telemetry_state	table	missing: 连带 12 个从属对象（column×8, constraint×4）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_dependency	table	missing: 连带 10 个从属对象（column×4, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_label	table	missing: 连带 13 个从属对象（column×8, constraint×3, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_property	table	missing: 连带 16 个从属对象（column×11, constraint×3, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_pull_request	table	missing: 连带 10 个从属对象（column×6, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_source_context	table	missing: 连带 18 个从属对象（column×13, constraint×2, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_source_context_object_intent	table	missing: 连带 15 个从属对象（column×11, constraint×1, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_to_label	table	missing: 连带 7 个从属对象（column×2, constraint×3, index×1, trigger×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_vcs_pull_request	table	missing: 连带 8 个从属对象（column×6, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_view	table	missing: 连带 26 个从属对象（column×14, constraint×10, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_view_preference	table	missing: 连带 9 个从属对象（column×6, constraint×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_wakeup	table	missing: 连带 36 个从属对象（column×26, constraint×3, index×6, trigger×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_wakeup_receipt	table	missing: 连带 15 个从属对象（column×10, index×5）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_binding_token	table	missing: 连带 12 个从属对象（column×7, constraint×4, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_chat_session_binding	table	missing: 连带 14 个从属对象（column×8, constraint×6）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_inbound_audit	table	missing: 连带 12 个从属对象（column×8, constraint×2, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_inbound_message_dedup	table	missing: 连带 8 个从属对象（column×5, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_installation	table	missing: 连带 28 个从属对象（column×16, constraint×9, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_outbound_card_message	table	missing: 连带 14 个从属对象（column×8, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+lark_user_binding	table	missing: 连带 13 个从属对象（column×7, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+maintenance_job	table	missing: 连带 25 个从属对象（column×19, constraint×3, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+notification_preference	table	missing: 连带 9 个从属对象（column×5, constraint×4）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+pinned_item	table	missing: 连带 13 个从属对象（column×7, constraint×5, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_hook_schedule	table	missing: 连带 18 个从属对象（column×12, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_installation	table	missing: 连带 24 个从属对象（column×15, constraint×7, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_invocation	table	missing: 连带 23 个从属对象（column×13, constraint×8, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_package	table	missing: 连带 11 个从属对象（column×7, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_package_file	table	missing: 连带 12 个从属对象（column×7, constraint×4, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_package_version	table	missing: 连带 16 个从属对象（column×9, constraint×5, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_secret	table	missing: 连带 10 个从属对象（column×6, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+plugin_storage	table	missing: 连带 13 个从属对象（column×8, constraint×4, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+quick_action	table	missing: 连带 21 个从属对象（column×15, constraint×5, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+seat_capacity_outbox	table	missing: 连带 27 个从属对象（column×17, constraint×8, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill_file	table	missing: 连带 10 个从属对象（column×6, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+skill_to_label	table	missing: 连带 5 个从属对象（column×3, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+squad_member	table	missing: 连带 12 个从属对象（column×6, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+sys_cron_executions	table	missing: 连带 30 个从属对象（column×22, constraint×5, index×3）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_message	table	missing: 连带 14 个从属对象（column×11, constraint×2, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_token	table	missing: 连带 17 个从属对象（column×8, constraint×5, index×4）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_usage	table	missing: 连带 19 个从属对象（column×11, constraint×3, index×4, trigger×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_usage_hourly	table	missing: 连带 24 个从属对象（column×19, constraint×1, index×4）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_usage_hourly_dirty	table	missing: 连带 10 个从属对象（column×8, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+task_usage_hourly_rollup_state	table	missing: 连带 8 个从属对象（column×6, constraint×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+user_composio_connection	table	missing: 连带 15 个从属对象（column×11, constraint×2, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+vcs_commit_status	table	missing: 连带 9 个从属对象（column×7, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+vcs_connection	table	missing: 连带 14 个从属对象（column×10, constraint×3, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+vcs_pull_request	table	missing: 连带 29 个从属对象（column×23, constraint×4, index×2）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+webhook_delivery	table	missing: 连带 42 个从属对象（column×28, constraint×9, index×5）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+workspace_mcp_server	table	missing: 连带 9 个从属对象（column×7, constraint×1, index×1）	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.agent_task_comment_thread	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.capture_task_wakeup	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.trg_atq_dirty_hourly	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+agent_task_queue.trg_clear_runtime_mcp_overlay	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+chat_message.trg_enforce_channel_message_task_context_revision	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment.capture_comment_wakeup	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+comment_reaction.capture_comment_reaction_wakeup	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.capture_issue_collaboration_wakeup	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.trg_issue_delete_dirty_hourly	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue.trg_issue_project_dirty_hourly	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
+issue_reaction.capture_issue_reaction_wakeup	trigger	missing:	本仓 0001–0004 只建出上游 114 张表里的 26 张（docs/plan1.md §6.3.1 实测）；W0-B2 把运行时切到 migrations/upstream/ 后由 upstream 自己建出来	LUM-1387
