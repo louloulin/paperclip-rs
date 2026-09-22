@@ -117,14 +117,24 @@ jobs:
       - name: "⑧ schema drift — python3 scripts/schema_drift.py --quiet"
         run: bash scripts/gates.sh --only schema-drift
 
-  # ⑦：纯离线契约门禁（读 docs/fixtures/{upstream-routes.tsv,route-parity-baseline.json}，
-  # 不 clone 上游、不需要 Rust 工具链、不需要数据库）。
+  # ⑦ + ⑨：契约门（route parity + conformance）。两者都是**离线确定性**门：
+  # ⑦ 只读 `docs/fixtures/{upstream-routes.tsv,route-parity-baseline.json}`（纯 Python）；
+  # ⑨ 跑 `mc-conformance --no-db --check`，打本仓真实 router 回放 58 条 golden fixture 并与
+  # `crates/mc-conformance/report.json`（stateless 层快照）逐字节比对 —— **不需要数据库**，
+  # 但要 Rust 工具链与一次 `cargo run`（缓存未命中时本 job 会有一次数分钟的编译，见 timeout）。
+  # ⑨ 绝不能带库变量：带上它会追回 database 层、把合并报告拿去比 stateless 快照（见
+  # `scripts/gates.sh` 顶部「已知坑」与 `docs/27-W0-GOLDEN-FIXTURES.md` §9）。
   contract:
-    name: contract — route parity
+    name: contract — route parity + conformance
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      # ⑨ 需要 cargo（`cargo run -q -p mc-conformance -- --no-db --check …`）。
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - uses: actions/setup-python@v5
         with:
@@ -132,3 +142,6 @@ jobs:
 
       - name: "⑦ route parity — python3 scripts/route_parity.py"
         run: bash scripts/gates.sh --only route-parity
+
+      - name: "⑨ conformance — mc-conformance --no-db --check report.json"
+        run: bash scripts/gates.sh --only conformance
