@@ -5,6 +5,7 @@
 > - **上游权威**：`docs/fixtures/upstream-routes.tsv`（456 行，commit `f41fae6b`）+ `docs/15-M3-PLAN.md` §1（逐条行号）
 > - **前作**：`docs/35-M3-W3A-PREFLIGHT.md`（W3a 口径）。冲突处以 `docs/plan1.md` 为准（LUM-1357 裁决）。
 > - 本 cycle **没有派发任何切片**（并发 3/3 满载，见 §1）；产出是「W3b 能不能开、开之前 base 上必须先落什么」的实测结论。
+> - **后续更新（2026-09-23 03:00 cycle / LUM-1430）**：§1 的两条结论**均已解除**（W3a 三片已合入 base `4a61450`、LUM-1387 与 LUM-1423 已晋升）。见文末 **§10**。
 
 ---
 
@@ -193,3 +194,24 @@ wc -l crates/mc-http/src/routes/issues.rs crates/mc-http/tests/issues.rs        
 - **没在 base 上改任何代码**：§3 的预删配方只是**实测演练**，已用 `git checkout --` 完整回退（`git status --porcelain` 为空）。本 cycle 落到 base 的只有本文件。
 - **没合 PR #19**（被门 ⑩ 判红，由 LUM-1423 解锁）、**没动 LUM-1387/1370/1423 的正文**（改正文属它们的晋升 cycle；本文件只把结论登记在这里）。
 - **没碰 cloud-runtime 的 owner 误标**（`docs/15` §9.1 已裁决判给 M9，改动面超出本片）。
+
+---
+
+## 10. 03:00 cycle 落地记录（LUM-1430）—— §1 的两条结论均已解除
+
+| 事实 | 实测（2026-09-23 03:07 CST） |
+| --- | --- |
+| W3a 三片合入 base | **octopus merge `4a61450`**：PR #21（M3-1 / LUM-1407）+ #22（M3-3 / LUM-1409）+ #23（M3-2 / LUM-1408），三 PR 均 `merged=True`；66 文件 +15821/−88 |
+| 门禁 | `bash scripts/gates.sh --with-db` **10/10 绿，187s**：⑤ `458 passed / 0 failed`（65 suites）、⑥ `89 passed / 0 failed`（含 `--ignored`）、⑦ `implemented 125/456`＋`regression 0`＋`unclaimed 0`、⑨ `pass 4 / mismatch 1 / unmounted 5 / placeholder 1 / unevaluable 47`（快照逐字未变）、⑩ 绿 |
+| 写集核对 | W3a 合入的 66 个文件里 `mc-repos/**` / `migrations/**` / `mc-db` / `mc-migrate` **0 命中** ⇒ 未侵占 LUM-1387 的独占写集，§4 的「W3b 必须等 W0-B2」顺序不变 |
+| 并发 | 三片交付后槽位全空（`daemon active_task_count` 由 4 降到 1）；本 cycle 晋升 **LUM-1387（独占）** 与 **LUM-1423**（`runs --active` 各 1 个 `running`，19:07:53 起），**第三个槽位有意留空** —— 队列里其余待办（M2-E / M3-4/5/6）都要碰 `mc-repos/**`，与 LUM-1387 的独占限制互斥 |
+
+### 10.1 LUM-1423 正文第 2 步的实测更正
+
+`git merge-tree --write-tree 4a61450 db080ca`（`db080ca` = PR #19 head）：`crates/mc-http/tests/issues.rs` 与 `docs/14-M2-TABLE.md` **自动合并**；**`docs/24-W0-CI.md` 有 1 处冲突**（起因是 `f0de4f7` 门 ⑩ 改过同一文档的门禁表，**与 W3a 无关**）。已在晋升时把这条写进 LUM-1423 正文。
+
+### 10.2 本 cycle 未做（边界）
+
+- **§3 的 anchor 预删仍未落**（`mount.rs` 两条 M0 占位 + ⑦ 基线 + ⑨ 快照）：配方未变，留给 LUM-1387 合入后的 cycle。
+- **没有**动 `docs/15` §8 的门禁数字；**没有**改 LUM-1370 的正文（它已由 LUM-1384 cycle 改成「不写 `0005`、前置 = W0-B2」）。
+- octopus merge 用了 git 的默认 commit message（`Merge commit '…'`，没带 `merge(...)` 标题）—— 下次集成请用 `git merge --no-ff -m "…" <sha1> <sha2> <sha3>`。
