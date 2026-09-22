@@ -117,22 +117,26 @@ grep -rn 'not_implemented' crates/mc-http/src/routes/                  # M2 那 
 
 **W3c 的实测结论：预删项 0 个。** 9 处占位分别属 M3-4（`/api/runtimes`）、M3-5（`/api/agents`）、M4/M5/M6/M10；`/api/daemon*` 与 `/api/runtimes/{runtimeId}/*` 没有被占位注册（探针实测 `POST /api/daemon/deregister` 无冲突）。
 
-### 2.5 基线口径：`a09789d`（issue 起点）vs `7888cf3`（当前 base head）
+### 2.5 基线口径：`a09789d`（issue 起点）vs 当前 base head
 
-issue 让从 `a09789d` 起分支，所以本片所有实测都在 `a09789d` 上做；但 base 分支随后前进了两步：
+issue 让从 `a09789d` 起分支，所以本片所有实测都在 `a09789d` 上做；但 base 分支随后前进了四步（**后两步都是 docs-only**，`git diff --name-only 7888cf3..28e5c56` 只列 `docs/15` 与 `docs/37`）：
 
 ```
 a09789d  merge(#24) R7 拆分 + #19 校验                    ← issue 指定的起点（本片实测基线）
 8895abe  chore(m3-anchor): W3b anchor 预删（删 /api/agents + /api/runtimes 占位，刷 ⑦ 基线 + ⑨ 快照）
-7888cf3  docs(36): 03:30 cycle 落地记录（LUM-1435）        ← 当前 base head
+7888cf3  docs(36): 03:30 cycle 落地记录（LUM-1435）
+dc4a45f  merge(#25): 本文件落底（PR #25 / LUM-1437）
+28e5c56  docs(37): 04:00 cycle 落地记录（LUM-1444）+ 晋升 LUM-1439   ← 当前 base head
 ```
+
+> 本节与 §10（04:00 cycle / LUM-1444 的落地记录）说的是同一件事：§10 记了 ⑦ 的一半并指出 §2.2 数字属 `a09789d`，**本节补上 ⑨ 的那一半与口径纪律**（⑨ 的快照也在 `8895abe` 变过：`unmounted 5 → 6`、`placeholder 1 → 0`，这一点 §10 没写）。因此 §2.1/§2.2 的数字应读作「**`a09789d` 时点的实测**」；引用任何 ⑦/⑨ 计数前先看是哪一版 base。
 
 两套数字（同一套命令，只是换 commit）：
 
 | 口径 | ⑦ | ⑨ totals | `mount.rs` 占位数 |
 | --- | --- | --- | --- |
 | **`a09789d`（issue 起点，本片 §2.2/§2.3 实测）** | `local 140 / baseline 139 / implemented 125 (112 real+13 placeholder) / known_gap 331 / local_only 12 / unclaimed 0 / regression 0` | `pass 4 / mismatch 1 / **unmounted 5** / **placeholder 1** / unevaluable 47` | 9（含 `/api/agents`、`/api/runtimes`） |
-| **`7888cf3`（当前 base head，临时 worktree 实测）** | `local 136 / baseline 136 / implemented 122 (112 real+10 placeholder) / known_gap 334 / local_only 11 / unclaimed 0 / regression 0` | `pass 4 / mismatch 1 / **unmounted 6** / **placeholder 0** / unevaluable 47` | 7（两条已被 `8895abe` 删除） |
+| **`7888cf3`（= 当前 base head `28e5c56` 的计数，临时 worktree 实测；后两步为 docs-only）** | `local 136 / baseline 136 / implemented 122 (112 real+10 placeholder) / known_gap 334 / local_only 11 / unclaimed 0 / regression 0` | `pass 4 / mismatch 1 / **unmounted 6** / **placeholder 0** / unevaluable 47` | 7（两条已被 `8895abe` 删除） |
 
 ⇒ **issue 里给出的预期值（122 / 136 / 11、unmounted 6 / placeholder 0）不是错的，而是属于 `7888cf3`**。本片没有改用后者的原因很实际：issue 指定从 `a09789d` 起分支，而预删本身**改变不了 W3c 的结论** ——
 
@@ -398,6 +402,8 @@ test daemon_min_loop_register_claim_start_progress_complete ... ok
 每个 issue 正文都带：路由清单（含上游行号）/ 写集 / 前置 / 上游硬约束 / 测试清单 / 门禁与交付证据 / 范围限制 / 晋升条件 / 分支与基线。
 
 **推荐派发序**：`LUM-1439` → `LUM-1438` → （`LUM-1440` 与 `LUM-1441` 可并行）→ `LUM-1442` → `LUM-1443`。
+
+> 实况（本节写作时为 `backlog`，已由 04:00 cycle 推进）：**LUM-1439 已晋升 `todo` 并起 run（20:03:41Z）**，见 §10。其余 5 个仍 `backlog`，等各自的晋升条件。
 
 ---
 
