@@ -31,11 +31,11 @@ max_attempts   = 2          # 同一秒（11:35:34Z）自动派发 attempt 2
 
 被中断时落在旧工作区里、**尚未提交**的工作量（实测）：
 
-| 切片 | 旧工作区（`lum-<n>-<旧 task-id>/workdir/paperclip-rs`） | 分支 @ head | 未提交改动 | `git diff` 哈希 |
-| --- | --- | --- | --- | --- |
-| M2-A | `lum-1348-415787f356d2` | `feat/multica-rs-m2a-issue` @ `fd6fdf6` | 3 文件 **+4134 −13** + 2 个未跟踪新文件（`mc-repos/src/issue_status.rs`、`mc-http/tests/issues.rs`） | `5bc95fef` |
-| M1-F | `lum-1375-0cef3da58917` | `feat/multica-rs-m1f-pat-persistence` @ `9851ebf` | 5 文件 **+705 −194** | `a6ed4b44` |
-| T1 | `lum-1376-5237cd988519` | `feat/multica-rs-tooling-route-parity` @ `9c57592` | 7 文件（含 5 个新文件），补丁 98,821 B | `a4880bec`（staged） |
+| 切片 | 旧工作区（`lum-<n>-<旧 task-id>/workdir/paperclip-rs`） | 分支 @ head | 未提交改动 | `git diff` 哈希 | 恢复模式（§2.1） |
+| --- | --- | --- | --- | --- | --- |
+| M2-A | `lum-1348-415787f356d2` | `feat/multica-rs-m2a-issue` @ `fd6fdf6` | 3 文件 **+4134 −13** + 2 个未跟踪新文件（`mc-repos/src/issue_status.rs`、`mc-http/tests/issues.rs`） | `5bc95fef` | **B**（原地继续） |
+| M1-F | `lum-1375-0cef3da58917` | `feat/multica-rs-m1f-pat-persistence` @ `9851ebf` | 5 文件 **+705 −194** | `a6ed4b44` | A（补丁重放，✓ 哈希一致） |
+| T1 | `lum-1376-5237cd988519` | `feat/multica-rs-tooling-route-parity` @ `9c57592` | 7 文件（含 5 个新文件），补丁 98,821 B | `a4880bec`（staged） | A（补丁重放，✓ 哈希一致） |
 
 ---
 
@@ -48,8 +48,24 @@ max_attempts   = 2          # 同一秒（11:35:34Z）自动派发 attempt 2
    发现旧目录的（`multica issue run-messages <run>` seq 39 → 50 → 106 → 113），随后生成补丁重放。
    也就是说：**没人主动做 §3，那 2 小时就是静默丢失**（旧工作区不会被 GC，但会一直没人看）。
 4. 因此规程是硬的：`multica issue runs <issue>` 出现 `runtime_recovery` 的切片，
-   **重试 run 的第一件事是 §3 抢救，然后才是写新代码**；本 cycle 复核时三条都已在恢复路上，
-   但 M2-A 的重试在 11:40Z 还没 `repo checkout`，恢复仍未发生 —— 这种「还没开始」的窗口只能靠人盯。
+   **重试 run 的第一件事是 §3 抢救，然后才是写新代码**。
+
+### 2.1 两种恢复模式（本次三条切片各占其一，都实测到了）
+
+| 模式 | 做法 | 本次实例 | 判据 |
+| --- | --- | --- | --- |
+| **A. 补丁重放** | 在旧 workdir 生成补丁 → 在新 workdir `apply --index`，之后在**新**目录干活 | M1-F（LUM-1375）、T1（LUM-1376） | 新 workdir 有 checkout，且两侧 `git diff --cached` 哈希相同（本次 `a6ed4b44` / `a4880bec`） |
+| **B. 原地继续** | 直接 `cd` 到旧 workdir 接着干活（不新建 checkout） | M2-A（LUM-1348） | 重试自己的 `lum-1348-36a319e516ba/workdir/` 里**始终只有 `AGENTS.md`**，而旧 workdir 的文件 mtime 在持续变新（`multica issue run-messages <重试 run>` seq 140/142 可见它 `ls ~/multica_workspaces/` 后切过去） |
+
+模式 B 的两个额外后果（对集成和协调 cycle 都重要）：
+
+- 旧 workdir 从「静态恢复源」变成**活的工作区**，里面每一份内容都在动——任何外部快照都只能拍到某个瞬间。
+  所以不要去建「保险用的 wip 快照分支」：本 cycle 试过（读到 11:41:56 的内容），几分钟后文件就有新改动、
+  与旧工作区不再一致（`crates/mc-http/tests/issues.rs` 1047 → 1062 行），只能丢弃。
+  真正可靠的动作是**只读核对 + 把结论写进文档**，抢救留给重试 run 自己。
+- 活工作区分支还停在**旧 base**（M2-A：`feat/multica-rs-m2a-issue` @ `fd6fdf6`，早于当前 base 的三个 docs 提交），
+  集成时要照 `docs/21` §7 先 `fetch` 再 rebase/合并，不能假设它已在当前 base 上。
+
 
 ---
 
@@ -122,4 +138,6 @@ git apply --index "$MINE/recover.patch"
 2. 重启后立即按 §1 的两条判据逐 issue 扫一遍 `multica issue runs`（`failed` + `runtime_recovery` +
    同秒 `attempt 2`），确认旧工作区还在同一台机器上（跨机器或清盘之后**无解**）。
 3. 抢救动作要落在**重试 run 自己**身上最稳（它有 issue 上下文、知道计划分支名与 base）；
-   协调 cycle 只做只读核对 + 把结论写进文档，避免制造新的写者。
+   协调 cycle 只做只读核对 + 把结论写进文档，不建快照分支、不在旧 workdir 里动 git 写命令（§2.1 有实测教训）。
+4. 协调 cycle 能做且值得做的两件事：(a) 用 `multica issue run-messages <重试 run>` 确认它**真的在恢复**
+   （模式 A/B 的判据见 §2.1），而不是从零重做；(b) 对模式 B 提醒集成方「活工作区停在旧 base」。
