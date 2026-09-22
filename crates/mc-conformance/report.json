@@ -7,16 +7,16 @@
   },
   "totals": {
     "fixtures": 58,
-    "pass": 4,
+    "pass": 5,
     "mismatch": 1,
-    "unmounted": 6,
+    "unmounted": 5,
     "placeholder": 0,
     "unevaluable": 47,
     "by_actor": {
       "anonymous": {
         "mismatch": 1,
-        "pass": 4,
-        "unmounted": 6
+        "pass": 5,
+        "unmounted": 5
       },
       "member": {
         "unevaluable": 47
@@ -29,25 +29,25 @@
         "unmounted": 2
       },
       "router": {
-        "pass": 4,
+        "pass": 5,
         "unevaluable": 12,
-        "unmounted": 4
+        "unmounted": 3
       }
     },
     "tiers": {
       "stateless": {
         "mismatch": 1,
-        "pass": 4,
+        "pass": 5,
         "unevaluable": 47,
-        "unmounted": 6
+        "unmounted": 5
       }
     }
   },
-  "contract_equivalence_rate": 0.06896551724137931,
-  "mounted_equivalence_rate": 0.8,
+  "contract_equivalence_rate": 0.08620689655172414,
+  "mounted_equivalence_rate": 0.8333333333333334,
   "offline_decidable": {
     "fixtures": 11,
-    "pass": 4
+    "pass": 5
   },
   "fixtures": [
     {
@@ -91,12 +91,12 @@
       "via": "router",
       "status_expected": 401,
       "source": "server/cmd/server/integration_test.go:433",
-      "outcome": "unmounted",
+      "outcome": "pass",
       "tier": "stateless",
-      "status_observed": 404,
-      "offline": "unmounted",
+      "status_observed": 401,
+      "offline": "pass",
       "database": null,
-      "detail": "no route: 404 with empty body (axum fallback), expected 401"
+      "detail": "status matched"
     },
     {
       "id": "auth/TestGoogleLoginSuccessfulExistingUser@server/internal/handler/auth_google_error_code_test.go:289#1",
