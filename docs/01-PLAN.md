@@ -239,6 +239,20 @@ UI 兼容性：`apps/web` / `apps/desktop` 仅切换 base URL 即可对接 multi
 下一里程碑（M1）目标：完成 workspace / member / invitation / PAT / verification 路由与服务，
 完成 auth 双因素。（M1 集成与 M2 晋升规则见 `docs/09` / `docs/10`。）
 
+### 进度更新（2026-09-22 15:00 CST，LUM-1356 cycle）
+
+- 🔄 M1 三切片并行运行健康（run 于 06:09–06:11 UTC 启动）：三个任务 workdir 均已进入
+  `cargo build --workspace` 编译阶段（06:58 UTC 后各持续产出约 1700–2000 个 target 产物，
+  依赖下载走 rsproxy 镜像完成），无 429、无 package-cache 死锁。
+- ✅ GitHub 分支逐一对齐核验：`feat/multica-rs-initial` @ `9dcd2f2`、
+  `feat/multica-rs-m1a-workspace-member` @ `2c4da9f`、`feat/multica-rs-m1b-auth` @ `89f5e94`、
+  `feat/multica-rs-m1c-invitation-pat` @ `60c9d49`（origin 与本地一致）。
+- 📋 后续队列核验完整：LUM-1347（M1-D 集成）→ LUM-1348 / 1350 / 1349（M2-A/B/C）→
+  LUM-1354（M2 集成）→ LUM-1355（M2-D）；本 cycle 补立项 **LUM-1357**（M3 切片计划，
+  backlog，晋升条件 = LUM-1354 完成后），补上 M2 之后的队列断档。
+- ⏭ 下一 cycle（16:00 CST）动作：若 M1×3 交付（status `in_review` 且分支已 push）→
+  晋升 LUM-1347 开始集成；否则继续健康核查，不硬塞新任务（并发上限 3）。
+
 ## 8. 风险与权衡
 
 | 风险 | 缓解 |
