@@ -144,6 +144,9 @@ PG `23505 → Conflict`、其余 → `RepoError::Db`。**HTTP 层**再翻译：
 | `labels` | `issue_label` / `issue_to_label` 两表 | **501** | `grep -rni label migrations/` 为空，两表不存在 |
 | reaction `actor_type` | `'member'` | `'user'` | 跟随 scaffold `0004` 的 CHECK（`user`/`agent`/`system`）+ `actor_id TEXT` |
 | `assignee_type` | `member` | 入参接受 `member`，落库/回显统一 `user` | `mc-core` 领域类型只有 `user`/`agent` |
+| assignee 存在性 | `validateAssigneePair`：member/agent/squad 必须在本 workspace 内存在；agent/squad 再过 `canInvokeAgent` 权限门（403） | **同样做存在性 + 归档位**（`validate_assignee_target`，含 `autopilot`），但**没有** 403 权限门 | 本仓 M2 无 agent 可见性/私有点判定面（LUM-1410） |
+| `assignee_type` 取值面 | 只接受 `member`/`agent`/`squad`，其余（含 `autopilot`）→ 400 | 另收 `user`（`member` 同义）与 `autopilot`（须真实存在） | 本仓四值枚举 + `0001` CHECK 允许 `autopilot`（LUM-1410 登记） |
+| `attachment_ids` | 逐元素 `util.ParseUUID` → 非法 400；合法则把附件挂到新 issue（含归属校验） | **同样逐元素校验 UUID**（400 `invalid attachment_ids`，写库之前），但**不绑定** | 无 `attachment` 表，storage 面归 M5（LUM-1410 登记） |
 | `triage_state` | 可写字段 | 接受但忽略（不落库） | `0001` 列存在但 M2 无 triage 交互面 |
 
 ## 6. 未覆盖项 TODO（本切片明确不做）
@@ -188,9 +191,11 @@ HTTP e2e（`crates/mc-http/tests/issues.rs`，`test-util` feature）：
 ```
 MULTICA_TEST_DATABASE_URL=postgres://multica:multica@127.0.0.1:5432/multica_test \
   cargo test -p mc-http --features test-util --test issues -- --ignored
-# 6 个：auth/workspace/501 形态（含 quick-create 400→201）、CRUD 全链 + revision 409 +
+# 7 个：auth/workspace/501 形态（含 quick-create 400→201）、CRUD 全链 + revision 409 +
 #   终态迁移 409、filter/search/grouped、children/move/batch、
-#   metadata/properties/reactions（幂等）、status catalog 生命周期（含 member 写 → 403）
+#   metadata/properties/reactions（幂等）、status catalog 生命周期（含 member 写 → 403）、
+#   create/update 的 assignee 存在性 + attachment_ids 形态校验（LUM-1410，含“400 在写库之前”
+#   的 issue 计数断言）
 ```
 
 不设 `MULTICA_TEST_DATABASE_URL` 时 DB 测试**静默 skip** —— 只看 “全绿” 可能是空跑。

@@ -39,6 +39,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
+use mc_core::issue::AssigneeType;
 use mc_core::priority::Priority;
 use mc_core::status::{is_valid_transition, IssueStatus, StatusCategory, CANONICAL_KEYS};
 use mc_core::Id;
@@ -238,6 +239,147 @@ fn normalize_assignee_type(raw: &str) -> &str {
         "member" => "user",
         other => other,
     }
+}
+
+/// `(assignee_type, assignee_id)` 的**存在性**校验（上游 `validateAssigneePair` 的移植，
+/// `server/internal/handler/issue.go:3971`）。
+///
+/// 上游在三个入口调用它：`CreateIssue`（`L3138`）、`UpdateIssue`（`L3814`，
+/// 「只要补丁碰到 assignee 任一半段」就校验补丁后的最终状态）、`BatchUpdateIssues`（`L4562`）。
+/// 语义：两者同时缺失 = 未指派（合法）；只给一个 → 400；两个都给 → 目标必须在本
+/// workspace 内真实存在。
+///
+/// | 上游 `assignee_type` | 校验 | 失败 |
+/// | --- | --- | --- |
+/// | `member` | `member(workspace_id, user_id)` 命中 | 400 |
+/// | `agent` | `agent(id, workspace_id)` 命中且未归档 | 400 |
+/// | `squad` | `squad` 命中、未归档、leader agent 存在且未归档 | 400 |
+/// | 其它 | — | 400 `assignee_type must be 'member', 'agent', or 'squad'` |
+///
+/// 本仓偏离（`docs/11-M2-ISSUE.md` §5）：
+///
+/// 1. 入参 `member` 被 `normalize_assignee_type` 归一成 `user`，故这里 `User` 分支查的是
+///    `member` 表（本仓 `issue.assignee_type` 无 `member` 取值）；
+/// 2. `autopilot` 是 `mc-core` / `0001` CHECK 允许的第四种类型，这里同样只做存在性 ——
+///    上游 handler 直接拒绝 `autopilot`，本仓保留该能力 ⇒ 已登记为已知偏离；
+/// 3. 上游 agent/squad 分支还有一道 `canInvokeAgent` 权限门（403，"you do not have
+///    permission to assign work to this agent"）；本仓 M2 没有 agent 可见性/私有点判定面，
+///    故只做存在性 + 归档位（`archived_at`）。
+///
+/// 目标 id 形态非法 → 400（`assignee_id must be a uuid`，上游 `parseUUIDOrBadRequest`）。
+async fn validate_assignee_target(
+    state: &AppState,
+    workspace_id: Id,
+    kind: AssigneeType,
+    raw_id: &str,
+) -> Result<(), Error> {
+    let target = parse_target_id("assignee_id", raw_id)?;
+    let pool = state.db.pool();
+    let db = |e: sqlx::Error| Error::Database(e.to_string());
+
+    match kind {
+        AssigneeType::User => {
+            let found: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM member WHERE workspace_id = $1 AND user_id = $2)",
+            )
+            .bind(workspace_id.0)
+            .bind(target.0)
+            .fetch_one(pool)
+            .await
+            .map_err(db)?;
+            if !found {
+                return Err(validation(
+                    "assignee_id does not refer to a member of this workspace",
+                ));
+            }
+        }
+        AssigneeType::Agent => {
+            let archived: Option<bool> = sqlx::query_scalar(
+                "SELECT archived_at IS NOT NULL FROM agent WHERE workspace_id = $1 AND id = $2",
+            )
+            .bind(workspace_id.0)
+            .bind(target.0)
+            .fetch_optional(pool)
+            .await
+            .map_err(db)?;
+            match archived {
+                Some(false) => {}
+                Some(true) => return Err(validation("cannot assign to an archived agent")),
+                None => {
+                    return Err(validation(
+                        "assignee_id does not refer to an agent of this workspace",
+                    ))
+                }
+            }
+        }
+        AssigneeType::Squad => {
+            let row: Option<(bool, Option<Uuid>)> = sqlx::query_as(
+                "SELECT archived_at IS NOT NULL, leader_agent_id FROM squad \
+                 WHERE workspace_id = $1 AND id = $2",
+            )
+            .bind(workspace_id.0)
+            .bind(target.0)
+            .fetch_optional(pool)
+            .await
+            .map_err(db)?;
+            let Some((archived, leader)) = row else {
+                return Err(validation(
+                    "assignee_id does not refer to a squad in this workspace",
+                ));
+            };
+            if archived {
+                return Err(validation("cannot assign to an archived squad"));
+            }
+            let leader_ok = match leader {
+                Some(leader_id) => sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS (SELECT 1 FROM agent \
+                     WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL)",
+                )
+                .bind(leader_id)
+                .bind(workspace_id.0)
+                .fetch_one(pool)
+                .await
+                .map_err(db)?,
+                // 无 leader 的 squad：上游 `GetAgent(NULL)` 同样报错（400）。
+                None => false,
+            };
+            if !leader_ok {
+                return Err(validation(
+                    "squad leader is archived; cannot assign to this squad",
+                ));
+            }
+        }
+        AssigneeType::Autopilot => {
+            let found: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM autopilot WHERE workspace_id = $1 AND id = $2)",
+            )
+            .bind(workspace_id.0)
+            .bind(target.0)
+            .fetch_one(pool)
+            .await
+            .map_err(db)?;
+            if !found {
+                return Err(validation(
+                    "assignee_id does not refer to an autopilot of this workspace",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 解析 `attachment_ids`（上游 `parseUUIDSliceOrBadRequest`，`handler.go:678`）。
+///
+/// 上游在 `CreateIssue` 里逐元素 `util.ParseUUID`，任一无效应即 400 `invalid attachment_ids`，
+/// **且发生在任何写库之前**（`TestCreateIssueRejectsMalformedAttachmentIDBeforeWrite` 断言
+/// 创建前后 issue 计数不变）。本仓 M2 没有 `attachment` 表（storage 面归 M5，见 `docs/11` §6），
+/// 因此这里只校验形态、不绑定 —— 返回值有意忽略，调用点写作 `_attachment_ids`。
+fn parse_attachment_ids(raw: &[String]) -> Result<Vec<Uuid>, Error> {
+    let mut parsed = Vec::with_capacity(raw.len());
+    for id in raw {
+        parsed.push(Uuid::parse_str(id.trim()).map_err(|_| validation("invalid attachment_ids"))?);
+    }
+    Ok(parsed)
 }
 
 // ---------------------------------------------------------------------------
@@ -888,6 +1030,8 @@ struct CreateIssueRequest {
     start_date: Option<String>,
     due_date: Option<String>,
     metadata: Option<JsonValue>,
+    /// 上游字段：附件绑定（本仓只有校验面，无 `attachment` 表，见 `parse_attachment_ids`）
+    attachment_ids: Vec<String>,
     /// `quick_create`（目前只接受这一个来源）
     origin_type: Option<String>,
     origin_id: Option<String>,
@@ -1347,6 +1491,12 @@ async fn create_issue(
     if assignee_type.is_some() != assignee_id.is_some() {
         return Err(validation("assignee_type and assignee_id must be provided together").into());
     }
+    // 上游 `validateAssigneePair`（L3138）：两者都给时必须指向本 workspace 内真实存在的实体。
+    if let (Some(kind), Some(target)) = (assignee_type, assignee_id.as_deref()) {
+        validate_assignee_target(&state, workspace_id, kind, target).await?;
+    }
+    // 上游 `parseUUIDSliceOrBadRequest`：形态非法 → 400，且在写库之前（LUM-1410）。
+    let _attachment_ids = parse_attachment_ids(&req.attachment_ids)?;
 
     let parent_issue_id = match req.parent_issue_id.as_deref().map(str::trim) {
         None | Some("") => None,
@@ -1464,7 +1614,7 @@ async fn update_issue(
     let repo = issue_repo(&state);
     let current = load_issue(&repo, workspace_id, &raw_id).await?;
     let catalog = load_catalog(&state, workspace_id).await?;
-    let patch = apply_update_request(&repo, workspace_id, &current, &catalog, req).await?;
+    let patch = apply_update_request(&state, &repo, workspace_id, &current, &catalog, req).await?;
 
     if patch.is_empty() {
         // no-op：不产生 revision 自增（上游对空更新也会走一次 UPDATE，这里更保守）
@@ -1480,6 +1630,7 @@ async fn update_issue(
 /// 把 `UpdateIssueRequest` 翻译成仓储层补丁（含 status 迁移、owner 配对、父子成环校验）。
 #[allow(clippy::too_many_lines)]
 async fn apply_update_request(
+    state: &AppState,
     repo: &IssueRepo,
     workspace_id: Id,
     current: &IssueRow,
@@ -1549,7 +1700,9 @@ async fn apply_update_request(
                 .filter(|s| !s.is_empty()),
         );
     }
-    // 配对校验：补丁后的最终状态必须「同时有值」或「同时为空」
+    // 配对 + 存在性校验：补丁后的最终状态必须「同时有值」或「同时为空」，且目标必须存在。
+    // 上游 `UpdateIssue`（L3814）/`BatchUpdateIssues`（L4562）在补丁碰到 assignee 任一半段时
+    // 都调 `validateAssigneePair`；`move_issue` 复用本函数，因此三条路径口径一致。
     if patch.assignee_type.is_some() || patch.assignee_id.is_some() {
         let type_present = match patch.assignee_type {
             Some(value) => value.is_some(),
@@ -1563,6 +1716,17 @@ async fn apply_update_request(
             return Err(validation(
                 "assignee_type and assignee_id must be set together",
             ));
+        }
+        let kind = match patch.assignee_type {
+            Some(value) => value,
+            None => current.assignee_type(),
+        };
+        let target = match &patch.assignee_id {
+            Some(value) => value.as_deref(),
+            None => current.assignee_id_str(),
+        };
+        if let (Some(kind), Some(target)) = (kind, target) {
+            validate_assignee_target(state, workspace_id, kind, target).await?;
         }
     }
 
@@ -1604,9 +1768,11 @@ async fn apply_update_request(
     }
 
     if let Some(raw_stage) = req.stage {
+        // 内部 binding 不能再叫 `stage`：与新增的 `state: &AppState` 参数触发
+        // `clippy::similar_names`（pedantic 门 `-D warnings`）。
         patch.stage = match raw_stage {
-            Some(stage) if stage < 1 => return Err(validation("stage must be >= 1")),
-            Some(stage) => Some(Some(stage)),
+            Some(value) if value < 1 => return Err(validation("stage must be >= 1")),
+            Some(value) => Some(Some(value)),
             None => None,
         };
     }
@@ -1693,7 +1859,7 @@ async fn move_issue(
     );
     let req: UpdateIssueRequest =
         serde_json::from_value(rest).map_err(|e| validation(format!("invalid move body: {e}")))?;
-    let patch = apply_update_request(&repo, workspace_id, &current, &catalog, req).await?;
+    let patch = apply_update_request(&state, &repo, workspace_id, &current, &catalog, req).await?;
 
     let row = repo
         .move_issue_with_update(workspace_id, current.id(), before_id, after_id, &patch)
@@ -1744,7 +1910,8 @@ async fn batch_update(
             other => repo_err(other),
         })?;
         let catalog = load_catalog(&state, workspace_id).await?;
-        patch = apply_update_request(&repo, workspace_id, &first, &catalog, req.updates).await?;
+        patch = apply_update_request(&state, &repo, workspace_id, &first, &catalog, req.updates)
+            .await?;
     }
 
     let updated = repo
