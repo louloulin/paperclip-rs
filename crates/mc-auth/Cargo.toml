@@ -26,7 +26,6 @@ sha2 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
-mc-secrets = { path = "../mc-secrets" }
 
 mc-core = { path = "../mc-core" }
 mc-errors = { path = "../mc-errors" }

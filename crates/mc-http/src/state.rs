@@ -105,6 +105,8 @@ impl Default for ConfigSnapshot {
             session_ttl_secs: 60 * 60 * 24 * 30,
             verification_code_ttl_secs: 600,
             send_code_per_email_per_min: 5,
+            // None → 调用方按 50/h 兜底（routes/invitations.rs `unwrap_or(50)`）。
+            invitation_per_workspace_per_hour: None,
         }
     }
 }

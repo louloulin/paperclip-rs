@@ -501,6 +501,7 @@ mod tests {
                 session_ttl_secs,
                 verification_code_ttl_secs: 600,
                 send_code_per_email_per_min: 5,
+                invitation_per_workspace_per_hour: None,
             },
             storage: mc_storage::Storage::new(),
             secrets: mc_secrets::Secrets::new(mc_auth::DefaultSecretsBackend::in_memory()),
