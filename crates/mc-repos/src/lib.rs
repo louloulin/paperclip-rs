@@ -1,32 +1,25 @@
-//! Multica 仓储层占位。
+//! Multica 仓储层。
 //!
-//! 后续 milestone 填充：
-//! - `workspace.rs` — workspace CRUD
-//! - `member.rs` — member
-//! - `issue.rs` — issue / status / view
-//! - `comment.rs` — comment
-//! - `agent.rs` — agent
-//! - `runtime.rs` — agent_runtime
-//! - `task_queue.rs` — agent task queue
-//! - `chat.rs` — chat session / message
-//! - `project.rs` — project
-//! - `inbox.rs` — inbox
-//! - `autopilot.rs` — autopilot
-//! - `wakeup.rs` — wakeup
-//! - `skill.rs` — skill
-//! - `plugin.rs` — plugin
-//! - `channel.rs` — channel
-//! - `vcs.rs` — vcs
-//! - `mcp.rs` — mcp
+//! 规则：
+//! - 每个文件一个 Repo 结构体，单一职责
+//! - 所有 Repo 通过 `RepoWithDb::db(&Db)` 共享 sqlx 连接池
+//! - DB 错误统一翻译为 `RepoError`
 //!
-//! 每个文件一个 Repo 结构体，单一职责。
-//! M0 仅暴露 lib 与 trait skeleton，避免 2000+ 文件一次性 commit。
+//! M1 增量（workspace / member / invitation / verification_code / pat）已声明 pub，
+//! 各 sub-issue 在不修改本 lib 的前提下独立新增文件实现 Repo。
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use mc_db::Db;
+
+pub mod workspace;
+pub mod member;
+pub mod user;
+pub mod verification_code;
+pub mod invitation;
+pub mod pat;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {

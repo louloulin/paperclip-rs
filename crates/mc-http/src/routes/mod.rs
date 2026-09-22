@@ -1,4 +1,11 @@
 //! Routes 聚合：所有 router 注册点。
+//!
+//! 命名约定：
+//! - 每个领域模块一个 `pub mod`（auth / workspaces / members / invitations / ...）
+//! - 各 sub-issue 在不修改本 mod.rs 的前提下，独立新增领域模块文件并在外层 build.rs
+//!   或 `mount_*.rs` 切片里注册自己的 router
+//! - 当前文件**仅保留 health + openapi + M0 占位**；M1 切片在独立的 `mount.rs`
+//!   里组合各领域 router，避免多分支同时编辑本文件造成冲突
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -8,29 +15,8 @@ use crate::state::AppState;
 
 pub mod health;
 pub mod openapi;
+pub mod mount;
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/api/health", get(health::health))
-        .route("/api/health/db", get(health::db_health))
-        .route("/api/openapi.json", get(openapi::openapi_json))
-        .route("/api/auth/login", post(health::placeholder))
-        .route("/api/auth/logout", post(health::placeholder))
-        .route("/api/auth/session", get(health::placeholder))
-        .route("/api/workspaces", get(health::placeholder).post(health::placeholder))
-        .route("/api/workspaces/{id}", get(health::placeholder))
-        .route("/api/workspaces/{id}/members", get(health::placeholder))
-        .route("/api/issues", get(health::placeholder).post(health::placeholder))
-        .route("/api/issues/{id}", get(health::placeholder))
-        .route("/api/agents", get(health::placeholder).post(health::placeholder))
-        .route("/api/runtimes", get(health::placeholder).post(health::placeholder))
-        .route("/api/chat/sessions", get(health::placeholder).post(health::placeholder))
-        .route("/api/inbox", get(health::placeholder))
-        .route("/api/skills", get(health::placeholder).post(health::placeholder))
-        .route("/api/plugins", get(health::placeholder).post(health::placeholder))
-        .route("/api/autopilots", get(health::placeholder).post(health::placeholder))
-        .route("/api/squads", get(health::placeholder).post(health::placeholder))
-        .route("/api/projects", get(health::placeholder).post(health::placeholder))
-        .route("/api/comments", get(health::placeholder).post(health::placeholder))
-        .route("/api/feature-flags", get(health::placeholder))
+    mount::router()
 }

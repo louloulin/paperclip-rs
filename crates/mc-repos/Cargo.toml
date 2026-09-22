@@ -21,6 +21,10 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+sqlx = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-db = { path = "../mc-db" }
