@@ -687,3 +687,157 @@ grep -n 'not_implemented' crates/mc-http/src/routes/issues/mod.rs | grep -c 'rou
 - **没碰** base 上的任何代码、⑦ 基线、⑨ 快照、`mount.rs`、`Cargo.lock`（§12.1 第 5 条的 Cargo 面留给合并 cycle）；**没晋升、没改状态**任何 worker issue（晋升 = 制造第 4 个并发）。
 - 本 cycle 的全部写集 = **本文件这一段** + **`LUM-1370` / `LUM-1438` 两份 issue 描述各追加一个「预飞追加」块**（`--no-start`，实测两条都是 `backlog` 不变、未起 run）：把上面的 M3-6 硬重叠 + 实测行号、M2-E 回填量的更正、以及「M3-7 的 ws 层已进 base、别重写」写进被晋升者要看的地方，省下一轮自主复核。
 - 三片正文**只核对未改**（它们自身没写错）；`gates.sh` 只跑了 ①②⑦⑩ 四门（②③④⑤⑥⑧⑨ 的未跑理由见上文）。
+
+## 13. 05:30 cycle 落地记录（LUM-1451）—— 并发位 3/3 ⇒ W3b **真码**预飞（把 §12.1 的正文推算换成代码实测），新发现 3 条
+
+**base 链**：`6bc8819`（`docs(37)` = §12，LUM-1449）。`git diff --stat 757f9ee..6bc8819` 实测是 **docs-only 1 文件 +109/−0** ⇒ code/tests 与 `2a759ae` **逐字节相同**，§11.1 的 10/10 全绿点沿用；**本 cycle 没有推进 base**。
+
+**并发位口径**：`LUM-1427` / `LUM-1428` / `LUM-1429` 实测仍 **running**（20:39:20Z 起）= **3/3**；`open PR = 0`（GitHub API 实测）⇒ 与 §12 一样，**无集成动作可做**，产出仍是「让下一个 cycle 的合并一次过」的预飞。
+
+### 13.1 与 §12.1 的关系：那次读的是**三片正文**，这次读的是**三片代码**
+
+本 cycle 交付 `scripts/w3b_premerge_audit.py`（448 行，纯静态、只读、不编译），把「正文明写的路由表」换成「工作区里真实 `.route(...)` 注册」来核对：逐文件与 `--base-ref 2a759ae` 的 git blob 做集合差、递归展开未跟踪目录、跳过 `#[cfg(test)]` 模块（口径与 ⑦ 一致）。
+
+```
+$ python3 scripts/w3b_premerge_audit.py --base-ref 2a759ae \
+    --slice M3-4=<lum-1427 工作区> --slice M3-5=<lum-1428 工作区> --slice M3-6=<lum-1429 工作区> \
+    --expect scratch/w3b_expect.json
+  [M3-4] … added_routes 18 keys = 15 upstream keys (folded) fp c4be9304b96df79f
+  [M3-5] … added_routes 16 keys = 16 upstream keys (folded) fp 56e715b3d17e08a4
+  [M3-6] … added_routes  0 keys =  0 upstream keys (folded) fp 361ad699e8cea089
+  union 34 keys; duplicates across slices: none
+```
+
+| 切片 | 真实注册键 | 折算上游键（尾斜杠折叠后） | 正文声称 | 判定 |
+| --- | ---: | ---: | ---: | --- |
+| M3-4 `LUM-1427` | 18 | **15** | 15 | ✅（多出的 3 个键是它**有意**注册的尾斜杠别名） |
+| M3-5 `LUM-1428` | 16 | **16** | 16 | ✅ 条数对，**但见 §13.2 ①** |
+| M3-6 `LUM-1429` | 0 | 0 | 15（9 新 + 6 替换） | ⏳ HTTP 面尚未落笔（repo 层已在工作区） |
+
+⇒ §12.1 的「46 条 = 40 新增 + 6 替换」在**代码面**成立（M3-4 15 + M3-5 16 = 31 条已实测；M3-6 的 15 条按其正文路径预演，见下）。
+
+**⑦ 预演改为注入真码集合**（副本在仓库外，`--routes-dir`）：
+- M3-4 的 15 条 → **`local 151 / implemented 137（127 real + 10 placeholder）/ known_gap 319 / regression 0`**，exit 0；
+- M3-4 + M3-5 的 31 条 → **`local 167 / implemented 153（143 real + 10 placeholder）/ known_gap 303 / regression 0`**，exit 0；
+- M3-6 的 9 条新增（按正文路径，`/api/agent-builder/sessions/` 等）→ **`local 145 / implemented 131 / known_gap 325 / regression 0`**，exit 0。
+
+⇒ 三段相加与 §12.1 的合入后预测 **`local 176 / implemented 162（152 real + 10 placeholder）/ known_gap 294`** 逐段吻合，且**没有一条**把 `local_only 11` 或占位 10 带偏离。
+
+### 13.2 三条 §12.1 看不到的新发现（都带实测证据）
+
+**① 【最高优先级】M3-5 的 `/api/agents` 只注册了带尾斜杠的形式 ⇒ ⑨ 那条唯一可判 fixture **不会**变绿（而 ⑦ 全绿，看不见）**
+
+- 代码实测：M3-5 只注册 `GET|POST /api/agents/` 与 `GET|PUT /api/agents/:id/`；**没有** `/api/agents`、`/api/agents/:id`。对照 —— M3-4 同一问题处理正确（`/api/runtimes` **与** `/api/runtimes/` 都注册，源码注释写明理由：「上游是 chi 的 `Route("/api/runtimes") + Get("/")`，客户端两种写法都能命中」）。
+- 三条 golden fixture 请求的路径是 **不带**尾斜杠的 `/api/agents`（`GET` ×2 / `POST` ×1，其中 `TestProtectedRoutesRequireAuth` 那条正是 §12.1 第 4 条点名要变 `pass` 的）。
+- **为什么 404 而不是 307**（用 axum 0.7.9 自己的依赖实测）：
+  - `matchit` 0.7.3（axum 0.7 的 matcher）：树里只有 `/api/agents/` 时 `at("/api/agents")` → **`Err(MissingTrailingSlash)`**，`at("/api/agents/")` → `Ok`；
+  - `axum-0.7.9/src/routing/path_router.rs:381-385` 把 `NotFound | ExtraTrailingSlash | MissingTrailingSlash` **一起**并进 `Err(...)` → 走 fallback ⇒ **404**（⑨ 记为 `unmounted`）。
+  - 本仓文档也是同一结论：`docs/17` L113「axum 0.7 不做末尾斜杠归一化」、`docs/15` L483「axum 把两者注册成不同键」。
+- ⇒ **§12.1 第 4 条的「⑨ 会变 `pass 5 / unmounted 5`」不成立**，除非 M3-5 补注册无斜杠形式。补上后（同一 `AuthUser` 提取器 → 401）该预测才成立；已由新脚本的 golden 检查自动点名：
+  ```
+  !! M3-5: golden GET  /api/agents is served only via the trailing-slash alias /api/agents/ -> axum 404s the fixture path (…integration_test.go:433#1)
+  !! M3-5: golden POST /api/agents is served only via the trailing-slash alias /api/agents/ -> axum 404s the fixture path (…handler_test.go:1691#3)
+  !! M3-5: golden GET  /api/agents is served only via the trailing-slash alias /api/agents/ -> axum 404s the fixture path (…integration_test.go:627#2)
+  ```
+- **⑦ 为什么看不见**：`scripts/route_parity.py` 的比较会折叠尾斜杠（`docs/22` §69：chi 的 `/x` 与 `/x/` 同一 handler）⇒ 合入后 `local 176 / regression 0` 全绿，而**契约未达**。这是 ⑦ 的结构性盲区（折叠是上游语义，不是 bug），所以必须由 §13.2 ① 这类 **golden 路径逐字检查**补上 —— 新脚本已把它变成一行命令。
+- 修法成本：2 行注册（`/api/agents`、`/api/agents/:id`）+ 测试补无斜杠用例；**M3-5 自己的测试里请求路径的唯一字面量集合（16 条）全部带尾斜杠**（`/api/agents/`、`/api/agents/{agent_id}/`、`/api/agents/?workspace_id={ws}` …，实测 `grep -rho '"/api/[^"]*"' crates/mc-http/tests/agents/*.rs | sort -u`），所以它自测会绿 —— 属「绿但错」类，必须靠外部口径抓。
+
+**② ⑩ 门在合入时会红，两片各一个 >800 行的新文件**
+
+| 切片 | 文件 | 行数 | 白名单 | 判定 |
+| --- | --- | ---: | --- | --- |
+| M3-5 `LUM-1428` | `crates/mc-http/src/routes/agents/dto.rs` | **912** | 不在（白名单 11 条，实测无此文件） | **⑩ rule 1 违规** |
+| M3-6 `LUM-1429` | `crates/mc-repos/src/task/tests.rs` | **1211** | 不在 | **⑩ rule 1 违规** |
+
+- M3-4 最大 728 行（`mc-repos/src/runtime/tests.rs`）✅；M3-5 次大 737（`routes/agents/crud.rs`）✅；M3-6 次大 782（`task/store.rs`）⚠️ 只剩 18 行余量。
+- **为什么现在跑 ⑩ 看不见**：`scripts/file_size_check.py` 读的是 `git ls-files`（**已跟踪**路径），进行中的新文件还是 untracked ⇒ 只有合并/`git add` 之后才会红。新脚本按同样规则（scope `crates/**/*.rs` + limit 800 + 白名单只减不增）复刻了判定，所以在预飞阶段就能点名。
+- 处理选项只有两个且都合规：拆文件（推荐）或**在合并 cycle 里先拆再合**；**不得**把新违规写进白名单（`docs/37` §R7 / 脚本 docstring 明写「新增违规不得写进白名单」）。
+
+**③ M3-6 的 6 条 stub 必须「原地替换」，一旦当成新增就 axum panic**
+
+用 ⑦ 自己的重复检测实测（同一棵 base 副本，两种注入）：
+
+```
+# 只加 9 条真新增  → local 145 / implemented 131，exit 0
+# 若 15 条全当新增 → exit 1
+!! duplicate (local) route keys: GET /api/issues/:param/active-task, GET /api/issues/:param/task-runs,
+   GET /api/issues/:param/usage, POST /api/issues/:param/rerun,
+   POST /api/issues/:param/tasks/:param/cancel, POST /api/issues/preview-trigger
+```
+
+这 6 个键在 base 里的**原地位置**（实测 `crates/mc-http/src/routes/issues/mod.rs`，全部指向 501 `not_implemented`）：`preview-trigger`、`:id/active-task`、`:id/rerun`、`:id/task-runs`、`:id/usage`、`:id/tasks/:taskId/cancel` —— 与 §12.1 第 1 条的表一致，无第七个。合入 cycle 的验收口径：**base 里指向 501 的注册数应从 19 降到 13**（6 条换成真 handler，另外 13 条仍留）。
+
+### 13.3 其余复核（沿用 / 细化 §12）
+
+- **共享面（读工作区实测）**：`mount.rs` / `crates/mc-http/src/routes/mod.rs` / ⑦ 基线 / ⑨ 快照 / `scripts/file_size_baseline.tsv` **三片都没碰** ✅；`Cargo` 面只有 M3-6 动了 `crates/mc-repos/Cargo.toml`（+`mc-task` path 依赖）与 `Cargo.lock`（**恰好 +1 条边 `mc-repos → mc-task`**，实测）⇒ 合并 cycle 复核这条边即可（path 依赖，确定性可解），与 §12.1 第 5 条一致。
+- **⑦ 的 `real` 高估口径细化**：`issues/mod.rs` 里仍有 **19 条 501**（§12.1 第 6 条）；M3-6 只替换其中 6 条 ⇒ 合入后的 `152 real` 里**仍有 13 条是 501**，真正实现口径 = **139**。结论不变：**别把 ⑦ 的 `real` 当「真实现」**。
+- **三片新代码里没有 501 残留**（对三片的 `crates/mc-http` 改动面 grep `not_implemented|NOT_IMPLEMENTED` = 0 命中）✅。
+- **测试静默跳过**：三片新增的 DB 相关测试**全部** `#[ignore]` + `MULTICA_TEST_DATABASE_URL` 门控（实测含 `#[test]` 的 **11 个文件**、0 个「无门控的 DB 测试」）⇒ 合并 cycle 必须 `gates.sh --with-db`，否则「绿」是空跑（§12 同结论）。
+- **① fmt**：M3-5 / M3-6 的改动文件 `rustfmt --check` clean ✅；M3-4 当时报 `routes/runtimes.rs` 声明了 `mod ledger/profiles/usage/refusals;` 而目录里只有 `access.rs/dto.rs/protocol.rs` ⇒ **在飞切片的工作区会瞬时不完整**，这类报错**不是**合并结论。这正好说明：**快照 ≠ PR diff**，合并 cycle 要用 `--expect`（冻结）+ `--merged`（回放）重跑，别引用本 cycle 的中间态数字。
+- **⑨ 修正后的预测（单一条件）**：M3-5 若**不修** §13.2 ① ⇒ ⑨ 保持 `pass 4 / mismatch 1 / unmounted 6 / placeholder 0 / unevaluable 47`（总数 58，`--write` 是 no-op）；**修了**才变 `pass 5 / unmounted 5`。
+
+### 13.4 复算命令（§13.1–§13.3 每条都能重跑）
+
+```bash
+# ① 三片真实注册面 + 交叉重复 + ⑩ 复刻 + golden 路径逐字检查（本 cycle 新增工具）
+python3 scripts/w3b_premerge_audit.py --base-ref 2a759ae \
+  --slice M3-4=<lum-1427 工作区> --slice M3-5=<lum-1428 工作区> --slice M3-6=<lum-1429 工作区> \
+  --expect scratch/w3b_expect.json
+#    → union 34 keys / duplicates none / ⑩ 两处违规 / 三条 golden「只能靠尾斜杠别名」/ exit 1
+# 合并之后（同一个冻结期望回放，先跑在 base 上验证「全丢」是预期）：
+python3 scripts/w3b_premerge_audit.py --merged . --expect scratch/w3b_expect.json
+
+# ② matchit / axum 的 404 微证（同版本依赖，10 秒，不用碰仓库 target）
+python3 - <<'PY'
+import subprocess,tempfile,os,textwrap
+d=tempfile.mkdtemp(); os.makedirs(d+"/src")
+open(d+"/Cargo.toml","w").write('[package]\nname="mt"\nversion="0.1.0"\nedition="2021"\n[dependencies]\nmatchit="0.7"\n')
+open(d+"/src/main.rs","w").write(textwrap.dedent('''
+    fn main(){let mut r=matchit::Router::new(); r.insert("/api/agents/","slash").unwrap();
+    for p in ["/api/agents","/api/agents/"]{println!("{p:16} -> {:?}",r.at(p).map(|m|*m.value));}}'''))
+print(subprocess.run(["cargo","run","--quiet","--offline"],cwd=d,text=True,capture_output=True).stdout)
+PY
+# → /api/agents      -> Err(MissingTrailingSlash)      # ⇒ axum path_router.rs:381 并入 Err ⇒ 404
+#    /api/agents/    -> Ok("slash")
+grep -n "MissingTrailingSlash" ~/.cargo/registry/src/*/axum-0.7.9/src/routing/path_router.rs
+
+# ③ ⑦ 预演（真码集合注入副本；不写仓库工作区，别让 ①⑦⑩ 把演练当真）
+python3 - <<'PY'
+import importlib.util,os,shutil,subprocess,sys,tempfile
+spec=importlib.util.spec_from_file_location("aud","scripts/w3b_premerge_audit.py")
+aud=importlib.util.module_from_spec(spec); spec.loader.exec_module(aud)
+WT=["/…/lum-1427-…/workdir/paperclip-rs","/…/lum-1428-…/workdir/paperclip-rs","/…/lum-1429-…/workdir/paperclip-rs"]
+routes=set()
+for w in WT: routes |= aud.routes_at(w,None)-aud.routes_at(w,"2a759ae")
+d=tempfile.mkdtemp(); shutil.copytree("crates/mc-http/src",d+"/src")
+L=['use axum::routing::{delete,get,patch,post,put};']
+for i,(m,p) in enumerate(sorted(routes),1):
+    L.append(f'fn h{i}(){{}}'); L.append(f'pub fn r{i}()->axum::Router{{axum::Router::new().route("{p}",{m.lower()}(h{i}))}}')
+open(d+"/src/routes/w3b_sim.rs","w").write("\n".join(L))
+print(subprocess.run([sys.executable,"scripts/route_parity.py","--quiet","--routes-dir",d+"/src"],capture_output=True,text=True).stdout)
+PY
+# → local 167 / implemented 153（143 real + 10 placeholder）/ known_gap 303 / regression 0 / exit 0
+
+# ④ M3-6 的「替换 vs 新增」判据：19 → 13
+#   注意 `grep -c not_implemented` 是 23 行、`grep -n not_implemented | grep -c 'route('` 只有 13 ——
+#   因为 `.route(` 与其链上的 `not_implemented` 常不在同一行。要数**注册条数**必须做括号配对：
+python3 - <<'PY'
+import re
+t=open("crates/mc-http/src/routes/issues/mod.rs").read()
+n=0
+for m in re.finditer(r'\.route\s*\(',t):
+    i=m.end()-1; d=0
+    for k in range(i,len(t)):
+        d+= t[k]=='('; d-= t[k]==')'
+        if d==0: break
+    n += 'not_implemented' in t[i:k]
+print(n)          # → 19（合入后应降到 13）
+PY
+```
+
+### 13.5 本 cycle 没做（边界）
+
+- **没碰** base 上的任何既有代码、⑦ 基线、⑨ 快照、`mount.rs`、`Cargo.lock`；**没晋升、没改状态**任何 worker issue（晋升 = 制造第 4 个并发）。
+- **没有编译、没有跑测试**（②③④⑤⑥⑧⑨ 全部未跑）：`/` 可用空间实测 **11G**，三片 `target/` 仍在增长（8.5G + 4.1G + 2.2G）⇒ 冷构建有把三片挤到 ENOSPC 的实测风险（R13）；本 cycle 的全部结论都建立在静态读取 + 纯 python 复算上，**并且每条都给了复算命令**。
+- 本 cycle 的写集 = **本文件这一段** + **`scripts/w3b_premerge_audit.py`（新文件，448 行，⑩ 范围内且已实测 ≤800）**；三片正文只读未改（`--slice` 模式全程只读工作区）。
+- 明确**没有**替 M3-5 改代码：§13.2 ① 的修法是「合并 cycle 或 M3-5 自己补 2 行」，本文件只给证据与判据。
