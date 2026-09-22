@@ -1076,12 +1076,14 @@ async fn issue_auth_workspace_and_not_implemented() {
     assert_eq!(quick["origin"], "quick_create");
     assert_eq!(quick["status"], "todo");
 
-    // 501 占位（M3 能力）
+    // 501 占位（M3 能力）。原先这里断言的是 `/api/issues/table/groups`，
+    // M2-D（LUM-1355）把它实现成真实路由后改用仍未实现的 `preview-trigger`
+    // 继续覆盖“占位返回 501 + `not_implemented` 错误码”这条约定。
     let res = app
         .clone()
         .oneshot(req(
             "POST",
-            "/api/issues/table/groups",
+            "/api/issues/preview-trigger",
             ws,
             user,
             Some(json!({})),
