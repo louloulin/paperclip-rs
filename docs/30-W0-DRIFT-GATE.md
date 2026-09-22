@@ -35,8 +35,8 @@
 | 打分变量 | `GATE_SCHEMA_DRIFT_EXIT=<code>`（取自脚本退出码，不改写） |
 | 是否需要 cargo | 否（纯 Python） |
 | 是否需要 PG | **是**（真库 URL；角色需 `CREATEDB`） |
-| 默认集合 | 不在（默认跑 ①–⑤ + ⑦） |
-| `--with-db` | **在**（`--with-db` = ①–⑤ + ⑥ + ⑧ + ⑦，共 8 门） |
+| 默认集合 | 不在（**当时**默认跑 ①–⑤ + ⑦；⑨ 之后加入默认集合，见 §2.3） |
+| `--with-db` | **在**（本切片时 `--with-db` = ①–⑤ + ⑥ + ⑧ + ⑦，共 8 门；现在含 ⑨，共 9 门，见 §2.3） |
 | 缺库 URL 时 | `exit 2`，与 ⑥ 同一条前置检查（**绝不静默跳过**） |
 
 > 汇总表里 ⑧ 会印在 ⑦ **之前**：`ALL_GATES` 的排列把两道**需要库**的门（⑥ ⑧）放在一起，
@@ -67,6 +67,24 @@ db job: ⑥ db  →  ⑧ deps (psql + python3)  →  ⑧ schema-drift
   所以 `db` job 原来完全没有 `psql`。ubuntu-latest 镜像自带 psql/python3，这一步只是把"镜像是精简版"
   的情形补上；**让 ⑧ 因为"环境没 psql"而红，会把环境问题错报成 schema 问题**。
   库里 `postgres:16` service 的 `POSTGRES_USER` 是超级用户 ⇒ `CREATEDB` 权限没问题。
+
+### 2.3 门清单的后续变化：⑨ `conformance`（W0-E / LUM-1413，非本切片）
+
+本文件交付时门清单是 **8 门**（`--list` 末行 = `route-parity`）。之后 **W0-E** 接上了
+`docs/27-W0-GOLDEN-FIXTURES.md` §9 预留的契约门，清单变成 **9 门**（编号稳定、不重编）：
+
+| 项 | 值 |
+| --- | --- |
+| 门名 / 编号 / 打分变量 | `conformance` / **⑨** / `GATE_CONFORMANCE_EXIT` |
+| 命令 | `env -u MULTICA_TEST_DATABASE_URL -u MULTICA_DATABASE_URL cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json` |
+| 是否需要 cargo / PG | 是 / **否**（stateless 层：不拨号、不建库） |
+| 默认集合 | **在**（默认 = ①–⑤ + ⑦ + ⑨，共 7 门） |
+| `--with-db` | **在**（①–⑨，共 9 门）⇒ 本文件 §3.4 那句"顺序为 ①–⑥⑧⑦、共 8 门"是**当时**的实测记录 |
+| 位置 | **不改 ⑧ 的挂点**：⑨ 挂 `contract` job（那道 job 因此补了 rust 工具链），⑧ 仍在 `db` job |
+| 与 ⑧ 的关系 | 无关，也不重叠：⑧ 盯 schema 差异登记表，⑨ 盯 golden fixture 回放结论（`report.json`） |
+
+汇总表里 ⑨ 会印在 ⑦ **之后**（`ALL_GATES` 末尾），所以当前顺序是 `① ② ③ ④ ⑤ ⑥ ⑧ ⑦ ⑨` ——
+再次强调：**编号是稳定标识，不表示执行顺序**。完整交付说明与实测输出见 `docs/24-W0-CI.md` §11。
 
 ---
 
@@ -184,7 +202,8 @@ OK — every difference is registered        # exit 0
 ```
 
 * ⑧ 自身耗时 **~1.3s**（建 scratch 库 → 应用上游 560 + 本仓 4 个 `.up.sql` → 快照 → 比 → drop）。
-* 8 门全绿的其余数字与 `docs/24` §4 逐字相同（本切片不动 ①–⑦ 的命令与期望值）。
+* 8 门全绿的其余数字与 `docs/24` §4 逐字相同（本切片不动 ①–⑦ 的命令与期望值）——
+  ⑨ 加入后 `--with-db` 是 9 门，多出的那一行是 `⑨ conformance 0s PASS`（见 §2.3）。
 * `767` 是**切换前**的数字：W0-B2（LUM-1387）采用上游迁移集合、收窄登记表之后，这个数字会大幅下降；
   ⑧ 的判据不变（`exit 0` = 每一处差异都已登记）。
 

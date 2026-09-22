@@ -268,8 +268,10 @@ plan1 §8 写「上游用例数」：本轮把分母解释为**抽出的 fixture
    `--scan` 扩到 daemon/ws 后这个数会变。
 3. **database 层是本地证据，CI 不依赖**：CI 只跑 stateless 层（无库）与 `--ignored` 的真库用例（⑧ 门已建库）。
    `report.json` 因此固定为 stateless 快照。
-4. **`report.json` 不是门禁**：本切片没有改 `scripts/gates.sh`（那是 W0-A/CI 的文件，且并发切片在改它）。
-   接线建议见 §9。当前它的用途是"证据 + 让你能 `--check` 发现漂移"。
+4. **`report.json` 已是门禁（⑨）**：W0-C 本切片没有改 `scripts/gates.sh`（那是 W0-A/CI 的文件，且并发切片在改它）；
+   **该接线已由 W0-E（LUM-1413）完成** —— ⑨ `conformance` 跑的就是本条命令，进默认集合与 `contract` job，
+   配置与实测见 `docs/24-W0-CI.md` §11。拍门之后的含义：**`report.json` 从"证据"变成了"契约快照"** ——
+   它的任何 diff 都是红灯，直到有人去解释并刷新它。
 5. **`insta` 未引入**（plan1 §4 曾列 `insta` 作 P5 执行器）：本轮的断言是"状态码 + JSON 子集"，
    不需要快照 redaction/评审工作流，`assert_eq!` + 稳定序列化已足够；引入它只会增加 `Cargo.lock` 面
    （本切片只新增 `mc-conformance` 一个 package 条目）。若将来做"整段响应快照"再评估。
@@ -310,17 +312,21 @@ $ cargo test -p mc-conformance                       # 2 passed
 $ cargo test -p mc-conformance -- --ignored          # 2 passed（含 58 条真库回放）
 $ cargo clippy -p mc-conformance --all-targets -- -D warnings   # clean
 $ cargo fmt --all --check                            # clean
+$ bash scripts/gates.sh --only conformance           # exit 0（⑨ 门，W0-E 接线；stateless 层）
 ```
 
 ---
 
 ## 9. 后续（不在本切片做）
 
-1. **⑨ 契约门**（建议名字）：把 stateless 层接进 `scripts/gates.sh` ——
-   `cargo run -p mc-conformance -- --check crates/mc-conformance/report.json`（漂移即红）。
-   所有者是 W0-A/CI 切片（`scripts/gates.sh`、`.github/workflows/ci.yml`），本切片不碰。
-   **注意**：接门那一刻起，任何让 stateless 结论变化的改动（例如 `/api/config` 接入 M10）都必须同步刷新 `report.json` ——
-   这是设计上的"强制对账"。
+1. **⑨ 契约门**（已接线：`conformance` / ⑨ / `GATE_CONFORMANCE_EXIT`）：
+   `cargo run -q -p mc-conformance -- --no-db --check crates/mc-conformance/report.json`（漂移即红）。
+   本切片（W0-C）当时的文件范围不含 `scripts/gates.sh` / `.github/workflows/ci.yml`，**接线由 W0-E（LUM-1413）完成**：
+   门进 **默认集合**（离线确定性，与 ⑦ 同组）+ `contract` job（该 job 因此补了 rust 工具链）。
+   命令比上面多一个 `--no-db` 并剥掉库变量，因为 `--db-url` 绑定了 `MULTICA_TEST_DATABASE_URL`：
+   不这么做，谁 export 过这个变量就会追回 database 层，把合并报告拿去比 stateless 快照（详见 `docs/24` §7 第 6 条 / §11）。
+   **注意（本条是本切片特意留下的约束）**：接门那一刻起，任何让 stateless 结论变化的改动（例如 `/api/config` 接入 M10）
+   都必须同步刷新 `report.json` —— 这是设计上的"强制对账"。
 2. **M2 面抽取扩面**：把 `body_unresolved`（74 条）里"上游断言了 body 字段"的用例解析成 `json_subset`；
    优先 M2-A/M2-D 的 issue/comment 路由，因为它们已经有真库层可判定性。
 3. **M3 协议 golden**：`--scan` 扩到 `internal/daemon`/`daemonws`，为 `docs/15-M3-PLAN.md` §8.5 的
