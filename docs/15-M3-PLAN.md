@@ -502,9 +502,12 @@ M3 规则：**每个新文件 ≤800 行**，daemon 面按域拆 6 文件（§6 
 
 ## 8. 验证门与仲裁规则（照 `docs/09` 模式）
 
-### 8.1 八道门（W0-A / W0-D 已落地，`bash scripts/gates.sh` 是唯一实现）
+### 8.1 十道门（W0-A / W0-D / ⑨ 契约门 / ⑩ 尺寸门已落地，`bash scripts/gates.sh` 是唯一实现）
 
-`ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity"`；`--with-db` 追加 **⑥`db`** 与 **⑧`schema-drift`**（两者需要 `MULTICA_TEST_DATABASE_URL`，**没有 URL 直接 exit 1，不静默跳过**）。退出码 0 全绿 / 1 门红 / 2 用法错（`docs/24 §2`、`docs/30`）。
+`ALL_GATES="fmt build clippy clippy-test-util test db schema-drift route-parity conformance file-size"`（@`d7639f0` 实测）；**默认集合 = ①–⑤ + ⑦`route-parity` + ⑨`conformance` + ⑩`file-size` = 8 门**，`--with-db` 追加 **⑥`db`** 与 **⑧`schema-drift`**（两者需要 `MULTICA_TEST_DATABASE_URL`，**没有 URL 直接 exit 1，不静默跳过**）。退出码 0 全绿 / 1 门红 / 2 用法错（`docs/24 §2`、`docs/30`）。
+
+- ⑨ `conformance`（W0-C / LUM-1388 抽取器 + LUM-1413 接线）：回放 golden fixture 对快照，`crates/mc-conformance/report.json` 是唯一真值；
+- ⑩ `file-size`（R7 / LUM-1416）：`python3 scripts/file_size_check.py`，单文件 800 行上限，存量违规在 `scripts/file_size_baseline.tsv` 里**只允许变短**——**M3 新代码不得进基线**。
 
 M3 每切片交付门（**统一写这一条命令**，LUM-1357 要求）：
 
@@ -522,10 +525,10 @@ bash scripts/gates.sh                    # 纯库切片（M3-1/2/3 亦建议带 
 
 ### 8.3 M3 集成的验证门
 
-1. 八道门全绿（`--with-db`）；
+1. 十道门全绿（`--with-db`）；
 2. `python3 scripts/route_parity.py --write-baseline` 后**再跑一次**必须 exit 0、`regression 0`、`unclaimed 0`。gap 计数口径：集成后 `M3` 应为 **11**（= 已判给 M9 的 cloud-runtime，属 §9.1 的 owner 计数噪声；owner 单元格一改即为 0）；`M3+` 的 17 条不动（§9.4）。**不许**为了好看去改 owner 单元格凑账。另：先修 §9.7 的占位正则再把 `implemented_real` 当指标——否则该数永远虚高 23（集成报告应同时给 `placeholder + not_implemented` 两个计数）；
 3. `python3 scripts/schema_drift.py --quiet` exit 0（W0-B2 后应只剩 `contracts/upstream-apply-exceptions.tsv` 里那 9 行不可应用的例外）；
-4. 契约等价率：按 plan1 §8 的 W3 目标 **40%**（分母 = W0-C 抽出的 golden fixture 用例数）。**注意**：`mc-conformance` crate 与 fixture 抽取器（W0-C / LUM-1388）尚未落地；在它落地前，M3 的契约门以「每切片 ≥3 条路由抽样 + daemon 回路 E2E 记录」代替，并**在集成报告里明确标注这是替代口径**（plan1 §8 的"任何对外汇报必须给出至少两项指标"要求）。
+4. 契约等价率：按 plan1 §8 的 W3 目标 **40%**（分母 = W0-C 抽出的 golden fixture 用例数）。**@`d7639f0` 状态**：`mc-conformance` crate + fixture 抽取器（W0-C / LUM-1388）与门 ⑨ 均已落地，基线口径 = `crates/mc-conformance/report.json`（stateless 层 `pass 4 / mismatch 1 / unevaluable 47`）与 `docs/27` §5.1 的真库层计数（`pass 43 / mismatch 1`，分层计数，**不要**把两层数字混用）；切片交付仍需「≥3 条路由抽样」作为路由级证据，但契约门要跑门 ⑨ 而不是用抽样代替。
 5. **端到端**：pi-local adapter 的真实任务回路（M3-2 的 E2E 升级版：daemon stub → claim → start → progress → complete → usage 结算落库）。
 
 ### 8.4 仲裁规则（M3 增补）

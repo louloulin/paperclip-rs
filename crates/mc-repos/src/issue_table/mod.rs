@@ -10,7 +10,8 @@
 //!
 //! 职责边界：**这里只有“已校验的查询规格 → SQL → 行”**。HTTP 概念（`query_fingerprint`、
 //! cursor 的 base64/JSON 编解码、400/422 判定、DTO 字段名）全在
-//! `crates/mc-http/src/routes/issue_table.rs`，与上游把两者放在同一个 handler 文件的
+//! `crates/mc-http/src/routes/issue_table/`（`mod.rs` / `spec.rs` / `cursor.rs` / `tests.rs`，
+//! R7 拆分后已是四文件），与上游把两者放在同一个 handler 文件的
 //! 做法不同，理由是 R7（单文件 800 行）与 M2-A 的文件已经超标（见 `docs/14-M2-TABLE.md` §6）。
 //!
 //! 本模块按 R7 拆成三份（每个文件都在 800 行以内）：
