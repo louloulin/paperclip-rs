@@ -9,6 +9,7 @@
 //! | POST | `/auth/verify-code` | `verify_code` | `Handler.VerifyCode` (auth.go) |
 //! | POST | `/auth/logout` | `logout` | `Handler.Logout` (auth.go) |
 //! | POST | `/api/auth/refresh` | `refresh_session` | `Handler.RefreshSession` (session.go) |
+//! | POST | `/auth/google` | `google_login` | `Handler.GoogleLogin` (auth.go:546) |
 //!
 //! 路径遵循 upstream：浏览器登录页用 `/auth/send-code`、`/auth/verify-code`，
 //! 而已经 cookie 化的会话通过 `/api/auth/refresh` 续期。
@@ -19,8 +20,9 @@
 
 use std::sync::Arc;
 
+use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::header::SET_COOKIE;
+use axum::http::header::{AUTHORIZATION, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -35,10 +37,12 @@ use mc_auth::session::Session;
 use mc_auth::verification::VerificationCodePurpose;
 use mc_core::Id;
 use mc_errors::Error;
+use mc_repos::user::{NewUser, UserRepo};
 use mc_repos::verification_code::{NewVerificationCode, VerificationCodeRepo};
+use mc_repos::Repository;
 
 use crate::error::{ApiError, ApiResult};
-use crate::state::AppState;
+use crate::state::{AppState, GoogleOAuthConfig};
 
 /// Auth 路由切片。
 ///
@@ -49,6 +53,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/auth/send-code", post(send_code))
         .route("/auth/verify-code", post(verify_code))
         .route("/auth/logout", post(logout))
+        .route("/auth/google", post(google_login))
         .route("/api/auth/refresh", post(refresh_session))
         // M1-D（LUM-1347）从 LUM-1335（`feat/multica-rs-m1`）cherry-pick 的增量：
         // CLI 登录用的一次性 PAT（浏览器会话 → token）。
@@ -580,6 +585,399 @@ fn _unused_uuid() -> Uuid {
 }
 
 // ============================================================
+// POST /auth/google
+// ============================================================
+
+/// 上游 `writeErrorCode`/`writeFeatureDisabled` 的等价物：
+///
+/// - 状态码由调用方显式给出（本仓 `mc_errors::Error` 的固定映射里
+///   `Upstream` 是 500，而上游 `GoogleLogin` 的 502 必须逐条对齐）；
+/// - 错误体沿用本仓 M1 的嵌套 envelope（`mc_errors::ErrorBody`，与 `ApiError`
+///   的输出逐字段同形）——上游是扁平 `{"error": msg, "code": code}`，
+///   登记在 `docs/29-W1-GOOGLE.md`；
+/// - `code` 用上游的字符串常量（`mc_errors::Error::code()` 只能返回固定映射）。
+fn google_error(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        Json(mc_errors::ErrorBody {
+            error: mc_errors::ErrorResponse::new(code, message),
+        }),
+    )
+        .into_response()
+}
+
+/// 上游 502 系列（换 token / 拉 userinfo 的传输层与协议层失败）。
+fn google_upstream_error(message: &str) -> Response {
+    google_error(StatusCode::BAD_GATEWAY, "upstream_error", message)
+}
+
+/// 上游 500 系列（userinfo 请求构造失败、user 落库失败、签发 session 失败）。
+fn google_internal_error(code: &str, message: &str) -> Response {
+    google_error(StatusCode::INTERNAL_SERVER_ERROR, code, message)
+}
+
+// 上游 `auth.go:43-47` 的 code 常量，字符串逐字保留（`pub` 供 M9 接上配置面后复用）。
+/// 上游 `googleLoginCodeAccountDisabled`：当前不可达（见上方偏离清单）。
+pub const GOOGLE_CODE_ACCOUNT_DISABLED: &str = "account_disabled";
+/// 上游 `googleLoginCodeSignupProhibited`：当前不可达（本仓无 `ALLOW_SIGNUP`）。
+pub const GOOGLE_CODE_SIGNUP_PROHIBITED: &str = "signup_prohibited";
+/// 上游 `googleLoginCodeEmailNotAllowed`：当前不可达（本仓无邮箱白名单）。
+pub const GOOGLE_CODE_EMAIL_NOT_ALLOWED: &str = "email_not_allowed";
+/// 上游 `googleLoginCodeAccountWithoutEmail`。
+pub const GOOGLE_CODE_ACCOUNT_WITHOUT_EMAIL: &str = "google_account_no_email";
+/// 上游 `googleLoginCodeInvalidOAuthCode`。
+pub const GOOGLE_CODE_INVALID_OAUTH_CODE: &str = "oauth_code_invalid";
+/// `writeFeatureDisabled` 的 code。
+pub const GOOGLE_CODE_NOT_CONFIGURED: &str = "google_login_not_configured";
+
+#[derive(Debug, Deserialize)]
+pub struct GoogleLoginRequest {
+    /// 上游是 `Code string` —— 字段缺失等同于空串（→ 400 `code is required`）。
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleTokenResponse {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default, rename = "id_token")]
+    #[allow(dead_code)]
+    id_token: Option<String>,
+    #[serde(default, rename = "token_type")]
+    #[allow(dead_code)]
+    token_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleTokenError {
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleUserInfo {
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    picture: Option<String>,
+}
+
+/// `LoginResponse`（上游 `handler/auth.go:112`）。
+#[derive(Debug, Serialize)]
+pub struct GoogleLoginResponse {
+    /// 上游是 HS256 JWT。本仓 M1 没有 JWT 层，这里是不透明 session id
+    /// （同时写进 `multica_session` cookie）—— 见 `docs/29-W1-GOOGLE.md`。
+    pub token: String,
+    pub user: UserView,
+}
+
+/// 上游 `Handler.GoogleLogin`（`handler/auth.go:546-728`）的逐条移植。
+///
+/// 请求：`POST /auth/google`（**没有** `/api` 前缀），body
+/// `{"code": "<google authorization code>", "redirect_uri": "<可选>"}`。
+///
+/// 11 步流程与状态码/错误码对齐上游（行号见 `docs/29-W1-GOOGLE.md` 的表）：
+/// 1. body 解析失败 → 400 `invalid request body`
+/// 2. `code` 为空 → 400 `code is required`
+/// 3. 未配置 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` → 403 `google_login_not_configured`
+///    （上游 `writeFeatureDisabled` 故意用 403 而不是 503，避免重试与告警噪音）
+/// 4. 换 token `POST {MC_GOOGLE_TOKEN_URL}`（表单）→ 传输失败 502
+/// 5. 非 200：`400 + {"error":"invalid_grant"}` → 400 `oauth_code_invalid`；其余 → 502
+/// 6. 响应解析失败 / 空 `access_token` → 502
+/// 7. `GET {MC_GOOGLE_USERINFO_URL}`（Bearer）→ 请求构造失败 500；传输失败 / 非 200 → 502
+/// 8. 空 email → 400 `google_account_no_email`
+/// 9. `findOrCreateUser(email)`（按 email 查，缺失则用 `@` 前缀建号；
+///    禁用/白名单三条 403 见下）→ 落库失败 500
+/// 10. 回填 name（仅当 name == email 前缀）/ avatar（仅当为空）—— 失败只记日志
+/// 11. 签发 session + `Set-Cookie` → `{"token", "user"}`；签发失败 500
+///
+/// 与上游的登记偏离（完整清单见 `docs/29-W1-GOOGLE.md`）：
+/// - 错误体是嵌套 envelope（本仓 M1 约定），`code` 字符串一致；
+/// - `token` 是 session id 而非 JWT；
+/// - `user` 是本仓 `UserView`（字段少于上游 `UserResponse`）；
+/// - `account_disabled` / `signup_prohibited` / `email_not_allowed` 三条 403 在本仓
+///   **不可达**：M1 没有 signup 白名单与禁用邮箱的配置面（上游是
+///   `ALLOW_SIGNUP` / `ALLOWED_EMAILS` / `ALLOWED_EMAIL_DOMAINS` +
+///   `auth.IsTemporarilyDisabledUserEmail`）；
+/// - 不签发上游 `SetAuthCookies` 附带的 CF region cookie；
+/// - 上游这条路由有 Redis 支持的 per-IP 限流（`RATE_LIMIT_AUTH`，默认 5/min），
+///   本仓 M1 无 per-IP 限流设施。
+// 逐条对齐上游 11 步流程与错误码；拆函数会把「步骤 ↔ 状态码」的对应关系割裂。
+#[allow(clippy::too_many_lines)]
+async fn google_login(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    // ---- 1. 请求体 ----
+    // 用 `Bytes` 而不是 `Json<T>`：axum 的 `Json` rejection 对「字段类型错误」是
+    // 422，而上游 `json.Decode` 失败一律 400 "invalid request body"。
+    let req: GoogleLoginRequest = match serde_json::from_slice(&body) {
+        Ok(req) => req,
+        Err(err) => {
+            tracing::debug!(error = %err, "google login: invalid request body");
+            return google_error(
+                StatusCode::BAD_REQUEST,
+                "validation_error",
+                "invalid request body",
+            );
+        }
+    };
+
+    // ---- 2. code 必填（上游不 trim，此处保持一致）----
+    if req.code.is_empty() {
+        return google_error(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "code is required",
+        );
+    }
+
+    // ---- 3. 功能开关 ----
+    let cfg: GoogleOAuthConfig = state.google_oauth.clone();
+    let Some((client_id, client_secret)) = cfg.client_id.clone().zip(cfg.client_secret.clone())
+    else {
+        return google_error(
+            StatusCode::FORBIDDEN,
+            GOOGLE_CODE_NOT_CONFIGURED,
+            "Google login is not configured",
+        );
+    };
+    let Some(http) = cfg.http.clone() else {
+        tracing::error!("google oauth http client unavailable");
+        return google_upstream_error("failed to exchange code with Google");
+    };
+
+    // ---- 4. 用 authorization code 换 token ----
+    let redirect_uri = cfg.redirect_uri_for(req.redirect_uri.as_deref());
+    let form = [
+        ("code", req.code.as_str()),
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+        ("grant_type", "authorization_code"),
+    ];
+    let token_resp = match http.post(&cfg.token_url).form(&form).send().await {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::error!(error = %err, url = %cfg.token_url, "google oauth token exchange failed");
+            return google_upstream_error("failed to exchange code with Google");
+        }
+    };
+    let token_status = token_resp.status();
+    let token_body = match token_resp.text().await {
+        Ok(body) => body,
+        Err(err) => {
+            tracing::error!(error = %err, "google oauth token response could not be read");
+            return google_upstream_error("failed to read Google token response");
+        }
+    };
+
+    // ---- 5. 非 200 ----
+    // 只有「400 + error == invalid_grant」说明授权码被拒；配置/上游/畸形响应都是
+    // 服务端失败（上游注释原话：Only a valid invalid_grant response identifies a
+    // rejected authorization code）。
+    if token_status != StatusCode::OK {
+        let provider_error = serde_json::from_str::<GoogleTokenError>(&token_body)
+            .ok()
+            .and_then(|err| err.error)
+            .unwrap_or_default();
+        tracing::error!(
+            status = token_status.as_u16(),
+            body = %token_body,
+            "google oauth token exchange returned error"
+        );
+        if token_status == StatusCode::BAD_REQUEST && provider_error == "invalid_grant" {
+            return google_error(
+                StatusCode::BAD_REQUEST,
+                GOOGLE_CODE_INVALID_OAUTH_CODE,
+                "failed to exchange code with Google",
+            );
+        }
+        return google_upstream_error("failed to exchange code with Google");
+    }
+
+    // ---- 6. token 响应体 ----
+    let token: GoogleTokenResponse = match serde_json::from_str(&token_body) {
+        Ok(token) => token,
+        Err(err) => {
+            tracing::error!(error = %err, body = %token_body, "google oauth token response could not be parsed");
+            return google_upstream_error("failed to parse Google token response");
+        }
+    };
+    let access_token = token.access_token.unwrap_or_default();
+    let access_token = access_token.trim();
+    if access_token.is_empty() {
+        tracing::error!("google oauth token response has no access token");
+        return google_upstream_error("invalid Google token response");
+    }
+
+    // ---- 7. 拉 userinfo ----
+    // 请求构造失败（URL/header 非法）→ 500，与上游 `http.NewRequestWithContext`
+    // 失败一致；`build()` 是唯一能在 `send()` 之前区分它的点。
+    let userinfo_request = match http
+        .get(&cfg.userinfo_url)
+        .header(AUTHORIZATION, format!("Bearer {access_token}"))
+        .build()
+    {
+        Ok(request) => request,
+        Err(err) => {
+            tracing::error!(error = %err, url = %cfg.userinfo_url, "failed to create userinfo request");
+            return google_internal_error("internal_error", "internal error");
+        }
+    };
+    let userinfo_resp = match http.execute(userinfo_request).await {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::error!(error = %err, "google userinfo fetch failed");
+            return google_upstream_error("failed to fetch user info from Google");
+        }
+    };
+    if userinfo_resp.status() != StatusCode::OK {
+        let status = userinfo_resp.status();
+        let body = userinfo_resp.text().await.unwrap_or_default();
+        tracing::error!(status = status.as_u16(), body = %body, "google userinfo returned error");
+        return google_upstream_error("failed to fetch user info from Google");
+    }
+    let userinfo_body = match userinfo_resp.text().await {
+        Ok(body) => body,
+        Err(err) => {
+            tracing::error!(error = %err, "google userinfo body could not be read");
+            return google_upstream_error("failed to parse Google user info");
+        }
+    };
+    // 上游把 body 解到 `*googleUserInfo`：字面量 `null` 解出 nil 指针 → 502
+    // "invalid Google user info"。`Option<GoogleUserInfo>` 保留了这条区分。
+    let userinfo: Option<GoogleUserInfo> = match serde_json::from_str(&userinfo_body) {
+        Ok(userinfo) => userinfo,
+        Err(err) => {
+            tracing::error!(error = %err, body = %userinfo_body, "google userinfo could not be parsed");
+            return google_upstream_error("failed to parse Google user info");
+        }
+    };
+    let Some(userinfo) = userinfo else {
+        return google_upstream_error("invalid Google user info");
+    };
+
+    // ---- 8. email 必填（小写 + trim）----
+    let email = userinfo
+        .email
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if email.is_empty() {
+        return google_error(
+            StatusCode::BAD_REQUEST,
+            GOOGLE_CODE_ACCOUNT_WITHOUT_EMAIL,
+            "Google did not provide an email address for this sign-in",
+        );
+    }
+
+    // ---- 9. findOrCreateUser ----
+    // 上游在 findOrCreateUser 之前还有一道 `IsTemporarilyDisabledUserEmail`（403
+    // `account_disabled`）；本仓 M1 没有这个硬编码列表，故该分支不可达。
+    // `account_disabled` / `signup_prohibited` / `email_not_allowed` 三个 code
+    // 保留为 `pub const`，M9 接上配置面（`ALLOW_SIGNUP` / `ALLOWED_EMAILS`）后再启用。
+    let users = UserRepo::new(state.db.clone());
+    let existing = match users.get_by_email(&email).await {
+        Ok(user) => user,
+        Err(err) => {
+            tracing::error!(error = %err, %email, "google login: user lookup failed");
+            return google_internal_error("database_error", "failed to create user");
+        }
+    };
+    let mut is_new = false;
+    let mut user = if let Some(user) = existing {
+        user
+    } else {
+        is_new = true;
+        match users
+            .create(NewUser {
+                name: email_local_part(&email),
+                email: email.clone(),
+                avatar_url: None,
+            })
+            .await
+        {
+            Ok(user) => user,
+            Err(err) => {
+                tracing::error!(error = %err, %email, "google login: user create failed");
+                return google_internal_error("database_error", "failed to create user");
+            }
+        }
+    };
+
+    // ---- 10. 回填 Google profile ----
+    // 上游只在「用户没改过」时回填：name 仍等于 email 本地部分、avatar 还是空。
+    // 回填失败只记日志，继续用旧 user（上游 `if err == nil { user = updated }`）。
+    let profile_name = userinfo.name.unwrap_or_default();
+    let picture = userinfo.picture.unwrap_or_default();
+    let needs_name = !profile_name.is_empty() && user.name == email_local_part(&email);
+    let has_avatar = user
+        .avatar_url
+        .as_deref()
+        .is_some_and(|url| !url.is_empty());
+    let needs_avatar = !picture.is_empty() && !has_avatar;
+    if needs_name || needs_avatar {
+        // `UserRepo::update` 没有 avatar 字段（M1-A 的签名），改用按 email 的
+        // 幂等 upsert：EXCLUDED 就是我们算好的最终值，语义等价且不动 mc-repos。
+        let patch = NewUser {
+            name: if needs_name {
+                profile_name
+            } else {
+                user.name.clone()
+            },
+            email: email.clone(),
+            avatar_url: if needs_avatar {
+                Some(picture)
+            } else {
+                user.avatar_url.clone()
+            },
+        };
+        match users.upsert_by_email(patch).await {
+            Ok(updated) => user = updated,
+            Err(err) => tracing::warn!(
+                error = %err,
+                %email,
+                "google login: profile backfill failed, keeping stored user"
+            ),
+        }
+    }
+
+    // ---- 11. 签发 session + cookie ----
+    let session = Session::new(user.id, state.config.session_ttl_secs);
+    if let Err(err) = state.auth.store().put(session.clone()).await {
+        tracing::error!(error = %err, "google login: session put failed");
+        return google_internal_error("internal_error", "failed to generate token");
+    }
+
+    let body = GoogleLoginResponse {
+        token: session.id.clone(),
+        user: UserView {
+            id: user.id.as_string(),
+            name: user.name.clone(),
+            email: user.email.clone(),
+            created_at: user.created_at.as_iso(),
+        },
+    };
+
+    tracing::info!(
+        user_id = %user.id.as_string(),
+        email = %email,
+        is_new,
+        "user logged in via google"
+    );
+    session_response(
+        &state,
+        &session,
+        StatusCode::OK,
+        serde_json::to_value(body).unwrap(),
+    )
+}
+
+// ============================================================
 // 单元测试 —— 用 tower::ServiceExt::oneshot 走真实 axum Router。
 // 重点：rate limit、consumed、expired 三种失败路径。
 // ============================================================
@@ -600,7 +998,22 @@ mod tests {
     fn build_state(session_ttl_secs: u64, dev_mode: bool) -> Arc<AppState> {
         let db_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://127.0.0.1:1/none".to_string());
-        let db = Db::connect_lazy(&db_url, 4, 1).expect("lazy db");
+        build_state_with_db(
+            &db_url,
+            session_ttl_secs,
+            dev_mode,
+            GoogleOAuthConfig::default(),
+        )
+    }
+
+    /// `build_state` 的完整形式：显式 `db_url` + 显式 Google 出站配置。
+    fn build_state_with_db(
+        db_url: &str,
+        session_ttl_secs: u64,
+        dev_mode: bool,
+        google_oauth: GoogleOAuthConfig,
+    ) -> Arc<AppState> {
+        let db = Db::connect_lazy(db_url, 4, 1).expect("lazy db");
 
         let realtime = RealtimeHandle::start(8);
         let ws = Arc::new(WsState::new(realtime.clone(), "test"));
@@ -629,6 +1042,7 @@ mod tests {
             auth: SessionStoreContainer::new(),
             pat: mc_auth::PatStoreContainer::new(),
             verification: VerificationStoreContainer::new(),
+            google_oauth,
         };
         Arc::new(state)
     }
@@ -932,5 +1346,359 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ============================================================
+    // POST /auth/google（W1-Google / LUM-1399）
+    // ============================================================
+    //
+    // stub 用本机临时 axum listener（`127.0.0.1:0`）：不引入 wiremock 这类
+    // 新依赖，也不需要常驻服务。stub 的行为由**请求里的 code** 决定，
+    // 所以一个 stub 服务能跑完全部用例，测试之间没有环境变量串扰
+    // （base URL 是构 state 时注入的，不读进程 env）。
+
+    use serde_json::json;
+
+    /// 出站配置：`client_id`/`client_secret` 齐全，base URL 指向本机 stub。
+    fn google_cfg(token_url: &str, userinfo_url: &str) -> GoogleOAuthConfig {
+        GoogleOAuthConfig {
+            client_id: Some("stub-client-id".into()),
+            client_secret: Some("stub-client-secret".into()),
+            redirect_uri: Some("https://app.test/auth/callback".into()),
+            token_url: token_url.to_string(),
+            userinfo_url: userinfo_url.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// 不需要 DB 的用例：`db_url` 指向一个连不上的地址（`connect_lazy` 不拨号）。
+    fn google_state(token_url: &str, userinfo_url: &str) -> Arc<AppState> {
+        build_state_with_db(
+            "postgres://127.0.0.1:1/none",
+            60,
+            true,
+            google_cfg(token_url, userinfo_url),
+        )
+    }
+
+    /// 起一个本机 stub Google：返回 `(token_url, userinfo_url)`。
+    async fn spawn_google_stub() -> (String, String) {
+        use std::collections::HashMap;
+
+        use axum::extract::Form;
+        use axum::routing::{get, post};
+
+        /// `POST /token`：校验表单字段名/值，再按 code 决定返回。
+        async fn token(Form(form): Form<HashMap<String, String>>) -> Response {
+            for key in ["code", "client_id", "client_secret", "redirect_uri"] {
+                if !form.contains_key(key) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": format!("missing form field {key}") })),
+                    )
+                        .into_response();
+                }
+            }
+            if form.get("grant_type").map(String::as_str) != Some("authorization_code") {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "bad_grant_type" })),
+                )
+                    .into_response();
+            }
+            match form.get("code").map(String::as_str).unwrap_or_default() {
+                "invalid_grant" => (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid_grant" })),
+                )
+                    .into_response(),
+                "provider_error" => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "internal" })),
+                )
+                    .into_response(),
+                code => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "access_token": format!("tok-{code}"),
+                        "id_token": "stub-id-token",
+                        "token_type": "Bearer",
+                    })),
+                )
+                    .into_response(),
+            }
+        }
+
+        /// `GET /userinfo`：按 Bearer 里的 code 决定 profile。
+        async fn userinfo(headers: HeaderMap) -> Response {
+            let auth = headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            let Some(code) = auth.strip_prefix("Bearer tok-") else {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "error": "invalid_token" })),
+                )
+                    .into_response();
+            };
+            match code {
+                // 上游第 8 步：email 为空 → 400 `google_account_no_email`
+                "noemail" => (
+                    StatusCode::OK,
+                    Json(json!({ "name": "No Email", "picture": "https://img.test/n.png" })),
+                )
+                    .into_response(),
+                // 故意带大写 + 前后空格，验证 handler 的 trim + lowercase
+                code => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "email": format!("  {code}@Stub.Test "),
+                        "name": "Stub User",
+                        "picture": "https://img.test/p.png",
+                    })),
+                )
+                    .into_response(),
+            }
+        }
+
+        let app = Router::new()
+            .route("/token", post(token))
+            .route("/userinfo", get(userinfo));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind google stub");
+        let addr = listener.local_addr().expect("stub addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            format!("http://{addr}/token"),
+            format!("http://{addr}/userinfo"),
+        )
+    }
+
+    /// POST `/auth/google`，返回 (status, body, headers)。
+    async fn post_google(
+        state: Arc<AppState>,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value, HeaderMap) {
+        let app = router().with_state(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/auth/google")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = to_bytes(resp.into_body(), 65536).await.unwrap();
+        let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, value, headers)
+    }
+
+    /// 上游 `writeFeatureDisabled`：未配置 → 403（故意不是 503）。
+    #[tokio::test]
+    async fn google_login_unconfigured_returns_feature_disabled() {
+        // `build_state` 的默认 `GoogleOAuthConfig` 没有 client_id/secret
+        let state = build_state(60, true);
+        assert!(!state.google_oauth.is_configured());
+        let (status, body, _) = post_google(state, json!({ "code": "anything" })).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "google_login_not_configured");
+        assert_eq!(body["error"]["message"], "Google login is not configured");
+    }
+
+    /// 第 1/2 步：畸形 JSON 与缺失/空 `code` 都是 400。
+    #[tokio::test]
+    async fn google_login_requires_code_and_parseable_body() {
+        let (token_url, userinfo_url) = spawn_google_stub().await;
+        let state = google_state(&token_url, &userinfo_url);
+
+        let app = router().with_state(state.clone());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/auth/google")
+            .header("content-type", "application/json")
+            .body(Body::from("{not json"))
+            .unwrap();
+        let (status, body) = body_json(app.oneshot(req).await.unwrap()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["message"], "invalid request body");
+
+        let (status, body, _) = post_google(state.clone(), json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "validation_error");
+        assert_eq!(body["error"]["message"], "code is required");
+
+        let (status, body, _) = post_google(state, json!({ "code": "" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["message"], "code is required");
+    }
+
+    /// 第 5 步：`400 + invalid_grant` → 400 `oauth_code_invalid`。
+    #[tokio::test]
+    async fn google_login_rejected_code_returns_oauth_code_invalid() {
+        let (token_url, userinfo_url) = spawn_google_stub().await;
+        let state = google_state(&token_url, &userinfo_url);
+        let (status, body, _) = post_google(state, json!({ "code": "invalid_grant" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "oauth_code_invalid");
+        assert_eq!(
+            body["error"]["message"],
+            "failed to exchange code with Google"
+        );
+    }
+
+    /// 第 5 步的另一个分支：非 400（或 error 不是 `invalid_grant`）→ 502，
+    /// 且**没有** `oauth_code_invalid`（上游注释：只有 `invalid_grant` 才算用户错）。
+    #[tokio::test]
+    async fn google_login_provider_error_returns_502() {
+        let (token_url, userinfo_url) = spawn_google_stub().await;
+        let state = google_state(&token_url, &userinfo_url);
+        let (status, body, _) = post_google(state, json!({ "code": "provider_error" })).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["error"]["code"], "upstream_error");
+        assert_eq!(
+            body["error"]["message"],
+            "failed to exchange code with Google"
+        );
+    }
+
+    /// 第 4 步：token 端点连不上 → 502（不是 500）。
+    #[tokio::test]
+    async fn google_login_token_endpoint_unreachable_returns_502() {
+        // 1/tcp 必然 connection refused（且不会真的发出去）
+        let state = google_state("http://127.0.0.1:1/token", "http://127.0.0.1:1/userinfo");
+        let (status, body, _) = post_google(state, json!({ "code": "abcd" })).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            body["error"]["message"],
+            "failed to exchange code with Google"
+        );
+    }
+
+    /// 第 8 步：Google 没给 email → 400 `google_account_no_email`。
+    #[tokio::test]
+    async fn google_login_without_email_returns_google_account_no_email() {
+        let (token_url, userinfo_url) = spawn_google_stub().await;
+        let state = google_state(&token_url, &userinfo_url);
+        let (status, body, _) = post_google(state, json!({ "code": "noemail" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "google_account_no_email");
+        assert_eq!(
+            body["error"]["message"],
+            "Google did not provide an email address for this sign-in"
+        );
+    }
+
+    /// gate ⑥（`--ignored`）用 `MULTICA_TEST_DATABASE_URL`；本地手跑可用 `DATABASE_URL`。
+    fn require_test_db() -> Option<String> {
+        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .ok()
+            .filter(|u| !u.trim().is_empty());
+        if url.is_none() {
+            eprintln!("MULTICA_TEST_DATABASE_URL/DATABASE_URL not set; skipping google e2e test");
+        }
+        url
+    }
+
+    /// 第 9-11 步（happy path）：建号 → 回填 profile → 签发 session/cookie → 200。
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
+    #[tokio::test]
+    async fn google_login_creates_user_and_returns_token() {
+        let Some(db_url) = require_test_db() else {
+            return;
+        };
+        let (token_url, userinfo_url) = spawn_google_stub().await;
+        // email 在 stub 里带大写 + 前后空格 → 验证 handler 的 trim + lowercase
+        let code = format!("Happy-{}", Uuid::new_v4());
+        let email = format!("{}@stub.test", code.to_lowercase());
+        let state = build_state_with_db(&db_url, 60, true, google_cfg(&token_url, &userinfo_url));
+
+        let (status, body, headers) = post_google(state.clone(), json!({ "code": code })).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+
+        // 上游 `LoginResponse{token, user}`
+        let session_id = body["token"].as_str().expect("token").to_string();
+        assert!(!session_id.is_empty());
+        assert_eq!(body["user"]["email"], email);
+        // 新建用户默认 name = email 前缀，随后被 Google profile 覆盖
+        assert_eq!(body["user"]["name"], "Stub User");
+
+        // cookie + CSRF 头复用 verify-code 的写入路径
+        let cookie = headers
+            .get(SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(cookie.starts_with("multica_session="), "cookie: {cookie}");
+        let session = state
+            .auth
+            .store()
+            .get(&session_id)
+            .await
+            .expect("session stored");
+        assert_eq!(
+            headers.get("x-multica-csrf").and_then(|v| v.to_str().ok()),
+            Some(session.csrf_token.as_str())
+        );
+
+        // 落库结果：name 被 profile 覆盖，avatar 落库，email 归一化
+        let db = Db::connect(&db_url, 4, 1).await.expect("db");
+        let users = UserRepo::new(db);
+        let stored = users
+            .get_by_email(&email)
+            .await
+            .expect("lookup")
+            .expect("user row created by google login");
+        assert_eq!(stored.name, "Stub User");
+        assert_eq!(stored.avatar_url.as_deref(), Some("https://img.test/p.png"));
+        assert_eq!(stored.id, session.user_id);
+        assert_eq!(body["user"]["id"], stored.id.as_string());
+        users.delete(&stored.id).await.ok();
+    }
+
+    /// 第 10 步的边界：用户改过 name / 已有 avatar 时**不**回填（上游只在
+    /// 「name 仍等于 email 前缀」与「avatar 为空」时写库）。
+    #[ignore = "needs a real PostgreSQL via MULTICA_TEST_DATABASE_URL"]
+    #[tokio::test]
+    async fn google_login_keeps_named_user_and_existing_avatar() {
+        let Some(db_url) = require_test_db() else {
+            return;
+        };
+        let (token_url, userinfo_url) = spawn_google_stub().await;
+        let code = format!("keep-{}", Uuid::new_v4());
+        let email = format!("{code}@stub.test");
+
+        let db = Db::connect(&db_url, 4, 1).await.expect("db");
+        let users = UserRepo::new(db);
+        let seeded = users
+            .create(NewUser {
+                name: "Custom Name".into(),
+                email: email.clone(),
+                avatar_url: Some("https://mine.test/a.png".into()),
+            })
+            .await
+            .expect("seed user");
+
+        let state = build_state_with_db(&db_url, 60, true, google_cfg(&token_url, &userinfo_url));
+        let (status, body, _) = post_google(state, json!({ "code": code })).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body["user"]["name"], "Custom Name");
+
+        let stored = users
+            .get_by_email(&email)
+            .await
+            .expect("lookup")
+            .expect("seeded row");
+        assert_eq!(stored.id, seeded.id);
+        assert_eq!(stored.name, "Custom Name");
+        assert_eq!(
+            stored.avatar_url.as_deref(),
+            Some("https://mine.test/a.png")
+        );
+        users.delete(&seeded.id).await.ok();
     }
 }

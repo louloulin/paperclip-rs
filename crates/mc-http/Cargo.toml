@@ -31,6 +31,9 @@ rand = { workspace = true }
 sha2 = { workspace = true }
 sqlx = { workspace = true }
 uuid = { workspace = true }
+# W1-Google（LUM-1399）：`POST /auth/google` 的两个出站调用（token / userinfo）。
+# 复用 workspace 既有版本（mc-cli 已在用），不引入新包。
+reqwest = { workspace = true }
 
 mc-core = { path = "../mc-core" }
 mc-errors = { path = "../mc-errors" }
