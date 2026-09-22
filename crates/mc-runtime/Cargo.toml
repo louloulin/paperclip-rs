@@ -3,7 +3,7 @@ name = "mc-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "M3 anchor scaffold 占位 — runtime 抽象/目录/存活探测/配额，由 M3-2 填充"
+description = "Multica runtime: RuntimeAdapter/AdapterRegistry + pi-local 端到端（M3-2；其余 24 个 adapter 走 M3-8）"
 
 [lints]
 workspace = true
@@ -11,9 +11,10 @@ workspace = true
 [features]
 default = []
 
-# M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.5）：依赖一次声明到位。
-# `async-trait` + `tokio` 给 `RuntimeAdapter` trait 与 spawn/流式读取（M3-2），
-# `mc-core` 给 `Id`；三个版本都已在 `Cargo.lock` 里，无新增三方包。
+# M3 anchor scaffold（LUM-1406 / docs/15-M3-PLAN.md §7.2.5）预声明的依赖，M3-2 起全部
+# 真正用上：`async-trait` 给 `RuntimeAdapter` trait、`tokio` 给 spawn + 逐行流式读取、
+# `mc-core` 给 `RuntimeProfile`（`AgentType::runtime_profile()` 的 25↔26 对照）。
+# 无新增三方包（§7.5），`Cargo.lock` 里只有 workspace 内路径边。
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,17 +1,89 @@
-//! M3 anchor scaffold（LUM-1406）：runtime 抽象 crate —— **占位，无实现**。
+//! `mc-runtime`：M3 的**运行时适配层** —— 把各家 coding agent CLI 统一成一套
+//! "启动 / 流式 / 取消 / 探版本 / 自述能力"的契约。
 //!
-//! 由 M3-2（`feat/multica-rs-m3a-runtime-adapter`）填充：
+//! # 它在整条链路上的位置
 //!
-//! - `RuntimeAdapter` trait（launch / stream / cancel / probe-version / capabilities）；
-//! - `AdapterRegistry` —— **替换** `crates/mc-http/src/state.rs::AdapterRegistryStub`
-//!   及其调用点（`AdapterRegistryStub` 本片不动）；
-//! - adapter 元数据表：白名单以 `server/pkg/agent/agent.go::SupportedTypes` 的
-//!   **25 项**为准（docs/15 §9.3），launch header 从同文件的 `launchHeaders` 逐条抄；
-//! - 一致性测试套件（宏 `adapter_conformance!(PiLocal)`），本片只做 `pi-local` 一个 adapter。
+//! M3-3（`mc-task`）负责"该不该跑、跑几次、失败怎么重试"，本 crate 负责"怎么把
+//! 一次 run 跑起来并把过程与终态如实报回去"。两边通过 [`LaunchRequest`] /
+//! [`RunOutcome`] 对齐，**本 crate 不碰数据库**（M3-2 的范围约束）。
 //!
-//! 范围限制：不复制第 2 个 adapter；不做配额/计费；不做 Windows 分支（Linux-first）。
-//! M3-4 / M3-8 会消费本 crate（profile 台账 / adapters 分批），因此依赖已在本文件预声明。
+//! ```text
+//! mc-task（M3-3，租约/重试）
+//!    └── AdapterRegistry::get(AgentType::Pi) ──► RuntimeAdapter::launch(request)
+//!                                                   ├── RunHandle::next_event()（流式）
+//!                                                   └── RunHandle::outcome()（终态）
+//! ```
 //!
-//! 超 800 行按 `adapters/` 拆（docs/15 §7.7 的 R7）。
+//! # 模块地图
 //!
-//! scaffold 阶段本文件只有文档注释：一个类型都不定义。
+//! | 模块 | 内容 |
+//! |---|---|
+//! | [`adapter`] | 契约本身：trait、请求/终态、事件、错误 |
+//! | [`catalog`] | 25 个官方 agent 类型的白名单表（含上游 `launchHeaders` 启动骨架） |
+//! | [`registry`] | `AgentType → Arc<dyn RuntimeAdapter>` 注册表（替换 M0 的 `AdapterRegistryStub`） |
+//! | [`adapters`] | 各 provider 的实现；M3-2 落 [`adapters::pi_local`] |
+//! | [`conformance`] | adapter 一致性套件（宏 + 假 CLI），M3-8 批量补 adapter 靠它 |
+//!
+//! # 五条契约（写新 adapter 前必须认同）
+//!
+//! 1. **启动失败 vs 运行失败是两件事**：`launch` 返回 `Err` 只代表"没能启动"
+//!    （可执行文件缺失、会话被占用）；启动之后的任何失败都在 [`RunOutcome`] 里，
+//!    因为那时调用方已经有 `run_id`，需要的是终态而不是异常。
+//! 2. **`Started` 必是第一条事件**，且事件通道在终态到达前关闭。
+//! 3. **终态必须给出**：run 任务无论走哪条路径（超时、取消、写 stdin 失败、
+//!    子进程被信号杀死）都要发一次 [`RunOutcome`]；只有 adapter 任务本身 panic
+//!    才会变成 [`AdapterError::OutcomeLost`]。
+//! 4. **事件通道是无界的**：run 阻塞在 `send` 上就看不到取消信号。调用方要么持续
+//!    消费事件，要么用 `outcome()`（它会 drop 接收端，让发送端立刻停发）。
+//! 5. **白名单是硬边界**：[`AgentType`] 的取值必须与上游 `SupportedTypes` 一致，
+//!    新增取值等于新增一个后端，属于产品决策而不是本 crate 的自由。
+//!
+//! # 与上游守护进程的关系
+//!
+//! 白名单、启动骨架、pi 的事件流解析与终态归因都是**逐条对齐**上游
+//! `server/pkg/agent`（Go）的结果，见 [`adapters::pi_local`] 的模块文档与
+//! `docs/18-M3-RUNTIME-ADAPTER.md`。有意偏离上游的地方（pi 的会话锁由 `flock`
+//! 改成进程内锁等）都在那里记了原因。
+
+pub mod adapter;
+pub mod adapters;
+pub mod catalog;
+#[cfg(unix)]
+pub mod conformance;
+pub mod registry;
+
+pub use adapter::{
+    AdapterCapabilities, AdapterError, CancelOutcome, EventDecoder, EventReceiver, EventSender,
+    FailureReason, LaunchRequest, ModelUsage, ProtocolFamily, RunHandle, RunId, RunOutcome,
+    RunStatus, RuntimeAdapter, RuntimeEvent, Semver, TokenUsage, VersionProbe, STDERR_TAIL_LIMIT,
+};
+pub use adapters::{PiDecoder, PiLocal, PiLocalConfig};
+pub use catalog::{AgentType, UnknownAgentType};
+#[cfg(unix)]
+pub use conformance::{ConformanceScript, FakeCli, TestableAdapter};
+pub use registry::AdapterRegistry;
+
+/// 本 crate 适配层的名字/版本，用于日志与 run 元数据。
+pub const CRATE_NAME: &str = "mc-runtime";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn re_exports_are_complete_for_registry_consumers() {
+        // mc-http 只 `use mc_runtime::AdapterRegistry;`，其余调用点靠这些 re-export。
+        let registry = AdapterRegistry::default();
+        assert!(registry.is_empty());
+        assert_eq!(AgentType::ALL.len(), 25);
+        assert_eq!(CRATE_NAME, "mc-runtime");
+    }
+
+    #[test]
+    fn builtin_registry_installs_pi_local() {
+        let registry = AdapterRegistry::with_builtin_adapters();
+        let adapter = registry.get(AgentType::Pi).expect("pi-local 必须注册");
+        assert_eq!(adapter.kind(), AgentType::Pi);
+        assert_eq!(adapter.capabilities().protocol, ProtocolFamily::JsonLine);
+    }
+}
