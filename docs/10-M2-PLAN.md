@@ -59,10 +59,14 @@ GetIssue L2345 / SearchIssues L1005 / QueryIssues L1150 / Grouped L1873）、
 
 ## 1. schema 现状
 
-`migrations/0001_init.up.sql` 已有：`issue`、`issue_status`、`comment`、`inbox_item`、
-`issue_label`、`issue_to_label`、`wakeup`。**缺失**（上游有，需 M2 scaffold 补）：
-`comment_reaction`（上游 026）、`issue_reaction`（027）、`issue_subscriber`（015）；
+`migrations/0001_init.up.sql` 已有：`issue`、`issue_status`、`comment`、`inbox_item`、`wakeup`。
+**缺失**（上游有，需 M2 scaffold 补）：`comment_reaction`（上游 026）、`issue_reaction`（027）、
+`issue_subscriber`（015）——已由 scaffold `0004_reactions_and_subscribers.up.sql` 补齐；
 `attachment`（029）、`issue_properties`（191）留到 M2 尾部或 M3。
+
+> **⚠️ 更正（2026-09-22 18:00，LUM-1368 cycle 实测）**：本节原本写 `issue_label` /
+> `issue_to_label` 也存在，**这是错的**——本仓 `migrations/` 里没有这两张表
+> （`grep -rni label migrations/` 为空）。详见 §5.1，M2-A 的 labels 路由因此不可实现。
 
 ## 2. 三切片划分
 
@@ -147,3 +151,51 @@ M2 切片开工前必须知道这两条，都是 M1 切片实测踩到的：
 3. **不要重新修 M0 基线缺陷**：`056d2ae` 自身不编译（缺 `anyhow`/`dirs`/`tokio` 依赖等），
    M1 的三个切片各自重复修了一遍。M1-D 集成后基线即可编译，M2 切片从集成后的
    `feat/multica-rs-initial` 开分支，不会再遇到。
+
+---
+
+## 5. 覆盖缺口与 schema 事实更正（2026-09-22 18:00 CST，LUM-1368 cycle 实测）
+
+实测方式：`git ls-remote` 核验远端 head；静态抽取 `fd6dfd6` 合并树全部 `.route(...)`；
+与上游 `louloulin/multica` `origin/main` @ `f41fae6`（`server/cmd/server/router.go`，2610 行）逐条对账。
+
+### 5.1 schema 事实更正（§1 有误，以本节为准）
+
+| 表 | 本仓现状（`fd6dfd6`） | 上游 | 结论 |
+| --- | --- | --- | --- |
+| `issue_label` / `issue_to_label` | **不存在**（0001 的 24 张表里没有；全 `migrations/` 无 `label` 字样） | `001_init.up.sql:75`、`:82` | §1 原文写"已有"是**错的** |
+| `issue_properties` | **不存在**；只有列 `issue.properties JSONB`（`0001:153`） | `191_issue_properties` | 值可存 JSONB，定义目录缺失 |
+| `issue.metadata JSONB` | **存在**（`0001:152`） | 同 | metadata 读写可实现 |
+| `comment_reaction` / `issue_reaction` / `issue_subscriber` | 存在（scaffold `0004`） | 026 / 027 / 015 | ✓ |
+
+对三个切片的实际影响：
+
+- `GET/PUT/DELETE /api/issues/{id}/metadata/{key}` → 用 `issue.metadata JSONB`，**可实现**。
+- `PUT/DELETE /api/issues/{id}/properties/{propertyId}` → 值可落 `issue.properties JSONB`，但
+  `/api/properties` 定义目录既无表也无路由 → **端到端不可用**，建议降级 TODO 并在 `docs/11` 注明。
+- `GET/POST /api/issues/{id}/labels`、`DELETE /api/issues/{id}/labels/{labelId}` → **无表，不可实现**
+  → 留 `501` / TODO。**不要在 M2 切片里新开迁移文件**（`0005` 编号由集成 master 统一分配）。
+
+### 5.2 无 milestone 认领的上游路由（覆盖缺口）
+
+| 上游路由块 | router.go 行号 | 条数 | 归属 |
+| --- | --- | --- | --- |
+| `/api/labels`（GET/POST `/`、GET/PUT/DELETE `/{id}`） | L2041–L2051 | 5 | **M2-E（新立项）** |
+| `/api/properties`（GET/POST `/`、GET/PATCH `/{id}`） | L2031–L2039 | 4 | **M2-E（新立项）** |
+| `/api/quick-actions`（GET/POST `/`、PATCH/DELETE `/{id}`） | L2021–L2029 | 4 | autopilot 域（M3+，未立项） |
+| `POST /api/issues/{id}/quick-actions/{quickActionId}/{run,render}` | L1995–L1996 | 2 | 依赖 task queue（M3+，未立项） |
+
+注：M2-A 只覆盖 issue-**从属**的 `/api/issues/{id}/labels`、`/properties`，上游的**定义目录**
+（`/api/labels`、`/api/properties`）在 §0／§2 里从未出现——这是本计划的覆盖盲区，已单独立 M2-E。
+
+### 5.3 计数更正与实测基线
+
+- §2 M2-C 写"`/api/inbox` 全部 **15** 条" → 实际 **14 条**（§0 表格是对的）：`GET /`、`archived`、
+  `archived/page`、`archived/facets`、`unread-count`、`unread-summary`、`mark-all-read`、`archive-all`、
+  `archive-all-read`、`archive-completed`、`{id}/read`、`{id}/unread`、`{id}/archive`、`{id}/unarchive`。
+  加上 4 条 subscriber 路由，M2-C 覆盖面 = **18** 条（不是 19）。
+- `/api/issue-statuses` 上游 5 条与 §0 一致：`GET /`、`POST /`、`PATCH /reorder`、`PATCH /{id}`、`DELETE /{id}`。
+- `fd6dfd6` 静态路由表实测：**(method, path) 52 条，无同 path+method 重复，无 `{param}` 字面量段**。
+  §4 第 2 条举的 M0 占位反例（`/api/workspaces/{id}`、`/api/issues/{id}`）已不存在——
+  workspace 占位被 M1-A 真实路由替换，`/api/issues`、`/api/issues/{id}`、`/api/comments`、`/api/inbox`
+  占位由 M1-D 删除（M2 切片**无需**再删占位行）。
