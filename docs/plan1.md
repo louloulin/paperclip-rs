@@ -119,10 +119,12 @@ multica/
 | Rust LOC | 19,177 | ~209,000 Go | 9% |
 | crate | 17 | ~40 目标 | 42% |
 | 迁移文件 | 4 | 560 up/560 down | 0.7% |
-| 数据表 | 28（26 同名） | 138 | 19% |
+| 数据表 | 28（26 同名） | 138｜**head 114** | ≈23%（26/114） |
 | HTTP 路由 | 43 真实 | 440 | **9.8%** |
 | 测试 | 242 个（42 个 `#[ignore]`） | 1,121 文件 / 414k 行 | — |
 | CI | **无** | 6 个 workflow | 0% |
+
+> 数据表口径（2026-09-22 实测更正）：上游列 **138 = 迁移 `CREATE TABLE` 去重 137 + Go runner 自建的 `schema_migrations`**；其中 **24 张已被后续迁移 `DROP`** ⇒ **head 最终表集 = 114**，覆盖率按 head 口径 = 26/114 ≈ 23%。复算命令见 §10.4，机制说明见 §6.3.1。
 
 ---
 
@@ -149,7 +151,9 @@ multica/
 `s sqlc → sqlx`（显式 SQL、编译期校验）、`chi → axum/tower`、`cobra → clap`、`pgx pool → sqlx::PgPool`、`chi middleware → tower::Layer`。**凡上游有的语义都照搬，只换实现**；只有在 Rust 侧天然更优处（类型状态、所有权消除数据竞争）才偏离，且必须记录。
 
 **P4 · schema 先行，不允许"顺手加表"**
-上游 560 个迁移**逐字**放入 `migrations/upstream/`（只读，禁止改），必要时在 `migrations/compat/` 放兼容性补丁；`migrate` 命令按文件名字典序应用两目录的合并序列。CI 跑 schema drift 对账（见 §6.3）。这条直接消灭"计划以为有表、实际没有"这类已发生两次的事故（label/properties）。
+上游 560 个迁移**逐字**放入 `migrations/upstream/`（只读，禁止改），必要时在 `migrations/compat/` 放兼容性补丁；`migrate` 命令应用两目录的合并序列。CI 跑 schema drift 对账（见 §6.3）。这条直接消灭"计划以为有表、实际没有"这类已发生两次的事故（label/properties）。
+
+> ⚠️ **2026-09-22 实测更正**：本仓现有 runner（`mc-db` / `mc-migrate`）的迁移身份是**解析出的整数版本号（`BIGINT` 主键）**、顺序是**数值序**、且只吃**单目录** —— 与上游 runner（`TEXT` 键 = 文件名词干、`sort.Strings` 全路径字典序）三处都不兼容，而上游 560 个迁移里**只有 513 个互不相同的数字版本**（30 个版本带 2–4 个文件）。因此"按文件名字典序合并"这句话在当前实现上是**不成立的**，接管前必须先按 **§6.3.1 接管契约**改造，否则会在第 1 个迁移上就与本地 `0001_init` 撞键。
 
 **P5 · 用上游测试当 oracle**
 414k 行 Go 测试逐子系统抽取为 **golden fixture**（HTTP 请求/响应 JSON 对、SQL 期望结果、事件 envelope），Rust 侧以 `insta` 快照断言。覆盖率不看行数，看**通过的 fixture 数 / 上游用例数**。
@@ -387,7 +391,7 @@ sequenceDiagram
 
 | 用途 | 选定 | 版本 | 说明 |
 | --- | --- | --- | --- |
-| SQL | **`sqlx`**(postgres, macros, migrate) | 0.9.0 | 对齐上游 sqlc 哲学；`sea-orm` 2.0.3 备选但**不采用**（会遮住上游 SQL 语义） |
+| SQL | **`sqlx`**(postgres, macros, migrate) | 0.9.0 ⚠️ | 对齐上游 sqlc 哲学；`sea-orm` 2.0.3 备选但**不采用**（会遮住上游 SQL 语义）。**实测（2026-09-22）：本仓 `Cargo.toml` 仍写 `sqlx = { version = "0.8", … }`、`Cargo.lock` = `0.8.6`，0.9.0 虽已发布但升级是独立工作项（宏/API 有破坏性变更），不得在 W0 顺手做** |
 | 迁移 | `sqlx::migrate` | — | 直接吃上游 SQL 文件；`refinery` 0.9.2 备选 |
 | 池 | `sqlx::PgPool` | — | `deadpool-postgres` 0.14.2 / `bb8` 0.9.1 仅在需要多后端时考虑 |
 | Redis | `redis` + `deadpool-redis` | 1.7.0 / 0.23.1 | — |
@@ -539,6 +543,32 @@ jobs:
 ```
 这条把"计划以为有表（issue_label/issue_properties）实际没有"变成 **CI 红灯**，而不是靠 agent 事后实测发现。
 
+#### 6.3.1 上游迁移接管契约（2026-09-22 实测，W0-B / W0-B2 的硬约束）
+
+P4 的"逐字复用 + 两目录合并"在**跑之前**必须先对齐两侧 runner 的迁移身份与记账方式。实测：上游 `multica` @ `f41fae6b` vs 本仓 @ `feat/multica-rs-initial`。
+
+| 维度 | 上游 `server/cmd/migrate` | 本仓 `mc-db` / `mc-migrate` | 结论 |
+| --- | --- | --- | --- |
+| 迁移标识 | `migrations.ExtractVersion(file)` = 文件名去掉 `.up.sql`，**TEXT**（如 `020_task_session`） | `mc-db/src/migrate.rs::parse_filename()` → `(version: i64, name)` | **不兼容**：键必须改成文件名词干 |
+| 记账表 | `schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ)` | `schema_migrations (version BIGINT PRIMARY KEY, name, source, applied_at)` | 同名不同形 → 与 Go 版 runner 不能互认（W10 双跑/回滚会踩） |
+| 应用顺序 | `Files("up")` → `sort.Strings(全路径)`（单目录下等价于文件名字典序；down 为逆序） | `sort_by_key(|s| s.version)`：**数值**序 | 两目录合并后必须按**词干**排序（按全路径会把 `compat/` 排到 `upstream/` 之前） |
+| 目录 | 单目录 `server/migrations/`（560 up + 560 down 平铺） | `mc-migrate --dir <单个目录>` | 需新增"upstream + compat 合并枚举" |
+
+上游编号实况：**560 个 `*.up.sql` / 560 个互不相同的词干 / 只有 513 个互不相同的数字版本**；**30 个数字版本各带 2–4 个文件**（共 77 个文件，例：`109_{agent_task_waiting_local_directory,drop_agent_skills_local,issue_pull_request_close_intent,lark_integration}.up.sql`），最大编号 534，1..534 内有 21 个空号。⇒ **用 `BIGINT version` 做主键会冲突/丢失 47 个文件**，"逐字复用"不可能建在有损键上。
+
+附带一处语义差异（W10 双跑/就绪探监会踩）：上游 `AllVersions()` + readiness 检查要求**所有 up 版本都已记入 `schema_migrations`**（专防"编号低于已应用版本的乱序补丁漏记录"），而 Rust 侧只有 `Migrator::list_applied(db)?.len()`；接管时需对齐。
+
+四条硬约束：
+
+- **C1 身份**：迁移键改为 TEXT（文件名词干），`schema_migrations.version TEXT PRIMARY KEY`，与上游逐字一致。
+- **C2 顺序**：合并序列按**词干**字典序；`migrations/compat/` 的补丁必须排在上游最大编号之后（**`535_` 起**，且保持 **3 位零填充** —— 一旦出现 `1000_*` 就会按字典序排到 `535_*` 之前；空号 70/71/99/146-148/280/372-374/380/381/405/406/433-436/507/508 **不可复用**，否则补丁会插到历史中间）。
+- **C3 记账对齐 + 存量库再基线**：现有开发库（如 `multica_m1b`）里是 `BIGINT` 形态的 `schema_migrations`（本地 1..4 行）；切换必须给出**显式再基线步骤**（`DROP TABLE schema_migrations` + 干净库重放，或登记 legacy→新键映射），CI 侧用 testcontainers 全新建库则无此问题。
+- **C4 本地迁移退役**：本仓 `0001_init.up.sql` 解析为 `(version=1, name="init")`，与上游 `001_init.up.sql` **完全相同**；`0002/0003/0004` 的数字 2/3/4 又与上游 `002_agent_config` / `003_task_context` / `004_agent_runtime_loop` 撞号 ⇒ 这 4 个本地迁移在合并序列里**整体退役**，其中仍有价值的以 `migrations/compat/535_*` 形式重述。
+
+本地 schema 偏离（接管时一并处置，实测）：`migrations/` 共 **28** 条 `CREATE TABLE`，其中 **26 张**在上游 head 也存在；**只有两张是本仓自造** —— `plugin`（上游 head 是 `plugin_package` / `plugin_package_version` / `plugin_package_file` / `plugin_invocation` / `plugin_storage` / `plugin_secret` / `plugin_hook_schedule`；v1 的 `plugin_identity`/`plugin_release`/`plugin_installation`/`plugin_grant`/`plugin_binding` 已被 `344_plugin_v2_reset.up.sql` **DROP 掉**）与 `wakeup`（上游是 `issue_wakeup` + `issue_wakeup_receipt`）。两者目前**没有任何 SQL 读它们**（`git grep -E 'FROM (wakeup|plugin)\b'` 为空），但 `crates/mc-migrate/src/lib.rs::DEFAULT_REQUIRED_TABLES` 里列了 `"wakeup"` ⇒ 接管时必须把该列表改成 `issue_wakeup` / `issue_wakeup_receipt`，否则 `mc-migrate` 的 verify 会在切换后立刻红灯。
+
+**§1.5「数据表 138」的口径要改**：上游 560 个迁移 `CREATE TABLE` 去重后是 **137** 张（+ Go runner 自建的 `schema_migrations` = 138，这解释了原数字），但其中 **24 张在后续迁移里被 `DROP TABLE`**（`plugin_v2_reset` 退役 12 张、usage dashboard/rollup 退役 6 张，另有 `daemon_pairing_session` / `runtime_usage` 等）⇒ **上游 head 的最终表集是 114 张**。drift 门禁（§6.3）与 §8「schema 一致率」必须以 **head 最终集**为分母，且统计器要**去注释 + 处理带引号标识符（上游是 `CREATE TABLE "user"`）+ 结算 DROP**（只按 `CREATE TABLE` 计数会在 114/137/138 之间漂）。
+
 ### 6.4 门禁清单（每切片必须全绿才可交付）
 
 1. `cargo build --workspace --locked`
@@ -603,7 +633,7 @@ jobs:
 
 | 编号 | 缺陷 | 对策 |
 | --- | --- | --- |
-| **D1** | **schema 策略缺失**：`issue_label`/`issue_to_label`/`issue_properties` 在上游不存在，label/properties 共 9 条路由**无法实现**；迁移编号靠 master 手工指定 | P4 逐字复用 560 迁移 + §6.3 drift CI，编号不再手工分配 |
+| **D1** | **schema 策略缺失**：`issue_label`/`issue_to_label`/`issue_properties` 在上游不存在，label/properties 共 9 条路由**无法实现**；迁移编号靠 master 手工指定 | P4 逐字复用 560 迁移 + §6.3 drift CI，编号不再手工分配。**追加（2026-09-22 实测）**："两目录按文件名字典序合并"在当前 runner 上不成立（i64 键 + 数值序），上游版本号也**不唯一**（30 处 / 77 文件）+ 本地 `0001–0004` 与上游 `001–004` 撞号 ⇒ 先执行 **§6.3.1 接管契约 C1–C4** |
 | **D2** | **无 CI**：M2-C 在 `cargo fmt` 不干净的情况下合入主干（base 处 54 处差异，全部落在其 5 个文件内），靠无关切片事后修复 | W0 交付 CI；fmt 为第 3 道门禁 |
 | **D3** | **crate 过度拆分**：细到 `mc-issue-view-preference`、`mc-runtime-unusable-notice`、`mc-runtime-blocklist`，收益 < 成本 | §3.2 R1/R2/R3，压到 38–48 |
 | **D4** | **M3 工期低估**：daemon↔26 adapter 的派发/心跳/租约/重试是真正护城河，4 周不可能 | §5 W3 拆 3 子波 = 8 周 |
@@ -674,6 +704,19 @@ git -C $UP ls-tree -r --name-only main -- server | grep '_test\.go$' | \
 # 本仓现状（multica-rs 检出目录）
 find crates -name '*.rs' | xargs wc -l | tail -1 && ls migrations/*.up.sql | wc -l
 python3 scripts/route_parity.py --json
+
+# §6.3.1 接管契约：上游迁移身份 = 文件名词干（TEXT），且数字版本号不唯一
+git -C $UP show main:server/internal/migrations/migrations.go | sed -n '/func ExtractVersion/,/^}/p'
+git -C $UP ls-tree --name-only main server/migrations/ | grep 'up\.sql$' | \
+  sed 's#server/migrations/##; s#\.up\.sql$##' | cut -d_ -f1 | sort | uniq -d | wc -l   # → 30 个版本号带多个文件
+# 本仓键是 i64 版本号（BIGINT 主键），与上游 TEXT 键不兼容
+sed -n '/fn parse_filename/,/^}/p' crates/mc-db/src/migrate.rs
+ls migrations/*.up.sql   # 0001_init 与上游 001_init 解析结果完全相同
+
+# 表集口径：CREATE 137 / DROP 24（去注释 + 处理 "user" 引号）→ head 最终 = 114（差集）
+for f in $(git -C $UP ls-tree --name-only main server/migrations/ | grep 'up\.sql$'); do
+  git -C $UP show main:$f | sed 's/--.*//' | grep -oiE '(CREATE|DROP) TABLE (IF (NOT )?EXISTS )?"?[a-z_]+'
+done | tr 'A-Z' 'a-z' | tr -d '"' | sed -E 's/if (not )?exists //' | awk '{print $1, $3}' | sort -u | awk '{print $1}' | sort | uniq -c
 ```
 
 ### 10.5 上游 `server/pkg` 公共包 → Rust 落点
