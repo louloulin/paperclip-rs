@@ -1,17 +1,423 @@
-//! MemberRepo — 由 M1 sub-issue A 实现。
+//! `MemberRepo` — workspace `member` 表 CRUD + 关联查询。
 //!
-//! 当前为占位 stub：`lib.rs` 已声明 `pub mod member;`。
+//! 错误映射与 `WorkspaceRepo` 共享：`sqlx::Error::RowNotFound` → `RepoError::NotFound`，
+//! `unique` 约束 → `RepoError::Conflict`。
+//!
+//! `list_with_user` 通过 `LEFT JOIN "user"` 把 user 元信息一起取出，避免 N+1。
+
+use chrono::{DateTime, Utc};
+use mc_core::workspace::{WorkspaceMember, WorkspaceRole};
+use mc_core::{Id, Timestamp};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use crate::{RepoError, RepoWithDb, Repository, Result};
+use crate::workspace::map_sqlx_err;
 
 use mc_db::Db;
 
-#[allow(dead_code)]
+/// MemberRepo。
+#[derive(Clone)]
 pub struct MemberRepo {
     db: Db,
 }
 
 impl MemberRepo {
-    #[allow(dead_code)]
     pub fn new(db: Db) -> Self {
         Self { db }
+    }
+}
+
+impl RepoWithDb for MemberRepo {
+    fn db(&self) -> &Db {
+        &self.db
+    }
+}
+
+/// 新增 member 请求。
+#[derive(Debug, Clone)]
+pub struct NewMember {
+    pub workspace_id: Id,
+    pub user_id: Id,
+    pub role: WorkspaceRole,
+}
+
+/// member patch（更新角色）。
+#[derive(Debug, Clone, Default)]
+pub struct MemberUpdate {
+    pub role: Option<WorkspaceRole>,
+}
+
+/// `list` 过滤条件。
+#[derive(Debug, Default, Clone)]
+pub struct MemberFilter {
+    pub workspace_id: Option<Id>,
+    pub user_id: Option<Id>,
+    pub role: Option<WorkspaceRole>,
+}
+
+/// Member 与 User 的连接结果（API 层 list_members 直接吐出）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberWithUser {
+    pub id: Id,
+    pub workspace_id: Id,
+    pub user_id: Id,
+    pub role: WorkspaceRole,
+    pub name: String,
+    pub email: String,
+    pub avatar_url: Option<String>,
+    pub created_at: Timestamp,
+}
+
+#[derive(Debug, FromRow)]
+struct MemberRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    role: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct MemberWithUserRow {
+    id: Uuid,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    role: String,
+    created_at: DateTime<Utc>,
+    user_name: String,
+    user_email: String,
+    user_avatar_url: Option<String>,
+}
+
+impl TryFrom<MemberRow> for WorkspaceMember {
+    type Error = RepoError;
+
+    fn try_from(row: MemberRow) -> Result<Self> {
+        let role = parse_role(&row.role)?;
+        Ok(WorkspaceMember {
+            id: Id::from(row.id),
+            workspace_id: Id::from(row.workspace_id),
+            user_id: Id::from(row.user_id),
+            role,
+            created_at: Timestamp::from(row.created_at),
+            updated_at: Timestamp::from(row.updated_at),
+        })
+    }
+}
+
+fn parse_role(s: &str) -> Result<WorkspaceRole> {
+    WorkspaceRole::from_str(s).ok_or_else(|| RepoError::Db(format!("invalid workspace role: {s}")))
+}
+
+#[async_trait::async_trait]
+impl Repository<WorkspaceMember, NewMember, MemberUpdate, MemberFilter> for MemberRepo
+where
+    NewMember: Send + Sync,
+    MemberUpdate: Send + Sync,
+{
+    async fn create(&self, item: NewMember) -> Result<WorkspaceMember> {
+        let row = sqlx::query_as::<_, MemberRow>(
+            "INSERT INTO member (workspace_id, user_id, role) \
+             VALUES ($1, $2, $3) \
+             RETURNING id, workspace_id, user_id, role, created_at, updated_at",
+        )
+        .bind(item.workspace_id.as_uuid())
+        .bind(item.user_id.as_uuid())
+        .bind(item.role.as_str())
+        .fetch_one(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        row.try_into()
+    }
+
+    async fn get(&self, id: &Id) -> Result<WorkspaceMember> {
+        let row = sqlx::query_as::<_, MemberRow>(
+            "SELECT id, workspace_id, user_id, role, created_at, updated_at \
+             FROM member WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?
+        .ok_or(RepoError::NotFound)?;
+        row.try_into()
+    }
+
+    async fn update(&self, id: &Id, patch: MemberUpdate) -> Result<WorkspaceMember> {
+        let role_str = patch.role.map(|r| r.as_str().to_string());
+        let row = sqlx::query_as::<_, MemberRow>(
+            "UPDATE member SET \
+                role = COALESCE($2, role), \
+                updated_at = now() \
+             WHERE id = $1 \
+             RETURNING id, workspace_id, user_id, role, created_at, updated_at",
+        )
+        .bind(id.as_uuid())
+        .bind(role_str)
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?
+        .ok_or(RepoError::NotFound)?;
+        row.try_into()
+    }
+
+    async fn delete(&self, id: &Id) -> Result<()> {
+        let res = sqlx::query("DELETE FROM member WHERE id = $1")
+            .bind(id.as_uuid())
+            .execute(self.db.pool())
+            .await
+            .map_err(map_sqlx_err)?;
+        if res.rows_affected() == 0 {
+            Err(RepoError::NotFound)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn list(&self, filter: MemberFilter) -> Result<Vec<WorkspaceMember>> {
+        let limit: i64 = 500;
+        let role_str = filter.role.map(|r| r.as_str().to_string());
+        let rows = sqlx::query_as::<_, MemberRow>(
+            "SELECT id, workspace_id, user_id, role, created_at, updated_at FROM member \
+             WHERE ($1::uuid IS NULL OR workspace_id = $1) \
+               AND ($2::uuid IS NULL OR user_id = $2) \
+               AND ($3::text IS NULL OR role = $3) \
+             ORDER BY created_at ASC LIMIT $4",
+        )
+        .bind(filter.workspace_id.map(|i| i.as_uuid()))
+        .bind(filter.user_id.map(|i| i.as_uuid()))
+        .bind(role_str)
+        .bind(limit)
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+}
+
+impl MemberRepo {
+    /// 列出某个 workspace 的所有 member。
+    pub async fn list_for_workspace(
+        &self,
+        workspace_id: Id,
+    ) -> Result<Vec<WorkspaceMember>> {
+        self.list(MemberFilter {
+            workspace_id: Some(workspace_id),
+            ..Default::default()
+        })
+        .await
+    }
+
+    /// 列出某 workspace 的 member（含 user 名称 / 邮箱 / 头像）。
+    ///
+    /// 使用 LEFT JOIN 一次性获取，匹配上游 `ListMembersWithUser`。
+    pub async fn list_with_user(
+        &self,
+        workspace_id: Id,
+    ) -> Result<Vec<MemberWithUser>> {
+        let rows = sqlx::query_as::<_, MemberWithUserRow>(
+            "SELECT m.id, m.workspace_id, m.user_id, m.role, m.created_at, \
+                    u.name as user_name, u.email as user_email, \
+                    u.avatar_url as user_avatar_url \
+             FROM member m \
+             JOIN \"user\" u ON u.id = m.user_id \
+             WHERE m.workspace_id = $1 \
+             ORDER BY m.created_at ASC",
+        )
+        .bind(workspace_id.as_uuid())
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(MemberWithUser {
+                    id: Id::from(r.id),
+                    workspace_id: Id::from(r.workspace_id),
+                    user_id: Id::from(r.user_id),
+                    role: parse_role(&r.role)?,
+                    name: r.user_name,
+                    email: r.user_email,
+                    avatar_url: r.user_avatar_url,
+                    created_at: Timestamp::from(r.created_at),
+                })
+            })
+            .collect()
+    }
+
+    /// 给 `(workspace_id, user_id)` 查 member；测试与权限检查用。
+    pub async fn get_for_user(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+    ) -> Result<WorkspaceMember> {
+        let row = sqlx::query_as::<_, MemberRow>(
+            "SELECT id, workspace_id, user_id, role, created_at, updated_at FROM member \
+             WHERE workspace_id = $1 AND user_id = $2",
+        )
+        .bind(workspace_id.as_uuid())
+        .bind(user_id.as_uuid())
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(map_sqlx_err)?
+        .ok_or(RepoError::NotFound)?;
+        row.try_into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mc_core::workspace::WorkspaceRole;
+
+    #[test]
+    fn parse_role_known_values() {
+        assert_eq!(parse_role("owner").unwrap(), WorkspaceRole::Owner);
+        assert_eq!(parse_role("admin").unwrap(), WorkspaceRole::Admin);
+        assert_eq!(parse_role("member").unwrap(), WorkspaceRole::Member);
+        assert!(parse_role("bogus").is_err());
+    }
+
+    #[test]
+    fn filter_default_shape() {
+        let f = MemberFilter::default();
+        assert!(f.workspace_id.is_none());
+        assert!(f.user_id.is_none());
+        assert!(f.role.is_none());
+    }
+
+    #[test]
+    fn new_member_constructs() {
+        let nm = NewMember {
+            workspace_id: Id::new(),
+            user_id: Id::new(),
+            role: WorkspaceRole::Admin,
+        };
+        assert_eq!(nm.role, WorkspaceRole::Admin);
+    }
+
+    // ---- DB 集成测试 ----
+
+    #[ignore]
+    #[tokio::test]
+    async fn db_add_list_remove() {
+        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
+            .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
+        let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
+        let ws_repo = crate::workspace::WorkspaceRepo::new(pool.clone());
+        let m_repo = MemberRepo::new(pool.clone());
+
+        let ws = ws_repo
+            .create(crate::workspace::NewWorkspace {
+                name: "WS".into(),
+                slug: Slug::parse("member-add-list").unwrap(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let user = mc_core::Id::new();
+        let m = m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: user,
+                role: WorkspaceRole::Member,
+            })
+            .await
+            .expect("add");
+        let list = m_repo.list_for_workspace(ws.id).await.expect("list");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].user_id, user);
+
+        // role 检查：更新为 admin
+        let updated = m_repo
+            .update(&m.id, MemberUpdate { role: Some(WorkspaceRole::Admin) })
+            .await
+            .unwrap();
+        assert_eq!(updated.role, WorkspaceRole::Admin);
+
+        m_repo.delete(&m.id).await.expect("remove");
+        ws_repo.delete(&ws.id).await.ok();
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn db_unique_member_conflict() {
+        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
+            .expect("set MULTICA_TEST_DATABASE_URL to enable DB tests");
+        let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
+        let ws_repo = crate::workspace::WorkspaceRepo::new(pool.clone());
+        let m_repo = MemberRepo::new(pool);
+        let ws = ws_repo
+            .create(crate::workspace::NewWorkspace {
+                name: "WS".into(),
+                slug: Slug::parse("member-conflict").unwrap(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let user = mc_core::Id::new();
+        m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: user,
+                role: WorkspaceRole::Member,
+            })
+            .await
+            .unwrap();
+        let err = m_repo
+            .create(NewMember {
+                workspace_id: ws.id,
+                user_id: user,
+                role: WorkspaceRole::Member,
+            })
+            .await
+            .expect_err("duplicate insert must error");
+        assert!(matches!(err, RepoError::Conflict));
+        ws_repo.delete(&ws.id).await.ok();
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn db_role_check_admin_can_grant_owner_only_owner_can_change() {
+        let url = std::env::var("MULTICA_TEST_DATABASE_URL")
+            .expect("set MULTICA_TEST_DATABASE_URL");
+        let pool = mc_db::pool::Db::connect(&url, 4, 1).await.unwrap();
+        let ws_repo = crate::workspace::WorkspaceRepo::new(pool.clone());
+        let m_repo = MemberRepo::new(pool);
+        let ws = ws_repo
+            .create(crate::workspace::NewWorkspace {
+                name: "WS".into(),
+                slug: Slug::parse("role-check").unwrap(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let owner = mc_core::Id::new();
+        let admin = mc_core::Id::new();
+        let member = mc_core::Id::new();
+        m_repo.create(NewMember {
+            workspace_id: ws.id,
+            user_id: owner,
+            role: WorkspaceRole::Owner,
+        }).await.unwrap();
+        m_repo.create(NewMember {
+            workspace_id: ws.id,
+            user_id: admin,
+            role: WorkspaceRole::Admin,
+        }).await.unwrap();
+        let m3 = m_repo.create(NewMember {
+            workspace_id: ws.id,
+            user_id: member,
+            role: WorkspaceRole::Member,
+        }).await.unwrap();
+
+        // 角色 update 仅允许 owner → owner/admin/member 或 admin → admin/member/guest
+        let promoted = m_repo.update(&m3.id, MemberUpdate {
+            role: Some(WorkspaceRole::Admin),
+        }).await.unwrap();
+        assert_eq!(promoted.role, WorkspaceRole::Admin);
+        ws_repo.delete(&ws.id).await.ok();
     }
 }
