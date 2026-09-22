@@ -514,16 +514,21 @@ gantt
 - **预扩展锚点**：`crates/mc-http/src/routes/mount.rs` 一次性预留 `mount_slice_*()`，各切片只填自己的函数体 —— 已验证可把三路并行冲突压到 4 个文件。
 - 规则：切片开始前先 rebase 基线；切片交付 = 代码 + 门禁证据 + `docs/plan1.md` 进度回填。
 
-### 6.2 CI（W0② 已落地 —— 三 job × 七道门，见 `docs/24-W0-CI.md`）
+### 6.2 CI（W0② 已落地 —— 三 job × 七道门；**⑧ schema-drift 已由 W0-D 追加，现为八道门**，见 `docs/24-W0-CI.md`）
 
 > **落地状态（LUM-1385，2026-09-22）**：`.github/workflows/ci.yml` + `scripts/gates.sh` 已交付，
 > 门禁命令的唯一实现是 `scripts/gates.sh`，CI 每条 `run:` 只调 `bash scripts/gates.sh --only <gate>`。
 > 本地冷启动七道门全绿（`bash scripts/gates.sh --with-db` → exit 0）。**尚未在 GitHub Actions 上实跑过**
 > （交付验收看本地 exit code）。
 >
+> **追加（W0-D / LUM-1402，2026-09-22）**：门 **⑧ `schema-drift`**（`python3 scripts/schema_drift.py --quiet`）
+> 已进 `ALL_GATES` / `--with-db` / `--list`，并挂在 `ci.yml` 的 `db` job（⑥ 之后，多一个 `psql`/`python3` 前置步）。
+> 至此 `--with-db` = **八道门**；设计稿 §6.3 的 `schema_drift.py` 一格于是也对上了。见 `docs/30-W0-DRIFT-GATE.md`。
+>
 > 与下面这份**建议稿**的差异：`cargo nextest`（本仓无 nextest 配置）、`cargo deny`（无 `deny.toml`）、
-> `scripts/schema_drift.py`（属 §6.3 的 **W0③**，需先有上游 schema 快照）、`mc-conformance`（无此 crate）
-> 均**未落地**，因此没有写进 CI —— 不放进一个红着躺尸的 job。实际命令与期望数字见 `docs/24` §2/§4。
+> `mc-conformance`（无此 crate）均**未落地**，因此没有写进 CI —— 不放进一个红着躺尸的 job。
+> （`scripts/schema_drift.py` 曾在这个未落地名单里，**已于 W0-D 接线为门 ⑧**。）
+> 实际命令与期望数字见 `docs/24` §2/§4。
 
 ```yaml
 # .github/workflows/ci.yml（W0 立项时的建议稿，保留以便对照）

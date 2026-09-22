@@ -410,6 +410,12 @@ exit 2
 
 ## 9. 以后怎么接 CI（本切片**不改** CI，只写清接法）
 
+> **已由 W0-D / LUM-1402 执行（2026-09-22）**：门 ⑧ `schema-drift` 已进 `scripts/gates.sh` 的 `ALL_GATES`
+> 与 `--with-db` 集合，并挂在 `ci.yml` 的 `db` job。本节以下内容保留为**当时的设计稿**，
+> 落地后的实现细节、实测输出与限制见 `docs/30-W0-DRIFT-GATE.md`。两处与下述草稿的差异：
+> ① 门里用 `--quiet`（判据是退出码），**红了才补跑一遍不带 `--quiet`** 的打印未登记差异（绿时那份报告 767 行）；
+> ② `db` job 在 ⑧ 之前多一个 `⑧ deps — psql client + python3` 步（⑥ 只用 sqlx，不会把 `psql` 装出来）。
+
 门禁本体已经能 `--quiet` 判退出码，接线是两句话的事，但**本切片不做**（`plan1` §5 W0 ④ 路由对账入 CI 之后）：
 
 ```bash
@@ -484,7 +490,8 @@ ls migrations/upstream/*.up.sql | sed 's#.*/##; s#_#\t#' | cut -f1 | sort -u | w
 ## 12. 本切片明确**未做**（避免误以为地基已完备）
 
 * **不切换应用集合**：`crates/mc-db`、`crates/mc-migrate`、`mc-repos` 里的 SQL 一行没动 → W0-B2（LUM-1387）；
-* **不改 CI**：只写了接法（§9），`gates.sh` 与 `ci.yml` 未加门禁；
+* **不改 CI**：只写了接法（§9），`gates.sh` 与 `ci.yml` 未加门禁
+  → **已在 W0-D / LUM-1402 补齐**（门 ⑧，见 §9 顶部标注与 `docs/30`）；本行原文保留为 W0-B 交付时的状态。
 * **不入库 560 个 `.down.sql`**（回滚路径属 W0-B2）；
 * **不建 `migrations/compat/`**、不写任何 compat 补丁；
 * 不实现路由、不建 `mc-source-context`、不碰 `docs/fixtures/`（route parity 属 T1 / W0-A）。
